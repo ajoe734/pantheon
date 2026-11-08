@@ -1,0 +1,333 @@
+{
+  "task_id": "EVOLUTION-ISOLATED-STIMULUS-20261107",
+  "source_sha": "21cbd9987a3a8ea86dfcd3d3708fdd400870746a",
+  "evidence_level": "local_integration_simulation",
+  "natural_market_qualification_proven": false,
+  "operator_authorization": {
+    "plan_reference": "/tmp/pantheon-evolution-simulation-20261107/PLAN.md",
+    "scope": "One isolated synthetic trigger and downstream test flow through qualification, governance approval, outbox dispatch, and real research execution",
+    "natural_ac5_status": "unproven_in_natural_paper_trading"
+  },
+  "synthetic_provenance": {
+    "simulation_case_id": "sim-case-isolated-stimulus-20261107",
+    "synthetic": true,
+    "data_scope": "synthetic",
+    "tenant_id": "tenant-isolated-sim-20261107",
+    "persona_id": "persona-sim-isolated-20261107",
+    "artifact_id": "artifact-sim-isolated-20261107-v1",
+    "strategy_id": "strategy-sim-isolated-20261107",
+    "runtime_binding_id": "bind-sim-isolated-20261107",
+    "runtime_id": "rt-sim-isolated-20261107",
+    "capital_pool_id": "pool-sim-isolated-20261107",
+    "deployment_plan_id": "plan-sim-isolated-20261107",
+    "persona_capital_binding_id": "pcb-sim-isolated-20261107",
+    "incident_id": "inc-drift-db1ab5760150",
+    "mark_event_ids": [
+      "evt-sim-dd-20261106-01",
+      "evt-sim-dd-20261107-02",
+      "evt-sim-dd-20261108-03"
+    ],
+    "drift_evaluation_ids": [
+      "rdeval-sched-tick-sim-2026-11-06-bind-sim-isolated-202611-318b0ca8a56b5ce3",
+      "rdeval-sched-tick-sim-2026-11-07-bind-sim-isolated-202611-345d3903574a58f2",
+      "rdeval-sched-tick-sim-2026-11-08-bind-sim-isolated-202611-ab97c3ee0bf25b16"
+    ],
+    "proposer_principal": {
+      "actor_id": "sim-human-operator-proposer-20261107",
+      "role": "operator",
+      "synthetic_test_identity": true
+    },
+    "reviewer_principal": {
+      "actor_id": "sim-human-governance-reviewer-20261107",
+      "role": "governance_reviewer",
+      "synthetic_test_identity": true
+    }
+  },
+  "policy_diff": {
+    "shared_policy_before": {
+      "path": "services/evolution/config/program_qualification_policy.json",
+      "sha256": "b3571f07f3fd05cb2515f3c33c7cf51fea36cf6bf80ba7519c6f767e482bdf5b",
+      "policy_version": "2026-11-05.1",
+      "allow_test_scope": false,
+      "min_distinct_breach_days": 3
+    },
+    "shared_policy_after": {
+      "path": "services/evolution/config/program_qualification_policy.json",
+      "sha256": "b3571f07f3fd05cb2515f3c33c7cf51fea36cf6bf80ba7519c6f767e482bdf5b",
+      "policy_version": "2026-11-05.1",
+      "allow_test_scope": false,
+      "min_distinct_breach_days": 3
+    },
+    "shared_policy_unchanged": true,
+    "isolated_simulation_policy_overrides": {
+      "policy_version": {
+        "from": "2026-11-05.1",
+        "to": "2026-11-05.1-isolated-simulation-20261107"
+      },
+      "allow_test_scope": {
+        "from": false,
+        "to": true
+      }
+    },
+    "shared_policy_refusal_on_synthetic_target": {
+      "qualified": false,
+      "first_failing_criterion": "real_target",
+      "real_target_criterion": {
+        "criterion": "real_target",
+        "observed": {
+          "artifact_type": "execution_bundle",
+          "data_scope": "synthetic",
+          "deployment_stage": "paper",
+          "persona_id": "persona-sim-isolated-20261107",
+          "runtime_id": "rt-sim-isolated-20261107",
+          "target_id": "artifact-sim-isolated-20261107-v1"
+        },
+        "reason": "persona data_scope synthetic is refused",
+        "result": "failed",
+        "threshold": {
+          "allow_test_scope": false,
+          "artifact_types": [
+            "behavior_policy",
+            "execution_bundle",
+            "model_artifact",
+            "strategy_spec"
+          ],
+          "stages": [
+            "paper"
+          ]
+        }
+      }
+    }
+  },
+  "qualification": {
+    "policy_version": "2026-11-05.1-isolated-simulation-20261107",
+    "evaluated": 1,
+    "qualified": 1,
+    "drafted": 1,
+    "decision_id": "evo-sweep-inc-drift-db1ab5760150",
+    "program_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+    "metric_name": "rolling_drawdown_multiple",
+    "action_type": "retrain",
+    "all_six_criteria_passed": true,
+    "criteria": [
+      {
+        "criterion": "real_threshold_signal",
+        "observed": {
+          "metric_name": "rolling_drawdown_multiple",
+          "observed_value": 1.4000000000000001,
+          "signal_type": "performance_degradation"
+        },
+        "reason": "",
+        "result": "passed",
+        "threshold": {
+          "comparator": "gt",
+          "threshold_value": 1.25
+        }
+      },
+      {
+        "criterion": "real_target",
+        "observed": {
+          "artifact_type": "execution_bundle",
+          "data_scope": "synthetic",
+          "deployment_stage": "paper",
+          "persona_id": "persona-sim-isolated-20261107",
+          "runtime_id": "rt-sim-isolated-20261107",
+          "target_id": "artifact-sim-isolated-20261107-v1"
+        },
+        "reason": "",
+        "result": "passed",
+        "threshold": {
+          "allow_test_scope": true,
+          "artifact_types": [
+            "behavior_policy",
+            "execution_bundle",
+            "model_artifact",
+            "strategy_spec"
+          ],
+          "stages": [
+            "paper"
+          ]
+        }
+      },
+      {
+        "criterion": "persistent_breach",
+        "observed": {
+          "distinct_breach_days": 3,
+          "mark_dates": [
+            "2026-11-06",
+            "2026-11-07",
+            "2026-11-08"
+          ]
+        },
+        "reason": "",
+        "result": "passed",
+        "threshold": {
+          "lookback_days": 30,
+          "metric": "rolling_drawdown_multiple",
+          "min_distinct_breach_days": 3
+        }
+      },
+      {
+        "criterion": "fresh_evidence",
+        "observed": {
+          "latest_evaluated_at": "2026-11-08T00:03:29Z",
+          "latest_evaluation_id": "rdeval-sched-tick-sim-2026-11-08-bind-sim-isolated-202611-ab97c3ee0bf25b16",
+          "latest_governed_threshold_breached": true,
+          "runtime_id": "rt-sim-isolated-20261107"
+        },
+        "reason": "",
+        "result": "passed",
+        "threshold": {
+          "latest_evaluation_window_seconds": 3600,
+          "metric_max_age_seconds": 172800
+        }
+      },
+      {
+        "criterion": "executable_action",
+        "observed": "retrain",
+        "reason": "",
+        "result": "passed",
+        "threshold": "execution_plane=research"
+      },
+      {
+        "criterion": "no_open_duplicate",
+        "observed": "proposed",
+        "reason": "",
+        "result": "passed",
+        "threshold": "decision proposed; no open program for target and metric; rejection cooldown elapsed"
+      }
+    ]
+  },
+  "pre_approval_stop": {
+    "program_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+    "program_origin": "auto_qualified",
+    "program_status": "under_review",
+    "program_stage": null,
+    "review_status": null,
+    "review_approval_id": null,
+    "decision_state": "proposed",
+    "outbox_record_count": 0,
+    "research_run_count": 0,
+    "stopped_before_dispatch": true
+  },
+  "negative_governance_proofs": {
+    "missing_approval_refusal": {
+      "http_status": 409,
+      "detail": "approval_missing: approval_missing: a governance approval id is required"
+    },
+    "mismatched_binding_refusal": {
+      "http_status": 409,
+      "detail": "approval_program_mismatch: approval_program_mismatch: approval is bound to another program"
+    },
+    "already_decided_rejected_refusal": {
+      "http_status": 409,
+      "detail": "approval_already_decided: approval_already_decided: the governance request was already decided"
+    },
+    "pending_approval_refusal": {
+      "http_status": 409,
+      "detail": "approval_pending: approval_pending: the governance request is not decided yet"
+    },
+    "proposer_self_decide_refusal": {
+      "http_status": 403,
+      "detail": "Body actor and role must match verified principal"
+    },
+    "work_started_during_invalid_or_pending_attempts": false
+  },
+  "governance_approval": {
+    "approval_id": "apv-2e6662a3a6ce91384fee9857ba5ea7313e6f8a8764645b1ca168c57f6aad63f9",
+    "target_type": "evolution_proposal",
+    "target_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+    "target_version": "3",
+    "proposal_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+    "proposal_revision": 3,
+    "proposal_content_digest": "5df00270340d657e5838d58b96aeb02b1c6601b8fb62eb399540590b82735352",
+    "decision_state": "decided",
+    "decision": "approved",
+    "owner_user_id": "sim-human-operator-proposer-20261107",
+    "actor_id": "sim-human-governance-reviewer-20261107",
+    "actor_role": "governance_reviewer",
+    "version": 3,
+    "audit_event_count": 3,
+    "program_status_after_approval": "active",
+    "decision_state_after_approval": "approved",
+    "outbox_status_after_approval": "pending",
+    "outbox_id": "evo-dispatch-b619f5a9-979b-5fb9-99d6-91a134c6bad7"
+  },
+  "research_execution": {
+    "dispatch_poll_1": {
+      "claimed": 1,
+      "pending": 1,
+      "executed": 0
+    },
+    "dispatch_poll_2": {
+      "claimed": 1,
+      "executed": 1
+    },
+    "task_id": "rtask-20261108-001",
+    "task_status": "completed",
+    "run_id": "rrun-20261108-001",
+    "run_status": "completed",
+    "executor": "services.research.main._execute_retrain",
+    "adapter": "training_session_evaluation",
+    "requested_mode": "training_evaluation",
+    "outcome": "candidate_created",
+    "outcome_reason": "candidate_passed_gate_and_beat_baseline",
+    "session_id": "trn-20261108-ffbd560ce792",
+    "baseline_job_id": "pvjob-20b2b106a7a3814b",
+    "candidate_job_id": "pvjob-61b0d4bf63dff5f2",
+    "baseline_metrics": {
+      "total_return": 0.000658,
+      "sharpe_ratio": 1.860738,
+      "max_drawdown": -0.000332,
+      "sharpe_defined": true
+    },
+    "candidate_metrics": {
+      "total_return": 0.001779,
+      "sharpe_ratio": 2.704302,
+      "max_drawdown": -0.000635,
+      "sharpe_defined": true
+    },
+    "candidate_artifact_id": "artifact-sim-isolated-20261107-v1-retrain-c357d4eb53",
+    "candidate_artifact_version": "1.1.0",
+    "candidate_artifact_state": "candidate",
+    "runtime_binding_changed": false,
+    "capital_records_created": 0,
+    "broker_orders_created": 0,
+    "program_readback": {
+      "program_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+      "status": "active",
+      "stage": null,
+      "research_run_ids": [
+        "rrun-20261108-001"
+      ],
+      "runs_endpoint_total": 1
+    },
+    "decision_readback": {
+      "decision_id": "evo-sweep-inc-drift-db1ab5760150",
+      "decision_state": "executed",
+      "approval_decision_id": "apv-2e6662a3a6ce91384fee9857ba5ea7313e6f8a8764645b1ca168c57f6aad63f9",
+      "execution_result_status": "succeeded",
+      "execution_result_run_id": "rrun-20261108-001"
+    },
+    "outbox_readback": {
+      "outbox_id": "evo-dispatch-b619f5a9-979b-5fb9-99d6-91a134c6bad7",
+      "status": "published",
+      "published_at": "2026-11-08T00:13:41Z"
+    }
+  },
+  "idempotency": {
+    "repeat_daily_sweep_created_decisions": 0,
+    "total_decisions": 1,
+    "total_programs": 1,
+    "repeat_approve_program_http_status": 200,
+    "repeat_approve_program_same_revision": true,
+    "repeat_dispatch_poll_claimed": 0,
+    "total_research_tasks": 1,
+    "total_research_runs": 1
+  },
+  "cleanup": {
+    "temp_root": "/tmp/pantheon-evolution-sim-_ar7qpsb",
+    "cleaned": true,
+    "exists_after_cleanup": false
+  }
+}
