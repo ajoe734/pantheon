@@ -358,6 +358,19 @@ def test_workflow_candidate_deploy_requires_predecessor_served_identity_readback
     assert '--rollback-sha "${{ steps.rollback_baseline.outputs.sha }}"' in deploy_step
 
 
+def test_workflow_taifex_refresh_runs_after_candidate_deploy_while_twse_refresh_stays_pre_mutation() -> None:
+    workflow = _workflow_text()
+    dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
+
+    twse_refresh_index = dev_job.index("- name: Refresh Taiwan market session under lease before stack mutation")
+    pred_step_index = dev_job.index("- name: Deploy bootstrap predecessor pair in strict live read-only mode under lease")
+    deploy_step_index = dev_job.index("- name: Deploy dev VM stack under lease")
+    taifex_refresh_index = dev_job.index("- name: Refresh TAIFEX contract dataset under lease after candidate stack deploy")
+    paper_bootstrap_index = dev_job.index("- name: Ensure governed dev paper baseline under lease")
+
+    assert twse_refresh_index < pred_step_index < deploy_step_index < taifex_refresh_index < paper_bootstrap_index
+
+
 def test_workflow_coordinate_release_passes_predecessor_pair_shas() -> None:
     workflow = _workflow_text()
     coordinate_job = _extract_job(workflow, "coordinate-dev-release")
