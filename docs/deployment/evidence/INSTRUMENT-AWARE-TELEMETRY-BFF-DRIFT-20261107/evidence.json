@@ -1,0 +1,49 @@
+{
+  "task_id": "INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "hosted_behaviour_exercised": false,
+  "statement": "Functional evidence only. Hosted behaviour was not exercised: no hosted VM, SSH, workflow dispatch, broker sandbox, futures smoke, live order, real capital or model provider call was run. Hosted verification belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "acceptance": {
+    "1": "runtime_summary folds fills per position key (symbol for a cash share, instrument_id for a stock future) with multiplier-scaled realized and unrealized PnL, exposes positions with instrument_id/kind/multiplier/contract_month/margin_reserved/currency plus positions_by_underlying, and folds paper_futures_settled idempotently. Tests replay the real cash share fill (2330.TWSE -5 @ 2299, mark 2240 -> unrealized 295, market value -11200) and a stock-future fill shape (2 contracts @ 2300 x100, sell 1 @ 2350 -> realized 5000; mark 2360 -> market value 236000, unrealized 6000).",
+    "2": "trade_episode_projection carries instrument_id (future contract), underlying_symbol, instrument_kind, multiplier, contract_month and reason_code only when events report them; futures fee+tax is counted as fees; a gate rejection that opens an episode reads rejected. Schema extended with optional fields. feedback_adapter order_context carries instrument_id, kind, multiplier, contract_month, reason_code, fee, tax, initial_margin_reserved. Cash share episodes are unchanged (asserted).",
+    "3": "pm12 holdings: market_value = quantity x multiplier x mark_price; instrument_id, instrument_kind, contract_month, multiplier, margin_reserved added; holding_id no longer collides between a future and its underlying cash row; stale/unavailable mark now clears unrealized_pnl with mark_price and market_value. BFF_API_CONTRACT.md documents the fields. Test uses the real RuntimeSummaryProjectionStore position shape through the holdings endpoint.",
+    "4": "agora performance facts value positions with the multiplier and expose summary.instrument_breakdown grouped by instrument (supported_dimensions unchanged). decision projection subject.asset_class follows the chosen instrument kind (cash_share->equity, stock_future->future; unknown kind rejected).",
+    "5": "reconciliation-drift fill identity includes instrument_id (optional, legacy fills key on empty); order_rejection, paper_order_simulated no trade, paper_futures_settled, paper_margin_call and paper_forced_liquidation with zero/absent fill quantity no longer yield ambiguous_fill_evidence or duplicate findings. Test: a day with one fill, one rejection and one no trade is measured/ok; a non-fill event that reports a fill stays ambiguous; cash+future fills for one decision are not duplicates; two orders for one instrument still report a duplicate.",
+    "6": "scripts/probe_dev_runtime_paper_lifecycle.py and services/trade_journey/hosted_lifecycle_probe.py and hosted_lifecycle_stimulus.py accept risk-gate order_rejection (closed reason set, non-gate reasons such as broker errors still fail closed), recorded paper_order_simulated no trade, and paper_futures_settled as terminals. Persona validation (agent_usability_validation, remaining_gap_validation) accepts signed fill quantities and gate-rejection/no-trade terminals. Each has tests.",
+    "7": "integrations/lean/pantheon_algo/base.py OnOrderEvent carries optional instrument_id/multiplier/kind/contract_month defensively; test proves a fill with instrument_id and multiplier is processed and malformed values are skipped.",
+    "8": "No existing assertion was weakened. Existing assertions that changed form: none; services/telemetry/test_discovery_imports.py EXPECTED_REPAIRED_TEST_COUNT raised 75 -> 77 because two tests were added to test_feedback_adapter.py. No new BFF test file was created, so bff_test_architecture_inventory.json needed no new entry (test_bff_test_architecture.py passes); the new non-BFF test file services/persona/test_paper_terminal_acceptance.py is outside that inventory."
+  },
+  "commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/telemetry -q",
+      "result": "500 passed, 1 skipped, 54 subtests passed (includes test_runtime_summary_projection 88, test_trade_episode_projection, test_feedback_adapter, test_discovery_imports, test_paper_runtime_ingest_contract)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/tests/test_bff_pm12_attribution_period_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_retired_runtime_scope.py services/control-plane/bff/agora/performance services/control-plane/bff/agora/decision_projection services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py -q",
+      "result": "186 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/reconciliation-drift/tests -q",
+      "result": "201 passed, 1 skipped"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/trade_journey scripts/test_probe_dev_runtime_paper_lifecycle.py services/persona/test_paper_terminal_acceptance.py integrations/lean/pantheon_algo/test_base.py -q",
+      "result": "591 passed, 82 skipped, 1 failed. The failure is services/trade_journey/test_lifecycle_projector_compose.py::test_rendered_compose_operator_bff_readiness_with_postgres_reader, which needs a Postgres DSN ('Postgres DSN is required') and is environment-dependent; it is unrelated to this change and was not run green here."
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge --delivery-class auto",
+      "result": "exit 0"
+    }
+  ],
+  "not_verified": [
+    "tests/e2e/test_persona_remaining_gap_validation_3000.py fails in this worktree before and independent of this change (signals are discarded for a missing runtime_id by the evolved signal consumer, so 'No paper_fill_simulated event'); persona validation changes are covered by services/persona/test_paper_terminal_acceptance.py instead.",
+    "A real risk-gate order_rejection from paper_runtime was not driven through the persona validation drain: the Taiwan path needs an admitted market price. Gate rejection shapes in tests are taken from paper_runtime's published metrics/metadata.",
+    "Futures marks in runtime_summary are matched by instrument_id mark_refs; the producer-side emission of instrument-keyed mark_refs was not changed or verified here.",
+    "Hosted behaviour of every surface above."
+  ],
+  "notes": [
+    "Test files outside the declared artifact list that were touched: services/telemetry/test_discovery_imports.py (count constant), integrations/lean/pantheon_algo/test_base.py, services/persona/test_paper_terminal_acceptance.py (new), services/trade_journey/lifecycle_noop_order.py (shared PAPER_GATE_REJECTION_REASONS constant).",
+    "Environment: tests ran with another worktree's .venv-pantheon interpreter because this worktree has none."
+  ]
+}
