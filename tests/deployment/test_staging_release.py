@@ -5101,6 +5101,205 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         self.assertNotIn("org.pantheon.compatibility_manifest_sha256", raw)
         self.assertIn("MIGRATION_SPEC_SHA_MISMATCH", raw)
 
+    def test_stage_persona_provisioning_store_and_governance_approval_auth_contract(self) -> None:
+        import base64
+        import importlib.util
+        import sys
+        import time
+        from unittest import mock
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+        from fastapi import HTTPException
+        from services.governance import main as gov_main
+        from services.runtime_auth_inbound import encode_jwt_hs256
+
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))
+        bff_env = compose["services"]["operator-bff"]["environment"]
+        self.assertEqual(bff_env["PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND"], "postgres")
+        self.assertEqual(bff_env["PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA"], "bff")
+        self.assertNotIn("PANTHEON_PERSONA_PROVISIONING_STORE_DSN", bff_env)
+
+        gov_env = compose["services"]["governance"]["environment"]
+        self.assertEqual(gov_env["PANTHEON_GOVERNANCE_AUTH_MODE"], "strict")
+        self.assertEqual(
+            gov_env["PANTHEON_GOVERNANCE_JWT_ISSUER"],
+            "${STAGING_JWT_ISSUER:?staging jwt issuer required}",
+        )
+        self.assertEqual(
+            gov_env["PANTHEON_GOVERNANCE_JWT_AUDIENCE"],
+            "${STAGING_JWT_AUDIENCE:?staging jwt audience required}",
+        )
+        self.assertEqual(
+            gov_env["PANTHEON_GOVERNANCE_OIDC_ISSUER"],
+            "${STAGING_IDP_ISSUER:?staging idp issuer required}",
+        )
+        self.assertEqual(
+            gov_env["PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL"],
+            "${STAGING_IDP_ISSUER:?staging idp issuer required}/.well-known/openid-configuration",
+        )
+
+        boot_raw = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
+        mint_py = boot_raw.split("cat > \"${LOCAL_WORK_DIR}/mint_runtime_manager_token.py\" <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            pub_nums = priv.public_key().public_numbers()
+            b64u = lambda b: base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
+            jwk = {
+                "kty": "RSA",
+                "kid": "stg-gov-kid-1",
+                "use": "sig",
+                "alg": "RS256",
+                "n": b64u(pub_nums.n.to_bytes((pub_nums.n.bit_length() + 7) // 8, "big")),
+                "e": b64u(pub_nums.e.to_bytes((pub_nums.e.bit_length() + 7) // 8, "big")),
+            }
+            jwks_path = td_path / "jwks.json"
+            jwks_path.write_text(json.dumps({"keys": [jwk]}), encoding="utf-8")
+            jwks_uri = f"file://{jwks_path}"
+
+            mint_script = td_path / "mint_runtime_manager_token.py"
+            mint_script.write_text(mint_py, encoding="utf-8")
+            secrets_env = td_path / "staging-secrets.env"
+            isolated_dsn = "postgresql://pantheon_stg_u:stg-secret@postgres:5432/pantheon_stg_iso"
+            secrets_env.write_text(
+                "\n".join(
+                    [
+                        "PANTHEON_BFF_JWT_SECRET=stg-bff-jwt-secret-0123456789abcdef",
+                        "PANTHEON_RUNTIME_JWT_SECRET=stg-runtime-jwt-secret-0123456789abcdef",
+                        f"DATABASE_URL={isolated_dsn}",
+                        f"PANTHEON_DATABASE_URL={isolated_dsn}",
+                        f"PANTHEON_BFF_JWKS_URI={jwks_uri}",
+                        "PANTHEON_BFF_ROLE_CLAIMS=roles,groups",
+                        "PANTHEON_BFF_ROLE_MAP=pantheon-operator=operator;pantheon-viewer=viewer",
+                        "PANTHEON_BFF_ROLE_MAP_MODE=strict",
+                        "PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED=true",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            res = subprocess.run(
+                [
+                    sys.executable,
+                    str(mint_script),
+                    str(secrets_env),
+                    "https://auth.pantheon-stg.internal",
+                    "pantheon-runtime",
+                    "tenant-a",
+                    "3600",
+                    "pantheon-stg-oidc-aud",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(res.returncode, 0)
+            rendered_kv = dict(
+                line.split("=", 1)
+                for line in secrets_env.read_text(encoding="utf-8").splitlines()
+                if "=" in line and not line.startswith("#")
+            )
+            self.assertEqual(rendered_kv["PANTHEON_PERSONA_PROVISIONING_STORE_DSN"], isolated_dsn)
+            self.assertEqual(
+                rendered_kv["PANTHEON_GOVERNANCE_JWT_SECRET"],
+                "stg-runtime-jwt-secret-0123456789abcdef",
+            )
+            self.assertEqual(rendered_kv["PANTHEON_GOVERNANCE_OIDC_AUDIENCE"], "pantheon-stg-oidc-aud")
+            self.assertEqual(
+                rendered_kv["PANTHEON_GOVERNANCE_JWKS_URI"],
+                jwks_uri,
+            )
+            self.assertEqual(rendered_kv["PANTHEON_GOVERNANCE_ROLE_CLAIMS"], "roles,groups")
+            self.assertEqual(
+                rendered_kv["PANTHEON_GOVERNANCE_ROLE_MAP"],
+                "pantheon-operator=operator;pantheon-viewer=viewer",
+            )
+            self.assertEqual(rendered_kv["PANTHEON_GOVERNANCE_ROLE_MAP_MODE"], "strict")
+
+            spec = importlib.util.spec_from_file_location(
+                "bff_persona_provisioning_stg_test",
+                REPO_ROOT / "services" / "control-plane" / "bff" / "persona_provisioning.py",
+            )
+            assert spec and spec.loader
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)
+            merged_bff_env = {
+                **rendered_kv,
+                "PANTHEON_ENV": "staging",
+                "PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND": bff_env["PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND"],
+                "PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA": bff_env["PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA"],
+            }
+            with mock.patch.object(mod.PostgresPersonaProvisioningStore, "_bootstrap", return_value=None):
+                store = mod.make_persona_provisioning_store(merged_bff_env)
+            self.assertIsInstance(store, mod.PostgresPersonaProvisioningStore)
+            self.assertEqual(store.dsn, isolated_dsn)
+            self.assertEqual(store.schema, "bff")
+
+            def sign_rs256(claims):
+                hdr = b64u(json.dumps({"alg": "RS256", "typ": "JWT", "kid": "stg-gov-kid-1"}, separators=(",", ":")).encode())
+                pld = b64u(json.dumps(claims, separators=(",", ":")).encode())
+                sig = priv.sign(f"{hdr}.{pld}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+                return f"{hdr}.{pld}.{b64u(sig)}"
+
+            now = int(time.time())
+            stage_gov_runtime_env = {
+                **rendered_kv,
+                "PANTHEON_GOVERNANCE_AUTH_MODE": "strict",
+                "PANTHEON_GOVERNANCE_JWT_ISSUER": "https://auth.pantheon-stg.internal",
+                "PANTHEON_GOVERNANCE_JWT_AUDIENCE": "pantheon-runtime",
+                "PANTHEON_GOVERNANCE_OIDC_ISSUER": "https://idp.pantheon-stg.internal",
+                "PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL": "https://idp.pantheon-stg.internal/.well-known/openid-configuration",
+            }
+            idp_op_token = sign_rs256(
+                {
+                    "iss": "https://idp.pantheon-stg.internal",
+                    "aud": "pantheon-stg-oidc-aud",
+                    "sub": "user-stg-operator-1",
+                    "tenant_id": "tenant-a",
+                    "groups": ["pantheon-operator"],
+                    "email_verified": True,
+                    "iat": now,
+                    "exp": now + 3600,
+                }
+            )
+            idp_unmapped_token = sign_rs256(
+                {
+                    "iss": "https://idp.pantheon-stg.internal",
+                    "aud": "pantheon-stg-oidc-aud",
+                    "sub": "user-stg-unmapped-1",
+                    "tenant_id": "tenant-a",
+                    "groups": ["unmapped-group"],
+                    "email_verified": True,
+                    "iat": now,
+                    "exp": now + 3600,
+                }
+            )
+            hs256_token = encode_jwt_hs256(
+                {
+                    "iss": "https://auth.pantheon-stg.internal",
+                    "aud": "pantheon-runtime",
+                    "sub": "svc:governance-internal-reader",
+                    "tenant_id": "tenant-a",
+                    "roles": ["approval_reader"],
+                    "iat": now,
+                    "exp": now + 3600,
+                },
+                secret=rendered_kv["PANTHEON_GOVERNANCE_JWT_SECRET"],
+            )
+            with mock.patch.dict(os.environ, stage_gov_runtime_env, clear=False):
+                ctx = gov_main._approval_reader(f"Bearer {idp_op_token}")
+                self.assertEqual(ctx.actor_id, "user-stg-operator-1")
+                self.assertEqual(ctx.claims["tenant_id"], "tenant-a")
+                self.assertIn("operator", ctx.roles)
+                with self.assertRaises(HTTPException) as unmapped_exc:
+                    gov_main._approval_reader(f"Bearer {idp_unmapped_token}")
+                self.assertEqual(unmapped_exc.exception.status_code, 401)
+                hs_ctx = gov_main._approval_reader(f"Bearer {hs256_token}")
+                self.assertEqual(hs_ctx.actor_id, "svc:governance-internal-reader")
+                self.assertEqual(hs_ctx.claims["tenant_id"], "tenant-a")
+                self.assertIn("approval_reader", hs_ctx.roles)
+
 
 if __name__ == "__main__":
     unittest.main()

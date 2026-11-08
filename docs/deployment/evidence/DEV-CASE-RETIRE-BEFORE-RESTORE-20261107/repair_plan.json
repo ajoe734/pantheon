@@ -1,0 +1,61 @@
+{
+  "task_id": "DEV-CASE-RETIRE-BEFORE-RESTORE-20261107",
+  "at": "2026-11-07T21:42:50.972396+00:00",
+  "objective": "Repair the existing dev release cleanup/restore dependency so this run's ephemeral probe cannot keep an older sealed baseline unhealthy while retirement waits for compensation success.",
+  "frozen_source": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c",
+  "observed_boundary": "Old Root42397678868 native compensation failed ownerCAS/exit75; independent restore had exact57 baseline images but producer degraded until original coordinator legally retired only its failed probe. All57 health then genuinely restored18:54:53. This task does not reopen that recovered state or invent a new current failure.",
+  "confirmed_source_chain": [
+    {
+      "path": "scripts/auto_deploy_dev_pair.py",
+      "lines": "196-201",
+      "fact": "Normal single publisher requests root plus fresh run_loop_prod_tel_002_probe."
+    },
+    {
+      "path": "services/control-plane/bff/persona_provisioning_coordinator.py",
+      "lines": "392-443,2261-2272",
+      "fact": "Fresh case creates forward artifact including expression_policy."
+    },
+    {
+      "path": "services/registry/strategy_artifact.schema.json",
+      "revision": "e9a1a196805663b175423964c2ccdc21bf2d24ea",
+      "lines": "291",
+      "fact": "Older sealed baseline forbids extra property and has no expression_policy."
+    },
+    {
+      "path": "scripts/dev_release_artifact_driver.py",
+      "lines": "884-897",
+      "fact": "restore_images completes whole-stack health readback before subsequent validations."
+    },
+    {
+      "path": "scripts/dev_release_artifacts.py",
+      "lines": "514-562,663-701",
+      "fact": "Synchronous restore waits for required health, including producer; no case-store snapshot rollback."
+    },
+    {
+      "path": ".github/workflows/nonprod-deploy.yml",
+      "lines": "2299-2304,3086-3091",
+      "fact": "Current run-case retirement follows and depends on successful compensation."
+    }
+  ],
+  "failure_preconditions": [
+    "Fresh case successfully created and still active in shared provisioning/runtime stores",
+    "Failed publication enters old-version compensation or another actual baseline-return path",
+    "Old baseline producer reads the unsupported artifact and remains degraded during required health readback",
+    "Current cleanup does not run before that readback"
+  ],
+  "scope": "Adjust existing workflow/retirement helper ordering and truthful retirement evidence only. Preserve existing Deployment-owner retire action, sealed images/env/CAS/auth/health gates, exact FE/BFF pair, fresh probe, lease and rollback flow. No new service/queue/framework, compatibility schema relaxation, status alias, broad cleanup, second publisher or new grant.",
+  "ownership": "Existing Egress task writes this workflow now; this task depends on Egress DONE to preserve source-writer ordering. Original supervisor dispatches a single original implementation/reviewer lane.",
+  "repair_requirements": [
+    "Inventory the actual compensation and explicit artifact-roundtrip baseline-return paths in this workflow. Arrange bounded retirement of only this run-created ephemeral case before an older baseline health wait can depend on it; successful ordinary publication is not claimed broken. Preserve accepted-release cleanup scope.",
+    "Use the existing retire helper/Deployment action and recorded run/attempt case identity. Preserve all unrelated/operator cases and all historical telemetry/failed proof; never use retire-all or change data/schema/image to hide the incompatibility.",
+    "Record pre-restore retirement honestly as an action/preparation; do not label compensation or qualification successful before real exact image/FE/health readback. Keep retirement failures visible and keep real restore/compensation attempts and quarantine/rollback behavior intact.",
+    "Regression covers the original circular-wait behavior with an unsupported active run case, success after exact-case retirement, unrelated cases preserved, no-case/no-probe behavior, and failure evidence. Exercise existing helper/restore workflow behavior, not only YAML/env presence. Use existing focused tests, no simulator platform.",
+    "Copy this plan into the scoped JSON artifact, record actual validations and exact identities, normal clean branch/commit/trailers/PR/genuine assigned review/requiredCI/integrator/owner finalization. Source-only result is not live acceptance."
+  ],
+  "not_authorized": [
+    "No deployment/VM/SSH/provider/model/broker/capital calls or live retire operations by this source task",
+    "No manual source takeover, canonical task/queue JSON edit, service restart, lease force-clear or operator approval manufacture",
+    "No rework of already delivered Paper7044/Auth7040/Restore7043/TAIFEX7037 source"
+  ],
+  "hosted_validation_owner": "Original sole Dev publisher validates normal flow/compensation; sole StageClaude9a1d and original11Prod retain their actual scopes."
+}

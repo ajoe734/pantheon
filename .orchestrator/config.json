@@ -14,7 +14,8 @@
     "event_log": ".orchestrator/task-state-events-v2.jsonl"
   },
   "review_gate": {
-    "github_review_bridge_required": false
+    "github_review_bridge_required": true,
+    "github_review_identity": "shared"
   },
   "permission_broker": {
     "allowed_workspace_roots": [
@@ -865,7 +866,8 @@
         "Commit trailers",
         "Runtime mirror guard",
         "Smoke acceptance",
-        "Service suites"
+        "Service suites",
+        "Pantheon canonical review gate"
       ],
       "max_open_hours": 24
     },

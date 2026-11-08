@@ -65,6 +65,14 @@ class PaperOrder:
     reject_reason: Optional[str] = None
     client_order_id: Optional[str] = None
     correlation_envelope: Optional[Dict[str, Any]] = None
+    instrument_id: Optional[str] = None
+    kind: str = "cash_share"
+    multiplier: float = 1.0
+    contract_month: Optional[str] = None
+    price_basis: Optional[str] = None
+    fee: float = 0.0
+    tax: float = 0.0
+    initial_margin_reserved: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -144,6 +152,14 @@ def simulate_paper_order(
     order_type: str = "market",
     limit_price: Optional[float] = None,
     market_price: Optional[float] = None,
+    instrument_id: Optional[str] = None,
+    kind: str = "cash_share",
+    multiplier: float = 1.0,
+    contract_month: Optional[str] = None,
+    price_basis: Optional[str] = None,
+    fee: float = 0.0,
+    tax: float = 0.0,
+    initial_margin_reserved: float = 0.0,
 ) -> PaperOrder:
     """Simulate a paper order fill synchronously.
 
@@ -161,6 +177,17 @@ def simulate_paper_order(
     if order_type == "limit" and (limit_price is None or limit_price <= 0):
         raise SimulationError("INVALID_LIMIT_PRICE", "limit_price must be positive for limit orders")
 
+    clean_kind = str(kind or "cash_share").strip().lower() or "cash_share"
+    resolved_basis = price_basis
+    if clean_kind == "stock_future":
+        if resolved_basis in (None, ""):
+            resolved_basis = "futures_daily_settlement_prev_session"
+        elif resolved_basis != "futures_daily_settlement_prev_session":
+            raise SimulationError(
+                "INVALID_FUTURES_PRICE_BASIS",
+                f"stock_future orders require price_basis='futures_daily_settlement_prev_session', got {resolved_basis!r}",
+            )
+
     now = _utc_now_iso()
     if order_type == "limit":
         fill_price = limit_price
@@ -172,6 +199,11 @@ def simulate_paper_order(
             "market order requires a positive market_price; no fill price is fabricated",
         )
     order_id = uuid.uuid4().hex
+    resolved_instrument_id = (
+        str(instrument_id).strip()
+        if instrument_id not in (None, "")
+        else f"eq:{str(symbol).strip()}"
+    )
     return PaperOrder(
         order_id=order_id,
         client_order_id=str(client_order_id or order_id),
@@ -187,6 +219,14 @@ def simulate_paper_order(
         fill_price=fill_price,
         fill_qty=qty,
         status="filled",
+        instrument_id=resolved_instrument_id,
+        kind=clean_kind,
+        multiplier=float(multiplier),
+        contract_month=str(contract_month).strip() if contract_month not in (None, "") else None,
+        price_basis=resolved_basis,
+        fee=float(fee),
+        tax=float(tax),
+        initial_margin_reserved=float(initial_margin_reserved),
         correlation_envelope=(
             propagate_envelope(
                 correlation_envelope,

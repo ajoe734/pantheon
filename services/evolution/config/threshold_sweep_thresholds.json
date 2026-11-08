@@ -3,7 +3,7 @@
   "_field_notes": {
     "enabled": "Threshold is skipped entirely (fail-closed) when false. Use this to gate a metric off until its threshold_value/baseline is governance-approved.",
     "telemetry_event_type": "Must be one of the services/telemetry/telemetry_event.schema.json event_type enum values; the worker admits a schema-valid derived event of this type through telemetry ingest before citing it in an incident.",
-    "ratio_baseline_key": "Optional. When set, the observed summary_field value is treated as a raw metric that must be divided by a per-artifact baseline (services/evolution/config/threshold_sweep_baselines.json, keyed by artifact_id -> {ratio_baseline_key: value}) before comparison, so threshold_value is compared against a unit-consistent multiple. When null, summary_field is compared directly (an absolute threshold).",
+    "ratio_baseline_key": "Optional. When set, the observed summary_field value is treated as a raw metric that must be divided by a per-artifact baseline (services/evolution/config/threshold_sweep_baselines.json, keyed by artifact_id -> {ratio_baseline_key: value} or by artifact_id and runtime summary instrument class) before comparison, so threshold_value is compared against a unit-consistent multiple. When null, summary_field is compared directly (an absolute threshold).",
     "incident_owner": "Optional. When set to 'reconciliation-drift', reconciliation-drift is the single incident producer for that metric and threshold_sweep_worker neither admits a derived telemetry echo event nor posts an incident, while input-coverage still reports the artifact evaluable."
   },
   "thresholds": [

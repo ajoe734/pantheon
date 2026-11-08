@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Discover publish snapshots ready for promotion to master and open PRs.
 
-Reads policy from .orchestrator/config.json `branch_workflow.promote`
-(falls back to legacy `wave_workflow.promote` if a migration hasn't run):
+Reads policy from .orchestrator/config.json `branch_workflow.promote`:
 
   soak_days                 — minimum days since the release/<VER> tag
   regression_label_prefix   — any open issue with this label prefix blocks promote
@@ -63,7 +62,7 @@ def load_promote_settings() -> dict:
         except json.JSONDecodeError:
             cfg = {}
     # Prefer new key, fall back to legacy for transition window.
-    wf = cfg.get("branch_workflow") or cfg.get("wave_workflow") or {}
+    wf = cfg.get("branch_workflow") or {}
     promote = wf.get("promote") or {}
     nightly = wf.get("nightly_publish") or {}
     return {

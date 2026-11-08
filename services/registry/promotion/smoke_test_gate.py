@@ -69,7 +69,6 @@ def test_promotion_gate() -> None:
     projection = gate.build_execution_projection(live)
     assert projection.metadata_key.endswith("/metadata.json")
     assert projection.artifact_key.endswith("/artifact.bin")
-    assert projection.metadata["promotion_state"] == "live"
     print("Success.")
 
     print("Testing Invalid Rollback Target...")

@@ -1,0 +1,261 @@
+{
+  "task": "EVO-ALPHA-PAGES-HOSTED-ACCEPT-20261107",
+  "result": "passed",
+  "operator": "local operator session (Human/Ops) through a real admintest browser login; no password or token is stored in this evidence or its files (checked: no password string, no JWT, no refresh credential in any file)",
+  "measured_at": {
+    "owner_reads": "2026-11-07T23:09:59Z (governance and registry Postgres read-only transaction; evolution and research files read-only)",
+    "browser_and_api": "2026-11-07T23:10:55.201Z to 2026-11-07T23:16:15.949Z",
+    "scroll_pass": "2026-11-07T23:16:55.879Z to 2026-11-07T23:21:11.223Z"
+  },
+  "hosted_pair": {
+    "deploy_run": "https://github.com/ajoe734/pantheon/actions/runs/42416671176",
+    "deploy_conclusion": "success (completed 2026-11-07T22:44:16Z)",
+    "bff_commit": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c",
+    "frontend_commit": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+    "deployment_json": "app.dev.mvl-cap.tw/deployment.json commit 4759795f3e58f4e51ce33fce5af0ab3591650b8f bffCommit 9a46cd1883c5441ef9fe17bced5df23a8a09a96c deployedAt 20261107T224019Z profile operator-live",
+    "bff_container_commit": "GET api.dev.mvl-cap.tw/bff/version source_commit_sha 9a46cd1883c5441ef9fe17bced5df23a8a09a96c image_digest sha256:a26d0bde5fcf709ceb3fa8811e9b43e8b3f3e0f26cd0435f7f2b5ca02feac3b9 build_time 2026-11-07T21:41:10Z; operator-bff container StartedAt 2026-11-07T22:01:01Z",
+    "contains": {
+      "pantheon": [
+        "#7033 merge e9a1a196805663b175423964c2ccdc21bf2d24ea (BFF-EVO-ALPHA-PAGE-TRUTH-20261107)",
+        "#7020 merge 462b599481c1fdbbcf09fc81ac6632d1d08ca41c (BFF-JOURNAL-GOVERNANCE-OWNER-READ-20261106)"
+      ],
+      "execute-plans": [
+        "#967 merge 4759795f3e58f4e51ce33fce5af0ab3591650b8f (FE-EVO-ALPHA-PAGE-LABELS-20261107)"
+      ]
+    }
+  },
+  "acceptance": {
+    "AC1_pair": "passed: both source tasks and PR 7020 are merged and are ancestors of the served pair; deployment.json and /bff/version report the same commits",
+    "AC2_freeze_rollback": {
+      "verdict": "passed",
+      "owner": "governance.freeze_orders 1 row freeze-h12-01a11-20261023-9aeb-artifact-usera status active tenant tenant-dev target hosted-all12-h12-01a11-20261023-9aeb-execution-artifact; governance.rollbacks 0 rows",
+      "bff": "view=history summary freeze_order_count 1 active_freeze_count 1 rollback_count 0; meta.surfaces freeze_orders ok rollbacks ok",
+      "ui": "desktop and phone show '凍結令: 1' and '回滾: 0'; no 暫時無法讀取 text; no partial-read badge; no degraded state",
+      "unverifiable_rows": "none reported"
+    },
+    "AC3_history_once": {
+      "verdict": "passed",
+      "owner": "evolution decisions.json tenant-dev 446 rows by state {'canceled': 1, 'executed': 1, 'proposed': 443, 'approved': 1}; non-proposed or threshold-signal decisions [['evo-h12-01a11-20261023-9aeb-duplicate-execution', 'canceled'], ['evo-h12-01a11-20261023-9aeb-duplicate-execution-usera', 'executed'], ['evo-sweep-inc-drift-87d6930c62ee', 'approved']]; proposed non-threshold 443 ({'incident_followup': 434, 'incident_severity': 9})",
+      "bff": "view=history page_info.total 4 = 3 decision rows + 1 freeze order; each decision row carries its review nested as mutation_review; no separate mutation_review rows",
+      "ui": "history rows ['evolution_decision:evo-sweep-inc-drift-87d6930c62ee', 'freeze_order:freeze-h12-01a11-20261023-9aeb-artifact-usera', 'evolution_decision:evo-h12-01a11-20261023-9aeb-duplicate-execution-usera', 'evolution_decision:evo-h12-01a11-20261023-9aeb-duplicate-execution']; active view label '演化歷史' (no 真實)",
+      "auto_proposals": "view=auto_proposals page_info.total 2607 equals auto_proposal_counts.total 2607 ({'incident_followup': 434, 'incident_severity': 9, 'postmortem_draft': 2164, 'total': 2607}); decision part 443 equals owner 443; postmortem drafts grew from 2128 (07:40Z baseline) to 2164"
+    },
+    "AC4_alpha": {
+      "verdict": "passed",
+      "ui": "replicated column titled 已通過准入檢查 with caption '准入檢查僅檢視規格、血緣與治理紀錄，不重跑回測。'; subtitle uses the new wording; no 已重現 text; discovered 0 with no_candidate_source and scaffolded 0 unchanged; card labels 本輪失敗次數 / 檢查執行次數 / 重新排入次數 / 最後重新排入時間",
+      "surfaces": {
+        "alpha_factory": {
+          "status": "ok",
+          "source": "research_orchestrator"
+        },
+        "alpha_factory_strategy_state": {
+          "status": "ok",
+          "source": "bff_strategy_registry"
+        }
+      },
+      "cards": [
+        {
+          "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+          "queue": {
+            "status": "completed",
+            "attempt_count": 0,
+            "replay_count": 0,
+            "last_replayed_at": null,
+            "failure_reason": null,
+            "experiment_runs": 1
+          },
+          "registry_artifact_state": "approved",
+          "bff_card": {
+            "strategy_state": "approved",
+            "attempt_count": 0,
+            "replay_count": 0,
+            "last_replayed_at": null,
+            "last_error": null,
+            "experiment_runs": 1
+          },
+          "ui": {
+            "retired_badge": null,
+            "last_failure_shown": null
+          },
+          "match": true
+        },
+        {
+          "strategy_id": "strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715",
+          "queue": {
+            "status": "completed",
+            "attempt_count": 0,
+            "replay_count": 1,
+            "last_replayed_at": "2026-10-16T02:54:42Z",
+            "failure_reason": null,
+            "experiment_runs": 4
+          },
+          "registry_artifact_state": "approved",
+          "bff_card": {
+            "strategy_state": "approved",
+            "attempt_count": 0,
+            "replay_count": 1,
+            "last_replayed_at": "2026-10-16T02:54:42Z",
+            "last_error": null,
+            "experiment_runs": 4
+          },
+          "ui": {
+            "retired_badge": null,
+            "last_failure_shown": null
+          },
+          "match": true
+        },
+        {
+          "strategy_id": "strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
+          "queue": {
+            "status": "completed",
+            "attempt_count": 0,
+            "replay_count": 1,
+            "last_replayed_at": "2026-10-24T02:28:22Z",
+            "failure_reason": null,
+            "experiment_runs": 4
+          },
+          "registry_artifact_state": "retired",
+          "bff_card": {
+            "strategy_state": "retired",
+            "attempt_count": 0,
+            "replay_count": 1,
+            "last_replayed_at": "2026-10-24T02:28:22Z",
+            "last_error": null,
+            "experiment_runs": 4
+          },
+          "ui": {
+            "retired_badge": "已退役",
+            "last_failure_shown": null
+          },
+          "match": true
+        },
+        {
+          "strategy_id": "strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a",
+          "queue": {
+            "status": "completed",
+            "attempt_count": 0,
+            "replay_count": 0,
+            "last_replayed_at": null,
+            "failure_reason": null,
+            "experiment_runs": 1
+          },
+          "registry_artifact_state": "retired",
+          "bff_card": {
+            "strategy_state": "retired",
+            "attempt_count": 0,
+            "replay_count": 0,
+            "last_replayed_at": null,
+            "last_error": null,
+            "experiment_runs": 1
+          },
+          "ui": {
+            "retired_badge": "已退役",
+            "last_failure_shown": null
+          },
+          "match": true
+        }
+      ]
+    },
+    "AC5_browser": {
+      "verdict": "passed with one pre-existing finding",
+      "viewports": "desktop 1440x1000 and phone 390x844 (isMobile) in headless Chromium with real scrollbars; each page's scroll container scrolled to the end",
+      "horizontal_overflow_px": {
+        "desktop_journal": 0,
+        "desktop_alpha": 0,
+        "phone_journal": 0,
+        "phone_alpha": 0
+      },
+      "finding_not_from_these_tasks": "phone journal cards: the monospace target value (candidate_artifact:hosted-all12-...) does not wrap and overlaps the 證據分類 value in the next grid cell (see shots/phone-journal-scroll-01.png and -02.png); the card grid in _core.tsx was not changed by these tasks; recorded only"
+    }
+  },
+  "operator_decisions_2026_11_07": [
+    "The 443 proposed decisions whose incidents are resolved stay as they are: they never pass the program qualification filter so they never reach human review; no auto-close mechanism now."
+  ],
+  "writes": "none: read-only API GETs, URL navigation and scrolling only; no approve, freeze, rollback, program or business write",
+  "files": {
+    "accept_browser.json": {
+      "sha256": "ba6c194475accdd7e8783d2f54545c5091da51bc736c605de27548a4c5bc01d0",
+      "bytes": 155747
+    },
+    "accept_scroll.json": {
+      "sha256": "b57356d9762b04a432c9b0034d3e292207c8fce1bd2cb4bb96de6a1c5dea95fb",
+      "bytes": 1216
+    },
+    "owner_evolution.json": {
+      "sha256": "7d1323ff3edab8e79bbd4cb23fc447e8a8c29147be6d9c0bba9f6802b07e528b",
+      "bytes": 439
+    },
+    "owner_governance_registry.txt": {
+      "sha256": "ce71fb8a3804de525025a97202938804168d4c6988e8bd11e34cb56bc4b0caac",
+      "bytes": 1431
+    },
+    "owner_read_at.txt": {
+      "sha256": "22c67a22e33d32768edee78b36a22d2b82fb6a08a6e88f715078e561b77cbc8c",
+      "bytes": 21
+    },
+    "owner_research_queue.json": {
+      "sha256": "635b78289ef51d5d9ad965c21d881c1b9f89678739d0dc765ef4e459cc1537a2",
+      "bytes": 2119
+    },
+    "shots/desktop-alpha-scroll-00.png": {
+      "sha256": "da8be891929194a51d24ed3c0149a90ac3bc17255db4f7c7ad1f6c5cfd38313e",
+      "bytes": 229673
+    },
+    "shots/desktop-alpha-scroll-01.png": {
+      "sha256": "612f36e7f5d73cfb038eaef643de1bf419a60479c203604a51b7f7367558102b",
+      "bytes": 188316
+    },
+    "shots/desktop-alpha.png": {
+      "sha256": "e525078ce67c1d9577b235d4fad3444189d24ed9a239275070181fadb5b0fb65",
+      "bytes": 229674
+    },
+    "shots/desktop-journal-auto.png": {
+      "sha256": "0a57bcf394a5b0bbbd7f8c3fbdc05b965fdf9b0add27a34c99586196dec84951",
+      "bytes": 246440
+    },
+    "shots/desktop-journal-history.png": {
+      "sha256": "ebaf7392cf7e6569639183c1a7a39129047d75946d1e51035449153c522cedfe",
+      "bytes": 243949
+    },
+    "shots/desktop-journal-scroll-00.png": {
+      "sha256": "94ce3917029fbbb095409d69c70aef11e92b9dedb3b565b9e0f07a045b8ef2ff",
+      "bytes": 243947
+    },
+    "shots/desktop-journal-scroll-01.png": {
+      "sha256": "179bb3d7b933e8c09651cbca1414fca2f7e122c86707706b7b4a89cd12e09d53",
+      "bytes": 238467
+    },
+    "shots/phone-alpha-scroll-00.png": {
+      "sha256": "300cffcccea5acb022aea1adec60343ab4543934db1882be6335ef195f6633e1",
+      "bytes": 229823
+    },
+    "shots/phone-alpha-scroll-01.png": {
+      "sha256": "5ee7324055941ad668927de729b65cc4797aa7b4e3ab825f89e599c2beee90aa",
+      "bytes": 227039
+    },
+    "shots/phone-alpha-scroll-02.png": {
+      "sha256": "4b9c966bf5e988634f69e8c0c300ff1a6022486ce03bf781599fb4b05bd7ed66",
+      "bytes": 201787
+    },
+    "shots/phone-alpha.png": {
+      "sha256": "300cffcccea5acb022aea1adec60343ab4543934db1882be6335ef195f6633e1",
+      "bytes": 229823
+    },
+    "shots/phone-journal-history.png": {
+      "sha256": "384c7ccadd541f3d77d4cffe851a85958cc68bafec8c25b76488ca0726fdf929",
+      "bytes": 229875
+    },
+    "shots/phone-journal-scroll-00.png": {
+      "sha256": "384c7ccadd541f3d77d4cffe851a85958cc68bafec8c25b76488ca0726fdf929",
+      "bytes": 229875
+    },
+    "shots/phone-journal-scroll-01.png": {
+      "sha256": "d5c86551e2aa0e6977384a60e87df53836c82da6441289c8848e7c134914b527",
+      "bytes": 208277
+    },
+    "shots/phone-journal-scroll-02.png": {
+      "sha256": "efdc0c228e8566d3bf13fa193f2c681626cc8b72643f21d01d38d877ba7d2c11",
+      "bytes": 225734
+    }
+  }
+}

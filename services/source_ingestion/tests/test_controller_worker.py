@@ -29,6 +29,7 @@ from services.source_ingestion.controller_worker import (
     _validate_terminal_readback as _validate_terminal_readback_impl,
     run_controller_tick,
 )
+from services.source_ingestion.runtime import create_runtime
 
 
 CONNECTOR_ID = "tw-official-market-datasets"
@@ -1986,8 +1987,8 @@ def test_two_controller_ticks_preserve_active_persona_only_schedule(tmp_path: Pa
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
 
-    runtime = sim.create_runtime(data_dir=data_dir)
-    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    runtime = create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim.runtime, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
     app = sim.create_app(runtime)
 
     s = socket.socket()
@@ -2144,8 +2145,8 @@ def test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchange
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
 
-    runtime = sim.create_runtime(data_dir=data_dir)
-    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    runtime = create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim.runtime, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
     app = sim.create_app(runtime)
 
     s = socket.socket()
@@ -2346,8 +2347,8 @@ def test_persona_finmind_only_merged_and_fails_closed_with_unsupported_1(tmp_pat
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
 
-    runtime = sim.create_runtime(data_dir=data_dir)
-    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    runtime = create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim.runtime, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
     app = sim.create_app(runtime)
 
     s = socket.socket()
@@ -2476,8 +2477,8 @@ def test_two_controller_ticks_preserve_active_persona_taiwan_schedule(tmp_path: 
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
 
-    runtime = sim.create_runtime(data_dir=data_dir)
-    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    runtime = create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim.runtime, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
     app = sim.create_app(runtime)
 
     s = socket.socket()
@@ -2710,3 +2711,62 @@ def test_bounded_pull_writes_hold_only_the_configured_lease(
 
     for name in ("heartbeat", "tick", "success"):
         assert _call(writer, name)["kwargs"]["lease_duration_seconds"] == 10
+
+
+def _reconcile_with_unselected_connector() -> dict[str, Any]:
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"].append(
+        {"dataset": "tw_price_daily", "connector_id": "unselected-official-market", "status": "satisfied"}
+    )
+    return reconcile
+
+
+def test_terminal_readback_exclusive_scope_does_not_require_unselected_connector_freshness() -> None:
+    # Reproducer shape for the TAIFEX bounded refresh: the desired state also lists the
+    # official TW market connector, which an exclusive TAIFEX tick never pulls.
+    actual = _actual_readback()
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+
+    _validate_terminal_readback(
+        reconcile=_reconcile_with_unselected_connector(),
+        schedule=schedule,
+        actual=actual,
+        expected_exclusive_connector_ids=(CONNECTOR_ID,),
+    )
+
+    with pytest.raises(ControllerTickError, match="unselected-official-market"):
+        _validate_terminal_readback(
+            reconcile=_reconcile_with_unselected_connector(),
+            schedule=_schedule(),
+            actual=actual,
+        )
+
+
+def test_terminal_readback_exclusive_scope_fails_closed_when_selected_connector_not_reconciled() -> None:
+    actual = _actual_readback()
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+
+    with pytest.raises(ControllerTickError, match="exclusive_connector_not_reconciled"):
+        _validate_terminal_readback(
+            reconcile=_reconcile(),
+            schedule=schedule,
+            actual=actual,
+            expected_exclusive_connector_ids=("tw-taifex-futures-options-chip",),
+        )
+
+
+def test_terminal_readback_exclusive_scope_still_validates_selected_connector_health() -> None:
+    actual = _actual_readback()
+    actual["connectors"][0]["source_health"]["status"] = "degraded"
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+
+    with pytest.raises(ControllerTickError, match="source_health_not_ok"):
+        _validate_terminal_readback(
+            reconcile=_reconcile_with_unselected_connector(),
+            schedule=schedule,
+            actual=actual,
+            expected_exclusive_connector_ids=(CONNECTOR_ID,),
+        )

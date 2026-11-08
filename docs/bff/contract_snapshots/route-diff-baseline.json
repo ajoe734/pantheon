@@ -157,13 +157,6 @@
       },
       {
         "family": "api-v1",
-        "key": "GET /api/v1/deployment-plans",
-        "method": "GET",
-        "path": "/api/v1/deployment-plans",
-        "status": "implemented"
-      },
-      {
-        "family": "api-v1",
         "key": "GET /api/v1/deployment-plans/{param}",
         "method": "GET",
         "path": "/api/v1/deployment-plans/{param}",
@@ -3460,16 +3453,16 @@
   },
   "summary": {
     "backend_routes": 626,
-    "failure_count": 487,
+    "failure_count": 486,
     "failures": {
-      "backend_missing_frontend": 486,
+      "backend_missing_frontend": 485,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 487,
+    "mode_failure_count": 486,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

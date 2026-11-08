@@ -913,5 +913,131 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         )
 
 
+class TestInstrumentAwareEpisodes(unittest.TestCase):
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 2).
+
+    Event shapes mirror ``paper_runtime._publish``: the event symbol is the
+    underlying and the instrument identity rides in metadata.
+    """
+
+    def setUp(self) -> None:
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp_dir.cleanup)
+        self.store = TradeEpisodeProjectionStore(
+            projections_path=Path(self.tmp_dir.name) / "p.json",
+            events_path=Path(self.tmp_dir.name) / "e.json",
+        )
+
+    @staticmethod
+    def _event(episode_id, seq, event_type, *, metrics=None, **metadata):
+        return {
+            "event_id": str(uuid.uuid4()),
+            "event_type": event_type,
+            "created_at": f"2026-11-05T01:0{seq}:00Z",
+            "deployment_stage": "paper",
+            "metrics": metrics or {},
+            "metadata": {
+                "symbol": "2330.TWSE",
+                "trade_episode_id": episode_id,
+                **metadata,
+            },
+            "sequence_number": seq,
+        }
+
+    def test_cash_share_episode_is_unchanged(self) -> None:
+        episode_id = str(uuid.uuid4())
+        proj = self.store.project_event(
+            self._event(
+                episode_id,
+                1,
+                "paper_fill_simulated",
+                metrics={"fill_quantity": -5.0, "fill_price": 2299.0},
+                currency="TWD",
+                sec_type="equity",
+            )
+        )
+        self.assertEqual(proj["instrument_id"], "2330.TWSE")
+        self.assertEqual(proj["side"], "short")
+        for absent in (
+            "multiplier",
+            "reason_code",
+            "instrument_kind",
+            "contract_month",
+            "underlying_symbol",
+        ):
+            self.assertNotIn(absent, proj)
+
+    def test_stock_future_episode_carries_instrument_multiplier_and_reason(self) -> None:
+        episode_id = str(uuid.uuid4())
+        self.store.project_event(
+            self._event(
+                episode_id,
+                1,
+                "trade_decision",
+                instrument_id="ssf:QFF:202611",
+                kind="stock_future",
+                reason_code="long_lever",
+            )
+        )
+        proj = self.store.project_event(
+            self._event(
+                episode_id,
+                2,
+                "paper_fill_simulated",
+                metrics={"fill_quantity": 2.0, "fill_price": 2300.0},
+                instrument_id="ssf:QFF:202611",
+                kind="stock_future",
+                multiplier=100.0,
+                contract_month="202611",
+                fee=40.0,
+                tax=10.0,
+                initial_margin_reserved=92000.0,
+            )
+        )
+        self.assertEqual(proj["instrument_id"], "ssf:QFF:202611")
+        self.assertEqual(proj["underlying_symbol"], "2330.TWSE")
+        self.assertEqual(proj["instrument_kind"], "stock_future")
+        self.assertEqual(proj["multiplier"], 100.0)
+        self.assertEqual(proj["contract_month"], "202611")
+        self.assertEqual(proj["reason_code"], "long_lever")
+        # The future fill reports fee and tax rather than ``fees``.
+        self.assertEqual(proj["fees"], 50.0)
+        self.assertNotIn("fees", proj["coverage"]["missing_refs"])
+        reopened = TradeEpisodeProjectionStore(
+            projections_path=Path(self.tmp_dir.name) / "p.json",
+            events_path=Path(self.tmp_dir.name) / "e.json",
+        )
+        self.assertEqual(reopened.get(episode_id)["multiplier"], 100.0)
+
+    def test_gate_rejection_records_reason_without_a_fill(self) -> None:
+        episode_id = str(uuid.uuid4())
+        proj = self.store.project_event(
+            self._event(
+                episode_id,
+                1,
+                "order_rejection",
+                reason="leverage_limit",
+                reject_reason="leverage_limit",
+                instrument_id="ssf:QFF:202611",
+                kind="stock_future",
+                multiplier=100.0,
+                reason_code="long_lever",
+            )
+        )
+        self.assertEqual(proj["status"], "rejected")
+        self.assertEqual(proj["rejects"][0]["reason"], "leverage_limit")
+        self.assertEqual(proj["reason_code"], "long_lever")
+        self.assertEqual(proj["filled_quantity"], 0.0)
+
+    def test_schema_declares_the_new_episode_fields(self) -> None:
+        schema = json.loads(
+            (Path(__file__).parent / "trade_episode_projection.schema.json").read_text(encoding="utf-8")
+        )
+        props = schema["properties"]
+        for name in ("multiplier", "reason_code", "instrument_kind", "contract_month", "underlying_symbol"):
+            self.assertIn(name, props)
+        self.assertNotIn(name, schema["required"])
+
+
 if __name__ == "__main__":
     unittest.main()

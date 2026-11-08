@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from services.source_ingestion.connectors import SourceConnector
+from services.source_ingestion.runtime import SourceIngestionRuntime
 
 
 def _read_headers(tenant: str = "tenant-a", roles: list[str] | None = None) -> dict[str, str]:
@@ -174,7 +176,7 @@ def test_private_evidence_reads_authenticate_and_scope_the_existing_repository(
         def list_source_records(self, **_kwargs):
             raise OSError("owner down")
 
-    monkeypatch.setattr(module, "evidence_repository", DownOwner())
+    monkeypatch.setattr(module.runtime, "evidence_repository", DownOwner())
     assert test_client.get("/api/source-ingest/source-records", headers=headers).status_code == 503
 
 
@@ -239,10 +241,10 @@ def test_fleet_freshness_readiness_does_not_replay_journals_at_production_scale(
         def get_watermark(self, _connector_id):
             raise AssertionError("fleet freshness must not replay watermarks per connector")
 
-    monkeypatch.setattr(module, "connector_store", ConnectorStore())
-    monkeypatch.setattr(module, "schedule_config_store", ScheduleStore())
-    monkeypatch.setattr(module, "store", IngestStore())
-    result = module._source_freshness_readiness()
+    monkeypatch.setattr(module.runtime, "connector_store", ConnectorStore())
+    monkeypatch.setattr(module.runtime, "schedule_config_store", ScheduleStore())
+    monkeypatch.setattr(module.runtime, "store", IngestStore())
+    result = module.runtime._source_freshness_readiness()
 
     assert calls == {"configs": 0, "schedules": 0, "snapshot": 0}
     assert result == {
@@ -320,12 +322,12 @@ def test_controller_readback_reads_each_store_once_at_production_scale(
             calls["records"] += 1
             return []
 
-    monkeypatch.setattr(module, "connector_store", ConnectorStore())
-    monkeypatch.setattr(module, "schedule_config_store", ScheduleStore())
-    monkeypatch.setattr(module, "store", IngestStore())
-    monkeypatch.setattr(module, "evidence_repository", EvidenceRepository())
+    monkeypatch.setattr(module.runtime, "connector_store", ConnectorStore())
+    monkeypatch.setattr(module.runtime, "schedule_config_store", ScheduleStore())
+    monkeypatch.setattr(module.runtime, "store", IngestStore())
+    monkeypatch.setattr(module.runtime, "evidence_repository", EvidenceRepository())
 
-    result = module._controller_connector_readbacks()
+    result = module.runtime._controller_connector_readbacks()
 
     assert calls == {"configs": 1, "schedules": 1, "snapshot": 1, "records": 1}
     assert len(result) == connector_count
@@ -344,7 +346,7 @@ def test_registry_reads_each_persistent_store_once_at_production_scale(
         connector_id = f"connector-{index}"
         configs.append(
             SimpleNamespace(
-                connector=module.SourceConnector.from_dict(
+                connector=SourceConnector.from_dict(
                     _connector(connector_id=connector_id)
                 ),
                 fetch={"mode": "static_records", "records": []},
@@ -402,13 +404,13 @@ def test_registry_reads_each_persistent_store_once_at_production_scale(
         def get_connector(self, _connector_id):
             raise AssertionError("all scale-test connectors are configured")
 
-    monkeypatch.setattr(module, "connector_store", ConnectorStore())
-    monkeypatch.setattr(module, "schedule_config_store", ScheduleStore())
-    monkeypatch.setattr(module, "store", IngestStore())
-    monkeypatch.setattr(module, "manager", Manager())
+    monkeypatch.setattr(module.runtime, "connector_store", ConnectorStore())
+    monkeypatch.setattr(module.runtime, "schedule_config_store", ScheduleStore())
+    monkeypatch.setattr(module.runtime, "store", IngestStore())
+    monkeypatch.setattr(module.runtime, "manager", Manager())
 
-    entries = module._source_connector_entries()
-    policy = module._source_policy_registry_payload(entries)
+    entries = module.runtime._source_connector_entries()
+    policy = module.runtime._source_policy_registry_payload(entries)
 
     assert len(entries) == connector_count
     assert len(policy["connector_policies"]) == connector_count
@@ -1359,18 +1361,18 @@ def test_controller_readback_thread_safety(client, monkeypatch: pytest.MonkeyPat
     test_client, _, module = client
     lock_acquired = False
 
-    original_payload_func = module._controller_readback_payload
+    original_payload_func = module.runtime._controller_readback_payload
 
     def mock_payload():
         nonlocal lock_acquired
         # Since RLock is reentrant, acquiring non-blocking from within the lock holder returns True:
-        acquired_again = module.authoritative_reconcile_lock.acquire(blocking=False)
+        acquired_again = module.runtime.authoritative_reconcile_lock.acquire(blocking=False)
         if acquired_again:
             lock_acquired = True
-            module.authoritative_reconcile_lock.release()
+            module.runtime.authoritative_reconcile_lock.release()
         return original_payload_func()
 
-    monkeypatch.setattr(module, "_controller_readback_payload", mock_payload)
+    monkeypatch.setattr(module.runtime, "_controller_readback_payload", mock_payload)
 
     response = test_client.get("/api/source-ingest/controller/readback")
     assert response.status_code == 200
@@ -1412,7 +1414,7 @@ def test_controller_provisioned_official_connector_stamps_requirement_tenant_and
             }
         ],
     }
-    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    controller_headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
     reconcile_res = test_client.post(
         "/api/source-ingest/persona-source-provisioning/reconcile",
         headers=controller_headers,
@@ -1421,7 +1423,7 @@ def test_controller_provisioned_official_connector_stamps_requirement_tenant_and
     assert reconcile_res.status_code == 200, reconcile_res.text
 
     # Provisioned connector carries requirement tenant
-    config = module.connector_store.get_config("tw-twse-tpex-official-market")
+    config = module.runtime.connector_store.get_config("tw-twse-tpex-official-market")
     assert config is not None
 
     # 2. Trigger ingest job for the provisioned connector
@@ -1743,7 +1745,7 @@ def test_controller_owned_connector_resolves_tenant_from_controller_state(client
 
     from services.source_ingestion.persona_source_reconciler import RECONCILIATION_METADATA_KEY
 
-    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    controller_headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
     configured = test_client.post(
         "/api/source-ingest/connectors",
         headers=controller_headers,
@@ -1829,7 +1831,7 @@ def test_controller_owned_connector_without_controller_state_rejects_job_and_per
 
     from services.source_ingestion.persona_source_reconciler import RECONCILIATION_METADATA_KEY
 
-    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    controller_headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
     configured = test_client.post(
         "/api/source-ingest/connectors",
         headers=controller_headers,
@@ -1887,9 +1889,9 @@ def test_controller_owned_connector_without_controller_state_rejects_job_and_per
     assert "controller tenant identity is unavailable" in job_res.text
 
     # Verify no source record, evidence bundle, or distillation admission was persisted
-    assert module.evidence_repository.get_source_record(record_id) is None
-    assert len(module.evidence_repository.list_bundles()) == 0
-    assert module.distillation_job_queue.count() == 0
+    assert module.runtime.evidence_repository.get_source_record(record_id) is None
+    assert len(module.runtime.evidence_repository.list_bundles()) == 0
+    assert module.runtime.distillation_job_queue.count() == 0
 
 
 def test_controller_owned_connector_resolves_only_controller_state_ignoring_env_and_stale_metadata(
@@ -1910,7 +1912,7 @@ def test_controller_owned_connector_resolves_only_controller_state_ignoring_env_
     )
     ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(state)
 
-    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    controller_headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
     configured = test_client.post(
         "/api/source-ingest/connectors",
         headers=controller_headers,
@@ -1972,12 +1974,12 @@ def test_controller_owned_connector_resolves_only_controller_state_ignoring_env_
     bundle_id = body["evidence_refs"]["evidence_bundle_id"]
     assert bundle_id
 
-    persisted_record = module.evidence_repository.get_source_record(record_id, tenant_id="tenant-dev")
+    persisted_record = module.runtime.evidence_repository.get_source_record(record_id, tenant_id="tenant-dev")
     assert persisted_record is not None
     assert persisted_record.tenant_id == "tenant-dev"
     assert persisted_record.metadata.get("tenant_id") == "tenant-dev"
 
-    bundle = module.evidence_repository.get_bundle(bundle_id, tenant_id="tenant-dev")
+    bundle = module.runtime.evidence_repository.get_bundle(bundle_id, tenant_id="tenant-dev")
     assert bundle is not None
     assert bundle.metadata.get("tenant_id") == "tenant-dev"
 
@@ -2013,7 +2015,7 @@ def test_non_controller_connector_requires_write_capable_auth_and_binds_tenant(c
         json={"connector": _connector(connector_id="conn-unauth-test"), "fetch": fetch_payload},
     )
     assert unauth.status_code == 401
-    assert module.connector_store.get_config("conn-unauth-test") is None
+    assert module.runtime.connector_store.get_config("conn-unauth-test") is None
 
     # AC1: Viewer-only role rejected with 403 AUTH_FORBIDDEN
     viewer_headers = _read_headers(tenant="tenant-dev", roles=["viewer"])
@@ -2024,7 +2026,7 @@ def test_non_controller_connector_requires_write_capable_auth_and_binds_tenant(c
     )
     assert viewer_res.status_code == 403
     assert viewer_res.json()["detail"]["code"] == "AUTH_FORBIDDEN"
-    assert module.connector_store.get_config("conn-viewer-test") is None
+    assert module.runtime.connector_store.get_config("conn-viewer-test") is None
 
     # AC2: Token without tenant identity rejected with 403 TENANT_SCOPE_DENIED
     from services.runtime_auth_inbound import encode_jwt_hs256
@@ -2040,7 +2042,7 @@ def test_non_controller_connector_requires_write_capable_auth_and_binds_tenant(c
     )
     assert no_tenant_res.status_code == 403
     assert no_tenant_res.json()["detail"]["code"] == "TENANT_SCOPE_DENIED"
-    assert module.connector_store.get_config("conn-notenant-test") is None
+    assert module.runtime.connector_store.get_config("conn-notenant-test") is None
 
     # AC2: Mismatched explicit metadata.tenant_id rejected with 403 TENANT_SCOPE_DENIED
     mismatch_headers = _read_headers(tenant="tenant-dev")
@@ -2054,7 +2056,7 @@ def test_non_controller_connector_requires_write_capable_auth_and_binds_tenant(c
     )
     assert mismatch_res.status_code == 403
     assert mismatch_res.json()["detail"]["code"] == "TENANT_SCOPE_DENIED"
-    assert module.connector_store.get_config("conn-mismatch-test") is None
+    assert module.runtime.connector_store.get_config("conn-mismatch-test") is None
 
     # AC1: Success with write-capable principal binds resolved tenant into metadata.tenant_id
     success_headers = _read_headers(tenant="tenant-dev", roles=["operator"])
@@ -2066,7 +2068,7 @@ def test_non_controller_connector_requires_write_capable_auth_and_binds_tenant(c
     assert success_res.status_code == 201
     body = success_res.json()
     assert body["connector"]["metadata"]["tenant_id"] == "tenant-dev"
-    stored = module.connector_store.get_config("conn-bound-test")
+    stored = module.runtime.connector_store.get_config("conn-bound-test")
     assert stored is not None
     assert stored.connector.metadata["tenant_id"] == "tenant-dev"
 
@@ -2136,7 +2138,7 @@ def test_controller_ownership_determined_solely_by_reconciliation_marker(client)
     fetch_payload = {"mode": "static_records", "records": []}
 
     # AC1: Verify CONTROLLER_OWNED_CONNECTOR_IDS is removed
-    assert not hasattr(module.SourceIngestionRuntime, "CONTROLLER_OWNED_CONNECTOR_IDS")
+    assert not hasattr(SourceIngestionRuntime, "CONTROLLER_OWNED_CONNECTOR_IDS")
     assert not hasattr(module.runtime, "CONTROLLER_OWNED_CONNECTOR_IDS")
 
     # Connector with ID 'tw-twse-tpex-official-market' configured without the reconciliation marker
@@ -2191,7 +2193,7 @@ def test_controller_ownership_determined_solely_by_reconciliation_marker(client)
     assert res_tenant.status_code == 403
 
     # Controller token succeeds
-    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    controller_headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
     res_ctrl = test_client.post(
         "/api/source-ingest/connectors",
         headers=controller_headers,
@@ -2227,8 +2229,8 @@ def test_configure_connector_refuses_adopting_tenantless_existing_connector(clie
         _connector(connector_id=legacy_id, metadata={"legacy_flag": "true"})
     )
     assert not legacy_conn.metadata.get("tenant_id")
-    module.connector_store.upsert_config(legacy_conn, fetch_payload)
-    assert module.connector_store.get_config(legacy_id) is not None
+    module.runtime.connector_store.upsert_config(legacy_conn, fetch_payload)
+    assert module.runtime.connector_store.get_config(legacy_id) is not None
 
     # Write-capable tenant caller attempts to update the existing tenantless connector
     headers_dev = _read_headers(tenant="tenant-dev", roles=["operator"])
@@ -2247,7 +2249,7 @@ def test_configure_connector_refuses_adopting_tenantless_existing_connector(clie
     assert detail.get("message") == "Connector has no bound tenant"
 
     # Verify connector metadata in store was not modified / adopted
-    stored = module.connector_store.get_config(legacy_id)
+    stored = module.runtime.connector_store.get_config(legacy_id)
     assert stored is not None
     assert "tenant_id" not in stored.connector.metadata
 
@@ -2452,7 +2454,7 @@ def _seed_hosted_scale_journal(store, runs: int) -> int:
 
 def test_bounded_jobs_listing_at_hosted_scale_stays_small_and_fast(client) -> None:
     test_client, _, module = client
-    _seed_hosted_scale_journal(module.store, int(os.environ.get("SOURCE_INGEST_TEST_HOSTED_RUNS", "9000")))
+    _seed_hosted_scale_journal(module.runtime.store, int(os.environ.get("SOURCE_INGEST_TEST_HOSTED_RUNS", "9000")))
 
     started = time.perf_counter()
     unbounded = test_client.get("/api/source-ingest/jobs")
@@ -2495,7 +2497,7 @@ def test_evidence_items_route_returns_tenant_population_summary_and_excludes_ten
     from services.knowledge.evidence.models import EvidenceItem
 
     test_client, _, module = client
-    repo = module.evidence_repository
+    repo = module.runtime.evidence_repository
     repo.clear()
 
     for idx in range(25):
@@ -2746,7 +2748,7 @@ def test_get_job_endpoint_replays_at_most_once_per_request_when_journal_changed(
     from services.source_ingestion.scheduler import IngestReceipt, JsonlIngestScheduleStore
 
     test_client, _, module = client
-    writer = JsonlIngestScheduleStore(module.store.path)
+    writer = JsonlIngestScheduleStore(module.runtime.store.path)
 
     run = IngestRun(
         ingest_run_id="ingest-job-detail-001",
@@ -2776,16 +2778,16 @@ def test_get_job_endpoint_replays_at_most_once_per_request_when_journal_changed(
     writer.upsert_receipt(receipt)
 
     replays = 0
-    orig_reload = module.store._reload_unlocked
+    orig_reload = module.runtime.store._reload_unlocked
 
     def counting_reload(*args, **kwargs):
         nonlocal replays
         replays += 1
         return orig_reload(*args, **kwargs)
 
-    monkeypatch.setattr(module.store, "_reload_unlocked", counting_reload)
+    monkeypatch.setattr(module.runtime.store, "_reload_unlocked", counting_reload)
 
-    # Journal changed since module.store last read: GET /api/source-ingest/jobs/{id} replays at most once.
+    # Journal changed since module.runtime.store last read: GET /api/source-ingest/jobs/{id} replays at most once.
     resp1 = test_client.get(f"/api/source-ingest/jobs/{run.ingest_run_id}")
     assert resp1.status_code == 200
     body1 = resp1.json()

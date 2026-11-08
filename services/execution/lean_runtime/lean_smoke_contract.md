@@ -26,7 +26,6 @@ The Object Store metadata must include:
 
 - `artifact_state: approved`
 - `deployment_stage: paper`
-- `promotion_state: paper` as a legacy read alias
 - `runtime_binding_id` and `deployment_plan_id` for audit linkage
 
 The runtime bootstrap env must include:

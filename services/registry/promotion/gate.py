@@ -204,7 +204,6 @@ class PromotionGate:
             "artifact_type": normalized["artifact_type"],
             "artifact_state": artifact_state,
             "deployment_stage": deployment_stage,
-            "promotion_state": state,
             "checksum": normalized["checksum"],
             "lineage": lineage,
             "created_at": normalized.get("created_at") or normalized.get("promoted_at") or utc_now(),

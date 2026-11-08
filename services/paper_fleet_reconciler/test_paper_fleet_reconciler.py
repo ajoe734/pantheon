@@ -495,31 +495,8 @@ class TestPaperPerformanceComposeWiring(unittest.TestCase):
             "service_healthy",
         )
 
-        static_runtime = services["pantheon-paper-runtime"]
-        static_env = static_runtime["environment"]
-        self.assertEqual(static_runtime["profiles"], ["static-paper-runtime"])
+        self.assertNotIn("pantheon-paper-runtime", services)
         self.assertIn("root", fleet["profiles"])
-        self.assertEqual(
-            static_env["PANTHEON_SOURCE_INGEST_URL"],
-            "http://source-ingest:8097",
-        )
-        self.assertEqual(
-            static_env["PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"],
-            "${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}",
-        )
-        self.assertEqual(
-            static_env["PANTHEON_PERFORMANCE_STATE_PATH"],
-            "/data/runtime/paper-performance/static-paper-runtime.json",
-        )
-        self.assertEqual(
-            static_env["PANTHEON_PAPER_SYNTHETIC_MARKET_DATA"],
-            "${PANTHEON_PAPER_SYNTHETIC_MARKET_DATA:-false}",
-        )
-        self.assertIn("runtime-data:/data/runtime", static_runtime["volumes"])
-        self.assertEqual(
-            static_runtime["depends_on"]["source-ingest"]["condition"],
-            "service_healthy",
-        )
 
 
 class TestPaperFleetReconcilerPortAllocation(unittest.TestCase):

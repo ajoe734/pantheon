@@ -2186,6 +2186,34 @@ class TestExpressionDecisionStep(unittest.TestCase):
             self.assertNotIn(field, record)
             self.assertEqual(signal["action"], "HOLD")
 
+    def test_replay_input_is_recorded_and_rebuilds_the_decision(self) -> None:
+        from services.execution.lean_runtime import expression_replay
+
+        store = InMemoryPendingSignalStore()
+        binding = self._binding(self._artifact(bearish=True), closes=(100.0, 101.0))
+        self.assertEqual(self._producer(store).produce(binding, self.NOW), 1)
+        [signal] = store.get_pending()
+        recorded = signal["metadata"]["expression_replay_input"]
+        self.assertEqual(recorded["decision_id"], signal["metadata"]["decision_id"])
+        self.assertEqual(recorded["budget"], self.INPUTS["risk_budget"])
+        self.assertEqual(recorded["book_before"], self.INPUTS["persona_book"])
+        self.assertEqual(recorded["view"]["direction"], "SHORT")
+        self.assertEqual([c["instrument_id"] for c in recorded["candidates"]], ["eq:0050", "ssf:SRF:202611"])
+        self.assertIn("lever_min_strength", recorded["parameters"])
+
+        # Rebuild the day from the recorded event metadata and replay it: the
+        # replayed policy outcome equals what the producer decided.
+        event = {"event_type": "trade_decision", "metadata": signal["metadata"]}
+        records, params = expression_replay.records_from_events(
+            [event], {recorded["decision_id"]: {"ssf:SRF:202611": [90.0], "eq:0050": [90.0]}}
+        )
+        [replayed] = expression_replay.replay(records, params)["decisions"]
+        decided = signal["metadata"]["expression_decision"]
+        self.assertEqual(replayed["record"]["instrument_id"], decided["instrument_id"])
+        self.assertEqual(replayed["record"]["units"], decided["units"])
+        self.assertEqual(replayed["record"]["policy_parameters_digest"], decided["policy_parameters_digest"])
+        self.assertEqual(replayed["pnl"], round(decided["units"] * (2500.0 - (20.0 * 2 + 92500.0 * 0.00002 * 2)), 6))
+
     def test_store_that_cannot_persist_fails_closed(self) -> None:
         class Plain:
             def enqueue(self, payload):  # pragma: no cover - must not be reached

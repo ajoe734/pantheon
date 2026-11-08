@@ -108,7 +108,7 @@ def publish_version_to_wave_id(version: str) -> str:
 
 
 def workflow_settings(config: dict[str, Any]) -> dict[str, str]:
-    workflow = config.get("branch_workflow") or config.get("wave_workflow") or {}
+    workflow = config.get("branch_workflow") or {}
     nightly_publish = workflow.get("nightly_publish") or {}
     return {
         "publish_branch_prefix": str(workflow.get("publish_branch_prefix") or "publish/"),

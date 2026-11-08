@@ -340,11 +340,11 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 
 **Canonical source**: BINDING_AND_DEPLOYMENT_SEMANTICS.md
 
-Deployment-plan creation through `POST /api/v1/deployment-plans` and `POST /bff/deployments` is retired and returns `410 ACTION_RETIRED`. The governed replacement is approval, then the deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans` endpoints. BFF does not create or validate deployment plans. All requests rejected through the existing retired-command mechanism likewise use the client-visible error code `ACTION_RETIRED` (HTTP 410), not `VALIDATION_FAILED`.
+`GET /api/v1/deployment-plans` is retired and returns `410` through `deprecated_bff_path_response` with `/bff/deployments` as the replacement (`GET /bff/deployments` is the active deployment-plan list surface). Deployment-plan creation through `POST /api/v1/deployment-plans` and `POST /bff/deployments` is retired and returns `410 ACTION_RETIRED`. The governed replacement is approval, then the deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans` endpoints. BFF does not create or validate deployment plans. All requests rejected through the existing retired-command mechanism likewise use the client-visible error code `ACTION_RETIRED` (HTTP 410), not `VALIDATION_FAILED`.
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
-| `/api/v1/deployment-plans` | GET | DP-01 | `{ data: [DeploymentPlan], meta }` | `status`, `capital_pool_id` |
+| `/api/v1/deployment-plans` | GET | Retired (DP-01) | `410`; retired BFF path — use `GET /bff/deployments` | — |
 | `/api/v1/deployment-plans` | POST | Retired | `410 ACTION_RETIRED`; use approval then deployment owner validate/create | — |
 | `/api/v1/deployment-plans/{plan_id}` | GET | DP-02 | `{ data: DeploymentPlan + ApprovalDecision, meta }` | — |
 | `/api/v1/approval-decisions` | GET | DP-03 | `{ data: [ApprovalDecision], meta }` | `outcome`, `state` |
@@ -1053,3 +1053,69 @@ resumed in place at startup, so the same item reaches a terminal state.
 - persona_fleet projects each persona with the app-scoped `PersonaService` bound as the current service (bound by the `project_persona_fleet_item` callback that `main.py` passes to `wire_management_runtime_projections`), the same binding `PersonaService.build_persona_health_items` uses. No module global or second persona projection is added.
 - A persona whose projection raises is reported as an unavailable item with an owner observation `degradation_reason=persona_projection_failed:<ExceptionClass>`; other personas still project. The persona_fleet error branch logs one warning with the exception class.
 - The cockpit human inbox count reads `data.items` of the wired human inbox payload and passes the caller identity, so `human_inbox_summary.total` and the `approval_queue` surface follow the inbox read for the same caller.
+
+## Instrument-aware portfolio holdings and performance attribution (INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107)
+
+Read-only; no new route. These fields extend the existing `GET /bff/management/portfolio-book/holdings` items and the performance-attribution facts and `summary` from the telemetry runtime summary `positions` rows. A cash share row is unchanged apart from the new fields reading `null` / `1.0`.
+
+### Holdings item fields
+
+| Field | Meaning |
+| --- | --- |
+| `symbol` | Underlying or native symbol (for a stock future, the underlying, e.g. `2330.TWSE`). |
+| `instrument_id` | Traded instrument (`ssf:QFF:202611`, or `eq:2330` when the fill carried it); `null` for a cash share whose fills carried none. |
+| `instrument_kind` | `cash_share` or `stock_future`; `null` when the fill reported none. |
+| `contract_month` | `YYYYMM` for a stock future, else `null`. |
+| `multiplier` | Contract multiplier; `1.0` for a cash share or when none was reported. |
+| `margin_reserved` | Initial margin the ledger reserved for the open contracts (currency units); `null` for a cash share. |
+| `asset_class` | An explicit value wins; otherwise derived from `instrument_kind` (`stock_future` -> `future`, `cash_share` -> `equity`), else `other`. |
+| `holding_id` | `{runtime_id}:{key}`; the key is the position's own id, else the `instrument_id` of a non-cash instrument, else the symbol, so a future never shares an id with its underlying's cash row. |
+
+### Valuation
+
+- `market_value` = `quantity` x `multiplier` x `mark_price`, signed by quantity. `unrealized_pnl` is taken from the telemetry row, which computes `quantity` x `multiplier` x (`mark_price` - `average_price`).
+- `average_price` is the cost per unit (a share or a contract). Realized PnL is in currency and is scaled by the fill multiplier when the position is reduced.
+- When the mark is stale or unavailable (`mark_status` is `stale` or `unavailable`), `mark_price`, `market_value` **and `unrealized_pnl`** are all `null`; only the last known quote provenance (`last_mark_at`, `mark_source_ref`) is kept.
+- Expiry settlement (`paper_futures_settled`) closes the contract row and books the ledger's realized PnL; it is not a fill and does not change fill counts.
+
+### Performance attribution
+
+- Each fact carries the same instrument fields and values `market_value` / `notional` with the multiplier.
+- `data.summary.instrument_breakdown` is an additive list grouped by traded instrument (`instrument_key` is the `instrument_id`, else the symbol) with `holding_count`, `market_value`, `total_notional`, `total_pnl`, `unrealized_pnl`, `realized_pnl`, `multiplier` and `margin_reserved`. `supported_dimensions` is unchanged.
+
+- `data.summary` carries three additive learning fields that are graded **separately** (INSTRUMENT-DECISION-LEARNING-COUNTERFACTUAL-20261107), read from the `persona_instrument_counterfactual` rows the telemetry runtime summary folds (`instrument_counterfactuals`, keyed `(decision_id, instrument_id)`):
+  - `direction_hit_rate`: fraction of graded decisions whose view direction matches the sign of the underlying's next-close move (`underlying_mark - underlying_entry`). It is independent of the instrument chosen. A decision with no underlying prices, a FLAT view or a zero move is not graded; `null` when nothing is graded (never a fabricated 0).
+  - `instrument_regret`: sum over decisions of `max(pnl_cf over candidates considered) - pnl_chosen` (`pnl_chosen` is 0 for a recorded no trade), `>= 0`; `null` when no decision can be computed.
+  - `margin_use`: sum of the chosen legs' initial margin (0 for a no trade); `null` when no rows exist.
+  - `instrument_learning` holds the same grades with `direction_hit_count`, `direction_graded_count`, `instrument_regret_graded_count`, `decision_count` and one entry per decision (`decision_id` is prefixed `{runtime_id}:`; `direction_hit`, `instrument_regret`, `margin_use`, `chosen_instrument_id`, `best_instrument_id`, `chosen_pnl`). A correct call in a worse instrument is therefore a direction hit with positive regret. `pnl_cf = side * q_cf * multiplier * (mark - entry) - costs` with `q_cf` from the same policy sizing rule applied to that candidate, on prices already held (D-1 settlement); no new data source.
+
+### Decision projection
+
+`subject.asset_class` of a projected trading-room decision event follows the chosen instrument kind (`cash_share` -> `equity`, `stock_future` -> `future`); a decision with no instrument stays `equity`, and an unknown kind is rejected instead of being labelled equity.
+
+## Retire a provisioned paper Persona case (BFF-PERSONA-CASE-RETIRE-COMMAND-20261108)
+
+`POST /bff/v1/commands` with `command: "PersonaAction"`, `action: "RetirePaperPersonaCase"` (verb aliases `retire`, `retire_case`) and `target: {"type": "Persona", "id": "<persona_id>"}`. No new HTTP route is added; `POST /bff/personas/{persona_id}/actions/{action_id}` keeps returning the deprecation response for `retire`.
+
+Admission is the existing command admission: operator role, `Idempotency-Key` header, non-empty `audit_context.reason`, and an `X-Confirm-Token` issued for `RetirePaperPersonaCase` on that Persona (the catalog entry has `requires_confirm_token`). The tenant is taken from the authenticated claims only.
+
+Execution calls the existing `retire_persona_provisioning_case(tenant_id, persona_id, reason=audit_context.reason)`; the coordinator owns every retirement step (schedule, compensation, saga, runtime bindings, persona capital binding, pool, persona archive).
+
+Receipt (`domain_receipt`, repeated in `authoritative_readback`):
+
+```json
+{"persona_id": "persona-…", "state": "retired | <unchanged ledger state>",
+ "retirement": {"status": "retired | pending", "pending_step": "…", "pending_reason": "…"}}
+```
+
+`pending_step` and `pending_reason` are present only when `retirement.status` is `pending`; replaying the command continues from that step.
+
+Failed receipts (no owner write happens):
+
+| code | downstream_status | meaning |
+| --- | --- | --- |
+| `persona_case_not_found` | 404 | the Persona has no provisioning ledger |
+| `release_case_use_release_retire` | 409 | the ledger idempotency key starts with `dev-paper-release-`; use `scripts/retire_dev_paper_release_cases.py` |
+| `tenant_required` | 403 | the authenticated caller has no tenant claim |
+
+Dry run (`dryRun: true`, the existing command-admission mechanism) reads the provisioning record only and never calls the coordinator. The response is the usual dry-run submission with `meta.plan`: `persona_id`, `state`, `release_case`, `retirement_status`, `planned_steps` (steps not yet confirmed, in coordinator order) and `confirmed_steps`. A missing ledger or a release case is refused with the same codes as above.

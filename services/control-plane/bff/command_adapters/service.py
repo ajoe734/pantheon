@@ -708,7 +708,6 @@ class CommandAdapterService:
         payload: Dict[str, Any],
         identity: OperatorIdentity,
         idempotency_key: Optional[str],
-        x_idempotency_key: Optional[str] = None,
         status_code: int = 202,
         server_generated_target: bool = False,
         terminal_on_persist: bool = False,
@@ -716,7 +715,7 @@ class CommandAdapterService:
     ) -> JSONResponse:
         payload = dict(payload or {})
         _reject_body_idempotency_key(payload)
-        clean_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        clean_key = resolve_final_idempotency_key(idempotency_key)
         hash_body: Dict[str, Any] = {
             "command": command_type.value,
             "target_type": target_type.value,
@@ -915,7 +914,7 @@ class CommandAdapterService:
     def sem_command_response(
         self, *, command_type: CommandType, target_type: ObjectType,
         target_id: str, payload: Dict[str, Any], identity: OperatorIdentity,
-        idempotency_key: Optional[str], x_idempotency_key: Optional[str] = None,
+        idempotency_key: Optional[str],
         status_code: int = 202, server_generated_target: bool = False,
         terminal_on_persist: bool = False, trusted_evidence_producer: Optional[str] = None,
         authorization: Optional[str] = None, action_id: Optional[str] = None,
@@ -936,7 +935,7 @@ class CommandAdapterService:
             return self._persist_local_evidence(
                 command_type=command_type, target_type=target_type, target_id=target_id,
                 payload=payload, identity=identity, idempotency_key=idempotency_key,
-                x_idempotency_key=x_idempotency_key, status_code=status_code,
+                status_code=status_code,
                 server_generated_target=server_generated_target, terminal_on_persist=True,
                 trusted_evidence_producer=trusted_evidence_producer,
             )
@@ -948,11 +947,11 @@ class CommandAdapterService:
         background = BackgroundTasks()
         if server_generated_target:
             # Stable across replay; the owner still allocates its own resource identity.
-            key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+            key = resolve_final_idempotency_key(idempotency_key)
             target_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{identity.operator_id}:{key}"))
         result = self._submit_command_admission(
             background_tasks=background, authorization=authorization,
-            idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             payload={
                 "command": command_type.value, "action": action_id,
                 **({"dryRun": True} if dry_run or _truthy_header(payload.get("dryRun") or payload.get("dry_run")) else {}),
@@ -970,7 +969,6 @@ class CommandAdapterService:
         payload: Dict[str, Any],
         identity: OperatorIdentity,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
     ) -> JSONResponse:
         self.check_read_role(identity)
         if payload.get("command") in ("PromoteCandidate", "Demote"):
@@ -992,7 +990,6 @@ class CommandAdapterService:
             payload=hash_payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             status_code=201,
             server_generated_target=server_generated,
             terminal_on_persist=True,
@@ -1000,7 +997,7 @@ class CommandAdapterService:
         content = json.loads(response.body.decode("utf-8"))
         final_token_id = token_id
         if server_generated and content.get("meta", {}).get("idempotency", {}).get("replayed"):
-            clean_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+            clean_key = resolve_final_idempotency_key(idempotency_key)
             store = self.command_store
             if store is not None:
                 stored = store.get_command_by_idempotency_key(
@@ -1028,7 +1025,6 @@ class CommandAdapterService:
         payload: Dict[str, Any],
         identity: OperatorIdentity,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
     ) -> JSONResponse:
         self.check_read_role(identity)
         self.raise_if_confirm_token_expired(token_id)
@@ -1039,7 +1035,6 @@ class CommandAdapterService:
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             terminal_on_persist=True,
         )
         content = json.loads(response.body.decode("utf-8"))
@@ -1056,7 +1051,6 @@ class CommandAdapterService:
         payload: Dict[str, Any],
         identity: OperatorIdentity,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
     ) -> JSONResponse:
         self.check_read_role(identity)
         response = self.sem_command_response(
@@ -1066,7 +1060,6 @@ class CommandAdapterService:
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             terminal_on_persist=True,
         )
         content = json.loads(response.body.decode("utf-8"))
@@ -1094,10 +1087,9 @@ class CommandAdapterService:
         payload: Dict[str, Any],
         identity: OperatorIdentity,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         self.check_operator_role(identity)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = resolve_final_idempotency_key(idempotency_key)
         _reject_body_idempotency_key(payload)
 
         confirm_token = str(
@@ -1190,14 +1182,13 @@ class CommandAdapterService:
         payload: Dict[str, Any],
         identity: OperatorIdentity,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
         x_correlation_id: Optional[str] = None,
         x_request_id: Optional[str] = None,
         x_dry_run: Optional[str] = None,
         response: Optional[Response] = None,
     ) -> Any:
         self.check_operator_role(identity)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = resolve_final_idempotency_key(idempotency_key)
         correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
         if response is not None:
             response.headers["X-Correlation-Id"] = correlation_id
@@ -1316,6 +1307,28 @@ class CommandAdapterService:
         }
         return result
 
+    @staticmethod
+    def _plan_paper_persona_case_retirement(
+        cmd: OperatorCommand, identity: OperatorIdentity, trusted_tenant: Optional[str]
+    ) -> Dict[str, Any]:
+        """Dry run: read the provisioning record only; never call retire_case."""
+        from ..personas import service as persona_service
+        from .persona_adapter import assert_case_retirable
+
+        claims = getattr(identity, "claims", None) or {}
+        tenant_id = str(trusted_tenant or claims.get("tenant_id") or "").strip()
+        if not tenant_id:
+            raise ActionUnavailableError(
+                "Persona case retirement requires the caller's tenant claim",
+                action_id="RetirePaperPersonaCase", entity_type="Persona",
+                error_code="tenant_required", downstream_status=403,
+            )
+        plan = persona_service.plan_persona_provisioning_case_retirement(
+            tenant_id, cmd.target.id
+        )
+        assert_case_retirable(plan)
+        return plan
+
     def submit_command_admission(
         self,
         *,
@@ -1328,7 +1341,6 @@ class CommandAdapterService:
         x_request_id: Optional[str] = None,
         x_confirm_token: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
         route: str = _FINAL_COMMAND_ROUTE,
         source_route: Optional[str] = None,
         foundation_raw_payload: Optional[Dict[str, Any]] = None,
@@ -1365,7 +1377,7 @@ class CommandAdapterService:
                     str(exc), precondition_failed=exc.precondition,
                 ) from exc
 
-        candidate_key = str(idempotency_key or x_idempotency_key or "").strip() or None
+        candidate_key = str(idempotency_key or "").strip() or None
         foundation_context = build_foundation_command_context(
             cmd=cmd,
             identity=identity,
@@ -1383,7 +1395,7 @@ class CommandAdapterService:
         )
 
         try:
-            resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+            resolved_key = resolve_final_idempotency_key(idempotency_key)
             reject_body_idempotency_key(payload)
             reject_server_managed_rebalance_evidence_command(cmd)
             if extra_precondition is not None:
@@ -1523,13 +1535,18 @@ class CommandAdapterService:
         staleness_warning = self.check_read_surface_state()
         if _truthy_header(payload.get("dryRun") or payload.get("dry_run")) or _truthy_header(os.getenv("BFF_REQUEST_DRY_RUN")):
             command_envelope = foundation_context["command_envelope"]
+            dry_run_meta = command_response_dry_run_meta(resolved_key)
+            if cmd.command == CommandType.RETIRE_PAPER_PERSONA_CASE:
+                dry_run_meta["plan"] = self._plan_paper_persona_case_retirement(
+                    cmd, identity, trusted_tenant
+                )
             return project_final_command_response(
                 command_id=command_envelope.command_id,
                 command=cmd.command,
                 accepted_at=self._utc_now(),
                 status=CommandStatus.SUBMITTED,
                 staleness_warning=staleness_warning,
-                meta=command_response_dry_run_meta(resolved_key),
+                meta=dry_run_meta,
                 deprecation=response_deprecation,
             )
 
@@ -1711,7 +1728,6 @@ class CommandAdapterService:
         x_request_id: Optional[str] = None,
         x_confirm_token: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
     ) -> Any:
         return self._submit_command_admission(
             background_tasks=background_tasks,
@@ -1723,7 +1739,6 @@ class CommandAdapterService:
             x_request_id=x_request_id,
             x_confirm_token=x_confirm_token,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             route="POST /bff/v1/commands",
             include_durable_meta=True,
         )
@@ -1871,6 +1886,14 @@ def _resolve_execution_params_for_record(
                 params["entity_id"] = rt_id
                 params.pop("runtimeId", None)
                 params.pop("entityId", None)
+        elif command_type == CommandType.RETIRE_PAPER_PERSONA_CASE:
+            persona_id = str((record.get("target") or {}).get("id") or "").strip()
+            audit_reason = str((record.get("audit") or {}).get("reason") or "").strip()
+            params.update(
+                persona_id=persona_id, entity_type="Persona",
+                action_id=command_type.value, actionId=command_type.value,
+                reason=audit_reason or params.get("reason"),
+            )
         elif command_type == CommandType.ADVANCE_LIFECYCLE:
             evidence = (record.get("audit") or {}).get("precondition_evidence") or {}
             params["confirm_token"] = str(evidence.get("confirm_token_id") or params.get("confirm_token_id") or "")

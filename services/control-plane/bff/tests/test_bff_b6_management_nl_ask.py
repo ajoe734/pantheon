@@ -81,10 +81,6 @@ class _B6NlAskTestStore:
             return None
         return self._load_evidence().get(ref_id)
 
-    def record_agora_audit_event(self, event: dict[str, Any]) -> dict[str, Any]:
-        self.audit_events.append(event)
-        return event
-
     def list_agora_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
         return list(self.audit_events)
 

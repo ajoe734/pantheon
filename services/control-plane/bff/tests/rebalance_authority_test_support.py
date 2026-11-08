@@ -708,7 +708,7 @@ def _build_authority_harness_app(
                 '_require_operator_role': require_operator_role,
                 '_require_read_role': require_read_role,
                 '_reject_body_idempotency_key': lambda p: None,
-                '_resolve_final_idempotency_key': lambda a, b: a or b,
+                '_resolve_final_idempotency_key': lambda a: a,
                 '_stable_json_hash': _stable_json_hash,
                 '_stable_capital_resource_id': stable_capital_resource_id,
                 '_capital_owner_role': capital_owner_role,
@@ -1434,6 +1434,7 @@ def bound_management_nl_store(read_surface: Any) -> Iterator[Any]:
             context_svc._get_read_store = (lambda: read_surface) if read_surface is not None else None
         yield read_surface
     finally:
+        management_service.set_agora_audit_store(old_audit_store)
         management_service.set_read_store(old_main_store)
         setattr(personas_service, "_composed_persona_service", old_persona_store)
         if context_svc is not None:
@@ -1446,6 +1447,7 @@ def management_nl_test_client(
     *,
     raise_server_exceptions: bool = False,
     reset_conversation_store: bool = True,
+    audit_store: Any = None,
 ) -> Iterator[TestClient]:
     """Provide a TestClient wired to the real seam-composed management NL app
     (``compose_bff_app``) with clean store/SSE state -- no main.py import."""
@@ -1458,6 +1460,11 @@ def management_nl_test_client(
     context_svc = getattr(management_service, "_management_ai_context_service", None)
     old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
     store = read_surface if read_surface is not None else old_main_store
+    old_audit_store = management_service._AGORA_AUDIT_STORE
+    if audit_store is None:
+        from services.control_plane.bff.agora_audit_store import AgoraAuditStore
+
+        audit_store = AgoraAuditStore(storage_path="off")
 
     if reset_conversation_store:
         management_service._MGMT_AI_CONVERSATION_STORE = management_service.ManagementAiConversationStore(
@@ -1468,6 +1475,7 @@ def management_nl_test_client(
         management_service._sse_buffers["ask"].clear()
 
     try:
+        management_service.set_agora_audit_store(audit_store)
         management_service.set_read_store(store)
         setattr(personas_service, "_composed_persona_service", make_composed_persona_service(read_store=store))
         if context_svc is not None:

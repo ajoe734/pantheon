@@ -432,7 +432,6 @@ def create_agora_router(
         x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
         content_type: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
@@ -457,7 +456,7 @@ def create_agora_router(
             _raise_scope_error(exc, bff_error)
         agora_service.reject_body_idempotency_key(payload)
         agora_service.require_merge_patch_content_type(content_type)
-        resolved_key = agora_service.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = agora_service.resolve_final_idempotency_key(idempotency_key)
         patch = agora_service.validate_journal_merge_patch_payload(payload, identity)
         return agora_service.patch_journal_entry(
             entry_id=entry_id,
@@ -503,7 +502,6 @@ def create_agora_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
@@ -529,7 +527,6 @@ def create_agora_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             x_dry_run=x_dry_run,
             tenant_id=scope.tenant_id if scope else None,
             user_id=scope.user_id if scope else None,

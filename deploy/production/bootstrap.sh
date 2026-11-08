@@ -147,7 +147,12 @@ if require_full:
             raise SystemExit(f"{token_key} carries a well-known Dev default credential")
     from urllib.parse import parse_qs
     pg_db = sys.argv[4]
-    for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN", *PRODUCT_DSN_KEYS):
+    for dsn_key in (
+        "TELEMETRY_DB_DSN",
+        "LIFECYCLE_PROJECTOR_PROJECTION_DSN",
+        *PRODUCT_DSN_KEYS,
+        *(("PANTHEON_PERSONA_PROVISIONING_STORE_DSN",) if kv.get("PANTHEON_PERSONA_PROVISIONING_STORE_DSN") else ()),
+    ):
         dsn_base, _, dsn_query = kv[dsn_key].partition("?")
         if dsn_query:
             bad = {"dbname", "host", "hostaddr", "port", "user", "service", "options"} & {
@@ -173,13 +178,25 @@ for suffix, default_val in (
     )
     if not shared_val:
         continue
-    for prefix in ("PANTHEON_BFF", "PANTHEON_RUNTIME", "PANTHEON_TELEMETRY", "POLICY_LEARNING"):
+    for prefix in ("PANTHEON_BFF", "PANTHEON_RUNTIME", "PANTHEON_GOVERNANCE", "PANTHEON_TELEMETRY", "POLICY_LEARNING"):
         if prefix == "POLICY_LEARNING" and suffix == "REQUIRE_EMAIL_VERIFIED":
             continue
         target_key = f"{prefix}_{suffix}"
         if not kv.get(target_key):
             added.append(f"{target_key}={shared_val}")
             kv[target_key] = shared_val
+
+if not kv.get("PANTHEON_GOVERNANCE_JWT_SECRET"):
+    gov_secret = kv.get("PANTHEON_RUNTIME_JWT_SECRET") or kv.get("PANTHEON_BFF_JWT_SECRET") or ""
+    if gov_secret:
+        added.append(f"PANTHEON_GOVERNANCE_JWT_SECRET={gov_secret}")
+        kv["PANTHEON_GOVERNANCE_JWT_SECRET"] = gov_secret
+
+if not kv.get("PANTHEON_PERSONA_PROVISIONING_STORE_DSN"):
+    persona_prov_dsn = kv.get("DATABASE_URL") or kv.get("PANTHEON_DATABASE_URL") or ""
+    if persona_prov_dsn:
+        added.append(f"PANTHEON_PERSONA_PROVISIONING_STORE_DSN={persona_prov_dsn}")
+        kv["PANTHEON_PERSONA_PROVISIONING_STORE_DSN"] = persona_prov_dsn
 
 if added:
     st = env_path.stat()

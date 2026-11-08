@@ -500,14 +500,13 @@ def create_runtime_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Create a pending PersonaCapitalBinding through Capital owner authority."""
         identity = _extract_identity(authorization)
         _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
         tenant_id = _resolve_tenant(identity, x_tenant_id, _bff_error)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_final_idempotency_key(idempotency_key)
         request_hash = _stable_json_hash(
             {"route": "POST /api/v1/bindings", "tenant_id": tenant_id, "payload": payload}
         )
@@ -997,13 +996,12 @@ def create_runtime_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: create a runtime binding in stopped state."""
         identity = _extract_identity(authorization)
         _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_final_idempotency_key(idempotency_key)
         dry_run = _request_dry_run_requested()
 
         fields = {
@@ -1188,7 +1186,6 @@ def create_runtime_router(
         action_id: str,
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ):
         """BFF: submit an action against a runtime binding."""

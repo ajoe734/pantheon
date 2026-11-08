@@ -50,14 +50,6 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
         "status": "alias",
         "covered_by": "POST /bff/v1/mcp/servers/{server_id}/import-tools",
     },
-    # /bff/ranking-formulas* are compat aliases for canonical /bff/ranking/formulas*
-    "GET /bff/ranking-formulas": {"status": "alias", "covered_by": "GET /bff/ranking/formulas"},
-    "GET /bff/ranking-formulas/{id}": {"status": "alias", "covered_by": "GET /bff/ranking/formulas/{formula_id}"},
-    "PATCH /bff/ranking-formulas/{id}": {
-        "status": "alias",
-        "covered_by": "PATCH /bff/ranking/formulas/{formula_id}",
-    },
-    "POST /bff/ranking-formulas": {"status": "alias", "covered_by": "POST /bff/ranking/formulas"},
     # /bff/management/persona-fleet is retained for stale UI builds; current
     # execute-plans code uses the canonical Pathreon fleet aggregate endpoint.
     "GET /bff/management/persona-fleet": {
@@ -68,6 +60,11 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
     "POST /bff/management/promotion-reviews/{review_id}/decisions": {
         "status": "superseded",
         "covered_by": "POST /bff/approvals/{decision_id}/decide",
+    },
+    # Retired DP-01 deployment-plan list route stays mounted only to return 410.
+    "GET /api/v1/deployment-plans": {
+        "status": "superseded",
+        "covered_by": "GET /bff/deployments",
     },
     # Track E OODA read routes are backend-owned first; frontend cards/drawer
     # activate in follow-on MGMT-OODA tasks.

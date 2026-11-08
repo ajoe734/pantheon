@@ -1491,6 +1491,53 @@ def retire_persona_provisioning_case(
     }
 
 
+# --- plan_persona_provisioning_case_retirement ---
+# Release cases (dev-paper-release-*) keep their own BFF-hosted retire script.
+RELEASE_CASE_KEY_PREFIX = "dev-paper-release-"
+
+# Order in which PersonaProvisioningCoordinator.retire_case proves its steps.
+# Read-only mirror used for the dry-run plan; a test pins it to the coordinator.
+PERSONA_CASE_RETIREMENT_STEP_ORDER = (
+    "first_evaluation_schedule",
+    "compensation",
+    "deployment_saga",
+    "runtime_bindings",
+    "persona_capital_binding",
+    "capital_pool",
+    "persona",
+)
+
+
+def plan_persona_provisioning_case_retirement(
+    tenant_id: str, persona_id: str
+) -> Optional[Dict[str, Any]]:
+    """Read-only retirement plan from the provisioning record (no coordinator call).
+
+    Returns ``None`` when the Persona has no provisioning ledger.
+    """
+
+    record = _persona_provisioning_store().get_by_persona(tenant_id, persona_id)
+    if record is None:
+        return None
+    retirement = record.references.get("retirement")
+    retirement = retirement if isinstance(retirement, Mapping) else {}
+    confirmed = [
+        name
+        for name in PERSONA_CASE_RETIREMENT_STEP_ORDER
+        if isinstance(retirement.get(name), Mapping)
+    ]
+    return {
+        "persona_id": persona_id,
+        "state": record.state,
+        "release_case": str(record.idempotency_key).startswith(RELEASE_CASE_KEY_PREFIX),
+        "retirement_status": retirement.get("status"),
+        "planned_steps": [
+            name for name in PERSONA_CASE_RETIREMENT_STEP_ORDER if name not in confirmed
+        ],
+        "confirmed_steps": confirmed,
+    }
+
+
 _PERSONA_CLEANUP_BACKOFF: Dict[Tuple[int, str], Tuple[int, float]] = {}
 
 
@@ -3215,9 +3262,94 @@ def _project_persona_fleet_health(
     active_incidents: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     reasons: List[str] = []
-    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
-    if lifecycle and not _is_persona_lifecycle_operational(lifecycle):
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
+    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").strip().lower()
+    admin_status = str(persona.get("status") or "").strip().lower()
+    meta_lifecycle = str(
+        metadata.get("lifecycle_state")
+        or metadata.get("provisioning_reconciliation_state")
+        or ""
+    ).strip().lower()
+    paper_runtime_state = str(
+        persona.get("paper_runtime_state") or metadata.get("paper_runtime_state") or ""
+    ).strip().lower()
+
+    active_paper_bindings = [
+        binding
+        for binding in runtime_bindings
+        if str(binding.get("status") or binding.get("state") or "").strip().lower()
+        in {"active", "ready", "running", "idle", "paper_running"}
+        and str(
+            binding.get("deployment_mode")
+            or binding.get("deployment_stage")
+            or binding.get("execution_mode")
+            or binding.get("environment")
+            or binding.get("mode")
+            or binding.get("runtime_kind")
+            or ""
+        ).strip().lower()
+        in {"paper", ""}
+    ]
+    raw_exec_mode = str(
+        metadata.get("execution_mode")
+        or metadata.get("capital_mode")
+        or metadata.get("deployment_stage")
+        or ""
+    ).strip().lower()
+    if not raw_exec_mode and runtime_bindings:
+        for binding in runtime_bindings:
+            cand = str(
+                binding.get("deployment_mode")
+                or binding.get("deployment_stage")
+                or binding.get("execution_mode")
+                or binding.get("environment")
+                or binding.get("mode")
+                or binding.get("runtime_kind")
+                or ""
+            ).strip().lower()
+            if cand:
+                raw_exec_mode = cand
+                break
+    if not raw_exec_mode and (
+        paper_runtime_state in {"running", "paper_running", "paper_active"} or active_paper_bindings
+    ):
+        raw_exec_mode = "paper"
+    execution_mode = raw_exec_mode or "unknown"
+
+    if admin_status in {"archived", "suspended", "retired", "frozen"}:
+        operational_state = admin_status
+    elif meta_lifecycle in {"provisioning", "provisioning_failed", "paper_running", "retired", "frozen", "suspended"}:
+        operational_state = meta_lifecycle
+    elif paper_runtime_state in {"running", "paper_running", "paper_active"} and active_paper_bindings:
+        operational_state = "paper_running"
+    elif lifecycle == "research_only" and raw_exec_mode == "paper" and active_paper_bindings:
+        operational_state = "paper_running"
+    elif _is_persona_lifecycle_operational(lifecycle):
+        operational_state = lifecycle
+    elif lifecycle:
+        operational_state = lifecycle
+    else:
+        operational_state = "unknown"
+
+    paper_operational = (
+        lifecycle == "research_only"
+        and admin_status not in {"archived", "suspended", "retired", "frozen"}
+        and bool(active_paper_bindings)
+        and (
+            operational_state == "paper_running"
+            or paper_runtime_state in {"running", "paper_running", "paper_active"}
+            or raw_exec_mode == "paper"
+        )
+    )
+    lifecycle_operational = (
+        admin_status not in {"archived", "suspended", "retired", "frozen"}
+        and (_is_persona_lifecycle_operational(lifecycle) or paper_operational)
+    )
+    if lifecycle and not lifecycle_operational:
         reasons.append("persona_lifecycle_not_active")
+    elif not lifecycle and admin_status in {"archived", "suspended", "retired", "frozen"}:
+        reasons.append("persona_lifecycle_not_active")
+
     if not runtime_bindings:
         reasons.append("no_runtime_binding")
     if active_incidents:
@@ -3264,6 +3396,9 @@ def _project_persona_fleet_health(
         "runtime_statuses": sorted(runtime_statuses),
         "latest_telemetry_at": latest_telemetry.get("collected_at"),
         "active_incident_count": len(active_incidents),
+        "lifecycle_maturity": lifecycle or "unknown",
+        "execution_mode": execution_mode,
+        "operational_state": operational_state,
     }
 
 
@@ -3276,6 +3411,7 @@ def _project_persona_fleet_item(
     all_evolution_decisions: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
+    raw_meta = raw_persona.get("metadata") if isinstance(raw_persona.get("metadata"), Mapping) else {}
     routed = _routed_strategies_for_persona(persona_id)
     persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
 
@@ -3285,11 +3421,20 @@ def _project_persona_fleet_item(
         for binding in bindings
         if str(binding.get("id") or binding.get("binding_id") or "").strip()
     }
+    for meta_key in ("persona_capital_binding_id", "binding_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            binding_ids.add(val)
+
     capital_pool_ids = {
         str(binding.get("capital_pool_id") or "").strip()
         for binding in bindings
         if str(binding.get("capital_pool_id") or "").strip()
     }
+    for meta_key in ("capital_pool_id", "internal_paper_capital_pool_id", "legacy_paper_capital_pool_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            capital_pool_ids.add(val)
 
     sessions = list(_get_active_read_store().get_sessions_for_persona(persona_id) or [])
     runtime_refs = {
@@ -3297,6 +3442,23 @@ def _project_persona_fleet_item(
         for session in sessions
         if str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
     }
+    for meta_key in ("runtime_binding_id", "runtime_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            runtime_refs.add(val)
+
+    plan_ids: set[str] = set()
+    meta_plan_id = str(raw_meta.get("deployment_plan_id") or "").strip()
+    if meta_plan_id:
+        plan_ids.add(meta_plan_id)
+    auth_readback = raw_meta.get("provisioning_authoritative_readback")
+    if isinstance(auth_readback, Mapping):
+        dep_rb = auth_readback.get("deployment")
+        if isinstance(dep_rb, Mapping):
+            rb_plan_id = str(dep_rb.get("plan_id") or "").strip()
+            if rb_plan_id:
+                plan_ids.add(rb_plan_id)
+
     runtime_bindings = [
         binding
         for binding in all_runtime_bindings
@@ -3305,6 +3467,8 @@ def _project_persona_fleet_item(
             binding_ids=binding_ids,
             capital_pool_ids=capital_pool_ids,
             runtime_refs=runtime_refs,
+            persona_id=persona_id,
+            plan_ids=plan_ids,
         )
     ]
     runtime_ids = {
@@ -4970,6 +5134,8 @@ def _ensure_persona_exists(persona_id: str, caller_tenant: Optional[str] = None)
 def _retrieve_canonical_persona_memory(
     persona_id: str,
     identity: OperatorIdentity,
+    authorization: Optional[str] = None,
+    selected_tenant_id: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Read persona memory without falling back to BFF snapshots or workspace files."""
     base_url = (
@@ -4990,10 +5156,35 @@ def _retrieve_canonical_persona_memory(
             "repair_action": "configure_memory_service_url",
         }
 
+    # Forward the caller's verified credential; Memory derives roles/tenant
+    # from the token itself (query roles are never authority).
+    from services.control_plane.bff.core import owner_reads as _owner_reads
+    from services.control_plane.bff.command_adapters.base import bound_tenant
+
+    def verified_tenant_for(auth: str) -> str:
+        return bound_tenant({}, tenant_id=selected_tenant_id or _owner_reads.selected_tenant.get(), auth_token=auth.removeprefix("Bearer ").strip())
+
+    caller_auth = (authorization or _owner_reads.authorization.get() or "").strip()
+    if not caller_auth:
+        return [], source | {
+            "reason": "memory_plane_caller_auth_missing",
+            "repair_action": "authenticate_caller",
+        }
+    if not caller_auth.lower().startswith("bearer "):
+        caller_auth = f"Bearer {caller_auth}"
+    try:
+        tenant_id = verified_tenant_for(caller_auth)
+    except Exception:
+        return [], source | {
+            "reason": "memory_plane_tenant_unbound",
+            "http_status": 403,
+            "repair_action": "select_verified_tenant",
+        }
+
     params = urlencode(
         {
             "actor_id": identity.operator_id,
-            "actor_roles": ",".join(sorted(identity.roles)),
+            "actor_roles": "",
             "session_id": f"bff-persona-memory-{persona_id}",
             "persona_id": persona_id,
             "session_persona_id": persona_id,
@@ -5004,7 +5195,15 @@ def _retrieve_canonical_persona_memory(
     timeout = float(os.getenv("PANTHEON_MEMORY_API_TIMEOUT_SECONDS", "3"))
     try:
         with urllib_request.urlopen(
-            urllib_request.Request(f"{base_url}/api/memory/retrieve?{params}", method="GET"),
+            urllib_request.Request(
+                f"{base_url}/api/memory/retrieve?{params}",
+                headers={
+                    "Authorization": caller_auth,
+                    "X-Tenant-Id": tenant_id,
+                    "Accept": "application/json",
+                },
+                method="GET",
+            ),
             timeout=timeout,
         ) as response:
             payload = json.loads(response.read().decode("utf-8") or "{}")
@@ -11648,6 +11847,8 @@ def _persona_fleet_runtime_matches(
     binding_ids: set[str],
     capital_pool_ids: set[str],
     runtime_refs: set[str],
+    persona_id: Optional[str] = None,
+    plan_ids: Optional[set[str]] = None,
 ) -> bool:
     runtime_ids = {
         str(runtime_binding.get(key) or "").strip()
@@ -11656,6 +11857,13 @@ def _persona_fleet_runtime_matches(
     runtime_ids.discard("")
     if runtime_ids.intersection(runtime_refs):
         return True
+
+    clean_persona_id = str(persona_id or "").strip()
+    if clean_persona_id:
+        rb_meta = runtime_binding.get("metadata") if isinstance(runtime_binding.get("metadata"), Mapping) else {}
+        rb_persona_id = str(runtime_binding.get("persona_id") or rb_meta.get("persona_id") or "").strip()
+        if rb_persona_id and rb_persona_id == clean_persona_id:
+            return True
 
     persona_binding_id = str(runtime_binding.get("persona_capital_binding_id") or "").strip()
     if persona_binding_id and persona_binding_id in binding_ids:
@@ -11667,6 +11875,8 @@ def _persona_fleet_runtime_matches(
 
     plan_id = str(runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or "").strip()
     if plan_id:
+        if plan_ids and plan_id in plan_ids:
+            return True
         plan = _get_active_read_store().get_deployment_plan(plan_id) or {}
         plan_binding_ids = {
             str(value).strip()
@@ -13866,7 +14076,6 @@ def _sem_command_response(
     payload: Dict[str, Any],
     identity: OperatorIdentity,
     idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str] = None,
     status_code: int = 202,
     server_generated_target: bool = False,
     trusted_evidence_producer: Optional[str] = None,
@@ -13895,7 +14104,6 @@ def _sem_command_response(
         payload=payload,
         identity=identity,
         idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
         status_code=status_code,
         server_generated_target=server_generated_target,
         trusted_evidence_producer=trusted_evidence_producer,
@@ -15218,9 +15426,23 @@ class PersonaService:
         read_store = self.get_read_store()
         return list(read_store.list_deployment_plans() or [])
 
+    def get_deployment_plan(self, plan_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not plan_id:
+            return None
+        read_store = self.get_read_store()
+        fetcher = getattr(read_store, "get_deployment_plan", None)
+        return fetcher(plan_id) if callable(fetcher) else None
+
     def list_approval_decisions(self) -> List[Dict[str, Any]]:
         read_store = self.get_read_store()
         return list(read_store.list_approval_decisions() or [])
+
+    def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not decision_id:
+            return None
+        read_store = self.get_read_store()
+        fetcher = getattr(read_store, "get_approval_decision", None)
+        return fetcher(decision_id) if callable(fetcher) else None
 
     def get_persona_containment(self, persona_id: str) -> Optional[Dict[str, Any]]:
         read_store = self.get_read_store()
@@ -15267,10 +15489,9 @@ class PersonaService:
         payload: Dict[str, Any],
         identity: Any,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute the PATCH persona command objective and manage persistence and idempotency."""
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_final_idempotency_key(idempotency_key)
         caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
         raw = self.get_persona(persona_id)
         if not raw:

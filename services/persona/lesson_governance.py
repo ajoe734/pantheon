@@ -435,6 +435,7 @@ class LessonGovernanceService:
             written_at=utc_now(),
             write_authority="persona-memory-svc",
             relevance_scope=PersonaRelevanceScope.PERSONA_AND_COMMITTEE.value,
+            tenant_id=candidate.get("tenant_id"),
         )
 
         # Store in memory store

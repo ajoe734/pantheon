@@ -567,15 +567,14 @@ GitHub *branch protection* approvals required: **0** on both `master` and `dev` 
 
 Independent review is enforced off GitHub by the canonical review-before-merge gate (§ 2.3.1): a task PR whose canonical row assigns an independent reviewer gets no auto-merge and is merged by `scripts/git/auto_integrator.py` only at the exact head that reviewer approved in TaskStore.
 
-#### Operator Decisions (2026-09-08 & 2026-11-07), Residual Risk, and Restoration Steps
+#### Operator Decisions (2026-09-08, 2026-11-07, & 2026-11-08), Shared Identity Mode, and Residual Risk
 
-- **2026-09-08 decision (`OPS-GITHUB-REVIEW-GATE-001` / `OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001`)**: Because every Pantheon worker shares a single GitHub account and GitHub refuses self-review, the operator removed the GitHub-side review requirement and set `review_gate.github_review_bridge_required: false` in `.orchestrator/config.json` (TaskStore-only exact-head review mode). No `refs/tags/pantheon-review/*` proof tag is created while that policy is `false`.
-- **2026-11-07 confirmation (`OPS-REVIEW-GATE-QUIET-20261107`)**: An audit of the last 100 merged pull requests confirmed 99 merged only after an exact-head TaskStore approval and 1 was an explicit operator-requested direct delivery. The operator confirmed keeping TaskStore-only exact-head review mode and updated `scripts/git/canonical_review_gate_ci.py` so non-dry-run executions emit a workflow notice and exit `0` without calling `gh` or posting a failing `Pantheon canonical review gate` commit status in either `pantheon` or `execute-plans` while `review_gate.github_review_bridge_required` is `false`.
-- **Residual risk**: While all workers share one GitHub account, `review_gate.github_review_bridge_required` is `false`, and branch protection requires 0 approvals (with no pull-request review rule on `dev`), any holder of the shared GitHub credential can merge a PR without review via the GitHub API or web UI.
-- **Steps to restore GitHub-side review enforcement**:
-  1. Provision a dedicated GitHub identity for review that is separate from the worker GitHub identity so independent review actions do not hit GitHub's self-review restriction.
-  2. In `.orchestrator/config.json`, set `review_gate.github_review_bridge_required` to `true` and add `"Pantheon canonical review gate"` to `branch_workflow.task_pr.required_status_checks` in the same change (required by `.orchestrator/common.py::validate_review_bridge_policy`).
-  3. Add `"Pantheon canonical review gate"` back to GitHub branch protection `required_status_checks` on the protected target branches (`pantheon` `dev`/`master` and `execute-plans` `dev`/`main`).
+- **2026-09-08 decision (`OPS-GITHUB-REVIEW-GATE-001` / `OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001`)**: `OPS-REVIEW-PROOF-001` removed the fallback when GitHub refused self-approval (`422 Can not approve your own pull request`). Because every Pantheon worker shares the `ajoe734` GitHub account, every approval failed and the operator disabled the bridge by setting `review_gate.github_review_bridge_required: false` in `.orchestrator/config.json`.
+- **2026-11-07 confirmation (`OPS-REVIEW-GATE-QUIET-20261107`)**: `scripts/git/canonical_review_gate_ci.py` was updated so non-dry-run executions emit a workflow notice and exit `0` when `review_gate.github_review_bridge_required` is `false`, while publishing the `Pantheon canonical review gate` status when `true`.
+- **2026-11-08 shared identity mode (`OPS-REVIEW-GATE-SHARED-IDENTITY-20261108`)**: `.orchestrator/config.json` sets `review_gate.github_review_bridge_required: true`, sets `review_gate.github_review_identity: "shared"`, and adds `"Pantheon canonical review gate"` to `branch_workflow.task_pr.required_status_checks`. Under `github_review_identity: "shared"`, `scripts/git/github_review_bridge.py` records both `approve` and `reopen` decisions as a `COMMENT` pull request review (`event: "COMMENT"`, matched review state `"COMMENTED"`) on the exact PR head carrying the `<!-- pantheon-review-bridge ... -->` marker, never submits an `APPROVE` or `REQUEST_CHANGES` review, and then pushes the `refs/tags/pantheon-review/<decision>/<head_sha>` proof tag and dispatches `.github/workflows/canonical-review-gate.yml` (the sole issuer of the `Pantheon canonical review gate` commit status). When a PR is approved in TaskStore by an assigned reviewer distinct from the owner and no `approve`, `operator-accept`, or `reopen` tag exists yet for that exact head, `scripts/git/auto_integrator.py` self-heals by publishing the approve proof through the bridge, dispatching the workflow, and waiting instead of opening a `ci-red` unblock task.
+- **Branch protection status and cutover**: GitHub branch protection does **not** currently require `Pantheon canonical review gate`. Shared identity mode blocks merges without a proof tag at the GitHub layer **only once branch protection requires the gate**. After merge and runtime promotion, the coordinator verifies that live PRs in both `ajoe734/pantheon` and `ajoe734/execute-plans` receive a green `Pantheon canonical review gate` status and merge normally, and only then adds `Pantheon canonical review gate` (bound to the GitHub Actions app) to branch protection on `pantheon` `dev` and `execute-plans` `dev` only (`master` and `main` remain unchanged because promote PRs do not run the gate workflow). Rollback is setting `review_gate.github_review_bridge_required` back to `false`.
+- **Operator-directed direct deliveries**: Once the gate is required, operator-directed direct deliveries must use a `task/<TASK-ID>` branch with the existing operator acceptance proof (`refs/tags/pantheon-review/operator-accept/<head_sha>` via `operator-accept`), or a mechanical `delivery:tooling` PR for eligible tooling-only changes.
+- **Residual risk under the shared GitHub credential**: Any holder of the shared `ajoe734` GitHub credential can still push a `refs/tags/pantheon-review/*` proof tag or add the `delivery:tooling` label directly on GitHub; only provisioning a separate GitHub review identity (`github_review_identity: "independent"`) and restricting tag/label permissions closes that gap.
 
 ---
 
@@ -743,7 +742,9 @@ All workflow parameters live in `.orchestrator/config.json`:
     "required_status_checks": [
       "Commit trailers",
       "Runtime mirror guard",
-      "Smoke acceptance"
+      "Smoke acceptance",
+      "Service suites",
+      "Pantheon canonical review gate"
     ],
     "max_open_hours": 24
   },

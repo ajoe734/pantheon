@@ -42,23 +42,17 @@ def _stable_json_hash(payload: Dict[str, Any]) -> str:
 
 def _resolve_final_idempotency_key(
     idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
+    *_ignored: Any,
 ) -> str:
     """Mirrors bff/main.py::_resolve_final_idempotency_key."""
     canonical = str(idempotency_key or "").strip()
     if canonical:
         return canonical
-    alias = str(x_idempotency_key or "").strip()
-    if alias:
-        return alias
     raise bff_error(
         400,
         ErrorCode.VALIDATION_FAILED,
         "Idempotency-Key is required for operator commands",
-        (
-            "Final contract routes require a non-empty Idempotency-Key header; "
-            "X-Idempotency-Key is accepted as a temporary compatibility alias"
-        ),
+        "Final contract routes require a non-empty Idempotency-Key header",
         precondition_failed="idempotency_key",
         suggestion="Retry with Idempotency-Key set to a stable client retry key",
     )

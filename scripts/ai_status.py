@@ -200,6 +200,7 @@ from common import (
     durable_write_bytes,
     first_symlink_component,
     github_review_bridge_required,
+    github_review_identity,
     git_toplevel,
     normalize_github_repo_slug,
     prepare_activity_audit_unlocked,
@@ -7714,6 +7715,7 @@ def bridge_github_review_decision(
     config = load_config()
     try:
         repository_id = validate_task_repository_scope(config, task)
+        identity = github_review_identity(config)
     except (ValueError, RuntimeError) as exc:
         raise SystemExit(
             f"GitHub review bridge rejected {decision} for {task.get('id') or '?'}: {exc}"
@@ -7733,6 +7735,7 @@ def bridge_github_review_decision(
             message=message,
             binding=binding,
             intent_nonce=intent_nonce,
+            identity=identity,
         )
     except github_review_bridge.ReviewBindingMismatch as exc:
         raise ReviewBindingMismatchError(str(exc)) from exc

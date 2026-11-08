@@ -140,7 +140,7 @@ class PersonaRouteContext:
     read_surface_meta: Callable[..., Dict[str, Any]]
     raise_if_read_surface_unavailable: Callable[..., None]
     reject_body_idempotency_key: Callable[[Dict[str, Any]], None]
-    resolve_final_idempotency_key: Callable[[Optional[str], Optional[str]], str]
+    resolve_final_idempotency_key: Callable[[Optional[str]], str]
     submit_persona_action: Optional[Callable[..., Any]] = None
     run_management_read: Optional[Callable[..., Any]] = None
 

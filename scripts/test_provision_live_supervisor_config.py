@@ -986,9 +986,7 @@ def test_build_live_config_rejects_contradictory_review_bridge_policy(tmp_path):
     command, status = _roots(tmp_path)
     config = json.loads((command / ".orchestrator/config.json").read_text())
     config["review_gate"] = {"github_review_bridge_required": False}
-    config["branch_workflow"]["task_pr"]["required_status_checks"].append(
-        "Pantheon canonical review gate"
-    )
+    assert "Pantheon canonical review gate" in config["branch_workflow"]["task_pr"]["required_status_checks"]
     with pytest.raises(ValueError, match="contradictory review bridge policy"):
         provision.build_live_config(
             config,
@@ -1011,13 +1009,30 @@ def test_build_live_config_retains_declared_task_pr_status_checks(tmp_path):
         live_config_path=tmp_path / "runtime/live.json",
         python_executable=Path(sys.executable),
     )
-    assert rendered["review_gate"]["github_review_bridge_required"] is False
+    assert rendered["review_gate"]["github_review_bridge_required"] is True
+    assert rendered["review_gate"]["github_review_identity"] == "shared"
     assert rendered["branch_workflow"]["task_pr"]["required_status_checks"] == [
         "Commit trailers",
         "Runtime mirror guard",
         "Smoke acceptance",
         "Service suites",
+        "Pantheon canonical review gate",
     ]
+
+
+def test_build_live_config_rejects_invalid_github_review_identity(tmp_path):
+    command, status = _roots(tmp_path)
+    config = json.loads((command / ".orchestrator/config.json").read_text())
+    config["review_gate"]["github_review_identity"] = "invalid-identity"
+    with pytest.raises(ValueError, match="review_gate.github_review_identity must be 'shared' or 'independent'"):
+        provision.build_live_config(
+            config,
+            existing_live_config=None,
+            command_root=command,
+            status_root=status,
+            live_config_path=tmp_path / "runtime/live.json",
+            python_executable=Path(sys.executable),
+        )
 
 
 def test_shipped_repo_config_has_no_coordination_integration_path() -> None:

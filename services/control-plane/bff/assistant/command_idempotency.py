@@ -38,7 +38,7 @@ class CommandIdempotencyKeyRequired(CommandIdempotencyError):
 class CommandIdempotencyHeaderConflict(CommandIdempotencyError):
     def __init__(self) -> None:
         super().__init__(
-            "Idempotency-Key and X-Idempotency-Key must match when both are supplied",
+            "Conflicting idempotency headers supplied",
             reason="idempotency_header_conflict",
             status_code=400,
         )
@@ -87,17 +87,12 @@ class CommandIdempotencyStorageError(CommandIdempotencyError):
 
 def resolve_command_idempotency_key(
     idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
-    *,
+    *_ignored: Any,
     required: Optional[bool] = None,
 ) -> Optional[str]:
-    """Resolve the canonical header without silently accepting conflicting aliases."""
+    """Resolve the canonical Idempotency-Key header."""
 
-    canonical = str(idempotency_key or "").strip()
-    alias = str(x_idempotency_key or "").strip()
-    if canonical and alias and canonical != alias:
-        raise CommandIdempotencyHeaderConflict()
-    resolved = canonical or alias
+    resolved = str(idempotency_key or "").strip()
     if resolved and (len(resolved) > 255 or any(ord(char) < 32 for char in resolved)):
         raise CommandIdempotencyKeyInvalid()
     if not resolved:

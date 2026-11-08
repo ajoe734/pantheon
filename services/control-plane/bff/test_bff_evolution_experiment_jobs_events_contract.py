@@ -438,7 +438,7 @@ def _build_test_app(store: EvolutionExperimentJobsEventsTestReadPorts) -> FastAP
         dataset_surface_status=_dataset_surface_status,
         raise_if_read_surface_unavailable=_raise_if_unavailable,
         reject_body_idempotency_key=lambda p: None,
-        resolve_final_idempotency_key=lambda h, b: h or b or "key",
+        resolve_final_idempotency_key=lambda h: h or "key",
         submit_job_action=_submit_job_action,
     ))
 

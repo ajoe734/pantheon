@@ -707,7 +707,7 @@ def create_datasources_router(
             raise _error_handler(
                 status_code=400,
                 code="VALIDATION_FAILED",
-                message="X-Idempotency-Key header is required for source management commands",
+                message="Idempotency-Key header is required for source management commands",
                 reason="missing_idempotency_key",
             )
 
@@ -876,7 +876,7 @@ def create_datasources_router(
     )
     def bff_create_data_source(
         body: CreateDataSourceRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """POST /bff/management/data-sources: Create a new configured_disabled data source."""
@@ -892,7 +892,7 @@ def create_datasources_router(
             reason=reason,
             parameters=params,
             trace_id=trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 
@@ -904,7 +904,7 @@ def create_datasources_router(
     def bff_validate_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """POST /bff/management/data-sources/{source_instance_id}/actions/validate"""
@@ -915,7 +915,7 @@ def create_datasources_router(
             reason=body.reason,
             parameters=body.parameters or {},
             trace_id=body.trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 
@@ -927,7 +927,7 @@ def create_datasources_router(
     def bff_canary_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """POST /bff/management/data-sources/{source_instance_id}/actions/canary"""
@@ -938,7 +938,7 @@ def create_datasources_router(
             reason=body.reason,
             parameters=body.parameters or {},
             trace_id=body.trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 
@@ -950,7 +950,7 @@ def create_datasources_router(
     def bff_enable_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """POST /bff/management/data-sources/{source_instance_id}/actions/enable"""
@@ -962,7 +962,7 @@ def create_datasources_router(
             confirmation=body.confirmation,
             parameters=body.parameters or {},
             trace_id=body.trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 
@@ -974,7 +974,7 @@ def create_datasources_router(
     def bff_disable_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """POST /bff/management/data-sources/{source_instance_id}/actions/disable"""
@@ -985,7 +985,7 @@ def create_datasources_router(
             reason=body.reason,
             parameters=body.parameters or {},
             trace_id=body.trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 
@@ -997,7 +997,7 @@ def create_datasources_router(
     def bff_degrade_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """POST /bff/management/data-sources/{source_instance_id}/actions/degrade"""
@@ -1008,7 +1008,7 @@ def create_datasources_router(
             reason=body.reason,
             parameters=body.parameters or {},
             trace_id=body.trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 
@@ -1020,7 +1020,7 @@ def create_datasources_router(
     def bff_resume_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """POST /bff/management/data-sources/{source_instance_id}/actions/resume"""
@@ -1031,7 +1031,7 @@ def create_datasources_router(
             reason=body.reason,
             parameters=body.parameters or {},
             trace_id=body.trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 
@@ -1043,7 +1043,7 @@ def create_datasources_router(
     def bff_change_schedule_data_source(
         source_instance_id: str,
         body: ChangeScheduleRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """PUT /bff/management/data-sources/{source_instance_id}/schedule"""
@@ -1054,7 +1054,7 @@ def create_datasources_router(
             reason=body.reason,
             parameters={"schedule": body.schedule},
             trace_id=body.trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 
@@ -1066,7 +1066,7 @@ def create_datasources_router(
     def bff_replace_data_source(
         source_instance_id: str,
         body: ReplaceDataSourceRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """POST /bff/management/data-sources/{source_instance_id}/actions/replace"""
@@ -1078,7 +1078,7 @@ def create_datasources_router(
             confirmation=body.confirmation,
             parameters={"replacement_source_id": body.replacement_source_id},
             trace_id=body.trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 
@@ -1090,7 +1090,7 @@ def create_datasources_router(
     def bff_retire_data_source(
         source_instance_id: str,
         body: RetireDataSourceRequest = Body(...),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """POST /bff/management/data-sources/{source_instance_id}/actions/retire"""
@@ -1102,7 +1102,7 @@ def create_datasources_router(
             confirmation=body.confirmation,
             parameters={},
             trace_id=body.trace_id,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             authorization=authorization,
         )
 

@@ -33,6 +33,82 @@ def _latest_journey_updated_at(projections: List[Any]) -> Optional[str]:
     return max(stamps, key=lambda value: _parse_timestamp(value)) if stamps else None
 
 
+def _finite(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and number not in (float("inf"), float("-inf")) else None
+
+
+def grade_instrument_decisions(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Grade the direction call and the instrument choice separately.
+
+    ``rows`` are ``persona_instrument_counterfactual`` rows keyed
+    ``(decision_id, instrument_id)``.
+
+    * ``direction_hit``: sign of the underlying's next-close move
+      (``underlying_mark - underlying_entry``) equals the recorded view
+      direction.  It never looks at the instrument, so a correct call expressed
+      in a worse instrument is still a hit.  A decision with no underlying
+      prices, a FLAT view or a zero move is not graded (never a fabricated miss).
+    * ``instrument_regret``: best counterfactual PnL among the candidates
+      considered minus the chosen PnL (0 for a recorded no trade).
+    * ``margin_use``: initial margin of the chosen leg (0 for no trade).
+
+    Nothing is graded from missing data: an empty input returns ``None`` rates.
+    """
+    by_decision: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for row in rows or []:
+        if isinstance(row, dict) and str(row.get("decision_id") or "").strip():
+            by_decision[str(row["decision_id"])].append(row)
+    decisions: List[Dict[str, Any]] = []
+    for decision_id in sorted(by_decision):
+        group = by_decision[decision_id]
+        chosen = next((r for r in group if r.get("chosen")), None)
+        direction = str(next((r.get("view_direction") for r in group if r.get("view_direction")), "") or "").upper()
+        u_entry = u_mark = None
+        for r in group:
+            u_entry, u_mark = _finite(r.get("underlying_entry")), _finite(r.get("underlying_mark"))
+            if u_entry is not None and u_mark is not None:
+                break
+        hit: Optional[bool] = None
+        if direction in ("LONG", "SHORT") and u_entry is not None and u_mark is not None and u_mark != u_entry:
+            hit = (u_mark > u_entry) == (direction == "LONG")
+        chosen_pnl = _finite(chosen.get("pnl_cf")) if chosen is not None else 0.0
+        candidate_pnls = [(_finite(r.get("pnl_cf")), str(r.get("instrument_id"))) for r in group]
+        candidate_pnls = [(v, i) for v, i in candidate_pnls if v is not None]
+        regret: Optional[float] = None
+        best_id = None
+        if chosen_pnl is not None and candidate_pnls:
+            best_pnl, best_id = max(candidate_pnls, key=lambda item: (item[0], item[1]))
+            regret = round(max(best_pnl, chosen_pnl) - chosen_pnl, 6)
+        decisions.append({
+            "decision_id": decision_id,
+            "direction_hit": hit,
+            "instrument_regret": regret,
+            "margin_use": (_finite(chosen.get("margin_use")) or 0.0) if chosen is not None else 0.0,
+            "chosen_instrument_id": str(chosen.get("instrument_id")) if chosen is not None else None,
+            "best_instrument_id": best_id,
+            "chosen_pnl": chosen_pnl,
+        })
+    graded = [d for d in decisions if d["direction_hit"] is not None]
+    regrets = [d["instrument_regret"] for d in decisions if d["instrument_regret"] is not None]
+    hits = sum(1 for d in graded if d["direction_hit"])
+    return {
+        "direction_hit_rate": round(hits / len(graded), 6) if graded else None,
+        "direction_hit_count": hits,
+        "direction_graded_count": len(graded),
+        "instrument_regret": round(sum(regrets), 6) if regrets else None,
+        "instrument_regret_graded_count": len(regrets),
+        "margin_use": round(sum(d["margin_use"] for d in decisions), 6) if decisions else None,
+        "decision_count": len(decisions),
+        "decisions": decisions,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Pydantic Models for Agora Strategy Performance Attribution
 # ---------------------------------------------------------------------------
@@ -100,6 +176,11 @@ class TradingRoomPerformanceAttributionSummary(BaseModel):
     total_trades: int = 0
     latest_telemetry_at: Optional[str] = None
     basis: str = "owner_scoped_strategy_attribution"
+    # Learning grades are separate fields: a correct call in a worse instrument
+    # is a direction hit with positive regret. None = nothing graded.
+    direction_hit_rate: Optional[float] = None
+    instrument_regret: Optional[float] = None
+    margin_use: Optional[float] = None
 
 
 class PerformanceAttributionPageInfo(BaseModel):

@@ -336,7 +336,6 @@ def _register_evolution_programs_routes(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         """Create an evolution program. ``name`` is required (422 otherwise).
 
@@ -378,7 +377,7 @@ def _register_evolution_programs_routes(
             )
         actor_id = getattr(identity, "operator_id", "operator-1")
         tenant_id = _identity_tenant(identity)
-        key = (idempotency_key or x_idempotency_key or "").strip() or None
+        key = (idempotency_key or "").strip() or None
         try:
             return await resolved_commands.create_program(
                 caller_token=authorization,
@@ -409,7 +408,6 @@ def _register_evolution_programs_routes(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         """Patch ``name`` only (U8A metadata allowlist).
 
@@ -464,7 +462,7 @@ def _register_evolution_programs_routes(
             )
         actor_id = getattr(identity, "operator_id", "operator-1")
         tenant_id = _identity_tenant(identity)
-        key = (idempotency_key or x_idempotency_key or "").strip() or None
+        key = (idempotency_key or "").strip() or None
         snapshot_at = utc_now()
         try:
             updated = await resolved_commands.patch_program_name(
@@ -537,7 +535,6 @@ def _register_evolution_programs_routes(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
@@ -550,7 +547,7 @@ def _register_evolution_programs_routes(
                 f"Operator role(s) {sorted(roles)} not authorized for {action_id}; approver or admin required",
                 precondition_failed="role_check",
             )
-        resolved_key = (idempotency_key or x_idempotency_key or "").strip()
+        resolved_key = (idempotency_key or "").strip()
         read_store = _resolve_read_store()
         clean_id = program_id.strip()
         _require_program(read_store, clean_id)

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from services.knowledge.evidence import JsonlEvidenceRepository
 from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanDatasetAdapter
 from services.source_ingestion.source_health import SourceHealth, SourceHealthStore
+from services.source_ingestion.pipeline import compact_bulk_market_record as _compact_bulk_market_record
 
 
 RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -232,7 +233,7 @@ def test_finmind_price_identity_survives_bulk_compaction_and_jsonl_reload(client
         trace_id="trace-finmind-price-persistence",
     )[0]
 
-    compacted = module._compact_bulk_market_record(
+    compacted = _compact_bulk_market_record(
         record,
         {
             "raw_refs": [

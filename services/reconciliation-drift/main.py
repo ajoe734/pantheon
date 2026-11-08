@@ -3746,6 +3746,18 @@ _REVERSAL_REF_KEYS = (
     "correction_of",
 )
 _REVERSAL_STATUSES = {"reversed", "corrected", "cancelled", "canceled", "rejected", "voided"}
+# Terminal outcomes that never commit a fill: a gate rejection, a recorded no
+# trade, or an expiry settlement. They are neither unreconciled nor duplicates.
+_NON_FILL_EVENT_TYPES = frozenset(
+    {
+        "order_rejection",
+        "order_rejection_simulated",
+        "paper_order_simulated",
+        "paper_futures_settled",
+        "paper_margin_call",
+        "paper_forced_liquidation",
+    }
+)
 
 
 def _event_dto(body: Any) -> Dict[str, Any] | None:
@@ -3823,6 +3835,12 @@ def _duplicate_execution_analysis(
     groups: Dict[tuple, Dict[str, Any]] = {}
     for event_id, dto in events.items():
         m, mt = meta(dto), metrics(dto)
+        if str(dto.get("event_type") or "").strip() in _NON_FILL_EVENT_TYPES and not _numeric(
+            mt.get("fill_quantity")
+        ):
+            # Only a zero or absent fill quantity is exempt; a non-fill event
+            # that reports a fill stays on the ambiguity path below.
+            continue
         broker_order_id = str(m.get("broker_order_id") or dto.get("order_id") or "").strip()
         status = str(m.get("broker_submission_status") or "").strip().lower()
         is_reversal = (
@@ -3864,6 +3882,9 @@ def _duplicate_execution_analysis(
         missing = [k for k, v in identity.items() if not str(v or "").strip()]
         if missing:
             return unmeasured("incomplete_decision_identity", event_id=event_id, missing_fields=missing)
+        # A cash share and a future on the same underlying are distinct
+        # instruments of one decision; a fill without one (legacy) keys on "".
+        instrument_id = str(m.get("instrument_id") or dto.get("instrument_id") or "").strip()
         checksum = str(
             m.get("plan_checksum") or dto.get("plan_checksum")
             or m.get("deployment_plan_checksum") or dto.get("deployment_plan_checksum") or ""
@@ -3882,6 +3903,7 @@ def _duplicate_execution_analysis(
             str(identity["plan_id"]).strip(),
             checksum,
             str(identity["capital_pool_id"]).strip(),
+            instrument_id,
         )
         if fill is None or requested is None or requested <= 0:
             return unmeasured("incomparable_execution_evidence", event_id=event_id)
@@ -3943,6 +3965,7 @@ def _duplicate_execution_analysis(
             "artifact_id": decision[3], "artifact_version": decision[4], "signal_id": decision[5],
             "run_id": decision[6], "symbol": decision[7], "action": decision[8], "bar": decision[9],
             "plan_id": decision[10], "plan_checksum": decision[11], "capital_pool_id": decision[12],
+            "instrument_id": decision[13] or None,
         },
         "plan_id": decision[10],
         "capital_pool_id": decision[12],

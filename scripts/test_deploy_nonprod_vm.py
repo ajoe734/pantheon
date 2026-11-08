@@ -1924,6 +1924,9 @@ def _run_pinned_taiwan_preflight(
     *,
     force: bool = False,
     symbols: str | None = None,
+    connector_id: str | None = None,
+    dataset: str | None = None,
+    readback_connectors: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the real preflight heredoc at a pinned clock against per-symbol stub snapshots."""
     import http.server
@@ -1934,10 +1937,20 @@ def _run_pinned_taiwan_preflight(
     script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
     body = script.split("<<'PREFLIGHT_PY'\n", 1)[1].split("\nPREFLIGHT_PY", 1)[0]
     requested: list[str] = []
+    requested_paths: list[str] = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            symbol = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)["symbol"][0]
+            requested_paths.append(self.path)
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/api/source-ingest/controller/readback":
+                payload = json.dumps({"connectors": readback_connectors or []}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            symbol = urllib.parse.parse_qs(parsed.query)["symbol"][0]
             requested.append(symbol)
             snap = snapshots.get(symbol)
             payload = json.dumps(snap if snap is not None else {"detail": "not found"}).encode()
@@ -1959,8 +1972,14 @@ def _run_pinned_taiwan_preflight(
     }
     env.pop("PANTHEON_DEV_PAPER_BASELINE_SYMBOL", None)
     env.pop("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", None)
+    env.pop("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", None)
+    env.pop("SOURCE_INGEST_BOUNDED_DATASET", None)
     if symbols is not None:
         env["SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"] = symbols
+    if connector_id is not None:
+        env["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] = connector_id
+    if dataset is not None:
+        env["SOURCE_INGEST_BOUNDED_DATASET"] = dataset
     try:
         proc = subprocess.run(
             ["python3", "-c", f"import sys\nexec(compile({body!r}, 'preflight', 'exec'))\n", "true" if force else "false"],
@@ -1974,6 +1993,7 @@ def _run_pinned_taiwan_preflight(
         server.shutdown()
     result = json.loads(proc.stdout)
     result["_requested"] = requested
+    result["_requested_paths"] = requested_paths
     return result
 
 
@@ -2428,3 +2448,238 @@ def test_bounded_refresh_entrypoint_resolves_active_symbols_before_preflight() -
     preflight = body.index('check_taiwan_refresh_preflight "${force}"')
     no_symbols_skip = body.index("no_active_taiwan_symbols")
     assert resolve < preflight < no_symbols_skip
+
+
+def test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs() -> None:
+    deploy_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8"))
+    refresh_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "dev-tw-market-refresh.yml").read_text(encoding="utf-8"))
+
+    deploy_steps = deploy_wf["jobs"]["deploy-dev"]["steps"]
+    deploy_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(deploy_steps) if s.get("id")}
+    assert deploy_by_id["market_refresh"][0] < deploy_by_id["taifex_market_refresh"][0]
+    assert deploy_by_id["deploy"][0] < deploy_by_id["bounded_taifex_refresh"][0]
+    assert deploy_by_id["taifex_market_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert deploy_by_id["taifex_market_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert deploy_by_id["taifex_market_refresh"][1]["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+    assert deploy_by_id["bounded_taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert deploy_by_id["bounded_taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert "openapi.taifex.com.tw,www.taifex.com.tw" in deploy_by_id["bounded_taifex_refresh"][1]["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"]
+
+    refresh_steps = refresh_wf["jobs"]["refresh"]["steps"]
+    refresh_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(refresh_steps) if s.get("id")}
+    assert refresh_by_id["refresh"][0] < refresh_by_id["taifex_refresh"][0]
+    assert refresh_by_id["taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert refresh_by_id["taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert refresh_by_id["taifex_refresh"][1]["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+
+
+def test_deploy_script_source_refresh_allowed_hosts_never_appends_twse_to_taifex() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    init_block = source.split("SOURCE_REFRESH_MAX_CONCURRENCY=", 1)[1].split("DEV_APP_DB_USER=", 1)[0]
+    script = (
+        "set -euo pipefail\n"
+        'SOURCE_REFRESH_SELECTED="true"\n'
+        'SOURCE_REFRESH_ALLOWED_HOSTS="openapi.taifex.com.tw,www.taifex.com.tw"\n'
+        'SOURCE_INGEST_BOUNDED_CONNECTOR_ID="tw-taifex-futures-options-chip"\n'
+        'SOURCE_INGEST_BOUNDED_DATASET="taifex_ssf_contracts"\n'
+        "SOURCE_REFRESH_MAX_CONCURRENCY=" + init_block + "\n"
+        'printf "connector=%s\\ndataset=%s\\nhosts=%s\\n" '
+        '"${SOURCE_REFRESH_CONNECTOR_ID}" "${SOURCE_REFRESH_DATASET}" "${SOURCE_REFRESH_ALLOWED_HOSTS}"\n'
+    )
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False, cwd=ROOT)
+    assert proc.returncode == 0, proc.stderr
+    assert "connector=tw-taifex-futures-options-chip" in proc.stdout
+    assert "dataset=taifex_ssf_contracts" in proc.stdout
+    assert "hosts=openapi.taifex.com.tw,www.taifex.com.tw" in proc.stdout
+    assert "www.twse.com.tw" not in proc.stdout
+
+
+def test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh() -> None:
+    fresh_twse = _stored_tw_snapshot("2026-11-06", "2026-11-06T07:10:00Z")
+
+    # Even when TWSE 2330.TW snapshot is fresh, TAIFEX preflight must proceed if SSF readback is missing
+    missing_res = _run_pinned_taiwan_preflight(
+        "2026-11-06T08:00:00Z",
+        {"2330.TW": fresh_twse},
+        connector_id="tw-taifex-futures-options-chip",
+        dataset="taifex_ssf_contracts",
+        readback_connectors=[],
+    )
+    assert (missing_res["status"], missing_res["reason"]) == ("proceed", "dataset_missing")
+    assert any("/api/source-ingest/controller/readback" in p for p in missing_res["_requested_paths"])
+
+    # When TAIFEX SSF readback is fresh for the closed session, preflight returns noop/already_fresh
+    fresh_ssf = {
+        "connector_id": "tw-taifex-futures-options-chip",
+        "freshness": {"last_success_at": "2026-11-06T07:20:00Z"},
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc",
+            "status": "normalized",
+            "metadata": {"date": "2026-11-06", "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+            "provenance": {"dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+        },
+    }
+    fresh_res = _run_pinned_taiwan_preflight(
+        "2026-11-06T08:00:00Z",
+        {"2330.TW": fresh_twse},
+        connector_id="tw-taifex-futures-options-chip",
+        dataset="taifex_ssf_contracts",
+        readback_connectors=[fresh_ssf],
+    )
+    assert (fresh_res["status"], fresh_res["reason"]) == ("noop", "already_fresh")
+    assert fresh_res["dataset"] == "taifex_ssf_contracts"
+
+
+def test_nonprod_deploy_workflow_dev_paper_expression_layer_default_and_steps() -> None:
+    deploy_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8"))
+    expected_expr = "${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}"
+
+    dev_steps = deploy_wf["jobs"]["deploy-dev"]["steps"]
+    dev_by_id = {s.get("id"): s for s in dev_steps if s.get("id")}
+    dev_by_name = {s.get("name"): s for s in dev_steps if s.get("name")}
+
+    assert dev_by_id["deploy"]["env"]["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] == expected_expr
+    assert dev_by_id["deploy_compensation"]["env"]["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] == expected_expr
+    assert (
+        dev_by_name["Deploy bootstrap predecessor pair in strict live read-only mode under lease"]["env"][
+            "PANTHEON_DEV_PAPER_EXPRESSION_LAYER"
+        ]
+        == expected_expr
+    )
+
+    frontend_steps = deploy_wf["jobs"]["coordinate-dev-release"]["steps"]
+    frontend_by_id = {s.get("id"): s for s in frontend_steps if s.get("id")}
+    for step_id in ("final_artifact_verify", "roundtrip_baseline_restore", "roundtrip_final_return", "compensation"):
+        assert frontend_by_id[step_id]["env"]["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] == expected_expr
+
+    for job_name, job in deploy_wf["jobs"].items():
+        if "staging" in job_name or "prod" in job_name:
+            job_dump = json.dumps(job)
+            assert "DEV_PAPER_EXPRESSION_LAYER" not in job_dump
+
+    plan_doc = (ROOT / "docs" / "deployment" / "vm-dev-staging-prod-management-plan.md").read_text(encoding="utf-8")
+    sec_3_1 = plan_doc.split("### 3.1 Dev", 1)[1].split("### 3.2 Staging", 1)[0]
+    assert "| `DEV_PAPER_EXPRESSION_LAYER` |" in sec_3_1
+    assert "`off`" in sec_3_1
+
+
+def test_deploy_nonprod_vm_preflight_paper_expression_layer_flag(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    ssh_args_file = tmp_path / "ssh_args.txt"
+    stub_ssh = bin_dir / "ssh"
+    stub_ssh.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{ssh_args_file}'\nexit 0\n",
+        encoding="utf-8",
+    )
+    stub_ssh.chmod(0o755)
+
+    base_env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "DEV_BFF_AUTH_MODE": "permissive",
+        "DEV_BFF_AUTH_STUB": "true",
+    }
+    base_env.pop("PANTHEON_DEV_PAPER_EXPRESSION_LAYER", None)
+    base_env.pop("DEV_PAPER_EXPRESSION_LAYER", None)
+
+    # Unset resolves to off
+    unset_res = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "root", "--sha", "a" * 40, "--dry-run"],
+        cwd=ROOT,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert unset_res.returncode == 0, unset_res.stderr
+    assert "dev_paper_expression_layer=off" in unset_res.stdout
+    assert not ssh_args_file.exists()
+
+    # Explicit 'off' and 'on' succeed preflight
+    for valid_val in ("off", "on"):
+        res = subprocess.run(
+            ["bash", str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "root", "--sha", "a" * 40, "--dry-run"],
+            cwd=ROOT,
+            env={**base_env, "PANTHEON_DEV_PAPER_EXPRESSION_LAYER": valid_val},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr
+        assert f"dev_paper_expression_layer={valid_val}" in res.stdout
+        assert not ssh_args_file.exists()
+
+    # Invalid values fail preflight with an explicit message before any VM/SSH step
+    for invalid_val in ("true", "1", "invalid", ""):
+        res = subprocess.run(
+            ["bash", str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "root", "--sha", "a" * 40],
+            cwd=ROOT,
+            env={**base_env, "PANTHEON_DEV_PAPER_EXPRESSION_LAYER": invalid_val},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode != 0
+        assert (
+            f"PANTHEON_DEV_PAPER_EXPRESSION_LAYER must be on or off (got: {invalid_val})"
+            in res.stderr
+        )
+        assert not ssh_args_file.exists()
+
+
+
+def _bounded_refresh_wait_harness(tmp_path: Path, state: str, exit_code: str) -> subprocess.CompletedProcess[str]:
+    """Run the real wait/dump/redact functions against a fake docker."""
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("redact_bounded_refresh_log() {")
+    end = source.index("\nresolve_bounded_source_refresh_active_symbols()")
+    functions = source[start:end]
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZXYifQ.c2lnbmF0dXJlLXZhbHVl"
+    log_lines = [f"line-{i}" for i in range(1, 301)]
+    log_lines[-1] = f"ERROR Authorization: Bearer supersecretbearer123 token={jwt}"
+    (tmp_path / "container.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+    script = tmp_path / "harness.sh"
+    script.write_text(
+        "set -uo pipefail\n"
+        f'FAKE_STATE="{state}"\nFAKE_EXIT="{exit_code}"\nLOG_FILE="{tmp_path / "container.log"}"\n'
+        'SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=30\n'
+        'SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX=pantheon-bounded-refresh\n'
+        'error() { echo "[remote-deploy] ERROR: $*" >&2; exit 1; }\n'
+        'sleep() { :; }\n'
+        'docker() {\n'
+        '  case "$1" in\n'
+        '    ps) echo cid123 ;;\n'
+        '    inspect) if [[ "$*" == *State.Status* ]]; then echo "$FAKE_STATE"; else echo "$FAKE_EXIT"; fi ;;\n'
+        '    logs) shift; [[ "$1" == "--tail" ]] && tail -n "$2" "$LOG_FILE" ;;\n'
+        '  esac\n'
+        '}\n'
+        + functions
+        + '\nwait_for_bounded_source_refresh_service source-ingest-scheduler\n',
+        encoding="utf-8",
+    )
+    return subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.parametrize("state,exit_code", [("exited", "1"), ("dead", "0")])
+def test_bounded_refresh_failure_prints_last_200_log_lines_redacted(
+    tmp_path: Path, state: str, exit_code: str
+) -> None:
+    result = _bounded_refresh_wait_harness(tmp_path, state, exit_code)
+    assert result.returncode == 1
+    assert "last 200 log lines (redacted)" in result.stderr
+    assert "line-101" in result.stderr and "line-299" in result.stderr
+    assert "line-100\n" not in result.stderr  # only the last 200 lines
+    assert "supersecretbearer123" not in result.stderr
+    assert "eyJhbGciOiJIUzI1NiJ9" not in result.stderr
+    assert "Bearer [REDACTED]" in result.stderr
+    assert "[REDACTED_JWT]" in result.stderr or "token=" in result.stderr
+    # Logs are printed before the terminal error so they survive container removal.
+    assert result.stderr.index("last 200 log lines") < result.stderr.index("ERROR:")
+
+
+def test_bounded_refresh_success_does_not_print_container_logs(tmp_path: Path) -> None:
+    result = _bounded_refresh_wait_harness(tmp_path, "exited", "0")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "cid123"
+    assert "log lines" not in result.stderr

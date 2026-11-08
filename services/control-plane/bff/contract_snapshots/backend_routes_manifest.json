@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-11-05",
+    "snapshot_date": "2026-11-08",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 626,
+    "total_routes": 623,
     "status_values": [
       "implemented",
       "alias",
@@ -922,7 +922,8 @@
       "method": "GET",
       "path": "/api/v1/deployment-plans",
       "family": "api-v1",
-      "status": "implemented"
+      "status": "superseded",
+      "covered_by": "GET /bff/deployments"
     },
     {
       "method": "GET",
@@ -1480,24 +1481,11 @@
       "method": "GET",
       "path": "/bff/ranking-formulas",
       "family": "capital-ranking-rebalance",
-      "status": "alias",
-      "covered_by": "GET /bff/ranking/formulas"
+      "status": "implemented"
     },
     {
       "method": "GET",
       "path": "/bff/ranking-formulas/{param}",
-      "family": "capital-ranking-rebalance",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/ranking/formulas",
-      "family": "capital-ranking-rebalance",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/ranking/formulas/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
@@ -1539,12 +1527,6 @@
     },
     {
       "method": "PATCH",
-      "path": "/bff/ranking/formulas/{param}",
-      "family": "capital-ranking-rebalance",
-      "status": "implemented"
-    },
-    {
-      "method": "PATCH",
       "path": "/bff/rebalances/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
@@ -1564,13 +1546,6 @@
     {
       "method": "POST",
       "path": "/bff/ranking-formulas",
-      "family": "capital-ranking-rebalance",
-      "status": "alias",
-      "covered_by": "POST /bff/ranking/formulas"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/ranking/formulas",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
@@ -2900,6 +2875,12 @@
     {
       "method": "POST",
       "path": "/bff/personas/{param}/actions/{param}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/provisioning/advisory-admission",
       "family": "strategy-persona",
       "status": "implemented"
     },

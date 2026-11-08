@@ -521,6 +521,62 @@ class CanonicalOwnerAdapter:
         return resp
 
 
+# Risk-gate rejection reasons the expression layer's order gate can emit
+# (DEV_PLAN_INSTRUMENT_EXPRESSION_LAYER section 4.5) plus the pre-existing
+# sell_without_holdings. Any other reason (for example a broker error) is not a
+# Loop 9 terminal and must keep failing closed.
+GATE_REJECTION_REASONS = frozenset(
+    {
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+        "sell_without_holdings",
+    }
+)
+FILL_EVENT_TYPES = ("paper_fill_simulated", "order_fill")
+
+
+def classify_lifecycle_terminal(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Classify a telemetry event as a Loop 9 terminal outcome, or None.
+
+    kind is one of ``fill``, ``rejection`` (risk-gate order_rejection),
+    ``no_trade`` (recorded paper_order_simulated no trade) or ``settlement``
+    (paper_futures_settled). ``expected_broker_status`` is the exact
+    broker_submission_status the owner publishes for that outcome, or None
+    when only its ``not_submitted`` family is required.
+    """
+    ev_type = event.get("event_type")
+    meta = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+    if ev_type in FILL_EVENT_TYPES:
+        return {"kind": "fill", "expected_broker_status": "filled", "reason": None}
+    if ev_type == "order_rejection":
+        reason = meta.get("reason") or event.get("reason")
+        if reason in GATE_REJECTION_REASONS:
+            return {"kind": "rejection", "expected_broker_status": str(reason), "reason": str(reason)}
+        return None
+    if ev_type == "paper_order_simulated":
+        status = str(meta.get("broker_submission_status") or "")
+        recorded_no_trade = bool(meta.get("noop_reason")) or meta.get("decision_status") == "no_order"
+        if recorded_no_trade and status.startswith("not_submitted"):
+            return {
+                "kind": "no_trade",
+                "expected_broker_status": None,
+                "reason": str(meta.get("noop_reason") or "no_order"),
+            }
+        return None
+    if ev_type == "paper_futures_settled":
+        return {
+            "kind": "settlement",
+            "expected_broker_status": "not_submitted_expiry_settlement",
+            "reason": None,
+        }
+    return None
+
+
 class DevRuntimePaperLifecycleProbe:
     """Executes preflight and paper lifecycle probe for Loops 8 and 9."""
 
@@ -949,7 +1005,6 @@ class DevRuntimePaperLifecycleProbe:
             "artifact_type": "execution_bundle",
             "artifact_state": "approved",
             "deployment_stage": "paper",
-            "promotion_state": "paper",
             "checksum": checksum,
             "created_at": utc_now(),
         }
@@ -1298,12 +1353,7 @@ class DevRuntimePaperLifecycleProbe:
                 if isinstance(event.get("metadata"), Mapping)
                 else {}
             )
-            if ev_type in ("paper_fill_simulated", "order_fill"):
-                return {"event": event, "summary": summary}
-            if ev_type == "order_rejection" and (
-                ev_meta.get("reason") == "sell_without_holdings"
-                or event.get("reason") == "sell_without_holdings"
-            ):
+            if classify_lifecycle_terminal(event) is not None:
                 return {"event": event, "summary": summary}
             return None
 
@@ -1331,8 +1381,23 @@ class DevRuntimePaperLifecycleProbe:
                 f"Telemetry event runtime_id {runtime_event.get('runtime_id')!r} != stimulus runtime_id {runtime_id!r}"
             )
 
+        terminal = classify_lifecycle_terminal(runtime_event)
+        if terminal is None:
+            raise ProbeError(
+                f"Telemetry event {event_id} is not a recognised Loop 9 terminal outcome: "
+                f"{runtime_event.get('event_type')!r}"
+            )
+        # A rejection, a recorded no trade or an expiry settlement never fills:
+        # it has no fill episode and is proved by the lifecycle event itself.
+        is_non_fill_terminal = terminal["kind"] != "fill"
+        # An expiry settlement is raised by the ledger on the trade date, not by
+        # the probe's signal stimulus, so it carries no stimulus correlation.
+        is_stimulus_terminal = terminal["kind"] != "settlement"
+
         corr_env = runtime_event.get("correlation_envelope")
-        if not isinstance(corr_env, Mapping) or corr_env.get("correlation_id") != correlation_id:
+        if is_stimulus_terminal and (
+            not isinstance(corr_env, Mapping) or corr_env.get("correlation_id") != correlation_id
+        ):
             raise CorrelationMismatchError(
                 f"Telemetry event missing or mismatched correlation envelope: {corr_env!r} (expected correlation_id {correlation_id!r})"
             )
@@ -1351,25 +1416,18 @@ class DevRuntimePaperLifecycleProbe:
                 f"Telemetry event metadata.is_real_order must be explicitly False, got {event_metadata.get('is_real_order')!r}"
             )
 
-        is_sell_without_holdings = (
-            runtime_event.get("event_type") == "order_rejection"
-            and (
-                event_metadata.get("reason") == "sell_without_holdings"
-                or runtime_event.get("reason") == "sell_without_holdings"
-            )
-        )
-        expected_broker_status = (
-            "sell_without_holdings" if is_sell_without_holdings else "filled"
-        )
+        expected_broker_status = terminal["expected_broker_status"]
+        if expected_broker_status is None:
+            expected_broker_status = str(event_metadata.get("broker_submission_status") or "")
         if event_metadata.get("broker_submission_status") != expected_broker_status:
             raise ProbeError(
                 f"Telemetry event broker_submission_status must be {expected_broker_status!r}, got {event_metadata.get('broker_submission_status')!r}"
             )
-        if event_metadata.get("artifact_signal_not_smoke") is not True:
+        if is_stimulus_terminal and event_metadata.get("artifact_signal_not_smoke") is not True:
             raise ProbeError(
                 f"Telemetry event artifact_signal_not_smoke must be explicitly True, got {event_metadata.get('artifact_signal_not_smoke')!r}"
             )
-        if event_metadata.get("source_snapshot_driven") is not True:
+        if is_stimulus_terminal and event_metadata.get("source_snapshot_driven") is not True:
             raise ProbeError(
                 f"Telemetry event source_snapshot_driven must be explicitly True, got {event_metadata.get('source_snapshot_driven')!r}"
             )
@@ -1464,8 +1522,8 @@ class DevRuntimePaperLifecycleProbe:
                 return dict(ep)
             return None
 
-        if is_sell_without_holdings:
-            episode_receipt_id = f"rejection-summary-{runtime_id}-{event_id}"
+        if is_non_fill_terminal:
+            episode_receipt_id = f"{terminal['kind']}-summary-{runtime_id}-{event_id}"
             trade_episode_receipt = {
                 "episode_id": episode_receipt_id,
                 "trade_episode_id": episode_receipt_id,
@@ -1473,8 +1531,8 @@ class DevRuntimePaperLifecycleProbe:
                 "binding_id": binding_id,
                 "runtime_binding_id": binding_id,
                 "event_id": event_id,
-                "status": "rejected",
-                "reason": "sell_without_holdings",
+                "status": "rejected" if terminal["kind"] == "rejection" else terminal["kind"],
+                "reason": terminal["reason"] or terminal["kind"],
                 "fill_count": 0,
                 "filled_quantity": 0.0,
             }
@@ -1557,11 +1615,12 @@ class DevRuntimePaperLifecycleProbe:
                 },
             },
             "assertions": {
-                "artifact_signal_not_smoke": True,
+                "terminal_outcome": terminal["kind"],
+                "artifact_signal_not_smoke": is_stimulus_terminal,
                 "is_real_capital": False,
                 "is_real_order": False,
                 "broker_submission_status": expected_broker_status,
-                "source_snapshot_driven": True,
+                "source_snapshot_driven": is_stimulus_terminal,
                 "liveness_heartbeat_verified": True,
                 "trade_episode_consumer_verified": True,
             },
@@ -1668,7 +1727,9 @@ class DevRuntimePaperLifecycleProbe:
             )
 
         rel_corr_env = reloaded_event.get("correlation_envelope")
-        if not isinstance(rel_corr_env, Mapping) or rel_corr_env.get("correlation_id") != correlation_id:
+        if is_stimulus_terminal and (
+            not isinstance(rel_corr_env, Mapping) or rel_corr_env.get("correlation_id") != correlation_id
+        ):
             raise ReloadMismatchError(
                 f"Reloaded event correlation envelope mismatch: {rel_corr_env}"
             )
@@ -1689,18 +1750,22 @@ class DevRuntimePaperLifecycleProbe:
             raise ReloadMismatchError(
                 f"Reloaded event broker_submission_status must be {expected_broker_status!r}, got {rel_meta.get('broker_submission_status')!r}"
             )
-        if is_sell_without_holdings and (
-            rel_meta.get("reason") != "sell_without_holdings"
-            and reloaded_event.get("reason") != "sell_without_holdings"
+        if terminal["kind"] == "rejection" and (
+            rel_meta.get("reason") != terminal["reason"]
+            and reloaded_event.get("reason") != terminal["reason"]
         ):
             raise ReloadMismatchError(
-                f"Reloaded event reason must be 'sell_without_holdings', got {rel_meta.get('reason')!r}"
+                f"Reloaded event reason must be {terminal['reason']!r}, got {rel_meta.get('reason')!r}"
             )
-        if rel_meta.get("artifact_signal_not_smoke") is not True:
+        if reloaded_event.get("event_type") != runtime_event.get("event_type"):
+            raise ReloadMismatchError(
+                f"Reloaded event_type {reloaded_event.get('event_type')!r} != {runtime_event.get('event_type')!r}"
+            )
+        if is_stimulus_terminal and rel_meta.get("artifact_signal_not_smoke") is not True:
             raise ReloadMismatchError(
                 f"Reloaded event artifact_signal_not_smoke must be True, got {rel_meta.get('artifact_signal_not_smoke')!r}"
             )
-        if rel_meta.get("source_snapshot_driven") is not True:
+        if is_stimulus_terminal and rel_meta.get("source_snapshot_driven") is not True:
             raise ReloadMismatchError(
                 f"Reloaded event source_snapshot_driven must be True, got {rel_meta.get('source_snapshot_driven')!r}"
             )
@@ -1759,7 +1824,7 @@ class DevRuntimePaperLifecycleProbe:
             )
 
         # Fresh reload Loop 9 trade episode receipt (Finding 3)
-        if is_sell_without_holdings:
+        if is_non_fill_terminal:
             reloaded_recent_ids = reloaded_summary.get("recent_lifecycle_event_ids") or []
             if not isinstance(reloaded_recent_ids, list) or event_id not in reloaded_recent_ids:
                 raise ReloadMismatchError(

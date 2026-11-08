@@ -612,7 +612,7 @@ def test_main_app_final_command_submission_regression() -> None:
         app.include_router(router)
         client = TestClient(app)
 
-        # 1. Submit with X-Idempotency-Key
+        # 1. Submit with Idempotency-Key
         # RejectDecision against an ApprovalDecision target requires no confirm
         # token, approval evidence, or two-man signature, so it exercises the
         # idempotency-key handling itself without tripping unrelated final-contract
@@ -622,7 +622,7 @@ def test_main_app_final_command_submission_regression() -> None:
             "/bff/v1/commands",
             headers={
                 "Authorization": "Bearer op-1:operator,approver:mfa",
-                "X-Idempotency-Key": "idmp-test-op-1",
+                "Idempotency-Key": "idmp-test-op-1",
             },
             json={
                 "command": "RejectDecision",

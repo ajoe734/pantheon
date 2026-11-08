@@ -35,7 +35,6 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     canonical_task_state_lock_file,
     durable_write_bytes,
     read_regular_file_bytes,
-    runtime_source_regular_file,
     task_branch_matches,
     worker_process_generation_id,
     first_symlink_component as _first_symlink_component,
@@ -211,8 +210,6 @@ def validate_coordination_root(
 
     # Enforce supervisor marker paths exist
     state_marker = root / ".orchestrator" / "worker-runtime" / "state.json"
-    if not state_marker.exists():
-        state_marker = root / ".orchestrator" / "state.json"
     approval_marker = root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
     if not approval_marker.exists():
         approval_marker = root / ".orchestrator" / "approval-queue.json"
@@ -914,12 +911,7 @@ def planned_drain_digest(coordination_root: Path, run_id: str, command_runtime: 
 
 def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, Any] | None:
     runtime_state = coordination_root / ".orchestrator" / "worker-runtime" / "state.json"
-    # The V2 supervisor owns its receipt in worker-runtime.  Retain the
-    # retired path only for isolated legacy fixtures that have no V2 file; a
-    # worker must never fail entry binding merely because the canonical state
-    # moved into its runtime directory.
-    if not runtime_state.exists() and runtime_source_regular_file(coordination_root / ".orchestrator" / "state.json"):
-        runtime_state = coordination_root / ".orchestrator" / "state.json"
+    # The V2 supervisor owns its receipt in worker-runtime only.
     # Atomic supervisor writes are not lease revocations. Retry only that
     # specific race; malformed files, symlinks and binding failures still fail.
     # Do not wait on admission here: promotion may hold it while draining us.

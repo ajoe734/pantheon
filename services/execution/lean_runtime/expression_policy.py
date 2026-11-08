@@ -187,6 +187,58 @@ def _chosen(
     }
 
 
+def feasible_candidates(
+    direction: str, candidates: Sequence[Mapping[str, Any]]
+) -> list[Mapping[str, Any]]:
+    """Candidates that can express ``direction`` within ``max_units_by_risk``."""
+    side_key = direction.lower()
+    return [
+        c
+        for c in candidates
+        if side_key in (c.get("side_capability") or [])
+        and int(c.get("max_units_by_risk") or 0) >= 1
+        and c.get("price") is not None
+        and _unit_notional(c) > 0
+    ]
+
+
+def target_notional(
+    direction: str,
+    strength: Any,
+    feasible: Sequence[Mapping[str, Any]],
+    params: Mapping[str, Any],
+    budget: Mapping[str, Any],
+) -> Decimal:
+    """Dev plan section 4.4 step 4; ``feasible`` must be non-empty."""
+    smallest = min(_unit_notional(c) for c in feasible)
+    if strength is None:
+        return smallest
+    if direction == "LONG" and _dec(strength) < _dec(params["lever_min_strength"]):
+        cash = next((c for c in feasible if str(c["instrument_id"]).startswith("eq:")), None)
+        return _dec(cash["price"]) * _dec(cash["unit"]) if cash is not None else smallest
+    return (
+        _dec(strength)
+        * _dec(params["notional_fraction_at_full_strength"])
+        * remaining_gross_notional(budget)
+    )
+
+
+def clamped_units(candidate: Mapping[str, Any], target: Decimal) -> int:
+    """``clamp(round(N* / (unit * price)), 1, max_units_by_risk)``."""
+    raw = (target / _unit_notional(candidate)).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    return int(min(max(raw, Decimal(1)), Decimal(int(candidate["max_units_by_risk"]))))
+
+
+def round_trip_cost_per_unit(candidate: Mapping[str, Any]) -> Decimal:
+    return _dec(candidate.get("fee_per_unit_per_side") or 0) * 2 + _unit_notional(
+        candidate
+    ) * _dec(candidate.get("tax_rate_per_side") or 0) * 2
+
+
+def resolved_parameters(parameters: Mapping[str, Any] | None) -> dict[str, Any]:
+    return _resolved_parameters(parameters)
+
+
 def decide(
     view: Mapping[str, Any],
     candidates: Sequence[Mapping[str, Any]],
@@ -254,15 +306,7 @@ def decide(
             )
 
     # Step 3: feasible set.
-    side_key = direction.lower()
-    feasible = [
-        c
-        for c in candidates
-        if side_key in (c.get("side_capability") or [])
-        and int(c.get("max_units_by_risk") or 0) >= 1
-        and c.get("price") is not None
-        and _unit_notional(c) > 0
-    ]
+    feasible = feasible_candidates(direction, candidates)
     if not feasible:
         unavailable = any(
             ref.get("reason") == "candidates_unavailable"
@@ -284,29 +328,14 @@ def decide(
         )
 
     # Step 4: target notional.
-    smallest = min(_unit_notional(c) for c in feasible)
-    if strength is None:
-        target = smallest
-    elif direction == "LONG" and _dec(strength) < _dec(params["lever_min_strength"]):
-        cash = next((c for c in feasible if str(c["instrument_id"]).startswith("eq:")), None)
-        target = _dec(cash["price"]) * _dec(cash["unit"]) if cash is not None else smallest
-    else:
-        target = (
-            _dec(strength)
-            * _dec(params["notional_fraction_at_full_strength"])
-            * remaining_gross_notional(budget)
-        )
+    target = target_notional(direction, strength, feasible, params, budget)
 
     # Step 5: size and score every feasible candidate.
     scored: list[tuple[Decimal, Decimal, str, Mapping[str, Any], int]] = []
     for c in feasible:
         per_unit = _unit_notional(c)
-        raw = (target / per_unit).quantize(Decimal(1), rounding=ROUND_HALF_UP)
-        units = int(min(max(raw, Decimal(1)), Decimal(int(c["max_units_by_risk"]))))
-        cost_per_unit = _dec(c.get("fee_per_unit_per_side") or 0) * 2 + per_unit * _dec(
-            c.get("tax_rate_per_side") or 0
-        ) * 2
-        score = abs(units * per_unit - target) + units * cost_per_unit
+        units = clamped_units(c, target)
+        score = abs(units * per_unit - target) + units * round_trip_cost_per_unit(c)
         scored.append((score, per_unit, str(c["instrument_id"]), c, units))
     scored.sort(key=lambda item: (item[0], item[1], item[2]))
     score, _, instrument_id, winner, units = scored[0]

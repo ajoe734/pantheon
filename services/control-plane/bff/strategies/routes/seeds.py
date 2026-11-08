@@ -871,14 +871,13 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: apply a governed StrategySpecSeed review decision."""
         _bind_caller(authorization, x_tenant_id)
         identity = ctx.extract_identity(authorization)
         _require_strategy_seed_review_role(identity)
         ctx.reject_body_idempotency_key(payload)
-        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key)
         return _strategy_seed_review_response(
             seed_id=seed_id,
             payload=payload,
@@ -893,14 +892,13 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: merge a StrategySpecSeed candidate into another seed candidate."""
         _bind_caller(authorization, x_tenant_id)
         identity = ctx.extract_identity(authorization)
         _require_strategy_seed_review_role(identity)
         ctx.reject_body_idempotency_key(payload)
-        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key)
         return _strategy_seed_merge_response(
             seed_id=seed_id,
             payload=payload,
@@ -915,14 +913,13 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: submit a promoted StrategySpecSeed to research replication."""
         _bind_caller(authorization, x_tenant_id)
         identity = ctx.extract_identity(authorization)
         _require_strategy_seed_submit_role(identity)
         ctx.reject_body_idempotency_key(payload)
-        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key)
         return _strategy_seed_replication_response(
             seed_id=seed_id,
             payload=payload,
