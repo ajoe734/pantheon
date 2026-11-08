@@ -9,6 +9,7 @@ from scripts.auto_deploy_dev_pair import (
     CLOSEOUT_REPORT_PATHS,
     FRONTEND,
     ControllerError,
+    drill_title,
     pair_title,
     reconcile,
 )
@@ -343,3 +344,33 @@ def test_inconsistent_served_identity_cannot_masquerade_as_report_only(drift):
         manifest["releaseAdmission"]["frontend"]["commitSha"] = OLD
     assert run(apply=True)["state"] == "dispatched"
     assert len(backend.dispatches) == 1
+
+
+def drill_run(run_id, conclusion, backend=B, frontend=F):
+    return {**deploy_run(run_id, conclusion, backend, frontend),
+            "display_title": drill_title(backend, frontend)}
+
+
+def test_drill_run_name_is_distinct_and_matches_workflow():
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text()
+    assert "format('Dev compensation drill {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha)" in workflow
+    assert drill_title(B, F) == f"Dev compensation drill {B} + {F}"
+    assert drill_title(B, F) != pair_title(B, F)
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "timed_out"])
+def test_failed_drill_never_counts_as_a_failed_attempt_of_the_pair(conclusion):
+    backend, _, _, _, run = setup_pair()
+    backend.deploys = [drill_run(10, conclusion)]
+    assert run(apply=False)["state"] != "failed_pair_not_retried"
+    assert run(apply=True)["state"] == "dispatched"
+
+
+def test_failed_drill_does_not_mask_or_clear_a_failed_normal_run():
+    backend, _, _, _, run = setup_pair()
+    backend.deploys = [deploy_run(10, "failure"), drill_run(11, "failure")]
+    result = run(apply=True)
+    assert result["state"] == "failed_pair_not_retried"
+    assert result["run_url"] == "https://github.test/10"
+    backend.deploys = [drill_run(10, "failure"), deploy_run(11, "failure")]
+    assert run(apply=True)["state"] == "failed_pair_not_retried"

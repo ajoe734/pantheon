@@ -437,6 +437,20 @@ readback (900 s inside the 60 minute step). The roundtrip steps keep their
 three-image scope. Design, scope flag, prune safety and evidence:
 `docs/deployment/dev-exact-artifact-rollback.md` ("Whole-stack compensation").
 
+### Whole-stack compensation drill
+
+`compensation_drill` (dev root dispatch input, default `false`) proves the
+whole-stack compensation on hosted without waiting for an accidental failure.
+Dispatch it (operator only) with a requested pair that differs from the pair
+`deployment.json` serves (`bffCommit` / `frontendSha`); the run is named
+`Dev compensation drill <backend> + <frontend>`. After the candidate stack is
+up, the dedicated step "Intentional compensation drill failure after candidate
+stack is up" fails on purpose and the existing compensation step restores and
+reads back every service. The same pair stays eligible for
+`auto_deploy_dev_pair` because the drill run name never equals the
+`Dev release ...` pair title. Details: `dev-exact-artifact-rollback.md`
+("Compensation drill").
+
 ## Rollback
 
 The deploy script writes a pre-deploy snapshot on each VM under:
