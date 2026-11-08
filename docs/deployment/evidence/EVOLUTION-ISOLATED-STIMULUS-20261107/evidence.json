@@ -1,6 +1,6 @@
 {
   "task_id": "EVOLUTION-ISOLATED-STIMULUS-20261107",
-  "source_sha": "21cbd9987a3a8ea86dfcd3d3708fdd400870746a",
+  "source_sha": "97b5666d6aa98a55bac585cce745e1427f41aeb6",
   "evidence_level": "local_integration_simulation",
   "natural_market_qualification_proven": false,
   "operator_authorization": {
@@ -105,7 +105,7 @@
     "qualified": 1,
     "drafted": 1,
     "decision_id": "evo-sweep-inc-drift-db1ab5760150",
-    "program_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+    "program_id": "evp-25c80f1da7444cf9b50714aed7d9febc",
     "metric_name": "rolling_drawdown_multiple",
     "action_type": "retrain",
     "all_six_criteria_passed": true,
@@ -170,7 +170,7 @@
       {
         "criterion": "fresh_evidence",
         "observed": {
-          "latest_evaluated_at": "2026-11-08T00:03:29Z",
+          "latest_evaluated_at": "2026-11-08T00:11:48Z",
           "latest_evaluation_id": "rdeval-sched-tick-sim-2026-11-08-bind-sim-isolated-202611-ab97c3ee0bf25b16",
           "latest_governed_threshold_breached": true,
           "runtime_id": "rt-sim-isolated-20261107"
@@ -199,7 +199,7 @@
     ]
   },
   "pre_approval_stop": {
-    "program_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+    "program_id": "evp-25c80f1da7444cf9b50714aed7d9febc",
     "program_origin": "auto_qualified",
     "program_status": "under_review",
     "program_stage": null,
@@ -236,11 +236,11 @@
   "governance_approval": {
     "approval_id": "apv-2e6662a3a6ce91384fee9857ba5ea7313e6f8a8764645b1ca168c57f6aad63f9",
     "target_type": "evolution_proposal",
-    "target_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+    "target_id": "evp-25c80f1da7444cf9b50714aed7d9febc",
     "target_version": "3",
-    "proposal_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+    "proposal_id": "evp-25c80f1da7444cf9b50714aed7d9febc",
     "proposal_revision": 3,
-    "proposal_content_digest": "5df00270340d657e5838d58b96aeb02b1c6601b8fb62eb399540590b82735352",
+    "proposal_content_digest": "a4c0307f01bab2f8a02eb12ecd4a2dd58ecb495f9b7464d8798ec8f0b2e76fad",
     "decision_state": "decided",
     "decision": "approved",
     "owner_user_id": "sim-human-operator-proposer-20261107",
@@ -272,9 +272,9 @@
     "requested_mode": "training_evaluation",
     "outcome": "candidate_created",
     "outcome_reason": "candidate_passed_gate_and_beat_baseline",
-    "session_id": "trn-20261108-ffbd560ce792",
-    "baseline_job_id": "pvjob-20b2b106a7a3814b",
-    "candidate_job_id": "pvjob-61b0d4bf63dff5f2",
+    "session_id": "trn-20261108-e36e07b57149",
+    "baseline_job_id": "pvjob-43c1200c57cbed9b",
+    "candidate_job_id": "pvjob-4f623b5f8d4ba7af",
     "baseline_metrics": {
       "total_return": 0.000658,
       "sharpe_ratio": 1.860738,
@@ -294,7 +294,7 @@
     "capital_records_created": 0,
     "broker_orders_created": 0,
     "program_readback": {
-      "program_id": "evp-c0ed4ab034b74170b626a18c1d6885a1",
+      "program_id": "evp-25c80f1da7444cf9b50714aed7d9febc",
       "status": "active",
       "stage": null,
       "research_run_ids": [
@@ -312,7 +312,7 @@
     "outbox_readback": {
       "outbox_id": "evo-dispatch-b619f5a9-979b-5fb9-99d6-91a134c6bad7",
       "status": "published",
-      "published_at": "2026-11-08T00:13:41Z"
+      "published_at": "2026-11-08T00:22:00Z"
     }
   },
   "idempotency": {
@@ -326,7 +326,7 @@
     "total_research_runs": 1
   },
   "cleanup": {
-    "temp_root": "/tmp/pantheon-evolution-sim-_ar7qpsb",
+    "temp_root": "/tmp/pantheon-evolution-sim-4dk3wuy8",
     "cleaned": true,
     "exists_after_cleanup": false
   }
