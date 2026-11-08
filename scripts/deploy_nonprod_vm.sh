@@ -30,6 +30,7 @@ DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS="${DEV_BFF_AUTH_READINESS_POLL_INTE
 DEV_DEPLOY_DEADLINE_SECONDS="${DEV_DEPLOY_DEADLINE_SECONDS:-${DEV_DEPLOY_TIMEOUT_SECONDS:-7200}}"
 DEV_ROLLBACK_BACKEND_SHA="${DEV_ROLLBACK_BACKEND_SHA:-${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}}"
 DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
+PANTHEON_DEV_PAPER_EXPRESSION_LAYER="${PANTHEON_DEV_PAPER_EXPRESSION_LAYER-${DEV_PAPER_EXPRESSION_LAYER-off}}"
 # Governed verifier/dev-login credentials for the strict auth cutover. These
 # must come from a secret source (GitHub Actions secrets in CI), never from
 # compose file defaults. When strict mode is requested without them, the
@@ -419,6 +420,7 @@ Environment overrides:
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
   DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
   DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED
+  PANTHEON_DEV_PAPER_EXPRESSION_LAYER DEV_PAPER_EXPRESSION_LAYER
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
   DEV_PAPER_PRINCIPALS_AUTHORIZED
   DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
@@ -696,6 +698,11 @@ if [[ "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED" == "true" && (
   error "PPL-ALLOC-009 dev proof requires a clean dev/root deploy with strict non-stub auth"
 fi
 
+case "$PANTHEON_DEV_PAPER_EXPRESSION_LAYER" in
+  on|off) ;;
+  *) error "PANTHEON_DEV_PAPER_EXPRESSION_LAYER must be on or off (got: ${PANTHEON_DEV_PAPER_EXPRESSION_LAYER})" ;;
+esac
+
 configure_management_ai_dev_env
 configure_management_ai_dev_kernel_env
 
@@ -716,6 +723,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
   info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
   info "dev_ppl_alloc_009_dev_proof_enabled=${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
+  info "dev_paper_expression_layer=${PANTHEON_DEV_PAPER_EXPRESSION_LAYER}"
   info "dev_bff_mfa_required=${DEV_BFF_MFA_REQUIRED}"
   info "dev_bff_jwt_secret_configured=$([[ -n "$DEV_BFF_JWT_SECRET" ]] && echo true || echo false)"
   info "dev_bff_jwt_issuer_configured=$([[ -n "$DEV_BFF_JWT_ISSUER" ]] && echo true || echo false)"
@@ -965,6 +973,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED=$(shell_quote "$DEV_PAPER_PRINCIPALS_AUTHORIZED")"
   command_prefix+=" PANTHEON_DEV_CAPITAL_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "${DEV_BFF_CORS_ORIGINS:-}")"
+  command_prefix+=" PANTHEON_DEV_PAPER_EXPRESSION_LAYER=$(shell_quote "$PANTHEON_DEV_PAPER_EXPRESSION_LAYER")"
   command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "${DEV_BFF_PUBLIC_HOST:-}")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
@@ -4752,6 +4761,7 @@ with_dev_bff_runtime_env() {
   AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
   AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
   PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
+  PANTHEON_PAPER_EXPRESSION_LAYER="${PANTHEON_DEV_PAPER_EXPRESSION_LAYER}" \
   PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
   PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
   PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${proof_flag}" \
@@ -5473,6 +5483,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     retire_dormant_and_one_off_profile_containers
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
+    PANTHEON_PAPER_EXPRESSION_LAYER="${PANTHEON_DEV_PAPER_EXPRESSION_LAYER}" \
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_release_artifacts_for_build

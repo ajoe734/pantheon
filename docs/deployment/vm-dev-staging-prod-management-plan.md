@@ -111,6 +111,7 @@ IP 未改變、VM 未重啟。之後 VM 停止再啟動仍保有同一 IP，DNS 
 | `DEV_FE_PUBLIC_HOST` | `app.dev.mvl-cap.tw` |
 | `DEV_BFF_PUBLIC_HOST` | `api.dev.mvl-cap.tw` |
 | `DEV_BFF_CANONICAL_CORS_ORIGIN` | `https://app.dev.mvl-cap.tw` |
+| `DEV_PAPER_EXPRESSION_LAYER` | 預設 `off`（未設定時解析為 `off`，僅允許 `on` 或 `off`；透過 `PANTHEON_DEV_PAPER_EXPRESSION_LAYER` 傳入 dev compose 的 `PANTHEON_PAPER_EXPRESSION_LAYER`，控制 paper 標的表達層啟用與否） |
 
 - VM 上 backend checkout 為部署帳號的 `~/pantheon`，不是開發工作站的 `~/code/pantheon`。
 - Pantheon compose project：`pantheon`。

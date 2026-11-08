@@ -1202,6 +1202,7 @@ jobs:
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
+          PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           BOOTSTRAP_PREDECESSOR_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
           CROSS_REPO_RELEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
@@ -1503,6 +1504,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
+          PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           # The recovery switch is deliberately one boolean with a fixed
           # connector and exact reviewed hosts. Callers cannot inject profiles,
           # wildcard domains, credentials, query strings, or arbitrary egress.
@@ -2212,6 +2214,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: "false"
+          PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
           PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
@@ -2927,6 +2930,7 @@ jobs:
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
+          PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -3079,6 +3083,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
+          PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -3189,6 +3194,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
+          PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -3360,6 +3366,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
+          PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: bash .target/scripts/compensate_cross_repo_release.sh
