@@ -27,8 +27,10 @@ from services.execution.lean_runtime.pending_signal_store import (
     binding_queue_key,
 )
 from services.execution.lean_runtime.signal_producer import DecisionSignalProducer
-from services.trade_journey.hosted_lifecycle_probe import _atomic_write_json
-from services.trade_journey.lifecycle_noop_order import PAPER_GATE_REJECTION_REASONS
+from services.trade_journey.hosted_lifecycle_probe import (
+    PAPER_GATE_REJECTION_REASONS,
+    _atomic_write_json,
+)
 from services.trade_journey.telemetry_rows import decode_event_payload
 
 

@@ -41,7 +41,6 @@ from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.memory.institutional_memory_store import InstitutionalMemoryStore
-from services.trade_journey.lifecycle_noop_order import PAPER_GATE_REJECTION_REASONS
 from services.memory.learn_feedback_writeback import write_learn_feedback
 from services.memory.persona_memory_store import PersonaMemoryStore
 from services.persona.ooda_cycle_runtime import (
@@ -142,6 +141,21 @@ LEAN_RUNTIME_FEEDBACK_OODA_STEP_BY_ACTION: dict[str, str] = {
     "orient_on_runtime_fill_quality_before_reprice": "orient",
 }
 BROKER_LIFECYCLE_TERMINAL_STATUS = "filled"
+# Reasons the paper order risk gate can reject an order for. Each rejection is
+# a terminal non-fill outcome. Kept equal to the hosted probe's set by a parity
+# test (services/trade_journey/test_hosted_lifecycle_probe.py).
+PAPER_GATE_REJECTION_REASONS = frozenset(
+    {
+        "sell_without_holdings",
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+    }
+)
 MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
 LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
 LEAN_RUNTIME_FEEDBACK_MODEL_ID = "persona_lean_runtime_feedback_v1"

@@ -2695,3 +2695,28 @@ def test_probe_rejection_loop_must_stay_failed_even_for_gate_reasons(tmp_path):
 
     assert code == 1
     assert artifact["failure"]["code"] == "loop_run_not_terminal"
+
+
+def test_gate_rejection_reason_sets_are_identical_across_probes_and_persona_validation():
+    """The dev probe, hosted probe/stimulus and persona validation share one closed set."""
+    from scripts import probe_dev_runtime_paper_lifecycle as dev_probe
+    from services.persona import agent_usability_validation, remaining_gap_validation
+    from services.trade_journey import hosted_lifecycle_stimulus
+
+    expected = {
+        "sell_without_holdings",
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+    }
+    assert set(probe.PAPER_GATE_REJECTION_REASONS) == expected
+    assert set(dev_probe.GATE_REJECTION_REASONS) == expected
+    assert set(agent_usability_validation.PAPER_GATE_REJECTION_REASONS) == expected
+    assert set(remaining_gap_validation.PAPER_GATE_REJECTION_REASONS) == expected
+    assert hosted_lifecycle_stimulus.PAPER_GATE_REJECTION_REASONS is probe.PAPER_GATE_REJECTION_REASONS
+    # A broker error is never a gate terminal.
+    assert "tw_broker_error" not in expected

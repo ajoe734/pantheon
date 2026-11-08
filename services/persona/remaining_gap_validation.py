@@ -22,7 +22,6 @@ from services.execution.lean_runtime.pending_signal_store import InMemoryPending
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.shioaji_adapter import ShioajiAdapter, ShioajiConfig, ShioajiOrderIntent
 from services.memory.institutional_memory_store import InstitutionalMemoryStore
-from services.trade_journey.lifecycle_noop_order import PAPER_GATE_REJECTION_REASONS
 from services.memory.learn_feedback_writeback import write_learn_feedback
 from services.memory.persona_memory_store import PersonaMemoryStore
 from services.research.vectorbt.adapter import BacktestConfig, StubVectorbtBackend, run_vectorbt_workflow
@@ -97,6 +96,22 @@ class RemainingGapCase:
     long_memory_scenario: str
     optimization_scenario: str
     broker_adapter: str
+
+# Reasons the paper order risk gate can reject an order for. Each rejection is
+# a terminal non-fill outcome. Kept equal to the hosted probe's set by a parity
+# test (services/trade_journey/test_hosted_lifecycle_probe.py).
+PAPER_GATE_REJECTION_REASONS = frozenset(
+    {
+        "sell_without_holdings",
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+    }
+)
 
 
 class RemainingGapValidationError(ValueError):

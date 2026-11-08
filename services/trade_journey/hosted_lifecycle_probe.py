@@ -39,7 +39,6 @@ from services.source_ingestion.requirement_state import (
     _checksum,
 )
 from services.trade_journey.telemetry_rows import decode_event_payload
-from services.trade_journey.lifecycle_noop_order import PAPER_GATE_REJECTION_REASONS
 from services.trade_journey.lifecycle_projector import (
     JOURNEY_STORE_SCHEMA,
     LOOP_STORE_SCHEMA,
@@ -65,6 +64,23 @@ REQUIRED_EVENT_TYPES = (
     "position_snapshot",
 )
 RECONCILIATION_TYPES = ("reconciliation_completed", "reconciliation_failed")
+# Reasons the paper order risk gate can reject an order for (dev plan section
+# 4.5) plus the pre-existing sell_without_holdings. Any other reason, for example
+# a broker error, is not a terminal outcome and keeps failing closed. The dev
+# probe (scripts/probe_dev_runtime_paper_lifecycle.py) and the persona
+# validation modules hold the same closed set; a parity test keeps them equal.
+PAPER_GATE_REJECTION_REASONS = frozenset(
+    {
+        "sell_without_holdings",
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+    }
+)
 # Terminal outcomes that never fill: a risk-gate rejection, a recorded no trade
 # and a futures expiry settlement. Each ends its journey without reconciliation.
 NONFILL_TERMINAL_EVENT_TYPES = (
