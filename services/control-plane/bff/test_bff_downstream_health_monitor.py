@@ -1673,3 +1673,503 @@ def test_stop_waits_for_inflight_writer_and_keeps_accounting(tmp_path):
 
     asyncio.run(_drive())
     assert monitor.pending_outcome_stats()["dropped_samples"] == 0
+
+
+def _real_shape_telemetry_body_json(event_id: str = "infra-health-00000000000000000000000000000000") -> str:
+    """Return an 866-byte infrastructure_health telemetry event JSON matching hosted shape."""
+    prefix = (
+        '{"component":{"component_id":"telemetry-ingest-svc","component_kind":"http_service",'
+        '"FailureBoundary":"edge_bff","health_url":"http://telemetry:8083/__health__"},'
+        f'"event_id":"{event_id}","event_type":"infrastructure_health",'
+        '"health":{"consecutive_failures":3,"error_rate":0.0,"failure_count":0,'
+        '"failure_reason":"HTTP 503","healthy":false,"latency_ms":12.4,"probe_kind":"interval_probe",'
+        '"sample_count":0,"status":"degraded","status_code":503,'
+        '"window_started_at":"2026-09-02T00:00:00Z"},"incident_ref":null,'
+        '"observed_at":"2026-09-02T00:00:05Z","producer":"control-plane-bff",'
+        '"schema_version":"pantheon.infrastructure-health/1","tenant_id":"default",'
+        '"detail":"'
+    )
+    suffix = '"}'
+    pad_len = 866 - len(prefix) - len(suffix)
+    body = prefix + ("x" * max(0, pad_len)) + suffix
+    assert len(body) == 866
+    return body
+
+
+def test_prune_indexes_created_idempotently_at_startup(tmp_path):
+    import sqlite3
+
+    db_path = str(tmp_path / "legacy_no_prune_idx.sqlite3")
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE delivery_outbox (
+            delivery_id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            target_name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            body_json TEXT NOT NULL,
+            dependency_ids_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempt_count INTEGER NOT NULL,
+            max_attempts INTEGER NOT NULL,
+            next_attempt_at REAL NOT NULL,
+            claim_owner TEXT,
+            claim_token TEXT,
+            claim_until REAL,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX delivery_outbox_due_idx
+            ON delivery_outbox(status, next_attempt_at, claim_until);
+        CREATE INDEX delivery_outbox_event_idx
+            ON delivery_outbox(event_id);
+        """
+    )
+    conn.close()
+
+    store = _DurableHealthStore(db_path)
+    # Re-run startup initialization to prove idempotency.
+    store._initialize()
+    store2 = _DurableHealthStore(db_path)
+    with store2._connect() as connection:
+        index_names = {
+            str(row["name"])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+    expected = {
+        "delivery_outbox_due_idx",
+        "delivery_outbox_event_idx",
+        "delivery_outbox_prune_idx",
+        "delivery_outbox_deps_idx",
+        "probe_windows_completed_idx",
+        "error_windows_observed_idx",
+        "delivery_replay_audit_replayed_idx",
+    }
+    assert expected.issubset(index_names)
+
+
+def test_prune_computes_protected_dependencies_in_sql_and_reads_bounded_rows(tmp_path):
+    import sqlite3
+
+    body_866 = _real_shape_telemetry_body_json()
+    dep1_fmt = '["telemetry:infra-health-%032x"]'
+
+    def _seed_and_measure_steps(db_file: str, row_count: int, batch_size: int = 100) -> int:
+        store = _DurableHealthStore(db_file)
+        conn = sqlite3.connect(db_file, isolation_level=None)
+        conn.execute("PRAGMA synchronous=OFF")
+        conn.execute("BEGIN")
+        conn.execute(
+            """
+            WITH RECURSIVE seq(i) AS (
+                VALUES(1)
+                UNION ALL
+                SELECT i + 1 FROM seq WHERE i < ?
+            )
+            INSERT INTO delivery_outbox(
+                delivery_id, event_id, channel, target_name, url,
+                body_json, dependency_ids_json, status, attempt_count,
+                max_attempts, next_attempt_at, claim_owner, claim_token,
+                claim_until, last_error, created_at, updated_at
+            )
+            SELECT
+                CASE WHEN (i % 125) = 0 THEN printf('incident-open:infra-health-%032x', i)
+                     ELSE printf('telemetry:infra-health-%032x', i) END,
+                printf('infra-health-%032x', i),
+                CASE WHEN (i % 125) = 0 THEN 'incident_open' ELSE 'telemetry' END,
+                'telemetry',
+                'http://telemetry:8083/api/v1/telemetry/infrastructure-health',
+                ?,
+                CASE WHEN (i % 125) = 0 THEN printf(?, i - 1) ELSE '[]' END,
+                'dead_letter',
+                5, 5, 0.0, NULL, NULL, NULL, 'HTTP 503',
+                printf('2026-09-%02dT%02d:%02d:%02dZ', 1 + (i % 28), (i / 3600) % 24, (i / 60) % 60, i % 60),
+                printf('2026-09-%02dT%02d:%02d:%02dZ', 1 + (i % 28), (i / 3600) % 24, (i / 60) % 60, i % 60)
+            FROM seq
+            """,
+            (row_count, body_866, dep1_fmt),
+        )
+        conn.execute("COMMIT")
+        conn.close()
+
+        statements: List[str] = []
+        vm_steps = 0
+        orig_connect = store._connect
+
+        import contextlib
+
+        @contextlib.contextmanager
+        def _instrumented_connect(busy_timeout_ms: int = 10000):
+            nonlocal vm_steps
+            with orig_connect(busy_timeout_ms) as c:
+                c.set_trace_callback(statements.append)
+
+                def _progress() -> int:
+                    nonlocal vm_steps
+                    vm_steps += 1
+                    return 0
+
+                c.set_progress_handler(_progress, 100)
+                try:
+                    yield c
+                finally:
+                    c.set_progress_handler(None, 0)
+                    c.set_trace_callback(None)
+
+        store._connect = _instrumented_connect  # type: ignore[method-assign]
+        pruned = store.prune_retained_history(batch_size=batch_size)
+        assert pruned["delivery_outbox"] == batch_size
+        # Verify Python never selects dependency_ids_json from all non-delivered rows.
+        assert not any(
+            "WHERE status <> 'delivered'" in stmt and "SELECT dependency_ids_json" in stmt
+            for stmt in statements
+        )
+        assert any("WITH RECURSIVE" in stmt for stmt in statements)
+        return vm_steps
+
+    steps_2k = _seed_and_measure_steps(str(tmp_path / "prune_2k.sqlite3"), 2000, batch_size=100)
+    steps_20k = _seed_and_measure_steps(str(tmp_path / "prune_20k.sqlite3"), 20000, batch_size=100)
+    # 10x more non-delivered rows must not cause O(N) VM work; bounded index scan stays nearly constant.
+    assert steps_20k <= max(steps_2k * 2, steps_2k + 50), (steps_2k, steps_20k)
+
+
+def test_dead_letter_and_quarantined_retention_and_replay_within_retention(tmp_path):
+    from datetime import datetime, timezone
+    from services.control_plane.bff.downstream_health_monitor import (
+        _DELIVERY_HISTORY_RETENTION_SECONDS,
+        _WINDOW_HISTORY_RETENTION_SECONDS,
+    )
+
+    assert _DELIVERY_HISTORY_RETENTION_SECONDS == 7 * 24 * 60 * 60
+    assert _WINDOW_HISTORY_RETENTION_SECONDS == 24 * 60 * 60
+
+    monitor = DownstreamHealthMonitor(
+        telemetry_url="http://telemetry:8083",
+        incidents_url="http://incidents:8084",
+        probe_interval_seconds=9999,
+        state_path=str(tmp_path / "dlq_retention.sqlite3"),
+        telemetry_service_jwt="jwt-test-token",
+        incident_service_token="inc-test-token",
+    )
+    store = monitor._store
+    now_epoch = time.time()
+
+    def _iso_ago(seconds: float) -> str:
+        return (
+            datetime.fromtimestamp(now_epoch - seconds, tz=timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+
+    old_ts = _iso_ago(8 * 24 * 3600)  # 8 days ago (> 7d retention)
+    recent_2d_ts = _iso_ago(2 * 24 * 3600)  # 2 days ago (< 7d retention)
+    recent_1h_ts = _iso_ago(3600)  # 1 hour ago (< 6h delivery age & < 7d retention)
+    old_win_ts = _iso_ago(25 * 3600)  # 25 hours ago (> 24h window retention)
+    recent_win_ts = _iso_ago(2 * 3600)  # 2 hours ago (< 24h window retention)
+
+    body_dict = json.loads(_real_shape_telemetry_body_json())
+    with store._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for idx in range(25):
+            for status in ("dead_letter", "quarantined", "delivered"):
+                did = f"{status}-old-{idx:02d}"
+                ev_id = f"ev-{status}-old-{idx:02d}"
+                b = dict(body_dict, event_id=ev_id)
+                conn.execute(
+                    """
+                    INSERT INTO delivery_outbox(
+                        delivery_id, event_id, channel, target_name, url,
+                        body_json, dependency_ids_json, status, attempt_count,
+                        max_attempts, next_attempt_at, claim_owner, claim_token,
+                        claim_until, last_error, created_at, updated_at
+                    ) VALUES (?, ?, 'telemetry', 'telemetry',
+                              'http://telemetry:8083/api/v1/telemetry/infrastructure-health',
+                              ?, '[]', ?, 5, 5, 0.0, NULL, NULL, NULL, 'err', ?, ?)
+                    """,
+                    (did, ev_id, json.dumps(b), status, old_ts, old_ts),
+                )
+        for status, ts, ev_id in (
+            ("dead_letter", recent_1h_ts, "ev-dlq-1h"),
+            ("dead_letter", recent_2d_ts, "ev-dlq-2d"),
+            ("quarantined", recent_2d_ts, "ev-quar-2d"),
+            ("delivered", recent_2d_ts, "ev-deliv-2d"),
+        ):
+            b = dict(body_dict, event_id=ev_id)
+            conn.execute(
+                """
+                INSERT INTO delivery_outbox(
+                    delivery_id, event_id, channel, target_name, url,
+                    body_json, dependency_ids_json, status, attempt_count,
+                    max_attempts, next_attempt_at, claim_owner, claim_token,
+                    claim_until, last_error, created_at, updated_at
+                ) VALUES (?, ?, 'telemetry', 'telemetry',
+                          'http://telemetry:8083/api/v1/telemetry/infrastructure-health',
+                          ?, '[]', ?, 5, 5, 0.0, NULL, NULL, NULL, 'HTTP 503', ?, ?)
+                """,
+                (f"telemetry:{ev_id}", ev_id, json.dumps(b), status, ts, ts),
+            )
+        conn.execute(
+            """
+            INSERT INTO probe_windows(
+                target_name, probe_kind, window_started_at, owner_id, lease_until, completed_at
+            ) VALUES
+                ('telemetry', 'interval_probe', ?, 'inst-1', 0.0, ?),
+                ('telemetry', 'interval_probe', ?, 'inst-1', 0.0, ?)
+            """,
+            (old_win_ts, old_win_ts, recent_win_ts, recent_win_ts),
+        )
+        conn.execute(
+            """
+            INSERT INTO error_windows(
+                target_name, window_started_at, sample_count, failure_count,
+                latency_total_ms, last_status_code, last_detail, last_observed_at
+            ) VALUES
+                ('telemetry', ?, 5, 5, 50.0, 503, 'old', ?),
+                ('telemetry', ?, 5, 0, 10.0, 200, NULL, ?)
+            """,
+            (old_win_ts, old_win_ts, recent_win_ts, recent_win_ts),
+        )
+        conn.commit()
+
+    # Bounded batch deletion: 75 old outbox rows (25 dead_letter + 25 quarantined + 25 delivered)
+    b1 = store.prune_retained_history(batch_size=30)
+    assert b1["delivery_outbox"] == 30
+    assert b1["probe_windows"] == 1
+    assert b1["error_windows"] == 1
+
+    b2 = store.prune_retained_history(batch_size=30)
+    assert b2["delivery_outbox"] == 30
+
+    b3 = store.prune_retained_history(batch_size=30)
+    assert b3["delivery_outbox"] == 15
+
+    b4 = store.prune_retained_history(batch_size=30)
+    assert b4["delivery_outbox"] == 0
+
+    counts = store.delivery_counts()
+    assert counts["dead_letter"] == 2
+    assert counts["quarantined"] == 1
+    assert counts["delivered"] == 1
+
+    # Dead letters inside the 7-day retention can still be replayed and delivered.
+    with patch(
+        "services.control_plane.bff.downstream_health_monitor._post_json",
+        return_value=(True, 200),
+    ):
+        replay_recent = monitor.replay_dead_letters(
+            actor_id="op-1",
+            approval_ref="apr-1",
+            reason="replay recent dead letter inside age bound",
+        )
+        assert replay_recent["replayed"] == 1
+        assert replay_recent["delivered_now"] == 1
+
+        replay_2d = monitor.replay_dead_letters(
+            actor_id="op-1",
+            approval_ref="apr-2",
+            reason="replay 2-day-old dead letter inside 7d retention by event_id",
+            event_id="ev-dlq-2d",
+        )
+        assert replay_2d["replayed"] == 1
+        assert replay_2d["delivered_now"] == 1
+
+    final_counts = store.delivery_counts()
+    assert final_counts["dead_letter"] == 0
+    assert final_counts["delivered"] == 3
+
+
+def test_prune_protects_dependencies_of_retained_rows_and_active_incidents(tmp_path):
+    store = _DurableHealthStore(str(tmp_path / "protected_deps.sqlite3"))
+    old_ts = "2026-09-02T00:00:00Z"
+    recent_ts = _utc_now_rfc3339()
+    body = json.loads(_real_shape_telemetry_body_json())
+
+    def _insert_outbox(
+        conn,
+        delivery_id: str,
+        event_id: str,
+        channel: str,
+        target_name: str,
+        status: str,
+        updated_at: str,
+        deps: List[str],
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO delivery_outbox(
+                delivery_id, event_id, channel, target_name, url,
+                body_json, dependency_ids_json, status, attempt_count,
+                max_attempts, next_attempt_at, claim_owner, claim_token,
+                claim_until, last_error, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'http://telemetry:8083/api/v1/telemetry/infrastructure-health',
+                      ?, ?, ?, 1, 5, 0.0, NULL, NULL, NULL, NULL, ?, ?)
+            """,
+            (
+                delivery_id,
+                event_id,
+                channel,
+                target_name,
+                json.dumps(dict(body, event_id=event_id)),
+                json.dumps(deps),
+                status,
+                updated_at,
+                updated_at,
+            ),
+        )
+
+    with store._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        # 1. Dependency chain referenced by a retained pending row:
+        #    pending-row -> dep-of-pending (old delivered) -> transitive-dep-of-pending (old dead_letter)
+        _insert_outbox(conn, "transitive-dep-of-pending", "ev-trans", "telemetry", "t1", "dead_letter", old_ts, [])
+        _insert_outbox(conn, "dep-of-pending", "ev-dep-pend", "incident_open", "t1", "delivered", old_ts, ["transitive-dep-of-pending"])
+        _insert_outbox(conn, "retained-pending", "ev-pend", "incident_resolve", "t1", "pending", old_ts, ["dep-of-pending"])
+
+        # 2. Old row referenced by a retained recent (< 7d) dead_letter row:
+        _insert_outbox(conn, "dep-of-recent-dlq", "ev-dep-dlq", "telemetry", "t2", "delivered", old_ts, [])
+        _insert_outbox(conn, "recent-dlq", "ev-rec-dlq", "incident_open", "t2", "dead_letter", recent_ts, ["dep-of-recent-dlq"])
+
+        # 3. Old row referenced by a retained recent (< 7d) delivered row:
+        _insert_outbox(conn, "dep-of-recent-delivered", "ev-dep-deliv", "telemetry", "t3", "quarantined", old_ts, [])
+        _insert_outbox(conn, "recent-delivered", "ev-rec-deliv", "incident_open", "t3", "delivered", recent_ts, ["dep-of-recent-delivered"])
+
+        # 4. Rows tied to active incidents in opening, open, and resolving states:
+        _insert_outbox(conn, "telemetry:ev-opening", "ev-opening", "telemetry", "t-opening", "delivered", old_ts, [])
+        _insert_outbox(conn, "incident-open:ev-opening", "ev-opening", "incident_open", "t-opening", "dead_letter", old_ts, ["telemetry:ev-opening"])
+        conn.execute(
+            """
+            INSERT INTO incident_mappings(
+                target_name, incident_id, status, opening_event_id,
+                create_delivery_id, last_event_id, updated_at
+            ) VALUES ('t-opening', 'inc-opening', 'opening', 'ev-opening', 'incident-open:ev-opening', 'ev-opening', ?)
+            """,
+            (old_ts,),
+        )
+
+        _insert_outbox(conn, "incident-open:ev-open", "ev-open", "incident_open", "t-open", "delivered", old_ts, [])
+        conn.execute(
+            """
+            INSERT INTO incident_mappings(
+                target_name, incident_id, status, opening_event_id,
+                create_delivery_id, last_event_id, updated_at
+            ) VALUES ('t-open', 'inc-open', 'open', 'ev-open', 'incident-open:ev-open', 'ev-open', ?)
+            """,
+            (old_ts,),
+        )
+
+        _insert_outbox(conn, "incident-open:ev-resolving", "ev-resolving-open", "incident_open", "t-resolving", "delivered", old_ts, [])
+        _insert_outbox(conn, "incident-resolve:ev-resolving-last", "ev-resolving-last", "incident_resolve", "t-resolving", "dead_letter", old_ts, ["incident-open:ev-resolving"])
+        conn.execute(
+            """
+            INSERT INTO incident_mappings(
+                target_name, incident_id, status, opening_event_id,
+                create_delivery_id, last_event_id, updated_at
+            ) VALUES ('t-resolving', 'inc-resolving', 'resolving', 'ev-resolving-open', 'incident-open:ev-resolving', 'ev-resolving-last', ?)
+            """,
+            (old_ts,),
+        )
+
+        # 5. Unprotected old rows (including one tied to an already-resolved incident):
+        _insert_outbox(conn, "incident-open:ev-resolved", "ev-resolved", "incident_open", "t-resolved", "delivered", old_ts, [])
+        conn.execute(
+            """
+            INSERT INTO incident_mappings(
+                target_name, incident_id, status, opening_event_id,
+                create_delivery_id, last_event_id, updated_at
+            ) VALUES ('t-resolved', 'inc-resolved', 'resolved', 'ev-resolved', 'incident-open:ev-resolved', 'ev-resolved', ?)
+            """,
+            (old_ts,),
+        )
+        _insert_outbox(conn, "unreferenced-old-dlq", "ev-unref-1", "telemetry", "t-unref", "dead_letter", old_ts, [])
+        _insert_outbox(conn, "unreferenced-old-quar", "ev-unref-2", "telemetry", "t-unref", "quarantined", old_ts, [])
+        conn.commit()
+
+    pruned = store.prune_retained_history()
+    assert pruned["delivery_outbox"] == 3
+
+    remaining_ids = {row["delivery_id"] for row in store.list_deliveries()}
+    expected_protected = {
+        "transitive-dep-of-pending",
+        "dep-of-pending",
+        "retained-pending",
+        "dep-of-recent-dlq",
+        "recent-dlq",
+        "dep-of-recent-delivered",
+        "recent-delivered",
+        "telemetry:ev-opening",
+        "incident-open:ev-opening",
+        "incident-open:ev-open",
+        "incident-open:ev-resolving",
+        "incident-resolve:ev-resolving-last",
+    }
+    assert expected_protected.issubset(remaining_ids)
+    assert "incident-open:ev-resolved" not in remaining_ids
+    assert "unreferenced-old-dlq" not in remaining_ids
+    assert "unreferenced-old-quar" not in remaining_ids
+
+    # Once active incidents transition to resolved, their old rows are eligible for prune.
+    with store._connect() as conn:
+        conn.execute("UPDATE incident_mappings SET status='resolved'")
+    pruned_after_resolve = store.prune_retained_history()
+    assert pruned_after_resolve["delivery_outbox"] == 5
+    remaining_after_resolve = {row["delivery_id"] for row in store.list_deliveries()}
+    for incident_row_id in (
+        "telemetry:ev-opening",
+        "incident-open:ev-opening",
+        "incident-open:ev-open",
+        "incident-open:ev-resolving",
+        "incident-resolve:ev-resolving-last",
+    ):
+        assert incident_row_id not in remaining_after_resolve
+    # Dependencies of retained rows remain protected.
+    for dep_id in (
+        "transitive-dep-of-pending",
+        "dep-of-pending",
+        "dep-of-recent-dlq",
+        "dep-of-recent-delivered",
+    ):
+        assert dep_id in remaining_after_resolve
+
+
+def test_get_state_accelerates_prune_cadence_while_backlog_batch_is_full(tmp_path):
+    from services.control_plane.bff.downstream_health_monitor import _DELIVERY_PRUNE_BATCH_SIZE
+
+    monitor = DownstreamHealthMonitor(
+        telemetry_url="http://telemetry:8083",
+        probe_interval_seconds=30.0,
+        state_path=str(tmp_path / "cadence.sqlite3"),
+    )
+    with patch.object(
+        monitor._store,
+        "prune_retained_history",
+        return_value={
+            "delivery_outbox": _DELIVERY_PRUNE_BATCH_SIZE,
+            "probe_windows": 0,
+            "error_windows": 0,
+            "delivery_replay_audit": 0,
+        },
+    ):
+        monitor.get_state()
+        # Next prune should be eligible after 30s (one probe interval) instead of 300s.
+        assert 260.0 <= (time.time() - monitor._last_retention_prune_at) <= 275.0
+
+    monitor._last_retention_prune_at = 0.0
+    with patch.object(
+        monitor._store,
+        "prune_retained_history",
+        return_value={
+            "delivery_outbox": 10,
+            "probe_windows": 0,
+            "error_windows": 0,
+            "delivery_replay_audit": 0,
+        },
+    ):
+        monitor.get_state()
+        assert (time.time() - monitor._last_retention_prune_at) < 5.0
+

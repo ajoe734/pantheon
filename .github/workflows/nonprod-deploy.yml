@@ -1,5 +1,5 @@
 name: Pantheon Nonprod Deploy
-run-name: ${{ inputs.environment == 'dev' && format('Dev release {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha) || github.workflow }}
+run-name: ${{ inputs.environment == 'dev' && (inputs.compensation_drill && format('Dev compensation drill {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha) || format('Dev release {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha)) || github.workflow }}
 
 on:
   workflow_dispatch:
@@ -105,6 +105,11 @@ on:
         required: false
         default: false
         type: boolean
+      compensation_drill:
+        description: "Dev root only: INTENTIONAL COMPENSATION DRILL - fail on purpose after the candidate stack is up so the existing whole-stack compensation restores the hosted baseline; the pair must differ from the served pair; incompatible with isolated, hosted chain, roundtrip, empty-host bootstrap and non-strict auth"
+        required: false
+        default: false
+        type: boolean
       chain_id:
         description: "Hosted chain only: stable lowercase nonsecret chain id (reuse the same id for every segment)"
         required: false
@@ -182,6 +187,7 @@ jobs:
       DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
       BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host || false }}
+      COMPENSATION_DRILL: ${{ inputs.compensation_drill || false }}
       # One applicability decision for the run-scoped paper case: only an
       # explicit proof/probe/bootstrap request on auto/root creates it, so an
       # ordinary code release preserves the current paper reservation.
@@ -234,9 +240,30 @@ jobs:
         env:
           RUN_EVOLUTION_DISPATCH_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe || false }}
           RUN_LOOP_PROD_TEL_002_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe || false }}
+          DRILL_ISOLATED: ${{ inputs.isolated_provider_qualification }}
+          DRILL_HOSTED_CHAIN: ${{ inputs.hosted_all12_chain }}
+          DRILL_ROUNDTRIP: ${{ inputs.run_exact_artifact_roundtrip }}
         run: |
           sha="$(git rev-parse HEAD)"
           [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
+          case "${COMPENSATION_DRILL}" in
+            true|false) ;;
+            *) echo "Compensation drill flag must be true or false." >&2; exit 1 ;;
+          esac
+          if [[ "${COMPENSATION_DRILL}" == "true" && (
+            "${DRILL_ISOLATED}" != "false" ||
+            "${DRILL_HOSTED_CHAIN}" != "false" ||
+            "${DRILL_ROUNDTRIP}" != "false" ||
+            "${BOOTSTRAP_EMPTY_HOST}" != "false" ||
+            "${DEV_AUTH_PROFILE}" != "strict"
+          ) ]]; then
+            echo "Compensation drill is rejected together with the isolated gate, the hosted chain, the exact artifact roundtrip, an empty host bootstrap or a non strict auth profile." >&2
+            exit 1
+          fi
+          if [[ "${COMPENSATION_DRILL}" == "true" && "${TARGET_COMPONENT}" != "auto" && "${TARGET_COMPONENT}" != "root" ]]; then
+            echo "Compensation drill is a dev root only drill and is rejected for component ${TARGET_COMPONENT}." >&2
+            exit 1
+          fi
           trusted_ref="$(git rev-parse refs/remotes/origin/dev)"
           [[ "${trusted_ref}" =~ ^[0-9a-f]{40}$ ]]
           if [[ "${sha}" != "${trusted_ref}" || "${GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}" ]]; then
@@ -653,6 +680,27 @@ jobs:
           path: ${{ steps.release_admission.outputs.evidence_dir }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Refuse compensation drill when the pair is already served
+        if: ${{ env.COMPENSATION_DRILL == 'true' }}
+        env:
+          SERVED_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
+          SERVED_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
+          REQUESTED_BACKEND_SHA: ${{ steps.target.outputs.sha }}
+          REQUESTED_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          # Restoring images identical to the candidate proves nothing, so a drill
+          # for the served pair stops here, before the lease and any mutation.
+          if [[ -z "${SERVED_BACKEND_SHA}" || -z "${SERVED_FRONTEND_SHA}" ]]; then
+            echo "Compensation drill needs the served hosted pair from deployment.json; none was captured." >&2
+            exit 1
+          fi
+          if [[ "${REQUESTED_BACKEND_SHA}" == "${SERVED_BACKEND_SHA}" && "${REQUESTED_FRONTEND_SHA,,}" == "${SERVED_FRONTEND_SHA,,}" ]]; then
+            echo "Compensation drill refused: requested pair ${REQUESTED_BACKEND_SHA} + ${REQUESTED_FRONTEND_SHA} equals the pair the hosted manifest serves (bffCommit/frontendSha); restoring identical images proves nothing." >&2
+            exit 1
+          fi
+          echo "- compensation drill admitted: requested \`${REQUESTED_BACKEND_SHA:0:12}\` + \`${REQUESTED_FRONTEND_SHA:0:12}\` differs from served \`${SERVED_BACKEND_SHA:0:12}\` + \`${SERVED_FRONTEND_SHA:0:12}\`" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Enforce dev auth deployment floor
         working-directory: .target
@@ -1611,6 +1659,24 @@ jobs:
             bash "${deploy_script}" --refresh-only --force --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${outcome_dir}/taifex-refresh.json"
           lease_token=""
 
+      - name: Intentional compensation drill failure after candidate stack is up
+        id: compensation_drill
+        if: ${{ env.COMPENSATION_DRILL == 'true' }}
+        env:
+          EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          # No VM access: this step only records the drill and fails so the one
+          # existing compensation step restores the hosted baseline.
+          printf '{"drill":true,"kind":"intentional-compensation-drill","run_id":"%s","run_attempt":"%s"}\n' \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" > "${EVIDENCE_DIR}/compensation-drill.json"
+          {
+            echo "### COMPENSATION DRILL (intentional failure, not a release defect)"
+            echo "The candidate stack is up; this run now fails on purpose so whole-stack compensation restores the exact hosted baseline."
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "INTENTIONAL COMPENSATION DRILL: failing on purpose after the candidate stack came up; the compensation step must restore the exact hosted baseline." >&2
+          exit 1
+
       - name: Ensure governed dev paper baseline under lease
         id: paper_bootstrap
         if: ${{ env.PAPER_BOOTSTRAP_REQUESTED == 'true' }}
@@ -2020,7 +2086,7 @@ jobs:
         # Pre-restore preparation only: retire this run's ephemeral probe case
         # before baseline restore waits on health; never marks compensation
         # successful before exact image/FE/health readback.
-        if: ${{ always() && env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || (env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
+        if: ${{ always() && env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || (env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
         continue-on-error: true
         timeout-minutes: 6
         env:
@@ -2059,7 +2125,7 @@ jobs:
 
       - name: Compensate dev deployment failure to exact hosted baseline
         id: deploy_compensation
-        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || (env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || (env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
         continue-on-error: true
         timeout-minutes: 60
         env:
@@ -2455,6 +2521,10 @@ jobs:
           actual_fe="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_FE_URL}/deployment.json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("frontendSha") or d.get("commit") or "")')"
           [[ "${actual_fe}" == "${PANTHEON_ROLLBACK_FRONTEND_SHA}" ]]
           echo "Artifact ${PANTHEON_DEV_ARTIFACT_OPERATION} proved exact prior images and FE bytes: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"
+          if [[ "${COMPENSATION_DRILL:-false}" == "true" ]]; then
+            echo "- compensation evidence label: COMPENSATION DRILL (intentional failure injected after the candidate stack was up)" >> "${GITHUB_STEP_SUMMARY}"
+            python3 -c 'import json,pathlib,sys; r=pathlib.Path(sys.argv[1]); r.write_text(json.dumps({**json.loads(r.read_text()), "compensation_drill": True}) + "\n"); m=pathlib.Path(sys.argv[2]); m.write_text(json.dumps({**json.loads(m.read_text()), "readback_file": r.name, "compensation_completed": True}) + "\n") if m.is_file() else None' "${EVIDENCE_DIR}/dev-compensation-artifact-readback.json" "${EVIDENCE_DIR}/compensation-drill.json"
+          fi
 
       - name: Upload validated dev compensation artifact readback
         if: ${{ always() && steps.deploy_compensation.outcome == 'success' }}
@@ -2463,6 +2533,15 @@ jobs:
           name: pantheon-dev-artifact-compensation-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.release_admission.outputs.evidence_dir }}/dev-compensation-artifact-readback.json
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload compensation drill marker
+        if: ${{ always() && steps.compensation_drill.conclusion != 'skipped' && steps.compensation_drill.conclusion != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-compensation-drill-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.release_admission.outputs.evidence_dir }}/compensation-drill.json
+          if-no-files-found: ignore
           retention-days: 30
 
       - name: Upload dev paper release case retirement evidence
@@ -3393,6 +3472,7 @@ jobs:
       TARGET_COMPONENT: ${{ inputs.component }}
       ALLOW_DIRTY: ${{ inputs.allow_dirty }}
       DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
+      COMPENSATION_DRILL: ${{ inputs.compensation_drill }}
     steps:
       # Plain git keeps the pinned checkout-action inventory unchanged. The
       # token travels only through git's environment config, never argv.
@@ -3423,6 +3503,10 @@ jobs:
           fi
           if [[ "${TARGET_COMPONENT}" != "auto" || "${ALLOW_DIRTY}" != "false" || "${DEV_AUTH_PROFILE}" != "strict" ]]; then
             echo "Isolated qualification requires component=auto, allow_dirty=false and strict auth." >&2
+            exit 1
+          fi
+          if [[ "${COMPENSATION_DRILL}" != "false" ]]; then
+            echo "compensation_drill is rejected together with the isolated gate." >&2
             exit 1
           fi
 
@@ -3499,6 +3583,7 @@ jobs:
       ALLOW_DIRTY: ${{ inputs.allow_dirty }}
       DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
       ISOLATED_REQUESTED: ${{ inputs.isolated_provider_qualification }}
+      COMPENSATION_DRILL: ${{ inputs.compensation_drill }}
       CHAIN_ID: ${{ inputs.chain_id }}
       CHAIN_PHASE: ${{ inputs.chain_phase }}
       CHAIN_INPUT_JSON: ${{ inputs.chain_input_json }}
@@ -3552,6 +3637,10 @@ jobs:
           fi
           if [[ "${ISOLATED_REQUESTED}" == "true" ]]; then
             echo "hosted_all12_chain and isolated_provider_qualification are mutually exclusive." >&2
+            exit 1
+          fi
+          if [[ "${COMPENSATION_DRILL}" != "false" ]]; then
+            echo "compensation_drill is rejected together with the hosted chain." >&2
             exit 1
           fi
           if [[ ! "${CHAIN_ID}" =~ ^[a-z0-9][a-z0-9-]{7,63}$ ]]; then

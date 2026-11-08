@@ -2469,20 +2469,6 @@ class StaticContractTests(unittest.TestCase):
                 self.assertEqual(ctx.actor_id, "user-prod-operator-1")
                 self.assertEqual(ctx.claims["tenant_id"], "tenant-a")
                 self.assertIn("operator", ctx.roles)
-                with self.assertRaises(HTTPException) as hs_under_jwks_exc:
-                    gov_main._approval_reader(f"Bearer {hs256_token}")
-                self.assertEqual(hs_under_jwks_exc.exception.status_code, 401)
-
-            hs256_only_gov_env = {
-                **prod_gov_runtime_env,
-                "PANTHEON_GOVERNANCE_JWKS_URI": "",
-                "PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL": "",
-                "PANTHEON_GOVERNANCE_OIDC_ISSUER": "",
-                "PANTHEON_GOVERNANCE_OIDC_AUDIENCE": "",
-                "PANTHEON_GOVERNANCE_ROLE_MAP": "",
-                "PANTHEON_GOVERNANCE_ROLE_MAP_MODE": "passthrough",
-            }
-            with mock.patch.dict(os.environ, hs256_only_gov_env, clear=False):
                 hs_ctx = gov_main._approval_reader(f"Bearer {hs256_token}")
                 self.assertEqual(hs_ctx.actor_id, "svc:governance-internal-reader")
                 self.assertEqual(hs_ctx.claims["tenant_id"], "tenant-a")

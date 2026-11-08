@@ -708,7 +708,7 @@ def _build_authority_harness_app(
                 '_require_operator_role': require_operator_role,
                 '_require_read_role': require_read_role,
                 '_reject_body_idempotency_key': lambda p: None,
-                '_resolve_final_idempotency_key': lambda a, b: a or b,
+                '_resolve_final_idempotency_key': lambda a: a,
                 '_stable_json_hash': _stable_json_hash,
                 '_stable_capital_resource_id': stable_capital_resource_id,
                 '_capital_owner_role': capital_owner_role,

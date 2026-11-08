@@ -283,7 +283,7 @@ def _create_app(store: _EvolutionJobsOpsTestStore) -> FastAPI:
             dataset_surface_status=_dataset_surface_status,
             raise_if_read_surface_unavailable=lambda s, label="": None,
             reject_body_idempotency_key=lambda b: None,
-            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            resolve_final_idempotency_key=lambda k1: k1 or "",
             submit_job_action=lambda *a, **k: {},
         )
     )

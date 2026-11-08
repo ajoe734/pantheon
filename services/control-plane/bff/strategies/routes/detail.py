@@ -76,14 +76,13 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: patch strategy fields through the canonical writer."""
         identity = ctx.extract_identity(authorization)
         ctx.require_operator_role(identity)
         principal = ctx.write_principal(identity)
         ctx.reject_body_idempotency_key(payload)
-        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key)
         request_hash = ctx.stable_json_hash(
             {"route": "PATCH /bff/strategies/{strategy_id}", "id": strategy_id, "payload": payload, "principal": principal}
         )
@@ -156,13 +155,12 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: create new spec version stub for a strategy."""
         identity = ctx.extract_identity(authorization)
         ctx.require_operator_role(identity)
         ctx.reject_body_idempotency_key(payload)
-        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key)
         ctx.ensure_strategy_exists(strategy_id)
         request_hash = ctx.stable_json_hash(
             {"route": "POST /bff/strategies/{id}/specs", "id": strategy_id, "payload": payload}
@@ -326,7 +324,6 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: strategy action — routes through command/precondition machinery."""
         if ctx.deprecated_bff_path_response:
@@ -342,13 +339,12 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: launch a strategy dry-run; returns a stub run handle."""
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         ctx.reject_body_idempotency_key(payload)
-        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key)
         ctx.ensure_strategy_exists(strategy_id)
         request_hash = ctx.stable_json_hash(
             {"route": "POST /bff/strategies/{id}/dry-run", "id": strategy_id, "payload": payload}

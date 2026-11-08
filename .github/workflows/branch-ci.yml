@@ -550,6 +550,11 @@ jobs:
             scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checkout_is_an_exact_immutable_separate_trust_root \
             scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checksums_match_pinned_controller_files \
             scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_and_other_lease_callers_use_the_repaired_controller \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_drill_input_defaults_false_and_is_rejected_with_incompatible_modes \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_drill_refuses_the_served_pair_before_the_lease \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_drill_step_runs_after_candidate_seal_and_before_paper_baseline \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_drill_feeds_the_existing_compensation_step_only \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_drill_has_its_own_run_name \
             scripts/test_auto_deploy_dev_pair.py \
             scripts/test_cross_repo_release_controller.py \
             scripts/test_capture_dev_artifact_baseline.py \

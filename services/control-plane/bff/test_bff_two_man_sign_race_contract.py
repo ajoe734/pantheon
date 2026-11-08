@@ -42,7 +42,6 @@ def _make_sem_command_submitter(store: CommandStore):
         payload: Dict[str, Any],
         identity: OperatorIdentity,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
         terminal_on_persist: bool = False,
         trusted_evidence_producer: Optional[str] = None,
         **kwargs: Any,
@@ -55,7 +54,7 @@ def _make_sem_command_submitter(store: CommandStore):
             "roles": identity.roles,
         }
         foundation_ctx = {
-            "idempotency_record": {"idempotency_key": idempotency_key or x_idempotency_key},
+            "idempotency_record": {"idempotency_key": idempotency_key},
         }
         if terminal_on_persist:
             store.submit_terminal_command_if_no_active_target(

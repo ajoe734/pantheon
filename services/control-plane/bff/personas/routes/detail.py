@@ -614,7 +614,6 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: patch persona fields through the BFF read store."""
         identity = _extract_identity(authorization)
@@ -635,7 +634,6 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
 

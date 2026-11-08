@@ -122,7 +122,7 @@ REVIEWER_TOKEN = "Bearer op-5:reviewer"
 
 
 def _command_headers(token: str | None, idempotency_key: str | None = None) -> dict[str, str]:
-    headers = {"X-Idempotency-Key": idempotency_key or f"idmp-smoke-{uuid.uuid4().hex}"}
+    headers = {"Idempotency-Key": idempotency_key or f"idmp-smoke-{uuid.uuid4().hex}"}
     if token:
         headers["Authorization"] = token
     return headers

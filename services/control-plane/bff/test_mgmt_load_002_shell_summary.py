@@ -59,7 +59,7 @@ def _build_app(store) -> FastAPI:
             dataset_surface_status=_default_dataset_surface_status,
             raise_if_read_surface_unavailable=_default_raise_if_read_surface_unavailable,
             reject_body_idempotency_key=lambda payload: None,
-            resolve_final_idempotency_key=lambda header_key, body_key: header_key or body_key or "idem-key",
+            resolve_final_idempotency_key=lambda header_key: header_key or "idem-key",
             submit_job_action=lambda job_id, action_id, resolved_key, identity, payload: {},
         )
     )

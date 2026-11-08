@@ -656,7 +656,6 @@ def test_management_nl_request_exception_marks_reservation_uncertain_immediately
             "payload": payload,
             "authorization": OPERATOR_HEADERS["Authorization"],
             "idempotency_key": "mgmt-command-exception-key",
-            "x_idempotency_key": None,
             "x_tenant_id": None,
             "x_pantheon_tenant": None,
         }
@@ -713,7 +712,6 @@ def test_management_nl_concurrent_exact_request_invokes_provider_once_and_replay
                 "payload": payload,
                 "authorization": OPERATOR_HEADERS["Authorization"],
                 "idempotency_key": key,
-                "x_idempotency_key": None,
                 "x_tenant_id": None,
                 "x_pantheon_tenant": None,
             }
@@ -770,7 +768,6 @@ def test_management_nl_concurrent_conflict_returns_409_before_second_side_effect
             common = {
                 "authorization": OPERATOR_HEADERS["Authorization"],
                 "idempotency_key": key,
-                "x_idempotency_key": None,
                 "x_tenant_id": None,
                 "x_pantheon_tenant": None,
             }

@@ -146,7 +146,6 @@ class EvolutionServiceProgramCommandPort:
         headers: Dict[str, str] = {}
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
-            headers["X-Idempotency-Key"] = idempotency_key
         try:
             # The payload carries no tenant: the helper binds X-Tenant-Id from the caller.
             return await asyncio.to_thread(

@@ -54,7 +54,7 @@ def _client():
         dataset_surface_status=lambda *a, **k: {},
         raise_if_read_surface_unavailable=lambda *a, **k: None,
         reject_body_idempotency_key=lambda b: None,
-        resolve_final_idempotency_key=lambda a, b: "k",
+        resolve_final_idempotency_key=lambda a: "k",
         submit_job_action=lambda *a: {},
     )
     app = FastAPI()

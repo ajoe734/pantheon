@@ -184,7 +184,7 @@ def test_adapter_dispatches_all_canonical_actions(action_id: str) -> None:
 
             call_headers = mock_http.call_args[1].get("headers", {})
             assert call_headers.get("Idempotency-Key") == "idem-key-1"
-            assert call_headers.get("X-Idempotency-Key") == "idem-key-1"
+            assert "X-Idempotency-Key" not in call_headers
             assert "X-Tenant-Id" in call_headers
 
     # Validate build_domain_receipt structure
@@ -265,7 +265,7 @@ def test_adapter_propagates_idempotency_and_tenant_headers() -> None:
             kwargs = mock_http.call_args[1]
             headers = kwargs.get("headers", {})
             assert headers.get("Idempotency-Key") == "unique-idemp-12345"
-            assert headers.get("X-Idempotency-Key") == "unique-idemp-12345"
+            assert "X-Idempotency-Key" not in headers
             assert headers.get("X-Tenant-Id") == "tenant-custom-xyz"
             assert kwargs.get("caller_token") == _tenant_token("tenant-custom-xyz")
 

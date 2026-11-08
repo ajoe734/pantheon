@@ -59,7 +59,7 @@ def create_deployment_router(
     split_csv_query: Callable[[Optional[str]], Optional[List[str]]],
     meta_staleness: Callable[[], Optional[Dict[str, Any]]],
     stable_json_hash: Callable[[Dict[str, Any]], str],
-    resolve_final_idempotency_key: Callable[[Optional[str], Optional[str]], str],
+    resolve_final_idempotency_key: Callable[[Optional[str]], str],
     reject_body_idempotency_key: Callable[[Dict[str, Any]], None],
     request_dry_run_requested: Callable[..., bool],
     publish_event: Callable[..., str],
@@ -103,7 +103,6 @@ def create_deployment_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
@@ -510,7 +509,6 @@ def create_deployment_router(
         action_id: str,
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ):
         """BFF: submit an action against a deployment plan."""
@@ -525,7 +523,6 @@ def create_deployment_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         identity = extract_identity(authorization)
         require_operator_role(identity)
@@ -537,7 +534,6 @@ def create_deployment_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         identity = extract_identity(authorization)
         require_operator_role(identity)
@@ -549,7 +545,6 @@ def create_deployment_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
     return router

@@ -171,7 +171,7 @@ def test_idempotency_conflict_uses_final_error_code(monkeypatch) -> None:
         headers = {
             "Authorization": APPROVER_TOKEN,
             "X-Trace-Id": "trace-final-idmp-conflict",
-            "X-Idempotency-Key": "idmp-final-conflict",
+            "Idempotency-Key": "idmp-final-conflict",
         }
         body = {
             "command": "ApproveDecision",

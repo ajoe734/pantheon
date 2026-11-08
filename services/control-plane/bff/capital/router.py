@@ -151,13 +151,9 @@ def _resolve_tenant(
 
 
 def _resolve_idempotency_key(
-    idempotency_key: Optional[str], x_idempotency_key: Optional[str]
+    idempotency_key: Optional[str], *_ignored: Any
 ) -> str:
-    first = str(idempotency_key or "").strip()
-    second = str(x_idempotency_key or "").strip()
-    if first and second and first != second:
-        raise CapitalValidationError("Idempotency-Key and X-Idempotency-Key must match when both are supplied")
-    return first or second
+    return str(idempotency_key or "").strip()
 
 
 def _owner_actor_role(identity: Any) -> str:
@@ -348,11 +344,11 @@ def create_capital_router(
 
     def _mutate(
         op: str, payload: Dict[str, Any], *, identity: Any, authorization: Optional[str],
-        x_tenant_id: Optional[str], idempotency_key: Optional[str], x_idempotency_key: Optional[str],
+        x_tenant_id: Optional[str], idempotency_key: Optional[str],
         target_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         tid = _resolve_tenant(identity, x_tenant_id, bff_error)
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
+        key = _resolve_idempotency_key(idempotency_key)
         result, replayed = _idempotent_write(op, payload, identity=identity, authorization=authorization, key=key, target_id=target_id, tenant_id=tid)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
@@ -401,12 +397,11 @@ def create_capital_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _require_operator(authorization)
         if not str(payload.get("name") or "").strip():
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool name is required", "name must be a non-empty string")
-        return _mutate("create_pool", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key)
+        return _mutate("create_pool", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key)
 
     # 5. BFF Capital Pool detail.
     @router.get("/bff/capital-pools/{pool_id}")
@@ -456,13 +451,12 @@ def create_capital_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _require_operator(authorization)
         _pool_or_error(pool_id)
         if not str(action_id).strip():
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool action is required")
-        return _mutate("pool_action", {**payload, "action_id": action_id}, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key, target_id=pool_id)
+        return _mutate("pool_action", {**payload, "action_id": action_id}, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, target_id=pool_id)
 
     # 8. Evaluate one policy snapshot before a rebalance proposal is admitted.
     @router.post("/bff/management/allocation-policy/evaluate")
@@ -501,14 +495,13 @@ def create_capital_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _require_operator(authorization)
         pool_id = str(payload.get("capital_pool_id") or payload.get("pool_id") or "").strip()
         if not pool_id:
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "capital_pool_id is required")
         _pool_or_error(pool_id)
-        return _mutate("create_rebalance", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key)
+        return _mutate("create_rebalance", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key)
 
     # 13. Apply an already admitted rebalance proposal through the capital owner.
     @router.post("/bff/rebalances/{rebalance_id}/apply", status_code=202)
@@ -518,7 +511,6 @@ def create_capital_router(
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _require_operator(authorization)
         _rebalance_or_error(rebalance_id)
@@ -534,9 +526,9 @@ def create_capital_router(
             return cas.submit_command_admission(
                 background_tasks=background_tasks, payload=cmd, authorization=authorization, x_confirm_token=x_confirm_token,
                 x_trace_id=request.headers.get("X-Trace-Id"), x_correlation_id=request.headers.get("X-Correlation-Id"), x_request_id=request.headers.get("X-Request-Id"),
-                idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key, source_route="POST /bff/rebalances/{rebalance_id}/apply", include_durable_meta=True,
+                idempotency_key=idempotency_key, source_route="POST /bff/rebalances/{rebalance_id}/apply", include_durable_meta=True,
             )
-        return _mutate("apply_rebalance", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key, target_id=rebalance_id)
+        return _mutate("apply_rebalance", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, target_id=rebalance_id)
 
     # 14. Rebalance detail.
     @router.get("/bff/rebalances/{rebalance_id}")

@@ -62,6 +62,7 @@ INFRASTRUCTURE_INCIDENT_PATH = "/api/incidents/consume-infrastructure-health"
 INFRASTRUCTURE_INCIDENT_RECONCILE_PATH = "/api/incidents/reconcile-infrastructure-health"
 ORPHAN_RECOVERED_REASON = "orphan_recovered"
 _DELIVERY_HISTORY_RETENTION_SECONDS = 7 * 24 * 60 * 60
+_DELIVERY_PRUNE_BATCH_SIZE = 3500
 # Undelivered health rows older than this no longer describe current health.
 _DELIVERY_MAX_AGE_SECONDS = 6 * 60 * 60
 _STALE_DELIVERY_ERROR = "stale_beyond_delivery_age_bound"
@@ -776,6 +777,17 @@ class _DurableHealthStore:
                     ON delivery_outbox(status, next_attempt_at, claim_until);
                 CREATE INDEX IF NOT EXISTS delivery_outbox_event_idx
                     ON delivery_outbox(event_id);
+                CREATE INDEX IF NOT EXISTS delivery_outbox_prune_idx
+                    ON delivery_outbox(updated_at)
+                    WHERE status IN ('delivered', 'dead_letter', 'quarantined');
+                CREATE INDEX IF NOT EXISTS delivery_outbox_deps_idx
+                    ON delivery_outbox(status, updated_at, delivery_id, dependency_ids_json)
+                    WHERE dependency_ids_json <> '[]';
+                CREATE INDEX IF NOT EXISTS probe_windows_completed_idx
+                    ON probe_windows(completed_at)
+                    WHERE completed_at IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS error_windows_observed_idx
+                    ON error_windows(last_observed_at);
                 CREATE TABLE IF NOT EXISTS delivery_status_counts (
                     status TEXT PRIMARY KEY,
                     count INTEGER NOT NULL
@@ -817,6 +829,8 @@ class _DurableHealthStore:
                     replayed_count INTEGER NOT NULL,
                     replayed_at TEXT NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS delivery_replay_audit_replayed_idx
+                    ON delivery_replay_audit(replayed_at);
                 """
             )
             if legacy_table is not None:
@@ -829,7 +843,7 @@ class _DurableHealthStore:
             """
             INSERT INTO delivery_status_counts(status, count)
             SELECT status, COUNT(*) AS count
-            FROM delivery_outbox
+            FROM delivery_outbox INDEXED BY delivery_outbox_due_idx
             GROUP BY status
             """
         )
@@ -1693,9 +1707,11 @@ class _DurableHealthStore:
         *,
         delivery_history_seconds: float = _DELIVERY_HISTORY_RETENTION_SECONDS,
         window_history_seconds: float = _WINDOW_HISTORY_RETENTION_SECONDS,
+        batch_size: int = _DELIVERY_PRUNE_BATCH_SIZE,
     ) -> Dict[str, int]:
         """Bound durable history that is not required for retry/DLQ recovery."""
 
+        limit = max(1, int(batch_size))
         now = datetime.now(timezone.utc)
         delivery_cutoff = (
             datetime.fromtimestamp(
@@ -1717,74 +1733,131 @@ class _DurableHealthStore:
         )
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            protected_delivery_ids = {
-                str(row["create_delivery_id"])
-                for row in connection.execute(
-                    """
-                    SELECT create_delivery_id
-                    FROM incident_mappings
-                    WHERE status IN ('opening', 'open', 'resolving')
-                    """
-                ).fetchall()
-            }
-            for row in connection.execute(
-                """
-                SELECT dependency_ids_json
-                FROM delivery_outbox
-                WHERE status <> 'delivered'
-                """
-            ).fetchall():
-                protected_delivery_ids.update(
-                    str(item)
-                    for item in json.loads(
-                        str(row["dependency_ids_json"]) or "[]"
-                    )
-                )
             connection.execute(
                 """
                 CREATE TEMP TABLE IF NOT EXISTS delivery_prune_protected (
-                    delivery_id TEXT PRIMARY KEY
+                    outbox_rowid INTEGER PRIMARY KEY
                 )
                 """
             )
             connection.execute("DELETE FROM delivery_prune_protected")
-            connection.executemany(
+            connection.execute(
                 """
-                INSERT OR IGNORE INTO delivery_prune_protected(delivery_id)
-                VALUES (?)
-                """,
-                ((delivery_id,) for delivery_id in protected_delivery_ids),
-            )
-            delivered = connection.execute(
-                """
-                DELETE FROM delivery_outbox
-                WHERE status='delivered' AND updated_at < ?
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM delivery_prune_protected AS protected
-                      WHERE protected.delivery_id=delivery_outbox.delivery_id
-                  )
+                WITH RECURSIVE
+                incident_protected_ids(delivery_id) AS (
+                    SELECT create_delivery_id
+                    FROM incident_mappings
+                    WHERE status IN ('opening', 'open', 'resolving')
+                      AND create_delivery_id <> ''
+                    UNION
+                    SELECT outbox.delivery_id
+                    FROM incident_mappings AS im
+                    CROSS JOIN delivery_outbox AS outbox INDEXED BY delivery_outbox_event_idx
+                      ON outbox.event_id IN (im.opening_event_id, im.last_event_id)
+                    WHERE im.status IN ('opening', 'open', 'resolving')
+                      AND outbox.channel IN ('incident_open', 'incident_resolve')
+                ),
+                dep_protected_ids(delivery_id) AS (
+                    SELECT CAST(dep.value AS TEXT)
+                    FROM delivery_outbox AS retained INDEXED BY delivery_outbox_deps_idx
+                    CROSS JOIN json_each(retained.dependency_ids_json) AS dep
+                    WHERE retained.dependency_ids_json <> '[]'
+                      AND retained.status IN ('pending', 'retry', 'claimed')
+                    UNION
+                    SELECT CAST(dep.value AS TEXT)
+                    FROM delivery_outbox AS retained INDEXED BY delivery_outbox_deps_idx
+                    CROSS JOIN json_each(retained.dependency_ids_json) AS dep
+                    WHERE retained.dependency_ids_json <> '[]'
+                      AND retained.status IN ('delivered', 'dead_letter', 'quarantined')
+                      AND retained.updated_at >= ?
+                    UNION
+                    SELECT CAST(dep.value AS TEXT)
+                    FROM incident_protected_ids AS ip
+                    CROSS JOIN delivery_outbox AS outbox
+                      ON outbox.delivery_id = ip.delivery_id
+                    CROSS JOIN json_each(outbox.dependency_ids_json) AS dep
+                    WHERE outbox.status <> 'delivered'
+                      AND outbox.dependency_ids_json <> '[]'
+                    UNION
+                    SELECT CAST(dep.value AS TEXT)
+                    FROM dep_protected_ids AS dp
+                    CROSS JOIN delivery_outbox AS outbox
+                      ON outbox.delivery_id = dp.delivery_id
+                    CROSS JOIN json_each(outbox.dependency_ids_json) AS dep
+                    WHERE outbox.dependency_ids_json <> '[]'
+                ),
+                all_protected_ids(delivery_id) AS (
+                    SELECT delivery_id FROM incident_protected_ids
+                    UNION
+                    SELECT delivery_id FROM dep_protected_ids
+                )
+                INSERT OR IGNORE INTO delivery_prune_protected(outbox_rowid)
+                SELECT outbox.rowid
+                FROM all_protected_ids AS p
+                CROSS JOIN delivery_outbox AS outbox
+                  ON outbox.delivery_id = p.delivery_id
                 """,
                 (delivery_cutoff,),
+            )
+            pruned_outbox = connection.execute(
+                """
+                DELETE FROM delivery_outbox
+                WHERE rowid IN (
+                    SELECT rowid
+                    FROM delivery_outbox INDEXED BY delivery_outbox_prune_idx
+                    WHERE status IN ('delivered', 'dead_letter', 'quarantined')
+                      AND updated_at < ?
+                      AND rowid NOT IN (
+                          SELECT outbox_rowid FROM delivery_prune_protected
+                      )
+                    ORDER BY updated_at
+                    LIMIT ?
+                )
+                """,
+                (delivery_cutoff, limit),
             ).rowcount
             probe_windows = connection.execute(
                 """
                 DELETE FROM probe_windows
-                WHERE completed_at IS NOT NULL AND completed_at < ?
+                WHERE rowid IN (
+                    SELECT rowid
+                    FROM probe_windows INDEXED BY probe_windows_completed_idx
+                    WHERE completed_at IS NOT NULL AND completed_at < ?
+                    ORDER BY completed_at
+                    LIMIT ?
+                )
                 """,
-                (window_cutoff,),
+                (window_cutoff, limit),
             ).rowcount
             error_windows = connection.execute(
-                "DELETE FROM error_windows WHERE last_observed_at < ?",
-                (window_cutoff,),
+                """
+                DELETE FROM error_windows
+                WHERE rowid IN (
+                    SELECT rowid
+                    FROM error_windows INDEXED BY error_windows_observed_idx
+                    WHERE last_observed_at < ?
+                    ORDER BY last_observed_at
+                    LIMIT ?
+                )
+                """,
+                (window_cutoff, limit),
             ).rowcount
             replay_audit = connection.execute(
-                "DELETE FROM delivery_replay_audit WHERE replayed_at < ?",
-                (delivery_cutoff,),
+                """
+                DELETE FROM delivery_replay_audit
+                WHERE rowid IN (
+                    SELECT rowid
+                    FROM delivery_replay_audit INDEXED BY delivery_replay_audit_replayed_idx
+                    WHERE replayed_at < ?
+                    ORDER BY replayed_at
+                    LIMIT ?
+                )
+                """,
+                (delivery_cutoff, limit),
             ).rowcount
             connection.commit()
         return {
-            "delivery_outbox": max(0, int(delivered)),
+            "delivery_outbox": max(0, int(pruned_outbox)),
             "probe_windows": max(0, int(probe_windows)),
             "error_windows": max(0, int(error_windows)),
             "delivery_replay_audit": max(0, int(replay_audit)),
@@ -2201,8 +2274,16 @@ class DownstreamHealthMonitor:
     def get_state(self) -> Dict[str, Any]:
         now = time.time()
         if now - self._last_retention_prune_at >= 300.0:
-            self._store.prune_retained_history()
-            self._last_retention_prune_at = now
+            pruned = self._store.prune_retained_history()
+            if any(
+                count >= _DELIVERY_PRUNE_BATCH_SIZE
+                for count in pruned.values()
+            ):
+                self._last_retention_prune_at = now - 300.0 + min(
+                    300.0, max(1.0, self._probe_interval)
+                )
+            else:
+                self._last_retention_prune_at = now
         persisted = self._store.list_probes()
         self._state = persisted
         registry = self._resolve_target_registry()

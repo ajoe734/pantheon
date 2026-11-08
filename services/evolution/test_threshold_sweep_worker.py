@@ -3051,3 +3051,230 @@ def test_threshold_worker_propagates_strict_telemetry_401_and_403_refusals(
         is None
     )
 
+
+# ---------------------------------------------------------------------------
+# PAPER-DRAWDOWN-REBASELINE-INSTRUMENT-CLASS-20261107: per-artifact and
+# per-instrument-class drawdown baselines and fail-closed class selection
+# ---------------------------------------------------------------------------
+
+_REBASELINE_POLICY_SOURCE = (
+    "docs/deployment/evidence/PAPER-DRAWDOWN-REBASELINE-INSTRUMENT-CLASS-20261107/policy.md#reviewer-decision"
+)
+
+
+def test_default_baselines_file_preserves_seven_existing_entries_and_loads_instrument_class_baselines():
+    with open(DEFAULT_BASELINES_PATH, "r", encoding="utf-8") as fh:
+        raw = json.load(fh)
+
+    assert raw["baselines"] == {
+        "artifact-tw-session-momentum-v1": {
+            "expected_drawdown": 0.0303,
+            "policy_source": "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision",
+        },
+        "artifact-persona-paper-00400aa279b49774cde4": {
+            "expected_drawdown": 0.0027,
+            "policy_source": "docs/deployment/evidence/PAPER-DRAWDOWN-CURRENT0040-CONFIG-20261021/policy.md#reviewer-decision",
+        },
+        "hosted-all12-h12-01a11-20261023-9aeb-execution-artifact": {
+            "expected_drawdown": 0.0325,
+            "policy_source": "docs/deployment/evidence/H12-DRAWDOWN-POLICY-CONFIG-20261025/policy.md#reviewer-decision",
+        },
+        "hosted-all12-h12-claude-20261027-4923-execution-artifact": {
+            "expected_drawdown": 0.0325,
+            "policy_source": "docs/deployment/evidence/H12-4923-DRAWDOWN-POLICY-CONFIG-20261101/policy.md#reviewer-decision",
+        },
+        "artifact-persona-paper-298e138c136c9840b0e4": {
+            "expected_drawdown": 0.0027,
+            "policy_source": "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/policy.md#reviewer-decision",
+        },
+        "artifact-persona-paper-01390a4b72713295b001": {
+            "expected_drawdown": 0.0002,
+            "policy_source": "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/policy.md#reviewer-decision",
+        },
+        "artifact-persona-paper-8ae996980eeccb80d928": {
+            "expected_drawdown": 0.0011,
+            "policy_source": "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/policy.md#reviewer-decision",
+        },
+    }
+
+    baselines = load_baselines(DEFAULT_BASELINES_PATH)
+    expected_by_artifact = {
+        "artifact-persona-paper-298e138c136c9840b0e4": (0.00235, 0.235),
+        "artifact-persona-paper-01390a4b72713295b001": (0.0001245, 0.1245),
+        "artifact-persona-paper-8ae996980eeccb80d928": (0.00021, 0.42),
+    }
+    for artifact_id, (cash_dd, future_dd) in expected_by_artifact.items():
+        assert (
+            approved_baseline_value(
+                baselines, artifact_id, "expected_drawdown", instrument_class="cash_share"
+            )
+            == cash_dd
+        )
+        assert (
+            approved_baseline_value(
+                baselines, artifact_id, "expected_drawdown", instrument_class="stock_future"
+            )
+            == future_dd
+        )
+        assert baselines[artifact_id]["cash_share"]["policy_source"] == _REBASELINE_POLICY_SOURCE
+        assert baselines[artifact_id]["stock_future"]["policy_source"] == _REBASELINE_POLICY_SOURCE
+
+
+def test_threshold_sweep_selects_cash_share_baseline_for_cash_share_artifact():
+    baselines = load_baselines(DEFAULT_BASELINES_PATH)
+    drawdown_threshold = [THRESHOLDS[0]]
+    artifact_id = "artifact-persona-paper-298e138c136c9840b0e4"
+
+    # At 1.0x of cash_share baseline (0.00235 <= 1.25 * 0.00235 = 0.0029375): no breach.
+    within_summary = _summary(
+        artifact_id=artifact_id,
+        drawdown=0.00235,
+        instrument_class="cash_share",
+    )
+    payloads, diagnostics = evaluate_breaches(
+        [within_summary],
+        drawdown_threshold,
+        window_bucket="2026-11-07",
+        baselines=baselines,
+        now=_NOW,
+    )
+    assert payloads == []
+    assert diagnostics == []
+
+    # Above 1.25x of cash_share baseline (0.0030 / 0.00235 = 1.276596 > 1.25),
+    # with instrument class reported via runtime_summary positions[].kind.
+    breach_summary = _summary(
+        artifact_id=artifact_id,
+        drawdown=0.0030,
+        positions=[
+            {
+                "symbol": "2330.TWSE",
+                "instrument_id": "2330.TWSE",
+                "kind": "cash_share",
+                "quantity": 1.0,
+                "multiplier": 1.0,
+            }
+        ],
+    )
+    payloads, diagnostics = evaluate_breaches(
+        [breach_summary],
+        drawdown_threshold,
+        window_bucket="2026-11-07",
+        baselines=baselines,
+        now=_NOW,
+    )
+    assert diagnostics == []
+    assert len(payloads) == 1
+    snap = payloads[0]["threshold_snapshot"]
+    assert snap["raw_observed_value"] == 0.0030
+    assert snap["observed_value"] == 0.0030 / 0.00235
+
+
+def test_threshold_sweep_selects_stock_future_baseline_for_stock_future_artifact():
+    baselines = load_baselines(DEFAULT_BASELINES_PATH)
+    drawdown_threshold = [THRESHOLDS[0]]
+    artifact_id = "artifact-persona-paper-298e138c136c9840b0e4"
+
+    # 23.5% drawdown (worst equity 76,500 on 1 QFF) is 1.0x the stock_future
+    # baseline (0.235 <= 1.25 * 0.235 = 0.29375) and must NOT open a breach.
+    within_future_summary = _summary(
+        artifact_id=artifact_id,
+        drawdown=0.235,
+        positions=[
+            {
+                "symbol": "2330.TWSE",
+                "instrument_id": "QFF202611",
+                "kind": "stock_future",
+                "quantity": 1.0,
+                "multiplier": 100.0,
+            }
+        ],
+    )
+    payloads, diagnostics = evaluate_breaches(
+        [within_future_summary],
+        drawdown_threshold,
+        window_bucket="2026-11-07",
+        baselines=baselines,
+        now=_NOW,
+    )
+    assert payloads == []
+    assert diagnostics == []
+
+    # 30.0% drawdown exceeds 1.25x of the stock_future baseline (0.30 / 0.235 = 1.276596).
+    breach_future_summary = _summary(
+        artifact_id=artifact_id,
+        drawdown=0.30,
+        instrument_class="stock_future",
+    )
+    payloads, diagnostics = evaluate_breaches(
+        [breach_future_summary],
+        drawdown_threshold,
+        window_bucket="2026-11-07",
+        baselines=baselines,
+        now=_NOW,
+    )
+    assert diagnostics == []
+    assert len(payloads) == 1
+    snap = payloads[0]["threshold_snapshot"]
+    assert snap["raw_observed_value"] == 0.30
+    assert snap["observed_value"] == 0.30 / 0.235
+
+
+def test_threshold_sweep_fails_closed_when_instrument_class_or_its_baseline_is_missing(tmp_path):
+    baselines = load_baselines(DEFAULT_BASELINES_PATH)
+    drawdown_threshold = [THRESHOLDS[0]]
+    artifact_id = "artifact-persona-paper-298e138c136c9840b0e4"
+
+    # 1. Missing instrument class on an instrument-class-baselined artifact.
+    missing_class_summary = _summary(artifact_id=artifact_id, drawdown=0.30)
+    payloads, diagnostics = evaluate_breaches(
+        [missing_class_summary],
+        drawdown_threshold,
+        window_bucket="2026-11-07",
+        baselines=baselines,
+        now=_NOW,
+    )
+    assert payloads == []
+    assert any("missing instrument_class" in d and "no approved" in d for d in diagnostics)
+
+    # 2. Unapproved instrument class (e.g. index_future has no approved baseline).
+    missing_class_baseline_summary = _summary(
+        artifact_id=artifact_id,
+        drawdown=0.30,
+        instrument_class="index_future",
+    )
+    payloads_unapproved, diagnostics_unapproved = evaluate_breaches(
+        [missing_class_baseline_summary],
+        drawdown_threshold,
+        window_bucket="2026-11-07",
+        baselines=baselines,
+        now=_NOW,
+    )
+    assert payloads_unapproved == []
+    assert any(
+        "instrument_class='index_future'" in d and "no approved" in d
+        for d in diagnostics_unapproved
+    )
+
+    # 3. End-to-end run_tick fails closed with diagnostic and no incident.
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=drawdown_threshold,
+        baselines=baselines,
+        fetch_summaries=lambda *_a, **_kw: [missing_class_summary, missing_class_baseline_summary],
+        admit_telemetry_event=lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("admit_telemetry_event must not be called when class/baseline is missing")
+        ),
+        post_incident=lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("post_incident must not be called when class/baseline is missing")
+        ),
+        state_path=str(tmp_path / "missing-class-state.json"),
+        now=_NOW,
+    )
+    assert result["candidates"] == 0
+    assert result["incidents_created"] == 0
+    assert result["input_coverage"]["coverage_complete"] is False
+    assert result["input_coverage"]["incomplete_artifacts"] == 2
+
+

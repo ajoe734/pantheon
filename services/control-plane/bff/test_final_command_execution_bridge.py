@@ -70,7 +70,6 @@ def _test_sem_command_response(
     payload: Dict[str, Any],
     identity: OperatorIdentity,
     idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str] = None,
     status_code: int = 202,
     server_generated_target: bool = False,
     trusted_evidence_producer: Optional[str] = None,
@@ -79,7 +78,7 @@ def _test_sem_command_response(
     reject_retired_command(command_type.value)
     payload = dict(payload or {})
     reject_body_idempotency_key(payload)
-    clean_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    clean_key = resolve_final_idempotency_key(idempotency_key)
     hash_body: Dict[str, Any] = {
         "command": command_type.value,
         "target_type": target_type.value,
@@ -224,7 +223,6 @@ def _build_test_app() -> FastAPI:
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         reject_retired_command("CreateDeployment")
 
@@ -333,13 +331,21 @@ def test_command_routes_require_header_idempotency_and_reject_body_key() -> None
         assert body_key.status_code == 400, body_key.text
         assert body_key.json()["error"]["code"] == "VALIDATION_FAILED"
 
-        alias = client.post(
+        retired_alias = client.post(
             "/bff/confirm-tokens",
             headers={**HEADERS, "X-Idempotency-Key": "ct-alias-key"},
             json=body,
         )
-        assert alias.status_code == 201, alias.text
-        assert alias.json()["meta"]["idempotency"]["idempotencyKey"] == "ct-alias-key"
+        assert retired_alias.status_code == 400, retired_alias.text
+        assert retired_alias.json()["error"]["code"] == "VALIDATION_FAILED"
+
+        canonical = client.post(
+            "/bff/confirm-tokens",
+            headers={**HEADERS, "Idempotency-Key": "ct-canonical-key"},
+            json=body,
+        )
+        assert canonical.status_code == 201, canonical.text
+        assert canonical.json()["meta"]["idempotency"]["idempotencyKey"] == "ct-canonical-key"
         assert len(command_store._get_all_commands()) == 1
 
 

@@ -86,7 +86,6 @@ def _isolated_audit_client(*, allow_fallback: bool) -> Iterator[TestClient]:
             payload: dict[str, Any],
             identity: OperatorIdentity,
             idempotency_key: Optional[str],
-            x_idempotency_key: Optional[str] = None,
             **kwargs: Any,
         ) -> JSONResponse:
             res = service.sem_command_response(
@@ -96,14 +95,13 @@ def _isolated_audit_client(*, allow_fallback: bool) -> Iterator[TestClient]:
                 payload=payload,
                 identity=identity,
                 idempotency_key=idempotency_key,
-                x_idempotency_key=x_idempotency_key,
             )
             content = json.loads(res.body.decode("utf-8"))
             if isinstance(content.get("data"), dict) and "receipt_id" not in content["data"]:
                 cmd_id = content["data"].get("command_id") or content.get("command_id")
                 content["data"]["receipt_id"] = cmd_id
 
-            clean_key = idempotency_key or x_idempotency_key or ""
+            clean_key = idempotency_key or ""
             rec = store.get_command_by_idempotency_key(clean_key, operator_id=identity.operator_id)
             if rec and ("foundation" not in rec or "audit_action" not in rec.get("foundation", {})):
                 foundation = dict(rec.get("foundation") or {})
