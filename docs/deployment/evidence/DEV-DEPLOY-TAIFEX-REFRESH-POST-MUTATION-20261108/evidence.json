@@ -1,0 +1,56 @@
+{
+  "task_id": "DEV-DEPLOY-TAIFEX-REFRESH-POST-MUTATION-20261108",
+  "title": "TAIFEX dataset refresh must run on the candidate stack and never block the release",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "generated_at_utc": "2026-11-08T15:40:00Z",
+  "hosted_verification_status": "not_run_in_worker_lane",
+  "hosted_workflow_dispatched": false,
+  "hosted_verification_note": "No hosted workflow was dispatched (neither nonprod-deploy.yml nor dev-tw-market-refresh.yml) and no VM or SSH access was performed. Functional and contract evidence only is recorded here; hosted verification is deferred to the next automatic dev release and operator acceptance task INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "summary": {
+    "nonprod_deploy_workflow": "Moved step id=taifex_market_refresh ('Refresh TAIFEX contract dataset under lease after candidate stack deploy') after step id=deploy ('Deploy dev VM stack under lease') and its candidate readiness gates while keeping TWSE refresh step id=market_refresh before stack mutation. Configured id=taifex_market_refresh and id=bounded_taifex_refresh with continue-on-error: true, --non-blocking, and normalized outcome + release evidence recording (status, reason, redacted one-shot log).",
+    "dev_tw_market_refresh_workflow": "Configured step id=taifex_refresh in .github/workflows/dev-tw-market-refresh.yml after step id=refresh (TWSE) with continue-on-error: true, --non-blocking, and normalized outcome JSON recording (status, reason, redacted one-shot log).",
+    "deploy_nonprod_vm_script": "Added --non-blocking flag (NON_BLOCKING_REFRESH=true), closed-session preflight priority (weekend, holiday, session_not_closed checked before dataset_missing / closed_session_missing in check_taiwan_refresh_preflight), redacted one-shot container log capture (last 200 lines), non-blocking outcome persistence (status, reason, log) for failed/skipped TAIFEX refreshes without failing the release or triggering compensation, while preserving fail-closed behaviour for TWSE refresh failures and restoring external egress to deny and source controller to reconcile_only on every path.",
+    "release_manifest_validation": "Allowed optional dev_verification.taifex_market_refresh object with status in {completed, noop, skipped, failed}, non-empty reason string, and log string without rejecting dev_verified release manifests."
+  },
+  "commands": [
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-deploy-taifex-refresh-post-mutation-20261108/.venv-pantheon/bin/python3 -m pytest -q scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_deploy_nonprod_bootstrap_contract.py",
+      "exit_code": 0,
+      "result": "122 passed, 2 skipped in 69.03s (0:01:09)"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-deploy-taifex-refresh-post-mutation-20261108/.venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
+      "exit_code": 0,
+      "result": "80 passed, 2 skipped in 96.49s (0:01:36)"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-deploy-taifex-refresh-post-mutation-20261108/.venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py",
+      "exit_code": 0,
+      "result": "55 passed in 198.51s (0:03:18)"
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "exit_code": 0,
+      "result": "syntax ok"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-deploy-taifex-refresh-post-mutation-20261108/.venv-pantheon/bin/python3 -m pytest -q scripts/test_nonprod_dev_artifact_workflow.py",
+      "exit_code": 0,
+      "result": "181 passed in 25.27s"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-deploy-taifex-refresh-post-mutation-20261108/.venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_staging_release.py -k ReleaseManifestContractTests",
+      "exit_code": 0,
+      "result": "4 passed, 80 deselected in 0.95s"
+    }
+  ],
+  "acceptance_criteria_verification": {
+    "1_post_mutation_taifex_step_order": "Verified by test_nonprod_deploy_workflow_wires_taifex_refresh_after_candidate_deploy in scripts/test_source_ingest_deploy_diagnostics_contract.py and test_workflow_invokes_bounded_refresh_under_lease_after_candidate_deploy in scripts/test_dev_tw_market_refresh.py: market_refresh (TWSE) stays before deploy, and taifex_market_refresh runs after deploy and artifact_candidate_upload.",
+    "2_non_blocking_taifex_failure_and_fail_closed_twse": "Verified by test_refresh_entrypoint_taifex_non_blocking_failure_continues_and_records_redacted_log_while_twse_fails_closed in scripts/test_dev_tw_market_refresh.py and test_release_manifest_accepts_non_blocking_taifex_market_refresh_statuses in scripts/test_deploy_nonprod_vm.py.",
+    "3_taiwan_session_preflight_weekend_holiday_closed_session_skip": "Verified by test_refresh_entrypoint_taifex_weekend_skips_with_recorded_outcome_even_when_dataset_missing in scripts/test_dev_tw_market_refresh.py.",
+    "4_egress_deny_and_controller_reconcile_only_restored": "Verified by test_refresh_entrypoint_taifex_non_blocking_failure_continues_and_records_redacted_log_while_twse_fails_closed and test_refresh_entrypoint_taifex_non_force_proceeds_when_twse_fresh_and_enforces_ssf_readback in scripts/test_dev_tw_market_refresh.py; egress host list openapi.taifex.com.tw,www.taifex.com.tw is unchanged.",
+    "5_dev_tw_market_refresh_workflow_contract": "Verified by test_dev_tw_market_refresh_workflow_contract in scripts/test_dev_tw_market_refresh.py.",
+    "6_evidence_records_commands_and_no_hosted_dispatch": "Recorded in this evidence.json; no hosted workflow was dispatched."
+  }
+}

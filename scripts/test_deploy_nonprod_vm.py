@@ -2683,3 +2683,76 @@ def test_bounded_refresh_success_does_not_print_container_logs(tmp_path: Path) -
     assert result.returncode == 0
     assert result.stdout.strip() == "cid123"
     assert "log lines" not in result.stderr
+
+
+def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_and_records_evidence() -> None:
+    import yaml
+    from scripts.deploy.release_manifest import ReleaseManifestError, _validate_dev_verification
+
+    workflow_path = DEPLOY_SCRIPT.resolve().parents[1] / ".github" / "workflows" / "nonprod-deploy.yml"
+    wf = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    steps = wf["jobs"]["deploy-dev"]["steps"]
+    by_id = {step.get("id"): (idx, step) for idx, step in enumerate(steps) if step.get("id")}
+
+    market_idx, market_step = by_id["market_refresh"]
+    deploy_idx, deploy_step = by_id["deploy"]
+    candidate_upload_idx, _ = by_id["artifact_candidate_upload"]
+    taifex_idx, taifex_step = by_id["taifex_market_refresh"]
+    bounded_taifex_idx, bounded_taifex_step = by_id["bounded_taifex_refresh"]
+    paper_idx, _ = by_id["paper_bootstrap"]
+    retire_idx, retire_step = by_id["retire_release_cases"]
+    comp_idx, comp_step = by_id["deploy_compensation"]
+
+    assert deploy_step["name"] == "Deploy dev VM stack under lease"
+    assert market_idx < deploy_idx < candidate_upload_idx < taifex_idx < bounded_taifex_idx < paper_idx < retire_idx < comp_idx
+    assert "continue-on-error" not in market_step
+    assert "--non-blocking" not in market_step["run"]
+    assert taifex_step.get("continue-on-error") is True
+    assert "--non-blocking" in taifex_step["run"]
+    assert "taifex-market-refresh.json" in taifex_step["run"]
+    assert bounded_taifex_step.get("continue-on-error") is True
+    assert "--non-blocking" in bounded_taifex_step["run"]
+    assert "taifex-market-refresh.json" in bounded_taifex_step["run"]
+    assert "taifex_market_refresh" not in retire_step["if"]
+    assert "taifex_market_refresh" not in comp_step["if"]
+    assert "bounded_taifex_refresh" not in retire_step["if"]
+    assert "bounded_taifex_refresh" not in comp_step["if"]
+
+    fe_sha = "f" * 40
+    bff_sha = "b" * 40
+    for refresh_status, refresh_reason, refresh_log in (
+        ("failed", "bounded source refresh service source-ingest-scheduler exited with code 1", "ControllerTickError: conflicts=1"),
+        ("skipped", "weekend", ""),
+        ("completed", "refreshed", ""),
+    ):
+        dev_verification = {
+            "status": "dev_verified",
+            "verified_at": "2026-11-08T14:35:00Z",
+            "workflow_run": "ajoe734/pantheon/actions/runs/42488948670",
+            "frontend_commit": fe_sha,
+            "bff_version_commit": bff_sha,
+            "fe_deployment_manifest_sha256": "sha256:" + "3" * 64,
+            "taifex_market_refresh": {
+                "connector_id": "tw-taifex-futures-options-chip",
+                "dataset": "taifex_ssf_contracts",
+                "status": refresh_status,
+                "reason": refresh_reason,
+                "log": refresh_log,
+            },
+        }
+        _validate_dev_verification(dev_verification, fe_sha, bff_sha)
+
+    with pytest.raises(ReleaseManifestError, match="dev_verification.taifex_market_refresh.reason"):
+        _validate_dev_verification(
+            {
+                "status": "dev_verified",
+                "verified_at": "2026-11-08T14:35:00Z",
+                "workflow_run": "ajoe734/pantheon/actions/runs/42488948670",
+                "frontend_commit": fe_sha,
+                "bff_version_commit": bff_sha,
+                "fe_deployment_manifest_sha256": "sha256:" + "3" * 64,
+                "taifex_market_refresh": {"status": "failed", "reason": "", "log": ""},
+            },
+            fe_sha,
+            bff_sha,
+        )

@@ -270,7 +270,7 @@ def _validate_dev_verification(
         "bff_version_commit",
         "fe_deployment_manifest_sha256",
     }
-    optional_keys = {"all12_chain_id", "all12_status"}
+    optional_keys = {"all12_chain_id", "all12_status", "taifex_market_refresh"}
     keys = set(dev_ver.keys())
     if not required_keys.issubset(keys) or not keys.issubset(required_keys | optional_keys):
         raise ReleaseManifestError(
@@ -309,6 +309,25 @@ def _validate_dev_verification(
         raise ReleaseManifestError(
             f"dev_verification.all12_status must be 'passed' to claim dev_verified (got {all12_status!r})"
         )
+    taifex_refresh = dev_ver.get("taifex_market_refresh")
+    if taifex_refresh is not None:
+        if not isinstance(taifex_refresh, dict):
+            raise ReleaseManifestError("dev_verification.taifex_market_refresh must be an object")
+        taifex_status = taifex_refresh.get("status")
+        if taifex_status not in {"completed", "noop", "skipped", "failed"}:
+            raise ReleaseManifestError(
+                "dev_verification.taifex_market_refresh.status must be completed, noop, skipped, or failed"
+            )
+        taifex_reason = taifex_refresh.get("reason")
+        if not isinstance(taifex_reason, str) or not taifex_reason.strip():
+            raise ReleaseManifestError(
+                "dev_verification.taifex_market_refresh.reason must be a non-empty string"
+            )
+        taifex_log = taifex_refresh.get("log")
+        if not isinstance(taifex_log, str):
+            raise ReleaseManifestError(
+                "dev_verification.taifex_market_refresh.log must be a string"
+            )
 
 
 def _validate_rollback_baseline(baseline: Any, current_release_id: str) -> None:

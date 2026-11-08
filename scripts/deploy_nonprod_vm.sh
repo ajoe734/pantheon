@@ -605,6 +605,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --refresh-only) REFRESH_ONLY=true; shift ;;
+    --non-blocking) NON_BLOCKING_REFRESH=true; shift ;;
     --force) FORCE_REFRESH=true; shift ;;
     --preflight-only) PREFLIGHT_ONLY=true; shift ;;
     --output) REFRESH_OUTPUT_PATH="${2:-}"; shift 2 ;;
@@ -916,6 +917,7 @@ ssh_bash() {
     command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:+${PANTHEON_DEPLOY_WORKTREE_ROOT%/}/dev-root}")"
     command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
     command_prefix+=" FORCE_REFRESH=$(shell_quote "${FORCE_REFRESH:-false}")"
+    command_prefix+=" NON_BLOCKING_REFRESH=$(shell_quote "${NON_BLOCKING_REFRESH:-false}")"
     command_prefix+=" PREFLIGHT_ONLY=$(shell_quote "${PREFLIGHT_ONLY:-false}")"
     command_prefix+=" REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")"
@@ -1077,6 +1079,7 @@ ssh_bash() {
     if [[ "${remote_component}" == "refresh-only" && -z "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
       PANTHEON_DEPLOY_COMPONENT=refresh-only \
       FORCE_REFRESH="${FORCE_REFRESH:-false}" \
+      NON_BLOCKING_REFRESH="${NON_BLOCKING_REFRESH:-false}" \
       PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-false}" \
       REFRESH_OUTPUT_PATH="${REFRESH_OUTPUT_PATH:-}" \
       SOURCE_INGEST_BOUNDED_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" \
@@ -1144,9 +1147,15 @@ with os.fdopen(fd, "wb") as stream:
             --deadline-seconds "${deadline_seconds}" "${observer_args[@]}" || transport_status=$?
         fi
       fi
-      if [[ "${transport_status}" -eq 0 && "${remote_component}" == "refresh-only" && -n "${remote_output:-}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
+      if [[ "${remote_component}" == "refresh-only" && -n "${remote_output:-}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
         "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
         "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
+      fi
+      if [[ "${remote_component}" == "refresh-only" && "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+        if [[ -n "${REFRESH_OUTPUT_PATH:-}" && ! -s "${REFRESH_OUTPUT_PATH}" ]]; then
+          printf '%s\n' '{"connector_id":"tw-taifex-futures-options-chip","dataset":"taifex_ssf_contracts","log":"","reason":"transport_failed","status":"failed"}' > "${REFRESH_OUTPUT_PATH}"
+        fi
+        transport_status=0
       fi
       # Only these locally-created, exact private paths are removed; never an
       # evidence directory, receipt, retained VM artifact, or caller path.
@@ -1235,6 +1244,7 @@ info() {
 }
 
 error() {
+  LAST_REMOTE_DEPLOY_ERROR="$*"
   echo "[remote-deploy] ERROR: $*" >&2
   exit 1
 }
@@ -1463,10 +1473,14 @@ redact_bounded_refresh_log() {
 }
 
 dump_bounded_refresh_container_logs() {
-  local service="$1" container_id="$2"
+  local service="$1" container_id="$2" redacted_log=""
   [[ -n "${container_id}" ]] || return 0
   printf '[remote-deploy] bounded source refresh service %s failed; last 200 log lines (redacted):\n' "${service}" >&2
-  { docker logs --tail 200 "${container_id}" 2>&1 || true; } | redact_bounded_refresh_log >&2 || true
+  redacted_log="$({ docker logs --tail 200 "${container_id}" 2>&1 || true; } | redact_bounded_refresh_log || true)"
+  [[ -z "${redacted_log}" ]] || printf '%s\n' "${redacted_log}" >&2 || true
+  if [[ -n "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" && -n "${redacted_log}" ]]; then
+    printf '%s\n' "${redacted_log}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
+  fi
 }
 
 wait_for_bounded_source_refresh_service() {
@@ -1881,6 +1895,7 @@ print(
 PY
   then
     rm -rf "${evidence_dir}"
+    LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed"
     return 1
   fi
   rm -rf "${evidence_dir}"
@@ -2030,6 +2045,12 @@ session_date = cursor
 session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
 
 if connector_id == "tw-taifex-futures-options-chip":
+    if now_t.weekday() >= 5:
+        emit("skipped", reason="weekend", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
+    if d_str in holidays:
+        emit("skipped", reason="holiday", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
+    if now_t.time() < time(13, 30):
+        emit("skipped", reason="session_not_closed", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
     readback_payload = None
     try:
         rb_url = (
@@ -2108,12 +2129,6 @@ if connector_id == "tw-taifex-futures-options-chip":
             obs_dt = None
     if record_session_date is None or record_session_date < session_date or obs_dt is None or obs_dt < session_close:
         emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
-    if now_t.weekday() >= 5:
-        emit("skipped", reason="weekend", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
-    if d_str in holidays:
-        emit("skipped", reason="holiday", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
-    if now_t.time() < time(13, 30):
-        emit("skipped", reason="session_not_closed", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
     emit(
         "noop",
         reason="already_fresh",
@@ -2696,19 +2711,81 @@ execute_bounded_source_refresh_entrypoint() {
   SOURCE_INGEST_MAX_RECORDS="100"
   export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS SOURCE_INGEST_BOUNDED_CONNECTOR_ID SOURCE_INGEST_BOUNDED_DATASET
   validate_source_refresh_profile
+  BOUNDED_REFRESH_CAPTURED_LOG_FILE="$(mktemp)"
+  write_bounded_refresh_outcome() {
+    [[ -n "${output_path:-}" ]] || return 0
+    local out_status="$1" out_reason="$2" base_json="${3:-}"
+    python3 - "${output_path}" "${out_status}" "${out_reason}" "${base_json}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'OUTCOME_PY'
+import json, pathlib, sys
+out_path, status, reason, base_raw, log_file, connector_id, dataset = sys.argv[1:8]
+payload = {}
+if base_raw:
+    try:
+        parsed = json.loads(base_raw)
+        if isinstance(parsed, dict):
+            payload.update(parsed)
+    except Exception:
+        pass
+log_text = ""
+if log_file and pathlib.Path(log_file).is_file():
+    log_text = pathlib.Path(log_file).read_text(encoding="utf-8", errors="replace").strip()
+payload["status"] = status or payload.get("status") or "failed"
+payload["reason"] = reason or payload.get("reason") or ("refreshed" if payload["status"] == "completed" else "unknown")
+payload["log"] = log_text
+if connector_id and "connector_id" not in payload:
+    payload["connector_id"] = connector_id
+if dataset and "dataset" not in payload:
+    payload["dataset"] = dataset
+pathlib.Path(out_path).write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+OUTCOME_PY
+  }
+  handle_pre_mutation_refresh_exit() {
+    local rc=$?
+    trap - EXIT INT TERM
+    if (( rc != 0 )); then
+      local fail_reason="${LAST_REMOTE_DEPLOY_ERROR:-bounded_refresh_preflight_failed}"
+      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
+        write_bounded_refresh_outcome "failed" "${fail_reason}" || true
+      fi
+      rm -f "${steady_env:-}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+        info "non-blocking TAIFEX refresh failed before container mutation (rc=${rc}, reason=${fail_reason}); continuing without failing release"
+        exit 0
+      fi
+      exit "${rc}"
+    fi
+    rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+  }
+  trap handle_pre_mutation_refresh_exit EXIT INT TERM
   resolve_bounded_source_refresh_active_symbols
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
   preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"
 
   case "${preflight_status}" in
     skipped|noop)
-      [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+      local skip_reason
+      skip_reason="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("reason") or "")' "${preflight_output}")"
+      write_bounded_refresh_outcome "${preflight_status}" "${skip_reason}" "${preflight_output}"
       info "bounded source refresh preflight: ${preflight_output}"
+      trap - EXIT INT TERM
+      rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
       return 0
       ;;
     error)
-      [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+      local err_reason
+      err_reason="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("detail") or d.get("reason") or "preflight_error")' "${preflight_output}")"
+      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
+        write_bounded_refresh_outcome "failed" "${err_reason}" "${preflight_output}"
+      else
+        [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+      fi
       info "bounded source refresh preflight error: ${preflight_output}" >&2
+      trap - EXIT INT TERM
+      rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+        info "non-blocking TAIFEX refresh preflight error (${err_reason}); continuing without failing release"
+        return 0
+      fi
       return 1
       ;;
     proceed)
@@ -2723,8 +2800,9 @@ execute_bounded_source_refresh_entrypoint() {
   steady_env="$(mktemp)" running_image_id="" steady_ids=() bounded_containers=()
   if [[ -z "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" ]]; then
     info "bounded source refresh skipped: no_active_taiwan_symbols"
-    [[ -n "${output_path}" ]] && printf '%s\n' '{"status": "skipped", "reason": "no_active_taiwan_symbols"}' > "${output_path}"
-    rm -f "${steady_env}"
+    write_bounded_refresh_outcome "skipped" "no_active_taiwan_symbols" '{"status": "skipped", "reason": "no_active_taiwan_symbols"}'
+    trap - EXIT INT TERM
+    rm -f "${steady_env}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
     return 0
   fi
 
@@ -2778,12 +2856,21 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   fi
 
   restore_bounded_source_refresh() {
-    local rc="${1:-$?}"
+    local rc="${1:-$?}" invoked_from_trap="false" restore_rc=0
+    (( $# == 0 )) && invoked_from_trap="true"
     trap - EXIT INT TERM
+    if (( rc != 0 )) && [[ -n "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" && ! -s "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" ]]; then
+      local sched_cid="" sched_log=""
+      sched_cid="$(docker ps -a -q --filter "name=^${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX:-pantheon-bounded-refresh}-source-ingest-scheduler\$" 2>/dev/null || true)"
+      if [[ -n "${sched_cid}" ]]; then
+        sched_log="$({ docker logs --tail 200 "${sched_cid}" 2>&1 || true; } | redact_bounded_refresh_log || true)"
+        [[ -z "${sched_log}" ]] || printf '%s\n' "${sched_log}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
+      fi
+    fi
     info "restoring external egress to deny and source controller to reconcile_only"
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
-      manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || rc=$?
+      manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
       PANTHEON_EXTERNAL_EGRESS=deny PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="" \
       SOURCE_INGEST_CONTROLLER_MODE=reconcile_only SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
@@ -2793,9 +2880,24 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
     (( ${#bounded_containers[@]} )) && docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
     if (( ${#steady_ids[@]} )); then
-      docker start "${steady_ids[@]}" >/dev/null 2>&1 || rc=$?
+      docker start "${steady_ids[@]}" >/dev/null 2>&1 || restore_rc=$?
+    fi
+    (( restore_rc == 0 )) || rc="${restore_rc}"
+    if (( rc != 0 )); then
+      local fail_reason="${LAST_REMOTE_DEPLOY_ERROR:-bounded_refresh_failed}"
+      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
+        write_bounded_refresh_outcome "failed" "${fail_reason}" || true
+      fi
     fi
     rm -f "${steady_env:-}"
+    if (( rc != 0 )); then
+      rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+      if (( restore_rc == 0 )) && [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+        info "non-blocking TAIFEX refresh failed (rc=${rc}); continuing without failing release"
+        [[ "${invoked_from_trap}" == "true" ]] && exit 0
+        return 0
+      fi
+    fi
     return "${rc}"
   }
   trap restore_bounded_source_refresh EXIT INT TERM
@@ -2855,11 +2957,15 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     wait_for_bounded_source_refresh_service "${bounded_service}"
   done
 
-  local refresh_rc=0
+  local refresh_rc=0 post_restore_rc=0
   verify_bounded_source_refresh_readback "${refresh_started_at}" || refresh_rc=$?
-  restore_bounded_source_refresh "${refresh_rc}" || refresh_rc=$?
-  (( refresh_rc == 0 )) || return "${refresh_rc}"
-  [[ -n "${output_path}" ]] && python3 -c "import json; print(json.dumps({'status': 'completed', 'refreshed_at': '${refresh_started_at}'}))" > "${output_path}"
+  restore_bounded_source_refresh "${refresh_rc}" || post_restore_rc=$?
+  (( post_restore_rc == 0 )) || return "${post_restore_rc}"
+  if (( refresh_rc != 0 )); then
+    return 0
+  fi
+  write_bounded_refresh_outcome "completed" "refreshed" "{\"status\": \"completed\", \"refreshed_at\": \"${refresh_started_at}\"}"
+  rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
 }
 
 assert_bff_source_sha() {
