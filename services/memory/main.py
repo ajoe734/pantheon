@@ -668,6 +668,13 @@ async def retrieve_memory(
                     ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
                 )
 
+    persona_tenant = None
+    if ctx is not None:
+        token_tenant = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default")
+        if token_tenant != "*":
+            persona_tenant = token_tenant
+    persona_fetch_limit = 1_000_000 if persona_tenant is not None else limit
+
     if scope in {"persona", "both"}:
         try:
             persona_store = _persona_store()
@@ -678,32 +685,37 @@ async def retrieve_memory(
             except Exception:
                 backend = None
 
-            if backend is not None:
-                for hit in retrieve_persona_with_backend(
-                    persona_store,
+            def _persona_hits():
+                # Tenant must be filtered before ranking/limit: fetch the full
+                # candidate set from the local store, then cut after filtering.
+                if backend is not None and query.strip():
+                    return retrieve_persona_with_backend(
+                        persona_store,
+                        persona_id=persona_id or "",
+                        backend=backend,
+                        query=query,
+                        tenant_id=persona_tenant,
+                        memory_type=memory_type,
+                        relevance_scope=persona_relevance_scope,
+                        tags=tag_values,
+                        limit=min(persona_fetch_limit, 100),
+                    )
+                return persona_store.retrieve(
                     persona_id=persona_id or "",
-                    backend=backend,
                     query=query,
                     memory_type=memory_type,
                     relevance_scope=persona_relevance_scope,
                     tags=tag_values,
-                    limit=limit,
-                ):
-                    ranked_hits.append(
-                        ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
-                    )
-            else:
-                for hit in persona_store.retrieve(
-                    persona_id=persona_id or "",
-                    query=query,
-                    memory_type=memory_type,
-                    relevance_scope=persona_relevance_scope,
-                    tags=tag_values,
-                    limit=limit,
-                ):
-                    ranked_hits.append(
-                        ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
-                    )
+                    limit=persona_fetch_limit,
+                )
+
+            persona_hits = _persona_hits()
+            if persona_tenant is not None:
+                persona_hits = [h for h in persona_hits if h.entry.tenant_id == persona_tenant]
+            for hit in persona_hits:
+                ranked_hits.append(
+                    ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
+                )
         except PersonaMemoryError as exc:
             raise HTTPException(
                 status_code=422,

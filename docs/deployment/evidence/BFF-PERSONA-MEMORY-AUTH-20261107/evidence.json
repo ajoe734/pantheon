@@ -1,0 +1,24 @@
+{
+  "task_id": "BFF-PERSONA-MEMORY-AUTH-20261107",
+  "scope": "source_only",
+  "hosted_completion_claimed": false,
+  "root_cause": "BFF _retrieve_canonical_persona_memory called Memory /api/memory/retrieve with no Authorization or tenant header; Memory runs PANTHEON_MEMORY_AUTH_MODE=strict and returned 401 (surfaced as memory_plane_access_denied) for all cohort personas.",
+  "fix": {
+    "bff": "Forward the caller's verified Bearer credential and bound tenant (X-Tenant-Id via bound_tenant) to Memory; actor_roles query is sent empty so Memory derives roles from the verified token only. Missing auth / unbound tenant yield explicit unavailable reasons without calling Memory. No empty fallback; failures stay degraded with memory_source.reason.",
+    "memory": "GET /api/memory/retrieve now filters persona hits to the verified token tenant (fail-closed: entries with missing/other tenant_id are dropped; '*' tenant unrestricted). Trade-lesson merge now stamps tenant_id from the owned candidate so merged entries stay readable by their tenant. Owner-file scope actually touched: services/memory/main.py, services/persona/lesson_governance.py (not in original artifact list; needs governed scope resolution at review).",
+    "memory_review_repair": "Review P2 repair (all inside services/memory/main.py): for a tenant-bound token, persona candidates come from the full local store retrieve (no pre-filter cutoff) and are tenant-filtered (strict equality; foreign/untagged dropped) before the final top-limit cut, so owned entries survive 100 higher-ranked foreign records; nonempty-query backend path passes the verified tenant into retrieve_persona_with_backend so SearchAccessContext carries tenant-alpha instead of 'default'."
+  },
+  "deployed_config_prerequisites": [
+    "Memory and BFF must validate the same operator JWT: PANTHEON_MEMORY_JWT_SECRET/ISSUER/AUDIENCE default to PANTHEON_BFF_JWT_* in docker-compose.yml (already wired); no new issuer or role grants required.",
+    "Operator token must carry a tenant claim and a role in Memory read roles (operator/admin/researcher/analyst/system)."
+  ],
+  "regression_tests": [
+    "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_bff_persona_memory_reads_canonical_memory_plane",
+    "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_bff_persona_memory_denied_stays_explicit",
+    "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_bff_persona_memory_unbound_tenant_never_calls_memory",
+    "services/memory/test_main.py::test_memory_retrieve_persona_entries_are_tenant_scoped (real strict-JWT owner app; alpha sees alpha, never beta; unauth 401; other tenant sees none)",
+    "services/memory/test_main.py::test_persona_retrieve_tenant_filter_precedes_ranking_limit",
+    "services/memory/test_main.py::test_persona_retrieve_backend_context_uses_verified_tenant"
+  ],
+  "test_result": "memory test_main + bff b2 facade + kw01 + persona lesson_governance: 95 passed, 2 subtests; hosted not exercised"
+}
