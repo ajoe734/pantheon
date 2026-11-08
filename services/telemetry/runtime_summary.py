@@ -22,6 +22,25 @@ log = logging.getLogger(__name__)
 
 RUNTIME_RETIRED_EVENT_TYPE = "runtime_retired"
 _MAX_PENDING_COST_FILLS = 64
+PERSONA_INSTRUMENT_COUNTERFACTUAL_EVENT_TYPE = "persona_instrument_counterfactual"
+_MAX_INSTRUMENT_COUNTERFACTUAL_ROWS = 512
+_COUNTERFACTUAL_ROW_FIELDS = (
+    "decision_id",
+    "instrument_id",
+    "kind",
+    "underlying",
+    "view_direction",
+    "chosen",
+    "units",
+    "multiplier",
+    "entry",
+    "mark",
+    "pnl_cf",
+    "costs",
+    "margin_use",
+    "underlying_entry",
+    "underlying_mark",
+)
 
 _LIFECYCLE_IDENTITY_EVENT_TYPES = frozenset(
     {
@@ -1184,6 +1203,31 @@ class RuntimeSummaryProjectionStore:
 
                     if symbol is not None:
                         _rebuild_positions(current)
+
+            # Counterfactual grading rows never touch fills, positions or cost
+            # basis: they are an append-only set keyed (decision_id,
+            # instrument_id), so a redelivery overwrites itself.
+            if event_type == PERSONA_INSTRUMENT_COUNTERFACTUAL_EVENT_TYPE:
+                decision_key = metadata.get("decision_id")
+                instrument_key = metadata.get("instrument_id")
+                if (
+                    isinstance(decision_key, str)
+                    and decision_key.strip()
+                    and isinstance(instrument_key, str)
+                    and instrument_key.strip()
+                ):
+                    rows = {
+                        f"{r['decision_id']}|{r['instrument_id']}": r
+                        for r in current.get("instrument_counterfactuals") or []
+                    }
+                    row = {k: metadata.get(k) for k in _COUNTERFACTUAL_ROW_FIELDS}
+                    row["decision_id"] = decision_key.strip()
+                    row["instrument_id"] = instrument_key.strip()
+                    row["event_id"] = event.get("event_id")
+                    row["observed_at"] = event.get("created_at")
+                    rows[f"{row['decision_id']}|{row['instrument_id']}"] = row
+                    ordered = sorted(rows)[-_MAX_INSTRUMENT_COUNTERFACTUAL_ROWS:]
+                    current["instrument_counterfactuals"] = [rows[k] for k in ordered]
 
             # Expiry settlement closes a stock-future position at the final
             # settlement price. It is not a fill (the ledger fill count does not

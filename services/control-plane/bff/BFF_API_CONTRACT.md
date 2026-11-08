@@ -1083,6 +1083,12 @@ Read-only; no new route. These fields extend the existing `GET /bff/management/p
 - Each fact carries the same instrument fields and values `market_value` / `notional` with the multiplier.
 - `data.summary.instrument_breakdown` is an additive list grouped by traded instrument (`instrument_key` is the `instrument_id`, else the symbol) with `holding_count`, `market_value`, `total_notional`, `total_pnl`, `unrealized_pnl`, `realized_pnl`, `multiplier` and `margin_reserved`. `supported_dimensions` is unchanged.
 
+- `data.summary` carries three additive learning fields that are graded **separately** (INSTRUMENT-DECISION-LEARNING-COUNTERFACTUAL-20261107), read from the `persona_instrument_counterfactual` rows the telemetry runtime summary folds (`instrument_counterfactuals`, keyed `(decision_id, instrument_id)`):
+  - `direction_hit_rate`: fraction of graded decisions whose view direction matches the sign of the underlying's next-close move (`underlying_mark - underlying_entry`). It is independent of the instrument chosen. A decision with no underlying prices, a FLAT view or a zero move is not graded; `null` when nothing is graded (never a fabricated 0).
+  - `instrument_regret`: sum over decisions of `max(pnl_cf over candidates considered) - pnl_chosen` (`pnl_chosen` is 0 for a recorded no trade), `>= 0`; `null` when no decision can be computed.
+  - `margin_use`: sum of the chosen legs' initial margin (0 for a no trade); `null` when no rows exist.
+  - `instrument_learning` holds the same grades with `direction_hit_count`, `direction_graded_count`, `instrument_regret_graded_count`, `decision_count` and one entry per decision (`decision_id` is prefixed `{runtime_id}:`; `direction_hit`, `instrument_regret`, `margin_use`, `chosen_instrument_id`, `best_instrument_id`, `chosen_pnl`). A correct call in a worse instrument is therefore a direction hit with positive regret. `pnl_cf = side * q_cf * multiplier * (mark - entry) - costs` with `q_cf` from the same policy sizing rule applied to that candidate, on prices already held (D-1 settlement); no new data source.
+
 ### Decision projection
 
 `subject.asset_class` of a projected trading-room decision event follows the chosen instrument kind (`cash_share` -> `equity`, `stock_future` -> `future`); a decision with no instrument stays `equity`, and an unknown kind is rejected instead of being labelled equity.

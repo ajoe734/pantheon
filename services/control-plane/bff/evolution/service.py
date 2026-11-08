@@ -16,6 +16,10 @@ import os
 import re
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from services.evolution.program_qualification import (
+    EXPRESSION_REPLAY_POLICY_CONTROLS,
+    expression_replay_gate,
+)
 from services.registry.strategy_artifact import (
     FORBIDDEN_MUTATION_CONTROL_KEYS,
     REQUIRED_EXPRESSION_POLICY_CONTROLS,
@@ -40,17 +44,38 @@ def validate_evolution_child_artifact(
     child_artifact: Mapping[str, Any],
     *,
     parameter_changes: Optional[Mapping[str, Any]] = None,
+    replay_records: Optional[Sequence[Mapping[str, Any]]] = None,
+    require_replay: bool = False,
 ) -> Dict[str, Any]:
     """Validate an evolution child strategy artifact against its parent and mutation surface.
 
     Accepts the expression policy controls (strength_scale_k, strength_floor_momentum,
     lever_min_strength, notional_fraction_at_full_strength) when expression_policy is
     present, and rejects forbidden controls or immutable parameter mutations.
+
+    A child may never raise a risk limit: any risk-limit key (``max_leverage``,
+    ``gross_limit``, ``net_limit`` ...) that differs from the parent, in the
+    parameters or the expression policy, is rejected.  When the change touches
+    a control that decides the instrument and ``replay_records`` are given, the
+    proposal is replayed on those recorded decisions against the parent and
+    rejected if it does not pass; ``require_replay=True`` (the pre-qualification
+    path) also rejects such a change when no records are supplied.
     """
     validate_strategy_artifact(parent_artifact)
     validate_strategy_artifact(child_artifact)
     parent = dict(parent_artifact)
     child = dict(child_artifact)
+
+    for section_name, getter in (
+        ("parameters", lambda a: a.get("parameters") or {}),
+        ("expression_policy.parameters", lambda a: (a.get("expression_policy") or {}).get("parameters") or {}),
+    ):
+        parent_section, child_section = getter(parent), getter(child)
+        for risk_key in sorted(FORBIDDEN_MUTATION_CONTROL_KEYS):
+            if risk_key in child_section and child_section[risk_key] != parent_section.get(risk_key):
+                raise StrategyArtifactValidationError(
+                    f"evolution child cannot raise or change risk limit {risk_key!r} in {section_name}"
+                )
 
     if child["strategy_id"] != parent["strategy_id"]:
         raise StrategyArtifactValidationError(
@@ -133,12 +158,27 @@ def validate_evolution_child_artifact(
         raise StrategyArtifactValidationError(
             "evolution child artifact does not match governed mutation of parent"
         )
-    return {
+    result: Dict[str, Any] = {
         "valid": True,
         "parent_artifact_id": parent["artifact_id"],
         "child_artifact_id": child["artifact_id"],
         "mutated_controls": sorted(changes_to_check.keys()),
     }
+    replay_controls = sorted(set(changes_to_check) & set(EXPRESSION_REPLAY_POLICY_CONTROLS))
+    if replay_controls and (replay_records or require_replay):
+        gate = expression_replay_gate(
+            parent["expression_policy"]["parameters"],
+            child["expression_policy"]["parameters"],
+            list(replay_records or []),
+        )
+        if not gate["passed"]:
+            raise StrategyArtifactValidationError(
+                f"evolution child expression replay failed: {gate['reason']}"
+            )
+        result["expression_replay"] = {**gate, "evaluated_controls": replay_controls}
+    elif replay_controls:
+        result["expression_replay"] = {"status": "not_evaluated", "evaluated_controls": replay_controls}
+    return result
 
 _EW04_ALLOWED_SURFACE_STATES = {"fresh", "stale", "unavailable"}
 
@@ -1250,9 +1290,30 @@ class EvolutionService:
         child_artifact: Mapping[str, Any],
         *,
         parameter_changes: Optional[Mapping[str, Any]] = None,
+        replay_records: Optional[Sequence[Mapping[str, Any]]] = None,
+        require_replay: bool = False,
     ) -> Dict[str, Any]:
         return validate_evolution_child_artifact(
             parent_artifact,
             child_artifact,
             parameter_changes=parameter_changes,
+            replay_records=replay_records,
+            require_replay=require_replay,
+        )
+
+    def propose_child_artifact(
+        self,
+        parent_artifact: Mapping[str, Any],
+        child_artifact: Mapping[str, Any],
+        *,
+        replay_records: Sequence[Mapping[str, Any]],
+        parameter_changes: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Pre-qualification path: instrument-affecting changes must replay first."""
+        return validate_evolution_child_artifact(
+            parent_artifact,
+            child_artifact,
+            parameter_changes=parameter_changes,
+            replay_records=replay_records,
+            require_replay=True,
         )
