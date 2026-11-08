@@ -4970,6 +4970,8 @@ def _ensure_persona_exists(persona_id: str, caller_tenant: Optional[str] = None)
 def _retrieve_canonical_persona_memory(
     persona_id: str,
     identity: OperatorIdentity,
+    authorization: Optional[str] = None,
+    selected_tenant_id: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Read persona memory without falling back to BFF snapshots or workspace files."""
     base_url = (
@@ -4990,10 +4992,35 @@ def _retrieve_canonical_persona_memory(
             "repair_action": "configure_memory_service_url",
         }
 
+    # Forward the caller's verified credential; Memory derives roles/tenant
+    # from the token itself (query roles are never authority).
+    from services.control_plane.bff.core import owner_reads as _owner_reads
+    from services.control_plane.bff.command_adapters.base import bound_tenant
+
+    def verified_tenant_for(auth: str) -> str:
+        return bound_tenant({}, tenant_id=selected_tenant_id or _owner_reads.selected_tenant.get(), auth_token=auth.removeprefix("Bearer ").strip())
+
+    caller_auth = (authorization or _owner_reads.authorization.get() or "").strip()
+    if not caller_auth:
+        return [], source | {
+            "reason": "memory_plane_caller_auth_missing",
+            "repair_action": "authenticate_caller",
+        }
+    if not caller_auth.lower().startswith("bearer "):
+        caller_auth = f"Bearer {caller_auth}"
+    try:
+        tenant_id = verified_tenant_for(caller_auth)
+    except Exception:
+        return [], source | {
+            "reason": "memory_plane_tenant_unbound",
+            "http_status": 403,
+            "repair_action": "select_verified_tenant",
+        }
+
     params = urlencode(
         {
             "actor_id": identity.operator_id,
-            "actor_roles": ",".join(sorted(identity.roles)),
+            "actor_roles": "",
             "session_id": f"bff-persona-memory-{persona_id}",
             "persona_id": persona_id,
             "session_persona_id": persona_id,
@@ -5004,7 +5031,15 @@ def _retrieve_canonical_persona_memory(
     timeout = float(os.getenv("PANTHEON_MEMORY_API_TIMEOUT_SECONDS", "3"))
     try:
         with urllib_request.urlopen(
-            urllib_request.Request(f"{base_url}/api/memory/retrieve?{params}", method="GET"),
+            urllib_request.Request(
+                f"{base_url}/api/memory/retrieve?{params}",
+                headers={
+                    "Authorization": caller_auth,
+                    "X-Tenant-Id": tenant_id,
+                    "Accept": "application/json",
+                },
+                method="GET",
+            ),
             timeout=timeout,
         ) as response:
             payload = json.loads(response.read().decode("utf-8") or "{}")

@@ -57,9 +57,9 @@ def _fresh_client(td: str = "") -> Iterator[tuple[TestClient, Any]]:
         store.audit_events.append(evt)
         return evt
 
-    store.record_agora_audit_event = _record_audit
+    audit_writer = type("_AuditWriter", (), {"record_agora_audit_event": staticmethod(_record_audit)})()
     store.get_agora_session = lambda session_id: None
-    with management_nl_test_client(store) as client:
+    with management_nl_test_client(store, audit_store=audit_writer) as client:
         yield client, store
 
 

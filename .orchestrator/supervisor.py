@@ -2266,7 +2266,7 @@ def _validate_auto_integrator_unblock_request(
     resolve_repository(config, repository_id)
     if request.get("repository_slug") != repository_slug(config, repository_id):
         raise ValueError("unblock request repository slug is not canonical")
-    workflow = config.get("branch_workflow") or config.get("wave_workflow") or {}
+    workflow = config.get("branch_workflow") or {}
     workflow = workflow if isinstance(workflow, Mapping) else {}
     auto = workflow.get("auto_integrator") or config.get("auto_integrator") or {}
     auto = auto if isinstance(auto, Mapping) else {}
