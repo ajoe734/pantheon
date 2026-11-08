@@ -26,6 +26,7 @@ import pytest
 
 from services.control_plane.bff.governance import approval_owner
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.tools_integrations.service import deprecated_bff_path_response
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -94,7 +95,7 @@ def _make_client(store: Any) -> TestClient:
         sse_buffers={},
         sse_subscribers={},
         gov_bff_action_command=lambda *a, **kw: {},
-        deprecated_bff_path_response=lambda *a, **kw: None,
+        deprecated_bff_path_response=deprecated_bff_path_response,
         sem_command_response=lambda *a, **kw: {},
         stream_generic_events=lambda *a, **kw: iter(()),
         surface_degradation_reason=lambda *a, **kw: None,
@@ -132,15 +133,22 @@ def test_pkt004_deployment_approval_drilldowns_filters_follow_canonical_contract
             "state": "decided",
         }
     ]
-    store.list_deployment_plans = lambda **kwargs: [
-        plan
-        for plan in plan_records
-        if (not kwargs.get("status") or plan["status"] == kwargs["status"])
-        and (
-            not kwargs.get("capital_pool_id")
-            or plan["capital_pool_id"] == kwargs["capital_pool_id"]
-        )
-    ]
+    list_calls = 0
+
+    def _list_deployment_plans(**kwargs: Any) -> list[dict[str, Any]]:
+        nonlocal list_calls
+        list_calls += 1
+        return [
+            plan
+            for plan in plan_records
+            if (not kwargs.get("status") or plan["status"] == kwargs["status"])
+            and (
+                not kwargs.get("capital_pool_id")
+                or plan["capital_pool_id"] == kwargs["capital_pool_id"]
+            )
+        ]
+
+    store.list_deployment_plans = _list_deployment_plans
     store.get_deployment_plan = lambda plan_id: next(
         (plan for plan in plan_records if plan["plan_id"] == plan_id), None
     )
@@ -161,19 +169,38 @@ def test_pkt004_deployment_approval_drilldowns_filters_follow_canonical_contract
         "/api/v1/deployment-plans?status=approved&capital_pool_id=pool-main",
         headers=headers,
     )
-    assert plans.status_code == 200, plans.text
+    assert plans.status_code == 410, plans.text
+    assert plans.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
     plan_payload = plans.json()
-    assert plan_payload["meta"]["total"] == 1
-    assert plan_payload["data"][0]["plan_id"] == "plan-F-042"
-    assert plan_payload["data"][0]["status"] == "approved"
-    assert plan_payload["data"][0]["capital_pool_id"] == "pool-main"
+    assert plan_payload["detail"]["error"]["details"]["route"] == "/api/v1/deployment-plans"
+    assert plan_payload["detail"]["error"]["details"]["replacement"] == "/bff/deployments"
+    assert plan_payload["meta"]["deprecation"]["replacement"] == "/bff/deployments"
 
     no_plans = client.get(
         "/api/v1/deployment-plans?status=rejected&capital_pool_id=pool-main",
         headers=headers,
     )
-    assert no_plans.status_code == 200, no_plans.text
-    assert no_plans.json()["meta"]["total"] == 0
+    assert no_plans.status_code == 410, no_plans.text
+    assert no_plans.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
+    assert list_calls == 0
+
+    bff_deployments = client.get(
+        "/bff/deployments?status=approved",
+        headers=headers,
+    )
+    assert bff_deployments.status_code == 200, bff_deployments.text
+    bff_deployments_payload = bff_deployments.json()
+    assert bff_deployments_payload["page_info"]["total"] == 1
+    assert bff_deployments_payload["data"][0]["plan_id"] == "plan-F-042"
+    assert bff_deployments_payload["data"][0]["status"] == "approved"
+    assert bff_deployments_payload["data"][0]["capital_pool_id"] == "pool-main"
+
+    no_bff_deployments = client.get(
+        "/bff/deployments?status=rejected",
+        headers=headers,
+    )
+    assert no_bff_deployments.status_code == 200, no_bff_deployments.text
+    assert no_bff_deployments.json()["page_info"]["total"] == 0
 
     decisions = client.get(
         "/api/v1/approval-decisions?outcome=approved&state=decided",
