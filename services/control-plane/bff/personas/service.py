@@ -3215,9 +3215,94 @@ def _project_persona_fleet_health(
     active_incidents: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     reasons: List[str] = []
-    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
-    if lifecycle and not _is_persona_lifecycle_operational(lifecycle):
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
+    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").strip().lower()
+    admin_status = str(persona.get("status") or "").strip().lower()
+    meta_lifecycle = str(
+        metadata.get("lifecycle_state")
+        or metadata.get("provisioning_reconciliation_state")
+        or ""
+    ).strip().lower()
+    paper_runtime_state = str(
+        persona.get("paper_runtime_state") or metadata.get("paper_runtime_state") or ""
+    ).strip().lower()
+
+    active_paper_bindings = [
+        binding
+        for binding in runtime_bindings
+        if str(binding.get("status") or binding.get("state") or "").strip().lower()
+        in {"active", "ready", "running", "idle", "paper_running"}
+        and str(
+            binding.get("deployment_mode")
+            or binding.get("deployment_stage")
+            or binding.get("execution_mode")
+            or binding.get("environment")
+            or binding.get("mode")
+            or binding.get("runtime_kind")
+            or ""
+        ).strip().lower()
+        in {"paper", ""}
+    ]
+    raw_exec_mode = str(
+        metadata.get("execution_mode")
+        or metadata.get("capital_mode")
+        or metadata.get("deployment_stage")
+        or ""
+    ).strip().lower()
+    if not raw_exec_mode and runtime_bindings:
+        for binding in runtime_bindings:
+            cand = str(
+                binding.get("deployment_mode")
+                or binding.get("deployment_stage")
+                or binding.get("execution_mode")
+                or binding.get("environment")
+                or binding.get("mode")
+                or binding.get("runtime_kind")
+                or ""
+            ).strip().lower()
+            if cand:
+                raw_exec_mode = cand
+                break
+    if not raw_exec_mode and (
+        paper_runtime_state in {"running", "paper_running", "paper_active"} or active_paper_bindings
+    ):
+        raw_exec_mode = "paper"
+    execution_mode = raw_exec_mode or "unknown"
+
+    if admin_status in {"archived", "suspended", "retired", "frozen"}:
+        operational_state = admin_status
+    elif meta_lifecycle in {"provisioning", "provisioning_failed", "paper_running", "retired", "frozen", "suspended"}:
+        operational_state = meta_lifecycle
+    elif paper_runtime_state in {"running", "paper_running", "paper_active"} and active_paper_bindings:
+        operational_state = "paper_running"
+    elif lifecycle == "research_only" and raw_exec_mode == "paper" and active_paper_bindings:
+        operational_state = "paper_running"
+    elif _is_persona_lifecycle_operational(lifecycle):
+        operational_state = lifecycle
+    elif lifecycle:
+        operational_state = lifecycle
+    else:
+        operational_state = "unknown"
+
+    paper_operational = (
+        lifecycle == "research_only"
+        and admin_status not in {"archived", "suspended", "retired", "frozen"}
+        and bool(active_paper_bindings)
+        and (
+            operational_state == "paper_running"
+            or paper_runtime_state in {"running", "paper_running", "paper_active"}
+            or raw_exec_mode == "paper"
+        )
+    )
+    lifecycle_operational = (
+        admin_status not in {"archived", "suspended", "retired", "frozen"}
+        and (_is_persona_lifecycle_operational(lifecycle) or paper_operational)
+    )
+    if lifecycle and not lifecycle_operational:
         reasons.append("persona_lifecycle_not_active")
+    elif not lifecycle and admin_status in {"archived", "suspended", "retired", "frozen"}:
+        reasons.append("persona_lifecycle_not_active")
+
     if not runtime_bindings:
         reasons.append("no_runtime_binding")
     if active_incidents:
@@ -3264,6 +3349,9 @@ def _project_persona_fleet_health(
         "runtime_statuses": sorted(runtime_statuses),
         "latest_telemetry_at": latest_telemetry.get("collected_at"),
         "active_incident_count": len(active_incidents),
+        "lifecycle_maturity": lifecycle or "unknown",
+        "execution_mode": execution_mode,
+        "operational_state": operational_state,
     }
 
 
@@ -3276,6 +3364,7 @@ def _project_persona_fleet_item(
     all_evolution_decisions: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
+    raw_meta = raw_persona.get("metadata") if isinstance(raw_persona.get("metadata"), Mapping) else {}
     routed = _routed_strategies_for_persona(persona_id)
     persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
 
@@ -3285,11 +3374,20 @@ def _project_persona_fleet_item(
         for binding in bindings
         if str(binding.get("id") or binding.get("binding_id") or "").strip()
     }
+    for meta_key in ("persona_capital_binding_id", "binding_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            binding_ids.add(val)
+
     capital_pool_ids = {
         str(binding.get("capital_pool_id") or "").strip()
         for binding in bindings
         if str(binding.get("capital_pool_id") or "").strip()
     }
+    for meta_key in ("capital_pool_id", "internal_paper_capital_pool_id", "legacy_paper_capital_pool_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            capital_pool_ids.add(val)
 
     sessions = list(_get_active_read_store().get_sessions_for_persona(persona_id) or [])
     runtime_refs = {
@@ -3297,6 +3395,23 @@ def _project_persona_fleet_item(
         for session in sessions
         if str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
     }
+    for meta_key in ("runtime_binding_id", "runtime_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            runtime_refs.add(val)
+
+    plan_ids: set[str] = set()
+    meta_plan_id = str(raw_meta.get("deployment_plan_id") or "").strip()
+    if meta_plan_id:
+        plan_ids.add(meta_plan_id)
+    auth_readback = raw_meta.get("provisioning_authoritative_readback")
+    if isinstance(auth_readback, Mapping):
+        dep_rb = auth_readback.get("deployment")
+        if isinstance(dep_rb, Mapping):
+            rb_plan_id = str(dep_rb.get("plan_id") or "").strip()
+            if rb_plan_id:
+                plan_ids.add(rb_plan_id)
+
     runtime_bindings = [
         binding
         for binding in all_runtime_bindings
@@ -3305,6 +3420,8 @@ def _project_persona_fleet_item(
             binding_ids=binding_ids,
             capital_pool_ids=capital_pool_ids,
             runtime_refs=runtime_refs,
+            persona_id=persona_id,
+            plan_ids=plan_ids,
         )
     ]
     runtime_ids = {
@@ -11683,6 +11800,8 @@ def _persona_fleet_runtime_matches(
     binding_ids: set[str],
     capital_pool_ids: set[str],
     runtime_refs: set[str],
+    persona_id: Optional[str] = None,
+    plan_ids: Optional[set[str]] = None,
 ) -> bool:
     runtime_ids = {
         str(runtime_binding.get(key) or "").strip()
@@ -11691,6 +11810,13 @@ def _persona_fleet_runtime_matches(
     runtime_ids.discard("")
     if runtime_ids.intersection(runtime_refs):
         return True
+
+    clean_persona_id = str(persona_id or "").strip()
+    if clean_persona_id:
+        rb_meta = runtime_binding.get("metadata") if isinstance(runtime_binding.get("metadata"), Mapping) else {}
+        rb_persona_id = str(runtime_binding.get("persona_id") or rb_meta.get("persona_id") or "").strip()
+        if rb_persona_id and rb_persona_id == clean_persona_id:
+            return True
 
     persona_binding_id = str(runtime_binding.get("persona_capital_binding_id") or "").strip()
     if persona_binding_id and persona_binding_id in binding_ids:
@@ -11702,6 +11828,8 @@ def _persona_fleet_runtime_matches(
 
     plan_id = str(runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or "").strip()
     if plan_id:
+        if plan_ids and plan_id in plan_ids:
+            return True
         plan = _get_active_read_store().get_deployment_plan(plan_id) or {}
         plan_binding_ids = {
             str(value).strip()
@@ -15253,9 +15381,23 @@ class PersonaService:
         read_store = self.get_read_store()
         return list(read_store.list_deployment_plans() or [])
 
+    def get_deployment_plan(self, plan_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not plan_id:
+            return None
+        read_store = self.get_read_store()
+        fetcher = getattr(read_store, "get_deployment_plan", None)
+        return fetcher(plan_id) if callable(fetcher) else None
+
     def list_approval_decisions(self) -> List[Dict[str, Any]]:
         read_store = self.get_read_store()
         return list(read_store.list_approval_decisions() or [])
+
+    def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not decision_id:
+            return None
+        read_store = self.get_read_store()
+        fetcher = getattr(read_store, "get_approval_decision", None)
+        return fetcher(decision_id) if callable(fetcher) else None
 
     def get_persona_containment(self, persona_id: str) -> Optional[Dict[str, Any]]:
         read_store = self.get_read_store()

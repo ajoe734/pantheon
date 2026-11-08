@@ -1,0 +1,52 @@
+{
+  "task_id": "BFF-PERSONA-OPERATING-CONTEXT-20261107",
+  "title": "Bind Management Persona conversations and readiness to actual bounded operating evidence",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "delivery_mode": "source_only_pr",
+  "summary": {
+    "gap_1_operating_context_hydration": {
+      "schema_version": "agora.persona-operating-context.v1",
+      "hydrated_at_submission": true,
+      "frozen_before_openclaw_invocation": true,
+      "surfaces": [
+        "lifecycle_and_execution",
+        "runtime_binding",
+        "strategy_parameters",
+        "telemetry_and_positions",
+        "trade_journal"
+      ],
+      "missing_semantics": "not_provided_or_unavailable_never_proves_zero_records",
+      "strategy_parameter_rule": "exact_bound_artifact_only_never_inferred_from_strategy_family",
+      "execution_authority": "none"
+    },
+    "gap_2_persona_management_readiness": {
+      "route": "/api/v1/operator/persona-management/{persona_id}",
+      "resolves_bound_deployment_plans": true,
+      "resolves_bound_approval_decisions": true,
+      "separates_lifecycle_maturity_from_execution_mode": true,
+      "preserves_research_only_lifecycle_state": true
+    }
+  },
+  "files_changed": [
+    "services/control-plane/bff/agora/interaction/provider.py",
+    "services/control-plane/bff/agora/interaction/runner.py",
+    "services/control-plane/bff/agora/interaction/router.py",
+    "services/control-plane/bff/agora/interaction/store.py",
+    "services/control-plane/bff/personas/routes/detail.py",
+    "services/control-plane/bff/personas/service.py",
+    "services/control-plane/bff/ports/read_surface_ports.py",
+    "services/control-plane/bff/trade_journal.py",
+    "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+    "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py",
+    "docs/operations/persona-paper-advisory-recovery.md",
+    "docs/deployment/evidence/BFF-PERSONA-OPERATING-CONTEXT-20261107/evidence.json"
+  ],
+  "validation": {
+    "commands": [
+      "PYTHONPATH=.:services/control-plane:services/control-plane/bff .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_pint_012_real_persona_provider.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/agora/interaction/test_worker.py -q",
+      "PYTHONPATH=.:services/control-plane:services/control-plane/bff .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_management.py -q"
+    ],
+    "status": "passed"
+  }
+}

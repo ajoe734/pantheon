@@ -790,3 +790,416 @@ def test_original_workshop_daily_context_resolve_uses_registry_http_owner(monkey
     finally:
         owner_reads.authorization.reset(tok_auth)
         owner_reads.selected_tenant.reset(tok_tenant)
+
+
+def test_selected_persona_interaction_freezes_bounded_operating_evidence_before_invocation(monkeypatch):
+    import json
+    from services.control_plane.bff.agora.interaction.provider import authority_boundary
+    from services.control_plane.bff import trade_journal as trade_journal_mod
+
+    c = client(monkeypatch)
+    persona_id = "persona-be19a1fac471247f2b2a"
+    runtime_id = "rb-677cd34c70a2b20c64b4"
+    plan_id = "plan-be19a1fac471247f2b2a"
+    artifact_id = "artifact-qinghe-r2-v1"
+    pool_id = "pool-paper-qinghe-r2"
+    cap_binding_id = "pcb-qinghe-r2"
+
+    orig_list_personas = read_store.list_personas
+    read_store.list_personas = lambda **kw: orig_list_personas(**kw) + [
+        {
+            "persona_id": persona_id,
+            "tenant_id": "pantheon-dev",
+            "display_name": "青禾 R2",
+            "lifecycle_state": "research_only",
+            "paper_runtime_state": "paper_running",
+            "strategy_family": "momentum",
+            "environment_ceiling": "paper",
+            "persona_version": "rev-qinghe-2",
+            "metadata": {
+                "environment_ceiling": "paper",
+                "paper_runtime_state": "paper_running",
+                "persona_capital_binding_id": cap_binding_id,
+                "capital_pool_id": pool_id,
+                "runtime_binding_id": runtime_id,
+                "strategy_artifact_id": artifact_id,
+            },
+        }
+    ]
+    read_store.list_runtime_bindings = lambda: [
+        # Foreign tenant binding must be ignored fail-closed
+        {
+            "runtime_id": "rb-foreign-tenant",
+            "tenant_id": "other-tenant",
+            "persona_id": persona_id,
+            "status": "active",
+            "environment": "paper",
+        },
+        # Matching active paper runtime binding
+        {
+            "runtime_id": runtime_id,
+            "binding_id": runtime_id,
+            "tenant_id": "pantheon-dev",
+            "persona_id": persona_id,
+            "plan_id": plan_id,
+            "status": "active",
+            "health_status": "healthy",
+            "environment": "paper",
+            "capital_pool_id": pool_id,
+            "persona_capital_binding_id": cap_binding_id,
+            "strategy_artifact_id": artifact_id,
+            "updated_at": "2026-11-07T08:00:00Z",
+            "metadata": {
+                "object_store": {
+                    "artifact_id": artifact_id,
+                    "version": "1.0.0",
+                },
+                "authoritative_loader_attestation": {
+                    "artifact_id": artifact_id,
+                    "artifact_sha256": "sha256:exact-qinghe-r2",
+                },
+            },
+        },
+    ]
+    read_store.read_registry_strategy_artifact_detail = lambda aid: (
+        {
+            "artifact_id": artifact_id,
+            "tenant_id": "pantheon-dev",
+            "persona_id": persona_id,
+            "version": "1.0.0",
+            "parameters": {
+                "lookback_bars": 2,
+                "momentum_threshold": 0.0,
+                "rebalance_interval_bars": 1,
+                "target_weight": 0.1,
+            },
+        }
+        if aid == artifact_id
+        else None
+    )
+    read_store.get_telemetry_summary = lambda rid: (
+        {
+            "runtime_id": runtime_id,
+            "tenant_id": "pantheon-dev",
+            "persona_id": persona_id,
+            "mark_price": 2135.0,
+            "mark_as_of": "2026-11-07T08:14:00Z",
+            "mark_source_ref": "twse:mark:2330:2026-11-07T08:14:00Z",
+            "last_fill": "2026-11-07T08:10:00Z",
+            "total_trades": 6,
+            "pnl": 915.0,
+            "realized_pnl": None,
+            "unrealized_pnl": 915.0,
+            "return_percent": None,
+            "drawdown": 0.012,
+            "fill_rate": 1.0,
+            "updated_at": "2026-11-07T08:14:00Z",
+            "positions": [
+                {
+                    "symbol": "2330.TWSE",
+                    "side": "LONG",
+                    "quantity": 6,
+                    "avg_entry_price": 1982.5,
+                    "mark_price": 2135.0,
+                    "mark_as_of": "2026-11-07T08:14:00Z",
+                    "unrealized_pnl": 915.0,
+                    "realized_pnl": None,
+                    "snapshot_ref": "pos-snap-2330-twse-01",
+                }
+            ],
+        }
+        if rid == runtime_id
+        else None
+    )
+
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry.internal")
+    monkeypatch.setattr(
+        trade_journal_mod,
+        "_http_call",
+        lambda url, data, headers, method="POST": (
+            200,
+            {
+                "projections": [
+                    {
+                        "trade_episode_id": "ep-2330-open-1",
+                        "tenant_id": "pantheon-dev",
+                        "persona_id": persona_id,
+                        "instrument_id": "2330.TWSE",
+                        "side": "LONG",
+                        "status": "open",
+                        "environment": "paper",
+                        "runtime_binding_id": runtime_id,
+                        "filled_quantity": 6,
+                        "vwap": 1982.5,
+                        "mark_price": 2135.0,
+                        "mark_as_of": "2026-11-07T08:14:00Z",
+                        "realized_pnl": None,
+                        "unrealized_pnl": 915.0,
+                        "return_percent": None,
+                        "order_ids": ["ord-2330-1", "ord-2330-2"],
+                        "fill_ids": ["fill-2330-1", "fill-2330-2"],
+                        "position_snapshot_refs": ["pos-snap-2330-twse-01"],
+                        "entry_at": "2026-11-07T07:30:00Z",
+                        "updated_at": "2026-11-07T08:10:00Z",
+                    },
+                ]
+            },
+        ),
+    )
+
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": "qinghe-ctx-1"},
+        json=context_payload(),
+    ).json()["data"]
+
+    submit_resp = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": "qinghe-submit-1"},
+        json={
+            "workshop_id": resolved["workshop_id"],
+            "mode": "ask",
+            "environment": "paper",
+            "topic": "Summarize your current 2330.TWSE paper position, recent fills, and strategy parameters",
+            "participant_persona_ids": [persona_id],
+            "context_refs": context_payload()["context_refs"],
+        },
+    )
+    assert submit_resp.status_code == 202, submit_resp.text
+    queued_data = submit_resp.json()["data"]
+    interaction_id = queued_data["interaction_id"]
+    assert queued_data["status"] == "queued"
+    assert queued_data["execution_authority"] == "none"
+
+    # Readback BEFORE OpenClaw invocation must already have frozen operating_context
+    stored_before = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert stored_before is not None
+    assert stored_before["status"] == "queued"
+    assert "pos-snap-2330-twse-01" in stored_before["context_snapshot"]["position_risk_snapshot_refs"]
+    assert stored_before["context_snapshot"]["journal_ref"] == "ep-2330-open-1"
+
+    frozen_op = stored_before["_operating_context"][persona_id]
+    assert frozen_op["schema_version"] == "agora.persona-operating-context.v1"
+    assert frozen_op["persona_id"] == persona_id
+    assert frozen_op["tenant_id"] == "pantheon-dev"
+    assert frozen_op["authority"] == authority_boundary()
+    assert frozen_op["lifecycle_and_execution"] == {
+        "lifecycle_maturity": "research_only",
+        "execution_mode": "paper",
+        "operational_state": "paper_running",
+        "paper_runtime_state": "paper_running",
+    }
+    assert frozen_op["strategy_parameters"]["status"] == "bound_artifact_verified"
+    assert frozen_op["strategy_parameters"]["artifact_id"] == artifact_id
+    assert frozen_op["strategy_parameters"]["parameters"] == {
+        "lookback_bars": 2,
+        "momentum_threshold": 0.0,
+        "rebalance_interval_bars": 1,
+        "target_weight": 0.1,
+    }
+    assert frozen_op["telemetry_and_positions"]["status"] == "partial"
+    assert frozen_op["telemetry_and_positions"]["mark_price"] == 2135.0
+    assert frozen_op["telemetry_and_positions"]["positions"][0]["symbol"] == "2330.TWSE"
+    assert frozen_op["telemetry_and_positions"]["positions"][0]["quantity"] == 6
+    assert "realized_pnl" in frozen_op["telemetry_and_positions"]["not_provided_fields"]
+    assert "return_percent" in frozen_op["telemetry_and_positions"]["not_provided_fields"]
+
+    assert frozen_op["trade_journal"]["status"] == "partial"
+    assert frozen_op["trade_journal"]["episode_count"] == 1
+    assert frozen_op["trade_journal"]["open_episode_count"] == 1
+    ep = frozen_op["trade_journal"]["episodes"][0]
+    assert ep["episode_id"] == "ep-2330-open-1"
+    assert ep["symbol"] == "2330.TWSE"
+    assert ep["filled_quantity"] == 6
+    assert ep["vwap"] == 1982.5
+    assert ep["order_ids"] == ["ord-2330-1", "ord-2330-2"]
+    assert "realized_pnl" in ep["not_provided_fields"]
+    assert "return_percent" in ep["not_provided_fields"]
+
+    # Timeline readback while queued also exposes the frozen operating_context
+    timeline = c.get(f"/bff/agora/interactions/{interaction_id}/timeline", headers=AUTH).json()["data"]
+    assert timeline[0]["projection_kind"] == "interaction_queued"
+    assert timeline[0]["payload"]["operating_context"][persona_id] == frozen_op
+
+    # Mutate live read_store before worker runs to prove worker uses the pre-frozen operating_context
+    read_store.get_telemetry_summary = lambda rid: None
+    monkeypatch.setattr(
+        trade_journal_mod,
+        "_http_call",
+        lambda url, data, headers, method="POST": (503, {"error": "unavailable"}),
+    )
+
+    captured_calls = []
+
+    class RecordingClient:
+        def ensure_persona_opinion_agent(self, admission, *, persona_profile):
+            return {"execution_authority": "none", "agent_id": admission["agent_id"]}
+
+        def invoke_assistant_provider(
+            self,
+            *,
+            provider,
+            mode,
+            prompt,
+            context_pack,
+            operator_id,
+            metadata,
+            trace_id,
+            agent_id=None,
+            persona_admission=None,
+            idempotency_key=None,
+            **kwargs,
+        ):
+            if (metadata or {}).get("purpose") == "persona_opinion":
+                captured_calls.append({
+                    "agent_id": agent_id,
+                    "prompt": prompt,
+                    "context_pack": context_pack,
+                    "persona_admission": persona_admission,
+                })
+                opinion = {
+                    "conclusion": "support",
+                    "rationale": "Grounded in 2330.TWSE open paper episode (qty 6, mark 2135.0) and lookback_bars=2.",
+                    "confidence": 0.85,
+                    "uncertainty": ["realized_pnl and return_percent are not_provided in bounded telemetry"],
+                    "risks": ["Single-instrument concentration in 2330.TWSE"],
+                    "invalidation_conditions": ["2330.TWSE mark falls below vwap 1982.5"],
+                    "evidence_refs": [
+                        {
+                            "ref_type": "journal_entry",
+                            "ref_id": "ep-2330-open-1",
+                            "version": "2026-11-07T08:10:00Z",
+                            "observed_at": "2026-11-07T08:14:00Z",
+                            "data_cutoff": "2026-11-07T08:14:00Z",
+                            "freshness": "fresh",
+                            "summary": "Open 2330.TWSE paper episode with filled_quantity=6",
+                        }
+                    ],
+                    "recommended_measures": [],
+                }
+                return {
+                    "status": "completed",
+                    "output": {
+                        "request_id": "req-qinghe-1",
+                        "agent_id": agent_id,
+                        "json_events": [{"item": {"text": json.dumps(opinion)}}],
+                    },
+                }
+            return {
+                "status": "completed",
+                "output": {
+                    "request_id": "synth-qinghe-1",
+                    "structured_data": {
+                        "status": "consensus",
+                        "summary": "Grounded in frozen operating context.",
+                        "agreements": ["2330.TWSE position verified"],
+                        "disagreements": [],
+                        "evidence_refs": ["ep-2330-open-1"],
+                    },
+                },
+            }
+
+    AgoraInteractionWorker(
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
+        client_factory=RecordingClient,
+    ).run_once()
+
+    assert len(captured_calls) == 1
+    sent_pack = captured_calls[0]["context_pack"]
+    assert sent_pack["operating_context"] == frozen_op
+    assert sent_pack["frozen_persona_profile"]["operating_context"] == frozen_op
+    assert "IMMUTABLE_TYPED_CONTEXT.operating_context" in captured_calls[0]["prompt"]
+    assert "never invent indicator/MA parameters from strategy_family" in captured_calls[0]["prompt"]
+
+
+def test_selected_persona_interaction_reports_unavailable_and_not_provided_without_fabricating_ma_params(monkeypatch):
+    from services.control_plane.bff import trade_journal as trade_journal_mod
+
+    c = client(monkeypatch)
+    persona_id = "persona-9d4fb3f44cbc5e7cb84f"
+
+    orig_list_personas = read_store.list_personas
+    read_store.list_personas = lambda **kw: orig_list_personas(**kw) + [
+        {
+            "persona_id": persona_id,
+            "tenant_id": "pantheon-dev",
+            "display_name": "衡岳",
+            "lifecycle_state": "research_only",
+            "paper_runtime_state": "paper_running",
+            "strategy_family": "trend_following",
+            "environment_ceiling": "paper",
+            "metadata": {
+                "environment_ceiling": "paper",
+                "paper_runtime_state": "paper_running",
+            },
+        }
+    ]
+    read_store.list_runtime_bindings = lambda: []
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry.internal")
+    monkeypatch.setattr(
+        trade_journal_mod,
+        "_http_call",
+        lambda url, data, headers, method="POST": (503, {"error": "telemetry_down"}),
+    )
+
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": "hengyue-ctx-1"},
+        json=context_payload(),
+    ).json()["data"]
+
+    submit_resp = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": "hengyue-submit-1"},
+        json={
+            "workshop_id": resolved["workshop_id"],
+            "mode": "challenge",
+            "environment": "paper",
+            "topic": "Challenge your current parameters and trade history",
+            "participant_persona_ids": [persona_id],
+            "context_refs": context_payload()["context_refs"],
+        },
+    )
+    assert submit_resp.status_code == 202, submit_resp.text
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    stored = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    frozen_op = stored["_operating_context"][persona_id]
+
+    assert frozen_op["strategy_parameters"]["status"] == "not_provided"
+    assert frozen_op["strategy_parameters"]["parameters"] is None
+    assert "Do not infer or fabricate indicator/MA parameters from strategy_family" in frozen_op["strategy_parameters"]["guidance"]
+    assert frozen_op["telemetry_and_positions"]["status"] == "unavailable"
+    assert frozen_op["telemetry_and_positions"]["positions"] is None
+    assert frozen_op["trade_journal"]["status"] == "unavailable"
+    assert frozen_op["trade_journal"]["episode_count"] is None
+    assert frozen_op["coverage"]["missing_semantics"] == "not_provided_or_unavailable_never_proves_zero_records"
+
+    # Cross-tenant or mismatched persona rows from telemetry owner must be rejected fail-closed
+    monkeypatch.setattr(
+        trade_journal_mod,
+        "_http_call",
+        lambda url, data, headers, method="POST": (
+            200,
+            {
+                "projections": [
+                    {
+                        "trade_episode_id": "ep-foreign-1",
+                        "tenant_id": "other-tenant",
+                        "persona_id": persona_id,
+                        "instrument_id": "2330.TWSE",
+                        "status": "open",
+                    }
+                ]
+            },
+        ),
+    )
+    cross_tenant_res = trade_journal_mod.read_persona_operating_episodes(
+        persona_id, None, "pantheon-dev"
+    )
+    assert cross_tenant_res["status"] == "unavailable"
+    assert cross_tenant_res["reason"] == "cross_tenant_or_persona_mismatch_rejected"
+    assert cross_tenant_res["episodes"] == []
+
+
