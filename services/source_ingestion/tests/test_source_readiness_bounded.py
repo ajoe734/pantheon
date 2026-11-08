@@ -85,7 +85,7 @@ def test_health_and_readiness_use_bounded_controller_summary_for_260_connectors(
         },
         actual_readback=_actual_readback(260),
     )
-    ControllerStateStore(module.CONTROLLER_STATE_PATH).save(state)
+    ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(state)
 
     # A readiness probe must not replay these journals, even when they are
     # large.  Any accidental use of a store fails this test immediately.
@@ -96,10 +96,10 @@ def test_health_and_readiness_use_bounded_controller_summary_for_260_connectors(
             calls.append(name)
             raise AssertionError(f"readiness must not replay {name}")
 
-    monkeypatch.setattr(module, "connector_store", ForbiddenStore())
-    monkeypatch.setattr(module, "schedule_config_store", ForbiddenStore())
-    monkeypatch.setattr(module, "store", ForbiddenStore())
-    monkeypatch.setattr(module, "evidence_repository", ForbiddenStore())
+    monkeypatch.setattr(module.runtime, "connector_store", ForbiddenStore())
+    monkeypatch.setattr(module.runtime, "schedule_config_store", ForbiddenStore())
+    monkeypatch.setattr(module.runtime, "store", ForbiddenStore())
+    monkeypatch.setattr(module.runtime, "evidence_repository", ForbiddenStore())
     (tmp_path / "ingest_schedule.jsonl").write_bytes(b"{}\n" * 1_000_000)
 
     client = TestClient(module.app)

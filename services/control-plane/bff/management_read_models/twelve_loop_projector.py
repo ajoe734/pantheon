@@ -783,10 +783,6 @@ class TwelveLoopTruthProjector:
                     else:
                         obs.degradation_reason = stale_msg
 
-    def _recompute_observation_status(self, obs: LoopObservation, now: Optional[datetime] = None) -> None:
-        """Compatibility alias for _recompute_freshness."""
-        self._recompute_freshness(obs, now=now)
-
     def rebuild(self) -> List[LoopObservation]:
         """Replay all source receipts to rebuild observations from scratch.
 

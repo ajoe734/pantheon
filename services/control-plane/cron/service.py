@@ -53,12 +53,9 @@ class CronOrchestrator:
         runtime_pin: OpenClawRuntimePin | None = None,
         stage_planner_factory: Callable[[], StagePlanner] = StagePlanner,
         saga_orchestrator_factory: Callable[[], DeploymentSagaOrchestrator] = DeploymentSagaOrchestrator,
-        promotion_gate_factory: Callable[[], StagePlanner] | None = None,
     ):
         self.client = client or OpenClawCronClient(runtime_pin=runtime_pin)
-        # `promotion_gate_factory` is kept as a compatibility alias while callers
-        # migrate to canonical DeploymentPlan terminology.
-        self.stage_planner_factory = promotion_gate_factory or stage_planner_factory
+        self.stage_planner_factory = stage_planner_factory
         self.saga_orchestrator_factory = saga_orchestrator_factory
 
     def run(self, workflow_id: str, payload: dict[str, Any], dry_run: bool = True) -> WorkflowRunResult:

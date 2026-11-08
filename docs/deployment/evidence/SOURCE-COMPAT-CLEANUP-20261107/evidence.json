@@ -1,0 +1,18 @@
+{
+  "task_id": "SOURCE-COMPAT-CLEANUP-20261107",
+  "scope": "services/source_ingestion",
+  "changes": [
+    "SourceIngestionRuntime owns stores, locks, paths and config as plain attributes; _active_attr, module/sys.modules lookup and __code__ identity dispatch removed",
+    "four dispatch wrappers collapsed into the canonical methods (_source_freshness_readiness, _source_provisioning_reconciler, _controller_readback_payload, _append_audit_actions)",
+    "main.py reduced to create_app (health, lifecycle, routers) plus default runtime/app; module-level aliases, forwarding helpers and re-exports deleted",
+    "tests and callers migrated to runtime attributes; added tests/test_runtime_isolation.py"
+  ],
+  "validation": {
+    "services/source_ingestion/tests (59 files)": "1081 passed, 4 skipped",
+    "services/source_ingestion/*.py": "59 passed, 9 skipped",
+    "services/search/test_index_pipeline.py": "26 passed",
+    "bff test_shell_summary_jobs_read / test_ranking_real_source_owner_admission / test_datastrat_seed_review_bff": "22 passed",
+    "tests/e2e source-ingest tests": "4 of 5 fail with 401 missing Bearer token; identical failures on unmodified HEAD (pre-existing environment auth), not caused by this change"
+  },
+  "not_done": "no deploy, no live data migration, no ingestion engine rewrite"
+}

@@ -471,17 +471,17 @@ def test_persona_source_provisioning_api_smoke(persona_api) -> None:
     assert unauthorized_non_authoritative.status_code == 401
     assert forbidden_non_authoritative.status_code == 403
     assert anonymous_dry_run.status_code == 200, anonymous_dry_run.text
-    assert module.connector_store.list_configs() == []
-    assert module.schedule_config_store.list_schedules() == []
-    assert module.manager.get_connector("tw-finmind-datasets") is None
+    assert module.runtime.connector_store.list_configs() == []
+    assert module.runtime.schedule_config_store.list_schedules() == []
+    assert module.runtime.manager.get_connector("tw-finmind-datasets") is None
 
-    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    controller_headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
     omitted_personas = client.post(
         endpoint,
         headers=controller_headers,
         json={
             "authoritative_snapshot": True,
-            "desired_state_sha256": module._desired_state_digest([]),
+            "desired_state_sha256": module.runtime._desired_state_digest([]),
         },
     )
     omitted_digest = client.post(
@@ -491,7 +491,7 @@ def test_persona_source_provisioning_api_smoke(persona_api) -> None:
     )
     assert omitted_personas.status_code == 400
     assert omitted_digest.status_code == 400
-    assert module.requirement_snapshot_store.latest is None
+    assert module.runtime.requirement_snapshot_store.latest is None
 
     personas = [_persona()]
     first = client.post(
@@ -500,7 +500,7 @@ def test_persona_source_provisioning_api_smoke(persona_api) -> None:
         json={
             "personas": personas,
             "authoritative_snapshot": True,
-            "desired_state_sha256": module._desired_state_digest(personas),
+            "desired_state_sha256": module.runtime._desired_state_digest(personas),
         },
     )
     assert first.status_code == 200, first.text
@@ -536,12 +536,12 @@ def test_persona_source_provisioning_api_smoke(persona_api) -> None:
 def test_two_reconcile_threads_converge_without_duplicate_connector_or_schedule(persona_api) -> None:
     client, module = persona_api
     endpoint = "/api/source-ingest/persona-source-provisioning/reconcile"
-    headers = {"Authorization": f"Bearer {module.controller_token}"}
+    headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
     personas = [_persona()]
     payload = {
         "personas": personas,
         "authoritative_snapshot": True,
-        "desired_state_sha256": module._desired_state_digest(personas),
+        "desired_state_sha256": module.runtime._desired_state_digest(personas),
     }
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -550,11 +550,11 @@ def test_two_reconcile_threads_converge_without_duplicate_connector_or_schedule(
     assert [response.status_code for response in responses] == [200, 200]
     summaries = [response.json()["summary"] for response in responses]
     assert sorted((summary["mutated"], summary["satisfied"]) for summary in summaries) == [(0, 1), (1, 0)]
-    assert _line_count(module.REQUIREMENT_STATE_PATH) == 1
-    assert _line_count(module.CONNECTOR_STORE_PATH) == 1
-    assert _line_count(module.CONNECTOR_SCHEDULE_CONFIG_PATH) == 1
-    assert len(module.connector_store.list_configs()) == 1
-    assert len(module.schedule_config_store.list_schedules()) == 1
+    assert _line_count(module.runtime.REQUIREMENT_STATE_PATH) == 1
+    assert _line_count(module.runtime.CONNECTOR_STORE_PATH) == 1
+    assert _line_count(module.runtime.CONNECTOR_SCHEDULE_CONFIG_PATH) == 1
+    assert len(module.runtime.connector_store.list_configs()) == 1
+    assert len(module.runtime.schedule_config_store.list_schedules()) == 1
 
 
 def test_authoritative_intent_is_durable_before_connector_mutation_and_retryable(
@@ -563,19 +563,19 @@ def test_authoritative_intent_is_durable_before_connector_mutation_and_retryable
 ) -> None:
     client, module = persona_api
     endpoint = "/api/source-ingest/persona-source-provisioning/reconcile"
-    headers = {"Authorization": f"Bearer {module.controller_token}"}
-    original_upsert = module.connector_store.upsert_config
+    headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
+    original_upsert = module.runtime.connector_store.upsert_config
     personas = [_persona()]
     payload = {
         "personas": personas,
         "authoritative_snapshot": True,
-        "desired_state_sha256": module._desired_state_digest(personas),
+        "desired_state_sha256": module.runtime._desired_state_digest(personas),
     }
 
     def fail_config_upsert(*args, **kwargs):
         raise OSError("simulated connector store crash")
 
-    monkeypatch.setattr(module.connector_store, "upsert_config", fail_config_upsert)
+    monkeypatch.setattr(module.runtime.connector_store, "upsert_config", fail_config_upsert)
     with pytest.raises(OSError, match="simulated connector store crash"):
         client.post(
             endpoint,
@@ -583,13 +583,13 @@ def test_authoritative_intent_is_durable_before_connector_mutation_and_retryable
             json=payload,
         )
 
-    admitted = module.requirement_snapshot_store.latest
+    admitted = module.runtime.requirement_snapshot_store.latest
     assert admitted is not None
     assert admitted.sequence == 1
     assert admitted.binding_count == 1
-    assert module.connector_store.list_configs() == []
+    assert module.runtime.connector_store.list_configs() == []
 
-    monkeypatch.setattr(module.connector_store, "upsert_config", original_upsert)
+    monkeypatch.setattr(module.runtime.connector_store, "upsert_config", original_upsert)
     retried = client.post(
         endpoint,
         headers=headers,
@@ -598,14 +598,14 @@ def test_authoritative_intent_is_durable_before_connector_mutation_and_retryable
 
     assert retried.status_code == 200, retried.text
     assert retried.json()["accepted_requirement_snapshot"]["sequence"] == 1
-    assert module.requirement_snapshot_store.latest.sequence == 1
-    assert module.connector_store.get_config("tw-finmind-datasets") is not None
+    assert module.runtime.requirement_snapshot_store.latest.sequence == 1
+    assert module.runtime.connector_store.get_config("tw-finmind-datasets") is not None
 
 
 def test_controller_owned_connector_legacy_mutations_require_controller_token(persona_api) -> None:
     client, module = persona_api
     endpoint = "/api/source-ingest/persona-source-provisioning/reconcile"
-    headers = {"Authorization": f"Bearer {module.controller_token}"}
+    headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
     personas = [_persona()]
     provisioned = client.post(
         endpoint,
@@ -613,7 +613,7 @@ def test_controller_owned_connector_legacy_mutations_require_controller_token(pe
         json={
             "personas": personas,
             "authoritative_snapshot": True,
-            "desired_state_sha256": module._desired_state_digest(personas),
+            "desired_state_sha256": module.runtime._desired_state_digest(personas),
         },
     )
     assert provisioned.status_code == 200, provisioned.text
@@ -658,17 +658,17 @@ def test_authoritative_removal_converges_after_retirement_crash_without_log_grow
 ) -> None:
     client, module = persona_api
     endpoint = "/api/source-ingest/persona-source-provisioning/reconcile"
-    headers = {"Authorization": f"Bearer {module.controller_token}"}
+    headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
     personas = [_persona()]
     desired_payload = {
         "personas": personas,
         "authoritative_snapshot": True,
-        "desired_state_sha256": module._desired_state_digest(personas),
+        "desired_state_sha256": module.runtime._desired_state_digest(personas),
     }
     removal_payload = {
         "personas": [],
         "authoritative_snapshot": True,
-        "desired_state_sha256": module._desired_state_digest([]),
+        "desired_state_sha256": module.runtime._desired_state_digest([]),
     }
     first = client.post(
         endpoint,
@@ -676,37 +676,37 @@ def test_authoritative_removal_converges_after_retirement_crash_without_log_grow
         json=desired_payload,
     )
     assert first.status_code == 200, first.text
-    original_upsert = module.connector_store.upsert_config
+    original_upsert = module.runtime.connector_store.upsert_config
 
     def fail_retirement(connector, fetch):
         if connector.status.value == "disabled":
             raise OSError("simulated retirement crash")
         return original_upsert(connector, fetch)
 
-    monkeypatch.setattr(module.connector_store, "upsert_config", fail_retirement)
+    monkeypatch.setattr(module.runtime.connector_store, "upsert_config", fail_retirement)
     with pytest.raises(OSError, match="simulated retirement crash"):
         client.post(endpoint, headers=headers, json=removal_payload)
 
-    assert module.requirement_snapshot_store.latest.sequence == 2
-    assert dict(module.requirement_snapshot_store.latest.bindings) == {}
-    assert module.connector_store.get_config("tw-finmind-datasets").connector.status.value == "enabled"
+    assert module.runtime.requirement_snapshot_store.latest.sequence == 2
+    assert dict(module.runtime.requirement_snapshot_store.latest.bindings) == {}
+    assert module.runtime.connector_store.get_config("tw-finmind-datasets").connector.status.value == "enabled"
 
-    monkeypatch.setattr(module.connector_store, "upsert_config", original_upsert)
+    monkeypatch.setattr(module.runtime.connector_store, "upsert_config", original_upsert)
     retried = client.post(endpoint, headers=headers, json=removal_payload)
     assert retried.status_code == 200, retried.text
     assert retried.json()["accepted_requirement_snapshot"]["sequence"] == 2
     assert retried.json()["retirement_actions"][0]["action"] == "disabled_controller_owned"
-    assert module.connector_store.get_config("tw-finmind-datasets").connector.status.value == "disabled"
-    assert module.schedule_config_store.get_schedule("tw-finmind-datasets").enabled is False
+    assert module.runtime.connector_store.get_config("tw-finmind-datasets").connector.status.value == "disabled"
+    assert module.runtime.schedule_config_store.get_schedule("tw-finmind-datasets").enabled is False
 
-    connector_lines = _line_count(module.CONNECTOR_STORE_PATH)
-    schedule_lines = _line_count(module.CONNECTOR_SCHEDULE_CONFIG_PATH)
+    connector_lines = _line_count(module.runtime.CONNECTOR_STORE_PATH)
+    schedule_lines = _line_count(module.runtime.CONNECTOR_SCHEDULE_CONFIG_PATH)
     duplicate = client.post(endpoint, headers=headers, json=removal_payload)
     assert duplicate.status_code == 200, duplicate.text
     assert duplicate.json()["accepted_requirement_snapshot"]["sequence"] == 2
     assert duplicate.json()["retirement_actions"][0]["action"] == "already_disabled_controller_owned"
-    assert _line_count(module.CONNECTOR_STORE_PATH) == connector_lines
-    assert _line_count(module.CONNECTOR_SCHEDULE_CONFIG_PATH) == schedule_lines
+    assert _line_count(module.runtime.CONNECTOR_STORE_PATH) == connector_lines
+    assert _line_count(module.runtime.CONNECTOR_SCHEDULE_CONFIG_PATH) == schedule_lines
 
 
 def test_unsupported_authoritative_snapshot_is_not_admitted_or_mutated(persona_api) -> None:
@@ -714,20 +714,20 @@ def test_unsupported_authoritative_snapshot_is_not_admitted_or_mutated(persona_a
     persona = _persona(source_class="live_push")
     response = client.post(
         "/api/source-ingest/persona-source-provisioning/reconcile",
-        headers={"Authorization": f"Bearer {module.controller_token}"},
+        headers={"Authorization": f"Bearer {module.runtime.controller_token}"},
         json={
             "personas": [persona],
             "authoritative_snapshot": True,
-            "desired_state_sha256": module._desired_state_digest([persona]),
+            "desired_state_sha256": module.runtime._desired_state_digest([persona]),
         },
     )
 
     assert response.status_code == 200, response.text
     assert response.json()["summary"]["unsupported"] == 1
     assert response.json()["accepted_requirement_snapshot"] is None
-    assert module.requirement_snapshot_store.latest is None
-    assert module.connector_store.list_configs() == []
-    assert module.schedule_config_store.list_schedules() == []
+    assert module.runtime.requirement_snapshot_store.latest is None
+    assert module.runtime.connector_store.list_configs() == []
+    assert module.runtime.schedule_config_store.list_schedules() == []
 
 
 def _us_persona() -> dict:

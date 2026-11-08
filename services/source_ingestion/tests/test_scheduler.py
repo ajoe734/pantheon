@@ -69,7 +69,7 @@ def client():
 def test_run_scheduled_exclusive_fails_closed_when_schedule_disabled(client) -> None:
     test_client, _, module = client
     conn_id = "conn-exclusive-disabled"
-    headers = {"Authorization": f"Bearer {module.controller_token}"}
+    headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
 
     # Configure connector
     configured = test_client.post(

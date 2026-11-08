@@ -93,23 +93,23 @@ def _worker(
 
         def reconciler() -> SourceProvisioningReconciler:
             return SourceProvisioningReconciler(
-                manager=module.manager,
-                connector_store=module.connector_store,
-                schedule_store=module.schedule_config_store,
+                manager=module.runtime.manager,
+                connector_store=module.runtime.connector_store,
+                schedule_store=module.runtime.schedule_config_store,
                 provider_factories={
                     CONNECTOR_ID: lambda _connector_id: MultiprocessProvider(),
                 },
             )
 
-        module._source_provisioning_reconciler = reconciler
+        module.runtime._source_provisioning_reconciler = reconciler
         personas = [_persona()]
         payload = {
             "personas": personas,
             "authoritative_snapshot": True,
-            "desired_state_sha256": module._desired_state_digest(personas),
+            "desired_state_sha256": module.runtime._desired_state_digest(personas),
             "source_authority": "test://l12-src-001/multiprocess",
         }
-        headers = {"Authorization": f"Bearer {module.controller_token}"}
+        headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
 
         # App construction and TestClient context setup completed before signalling readiness
         with TestClient(module.app) as client:
