@@ -259,6 +259,42 @@ def _is_reconciliation_drift_owned_threshold(
     return owner == "reconciliation-drift"
 
 
+_BASELINE_RESERVED_KEYS = frozenset(
+    {
+        "expected_drawdown",
+        "policy_source",
+        "by_instrument_class",
+        "instrument_classes",
+    }
+)
+
+
+def _extract_valid_class_baselines(mapping: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Extract governance-approved instrument-class baseline mappings."""
+    class_entries: dict[str, dict[str, Any]] = {}
+    nested_candidates: list[Mapping[str, Any]] = []
+    for nested_key in ("by_instrument_class", "instrument_classes"):
+        nested = mapping.get(nested_key)
+        if isinstance(nested, Mapping):
+            nested_candidates.append(nested)
+    nested_candidates.append(mapping)
+
+    for source in nested_candidates:
+        for cls_name, cls_values in source.items():
+            if not isinstance(cls_name, str):
+                continue
+            cls_key = cls_name.strip()
+            if not cls_key or cls_key in _BASELINE_RESERVED_KEYS:
+                continue
+            if not isinstance(cls_values, Mapping):
+                continue
+            policy_source = cls_values.get("policy_source")
+            if not isinstance(policy_source, str) or not policy_source.strip():
+                continue
+            class_entries[cls_key] = dict(cls_values)
+    return class_entries
+
+
 def load_baselines(path: str | None = None) -> dict[str, dict[str, Any]]:
     """Load per-artifact research-approved baseline values from live config.
 
@@ -267,13 +303,13 @@ def load_baselines(path: str | None = None) -> dict[str, dict[str, Any]]:
     present here is skipped as a diagnostic (never fabricated) by
     ``evaluate_breaches``.
 
-    A baseline only counts as *approved* when its artifact entry carries a
-    non-empty ``policy_source`` naming the governance decision that set it.
-    An entry without that provenance is dropped here rather than being used as
-    the denominator of a ratio threshold: an unapproved number is exactly the
-    fabricated-baseline case this worker must never turn into a breach
-    (L12-EVO-001 acceptance: "All monitored artifacts have numeric drawdown and
-    approved expected baselines").
+    A baseline only counts as *approved* when its artifact entry (or
+    instrument-class entry) carries a non-empty ``policy_source`` naming the
+    governance decision that set it. An entry without that provenance is
+    dropped here rather than being used as the denominator of a ratio
+    threshold: an unapproved number is exactly the fabricated-baseline case
+    this worker must never turn into a breach (L12-EVO-001 acceptance: "All
+    monitored artifacts have numeric drawdown and approved expected baselines").
     """
     baselines_path = path or DEFAULT_BASELINES_PATH
     try:
@@ -282,37 +318,57 @@ def load_baselines(path: str | None = None) -> dict[str, dict[str, Any]]:
     except (OSError, ValueError):
         return {}
 
-    raw_baselines = data.get("baselines") if isinstance(data, Mapping) else None
-    if not isinstance(raw_baselines, Mapping):
+    if not isinstance(data, Mapping):
+        return {}
+    raw_baselines = data.get("baselines")
+    raw_by_class = data.get("baselines_by_instrument_class")
+    if not isinstance(raw_baselines, Mapping) and not isinstance(raw_by_class, Mapping):
         return {}
 
     valid: dict[str, dict[str, Any]] = {}
-    for artifact_id, values in raw_baselines.items():
-        if not isinstance(values, Mapping):
-            continue
-        policy_source = values.get("policy_source")
-        if not isinstance(policy_source, str) or not policy_source.strip():
-            continue
-        valid[str(artifact_id)] = dict(values)
+    if isinstance(raw_baselines, Mapping):
+        for artifact_id, values in raw_baselines.items():
+            if not isinstance(values, Mapping):
+                continue
+            aid = str(artifact_id).strip()
+            if not aid:
+                continue
+            policy_source = values.get("policy_source")
+            has_flat_policy = isinstance(policy_source, str) and bool(policy_source.strip())
+            class_entries = _extract_valid_class_baselines(values)
+            if not has_flat_policy and not class_entries:
+                continue
+            entry = dict(values)
+            if class_entries:
+                existing_by_cls = dict(entry.get("by_instrument_class") or {})
+                existing_by_cls.update(class_entries)
+                entry["by_instrument_class"] = existing_by_cls
+                for cls_key, cls_val in class_entries.items():
+                    entry[cls_key] = dict(cls_val)
+            valid[aid] = entry
+
+    if isinstance(raw_by_class, Mapping):
+        for artifact_id, values in raw_by_class.items():
+            if not isinstance(values, Mapping):
+                continue
+            aid = str(artifact_id).strip()
+            if not aid:
+                continue
+            class_entries = _extract_valid_class_baselines(values)
+            if not class_entries:
+                continue
+            entry = dict(valid.get(aid) or {})
+            existing_by_cls = dict(entry.get("by_instrument_class") or {})
+            existing_by_cls.update(class_entries)
+            entry["by_instrument_class"] = existing_by_cls
+            for cls_key, cls_val in class_entries.items():
+                entry[cls_key] = dict(cls_val)
+            valid[aid] = entry
     return valid
 
 
-def approved_baseline_value(
-    baselines: Mapping[str, Mapping[str, Any]],
-    artifact_id: str,
-    baseline_key: str,
-) -> float | None:
-    """Return an artifact's approved positive baseline, or ``None``.
-
-    ``None`` means "no usable approved baseline" for every reason that must
-    fail closed: no entry, non-numeric, boolean, non-positive, or non-finite.
-    A single reader keeps ``evaluate_breaches`` and the input-coverage report
-    from disagreeing about whether an artifact is governed.
-    """
-    artifact_baselines = baselines.get(artifact_id)
-    if not isinstance(artifact_baselines, Mapping):
-        return None
-    value = artifact_baselines.get(baseline_key)
+def _validated_positive_float(mapping: Mapping[str, Any], baseline_key: str) -> float | None:
+    value = mapping.get(baseline_key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     try:
@@ -322,6 +378,143 @@ def approved_baseline_value(
     if not math.isfinite(numeric) or numeric <= 0:
         return None
     return numeric
+
+
+def approved_baseline_value(
+    baselines: Mapping[str, Mapping[str, Any]],
+    artifact_id: str,
+    baseline_key: str,
+    instrument_class: str | None = None,
+) -> float | None:
+    """Return an artifact's approved positive baseline, or ``None``.
+
+    When ``instrument_class`` is provided, resolves the baseline exclusively
+    from that instrument class's approved sub-entry (never falling back to an
+    unrelated class or flat entry). ``None`` means "no usable approved
+    baseline" for every reason that must fail closed: no entry, missing
+    policy_source, non-numeric, boolean, non-positive, or non-finite.
+    """
+    if not isinstance(baselines, Mapping):
+        return None
+    artifact_baselines = baselines.get(artifact_id)
+    if not isinstance(artifact_baselines, Mapping):
+        return None
+    if instrument_class is not None:
+        if not isinstance(instrument_class, str) or not instrument_class.strip():
+            return None
+        cls_key = instrument_class.strip()
+        class_entries = _extract_valid_class_baselines(artifact_baselines)
+        cls_mapping = class_entries.get(cls_key)
+        if not isinstance(cls_mapping, Mapping):
+            return None
+        return _validated_positive_float(cls_mapping, baseline_key)
+    return _validated_positive_float(artifact_baselines, baseline_key)
+
+
+def _summary_instrument_class(summary: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Extract the runtime summary's reported instrument class.
+
+    Checks explicit summary-level fields (``instrument_class``,
+    ``instrument_kind``) first, then falls back to a single unambiguous
+    ``kind`` / ``instrument_class`` across ``positions`` or
+    ``positions_by_underlying``. Returns ``(instrument_class, error_reason)``.
+    """
+    for field_name in ("instrument_class", "instrument_kind"):
+        if field_name in summary:
+            raw = summary.get(field_name)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip(), None
+            return None, f"missing or invalid {field_name} in runtime summary"
+
+    discovered: set[str] = set()
+    positions = summary.get("positions")
+    if isinstance(positions, list):
+        for pos in positions:
+            if not isinstance(pos, Mapping):
+                continue
+            raw_kind = pos.get("instrument_class") or pos.get("kind")
+            if isinstance(raw_kind, str) and raw_kind.strip():
+                discovered.add(raw_kind.strip())
+
+    by_underlying = summary.get("positions_by_underlying")
+    if isinstance(by_underlying, Mapping):
+        for group in by_underlying.values():
+            if not isinstance(group, Mapping):
+                continue
+            instruments = group.get("instruments")
+            if not isinstance(instruments, list):
+                continue
+            for inst in instruments:
+                if not isinstance(inst, Mapping):
+                    continue
+                raw_kind = inst.get("instrument_class") or inst.get("kind")
+                if isinstance(raw_kind, str) and raw_kind.strip():
+                    discovered.add(raw_kind.strip())
+
+    if len(discovered) == 1:
+        return next(iter(discovered)), None
+    if len(discovered) > 1:
+        return None, f"ambiguous instrument classes {sorted(discovered)!r} in runtime summary"
+    return None, None
+
+
+def _resolve_summary_baseline(
+    baselines: Mapping[str, Mapping[str, Any]],
+    summary: Mapping[str, Any],
+    artifact_id: str,
+    baseline_key: str,
+) -> tuple[float | None, str | None]:
+    """Resolve the baseline for a runtime summary, failing closed when the
+    instrument class or its approved baseline is missing."""
+    instrument_class, class_err = _summary_instrument_class(summary)
+    if class_err is not None:
+        return (
+            None,
+            f"{class_err} for artifact_id={artifact_id!r}; no approved "
+            f"{baseline_key!r} baseline can be selected "
+            "(fail-closed; add a positive value plus its approving policy_source "
+            "to threshold_sweep_baselines.json)",
+        )
+
+    artifact_baselines = baselines.get(artifact_id) if isinstance(baselines, Mapping) else None
+    class_entries = (
+        _extract_valid_class_baselines(artifact_baselines)
+        if isinstance(artifact_baselines, Mapping)
+        else {}
+    )
+
+    if instrument_class is not None:
+        value = approved_baseline_value(
+            baselines, artifact_id, baseline_key, instrument_class=instrument_class
+        )
+        if value is None:
+            return (
+                None,
+                f"no approved {baseline_key!r} baseline for "
+                f"artifact_id={artifact_id!r} instrument_class={instrument_class!r} "
+                "(fail-closed; add a positive value plus its approving policy_source "
+                "to threshold_sweep_baselines.json)",
+            )
+        return value, None
+
+    if class_entries:
+        return (
+            None,
+            f"missing instrument_class in runtime summary for "
+            f"artifact_id={artifact_id!r}; no approved {baseline_key!r} baseline "
+            "can be selected (fail-closed; add a positive value plus its approving "
+            "policy_source to threshold_sweep_baselines.json)",
+        )
+
+    value = approved_baseline_value(baselines, artifact_id, baseline_key)
+    if value is None:
+        return (
+            None,
+            f"no approved {baseline_key!r} baseline for artifact_id={artifact_id!r} "
+            "(fail-closed; add a positive value plus its approving policy_source "
+            "to threshold_sweep_baselines.json)",
+        )
+    return value, None
 
 
 def _extract_identity(summary: Mapping[str, Any]) -> tuple[dict[str, str], list[str]]:
@@ -521,15 +714,15 @@ def evaluate_breaches(
 
                 baseline_key = threshold.get("ratio_baseline_key")
                 if baseline_key:
-                    baseline_value = approved_baseline_value(
-                        active_baselines, identity["artifact_id"], str(baseline_key)
+                    baseline_value, baseline_diag = _resolve_summary_baseline(
+                        active_baselines,
+                        summary,
+                        identity["artifact_id"],
+                        str(baseline_key),
                     )
                     if baseline_value is None:
                         diagnostics.append(
-                            f"skip {identity['binding_id']}/{metric_name}: no approved "
-                            f"{baseline_key!r} baseline for artifact_id={identity['artifact_id']!r} "
-                            "(fail-closed; add a positive value plus its approving policy_source "
-                            "to threshold_sweep_baselines.json)"
+                            f"skip {identity['binding_id']}/{metric_name}: {baseline_diag}"
                         )
                         continue
                     observed = observed_raw_float / baseline_value
@@ -725,13 +918,15 @@ def assess_input_coverage(
                 summary, field, now=moment, max_age_seconds=metric_max_age_seconds
             )
 
-            baseline_value = (
-                approved_baseline_value(
-                    active_baselines, identity["artifact_id"], str(baseline_key)
+            if baseline_key:
+                baseline_value, baseline_diag = _resolve_summary_baseline(
+                    active_baselines,
+                    summary,
+                    identity["artifact_id"],
+                    str(baseline_key),
                 )
-                if baseline_key
-                else None
-            )
+            else:
+                baseline_value, baseline_diag = None, None
             baseline_ok = baseline_value is not None if baseline_key else True
 
             entry = {
@@ -755,10 +950,7 @@ def assess_input_coverage(
             if not fresh:
                 gaps.append(f"{metric_name}: telemetry field {field!r} has no fresh as-of time")
             if baseline_key and not baseline_ok:
-                gaps.append(
-                    f"{metric_name}: no approved {str(baseline_key)!r} baseline for "
-                    f"artifact_id={identity['artifact_id']!r}"
-                )
+                gaps.append(f"{metric_name}: {baseline_diag}")
 
         artifacts.append(
             {
