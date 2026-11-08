@@ -1453,6 +1453,22 @@ wait_for_exact_bff_lifecycle_readiness() {
     --exact-evidence-max-age-seconds 30
 }
 
+# Prints the last 200 log lines of a failed bounded refresh one-shot container
+# with bearer values and JWT-like strings redacted. Must run before the
+# container is removed, otherwise the worker's own error is lost.
+redact_bounded_refresh_log() {
+  sed -E \
+    -e 's/([Bb]earer)[[:space:]]+[A-Za-z0-9._~+\/=-]+/\1 [REDACTED]/g' \
+    -e 's/eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}(\.[A-Za-z0-9_-]*)?/[REDACTED_JWT]/g'
+}
+
+dump_bounded_refresh_container_logs() {
+  local service="$1" container_id="$2"
+  [[ -n "${container_id}" ]] || return 0
+  printf '[remote-deploy] bounded source refresh service %s failed; last 200 log lines (redacted):\n' "${service}" >&2
+  { docker logs --tail 200 "${container_id}" 2>&1 || true; } | redact_bounded_refresh_log >&2 || true
+}
+
 wait_for_bounded_source_refresh_service() {
   local service="$1"
   local container_name=""
@@ -1480,12 +1496,15 @@ wait_for_bounded_source_refresh_service() {
     case "$state" in
       exited)
         exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container_id")"
-        [[ "$exit_code" == "0" ]] \
-          || error "bounded source refresh service ${service} exited with code ${exit_code}"
+        if [[ "$exit_code" != "0" ]]; then
+          dump_bounded_refresh_container_logs "${service}" "${container_id}"
+          error "bounded source refresh service ${service} exited with code ${exit_code}"
+        fi
         printf '%s\n' "$container_id"
         return 0
         ;;
       dead)
+        dump_bounded_refresh_container_logs "${service}" "${container_id}"
         error "bounded source refresh service ${service} entered dead state"
         ;;
       created|running|restarting)

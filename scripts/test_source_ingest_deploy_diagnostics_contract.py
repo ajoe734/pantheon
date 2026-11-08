@@ -17,7 +17,8 @@ def _failure_diagnostics_function() -> str:
 
 def _bounded_wait_function() -> str:
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    start = deploy.index("wait_for_bounded_source_refresh_service() {")
+    # Include the log-dump helpers that the wait function calls on failure.
+    start = deploy.index("redact_bounded_refresh_log() {")
     end = deploy.index("\n}\n\nverify_bounded_source_refresh_readback()", start) + 2
     return deploy[start:end]
 
@@ -35,6 +36,8 @@ elif [[ "$1" == "inspect" && "$3" == *State.Status* ]]; then
   printf 'exited\\n'
 elif [[ "$1" == "inspect" && "$3" == *State.ExitCode* ]]; then
   printf '%s\\n' "${FAKE_DOCKER_EXIT_CODE}"
+elif [[ "$1" == "logs" ]]; then
+  printf 'worker-boom Authorization: Bearer leakedbearer999\\n'
 else
   exit 91
 fi
@@ -401,6 +404,8 @@ def test_bounded_source_refresh_wait_rejects_nonzero_exit(tmp_path: Path) -> Non
 
     assert result.returncode != 0
     assert "source-ingest-scheduler exited with code 17" in result.stderr
+    assert "worker-boom" in result.stderr
+    assert "leakedbearer999" not in result.stderr
 
 
 def test_root_failure_diagnostics_capture_search_service_and_state_without_env() -> None:

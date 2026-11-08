@@ -2627,3 +2627,59 @@ def test_deploy_nonprod_vm_preflight_paper_expression_layer_flag(tmp_path: Path)
         )
         assert not ssh_args_file.exists()
 
+
+
+def _bounded_refresh_wait_harness(tmp_path: Path, state: str, exit_code: str) -> subprocess.CompletedProcess[str]:
+    """Run the real wait/dump/redact functions against a fake docker."""
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("redact_bounded_refresh_log() {")
+    end = source.index("\nresolve_bounded_source_refresh_active_symbols()")
+    functions = source[start:end]
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZXYifQ.c2lnbmF0dXJlLXZhbHVl"
+    log_lines = [f"line-{i}" for i in range(1, 301)]
+    log_lines[-1] = f"ERROR Authorization: Bearer supersecretbearer123 token={jwt}"
+    (tmp_path / "container.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+    script = tmp_path / "harness.sh"
+    script.write_text(
+        "set -uo pipefail\n"
+        f'FAKE_STATE="{state}"\nFAKE_EXIT="{exit_code}"\nLOG_FILE="{tmp_path / "container.log"}"\n'
+        'SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=30\n'
+        'SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX=pantheon-bounded-refresh\n'
+        'error() { echo "[remote-deploy] ERROR: $*" >&2; exit 1; }\n'
+        'sleep() { :; }\n'
+        'docker() {\n'
+        '  case "$1" in\n'
+        '    ps) echo cid123 ;;\n'
+        '    inspect) if [[ "$*" == *State.Status* ]]; then echo "$FAKE_STATE"; else echo "$FAKE_EXIT"; fi ;;\n'
+        '    logs) shift; [[ "$1" == "--tail" ]] && tail -n "$2" "$LOG_FILE" ;;\n'
+        '  esac\n'
+        '}\n'
+        + functions
+        + '\nwait_for_bounded_source_refresh_service source-ingest-scheduler\n',
+        encoding="utf-8",
+    )
+    return subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.parametrize("state,exit_code", [("exited", "1"), ("dead", "0")])
+def test_bounded_refresh_failure_prints_last_200_log_lines_redacted(
+    tmp_path: Path, state: str, exit_code: str
+) -> None:
+    result = _bounded_refresh_wait_harness(tmp_path, state, exit_code)
+    assert result.returncode == 1
+    assert "last 200 log lines (redacted)" in result.stderr
+    assert "line-101" in result.stderr and "line-299" in result.stderr
+    assert "line-100\n" not in result.stderr  # only the last 200 lines
+    assert "supersecretbearer123" not in result.stderr
+    assert "eyJhbGciOiJIUzI1NiJ9" not in result.stderr
+    assert "Bearer [REDACTED]" in result.stderr
+    assert "[REDACTED_JWT]" in result.stderr or "token=" in result.stderr
+    # Logs are printed before the terminal error so they survive container removal.
+    assert result.stderr.index("last 200 log lines") < result.stderr.index("ERROR:")
+
+
+def test_bounded_refresh_success_does_not_print_container_logs(tmp_path: Path) -> None:
+    result = _bounded_refresh_wait_harness(tmp_path, "exited", "0")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "cid123"
+    assert "log lines" not in result.stderr
