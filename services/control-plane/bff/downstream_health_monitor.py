@@ -1988,6 +1988,9 @@ class DownstreamHealthMonitor:
         }
         self._error_windows_in_flight: set[tuple[str, str]] = set()
         self._pending_lock = threading.Lock()
+        # Serializes flush writers so a cancelled to_thread flush cannot
+        # overlap the next one (batch reservation / accounting stay exact).
+        self._flush_lock = threading.Lock()
         self._pending_windows: Dict[tuple, Dict[str, Any]] = {}
         self._pending_probes: Dict[str, Dict[str, Any]] = {}
         self._pending_samples = 0
@@ -2931,11 +2934,12 @@ class DownstreamHealthMonitor:
         *,
         target_name: str,
         window: Mapping[str, Any],
-    ) -> None:
+    ) -> bool:
+        """Queue the window event; True only once delivery intent is durable."""
         window_started_at = str(window["window_started_at"])
         flight_key = (target_name, window_started_at)
         if flight_key in self._error_windows_in_flight:
-            return
+            return False
         self._error_windows_in_flight.add(flight_key)
         claimed = await asyncio.to_thread(
             self._store.claim_window,
@@ -2947,13 +2951,13 @@ class DownstreamHealthMonitor:
         )
         if not claimed:
             self._error_windows_in_flight.discard(flight_key)
-            return
+            return False
         try:
             await asyncio.to_thread(
                 self._queue_error_rate_window_sync, target_name, window
             )
-            await asyncio.to_thread(self._deliver_due_sync)
-        finally:
+            # Delivery intent is durable from here; complete the window so it
+            # is never re-queued, even if the immediate delivery attempt fails.
             await asyncio.to_thread(
                 self._store.complete_window,
                 target_name=target_name,
@@ -2961,6 +2965,12 @@ class DownstreamHealthMonitor:
                 window_started_at=window_started_at,
                 owner_id=self._instance_id,
             )
+            try:
+                await asyncio.to_thread(self._deliver_due_sync)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("error-rate delivery deferred: %s", exc)
+            return True
+        finally:
             self._error_windows_in_flight.discard(flight_key)
 
     def _queue_error_rate_window_sync(
@@ -3138,6 +3148,10 @@ class DownstreamHealthMonitor:
 
         A locked database keeps the samples for the next flush.
         """
+        with self._flush_lock:
+            return self._flush_outcomes_locked()
+
+    def _flush_outcomes_locked(self) -> List[Dict[str, Any]]:
         windows, probes, samples = self._take_pending()
         if not windows and not probes:
             with self._pending_lock:
@@ -3166,12 +3180,18 @@ class DownstreamHealthMonitor:
             key = (str(window["target_name"]), str(window["window_started_at"]))
             if key in self._error_windows_emitted:
                 continue
+            try:
+                done = await self._emit_error_rate_window(
+                    target_name=key[0], window=window
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("error-rate emit deferred: %s", exc)
+                continue
+            if not done:
+                continue  # retried on the next flush that touches the window
             self._error_windows_emitted[key] = None
             while len(self._error_windows_emitted) > 4096:
                 self._error_windows_emitted.pop(next(iter(self._error_windows_emitted)))
-            await self._emit_error_rate_window(
-                target_name=key[0], window=window
-            )
         return crossed
 
     def _resolve_telemetry_service_jwt(self) -> str:
