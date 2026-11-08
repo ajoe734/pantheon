@@ -39,7 +39,6 @@ from services.control_plane.bff.ports import CapitalPoolPort, ReadSurfacePorts, 
 from services.control_plane.bff.strategies.routes.common import default_read_surface_meta
 from services.control_plane.bff.tests.rebalance_authority_test_support import CapitalBffAuthorityHarness
 from services.control_plane.bff.tools_integrations.service import (
-    deprecated_bff_path_response,
     page_slice,
     reject_body_idempotency_key,
     resolve_final_idempotency_key,
@@ -123,7 +122,6 @@ def _build_app(read_store: Any, command_store: CommandStore) -> FastAPI:
             utc_now=utc_now,
             page_slice=page_slice,
             read_surface_meta=default_read_surface_meta,
-            deprecated_bff_path_response=deprecated_bff_path_response,
             reject_body_idempotency_key=reject_body_idempotency_key,
             resolve_final_idempotency_key=resolve_final_idempotency_key,
             object_type=ObjectType,

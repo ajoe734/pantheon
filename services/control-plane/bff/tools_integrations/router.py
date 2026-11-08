@@ -299,11 +299,11 @@ def create_integrations_router(
     def create_openclaw_session(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> JSONResponse:
         identity = _extract(authorization)
         _require_openclaw(identity)
-        idempotency_key = resolved_service.require_openclaw_idempotency_key(x_idempotency_key)
+        idempotency_key = resolved_service.require_openclaw_idempotency_key(idempotency_key)
         agent_id = str(payload.get("agent_id") or payload.get("agentId") or "").strip()
         session_type = str(payload.get("session_type") or payload.get("sessionType") or "").strip()
         if not agent_id or not session_type:
@@ -352,11 +352,11 @@ def create_integrations_router(
     def cancel_openclaw_session(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> JSONResponse:
         identity = _extract(authorization)
         _require_openclaw(identity)
-        idempotency_key = resolved_service.require_openclaw_idempotency_key(x_idempotency_key)
+        idempotency_key = resolved_service.require_openclaw_idempotency_key(idempotency_key)
         op_id = getattr(identity, "operator_id", None) or getattr(identity, "id", "operator-1")
         client = resolved_service.get_openclaw_client()
         try:
@@ -469,7 +469,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> CommandResponse[McpToolImportData]:
         identity = _extract(authorization)
@@ -479,7 +478,6 @@ def create_integrations_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             x_request_id=x_request_id,
         )
 
@@ -493,7 +491,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> CommandResponse[McpToolActionData]:
         clean_tool_id = str(tool_id or "").strip()
@@ -517,7 +514,6 @@ def create_integrations_router(
             payload=payload,
             authorization=authorization,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             x_request_id=x_request_id,
         )
 
@@ -532,7 +528,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> CommandResponse[McpToolActionData]:
         identity = _extract(authorization)
@@ -544,7 +539,6 @@ def create_integrations_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             x_request_id=x_request_id,
         )
 
@@ -581,14 +575,13 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
         _require_operator(identity)
         reject_body_idempotency_key(payload, bff_error_fn=_err)
         resolved_key = resolve_final_idempotency_key(
-            idempotency_key, x_idempotency_key, bff_error_fn=_err
+            idempotency_key, bff_error_fn=_err
         )
         name = str(payload.get("name") or "").strip()
         if not name:
@@ -664,7 +657,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
@@ -680,7 +672,7 @@ def create_integrations_router(
             )
         reject_body_idempotency_key(payload, bff_error_fn=_err)
         resolved_key = resolve_final_idempotency_key(
-            idempotency_key, x_idempotency_key, bff_error_fn=_err
+            idempotency_key, bff_error_fn=_err
         )
         allowed_patches = {
             "name",
@@ -708,7 +700,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> JSONResponse:
         return deprecated_bff_path_response(
             route="/bff/tools/{tool_id}/actions/{action_id}",
@@ -732,13 +723,12 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
         _require_mcp_write(identity)
         reject_body_idempotency_key(payload, bff_error_fn=_err)
         resolved_key = resolve_final_idempotency_key(
-            idempotency_key, x_idempotency_key, bff_error_fn=_err
+            idempotency_key, bff_error_fn=_err
         )
         request_hash = stable_json_hash({"route": "POST /bff/mcp/servers", "payload": payload})
         cached = resolved_service.mcp_server_bff_idempotency_check(resolved_key, request_hash)
@@ -794,7 +784,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
         _require_mcp_write(identity)
@@ -839,7 +828,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> JSONResponse:
         return deprecated_bff_path_response(
             route="/bff/mcp/tools/{tool_id}/actions/{action_id}",
@@ -872,7 +860,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Any:
@@ -880,7 +867,7 @@ def create_integrations_router(
         _require_operator(identity)
         reject_body_idempotency_key(payload, bff_error_fn=_err)
         resolved_key = resolve_final_idempotency_key(
-            idempotency_key, x_idempotency_key, bff_error_fn=_err
+            idempotency_key, bff_error_fn=_err
         )
         name = str(payload.get("name") or "").strip()
         if not name:
@@ -965,7 +952,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
@@ -981,7 +967,7 @@ def create_integrations_router(
             )
         reject_body_idempotency_key(payload, bff_error_fn=_err)
         resolved_key = resolve_final_idempotency_key(
-            idempotency_key, x_idempotency_key, bff_error_fn=_err
+            idempotency_key, bff_error_fn=_err
         )
         allowed_patches = {
             "name",
@@ -1009,7 +995,6 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> JSONResponse:
         return deprecated_bff_path_response(
             route="/bff/skills/{skill_id}/actions/{action_id}",
@@ -1022,14 +1007,13 @@ def create_integrations_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
         _require_read(identity)
         reject_body_idempotency_key(payload, bff_error_fn=_err)
         resolved_key = resolve_final_idempotency_key(
-            idempotency_key, x_idempotency_key, bff_error_fn=_err
+            idempotency_key, bff_error_fn=_err
         )
         clean_id = str(skill_id or "").strip()
         if not clean_id:

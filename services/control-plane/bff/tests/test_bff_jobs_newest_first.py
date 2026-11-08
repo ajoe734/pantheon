@@ -333,7 +333,7 @@ def _build_jobs_client() -> TestClient:
             dataset_surface_status=dataset_surface_status,
             raise_if_read_surface_unavailable=persona_service._raise_if_read_surface_unavailable,
             reject_body_idempotency_key=lambda _b: None,
-            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            resolve_final_idempotency_key=lambda k1: k1 or "",
             submit_job_action=lambda *_a, **_kw: {},
         )
     )

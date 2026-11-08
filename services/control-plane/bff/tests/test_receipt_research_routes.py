@@ -105,7 +105,7 @@ def test_job_admission_executes_real_orchestrator(research_client, tmp_path, mon
         dataset_surface_status=lambda *a, **k: {"status": "ok"},
         raise_if_read_surface_unavailable=lambda *a, **k: None,
         reject_body_idempotency_key=lambda body: None,
-        resolve_final_idempotency_key=lambda key, other: key or other,
+        resolve_final_idempotency_key=lambda key: key,
         submit_job_action=lambda jid, action, key, ident, body, **ctx:
             service.submit_resource_action(ObjectType.JOB, jid, action, key, ident, body, CommandType.JOB_ACTION, **ctx),
     ))

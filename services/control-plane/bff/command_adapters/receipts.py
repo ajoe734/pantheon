@@ -468,7 +468,7 @@ def foundation_idempotency_conflict_error(
         message,
         reason,
         precondition_failed="idempotency_conflict",
-        suggestion="Reuse the original payload for this key or submit with a new X-Idempotency-Key",
+        suggestion="Reuse the original payload for this key or submit with a new Idempotency-Key",
         foundation_error=foundation_error,
         audit_action=audit_action,
     )

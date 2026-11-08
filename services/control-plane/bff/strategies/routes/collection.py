@@ -325,7 +325,6 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: create strategy stub (execute-plans compatibility)."""
         identity = ctx.extract_identity(authorization)
@@ -339,7 +338,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 "Strategy name must be a non-empty string",
                 precondition_failed="name",
             )
-        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = ctx.resolve_final_idempotency_key(idempotency_key)
         dry_run = ctx.request_dry_run_requested()
         return ctx.service.create_strategy(
             payload=payload,

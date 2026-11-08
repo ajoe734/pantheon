@@ -207,13 +207,12 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Create a real dynamic paper Persona through canonical owner services."""
         identity = _extract_identity(authorization)
         _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_final_idempotency_key(idempotency_key)
 
         name = str(payload.get("name") or "").strip()
         if not name:
@@ -409,14 +408,12 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Create a restart-safe paper Persona bundle through the shared coordinator."""
         return await bff_create_persona(
             payload=payload,
             authorization=authorization,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
 

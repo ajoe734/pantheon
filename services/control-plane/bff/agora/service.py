@@ -315,15 +315,15 @@ class AgoraService:
     def resolve_final_idempotency_key(
         self,
         idempotency_key: Optional[str],
-        x_idempotency_key: Optional[str],
+        *_ignored: Any,
     ) -> str:
-        key = str(idempotency_key or x_idempotency_key or "").strip()
+        key = str(idempotency_key or "").strip()
         if not key:
             raise self.bff_error(
                 400,
                 ErrorCode.VALIDATION_FAILED,
                 "Idempotency-Key header is required",
-                "Request must include a non-empty Idempotency-Key or X-Idempotency-Key header",
+                "Request must include a non-empty Idempotency-Key header",
                 precondition_failed="Idempotency-Key",
             )
         return key
@@ -935,13 +935,12 @@ class AgoraService:
         payload: Dict[str, Any],
         identity: OperatorIdentity,
         idempotency_key: Optional[str],
-        x_idempotency_key: Optional[str],
         x_dry_run: Optional[str] = None,
         tenant_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> Any:
         self.reject_body_idempotency_key(payload)
-        resolved_key = self.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = self.resolve_final_idempotency_key(idempotency_key)
         if identity is None:
             raise self.bff_error(401, ErrorCode.AUTH_REQUIRED, "Journal entry creation requires a verified identity")
         body_tenant = str(payload.get("tenant_id") or payload.get("tenantId") or "").strip()

@@ -75,8 +75,8 @@ def _reject_body_idempotency_key(_payload: Dict[str, Any]) -> None:
     return None
 
 
-def _resolve_final_idempotency_key(primary: Optional[str], alternate: Optional[str]) -> str:
-    return primary or alternate or str(uuid.uuid4())
+def _resolve_final_idempotency_key(primary: Optional[str]) -> str:
+    return primary or str(uuid.uuid4())
 
 _ENV_TO_FILE = {
     "PANTHEON_BFF_ROUTE_POLICY_STORE": "route_policies.json",

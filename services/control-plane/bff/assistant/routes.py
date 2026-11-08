@@ -336,7 +336,6 @@ def create_assistant_router(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         idempotency_recovery_id: Optional[str] = Header(
             default=None, alias="X-Idempotency-Recovery-Id"
         ),
@@ -387,7 +386,6 @@ def create_assistant_router(
             route="/bff/assistant/control-mode/activate",
             payload={"payload": payload, "tenant_id": tenant_id},
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             recovery_id=idempotency_recovery_id,
             bff_error=bff_error,
         ) as transaction:
@@ -440,7 +438,6 @@ def create_assistant_router(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         idempotency_recovery_id: Optional[str] = Header(
             default=None, alias="X-Idempotency-Recovery-Id"
         ),
@@ -455,7 +452,6 @@ def create_assistant_router(
             route="/bff/assistant/control-mode/deactivate",
             payload=payload,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             recovery_id=idempotency_recovery_id,
             bff_error=bff_error,
         ) as transaction:
@@ -957,12 +953,11 @@ def _assistant_command_idempotency(
     route: str,
     payload: Any,
     idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
     recovery_id: Optional[str],
     bff_error: Optional[BffErrorFactory],
 ) -> Iterator[Optional[CommandIdempotencyTransaction]]:
     try:
-        resolved_key = resolve_command_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = resolve_command_idempotency_key(idempotency_key)
         if resolved_key is None:
             yield None
             return

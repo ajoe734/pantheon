@@ -219,9 +219,9 @@ def _authorization() -> inspect.Parameter:
 def _idempotency_key() -> inspect.Parameter:
     from fastapi import Header
     return _parameter(
-        "x_idempotency_key",
+        "idempotency_key",
         annotation=Optional[str],
-        default=Header(default=None, alias="X-Idempotency-Key"),
+        default=Header(default=None, alias="Idempotency-Key"),
     )
 
 

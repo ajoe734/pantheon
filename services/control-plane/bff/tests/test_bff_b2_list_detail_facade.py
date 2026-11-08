@@ -656,7 +656,7 @@ def _create_app() -> FastAPI:
         split_csv_query=lambda q: q.split(",") if q else None,
         meta_staleness=lambda: None,
         stable_json_hash=_stable_json_hash,
-        resolve_final_idempotency_key=lambda ik, xik: str(ik or xik or ""),
+        resolve_final_idempotency_key=lambda ik: str(ik or ""),
         reject_body_idempotency_key=lambda p: None,
         request_dry_run_requested=lambda: False,
         publish_event=lambda *a, **kw: "ev-1",

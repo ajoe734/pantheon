@@ -218,7 +218,7 @@ def test_owner_http_409_semantic_conflict_is_not_retryable(
 
 @pytest.mark.parametrize(
     "idempotency_header",
-    ["Idempotency-Key", "X-Idempotency-Key"],
+    ["Idempotency-Key"],
 )
 @pytest.mark.parametrize(
     ("command", "target"),
@@ -281,7 +281,7 @@ def test_final_command_admission_cannot_bypass_approved_apply_gates(
                 },
                 "audit_context": {"reason": "attempt legacy apply bypass"},
             },
-            headers={**HEADERS, "X-Idempotency-Key": "legacy-apply-bypass"},
+            headers={**HEADERS, "Idempotency-Key": "legacy-apply-bypass"},
         )
         assert bypass.status_code == 428, bypass.text
         assert "CONFIRM_TOKEN_MISSING" in bypass.text
@@ -289,7 +289,7 @@ def test_final_command_admission_cannot_bypass_approved_apply_gates(
 
 @pytest.mark.parametrize(
     "idempotency_header",
-    ["Idempotency-Key", "X-Idempotency-Key"],
+    ["Idempotency-Key"],
 )
 def test_approved_apply_admissions_reject_params_target_redirect(
     tmp_path: Path,

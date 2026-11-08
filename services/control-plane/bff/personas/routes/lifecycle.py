@@ -174,7 +174,6 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Run the exact dev-only paper positive control through telemetry owner."""
 
@@ -202,7 +201,6 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         _reject_body_idempotency_key(payload)
         resolved_key = _resolve_final_idempotency_key(
             idempotency_key,
-            x_idempotency_key,
         )
         if resolved_key != _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY:
             raise _ppl_alloc_009_eligibility_error(
@@ -414,13 +412,12 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: create a transient research-only discovery session view."""
         identity = _extract_identity(authorization)
         _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_final_idempotency_key(idempotency_key)
         request_hash = _stable_json_hash(
             {
                 "route": "POST /api/v1/personas/{persona_id}/strategy-discovery",
@@ -461,13 +458,12 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: research-only action for a Persona strategy match."""
         identity = _extract_identity(authorization)
         _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_final_idempotency_key(idempotency_key)
         return _persona_strategy_match_action_response(
             persona_id=persona_id,
             match_id=match_id,
@@ -488,7 +484,6 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Forward lifecycle aliases through the same authenticated command admission."""
         if action_id.lower().replace("_", "").replace("-", "") not in {
@@ -515,7 +510,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
             x_trace_id=request.headers.get("X-Trace-Id"),
             x_correlation_id=request.headers.get("X-Correlation-Id"),
             x_request_id=request.headers.get("X-Request-Id"),
-            idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
             source_route="POST /bff/personas/{persona_id}/actions/{action_id}",
             include_durable_meta=True,
         )
@@ -527,13 +522,12 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: send a test prompt to a persona; returns a stub trial handle."""
         identity = _extract_identity(authorization)
         _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_final_idempotency_key(idempotency_key)
         _ensure_persona_exists(persona_id)
         request_hash = _stable_json_hash(
             {"route": "POST /bff/personas/{id}/test-prompt", "id": persona_id, "payload": payload}

@@ -61,7 +61,7 @@ Key contract details of the sole canonical route:
 
 | Dimension | `/bff/v1/commands` |
 |---|---|
-| Idempotency header | `Idempotency-Key` (canonical); `X-Idempotency-Key` accepted as alias |
+| Idempotency header | `Idempotency-Key` (canonical; `X-Idempotency-Key` alias retired) |
 | Body `idempotencyKey` | Rejected with 400 `INVALID_REQUEST` |
 | Response shape | `CommandResponse<T>` with `status` and `data` |
 
@@ -74,7 +74,7 @@ Every accepted command must persist:
 | Actor | `actor_ref` from authenticated operator identity; anonymous commands are rejected. |
 | Tenant | Verified caller tenant from `_trusted_tenant_for_identity(identity)` is compared against `params` keys (`tenant_id`, `tenant`, `tenantId`) and nested `params.payload` keys (`tenant_id`, `tenant`, `tenantId`, when `payload` is an object) before any store write or downstream owner call; any differing tenant claim is refused with HTTP 403 `TENANT_MISMATCH` and one server audit log line (without tokens). |
 | Trace | non-empty `trace_id` and `correlation_id`; `X-Trace-Id` may be supplied by caller, otherwise BFF generates one. |
-| Idempotency | non-empty idempotency key from header; duplicate key with same request returns the original receipt; same key with different request returns conflict. On final routes, `Idempotency-Key` is canonical and `X-Idempotency-Key` is a temporary compatibility alias; body-level `idempotencyKey` is rejected. |
+| Idempotency | non-empty idempotency key from header; duplicate key with same request returns the original receipt; same key with different request returns conflict. On final routes, `Idempotency-Key` is the sole supported header (`X-Idempotency-Key` is ignored/rejected); body-level `idempotencyKey` is rejected. |
 | RBAC / policy | command-specific validator must produce a policy decision (`allow` or `deny`) tied to actor, target, action, environment, and trace. |
 | Audit | non-empty `audit_context.reason`; accepted, denied, validation-failed, and idempotency-conflict commands emit an audit action. |
 | Target | typed target reference (`target.type`, `target.id`) matching the command class. |
@@ -86,14 +86,12 @@ Headers (final `/bff/v1/commands` route):
 ```http
 Authorization: Bearer <operator-token>
 Idempotency-Key: <stable-client-retry-key>
-X-Idempotency-Key: <compatibility alias — accepted when Idempotency-Key is absent>
 X-Trace-Id: <optional-trace-id>
 X-Correlation-Id: <optional-correlation-id>
 X-Request-Id: <optional-request-id>
 X-MFA-Token: <required for MFA-gated commands when not already session-bound>
 ```
 
-`Idempotency-Key` takes precedence over `X-Idempotency-Key` when both are present.
 `idempotencyKey` in the request body is rejected with 400 `INVALID_REQUEST` on the final route.
 
 Body:
@@ -643,8 +641,8 @@ in this mapping table:
    (`auth_token.sub`, `auth_token.roles`). Anonymous or stub sessions are rejected before
    command admission.
 
-2. **Idempotency key forwarding** — The frontend `Idempotency-Key` (or `X-Idempotency-Key`
-   alias) is forwarded as-is to the command record. The adapter must not re-mint a new key
+2. **Idempotency key forwarding** — The frontend `Idempotency-Key`
+   is forwarded as-is to the command record. The adapter must not re-mint a new key
    for the downstream command submission; the same key ties the action receipt to the command
    receipt for dual-write reconciliation (BFF-CONSOL-021).
 
@@ -692,8 +690,7 @@ python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adap
 This test set verifies:
 
 - `Idempotency-Key` header is accepted on `/bff/v1/commands` (sole canonical route)
-- `X-Idempotency-Key` is accepted as a compatibility alias on the canonical route
-- `Idempotency-Key` takes precedence over `X-Idempotency-Key` when both are present
+- `X-Idempotency-Key` is no longer accepted on the canonical route (`Idempotency-Key` is required)
 - `idempotencyKey` in the request body is rejected with 400 `INVALID_REQUEST`
 - missing idempotency key returns 400 `INVALID_PARAMS` with `precondition_failed=idempotency_key`
 - duplicate idempotency key with identical request replays the original `CommandResponse`

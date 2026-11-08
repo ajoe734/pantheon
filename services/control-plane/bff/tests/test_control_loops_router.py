@@ -192,7 +192,7 @@ class MockCommandOwners:
 
     @staticmethod
     def _key(kwargs: Dict[str, Any]) -> str:
-        return str(kwargs.get("idempotency_key") or kwargs.get("x_idempotency_key") or "generated")
+        return str(kwargs.get("idempotency_key") or "generated")
 
     def _receipt(self, command: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         key = self._key(kwargs)

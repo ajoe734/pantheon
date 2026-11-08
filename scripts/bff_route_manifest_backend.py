@@ -50,14 +50,6 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
         "status": "alias",
         "covered_by": "POST /bff/v1/mcp/servers/{server_id}/import-tools",
     },
-    # /bff/ranking-formulas* are compat aliases for canonical /bff/ranking/formulas*
-    "GET /bff/ranking-formulas": {"status": "alias", "covered_by": "GET /bff/ranking/formulas"},
-    "GET /bff/ranking-formulas/{id}": {"status": "alias", "covered_by": "GET /bff/ranking/formulas/{formula_id}"},
-    "PATCH /bff/ranking-formulas/{id}": {
-        "status": "alias",
-        "covered_by": "PATCH /bff/ranking/formulas/{formula_id}",
-    },
-    "POST /bff/ranking-formulas": {"status": "alias", "covered_by": "POST /bff/ranking/formulas"},
     # /bff/management/persona-fleet is retained for stale UI builds; current
     # execute-plans code uses the canonical Pathreon fleet aggregate endpoint.
     "GET /bff/management/persona-fleet": {
