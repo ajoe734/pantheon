@@ -279,13 +279,33 @@ Topology (2026-05-17 redesign, per-task PR model):
   (3 required status checks: `Commit trailers` / `Runtime mirror guard` /
   `Smoke acceptance`; strict up-to-date base required; 0 GitHub approvals).
   Receives `promote/<v>` and `hotfix/<topic>` PRs.
-- `dev`: integration line with 4 required status checks (`Commit trailers` /
-  `Runtime mirror guard` / `Smoke acceptance` / `Service suites`; strict
-  up-to-date base not enforced; 0 GitHub approvals and no PR review rule on
-  GitHub). Task pull requests do not use GitHub auto-merge; every
-  `task/<TASK-ID>` PR merges into `dev` through the canonical supervisor
-  integrator (`scripts/git/auto_integrator.py`) only after exact-head
-  TaskStore `review_approved` by the assigned independent reviewer.
+- `dev`: integration line with 4 status checks currently required in GitHub
+  branch protection (`Commit trailers` / `Runtime mirror guard` /
+  `Smoke acceptance` / `Service suites`; strict up-to-date base not enforced;
+  0 GitHub approvals and no PR review rule on GitHub) and 5 task-PR required
+  status checks in `.orchestrator/config.json` (adding
+  `Pantheon canonical review gate` under
+  `review_gate.github_review_bridge_required: true` and
+  `review_gate.github_review_identity: "shared"`). Under shared identity mode,
+  `scripts/git/github_review_bridge.py` records `approve` and `reopen` as a
+  `COMMENT` PR review (`event: "COMMENT"`, matched state `"COMMENTED"`) carrying
+  the review marker on the exact head (never submitting `APPROVE` or
+  `REQUEST_CHANGES`), pushes the `refs/tags/pantheon-review/<decision>/<head_sha>`
+  proof tag, and dispatches `canonical-review-gate.yml` as the sole issuer of
+  the `Pantheon canonical review gate` status. Shared identity mode blocks
+  merges without a proof tag at the GitHub layer **only once branch protection
+  requires the gate** (GitHub branch protection does not currently require it;
+  the coordinator adds it to `pantheon` `dev` and `execute-plans` `dev` after
+  live verification, leaving `master` and `main` unchanged). Once the gate is
+  required, operator-directed direct deliveries must use a `task/<TASK-ID>`
+  branch with the existing operator acceptance proof (`operator-accept`). Any
+  holder of the shared `ajoe734` GitHub credential can still push a proof tag or
+  add the `delivery:tooling` label directly; only a separate review identity
+  (`github_review_identity: "independent"`) closes that. Task pull requests do
+  not use GitHub auto-merge; every `task/<TASK-ID>` PR merges into `dev` through
+  the canonical supervisor integrator (`scripts/git/auto_integrator.py`) only
+  after exact-head TaskStore `review_approved` by the assigned independent
+  reviewer.
 - `task/<TASK-ID>`: ephemeral per-task branch. One branch per task,
   pushed by one worker, auto-deleted by GitHub when its PR merges.
   Replaces the retired `worker/<name>` permanent branches.

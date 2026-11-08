@@ -39,6 +39,7 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "worker_runtime.work_progress_stale_seconds",
     "task_state_store.mode",
     "review_gate.github_review_bridge_required",
+    "review_gate.github_review_identity",
     "branch_workflow.task_pr.required_status_checks",
     # worker_reassignment governs who a task's owner/reviewer fails over to
     # (see supervisor.py's plan_task_assignment_pair / persist_task_reassignment).

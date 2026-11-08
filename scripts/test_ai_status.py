@@ -6017,6 +6017,70 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 binding=binding,
             )
         self.assertEqual(payload, expected_payload)
+        self.assertEqual(
+            mock_bridge.bridge_review_decision.call_args.kwargs.get("identity"),
+            "independent",
+        )
+
+    def test_bridge_github_review_decision_forwards_configured_github_review_identity(self) -> None:
+        task = {"id": "REG-002", "repository_id": "pantheon"}
+        binding = {"pr": 4218, "head_sha": "b" * 40, "head_branch": "task/REG-002", "base": "dev"}
+        mock_bridge = mock.MagicMock()
+        expected_payload = {
+            "mode": "pull_request_review",
+            "repository": "ajoe734/pantheon",
+            "pr": 4218,
+            "head_sha": "b" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "decision": "approve",
+            "actor": "Claude",
+            "github_review_id": 91,
+            "review_proof_ref": f"refs/tags/pantheon-review/approve/{'b' * 40}",
+        }
+        mock_bridge.bridge_review_decision.return_value = mock.MagicMock(
+            as_dict=lambda: dict(expected_payload)
+        )
+        shared_cfg = {
+            "repositories": [{"id": "pantheon", "github_slug": "ajoe734/pantheon"}],
+            "review_gate": {"github_review_identity": "shared"},
+        }
+        with (
+            mock.patch.object(ai_status, "load_config", return_value=shared_cfg),
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+        ):
+            payload = ai_status.bridge_github_review_decision(
+                task,
+                actor="Claude",
+                decision="approve",
+                message="Approved in shared mode.",
+                binding=binding,
+            )
+        self.assertEqual(payload, expected_payload)
+        self.assertEqual(
+            mock_bridge.bridge_review_decision.call_args.kwargs.get("identity"),
+            "shared",
+        )
+
+        invalid_cfg = {
+            "repositories": [{"id": "pantheon", "github_slug": "ajoe734/pantheon"}],
+            "review_gate": {"github_review_identity": "bogus"},
+        }
+        with (
+            mock.patch.object(ai_status, "load_config", return_value=invalid_cfg),
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            self.assertRaisesRegex(
+                SystemExit,
+                "review_gate.github_review_identity must be 'shared' or 'independent'",
+            ),
+        ):
+            ai_status.bridge_github_review_decision(
+                task,
+                actor="Claude",
+                decision="approve",
+                message="Invalid identity.",
+                binding=binding,
+            )
 
     def test_operator_accept_records_distinct_exact_head_evidence_without_owner_finalizer(self) -> None:
         self._set_pr_delivery_binding(pr=4218, head_sha="b" * 40)
