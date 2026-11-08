@@ -964,6 +964,9 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
+          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw
+          SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market
+          SOURCE_INGEST_BOUNDED_DATASET: tw_price_daily
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -1010,6 +1013,67 @@ jobs:
               )
           print(f"Taiwan market session proven: status={status} reason={reason}")
           PY
+
+      - name: Refresh TAIFEX contract dataset under lease before stack mutation
+        id: taifex_market_refresh
+        if: ${{ env.PAPER_BOOTSTRAP_REQUESTED == 'true' && env.BOUNDED_SOURCE_REFRESH_ENABLED != 'true' && env.BOOTSTRAP_EMPTY_HOST != 'true' }}
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS: "120"
+          PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
+          PANTHEON_EXTERNAL_EGRESS: allowlist
+          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: openapi.taifex.com.tw,www.taifex.com.tw
+          SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-taifex-futures-options-chip
+          SOURCE_INGEST_BOUNDED_DATASET: taifex_ssf_contracts
+          SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS: "1800"
+          SOURCE_INGEST_CONTROLLER_MAX_TICKS: "1"
+          SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: "1"
+          SOURCE_INGEST_MAX_RECORDS: "100"
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
+          printf '%s  %s\n' \
+            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          outcome_dir="${RUNNER_TEMP}/pantheon-taifex-refresh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${outcome_dir}"
+          deploy_script="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh"
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            bash "${deploy_script}" --refresh-only --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${outcome_dir}/taifex-refresh.json"
+          lease_token=""
 
       - name: Deploy bootstrap predecessor pair in strict live read-only mode under lease
         id: deploy_bootstrap_predecessor
@@ -1398,6 +1462,7 @@ jobs:
           PANTHEON_EXTERNAL_EGRESS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'allowlist' || 'deny' }}
           PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'openapi.twse.com.tw,www.tpex.org.tw' || '' }}
           SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market
+          SOURCE_INGEST_BOUNDED_DATASET: tw_price_daily
           SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS: "1800"
           SOURCE_INGEST_CONTROLLER_MAX_TICKS: "1"
           SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: "1"
@@ -1483,6 +1548,68 @@ jobs:
           path: ${{ steps.artifact_candidate_seal.outputs.receipt_file }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Execute bounded TAIFEX contract refresh under lease
+        id: bounded_taifex_refresh
+        if: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' }}
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS: "120"
+          PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
+          PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'root,source-ingest-scheduler' || 'root' }}
+          PANTHEON_EXTERNAL_EGRESS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'allowlist' || 'deny' }}
+          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'openapi.taifex.com.tw,www.taifex.com.tw' || '' }}
+          SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-taifex-futures-options-chip
+          SOURCE_INGEST_BOUNDED_DATASET: taifex_ssf_contracts
+          SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS: "1800"
+          SOURCE_INGEST_CONTROLLER_MAX_TICKS: "1"
+          SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: "1"
+          SOURCE_INGEST_MAX_RECORDS: "100"
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
+          printf '%s  %s\n' \
+            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          outcome_dir="${RUNNER_TEMP}/pantheon-bounded-taifex-refresh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${outcome_dir}"
+          deploy_script="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh"
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            bash "${deploy_script}" --refresh-only --force --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${outcome_dir}/taifex-refresh.json"
+          lease_token=""
 
       - name: Ensure governed dev paper baseline under lease
         id: paper_bootstrap

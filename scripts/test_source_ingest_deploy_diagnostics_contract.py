@@ -413,3 +413,703 @@ def test_root_failure_diagnostics_capture_search_service_and_state_without_env()
     assert "restart_count={{.RestartCount}}" in diagnostics
     assert "health={{if .State.Health}}{{.State.Health.Status}}" in diagnostics
     assert ".Config.Env" not in diagnostics
+
+
+def _validate_source_refresh_profile_function() -> str:
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = deploy.index("validate_source_refresh_profile() {")
+    end = deploy.index("\n}\n\ncurl_with_retry()", start) + 2
+    return deploy[start:end]
+
+
+def _run_source_refresh_profile_gate(
+    connector_id: str,
+    allowed_hosts: str,
+    dataset: str = "",
+) -> subprocess.CompletedProcess[str]:
+    script = """set -euo pipefail
+error() {
+  echo "$*" >&2
+  exit 1
+}
+""" + _validate_source_refresh_profile_function() + """
+export PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler"
+export PANTHEON_EXTERNAL_EGRESS="allowlist"
+export SOURCE_INGEST_CONTROLLER_MODE="reconcile_and_pull"
+export SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="reconciled_live_proof"
+export SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no"
+export SOURCE_INGEST_CONTROLLER_MAX_TICKS="1"
+export SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1"
+export SOURCE_INGEST_MAX_RECORDS="100"
+export SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="180"
+validate_source_refresh_profile
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(ROOT)
+    env["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] = connector_id
+    env["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] = allowed_hosts
+    env["SOURCE_INGEST_BOUNDED_DATASET"] = dataset
+    return subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def test_validate_source_refresh_profile_taifex_and_twse_exact_host_contract() -> None:
+    gate = _validate_source_refresh_profile_function()
+    assert 'required = {"openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"}' in gate
+    assert 'required = {"openapi.taifex.com.tw", "www.taifex.com.tw"}' in gate
+    assert "if hosts != required:" in gate
+
+    # Accept TAIFEX with exact two hosts in either order
+    for valid_taifex in (
+        "openapi.taifex.com.tw,www.taifex.com.tw",
+        "www.taifex.com.tw,openapi.taifex.com.tw",
+    ):
+        res = _run_source_refresh_profile_gate(
+            "tw-taifex-futures-options-chip", valid_taifex, "taifex_ssf_contracts"
+        )
+        assert res.returncode == 0, res.stderr
+
+    # Accept TWSE/TPEx with exact three hosts in either order
+    for valid_twse in (
+        "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw",
+        "www.tpex.org.tw,www.twse.com.tw,openapi.twse.com.tw",
+    ):
+        res = _run_source_refresh_profile_gate(
+            "tw-twse-tpex-official-market", valid_twse, "tw_price_daily"
+        )
+        assert res.returncode == 0, res.stderr
+
+    # Reject any other host set or wildcard for both connectors
+    for connector_id, invalid_hosts in (
+        ("tw-taifex-futures-options-chip", "openapi.taifex.com.tw"),
+        ("tw-taifex-futures-options-chip", "www.taifex.com.tw"),
+        ("tw-taifex-futures-options-chip", "openapi.taifex.com.tw,www.taifex.com.tw,www.twse.com.tw"),
+        ("tw-taifex-futures-options-chip", "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw"),
+        ("tw-taifex-futures-options-chip", "*.taifex.com.tw,www.taifex.com.tw"),
+        ("tw-taifex-futures-options-chip", "*"),
+        ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.tpex.org.tw"),
+        ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw"),
+        ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw"),
+        ("tw-twse-tpex-official-market", "*.twse.com.tw,www.tpex.org.tw"),
+    ):
+        res = _run_source_refresh_profile_gate(connector_id, invalid_hosts)
+        assert res.returncode != 0, f"Expected failure for {connector_id} with {invalid_hosts}"
+
+
+def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse() -> None:
+    import yaml
+
+    refresh_wf_path = ROOT / ".github" / "workflows" / "dev-tw-market-refresh.yml"
+    refresh_wf = yaml.safe_load(refresh_wf_path.read_text(encoding="utf-8"))
+    refresh_steps = refresh_wf["jobs"]["refresh"]["steps"]
+    refresh_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(refresh_steps) if s.get("id")}
+
+    assert "refresh" in refresh_by_id
+    assert "taifex_refresh" in refresh_by_id
+    twse_idx, twse_step = refresh_by_id["refresh"]
+    taifex_idx, taifex_step = refresh_by_id["taifex_refresh"]
+    assert twse_idx < taifex_idx, "TAIFEX refresh must run after TWSE refresh"
+
+    assert twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
+    assert twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
+    assert twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+
+    assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert taifex_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+    assert "--connector-id tw-taifex-futures-options-chip" in taifex_step["run"]
+    assert "--allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw" in taifex_step["run"]
+    assert "--dataset taifex_ssf_contracts" in taifex_step["run"]
+
+    deploy_wf = yaml.safe_load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"))
+    deploy_steps = deploy_wf["jobs"]["deploy-dev"]["steps"]
+    deploy_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(deploy_steps) if s.get("id")}
+
+    assert "market_refresh" in deploy_by_id
+    assert "taifex_market_refresh" in deploy_by_id
+    m_twse_idx, m_twse_step = deploy_by_id["market_refresh"]
+    m_taifex_idx, m_taifex_step = deploy_by_id["taifex_market_refresh"]
+    assert m_twse_idx < m_taifex_idx, "Pre-mutation TAIFEX refresh must run after TWSE refresh"
+    assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
+    assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
+    assert m_twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+    assert m_taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert m_taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert m_taifex_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+
+    assert "deploy" in deploy_by_id
+    assert "bounded_taifex_refresh" in deploy_by_id
+    d_twse_idx, d_twse_step = deploy_by_id["deploy"]
+    d_taifex_idx, d_taifex_step = deploy_by_id["bounded_taifex_refresh"]
+    assert d_twse_idx < d_taifex_idx, "Bounded TAIFEX refresh under lease must run after TWSE deploy refresh"
+    assert d_twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
+    assert d_twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
+    assert d_taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert d_taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert "openapi.taifex.com.tw,www.taifex.com.tw" in d_taifex_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"]
+
+    # Every workflow step with SOURCE_INGEST_BOUNDED_CONNECTOR_ID must use a single fixed value per run
+    for wf_steps in (refresh_steps, deploy_steps):
+        for step in wf_steps:
+            env_map = step.get("env") or {}
+            if "SOURCE_INGEST_BOUNDED_CONNECTOR_ID" in env_map:
+                cid = str(env_map["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"])
+                assert cid in ("tw-twse-tpex-official-market", "tw-taifex-futures-options-chip")
+                assert "," not in cid
+                assert "${{" not in cid
+
+
+def _assert_no_merged_twse_and_taifex_hosts_in_text(text: str, source_name: str) -> None:
+    import re
+
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        has_twse = "twse.com.tw" in line or "tpex.org.tw" in line
+        has_taifex = "taifex.com.tw" in line
+        assert not (has_twse and has_taifex), (
+            f"{source_name}:{line_no} merges TWSE/TPEx and TAIFEX hosts on the same line: {line}"
+        )
+        if any(
+            token in line
+            for token in (
+                "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS",
+                "SOURCE_REFRESH_ALLOWED_HOSTS",
+                "--allowed-hosts",
+            )
+        ):
+            cleaned_line = re.sub(r"^\s*\*\)\s*", "", line)
+            assert "*" not in cleaned_line, f"{source_name}:{line_no} contains wildcard in allowed hosts: {line}"
+
+
+def test_regression_no_wildcard_no_host_widening_and_never_merged_host_lists() -> None:
+    import pytest
+
+    refresh_wf_path = ROOT / ".github" / "workflows" / "dev-tw-market-refresh.yml"
+    for path in (DEPLOY_SCRIPT, DEPLOY_WORKFLOW, refresh_wf_path):
+        _assert_no_merged_twse_and_taifex_hosts_in_text(path.read_text(encoding="utf-8"), path.name)
+
+    # Verify the regression detector fails if a future change merges the two host lists
+    with pytest.raises(AssertionError, match="merges TWSE/TPEx and TAIFEX hosts"):
+        _assert_no_merged_twse_and_taifex_hosts_in_text(
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw",
+            "synthetic-merged-workflow.yml",
+        )
+
+
+def _run_embedded_preflight(
+    *,
+    now_utc: str,
+    twse_snapshot: dict | None,
+    taifex_readback_connector: dict | None = None,
+    connector_id: str = "tw-taifex-futures-options-chip",
+    dataset: str = "taifex_ssf_contracts",
+    force: bool = False,
+) -> tuple[dict, list[str]]:
+    import http.server
+    import json
+    import os
+    import threading
+    import urllib.parse
+
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    body = script.split("<<'PREFLIGHT_PY'\n", 1)[1].split("\nPREFLIGHT_PY", 1)[0]
+    requested_paths: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requested_paths.append(self.path)
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/api/source-ingest/snapshots/latest":
+                payload = json.dumps(twse_snapshot if twse_snapshot is not None else {"detail": "not found"}).encode()
+                self.send_response(200 if twse_snapshot is not None else 404)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            elif parsed.path == "/api/source-ingest/controller/readback":
+                connectors = [taifex_readback_connector] if taifex_readback_connector is not None else []
+                payload = json.dumps({"connectors": connectors}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(ROOT),
+        "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
+        "PANTHEON_REFRESH_PREFLIGHT_NOW": now_utc,
+        "SOURCE_INGEST_BOUNDED_CONNECTOR_ID": connector_id,
+        "SOURCE_INGEST_BOUNDED_DATASET": dataset,
+    }
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", f"import sys\nexec(compile({body!r}, 'preflight', 'exec'))\n", "true" if force else "false"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    finally:
+        server.shutdown()
+    return json.loads(proc.stdout), requested_paths
+
+
+def test_taifex_preflight_does_not_skip_on_fresh_twse_snapshot_when_ssf_missing_or_stale() -> None:
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    fresh_twse_snapshot = {
+        "snapshot_id": "snap-2026-11-06",
+        "event_time": "2026-11-06T06:30:00Z",
+        "observed_at": "2026-11-06T07:05:00Z",
+        "calendar_evidence": governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-11-06"),
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:receipt-2026-11-06"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    }
+
+    # 1. Fresh TWSE snapshot + missing TAIFEX SSF readback -> must proceed, NOT noop/already_fresh
+    res_missing, paths_missing = _run_embedded_preflight(
+        now_utc="2026-11-06T08:00:00Z",
+        twse_snapshot=fresh_twse_snapshot,
+        taifex_readback_connector=None,
+    )
+    assert res_missing["status"] == "proceed"
+    assert res_missing["reason"] == "dataset_missing"
+    assert res_missing["connector_id"] == "tw-taifex-futures-options-chip"
+    assert res_missing["dataset"] == "taifex_ssf_contracts"
+    assert any("/api/source-ingest/controller/readback" in p for p in paths_missing)
+
+    # 2. Fresh TWSE snapshot + TAIFEX readback has taifex_futures_chip instead of taifex_ssf_contracts -> proceed
+    futures_chip_connector = {
+        "connector_id": "tw-taifex-futures-options-chip",
+        "freshness": {"last_success_at": "2026-11-06T07:30:00Z"},
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_futures_chip:TX:foreign_investors:abc",
+            "status": "normalized",
+            "metadata": {"date": "2026-11-06", "dataset": "taifex_futures_chip", "schema_hash": "tw_taifex_futures_chip.v1"},
+            "provenance": {"dataset": "taifex_futures_chip", "schema_hash": "tw_taifex_futures_chip.v1"},
+        },
+    }
+    res_wrong_ds, _ = _run_embedded_preflight(
+        now_utc="2026-11-06T08:00:00Z",
+        twse_snapshot=fresh_twse_snapshot,
+        taifex_readback_connector=futures_chip_connector,
+    )
+    assert res_wrong_ds["status"] == "proceed"
+    assert res_wrong_ds["reason"] == "dataset_missing"
+
+    # 3. Fresh TWSE snapshot + stale TAIFEX SSF readback from previous session -> proceed
+    stale_ssf_connector = {
+        "connector_id": "tw-taifex-futures-options-chip",
+        "freshness": {"last_success_at": "2026-11-05T07:30:00Z"},
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc",
+            "status": "normalized",
+            "metadata": {"date": "2026-11-05", "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+            "provenance": {"dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+        },
+    }
+    res_stale, _ = _run_embedded_preflight(
+        now_utc="2026-11-06T08:00:00Z",
+        twse_snapshot=fresh_twse_snapshot,
+        taifex_readback_connector=stale_ssf_connector,
+    )
+    assert res_stale["status"] == "proceed"
+    assert res_stale["reason"] == "closed_session_missing"
+
+    # 4. Fresh TAIFEX SSF readback for closed session -> noop/already_fresh
+    fresh_ssf_connector = {
+        "connector_id": "tw-taifex-futures-options-chip",
+        "freshness": {"last_success_at": "2026-11-06T07:30:00Z"},
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc",
+            "status": "normalized",
+            "metadata": {"date": "2026-11-06", "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+            "provenance": {"dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+        },
+    }
+    res_fresh, _ = _run_embedded_preflight(
+        now_utc="2026-11-06T08:00:00Z",
+        twse_snapshot=fresh_twse_snapshot,
+        taifex_readback_connector=fresh_ssf_connector,
+    )
+    assert res_fresh["status"] == "noop"
+    assert res_fresh["reason"] == "already_fresh"
+    assert res_fresh["dataset"] == "taifex_ssf_contracts"
+
+
+def test_prepare_bounded_source_refresh_dataset_wires_ssf_through_scheduler_and_adapter(
+    tmp_path: Path,
+) -> None:
+    import sys
+
+    runner_code = """
+import importlib
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from io import BytesIO
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+tmp_dir = Path(sys.argv[1])
+root_dir = Path(sys.argv[2])
+
+data_dir = tmp_dir / "source-ingest-data"
+data_dir.mkdir(parents=True, exist_ok=True)
+token = "t" * 48
+(data_dir / "controller_token").write_text(token, encoding="utf-8")
+
+from services.source_ingestion.controller_state import ControllerStateStore
+from services.source_ingestion.controller_worker import _new_state
+
+ctrl_state = _new_state()
+ctrl_state.controller_id = "bounded-test:gen"
+ctrl_state.tenant_id = "tenant-dev"
+ctrl_state.sequence_no = 1
+ControllerStateStore(data_dir / "controller_state.json").save(ctrl_state)
+
+os.environ["SOURCE_INGEST_DATA_DIR"] = str(data_dir)
+os.environ["SOURCE_INGEST_CONTROLLER_TOKEN"] = token
+os.environ["PANTHEON_TENANT_ID"] = "tenant-dev"
+os.environ["PANTHEON_REMOTE_DIR"] = str(root_dir)
+# Leave SOURCE_INGEST_API_URL unset to exercise default host URL resolution (http://127.0.0.1:18097)
+os.environ.pop("SOURCE_INGEST_API_URL", None)
+
+import services.source_ingestion.main as si_main
+from services.source_ingestion import controller_worker
+from services.source_ingestion.connectors import taiwan_official as tw_official
+
+for attr in list(vars(si_main)):
+    if not attr.startswith("__"):
+        delattr(si_main, attr)
+importlib.reload(si_main)
+client = TestClient(si_main.app)
+
+real_urlopen = urllib.request.urlopen
+preparation_urls: list[str] = []
+
+
+class _FakeHTTPResponse:
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._buf = BytesIO(body)
+
+    def read(self) -> bytes:
+        return self._buf.read()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def fake_urlopen(req, timeout=30):
+    url = req.full_url if hasattr(req, "full_url") else str(req)
+    preparation_urls.append(url)
+    if url.startswith("http://127.0.0.1:18097"):
+        path = url[len("http://127.0.0.1:18097") :]
+        method = getattr(req, "get_method", lambda: "GET")()
+        headers = dict(req.header_items()) if hasattr(req, "header_items") else {}
+        data = req.data if hasattr(req, "data") else None
+        resp = client.request(method, path, headers=headers, content=data)
+        if resp.status_code >= 400:
+            raise urllib.error.HTTPError(
+                url, resp.status_code, resp.reason_phrase, resp.headers, BytesIO(resp.content)
+            )
+        return _FakeHTTPResponse(resp.status_code, resp.content)
+    return real_urlopen(req, timeout=timeout)
+
+
+urllib.request.urlopen = fake_urlopen
+
+deploy = (root_dir / "scripts" / "deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+marker = 'python3 - "${connector_id}" "${dataset}" "${active_symbols_csv}" <<\\'PREPARE_DATASET_PY\\'\\n'
+start = deploy.index(marker) + len(marker)
+end = deploy.index("\\nPREPARE_DATASET_PY\\n", start)
+prepare_py = deploy[start:end]
+
+old_argv = list(sys.argv)
+try:
+    sys.argv = ["prepare_dataset.py", "tw-taifex-futures-options-chip", "taifex_ssf_contracts", "2330.TW"]
+    ns: dict = {"__name__": "__main__"}
+    exec(compile(prepare_py, "prepare_bounded_source_refresh_dataset", "exec"), ns)
+finally:
+    sys.argv = old_argv
+
+assert preparation_urls == [
+    "http://127.0.0.1:18097/api/source-ingest/connectors",
+    "http://127.0.0.1:18097/api/source-ingest/connectors/tw-taifex-futures-options-chip/schedule",
+    "http://127.0.0.1:18097/api/source-ingest/active-universe/schedule",
+], f"Expected all three preparation requests to target default host URL 18097, got: {preparation_urls}"
+
+frontier_resp = client.get(
+    "/api/source-ingest/frontier",
+    headers={"Authorization": f"Bearer {token}"},
+)
+assert frontier_resp.status_code == 200
+frontier_items = [
+    item
+    for item in (frontier_resp.json().get("frontier") or [])
+    if item.get("connector_id") == "tw-taifex-futures-options-chip"
+]
+assert len(frontier_items) == 1
+assert frontier_items[0]["job_parameters"]["dataset"] == "taifex_ssf_contracts"
+assert frontier_items[0]["job_parameters"]["contracts"] == ["2330"]
+assert frontier_items[0]["job_parameters"]["symbols"] == ["2330"]
+
+ssf_fixtures = root_dir / "services" / "execution" / "lean_runtime" / "fixtures" / "taifex_20261106"
+seen_urls: list[str] = []
+
+
+def fake_fetch_official(request, *, caller, timeout_seconds, max_bytes, parse):
+    seen_urls.append(request.full_url)
+    name = request.full_url.rsplit("/", 1)[-1]
+    if name == "stockLists":
+        return parse((ssf_fixtures / "stockLists.html").read_text(encoding="utf-8").encode("utf-8"))
+    raw = json.loads((ssf_fixtures / f"{name}.json").read_text(encoding="utf-8"))
+    return parse(b"\\xef\\xbb\\xbf" + json.dumps(raw).encode("utf-8"))
+
+
+tw_official._fetch_official = fake_fetch_official
+
+
+def fake_controller_request_json(url, *, method="GET", payload=None, bearer_token=None, timeout_seconds=30.0):
+    path = url[len("http://127.0.0.1:18097") :]
+    headers = {"Accept": "application/json"}
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+    resp = client.request(method, path, headers=headers, json=payload)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+controller_worker._request_json = fake_controller_request_json
+
+tick_result = controller_worker.run_schedule_tick(
+    api_url="http://127.0.0.1:18097",
+    max_concurrency=1,
+    timeout_seconds=30.0,
+    controller_token=token,
+    force_connector_ids=("tw-taifex-futures-options-chip",),
+    exclusive_connector_ids=("tw-taifex-futures-options-chip",),
+)
+assert tick_result["summary"]["total_ran"] == 1
+assert tick_result["summary"]["total_failed"] == 0
+
+assert seen_urls == [
+    "https://openapi.taifex.com.tw/v1/SingleStockFuturesMargining",
+    "https://openapi.taifex.com.tw/v1/SingleStockFuturesETFMargining",
+    "https://openapi.taifex.com.tw/v1/DailyMarketReportFut",
+    "https://openapi.taifex.com.tw/v1/FinalSettlementPriceSSF",
+    "https://www.taifex.com.tw/cht/2/stockLists",
+]
+assert not any("InstitutionalInvestors" in u for u in seen_urls)
+assert {u.split("/")[2] for u in seen_urls} == {"openapi.taifex.com.tw", "www.taifex.com.tw"}
+
+readback_resp = client.get(
+    "/api/source-ingest/controller/readback",
+    headers={"Authorization": f"Bearer {token}"},
+)
+assert readback_resp.status_code == 200
+taifex_row = next(
+    row
+    for row in (readback_resp.json().get("connectors") or [])
+    if row.get("connector_id") == "tw-taifex-futures-options-chip"
+)
+latest_rec = taifex_row["latest_source_record"]
+assert latest_rec["source_id"].startswith("tw-taifex:taifex_ssf_contracts:")
+assert latest_rec["provenance"]["dataset"] == "taifex_ssf_contracts"
+assert latest_rec["provenance"]["schema_hash"] == "tw_taifex_ssf_contracts.v1"
+assert latest_rec["provenance"]["symbol"] == "2330"
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(ROOT)
+    env.pop("SOURCE_INGEST_API_URL", None)
+    proc = subprocess.run(
+        [sys.executable, "-c", runner_code, str(tmp_path), str(ROOT)],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, f"Subprocess integration test failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+
+def test_prepare_bounded_source_refresh_dataset_re_resolves_cid_and_fails_closed_on_exec_failures(
+    tmp_path: Path,
+) -> None:
+    import http.server
+    import json
+    import threading
+
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = deploy.index("prepare_bounded_source_refresh_dataset() {")
+    end = deploy.index("\n}\n\n# Proves the latest closed Taiwan session", start) + 2
+    func_def = deploy[start:end]
+
+    received_requests: list[tuple[str, str, str]] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _handle(self, method: str) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
+            received_requests.append((method, self.path, self.headers.get("Authorization", "")))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            if self.path == "/api/source-ingest/active-universe/schedule":
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "enqueued_count": 1,
+                            "enqueued_items": [
+                                {
+                                    "connector_id": "tw-taifex-futures-options-chip",
+                                    "job_parameters": {
+                                        "connector_id": "tw-taifex-futures-options-chip",
+                                        "dataset": "taifex_ssf_contracts",
+                                        "contracts": ["2330"],
+                                        "symbols": ["2330"],
+                                    },
+                                }
+                            ],
+                        }
+                    ).encode("utf-8")
+                )
+            else:
+                self.wfile.write(json.dumps({"ok": True, "echo": body}).encode("utf-8"))
+
+        def do_POST(self) -> None:
+            self._handle("POST")
+
+        def do_PUT(self) -> None:
+            self._handle("PUT")
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    state_path = tmp_path / "stub_state.json"
+    written_desired = tmp_path / "written_desired.json"
+
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        f"""#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+
+state = json.loads(Path({str(state_path)!r}).read_text(encoding="utf-8"))
+args = sys.argv[1:]
+if args[0] == "compose" and "ps" in args and args[-1] == "source-ingest":
+    print(state.get("live_cid", ""))
+    sys.exit(0)
+if args[0] == "exec":
+    cid = args[2] if args[1] == "-i" else args[1]
+    cmd = " ".join(args[3:] if args[1] == "-i" else args[2:])
+    if cid != state.get("live_cid"):
+        sys.stderr.write(f"Error: No such container: {{cid}}\\n")
+        sys.exit(1)
+    if "controller_token" in cmd:
+        if state.get("fail_token_exec"):
+            sys.stderr.write("exec token read failed\\n")
+            sys.exit(1)
+        print(state.get("token", ""))
+        sys.exit(0)
+    if "desired_state.json" in cmd:
+        if state.get("fail_desired_write"):
+            sys.stderr.write("exec desired_state write failed\\n")
+            sys.exit(1)
+        data = sys.stdin.read()
+        if not data.strip():
+            sys.exit(1)
+        Path({str(written_desired)!r}).write_text(data, encoding="utf-8")
+        sys.exit(0)
+sys.exit(1)
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+
+    def run_prepare(state_obj: dict, passed_cid: str = "obsolete-cid-before-recreate") -> subprocess.CompletedProcess[str]:
+        state_path.write_text(json.dumps(state_obj), encoding="utf-8")
+        script = f"""set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+{func_def}
+prepare_bounded_source_refresh_dataset "tw-taifex-futures-options-chip" "taifex_ssf_contracts" "2330.TW" "{passed_cid}"
+"""
+        env = dict(os.environ)
+        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+        env["PYTHONPATH"] = str(ROOT)
+        env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+        env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{server.server_port}"
+        env.pop("SOURCE_INGEST_CONTROLLER_TOKEN", None)
+        env.pop("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", None)
+        return subprocess.run(
+            ["bash", "-c", script],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    try:
+        # 1. Obsolete passed cid is overridden by live compose ps cid; token read and desired_state write succeed
+        res_ok = run_prepare({"live_cid": "new-recreated-cid", "token": "tok-live-999"})
+        assert res_ok.returncode == 0, res_ok.stderr
+        assert "prepared bounded source refresh dataset taifex_ssf_contracts" in res_ok.stdout
+        assert written_desired.exists()
+        desired_obj = json.loads(written_desired.read_text(encoding="utf-8"))
+        assert any(
+            r.get("dataset") == "taifex_ssf_contracts"
+            for r in desired_obj["personas"][0]["required_data_sources"]
+        )
+        assert all(auth == "Bearer tok-live-999" for _, _, auth in received_requests)
+
+        # 2. Token docker exec failure must fail closed (non-zero) and never report prepared
+        res_tok_fail = run_prepare({"live_cid": "new-recreated-cid", "fail_token_exec": True})
+        assert res_tok_fail.returncode != 0
+        assert "failed to read controller_token" in res_tok_fail.stderr
+        assert "prepared bounded source refresh dataset" not in res_tok_fail.stdout
+
+        # 3. Empty controller token must fail closed
+        res_tok_empty = run_prepare({"live_cid": "new-recreated-cid", "token": ""})
+        assert res_tok_empty.returncode != 0
+        assert "empty controller_token" in res_tok_empty.stderr
+        assert "prepared bounded source refresh dataset" not in res_tok_empty.stdout
+
+        # 4. Desired-state docker exec write failure must fail closed (no || true swallow)
+        res_write_fail = run_prepare(
+            {"live_cid": "new-recreated-cid", "token": "tok-live-999", "fail_desired_write": True}
+        )
+        assert res_write_fail.returncode != 0
+        assert "failed to write bounded desired_state.json" in res_write_fail.stderr
+        assert "prepared bounded source refresh dataset" not in res_write_fail.stdout
+    finally:
+        server.shutdown()

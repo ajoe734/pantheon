@@ -924,3 +924,172 @@ exit 0
     gcloud_args = cmd_file.read_text(encoding="utf-8")
     assert "--project=neutral-staging-project" in gcloud_args
     assert "deployer@neutral-staging-control" in gcloud_args
+
+
+def _run_validate_source_refresh_profile(
+    connector_id: str,
+    allowed_hosts: str,
+    dataset: str = "",
+) -> subprocess.CompletedProcess[str]:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("validate_source_refresh_profile() {")
+    end = source.index("\n}\n\ncurl_with_retry()", start) + 2
+    func_def = source[start:end]
+
+    script = f"""set -euo pipefail
+error() {{
+  echo "$*" >&2
+  exit 1
+}}
+{func_def}
+export PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler"
+export PANTHEON_EXTERNAL_EGRESS="allowlist"
+export SOURCE_INGEST_CONTROLLER_MODE="reconcile_and_pull"
+export SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="reconciled_live_proof"
+export SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no"
+export SOURCE_INGEST_CONTROLLER_MAX_TICKS="1"
+export SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1"
+export SOURCE_INGEST_MAX_RECORDS="100"
+export SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="180"
+export SOURCE_INGEST_BOUNDED_CONNECTOR_ID="{connector_id}"
+export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="{allowed_hosts}"
+export SOURCE_INGEST_BOUNDED_DATASET="{dataset}"
+validate_source_refresh_profile
+printf 'FORCE=%s\\nEXCLUSIVE=%s\\n' "${{SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}}" "${{SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}}"
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(ROOT)
+    return subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+@pytest.mark.parametrize(
+    ("connector_id", "allowed_hosts", "dataset"),
+    [
+        ("tw-taifex-futures-options-chip", "openapi.taifex.com.tw,www.taifex.com.tw", ""),
+        ("tw-taifex-futures-options-chip", "www.taifex.com.tw,openapi.taifex.com.tw", "taifex_ssf_contracts"),
+        ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw", ""),
+        ("tw-twse-tpex-official-market", "www.tpex.org.tw,www.twse.com.tw,openapi.twse.com.tw", "tw_price_daily"),
+    ],
+)
+def test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors(
+    connector_id: str,
+    allowed_hosts: str,
+    dataset: str,
+) -> None:
+    proc = _run_validate_source_refresh_profile(connector_id, allowed_hosts, dataset)
+    assert proc.returncode == 0, f"Expected accept for {connector_id} ({allowed_hosts}): {proc.stderr}"
+    assert f"FORCE={connector_id}" in proc.stdout
+    assert f"EXCLUSIVE={connector_id}" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    ("connector_id", "allowed_hosts", "dataset", "expected_err"),
+    [
+        (
+            "tw-taifex-futures-options-chip",
+            "openapi.taifex.com.tw",
+            "",
+            "official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw",
+        ),
+        (
+            "tw-taifex-futures-options-chip",
+            "www.taifex.com.tw",
+            "",
+            "official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw",
+        ),
+        (
+            "tw-taifex-futures-options-chip",
+            "openapi.taifex.com.tw,www.taifex.com.tw,extra.taifex.com.tw",
+            "",
+            "official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw",
+        ),
+        (
+            "tw-taifex-futures-options-chip",
+            "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw",
+            "",
+            "official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw",
+        ),
+        (
+            "tw-taifex-futures-options-chip",
+            "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw",
+            "",
+            "official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw",
+        ),
+        (
+            "tw-taifex-futures-options-chip",
+            "*.taifex.com.tw,www.taifex.com.tw",
+            "",
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS entries must be exact host names",
+        ),
+        (
+            "tw-taifex-futures-options-chip",
+            "*",
+            "",
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS entries must be exact host names",
+        ),
+        (
+            "tw-taifex-futures-options-chip",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "tw_price_daily",
+            "official TAIFEX refresh requires dataset taifex_ssf_contracts",
+        ),
+        (
+            "tw-twse-tpex-official-market",
+            "openapi.twse.com.tw,www.tpex.org.tw",
+            "",
+            "official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw,www.twse.com.tw",
+        ),
+        (
+            "tw-twse-tpex-official-market",
+            "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw",
+            "",
+            "official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw,www.twse.com.tw",
+        ),
+        (
+            "tw-twse-tpex-official-market",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "",
+            "official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw,www.twse.com.tw",
+        ),
+        (
+            "tw-twse-tpex-official-market",
+            "*.twse.com.tw,www.tpex.org.tw",
+            "",
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS entries must be exact host names",
+        ),
+        (
+            "tw-twse-tpex-official-market",
+            "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw",
+            "taifex_ssf_contracts",
+            "official TWSE/TPEx refresh does not admit dataset: taifex_ssf_contracts",
+        ),
+        (
+            "tw-unknown-connector",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "",
+            "unsupported bounded source refresh connector",
+        ),
+        (
+            "tw-twse-tpex-official-market,tw-taifex-futures-options-chip",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "",
+            "SOURCE_INGEST_BOUNDED_CONNECTOR_ID must contain one exact connector id",
+        ),
+    ],
+)
+def test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors(
+    connector_id: str,
+    allowed_hosts: str,
+    dataset: str,
+    expected_err: str,
+) -> None:
+    proc = _run_validate_source_refresh_profile(connector_id, allowed_hosts, dataset)
+    assert proc.returncode != 0, f"Expected reject for {connector_id} ({allowed_hosts})"
+    assert expected_err in proc.stderr
