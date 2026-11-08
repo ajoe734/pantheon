@@ -66,6 +66,36 @@
         "expected_drawdown": 0.42,
         "policy_source": "docs/deployment/evidence/PAPER-DRAWDOWN-REBASELINE-INSTRUMENT-CLASS-20261107/policy.md#reviewer-decision"
       }
+    },
+    "artifact-persona-paper-06d4775a9b6a8f63b311": {
+      "cash_share": {
+        "expected_drawdown": 0.00235,
+        "policy_source": "docs/deployment/evidence/PAPER-SUCCESSOR-BASELINES-20261108/policy.md#reviewer-decision"
+      },
+      "stock_future": {
+        "expected_drawdown": 0.235,
+        "policy_source": "docs/deployment/evidence/PAPER-SUCCESSOR-BASELINES-20261108/policy.md#reviewer-decision"
+      }
+    },
+    "artifact-persona-paper-a81b4fd15944698341aa": {
+      "cash_share": {
+        "expected_drawdown": 0.0001245,
+        "policy_source": "docs/deployment/evidence/PAPER-SUCCESSOR-BASELINES-20261108/policy.md#reviewer-decision"
+      },
+      "stock_future": {
+        "expected_drawdown": 0.1245,
+        "policy_source": "docs/deployment/evidence/PAPER-SUCCESSOR-BASELINES-20261108/policy.md#reviewer-decision"
+      }
+    },
+    "artifact-persona-paper-039ad01f8bcd2b4aa466": {
+      "cash_share": {
+        "expected_drawdown": 0.00021,
+        "policy_source": "docs/deployment/evidence/PAPER-SUCCESSOR-BASELINES-20261108/policy.md#reviewer-decision"
+      },
+      "stock_future": {
+        "expected_drawdown": 0.42,
+        "policy_source": "docs/deployment/evidence/PAPER-SUCCESSOR-BASELINES-20261108/policy.md#reviewer-decision"
+      }
     }
   }
 }
