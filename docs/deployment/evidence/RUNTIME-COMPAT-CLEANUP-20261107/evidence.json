@@ -1,0 +1,16 @@
+{
+  "task_id": "RUNTIME-COMPAT-CLEANUP-20261107",
+  "findings": ["A06", "A16"],
+  "a06": {
+    "decision": "retired root docker-compose.yml service pantheon-paper-runtime, profile static-paper-runtime, deploy_nonprod_vm.sh activation exception, retire_legacy_static_paper_runtime and FORBIDDEN_DUPLICATE_WORKERS guard, plus obsolete root-compose tests",
+    "retained": "paper-fleet-reconciler, paper_runtime engine, binding-scoped queues",
+    "not_changed": "docker-compose.exec.yml pantheon-paper-runtime (separate exec-VM split topology, its own consumers: validate_split_topology.sh, test_paper_runtime.py exec wiring); no container stopped, no deployment dispatched",
+    "retirement_basis": "live dev observation (read-only) found only the fleet container and no static worker; no maintained root consumer remained after test/script cleanup"
+  },
+  "a16": {
+    "decision": "retain promotion_state reader in artifact_loader (closed retain decision documented in artifact-loader/contract.md)",
+    "migrated_producers": ["scripts/probe_dev_runtime_paper_lifecycle.py projection_metadata"],
+    "not_migrated": "EP4/EP5 'target.promotion_state' are telemetry event fields consumed by services/training-session/trace_export.py, not artifact object metadata",
+    "persisted_object_inventory": "not available to source worker; no mutation performed"
+  }
+}

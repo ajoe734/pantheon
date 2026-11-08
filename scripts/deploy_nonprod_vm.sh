@@ -1380,15 +1380,8 @@ REQUIRED_LOOP_WORKERS=(
   search-index-scheduler
 )
 
-# The legacy static paper runtime duplicates the binding-scoped workers that
-# paper-fleet-reconciler owns. Two writers on the same bindings is the exact
-# duplicate-worker failure this manifest is supposed to prevent.
-FORBIDDEN_DUPLICATE_WORKERS=(
-  pantheon-paper-runtime
-)
-
 validate_required_loop_workers() {
-  local resolved missing=() duplicates=() worker
+  local resolved missing=() worker
 
   resolved="$(
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
@@ -1400,20 +1393,12 @@ validate_required_loop_workers() {
       missing+=("$worker")
     fi
   done
-  for worker in "${FORBIDDEN_DUPLICATE_WORKERS[@]}"; do
-    if grep -qxF -- "$worker" <<<"$resolved"; then
-      duplicates+=("$worker")
-    fi
-  done
 
   if (( ${#missing[@]} > 0 )); then
     error "required loop workers not activated by the selected profiles: ${missing[*]}"
   fi
-  if (( ${#duplicates[@]} > 0 )); then
-    error "duplicate legacy workers activated alongside the loop manifest: ${duplicates[*]}"
-  fi
 
-  info "required_loop_workers=${#REQUIRED_LOOP_WORKERS[@]} all activated; no duplicate legacy workers"
+  info "required_loop_workers=${#REQUIRED_LOOP_WORKERS[@]} all activated"
 }
 
 curl_with_retry() {
@@ -3867,24 +3852,6 @@ dump_dev_root_failure_diagnostics() {
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 source-ingest-scheduler || true
 }
 
-retire_legacy_static_paper_runtime() {
-  # paper-fleet-reconciler and paper-signal-producer are now unconditional
-  # members of the required loop worker manifest, so co-enabling this profile
-  # always means two writers on the same bindings. On the root deploy path
-  # validate_required_loop_workers rejects that combination before we get
-  # here; this branch survives only for components that skip that guard.
-  case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
-    *,static-paper-runtime,*)
-      info "static paper runtime profile explicitly enabled; leaving compatibility worker active"
-      return 0
-      ;;
-  esac
-
-  info "retiring legacy unbound static paper runtime; fleet reconciler is authoritative"
-  COMPOSE_PROFILES=static-paper-runtime \
-    docker compose -p pantheon -f docker-compose.yml rm -f -s pantheon-paper-runtime
-}
-
 retire_dormant_and_one_off_profile_containers() {
   local active_profiles=",${PANTHEON_DEV_COMPOSE_PROFILES:-},"
   if [[ "${active_profiles}" != *",dormant-smoke,"* ]]; then
@@ -5558,8 +5525,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_DEV_REPO="$(pwd)" \
       bash scripts/openclaw-configure-shared-model-pool.sh \
       || rollback_dev_bff_on_failure "shared_model_pool"
-    retire_legacy_static_paper_runtime \
-      || rollback_dev_bff_on_failure "retire_legacy_paper"
     retire_dormant_and_one_off_profile_containers \
       || rollback_dev_bff_on_failure "retire_dormant_profiles"
     verify_dev_paper_fleet \

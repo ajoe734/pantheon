@@ -28,6 +28,12 @@ Migration note (EX-002-RB):
 - the loader now requires `artifact_state=approved` whenever canonical execution metadata is present
 - the loader validates `deployment_stage` as the primary mode gate field
 - `promotion_state` is accepted as a backward-compat fallback only for pre-migration object store metadata
+- Closed retain decision (RUNTIME-COMPAT-CLEANUP-20261107): the small `promotion_state` reader stays. Maintained
+  source producers (the dev paper lifecycle probe, `PromotionGate` projection) emit only `artifact_state` +
+  `deployment_stage`; the remaining `promotion_state` literals in EP4/EP5 acceptance scripts are telemetry event
+  `target` fields consumed by training-session trace export, not loader object metadata. Absence of legacy-only
+  executable/rollback objects in the object store was NOT proven (no read-only inventory available to source
+  workers), so the reader is retained and no persisted object is mutated or migrated by this delivery.
 - the execution projection emitted by `PromotionGate.build_execution_projection()` now carries canonical fields
 - rollback execution semantics (`replace`, `pause_then_replace`, `liquidate_then_replace`) remain owned by
   `DeploymentPlan.rollback.action_type` and the Runtime Manager; the loader validates fallback metadata only
