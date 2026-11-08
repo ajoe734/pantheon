@@ -204,7 +204,18 @@ services:
       BFF_COMMIT: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
       BFF_IMAGE_DIGEST: ${PANTHEON_OPERATOR_BFF_DIGEST:?operator_bff digest required}
       BFF_DATA_DIR: /data/bff
+      REGISTRY_STORE_BACKEND: postgres
+      REGISTRY_ENTRIES_TABLE: registry.entries
+      REGISTRY_RECEIPTS_TABLE: registry.command_receipts
+      REGISTRY_STORE_BOOTSTRAP: "1"
+      GOVERNANCE_STORE_BACKEND: postgres
+      GOVERNANCE_STORE_BOOTSTRAP: "1"
+      PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND: postgres
+      PANTHEON_DECISION_JOURNAL_DATA_DIR: /data/bff/decision_journal
+      SOURCE_MANAGEMENT_STORE_BACKEND: postgres
       MANAGEMENT_AI_STORE_BACKEND: postgres
+      MANAGEMENT_AI_STORE_SCHEMA: management_ai
+      RANKING_STORE_TABLE: rankings.rankings
       PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
       PANTHEON_BFF_AUTH_MODE: strict
@@ -213,17 +224,27 @@ services:
       PANTHEON_BFF_OIDC_DISCOVERY_URL: ${STAGING_IDP_ISSUER:?staging idp issuer required}/.well-known/openid-configuration
       PANTHEON_BFF_CORS_ORIGINS: ${STAGING_BFF_CORS_ORIGINS:?staging FE origin required}
       PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND: postgres
+      PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA: trade_journey_projection
+      PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND: postgres
+      PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_SCHEMA: public
       LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
       PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND: postgres
       PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA: bff
       # Shared durable Agora stores: must match agora-interaction-worker so requests/readbacks do not diverge.
+      AGORA_DASHBOARD_STORE_BACKEND: postgres
+      AGORA_DASHBOARD_STORE_SCHEMA: agora
+      AGORA_TRADING_ROOM_STORE_BACKEND: postgres
+      AGORA_TRADING_ROOM_STORE_SCHEMA: agora
       AGORA_WORKSHOP_STORE_BACKEND: postgres
       AGORA_WORKSHOP_STORE_SCHEMA: agora
       AGORA_DATASET_STORE_BACKEND: postgres
       AGORA_DATASET_STORE_SCHEMA: agora
       AGORA_GOVERNANCE_STORE_BACKEND: postgres
       AGORA_GOVERNANCE_STORE_SCHEMA: agora
+      AGORA_CANDIDATE_DECISION_STORE_BACKEND: postgres
+      AGORA_CANDIDATE_DECISION_STORE_SCHEMA: agora
       AGORA_RESEARCH_STORE_BACKEND: postgres
+      AGORA_RESEARCH_PLAN_STORE_BACKEND: postgres
       AGORA_RESEARCH_STORE_SCHEMA: agora_research
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8080
       PANTHEON_GOVERNANCE_API_URL: http://governance:8082
@@ -315,6 +336,8 @@ services:
       <<: *product_env
       PORT: "8087"
       REGISTRY_STORE_BACKEND: postgres
+      REGISTRY_ENTRIES_TABLE: registry.entries
+      REGISTRY_RECEIPTS_TABLE: registry.command_receipts
       REGISTRY_GOVERNANCE_BASE_URL: http://governance:8082
       PANTHEON_REGISTRY_AUTH_MODE: strict
       PANTHEON_REGISTRY_JWT_ISSUER: ${STAGING_JWT_ISSUER:?staging jwt issuer required}
@@ -646,6 +669,7 @@ services:
       AGORA_GOVERNANCE_STORE_BACKEND: postgres
       AGORA_GOVERNANCE_STORE_SCHEMA: agora
       AGORA_RESEARCH_STORE_BACKEND: postgres
+      AGORA_RESEARCH_PLAN_STORE_BACKEND: postgres
       AGORA_RESEARCH_STORE_SCHEMA: agora_research
       AGORA_RESEARCH_BACKEND_URL: http://research-orchestrator-svc:8101
       PANTHEON_AGORA_WORKER_ID: agora-interaction-worker
