@@ -555,6 +555,8 @@ def _retrieve_auth_params(**overrides) -> dict:
 def memory_client(tmp_path, monkeypatch):
     monkeypatch.setenv("PANTHEON_MEMORY_STORE_PATH", str(tmp_path / "memory-store.json"))
     monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE_PATH", str(tmp_path / "persona-store.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "memory-store.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "persona-store.json"))
     monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
     main._STORE = None
     main._PERSONA_STORE = None

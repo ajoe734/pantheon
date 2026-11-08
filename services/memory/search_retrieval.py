@@ -264,7 +264,6 @@ def retrieve_persona_with_backend(
             relevance_scope=relevance_scope,
             tags=tags,
             limit=limit,
-            **({"tenant_id": tenant_id} if tenant_id else {}),
         )
 
     context = SearchAccessContext(
