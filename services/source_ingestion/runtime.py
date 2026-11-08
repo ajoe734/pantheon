@@ -173,86 +173,85 @@ def _active_contract_symbols() -> set[str]:
 class SourceIngestionRuntime:
     """Explicit runtime holding stores, managers, locks, and configuration."""
 
-    def __init__(self, data_dir: Path | None = None, module: Any = None) -> None:
-        self._module = module
-        self._DATA_DIR = data_dir or _resolve_data_dir()
-        self._PROPOSAL_STORE_PATH = Path(
-            os.getenv("SOURCE_INGEST_PROPOSAL_STORE_PATH", str(self._DATA_DIR / "source_change_proposals.jsonl"))
+    def __init__(self, data_dir: Path | None = None) -> None:
+        self.DATA_DIR = data_dir or _resolve_data_dir()
+        self.PROPOSAL_STORE_PATH = Path(
+            os.getenv("SOURCE_INGEST_PROPOSAL_STORE_PATH", str(self.DATA_DIR / "source_change_proposals.jsonl"))
         )
-        self._SCHEDULE_STORE_PATH = Path(
-            os.getenv("SOURCE_INGEST_STORE_PATH", str(self._DATA_DIR / "ingest_schedule.jsonl"))
+        self.SCHEDULE_STORE_PATH = Path(
+            os.getenv("SOURCE_INGEST_STORE_PATH", str(self.DATA_DIR / "ingest_schedule.jsonl"))
         )
-        self._CONNECTOR_STORE_PATH = Path(
-            os.getenv("SOURCE_INGEST_CONNECTOR_STORE_PATH", str(self._DATA_DIR / "connector_config.jsonl"))
+        self.CONNECTOR_STORE_PATH = Path(
+            os.getenv("SOURCE_INGEST_CONNECTOR_STORE_PATH", str(self.DATA_DIR / "connector_config.jsonl"))
         )
-        self._SOURCE_EVIDENCE_STORE_PATH = Path(
-            os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", str(self._DATA_DIR / "source_evidence.jsonl"))
+        self.SOURCE_EVIDENCE_STORE_PATH = Path(
+            os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", str(self.DATA_DIR / "source_evidence.jsonl"))
         )
-        self._DLQ_STORE_PATH = Path(
-            os.getenv("SOURCE_INGEST_DLQ_PATH", str(self._DATA_DIR / "source_ingest_dlq.jsonl"))
+        self.DLQ_STORE_PATH = Path(
+            os.getenv("SOURCE_INGEST_DLQ_PATH", str(self.DATA_DIR / "source_ingest_dlq.jsonl"))
         )
-        self._AUDIT_STORE_PATH = Path(
-            os.getenv("SOURCE_INGEST_AUDIT_PATH", str(self._DATA_DIR / "source_ingest_audit.jsonl"))
+        self.AUDIT_STORE_PATH = Path(
+            os.getenv("SOURCE_INGEST_AUDIT_PATH", str(self.DATA_DIR / "source_ingest_audit.jsonl"))
         )
-        self._CONNECTOR_SCHEDULE_CONFIG_PATH = Path(
-            os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_PATH", str(self._DATA_DIR / "connector_schedule.jsonl"))
+        self.CONNECTOR_SCHEDULE_CONFIG_PATH = Path(
+            os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_PATH", str(self.DATA_DIR / "connector_schedule.jsonl"))
         )
-        self._SOURCE_HEALTH_STORE_PATH = Path(
-            os.getenv("SOURCE_INGEST_HEALTH_STORE_PATH", str(self._DATA_DIR / "source_health.jsonl"))
+        self.SOURCE_HEALTH_STORE_PATH = Path(
+            os.getenv("SOURCE_INGEST_HEALTH_STORE_PATH", str(self.DATA_DIR / "source_health.jsonl"))
         )
-        self._SOURCE_USAGE_STORE_PATH = Path(
-            os.getenv("SOURCE_INGEST_USAGE_STORE_PATH", str(self._DATA_DIR / "source_usage_daily.jsonl"))
+        self.SOURCE_USAGE_STORE_PATH = Path(
+            os.getenv("SOURCE_INGEST_USAGE_STORE_PATH", str(self.DATA_DIR / "source_usage_daily.jsonl"))
         )
-        self._MARKET_DATA_STORAGE_ROOT = Path(
-            os.getenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(self._DATA_DIR / "market_data_store"))
+        self.MARKET_DATA_STORAGE_ROOT = Path(
+            os.getenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(self.DATA_DIR / "market_data_store"))
         )
-        self._CONTROLLER_STATE_PATH = Path(
-            os.getenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(self._DATA_DIR / "controller_state.json"))
+        self.CONTROLLER_STATE_PATH = Path(
+            os.getenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(self.DATA_DIR / "controller_state.json"))
         )
-        self._REQUIREMENT_STATE_PATH = Path(
-            os.getenv("SOURCE_INGEST_REQUIREMENT_STATE_PATH", str(self._DATA_DIR / "requirement_snapshots.jsonl"))
+        self.REQUIREMENT_STATE_PATH = Path(
+            os.getenv("SOURCE_INGEST_REQUIREMENT_STATE_PATH", str(self.DATA_DIR / "requirement_snapshots.jsonl"))
         )
-        self._LATEST_MARKET_SNAPSHOT_PATH = Path(
+        self.LATEST_MARKET_SNAPSHOT_PATH = Path(
             os.getenv(
                 "SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH",
-                str(self._DATA_DIR / "latest_market_snapshots.jsonl"),
+                str(self.DATA_DIR / "latest_market_snapshots.jsonl"),
             )
         )
-        self._RECONCILE_TRANSACTION_LOCK_PATH = Path(
+        self.RECONCILE_TRANSACTION_LOCK_PATH = Path(
             os.getenv(
                 "SOURCE_INGEST_RECONCILE_TRANSACTION_LOCK_PATH",
-                str(self._DATA_DIR / "persona_source_reconcile.lock"),
+                str(self.DATA_DIR / "persona_source_reconcile.lock"),
             )
         )
-        self._CONTROLLER_TOKEN_PATH = Path(
-            os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", str(self._DATA_DIR / "controller_token"))
+        self.CONTROLLER_TOKEN_PATH = Path(
+            os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", str(self.DATA_DIR / "controller_token"))
         )
-        self._DISTILLATION_JOB_QUEUE_PATH = Path(
-            os.getenv("DISTILLATION_JOB_QUEUE_PATH", str(self._DATA_DIR / "distillation_job_queue.sqlite3"))
+        self.DISTILLATION_JOB_QUEUE_PATH = Path(
+            os.getenv("DISTILLATION_JOB_QUEUE_PATH", str(self.DATA_DIR / "distillation_job_queue.sqlite3"))
         )
-        self._SOURCE_RECORD_SCHEMA_PATH = Path(__file__).with_name("source_record.schema.json")
-        self._MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
-        self._SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
-        self._FRONTIER_MAX_ATTEMPTS = max(1, int(os.getenv("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS", "2")))
-        self._FRONTIER_BACKOFF_SECONDS = max(0, int(os.getenv("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS", "60")))
-        self._FRONTIER_RUNNING_TIMEOUT_SECONDS = max(
+        self.SOURCE_RECORD_SCHEMA_PATH = Path(__file__).with_name("source_record.schema.json")
+        self.MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
+        self.SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
+        self.FRONTIER_MAX_ATTEMPTS = max(1, int(os.getenv("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS", "2")))
+        self.FRONTIER_BACKOFF_SECONDS = max(0, int(os.getenv("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS", "60")))
+        self.FRONTIER_RUNNING_TIMEOUT_SECONDS = max(
             1,
             int(os.getenv("SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS", "300")),
         )
-        self._DEFAULT_STALE_THRESHOLD_SECONDS = max(
+        self.DEFAULT_STALE_THRESHOLD_SECONDS = max(
             1,
             int(os.getenv("SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS", "86400")),
         )
-        self._MARKET_SNAPSHOT_MAX_CLOSES = max(
+        self.MARKET_SNAPSHOT_MAX_CLOSES = max(
             2,
             int(os.getenv("SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES", "60")),
         )
-        self._SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = max(
+        self.SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = max(
             0,
             int(os.getenv("SOURCE_INGEST_FUTURE_TIMESTAMP_TOLERANCE_SECONDS", "300")),
         )
-        self._SEARCH_INGEST_NOTIFY_URL = os.getenv("SEARCH_INGEST_NOTIFY_URL", "").rstrip("/")
-        self._PRODUCTION_POSTURE = require_source_search_posture("source-ingest")
+        self.SEARCH_INGEST_NOTIFY_URL = os.getenv("SEARCH_INGEST_NOTIFY_URL", "").rstrip("/")
+        self.PRODUCTION_POSTURE = require_source_search_posture("source-ingest")
         self._SOURCE_READINESS_MAX_STATE_BYTES = max(
             1,
             int(os.getenv("SOURCE_INGEST_READINESS_MAX_STATE_BYTES", str(1024 * 1024))),
@@ -262,272 +261,47 @@ class SourceIngestionRuntime:
             int(os.getenv("SOURCE_INGEST_READINESS_MAX_CONTROLLER_AGE_SECONDS", "300")),
         )
 
-        self._manager = IngestManager()
-        self._proposal_store = SourceChangeProposalStore.from_jsonl(self._PROPOSAL_STORE_PATH)
-        self._llm_proposal_adapter = LLMSourceProposalAdapter(self._proposal_store)
-        self._store = JsonlIngestScheduleStore(self._SCHEDULE_STORE_PATH)
-        self._connector_store = JsonlConfiguredConnectorStore(self._CONNECTOR_STORE_PATH)
-        self._schedule_config_store = JsonlConnectorScheduleStore(self._CONNECTOR_SCHEDULE_CONFIG_PATH)
-        self._configured_fetcher = ConfiguredConnectorFetcher(self._connector_store)
-        self._evidence_repository = build_source_evidence_repository(self._SOURCE_EVIDENCE_STORE_PATH)
-        self._evidence_builder = EvidenceBundleBuilder(self._evidence_repository)
-        self._dead_letter_queue = DeadLetterQueue(self._DLQ_STORE_PATH)
-        self._dead_letter_queue.load_from_spill()
-        self._scheduler = IngestionScheduler(manager=self._manager, store=self._store, dead_letter_queue=self._dead_letter_queue)
-        self._replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
-        self._source_health_store = SourceHealthStore.from_jsonl(self._SOURCE_HEALTH_STORE_PATH)
-        self._source_usage_store = SourceUsageDailyStore.from_jsonl(self._SOURCE_USAGE_STORE_PATH)
-        self._requirement_snapshot_store = RequirementSnapshotStore(self._REQUIREMENT_STATE_PATH)
-        self._latest_market_snapshot_store = LatestMarketSnapshotStore(
-            self._LATEST_MARKET_SNAPSHOT_PATH,
-            max_closes=self._MARKET_SNAPSHOT_MAX_CLOSES,
+        self.manager = IngestManager()
+        self.proposal_store = SourceChangeProposalStore.from_jsonl(self.PROPOSAL_STORE_PATH)
+        self.llm_proposal_adapter = LLMSourceProposalAdapter(self.proposal_store)
+        self.store = JsonlIngestScheduleStore(self.SCHEDULE_STORE_PATH)
+        self.connector_store = JsonlConfiguredConnectorStore(self.CONNECTOR_STORE_PATH)
+        self.schedule_config_store = JsonlConnectorScheduleStore(self.CONNECTOR_SCHEDULE_CONFIG_PATH)
+        self.configured_fetcher = ConfiguredConnectorFetcher(self.connector_store)
+        self.evidence_repository = build_source_evidence_repository(self.SOURCE_EVIDENCE_STORE_PATH)
+        self.evidence_builder = EvidenceBundleBuilder(self.evidence_repository)
+        self.dead_letter_queue = DeadLetterQueue(self.DLQ_STORE_PATH)
+        self.dead_letter_queue.load_from_spill()
+        self.scheduler = IngestionScheduler(manager=self.manager, store=self.store, dead_letter_queue=self.dead_letter_queue)
+        self.replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
+        self.source_health_store = SourceHealthStore.from_jsonl(self.SOURCE_HEALTH_STORE_PATH)
+        self.source_usage_store = SourceUsageDailyStore.from_jsonl(self.SOURCE_USAGE_STORE_PATH)
+        self.requirement_snapshot_store = RequirementSnapshotStore(self.REQUIREMENT_STATE_PATH)
+        self.latest_market_snapshot_store = LatestMarketSnapshotStore(
+            self.LATEST_MARKET_SNAPSHOT_PATH,
+            max_closes=self.MARKET_SNAPSHOT_MAX_CLOSES,
         )
-        self._controller_token = load_controller_token(token_path=self._CONTROLLER_TOKEN_PATH, create=True)
-        self._authoritative_reconcile_lock = threading.RLock()
-        self._audit_store_lock = threading.RLock()
-        self._source_execution_lock = threading.RLock()
-        self._market_data_storage_writer = MarketDataStorageWriter(self._MARKET_DATA_STORAGE_ROOT)
-        self._distillation_job_queue = DistillationJobQueue(self._DISTILLATION_JOB_QUEUE_PATH)
-        self._source_management_store = build_source_management_store(self._DATA_DIR)
+        self.controller_token = load_controller_token(token_path=self.CONTROLLER_TOKEN_PATH, create=True)
+        self.authoritative_reconcile_lock = threading.RLock()
+        self.audit_store_lock = threading.RLock()
+        self.source_execution_lock = threading.RLock()
+        self.market_data_storage_writer = MarketDataStorageWriter(self.MARKET_DATA_STORAGE_ROOT)
+        self.distillation_job_queue = DistillationJobQueue(self.DISTILLATION_JOB_QUEUE_PATH)
+        self.source_management_store = build_source_management_store(self.DATA_DIR)
         self._STRATEGY_SEED_STORE_PATH = Path(
             (os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or os.getenv("STRATEGY_SEED_STORE_PATH"))
             if data_dir is None and (os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or os.getenv("STRATEGY_SEED_STORE_PATH"))
-            else str(self._DATA_DIR / "distill_seeds.jsonl")
+            else str(self.DATA_DIR / "distill_seeds.jsonl")
         )
-        self._strategy_seed_store = StrategySpecSeedStore(path=self._STRATEGY_SEED_STORE_PATH)
-        self._source_command_engine = SourceCommandEngine(
-            store=self._source_management_store,
-            connector_store=self._connector_store,
-            schedule_config_store=self._schedule_config_store,
-            evidence_builder=self._evidence_builder,
+        self.strategy_seed_store = StrategySpecSeedStore(path=self._STRATEGY_SEED_STORE_PATH)
+        self.source_command_engine = SourceCommandEngine(
+            store=self.source_management_store,
+            connector_store=self.connector_store,
+            schedule_config_store=self.schedule_config_store,
+            evidence_builder=self.evidence_builder,
         )
 
         self.pipeline = IngestPipelineService(self)
-
-    @property
-    def strategy_seed_store(self) -> StrategySpecSeedStore:
-        return self._active_attr("strategy_seed_store", self._strategy_seed_store)
-
-    def _active_attr(self, name: str, default: Any) -> Any:
-        if getattr(self, "_module", None) is not None:
-            val = self._module.__dict__.get(name)
-            if val is not None:
-                return val
-        import sys
-        main_mod = sys.modules.get("services.source_ingestion.main")
-        if main_mod is not None:
-            val = main_mod.__dict__.get(name)
-            if val is not None:
-                return val
-        return default
-
-    @property
-    def DATA_DIR(self) -> Path:
-        return self._active_attr("DATA_DIR", self._DATA_DIR)
-
-    @property
-    def store(self) -> JsonlIngestScheduleStore:
-        return self._active_attr("store", self._store)
-
-    @property
-    def connector_store(self) -> JsonlConfiguredConnectorStore:
-        return self._active_attr("connector_store", self._connector_store)
-
-    @property
-    def schedule_config_store(self) -> JsonlConnectorScheduleStore:
-        return self._active_attr("schedule_config_store", self._schedule_config_store)
-
-    @property
-    def evidence_repository(self) -> Any:
-        return self._active_attr("evidence_repository", self._evidence_repository)
-
-    @property
-    def evidence_builder(self) -> EvidenceBundleBuilder:
-        return self._active_attr("evidence_builder", self._evidence_builder)
-
-    @property
-    def manager(self) -> IngestManager:
-        return self._active_attr("manager", self._manager)
-
-    @property
-    def scheduler(self) -> IngestionScheduler:
-        return self._active_attr("scheduler", self._scheduler)
-
-    @property
-    def dead_letter_queue(self) -> DeadLetterQueue:
-        return self._active_attr("dead_letter_queue", self._dead_letter_queue)
-
-    @property
-    def replay_processor(self) -> DeadLetterReplayProcessor:
-        return self._active_attr("replay_processor", self._replay_processor)
-
-    @property
-    def source_health_store(self) -> SourceHealthStore:
-        return self._active_attr("source_health_store", self._source_health_store)
-
-    @property
-    def source_usage_store(self) -> SourceUsageDailyStore:
-        return self._active_attr("source_usage_store", self._source_usage_store)
-
-    @property
-    def requirement_snapshot_store(self) -> RequirementSnapshotStore:
-        return self._active_attr("requirement_snapshot_store", self._requirement_snapshot_store)
-
-    @property
-    def latest_market_snapshot_store(self) -> LatestMarketSnapshotStore:
-        return self._active_attr("latest_market_snapshot_store", self._latest_market_snapshot_store)
-
-    @property
-    def authoritative_reconcile_lock(self) -> threading.RLock:
-        return self._active_attr("authoritative_reconcile_lock", self._authoritative_reconcile_lock)
-
-    @property
-    def audit_store_lock(self) -> threading.RLock:
-        return self._active_attr("audit_store_lock", self._audit_store_lock)
-
-    @property
-    def source_execution_lock(self) -> threading.RLock:
-        return self._active_attr("source_execution_lock", self._source_execution_lock)
-
-    @property
-    def market_data_storage_writer(self) -> MarketDataStorageWriter:
-        return self._active_attr("market_data_storage_writer", self._market_data_storage_writer)
-
-    @property
-    def distillation_job_queue(self) -> DistillationJobQueue:
-        return self._active_attr("distillation_job_queue", self._distillation_job_queue)
-
-    @property
-    def source_management_store(self) -> SourceManagementStore:
-        return self._active_attr("source_management_store", self._source_management_store)
-
-    @property
-    def source_command_engine(self) -> SourceCommandEngine:
-        return self._active_attr("source_command_engine", self._source_command_engine)
-
-    @property
-    def configured_fetcher(self) -> ConfiguredConnectorFetcher:
-        return self._active_attr("configured_fetcher", self._configured_fetcher)
-
-    @property
-    def proposal_store(self) -> SourceChangeProposalStore:
-        return self._active_attr("proposal_store", self._proposal_store)
-
-    @property
-    def llm_proposal_adapter(self) -> LLMSourceProposalAdapter:
-        return self._active_attr("llm_proposal_adapter", self._llm_proposal_adapter)
-
-    @property
-    def controller_token(self) -> str:
-        return self._active_attr("controller_token", self._controller_token)
-
-    @property
-    def PROPOSAL_STORE_PATH(self) -> Path:
-        return Path(self._active_attr("PROPOSAL_STORE_PATH", self._PROPOSAL_STORE_PATH))
-
-    @property
-    def SCHEDULE_STORE_PATH(self) -> Path:
-        return Path(self._active_attr("SCHEDULE_STORE_PATH", self._SCHEDULE_STORE_PATH))
-
-    @property
-    def CONNECTOR_STORE_PATH(self) -> Path:
-        return Path(self._active_attr("CONNECTOR_STORE_PATH", self._CONNECTOR_STORE_PATH))
-
-    @property
-    def SOURCE_EVIDENCE_STORE_PATH(self) -> Path:
-        return Path(self._active_attr("SOURCE_EVIDENCE_STORE_PATH", self._SOURCE_EVIDENCE_STORE_PATH))
-
-    @property
-    def DLQ_STORE_PATH(self) -> Path:
-        return Path(self._active_attr("DLQ_STORE_PATH", self._DLQ_STORE_PATH))
-
-    @property
-    def AUDIT_STORE_PATH(self) -> Path:
-        return Path(self._active_attr("AUDIT_STORE_PATH", self._AUDIT_STORE_PATH))
-
-    @property
-    def CONNECTOR_SCHEDULE_CONFIG_PATH(self) -> Path:
-        return Path(self._active_attr("CONNECTOR_SCHEDULE_CONFIG_PATH", self._CONNECTOR_SCHEDULE_CONFIG_PATH))
-
-    @property
-    def SOURCE_HEALTH_STORE_PATH(self) -> Path:
-        return Path(self._active_attr("SOURCE_HEALTH_STORE_PATH", self._SOURCE_HEALTH_STORE_PATH))
-
-    @property
-    def SOURCE_USAGE_STORE_PATH(self) -> Path:
-        return Path(self._active_attr("SOURCE_USAGE_STORE_PATH", self._SOURCE_USAGE_STORE_PATH))
-
-    @property
-    def MARKET_DATA_STORAGE_ROOT(self) -> Path:
-        return Path(self._active_attr("MARKET_DATA_STORAGE_ROOT", self._MARKET_DATA_STORAGE_ROOT))
-
-    @property
-    def CONTROLLER_STATE_PATH(self) -> Path:
-        return Path(self._active_attr("CONTROLLER_STATE_PATH", self._CONTROLLER_STATE_PATH))
-
-    @property
-    def REQUIREMENT_STATE_PATH(self) -> Path:
-        return Path(self._active_attr("REQUIREMENT_STATE_PATH", self._REQUIREMENT_STATE_PATH))
-
-    @property
-    def LATEST_MARKET_SNAPSHOT_PATH(self) -> Path:
-        return Path(self._active_attr("LATEST_MARKET_SNAPSHOT_PATH", self._LATEST_MARKET_SNAPSHOT_PATH))
-
-    @property
-    def RECONCILE_TRANSACTION_LOCK_PATH(self) -> Path:
-        return Path(self._active_attr("RECONCILE_TRANSACTION_LOCK_PATH", self._RECONCILE_TRANSACTION_LOCK_PATH))
-
-    @property
-    def CONTROLLER_TOKEN_PATH(self) -> Path:
-        return Path(self._active_attr("CONTROLLER_TOKEN_PATH", self._CONTROLLER_TOKEN_PATH))
-
-    @property
-    def DISTILLATION_JOB_QUEUE_PATH(self) -> Path:
-        return Path(self._active_attr("DISTILLATION_JOB_QUEUE_PATH", self._DISTILLATION_JOB_QUEUE_PATH))
-
-    @property
-    def SOURCE_RECORD_SCHEMA_PATH(self) -> Path:
-        return Path(self._active_attr("SOURCE_RECORD_SCHEMA_PATH", self._SOURCE_RECORD_SCHEMA_PATH))
-
-    @property
-    def MAX_RECORDS_PER_JOB(self) -> int:
-        return int(self._active_attr("MAX_RECORDS_PER_JOB", self._MAX_RECORDS_PER_JOB))
-
-    @property
-    def SCHEDULER_MAX_CONCURRENCY(self) -> int:
-        return int(self._active_attr("SCHEDULER_MAX_CONCURRENCY", self._SCHEDULER_MAX_CONCURRENCY))
-
-    @property
-    def FRONTIER_MAX_ATTEMPTS(self) -> int:
-        return int(self._active_attr("FRONTIER_MAX_ATTEMPTS", self._FRONTIER_MAX_ATTEMPTS))
-
-    @property
-    def FRONTIER_BACKOFF_SECONDS(self) -> int:
-        return int(self._active_attr("FRONTIER_BACKOFF_SECONDS", self._FRONTIER_BACKOFF_SECONDS))
-
-    @property
-    def FRONTIER_RUNNING_TIMEOUT_SECONDS(self) -> int:
-        return int(self._active_attr("FRONTIER_RUNNING_TIMEOUT_SECONDS", self._FRONTIER_RUNNING_TIMEOUT_SECONDS))
-
-    @property
-    def DEFAULT_STALE_THRESHOLD_SECONDS(self) -> int:
-        return int(self._active_attr("DEFAULT_STALE_THRESHOLD_SECONDS", self._DEFAULT_STALE_THRESHOLD_SECONDS))
-
-    @property
-    def MARKET_SNAPSHOT_MAX_CLOSES(self) -> int:
-        return int(self._active_attr("MARKET_SNAPSHOT_MAX_CLOSES", self._MARKET_SNAPSHOT_MAX_CLOSES))
-
-    @property
-    def SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS(self) -> int:
-        return int(self._active_attr("SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS", self._SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS))
-
-    @property
-    def SEARCH_INGEST_NOTIFY_URL(self) -> str:
-        return str(self._active_attr("SEARCH_INGEST_NOTIFY_URL", self._SEARCH_INGEST_NOTIFY_URL))
-
-    @property
-    def PRODUCTION_POSTURE(self) -> Any:
-        return self._active_attr("PRODUCTION_POSTURE", self._PRODUCTION_POSTURE)
 
     # -----------------------------------------------------------------------
     # Authorization & Mutation Guards
@@ -932,19 +706,6 @@ class SourceIngestionRuntime:
         )
 
     def _source_freshness_readiness(self) -> dict[str, Any]:
-        if getattr(self, "_module", None) is not None:
-            fn = self._module.__dict__.get("_source_freshness_readiness")
-            if callable(fn) and getattr(fn, "__code__", None) is not None and fn.__code__ is not self._default_source_freshness_readiness.__code__:
-                return fn()
-        import sys
-        main_mod = sys.modules.get("services.source_ingestion.main")
-        if main_mod is not None:
-            fn = main_mod.__dict__.get("_source_freshness_readiness")
-            if callable(fn) and getattr(fn, "__code__", None) is not None and fn.__code__ is not self._default_source_freshness_readiness.__code__:
-                return fn()
-        return self._default_source_freshness_readiness()
-
-    def _default_source_freshness_readiness(self) -> dict[str, Any]:
         """Return a fixed-cost readiness projection from the controller snapshot."""
         from .pipeline import _parse_utc_datetime
 
@@ -1235,19 +996,6 @@ class SourceIngestionRuntime:
         return payloads
 
     def _source_provisioning_reconciler(self) -> SourceProvisioningReconciler:
-        if getattr(self, "_module", None) is not None:
-            fn = self._module.__dict__.get("_source_provisioning_reconciler")
-            if callable(fn) and getattr(fn, "__code__", None) is not None and fn.__code__ is not self._default_source_provisioning_reconciler.__code__:
-                return fn()
-        import sys
-        main_mod = sys.modules.get("services.source_ingestion.main")
-        if main_mod is not None:
-            fn = main_mod.__dict__.get("_source_provisioning_reconciler")
-            if callable(fn) and getattr(fn, "__code__", None) is not None and fn.__code__ is not self._default_source_provisioning_reconciler.__code__:
-                return fn()
-        return self._default_source_provisioning_reconciler()
-
-    def _default_source_provisioning_reconciler(self) -> SourceProvisioningReconciler:
         return SourceProvisioningReconciler(
             manager=self.manager,
             connector_store=self.connector_store,
@@ -1490,19 +1238,6 @@ class SourceIngestionRuntime:
         return readbacks
 
     def _controller_readback_payload(self) -> dict[str, Any]:
-        if getattr(self, "_module", None) is not None:
-            fn = self._module.__dict__.get("_controller_readback_payload")
-            if callable(fn) and getattr(fn, "__code__", None) is not None and fn.__code__ is not self._default_controller_readback_payload.__code__:
-                return fn()
-        import sys
-        main_mod = sys.modules.get("services.source_ingestion.main")
-        if main_mod is not None:
-            fn = main_mod.__dict__.get("_controller_readback_payload")
-            if callable(fn) and getattr(fn, "__code__", None) is not None and fn.__code__ is not self._default_controller_readback_payload.__code__:
-                return fn()
-        return self._default_controller_readback_payload()
-
-    def _default_controller_readback_payload(self) -> dict[str, Any]:
         connector_readbacks = self._controller_connector_readbacks()
         frontier = self.store.list_frontier()
         frontier_backlog, frontier_backlog_by_connector = _frontier_backlog_readback(frontier)
@@ -1635,19 +1370,6 @@ class SourceIngestionRuntime:
             raise SourceEvidenceError(f"Connector lifecycle status disabled rejects ingest runs: {connector.connector_id}")
 
     def _append_audit_actions(self, actions: tuple[Any, ...]) -> None:
-        if getattr(self, "_module", None) is not None:
-            fn = self._module.__dict__.get("_append_audit_actions")
-            if callable(fn) and getattr(fn, "__code__", None) is not None and fn.__code__ is not self._default_append_audit_actions.__code__:
-                return fn(actions)
-        import sys
-        main_mod = sys.modules.get("services.source_ingestion.main")
-        if main_mod is not None:
-            fn = main_mod.__dict__.get("_append_audit_actions")
-            if callable(fn) and getattr(fn, "__code__", None) is not None and fn.__code__ is not self._default_append_audit_actions.__code__:
-                return fn(actions)
-        return self._default_append_audit_actions(actions)
-
-    def _default_append_audit_actions(self, actions: tuple[Any, ...]) -> None:
         if not actions:
             return
         payloads = [action.to_dict() for action in actions]
@@ -1816,5 +1538,5 @@ class SourceIngestionRuntime:
         return self._persona_source_provisioning_payload(request)
 
 
-def create_runtime(data_dir: Path | None = None, module: Any = None) -> SourceIngestionRuntime:
-    return SourceIngestionRuntime(data_dir=data_dir, module=module)
+def create_runtime(data_dir: Path | None = None) -> SourceIngestionRuntime:
+    return SourceIngestionRuntime(data_dir=data_dir)
