@@ -32,6 +32,7 @@ import os
 import re
 import sqlite3
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -659,16 +660,16 @@ class _DurableHealthStore:
         self._initialize()
 
     @contextlib.contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
+    def _connect(self, busy_timeout_ms: int = 10000) -> Iterator[sqlite3.Connection]:
         """Yield a connection with sqlite's commit/rollback semantics, then close it."""
         connection = sqlite3.connect(
             self.path,
-            timeout=10.0,
+            timeout=busy_timeout_ms / 1000.0,
             isolation_level=None,
         )
         try:
             connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA busy_timeout = 10000")
+            connection.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA synchronous = FULL")
             try:
@@ -1124,6 +1125,82 @@ class _DurableHealthStore:
             self._record_probe_in(connection, probe)
             connection.commit()
         return value
+
+    def flush_outcomes(
+        self,
+        *,
+        windows: Mapping[tuple, Mapping[str, Any]],
+        probes: Mapping[str, Mapping[str, Any]],
+        busy_timeout_ms: int = 2000,
+    ) -> List[Dict[str, Any]]:
+        """Persist aggregated request outcomes in one short transaction.
+
+        Raises sqlite3.OperationalError when the database stays locked so the
+        caller can keep the samples for the next flush.
+        """
+        touched: List[Dict[str, Any]] = []
+        with self._connect(busy_timeout_ms) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for (target_name, window_started_at), agg in windows.items():
+                connection.execute(
+                    """
+                    INSERT INTO error_windows(
+                        target_name, window_started_at, sample_count,
+                        failure_count, latency_total_ms, last_status_code,
+                        last_detail, last_observed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(target_name, window_started_at) DO UPDATE SET
+                        sample_count=error_windows.sample_count + excluded.sample_count,
+                        failure_count=error_windows.failure_count + excluded.failure_count,
+                        latency_total_ms=error_windows.latency_total_ms + excluded.latency_total_ms,
+                        last_status_code=excluded.last_status_code,
+                        last_detail=excluded.last_detail,
+                        last_observed_at=excluded.last_observed_at
+                    """,
+                    (
+                        target_name,
+                        window_started_at,
+                        int(agg["sample_count"]),
+                        int(agg["failure_count"]),
+                        float(agg["latency_total_ms"]),
+                        int(agg["last_status_code"]),
+                        agg["last_detail"],
+                        str(agg["last_observed_at"]),
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM error_windows WHERE target_name=? AND window_started_at=?",
+                    (target_name, window_started_at),
+                ).fetchone()
+                value = dict(row)
+                count = int(value["sample_count"])
+                value["error_rate"] = int(value["failure_count"]) / count if count else 0.0
+                value["latency_ms"] = float(value["latency_total_ms"]) / count if count else 0.0
+                touched.append(value)
+            for target_name, probe in probes.items():
+                result = DownstreamProbeResult(
+                    target_name=target_name,
+                    ok=bool(probe["ok"]),
+                    status_code=int(probe["status_code"]),
+                    latency_ms=float(probe["latency_ms"]),
+                    checked_at=str(probe["checked_at"]),
+                    failure_reason=probe["failure_reason"],
+                    consecutive_failures=0 if probe["ok"] else 1,
+                )
+                self._record_probe_in(connection, result)
+                if not result.ok:
+                    run = int(probe["fail_run"])
+                    if probe["had_success"]:
+                        final = run
+                    else:
+                        final = result.consecutive_failures + run - 1
+                    if final != result.consecutive_failures:
+                        connection.execute(
+                            "UPDATE probe_state SET consecutive_failures=? WHERE target_name=?",
+                            (final, target_name),
+                        )
+            connection.commit()
+        return touched
 
     @staticmethod
     def _append_error_sample_in(
@@ -1775,6 +1852,7 @@ class DownstreamHealthMonitor:
         delivery_max_attempts: Optional[int] = None,
         delivery_backoff_seconds: Optional[float] = None,
         delivery_max_age_seconds: Optional[float] = None,
+        pending_outcome_max: Optional[int] = None,
     ) -> None:
         self._telemetry_url = (
             telemetry_url
@@ -1909,6 +1987,25 @@ class DownstreamHealthMonitor:
             if str(value["status"]) in {"opening", "open", "resolving"}
         }
         self._error_windows_in_flight: set[tuple[str, str]] = set()
+        self._pending_lock = threading.Lock()
+        # Serializes flush writers so a cancelled to_thread flush cannot
+        # overlap the next one (batch reservation / accounting stay exact).
+        self._flush_lock = threading.Lock()
+        self._pending_windows: Dict[tuple, Dict[str, Any]] = {}
+        self._pending_probes: Dict[str, Dict[str, Any]] = {}
+        self._pending_samples = 0
+        self._inflight_samples = 0
+        self._pending_dropped = 0
+        self._pending_max = max(
+            1,
+            int(
+                pending_outcome_max
+                if pending_outcome_max is not None
+                else os.getenv("PANTHEON_BFF_HEALTH_PENDING_OUTCOME_MAX", "10000")
+            ),
+        )
+        self._flush_failures = 0
+        self._error_windows_emitted: Dict[tuple, None] = {}
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
         self._last_retention_prune_at = 0.0
@@ -1961,6 +2058,10 @@ class DownstreamHealthMonitor:
                     pass
         self._task = None
         self._loop_12_truth_task = None
+        try:
+            await asyncio.to_thread(self.flush_outcomes_sync)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("final outcome flush failed: %s", exc)
         log.info("DownstreamHealthMonitor stopped instance=%s", self._instance_id)
 
     def _configured_target_json(self) -> List[DownstreamTarget]:
@@ -2168,7 +2269,17 @@ class DownstreamHealthMonitor:
             "delivery_replays": self._store.list_replay_audit(),
             "incidents": self._store.list_incidents(),
             "loop_12_controller_truth": dict(self._loop_12_truth),
+            "pending_outcomes": self.pending_outcome_stats(),
         }
+
+    def pending_outcome_stats(self) -> Dict[str, int]:
+        with self._pending_lock:
+            return {
+                "pending_samples": self._pending_samples + self._inflight_samples,
+                "dropped_samples": self._pending_dropped,
+                "max_pending_samples": self._pending_max,
+                "flush_failures": self._flush_failures,
+            }
 
     def get_degraded_targets(self) -> List[str]:
         return [
@@ -2187,6 +2298,10 @@ class DownstreamHealthMonitor:
                 except Exception as exc:  # noqa: BLE001
                     log.warning("probe_loop: unexpected error: %s", exc)
                 next_probe_at = now + self._probe_interval
+            try:
+                await self.flush_outcomes()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("outcome_flush: unexpected error: %s", exc)
             try:
                 await asyncio.to_thread(self._deliver_due_sync)
             except Exception as exc:  # noqa: BLE001
@@ -2819,11 +2934,12 @@ class DownstreamHealthMonitor:
         *,
         target_name: str,
         window: Mapping[str, Any],
-    ) -> None:
+    ) -> bool:
+        """Queue the window event; True only once delivery intent is durable."""
         window_started_at = str(window["window_started_at"])
         flight_key = (target_name, window_started_at)
         if flight_key in self._error_windows_in_flight:
-            return
+            return False
         self._error_windows_in_flight.add(flight_key)
         claimed = await asyncio.to_thread(
             self._store.claim_window,
@@ -2835,13 +2951,13 @@ class DownstreamHealthMonitor:
         )
         if not claimed:
             self._error_windows_in_flight.discard(flight_key)
-            return
+            return False
         try:
             await asyncio.to_thread(
                 self._queue_error_rate_window_sync, target_name, window
             )
-            await asyncio.to_thread(self._deliver_due_sync)
-        finally:
+            # Delivery intent is durable from here; complete the window so it
+            # is never re-queued, even if the immediate delivery attempt fails.
             await asyncio.to_thread(
                 self._store.complete_window,
                 target_name=target_name,
@@ -2849,6 +2965,12 @@ class DownstreamHealthMonitor:
                 window_started_at=window_started_at,
                 owner_id=self._instance_id,
             )
+            try:
+                await asyncio.to_thread(self._deliver_due_sync)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("error-rate delivery deferred: %s", exc)
+            return True
+        finally:
             self._error_windows_in_flight.discard(flight_key)
 
     def _queue_error_rate_window_sync(
@@ -2939,44 +3061,138 @@ class DownstreamHealthMonitor:
             raise ValueError(f"unknown downstream health target: {target_name}")
         timestamp = observed_at or _utc_now_rfc3339()
         window_start = _window_start(timestamp, self._error_rate_window)
-        window = self._store.record_outcome(
-            target_name=target_name,
-            window_started_at=window_start,
-            ok=ok,
-            latency_ms=latency_ms,
-            status_code=status_code,
-            detail=detail,
-            observed_at=timestamp,
-            probe=DownstreamProbeResult(
-                target_name=target_name,
+        latency = max(0.0, float(latency_ms))
+        with self._pending_lock:
+            if self._pending_samples + self._inflight_samples >= self._pending_max:
+                self._pending_dropped += 1
+                return None
+            agg = self._pending_windows.get((target_name, window_start))
+            if agg is None:
+                agg = {
+                    "sample_count": 0,
+                    "failure_count": 0,
+                    "latency_total_ms": 0.0,
+                }
+                self._pending_windows[(target_name, window_start)] = agg
+            agg["sample_count"] += 1
+            agg["failure_count"] += 0 if ok else 1
+            agg["latency_total_ms"] += latency
+            agg["last_status_code"] = status_code
+            agg["last_detail"] = detail
+            agg["last_observed_at"] = timestamp
+            probe = self._pending_probes.get(target_name)
+            if probe is None:
+                probe = {"fail_run": 0, "had_success": False}
+                self._pending_probes[target_name] = probe
+            if ok:
+                probe["fail_run"] = 0
+                probe["had_success"] = True
+            else:
+                probe["fail_run"] += 1
+            probe.update(
                 ok=ok,
                 status_code=status_code,
                 latency_ms=latency_ms,
                 checked_at=timestamp,
                 failure_reason=detail if not ok else None,
-                consecutive_failures=0 if ok else 1,
-            ),
-        )
-        if (
-            int(window["sample_count"]) >= self._error_rate_min_samples
-            and float(window["error_rate"]) >= self._error_rate_threshold
-        ):
-            try:
-                asyncio.get_running_loop().create_task(
-                    self._emit_error_rate_window(
-                        target_name=target_name,
-                        window=window,
-                    )
-                )
-            except RuntimeError:
-                asyncio.run(
-                    self._emit_error_rate_window(
-                        target_name=target_name,
-                        window=window,
-                    )
-                )
-            return dict(window)
+            )
+            self._pending_samples += 1
+        # Persistence and threshold evaluation happen on the monitor loop.
         return None
+
+    def _take_pending(self) -> tuple[Dict[tuple, Dict[str, Any]], Dict[str, Dict[str, Any]], int]:
+        with self._pending_lock:
+            windows, probes, samples = (
+                self._pending_windows,
+                self._pending_probes,
+                self._pending_samples,
+            )
+            self._pending_windows = {}
+            self._pending_probes = {}
+            self._pending_samples = 0
+            # Reserve capacity for the in-flight batch until commit/restore.
+            self._inflight_samples = samples
+        return windows, probes, samples
+
+    def _restore_pending(
+        self,
+        windows: Dict[tuple, Dict[str, Any]],
+        probes: Dict[str, Dict[str, Any]],
+        samples: int,
+    ) -> None:
+        """Put an unflushed batch back in front of anything newer."""
+        with self._pending_lock:
+            for key, old in windows.items():
+                new = self._pending_windows.get(key)
+                if new is None:
+                    self._pending_windows[key] = old
+                    continue
+                new["sample_count"] += old["sample_count"]
+                new["failure_count"] += old["failure_count"]
+                new["latency_total_ms"] += old["latency_total_ms"]
+            for name, old in probes.items():
+                new = self._pending_probes.get(name)
+                if new is None:
+                    self._pending_probes[name] = old
+                    continue
+                if not new["had_success"]:
+                    # Newer batch is a pure failure run continuing the old one.
+                    new["fail_run"] += old["fail_run"]
+                    new["had_success"] = old["had_success"]
+            self._pending_samples += samples
+            self._inflight_samples = 0
+            self._flush_failures += 1
+
+    def flush_outcomes_sync(self) -> List[Dict[str, Any]]:
+        """Persist buffered request outcomes; return windows over threshold.
+
+        A locked database keeps the samples for the next flush.
+        """
+        with self._flush_lock:
+            return self._flush_outcomes_locked()
+
+    def _flush_outcomes_locked(self) -> List[Dict[str, Any]]:
+        windows, probes, samples = self._take_pending()
+        if not windows and not probes:
+            with self._pending_lock:
+                self._inflight_samples = 0
+            return []
+        try:
+            touched = self._store.flush_outcomes(windows=windows, probes=probes)
+        except BaseException as exc:  # noqa: BLE001
+            self._restore_pending(windows, probes, samples)
+            if not isinstance(exc, Exception):
+                raise
+            log.warning("outcome flush deferred: %s", exc)
+            return []
+        with self._pending_lock:
+            self._inflight_samples = 0
+        return [
+            w
+            for w in touched
+            if int(w["sample_count"]) >= self._error_rate_min_samples
+            and float(w["error_rate"]) >= self._error_rate_threshold
+        ]
+
+    async def flush_outcomes(self) -> List[Dict[str, Any]]:
+        crossed = await asyncio.to_thread(self.flush_outcomes_sync)
+        for window in crossed:
+            key = (str(window["target_name"]), str(window["window_started_at"]))
+            if key in self._error_windows_emitted:
+                continue
+            try:
+                done = await self._emit_error_rate_window(
+                    target_name=key[0], window=window
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("error-rate emit deferred: %s", exc)
+                continue
+            if not done:
+                continue  # retried on the next flush that touches the window
+            self._error_windows_emitted[key] = None
+            while len(self._error_windows_emitted) > 4096:
+                self._error_windows_emitted.pop(next(iter(self._error_windows_emitted)))
+        return crossed
 
     def _resolve_telemetry_service_jwt(self) -> str:
         """Explicit override, else the file principal; a configured bad file fails closed."""
