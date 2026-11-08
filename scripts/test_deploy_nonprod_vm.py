@@ -2528,3 +2528,102 @@ def test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh() -> None:
     )
     assert (fresh_res["status"], fresh_res["reason"]) == ("noop", "already_fresh")
     assert fresh_res["dataset"] == "taifex_ssf_contracts"
+
+
+def test_nonprod_deploy_workflow_dev_paper_expression_layer_default_and_steps() -> None:
+    deploy_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8"))
+    expected_expr = "${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}"
+
+    dev_steps = deploy_wf["jobs"]["deploy-dev"]["steps"]
+    dev_by_id = {s.get("id"): s for s in dev_steps if s.get("id")}
+    dev_by_name = {s.get("name"): s for s in dev_steps if s.get("name")}
+
+    assert dev_by_id["deploy"]["env"]["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] == expected_expr
+    assert dev_by_id["deploy_compensation"]["env"]["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] == expected_expr
+    assert (
+        dev_by_name["Deploy bootstrap predecessor pair in strict live read-only mode under lease"]["env"][
+            "PANTHEON_DEV_PAPER_EXPRESSION_LAYER"
+        ]
+        == expected_expr
+    )
+
+    frontend_steps = deploy_wf["jobs"]["coordinate-dev-release"]["steps"]
+    frontend_by_id = {s.get("id"): s for s in frontend_steps if s.get("id")}
+    for step_id in ("final_artifact_verify", "roundtrip_baseline_restore", "roundtrip_final_return", "compensation"):
+        assert frontend_by_id[step_id]["env"]["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] == expected_expr
+
+    for job_name, job in deploy_wf["jobs"].items():
+        if "staging" in job_name or "prod" in job_name:
+            job_dump = json.dumps(job)
+            assert "DEV_PAPER_EXPRESSION_LAYER" not in job_dump
+
+    plan_doc = (ROOT / "docs" / "deployment" / "vm-dev-staging-prod-management-plan.md").read_text(encoding="utf-8")
+    sec_3_1 = plan_doc.split("### 3.1 Dev", 1)[1].split("### 3.2 Staging", 1)[0]
+    assert "| `DEV_PAPER_EXPRESSION_LAYER` |" in sec_3_1
+    assert "`off`" in sec_3_1
+
+
+def test_deploy_nonprod_vm_preflight_paper_expression_layer_flag(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    ssh_args_file = tmp_path / "ssh_args.txt"
+    stub_ssh = bin_dir / "ssh"
+    stub_ssh.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{ssh_args_file}'\nexit 0\n",
+        encoding="utf-8",
+    )
+    stub_ssh.chmod(0o755)
+
+    base_env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "DEV_BFF_AUTH_MODE": "permissive",
+        "DEV_BFF_AUTH_STUB": "true",
+    }
+    base_env.pop("PANTHEON_DEV_PAPER_EXPRESSION_LAYER", None)
+    base_env.pop("DEV_PAPER_EXPRESSION_LAYER", None)
+
+    # Unset resolves to off
+    unset_res = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "root", "--sha", "a" * 40, "--dry-run"],
+        cwd=ROOT,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert unset_res.returncode == 0, unset_res.stderr
+    assert "dev_paper_expression_layer=off" in unset_res.stdout
+    assert not ssh_args_file.exists()
+
+    # Explicit 'off' and 'on' succeed preflight
+    for valid_val in ("off", "on"):
+        res = subprocess.run(
+            ["bash", str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "root", "--sha", "a" * 40, "--dry-run"],
+            cwd=ROOT,
+            env={**base_env, "PANTHEON_DEV_PAPER_EXPRESSION_LAYER": valid_val},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr
+        assert f"dev_paper_expression_layer={valid_val}" in res.stdout
+        assert not ssh_args_file.exists()
+
+    # Invalid values fail preflight with an explicit message before any VM/SSH step
+    for invalid_val in ("true", "1", "invalid", ""):
+        res = subprocess.run(
+            ["bash", str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "root", "--sha", "a" * 40],
+            cwd=ROOT,
+            env={**base_env, "PANTHEON_DEV_PAPER_EXPRESSION_LAYER": invalid_val},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode != 0
+        assert (
+            f"PANTHEON_DEV_PAPER_EXPRESSION_LAYER must be on or off (got: {invalid_val})"
+            in res.stderr
+        )
+        assert not ssh_args_file.exists()
+
