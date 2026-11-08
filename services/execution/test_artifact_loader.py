@@ -335,7 +335,6 @@ class TestEX002RBLoaderMetadataMigration(unittest.TestCase):
 
         self.assertEqual(projection.metadata["artifact_state"], "approved")
         self.assertEqual(projection.metadata["deployment_stage"], "paper")
-        self.assertEqual(projection.metadata["promotion_state"], "paper")
 
     def test_gate_live_projection_emits_canonical_fields(self):
         gate = PromotionGate()
@@ -359,7 +358,6 @@ class TestEX002RBLoaderMetadataMigration(unittest.TestCase):
 
         self.assertEqual(projection.metadata["artifact_state"], "approved")
         self.assertEqual(projection.metadata["deployment_stage"], "live")
-        self.assertEqual(projection.metadata["promotion_state"], "live")
 
     def test_loader_reads_deployment_stage_as_canonical_field(self):
         metadata = {

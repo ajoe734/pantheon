@@ -1,0 +1,33 @@
+{
+  "task_id": "RUNTIME-COMPAT-CLEANUP-20261107",
+  "findings": ["A06", "A16"],
+  "a06": {
+    "decision": "retired root docker-compose.yml service pantheon-paper-runtime, profile static-paper-runtime, deploy_nonprod_vm.sh activation exception, retire_legacy_static_paper_runtime and FORBIDDEN_DUPLICATE_WORKERS guard, plus obsolete root-compose tests (including the retire_legacy_paper rollback-stage expectation in scripts/test_dev_environment_lease_deploy_contract.py)",
+    "retained": "paper-fleet-reconciler, paper_runtime engine, binding-scoped queues",
+    "retained_exec_topology": "docker-compose.exec.yml pantheon-paper-runtime is a separate exec-VM split topology service with its own maintained consumers (scripts/validate_split_topology.sh, test_paper_runtime.py exec wiring); unchanged",
+    "maintained_root_consumer_receipts": {
+      "method": "repo-only grep of the task head (read-only, secret-free); no live host access by the source worker",
+      "docker-compose.yml": "no pantheon-paper-runtime service or static-paper-runtime profile remains",
+      "scripts/deploy_nonprod_vm.sh": "no activation exception, retire step or forbidden-worker guard remains",
+      "scripts/ensure_devloop_paper_runtime_worker.sh": "targets paper-fleet-reconciler only; comment states static service must not be recreated",
+      "scripts/audit_deploy_drift.sh and scripts/paper_signal_producer.py": "refer to binding-scoped pantheon-paper-runtime-<binding> fleet workers by name prefix, not the root static service",
+      "scripts/validate_split_topology.sh": "reads docker-compose.exec.yml only"
+    },
+    "rollback_deployment_targets": "dev rollback (rollback_dev_bff_on_failure) redeploys the prior baseline SHA with that SHA's own compose and deploy script, so rolling back to an older SHA restores its own definition; no maintained current-head path activates the static service",
+    "retirement_basis": "earlier read-only live dev observation (not retained as a dated receipt, so not relied on alone) found only the fleet container; retirement rests on the repo-consumer receipts above plus local single-ownership topology tests",
+    "obsolete_container_cleanup": "UNVERIFIED by the source worker: no read-only dev container inventory was available. The previous retire step ran on every root deploy, so a stale static container is not expected, but if an operator-side read-only `docker ps` shows pantheon-paper-runtime on the dev root project it needs one manual `docker compose rm -f -s` (operator action, not performed here). No container stopped, no deployment dispatched, no loop replayed."
+  },
+  "a16": {
+    "decision": "retain promotion_state reader in artifact_loader (closed retain decision documented in artifact-loader/contract.md)",
+    "migrated_producers": [
+      "scripts/probe_dev_runtime_paper_lifecycle.py projection_metadata",
+      "services/registry/promotion/gate.py PromotionGate.build_execution_projection (promotion_state no longer emitted; its tests assert artifact_state + deployment_stage)",
+      "services/execution/lean_runtime/smoke_algorithm.py _artifact_metadata and _artifact_metadata_from_binding",
+      "services/execution/lean_runtime/test_current_artifact_signal.py fixture",
+      "services/execution/lean_runtime/lean_smoke_contract.md canonical field list"
+    ],
+    "not_migrated": "'target.promotion_state' in EP4/EP5 acceptance scripts, seed_tj_e2e_012_hosted_scenarios.py and PaperRuntime telemetry is a telemetry event field consumed by services/training-session/trace_export.py and services/research/imitation, not artifact object metadata. services/registry/experiments/adapter.py promoted metadata still carries promotion_state and is out of scope of this delivery.",
+    "preserved_tests": "legacy-reader fallback and deployment_stage-over-promotion_state precedence negative tests in services/execution/test_artifact_loader.py",
+    "persisted_object_inventory": "not available to source worker; absence of legacy-only objects NOT proven, so the reader is retained and no persisted object is mutated"
+  }
+}

@@ -489,7 +489,6 @@ def _artifact_metadata_from_binding(checksum: str, plan: dict, binding: Any) -> 
         "artifact_type": plan.get("artifact_type", "execution_bundle"),
         "artifact_state": "approved",
         "deployment_stage": plan["target_stage"],
-        "promotion_state": plan["target_stage"],
         "checksum": checksum,
         "lineage": {
             "source_run_ids": ["train-lean-smoke-001"],
@@ -564,7 +563,6 @@ def _artifact_metadata(checksum: str) -> dict[str, Any]:
         "artifact_type": "execution_bundle",
         "artifact_state": "approved",
         "deployment_stage": "paper",
-        "promotion_state": "paper",
         "checksum": checksum,
         "lineage": {
             "source_run_ids": ["train-lean-smoke-001"],
