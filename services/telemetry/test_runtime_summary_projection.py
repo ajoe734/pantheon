@@ -3831,3 +3831,48 @@ class TestInstrumentAwarePositionProjection(unittest.TestCase):
         # closes 1 long contract: 1 * 100 * (2290 - 2300)
         self.assertEqual(row["realized_pnl"], -1000.0)
         self.assertEqual(row["margin_reserved"], 92000.0)
+
+    def test_expiry_settlement_closes_the_contract_and_books_realized(self) -> None:
+        store = self._store()
+        store.project_event(self._fill(lfc=1, quantity=-5.0, price=2299.0))
+        store.project_event(
+            self._fill(lfc=2, quantity=2.0, price=2300.0, future=True, margin_after=92000.0)
+        )
+        settled = TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol="2330.TWSE",
+            quantity=0.0,
+            price=2310.0,
+            ledger_fill_count=None,
+            created_at="2026-11-18T05:30:00Z",
+            event_id="evt-settle-001",
+            extra_metadata={
+                "instrument_id": self._FUTURE_ID,
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "settled_quantity": 2.0,
+                "final_settlement_price": 2310.0,
+                # (2310 - 2300) * 2 contracts * 100
+                "realized_pnl": 2000.0,
+                "settlement_fee": 5.0,
+                "fee": 10.0,
+                "tax": 4.0,
+                "price_basis": "FinalSettlementPriceSSF",
+            },
+        )
+        settled["event_type"] = "paper_futures_settled"
+        settled["metrics"] = {}
+        summary = store.project_event(settled)
+        # The cash share short is untouched; the contract is gone.
+        self.assertEqual([r["symbol"] for r in summary["positions"]], ["2330.TWSE"])
+        self.assertNotIn("instrument_id", summary["positions"][0])
+        self.assertEqual(summary["executed_trade_count"], 2)
+        self.assertEqual(
+            summary["_cost_by_symbol"][self._FUTURE_ID]["realized_pnl"], 2000.0
+        )
+        # A redelivered settlement does not book realized twice.
+        again = store.project_event(dict(settled))
+        self.assertEqual(
+            again["_cost_by_symbol"][self._FUTURE_ID]["realized_pnl"], 2000.0
+        )

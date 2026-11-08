@@ -1185,6 +1185,53 @@ class RuntimeSummaryProjectionStore:
                     if symbol is not None:
                         _rebuild_positions(current)
 
+            # Expiry settlement closes a stock-future position at the final
+            # settlement price. It is not a fill (the ledger fill count does not
+            # move), so it only zeroes that contract's quantity and books the
+            # realized PnL the ledger computed with the contract multiplier.
+            if event_type == "paper_futures_settled":
+                settled_id = metadata.get("instrument_id")
+                if isinstance(settled_id, str) and settled_id.strip():
+                    settled_key = settled_id.strip()
+                    positions = current.get("_positions_by_symbol")
+                    cost_by_symbol = current.get("_cost_by_symbol")
+                    event_id = str(event.get("event_id") or "")
+                    if isinstance(positions, dict) and settled_key in positions:
+                        already = False
+                        if isinstance(cost_by_symbol, dict):
+                            prior = cost_by_symbol.get(settled_key)
+                            already = bool(
+                                event_id
+                                and isinstance(prior, dict)
+                                and event_id in (prior.get("settled_event_ids") or [])
+                            )
+                        if not already:
+                            positions = dict(positions)
+                            positions[settled_key] = 0.0
+                            current["_positions_by_symbol"] = positions
+                            realized_delta = _finite_number(metadata.get("realized_pnl"))
+                            if (
+                                isinstance(cost_by_symbol, dict)
+                                and not current.get("_cost_withheld")
+                                and realized_delta is not None
+                            ):
+                                cost_by_symbol = dict(cost_by_symbol)
+                                prior = cost_by_symbol.get(settled_key) or {}
+                                cost_by_symbol[settled_key] = {
+                                    "quantity": 0.0,
+                                    "average_price": None,
+                                    "realized_pnl": float(prior.get("realized_pnl") or 0.0)
+                                    + realized_delta,
+                                    "settled_event_ids": [
+                                        *(prior.get("settled_event_ids") or []),
+                                        *([event_id] if event_id else []),
+                                    ],
+                                }
+                                current["_cost_by_symbol"] = cost_by_symbol
+                            else:
+                                _withhold_cost(current)
+                            _rebuild_positions(current)
+
             # The producer reports a failed/expired valuation attempt through its
             # heartbeat performance_telemetry. Only its own attempt time orders
             # it; a heartbeat never refreshes a mark, it can only withdraw one.

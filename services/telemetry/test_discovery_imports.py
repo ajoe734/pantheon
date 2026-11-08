@@ -98,8 +98,8 @@ UNEXPORTED_ROOT_MODULES = ("cli", "gate", "workflows", "conftest", "mlflow_adapt
 # the broader package-wide contract is asserted separately below.
 REPAIRED_MODULES = ("test_capture", "test_feedback_adapter")
 
-# Recorded post-change counts for the repaired modules (35 + 40).
-EXPECTED_REPAIRED_TEST_COUNT = 75
+# Recorded post-change counts for the repaired modules (35 + 42).
+EXPECTED_REPAIRED_TEST_COUNT = 77
 
 # Set in every child interpreter this module spawns. A child that ever loads
 # this module (for example if someone widens a discovery pattern) skips the
