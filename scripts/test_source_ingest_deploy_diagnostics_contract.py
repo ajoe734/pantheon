@@ -17,7 +17,8 @@ def _failure_diagnostics_function() -> str:
 
 def _bounded_wait_function() -> str:
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    start = deploy.index("wait_for_bounded_source_refresh_service() {")
+    # Include the log-dump helpers that the wait function calls on failure.
+    start = deploy.index("redact_bounded_refresh_log() {")
     end = deploy.index("\n}\n\nverify_bounded_source_refresh_readback()", start) + 2
     return deploy[start:end]
 
@@ -35,6 +36,8 @@ elif [[ "$1" == "inspect" && "$3" == *State.Status* ]]; then
   printf 'exited\\n'
 elif [[ "$1" == "inspect" && "$3" == *State.ExitCode* ]]; then
   printf '%s\\n' "${FAKE_DOCKER_EXIT_CODE}"
+elif [[ "$1" == "logs" ]]; then
+  printf 'worker-boom Authorization: Bearer leakedbearer999\\n'
 else
   exit 91
 fi
@@ -401,6 +404,8 @@ def test_bounded_source_refresh_wait_rejects_nonzero_exit(tmp_path: Path) -> Non
 
     assert result.returncode != 0
     assert "source-ingest-scheduler exited with code 17" in result.stderr
+    assert "worker-boom" in result.stderr
+    assert "leakedbearer999" not in result.stderr
 
 
 def test_root_failure_diagnostics_capture_search_service_and_state_without_env() -> None:
@@ -532,27 +537,45 @@ def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_t
     deploy_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(deploy_steps) if s.get("id")}
 
     assert "market_refresh" in deploy_by_id
+    assert "deploy" in deploy_by_id
     assert "taifex_market_refresh" in deploy_by_id
+    assert "bounded_taifex_refresh" in deploy_by_id
+    assert "taifex_market_refresh_upload" in deploy_by_id
+    assert "paper_bootstrap" in deploy_by_id
     m_twse_idx, m_twse_step = deploy_by_id["market_refresh"]
+    d_twse_idx, d_twse_step = deploy_by_id["deploy"]
     m_taifex_idx, m_taifex_step = deploy_by_id["taifex_market_refresh"]
-    assert m_twse_idx < m_taifex_idx, "Pre-mutation TAIFEX refresh must run after TWSE refresh"
+    d_taifex_idx, d_taifex_step = deploy_by_id["bounded_taifex_refresh"]
+    taifex_upload_idx, taifex_upload_step = deploy_by_id["taifex_market_refresh_upload"]
+    paper_idx, _ = deploy_by_id["paper_bootstrap"]
+    assert m_twse_idx < d_twse_idx < m_taifex_idx < d_taifex_idx < taifex_upload_idx < paper_idx, (
+        "TWSE market_refresh must stay before stack mutation while TAIFEX refresh and its evidence upload run after candidate stack deploy"
+    )
     assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
     assert m_twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
     assert m_taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
     assert m_taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
     assert m_taifex_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+    assert m_taifex_step.get("continue-on-error") is True
+    assert "--non-blocking" in m_taifex_step["run"]
+    assert "taifex-market-refresh.json" in m_taifex_step["run"]
+    assert "if log_text:\n    print(log_text)" in m_taifex_step["run"]
 
-    assert "deploy" in deploy_by_id
-    assert "bounded_taifex_refresh" in deploy_by_id
-    d_twse_idx, d_twse_step = deploy_by_id["deploy"]
-    d_taifex_idx, d_taifex_step = deploy_by_id["bounded_taifex_refresh"]
-    assert d_twse_idx < d_taifex_idx, "Bounded TAIFEX refresh under lease must run after TWSE deploy refresh"
     assert d_twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert d_twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
     assert d_taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
     assert d_taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
     assert "openapi.taifex.com.tw,www.taifex.com.tw" in d_taifex_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"]
+    assert d_taifex_step.get("continue-on-error") is True
+    assert "--force" in d_taifex_step["run"]
+    assert "--non-blocking" in d_taifex_step["run"]
+    assert "if log_text:\n    print(log_text)" in d_taifex_step["run"]
+    assert "always()" in taifex_upload_step["if"]
+    assert taifex_upload_step["with"]["path"].endswith("/taifex-market-refresh.json")
+    assert taifex_step.get("continue-on-error") is True
+    assert "--non-blocking" in taifex_step["run"]
+    assert "if log_text:\n    print(log_text)" in taifex_step["run"]
 
     # Every workflow step with SOURCE_INGEST_BOUNDED_CONNECTOR_ID must use a single fixed value per run
     for wf_steps in (refresh_steps, deploy_steps):
@@ -751,6 +774,61 @@ def test_taifex_preflight_does_not_skip_on_fresh_twse_snapshot_when_ssf_missing_
     assert res_fresh["status"] == "noop"
     assert res_fresh["reason"] == "already_fresh"
     assert res_fresh["dataset"] == "taifex_ssf_contracts"
+
+
+def test_taifex_preflight_skips_weekend_holiday_and_session_not_closed_before_dataset_missing() -> None:
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    fresh_friday_twse_snapshot = {
+        "snapshot_id": "snap-2026-11-06",
+        "event_time": "2026-11-06T06:30:00Z",
+        "observed_at": "2026-11-06T07:05:00Z",
+        "calendar_evidence": governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-11-06"),
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:receipt-2026-11-06"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    }
+
+    # 1. Sunday 2026-11-08 (run 42488948670 timestamp) with missing TAIFEX dataset skips with reason=weekend
+    res_sun, paths_sun = _run_embedded_preflight(
+        now_utc="2026-11-08T14:21:20Z",
+        twse_snapshot=fresh_friday_twse_snapshot,
+        taifex_readback_connector=None,
+    )
+    assert res_sun["status"] == "skipped"
+    assert res_sun["reason"] == "weekend"
+    assert res_sun["connector_id"] == "tw-taifex-futures-options-chip"
+    assert res_sun["dataset"] == "taifex_ssf_contracts"
+    assert not any("/api/source-ingest/controller/readback" in p for p in paths_sun)
+
+    # 2. Weekday before 13:30 Asia/Taipei close with missing TAIFEX dataset skips with reason=session_not_closed
+    res_open, _ = _run_embedded_preflight(
+        now_utc="2026-11-06T04:00:00Z",
+        twse_snapshot=fresh_friday_twse_snapshot,
+        taifex_readback_connector=None,
+    )
+    assert res_open["status"] == "skipped"
+    assert res_open["reason"] == "session_not_closed"
+
+    # 3. Evidenced Taiwan holiday (2026-10-09 Double Ten observed) skips with reason=holiday
+    holiday_prev_snapshot = {
+        "snapshot_id": "snap-2026-10-08",
+        "event_time": "2026-10-08T06:30:00Z",
+        "observed_at": "2026-10-08T07:05:00Z",
+        "calendar_evidence": governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-08"),
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:receipt-2026-10-08"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    }
+    res_holiday, _ = _run_embedded_preflight(
+        now_utc="2026-10-09T08:00:00Z",
+        twse_snapshot=holiday_prev_snapshot,
+        taifex_readback_connector=None,
+    )
+    assert res_holiday["status"] == "skipped"
+    assert res_holiday["reason"] == "holiday"
 
 
 def test_prepare_bounded_source_refresh_dataset_wires_ssf_through_scheduler_and_adapter(

@@ -597,3 +597,44 @@ def test_main_passes_with_valid_aligned_false_review_bridge_policy(
 def test_review_only_agents_is_a_tracked_critical_flag() -> None:
     from check_config_drift import CRITICAL_FLAGS
     assert "worker_reassignment.review_only_agents" in CRITICAL_FLAGS
+    assert "review_gate.github_review_identity" in CRITICAL_FLAGS
+
+
+def test_main_accepts_shipped_repo_config_and_flags_github_review_identity_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    shipped = json.loads(
+        (Path(__file__).resolve().parents[1] / ".orchestrator" / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert shipped["review_gate"]["github_review_bridge_required"] is True
+    assert shipped["review_gate"]["github_review_identity"] == "shared"
+    assert "Pantheon canonical review gate" in shipped["branch_workflow"]["task_pr"]["required_status_checks"]
+
+    repo = tmp_path / "repo.json"
+    live = tmp_path / "live.json"
+    repo.write_text(json.dumps(shipped), encoding="utf-8")
+    live.write_text(json.dumps(shipped), encoding="utf-8")
+
+    assert main(["--repo-config", str(repo), "--live-config", str(live), "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["review_bridge_policy_errors"] == []
+    assert report["drift"] == []
+
+    drifted_live = json.loads(json.dumps(shipped))
+    drifted_live["review_gate"]["github_review_identity"] = "independent"
+    drift_report = find_drift(shipped, drifted_live)
+    drift_paths = {item["path"]: item for item in drift_report["drift"]}
+    assert drift_paths["review_gate.github_review_identity"] == {
+        "path": "review_gate.github_review_identity",
+        "repo": "shared",
+        "live": "independent",
+    }
+
+    invalid_live = json.loads(json.dumps(shipped))
+    invalid_live["review_gate"]["github_review_identity"] = "invalid"
+    errors = review_bridge_policy_errors(shipped, invalid_live)
+    assert len(errors) == 1
+    assert errors[0]["source"] == "live"
+    assert "review_gate.github_review_identity must be 'shared' or 'independent'" in errors[0]["error"]

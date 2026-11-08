@@ -270,7 +270,7 @@ def _validate_dev_verification(
         "bff_version_commit",
         "fe_deployment_manifest_sha256",
     }
-    optional_keys = {"all12_chain_id", "all12_status"}
+    optional_keys = {"all12_chain_id", "all12_status", "taifex_market_refresh"}
     keys = set(dev_ver.keys())
     if not required_keys.issubset(keys) or not keys.issubset(required_keys | optional_keys):
         raise ReleaseManifestError(
@@ -309,6 +309,25 @@ def _validate_dev_verification(
         raise ReleaseManifestError(
             f"dev_verification.all12_status must be 'passed' to claim dev_verified (got {all12_status!r})"
         )
+    taifex_refresh = dev_ver.get("taifex_market_refresh")
+    if taifex_refresh is not None:
+        if not isinstance(taifex_refresh, dict):
+            raise ReleaseManifestError("dev_verification.taifex_market_refresh must be an object")
+        taifex_status = taifex_refresh.get("status")
+        if taifex_status not in {"completed", "noop", "skipped", "failed"}:
+            raise ReleaseManifestError(
+                "dev_verification.taifex_market_refresh.status must be completed, noop, skipped, or failed"
+            )
+        taifex_reason = taifex_refresh.get("reason")
+        if not isinstance(taifex_reason, str) or not taifex_reason.strip():
+            raise ReleaseManifestError(
+                "dev_verification.taifex_market_refresh.reason must be a non-empty string"
+            )
+        taifex_log = taifex_refresh.get("log")
+        if not isinstance(taifex_log, str):
+            raise ReleaseManifestError(
+                "dev_verification.taifex_market_refresh.log must be a string"
+            )
 
 
 def _validate_rollback_baseline(baseline: Any, current_release_id: str) -> None:
@@ -504,6 +523,29 @@ def verify_promotion_eligibility(
     }
 
 
+def load_taifex_market_refresh(source: dict[str, Any] | Path) -> dict[str, Any]:
+    """Load and normalize a `taifex-market-refresh.json` outcome payload for `dev_verification`."""
+    if isinstance(source, Path):
+        try:
+            raw = source.read_bytes()
+        except OSError as exc:
+            raise ReleaseManifestError(
+                f"cannot read TAIFEX market refresh evidence file {source}: {exc}"
+            ) from exc
+        payload = parse_manifest_json(raw)
+    elif isinstance(source, dict):
+        payload = dict(source)
+    else:
+        raise ReleaseManifestError("taifex_market_refresh must be a dict or Path")
+    return {
+        "connector_id": str(payload.get("connector_id") or "tw-taifex-futures-options-chip"),
+        "dataset": str(payload.get("dataset") or "taifex_ssf_contracts"),
+        "status": payload.get("status"),
+        "reason": payload.get("reason"),
+        "log": "" if payload.get("log") is None else payload.get("log"),
+    }
+
+
 def build_manifest(
     *,
     release_id: str,
@@ -519,6 +561,7 @@ def build_manifest(
     created_at: str,
     additional_images: dict[str, str] | None = None,
     dev_verification: dict[str, Any] | None = None,
+    taifex_market_refresh: dict[str, Any] | Path | None = None,
     rollback_baseline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Construct and validate an immutable release manifest."""
@@ -547,7 +590,10 @@ def build_manifest(
         "created_at": created_at,
     }
     if dev_verification is not None:
-        manifest["dev_verification"] = dev_verification
+        dev_ver_copy = dict(dev_verification)
+        if taifex_market_refresh is not None:
+            dev_ver_copy["taifex_market_refresh"] = load_taifex_market_refresh(taifex_market_refresh)
+        manifest["dev_verification"] = dev_ver_copy
     if rollback_baseline is not None:
         manifest["rollback_baseline"] = rollback_baseline
     return validate_manifest(manifest)

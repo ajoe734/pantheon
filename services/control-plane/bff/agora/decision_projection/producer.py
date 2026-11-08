@@ -15,6 +15,26 @@ from .models import (
 from .store import DecisionEventStore
 
 
+# Asset class of a chosen instrument kind, in the vocabulary the paper order
+# risk gate already uses (``equity`` / ``future``).
+ASSET_CLASS_BY_INSTRUMENT_KIND = {
+    "cash_share": "equity",
+    "stock_future": "future",
+}
+
+
+def asset_class_for_instrument_kind(kind: Optional[str]) -> str:
+    """Asset class for a chosen instrument kind; absent means legacy cash equity."""
+    clean = str(kind or "").strip()
+    if not clean:
+        return "equity"
+    try:
+        return ASSET_CLASS_BY_INSTRUMENT_KIND[clean]
+    except KeyError:
+        # An unknown kind must not be silently labelled equity.
+        raise ValueError(f"unsupported instrument kind: {clean!r}") from None
+
+
 def _parse_iso(iso_str: str) -> Optional[datetime]:
     try:
         dt = datetime.fromisoformat(iso_str)
@@ -128,6 +148,8 @@ class DecisionEventProducer:
             status=status,
             created_at=now_str,
             has_broker_authority=False,
+            instrument_id=command.instrument_id,
+            instrument_kind=command.instrument_kind,
         )
 
         # 5. Persist and return
@@ -140,6 +162,7 @@ class DecisionEventProducer:
         trading_room_store: Optional[Any] = None,
         strategy_spec_registry_id: Optional[str] = None,
         symbol: Optional[str] = None,
+        instrument_kind: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Project a DecisionEventRecord into a canonical TradingDecisionEvent in TradingRoomStore."""
         from ..trading_room.router import _get_store as _get_tr_store
@@ -172,7 +195,9 @@ class DecisionEventProducer:
             "strategy_spec_registry_id": strategy_spec_registry_id or record.strategy_id,
             "subject": {
                 "symbol": symbol or record.strategy_id,
-                "asset_class": "equity",
+                "asset_class": asset_class_for_instrument_kind(
+                    instrument_kind or record.instrument_kind
+                ),
                 "venue": "default",
             },
             "state": (

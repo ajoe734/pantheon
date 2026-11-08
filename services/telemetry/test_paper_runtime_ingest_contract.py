@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import os
+import sys
 import threading
 import types
 import unittest
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from services.execution.lean_runtime.paper_runtime import RuntimeTelemetryEmitter
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.telemetry.batch_writer import WriteResult
+from services.telemetry.feedback_adapter import FeedbackStoreAdapter
 from services.telemetry.dead_letter import TAG_BINDING_MISMATCH, TAG_SCHEMA_VIOLATION
 from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
@@ -1299,6 +1303,196 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
             await svc.stop(graceful=True)
 
         asyncio.run(scenario())
+
+
+# --- LEAN base fill callback (INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 AC 7) ---
+_LEAN_DIR = Path(__file__).resolve().parents[2] / "integrations" / "lean"
+if str(_LEAN_DIR) not in sys.path:
+    sys.path.insert(0, str(_LEAN_DIR))
+
+from pantheon_algo.base import EngineReplayAlgo, PersistentLeanObjectStore  # noqa: E402
+
+_LEAN_CONTEXT_ENV = {
+    "PANTHEON_RUNTIME_BINDING_ID": "rtb-paper-001",
+    "PANTHEON_RUNTIME_ID": "rt-paper-001",
+    "PANTHEON_DEPLOYMENT_PLAN_ID": "dp-paper-001",
+    "PANTHEON_DEPLOYMENT_STAGE": "paper",
+    "PANTHEON_RUNTIME_ROLE": "paper",
+    "PANTHEON_ARTIFACT_ID": "art-001",
+    "PANTHEON_ARTIFACT_VERSION": "1.0.0",
+    "PANTHEON_ARTIFACT_CHECKSUM": "sha256:abc",
+    "PANTHEON_STRATEGY_ID": "strat-001",
+    "PANTHEON_CAPITAL_POOL_ID": "pool-001",
+    "PANTHEON_PERSONA_CAPITAL_BINDING_ID": "pcb-001",
+    "PANTHEON_ENGINE_BRIDGE_REMOTE": "ajoe734/pantheon-lean.git",
+    "PANTHEON_ENGINE_BRIDGE_SOURCE_PATH": "pantheon/lean",
+    "PANTHEON_ENGINE_BRIDGE_COMMIT": "abc123",
+    "PANTHEON_RUNTIME_ADAPTER_VERSION": "0.1.0",
+    "PANTHEON_TRACE_ID": "trace-001",
+    "PANTHEON_CORRELATION_ID": "corr-001",
+}
+
+
+@contextmanager
+def patched_env(values: dict[str, str]):
+    keys = set(values) | {key for key in os.environ if key.startswith("PANTHEON_")}
+    previous = {key: os.environ.get(key) for key in keys}
+    try:
+        for key in keys:
+            os.environ.pop(key, None)
+        os.environ.update(values)
+        yield
+    finally:
+        for key in keys:
+            os.environ.pop(key, None)
+        for key, value in previous.items():
+            if value is not None:
+                os.environ[key] = value
+
+
+class TestInstrumentAwareLineageContext(unittest.TestCase):
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 2)."""
+
+    def test_stock_future_fill_keeps_instrument_fields_in_order_context(self) -> None:
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-ssf-fill-001",
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-11-05T01:02:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-ssf-001",
+            "target": {"strategy_id": "strat-ssf", "registry_id": "reg-ssf"},
+            "metrics": {"fill_quantity": 2.0, "fill_price": 2300.0},
+            "metadata": {
+                "symbol": "2330.TWSE",
+                "broker": "shioaji_paper",
+                "sec_type": "future",
+                "currency": "TWD",
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "multiplier": 100.0,
+                "contract_month": "202611",
+                "fee": 40.0,
+                "tax": 10.0,
+                "initial_margin_reserved": 92000.0,
+                "reason_code": "long_lever",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-ssf", "paper")
+        records = adapter.query_lineage_records("runtime_binding", "rb-ssf-001")
+        self.assertEqual(len(records), 1)
+        ctx = records[0]["order_context"]
+        self.assertEqual(ctx["instrument_id"], "ssf:QFF:202611")
+        self.assertEqual(ctx["kind"], "stock_future")
+        self.assertEqual(ctx["multiplier"], 100.0)
+        self.assertEqual(ctx["contract_month"], "202611")
+        self.assertEqual(ctx["reason_code"], "long_lever")
+        self.assertEqual(ctx["initial_margin_reserved"], 92000.0)
+
+    def test_cash_share_fill_order_context_has_no_instrument_fields(self) -> None:
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-cash-fill-001",
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-11-05T01:02:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-cash-001",
+            "target": {"strategy_id": "strat-cash", "registry_id": "reg-cash"},
+            "metrics": {"fill_quantity": -5.0, "fill_price": 2299.0},
+            "metadata": {"symbol": "2330.TWSE", "broker": "shioaji_paper", "currency": "TWD"},
+        }
+        adapter.ingest_telemetry_event(event, "strat-cash", "paper")
+        ctx = adapter.query_lineage_records("runtime_binding", "rb-cash-001")[0]["order_context"]
+        for absent in ("instrument_id", "kind", "multiplier", "contract_month"):
+            self.assertNotIn(absent, ctx)
+
+
+class _OrderEvent:
+    """Minimal stand-in for a LEAN OrderEvent; extra attributes are set per test."""
+
+    Status = "Filled"
+
+    def __init__(self, **attributes: object) -> None:
+        self.OrderId = 42
+        self.Symbol = "2330"
+        self.FillPrice = 2300.0
+        self.FillQuantity = 2.0
+        for name, value in attributes.items():
+            setattr(self, name, value)
+
+
+class ExtendedFillFieldTests(unittest.TestCase):
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 7): the LEAN base accepts extended fills."""
+
+    def _algo(self) -> EngineReplayAlgo:
+        algo = EngineReplayAlgo(object_store=PersistentLeanObjectStore())
+        algo.Initialize()
+        return algo
+
+    def test_fill_carrying_instrument_id_and_multiplier_is_processed(self) -> None:
+        with patched_env(_LEAN_CONTEXT_ENV):
+            algo = self._algo()
+            algo.OnOrderEvent(
+                _OrderEvent(
+                    InstrumentId="ssf:QFF:202611",
+                    Multiplier=100.0,
+                    Kind="stock_future",
+                    ContractMonth="202611",
+                )
+            )
+
+        (record,) = algo.executed_orders
+        self.assertEqual(record["fill_quantity"], 2.0)
+        self.assertEqual(record["status"], "FILLED")
+        self.assertEqual(record["instrument_id"], "ssf:QFF:202611")
+        self.assertEqual(record["multiplier"], 100.0)
+        self.assertEqual(record["kind"], "stock_future")
+        self.assertEqual(record["contract_month"], "202611")
+        event = algo._last_pantheon_event
+        self.assertEqual(event["event_type"], "OrderFilledReplay")
+        self.assertEqual(event["metrics"]["fill_quantity"], 2.0)
+        self.assertEqual(event["metadata"]["instrument_id"], "ssf:QFF:202611")
+        self.assertEqual(event["metadata"]["multiplier"], 100.0)
+
+    def test_negative_fill_quantity_is_a_sell(self) -> None:
+        with patched_env(_LEAN_CONTEXT_ENV):
+            algo = self._algo()
+            algo.OnOrderEvent(_OrderEvent(FillQuantity=-5.0, InstrumentId="eq:2330", Multiplier=1.0))
+
+        (record,) = algo.executed_orders
+        self.assertEqual(record["action"], "SELL")
+        self.assertEqual(record["fill_quantity"], -5.0)
+        self.assertEqual(record["instrument_id"], "eq:2330")
+
+    def test_cash_share_fill_without_extended_fields_is_unchanged(self) -> None:
+        with patched_env(_LEAN_CONTEXT_ENV):
+            algo = self._algo()
+            algo.OnOrderEvent(_OrderEvent())
+
+        (record,) = algo.executed_orders
+        for absent in ("instrument_id", "multiplier", "kind", "contract_month"):
+            self.assertNotIn(absent, record)
+            self.assertNotIn(absent, algo._last_pantheon_event["metadata"])
+
+    def test_malformed_extended_fields_are_skipped_not_fatal(self) -> None:
+        with patched_env(_LEAN_CONTEXT_ENV):
+            algo = self._algo()
+            algo.OnOrderEvent(
+                _OrderEvent(
+                    InstrumentId=["not", "text"],
+                    Multiplier="100",
+                    Kind="   ",
+                    ContractMonth=None,
+                )
+            )
+            algo.OnOrderEvent(_OrderEvent(OrderId=43, Multiplier=float("nan")))
+            algo.OnOrderEvent(_OrderEvent(OrderId=44, Multiplier=-100.0))
+            algo.OnOrderEvent(_OrderEvent(OrderId=45, Multiplier=True))
+
+        self.assertEqual(len(algo.executed_orders), 4)
+        for record in algo.executed_orders:
+            for absent in ("instrument_id", "multiplier", "kind", "contract_month"):
+                self.assertNotIn(absent, record)
 
 
 if __name__ == "__main__":
