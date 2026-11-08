@@ -5,7 +5,7 @@ Task: OPS-REVIEW-PROOF-001
 Plan source: `sha256:07b330d425946fb363e8b94a0e707595bb0e3c7af6be0d161ad9ab88705471f0`
 (`/tmp/pantheon-tooling-root-repair-20260907/REVIEW_PROOF_PLAN.md`)
 
-> **Scope (`OPS-REVIEW-GATE-QUIET-20261107`):** This procedure applies **only when `review_gate.github_review_bridge_required` is `true`** in `.orchestrator/config.json`. While `review_gate.github_review_bridge_required` is `false` (the TaskStore-only exact-head review mode set on 2026-09-08 and confirmed on 2026-11-07), no review-proof tags are pushed to GitHub, `scripts/git/canonical_review_gate_ci.py` logs a workflow notice and exits `0` without posting the `Pantheon canonical review gate` status, and TaskStore exact-head approval enforced by `scripts/git/auto_integrator.py` is the sole merge authority.
+> **Scope (`OPS-REVIEW-GATE-SHARED-IDENTITY-20261108`):** `.orchestrator/config.json` sets `review_gate.github_review_bridge_required: true`, sets `review_gate.github_review_identity: "shared"`, and includes `"Pantheon canonical review gate"` in `branch_workflow.task_pr.required_status_checks`. Under `github_review_identity: "shared"`, `scripts/git/github_review_bridge.py` records `approve` and `reopen` decisions as a `COMMENT` pull request review (`event: "COMMENT"`, matched state `"COMMENTED"`) carrying the `<!-- pantheon-review-bridge ... -->` marker on the exact PR head (never submitting `APPROVE` or `REQUEST_CHANGES`), pushes the `refs/tags/pantheon-review/<decision>/<head_sha>` proof tag, and dispatches `canonical-review-gate.yml` as the sole issuer of the `Pantheon canonical review gate` commit status. This gate blocks merges without a proof tag at the GitHub layer **only once branch protection requires the gate** (GitHub branch protection does not currently require `Pantheon canonical review gate`; the coordinator adds it to `pantheon` `dev` and `execute-plans` `dev` after live verification, while `master` and `main` stay unchanged). Once the gate is required, operator-directed direct deliveries must use a `task/<TASK-ID>` branch with the existing operator acceptance proof (`refs/tags/pantheon-review/operator-accept/<head_sha>`). Plainly stated: any holder of the shared `ajoe734` GitHub credential can still push a proof tag or add the `delivery:tooling` label directly, and only a separate review identity (`github_review_identity: "independent"`) closes that. Rollback is setting `review_gate.github_review_bridge_required` back to `false`.
 
 ## The Contradictions and Defects This Closes
 
@@ -44,16 +44,18 @@ In `scripts/git/github_review_bridge.py`:
 - Same-decision tags are accepted as idempotent replays ONLY if `task_id`, `actor`, `decision`, and `intent_nonce` all match. If the caller provides a strictly newer intent of the same decision, the tag is updated; otherwise it fails closed.
 - `_dispatch_canonical_review_gate_workflow` defaults to `required=True`. Dispatch failures are observable to callers.
 
-### 3. Integrator Reconciliation and Observable Failure Reporting
+### 3. Integrator Reconciliation, Self-Heal, and Observable Failure Reporting
 In `scripts/git/auto_integrator.py`:
 - `make_integrator_tag_lookup` re-raises non-404 exceptions so API lookup failures result in `api_error` rather than false absence. Empty mappings, lists, and null payloads are preserved as malformed payloads rather than collapsing to absent, reserving absence for confirmed HTTP 404.
 - In `integrate_candidate`, the reopen tag is inspected using `canonical_review_gate_ci.inspect_proof_tag`. Re-dispatch is only attempted when `reopen_inspection.is_absent` is true and a valid review or operator acceptance tag exists.
+- When `review_bridge_is_required` is true, the `Pantheon canonical review gate` check is not green, no `approve`, `operator-accept`, or `reopen` tag exists for the exact head, and the active task store holds a `review_approved` for that exact head by an assigned reviewer different from the owner, the integrator self-heals by calling `bridge_review_decision` with that reviewer as actor, dispatching the workflow, and reporting `"waiting"` instead of opening a `ci-red` unblock task. It never publishes a proof without an exact-head approval by a reviewer distinct from the owner and never publishes when a `reopen` tag exists.
 - `_dispatch_canonical_review_gate_workflow` is invoked with `required=True`. If dispatch fails (e.g. transient API failure), the error is recorded in `detail` without falsely claiming `re-dispatched`, and action remains `"waiting"` without blocking unrelated candidates.
 
-### 4. Review Mode Convergence
-In `scripts/ai_status.py` and `scripts/git/github_review_bridge.py`:
+### 4. Review Mode Convergence and Shared Identity Mode (`OPS-REVIEW-GATE-SHARED-IDENTITY-20261108`)
+In `scripts/ai_status.py`, `.orchestrator/common.py`, and `scripts/git/github_review_bridge.py`:
 - `GITHUB_REVIEW_MODES` is converged to `{"pull_request_review"}` only.
-- Direct PAT status posting (`_submit_required_status`) is completely retired; the sole authoritative status issuer is the GitHub Actions workflow (`github-actions[bot]`).
+- `review_gate.github_review_identity` accepts `"shared"` or `"independent"` (missing defaults to `"independent"`). In `"shared"` mode, `bridge_review_decision` submits `event: "COMMENT"` (`state: "COMMENTED"`) carrying the `<!-- pantheon-review-bridge ... -->` marker on the exact head so intent ordering across `approve` and `reopen` works under a single shared GitHub account without hitting GitHub's self-approval refusal.
+- Direct PAT status posting (`_submit_required_status`) is completely retired in both modes; the sole authoritative status issuer is the GitHub Actions workflow (`github-actions[bot]`).
 - `bridge_github_review_decision` strictly validates that the returned mode is in `GITHUB_REVIEW_MODES`.
 
 ### 5. Optional Diagnostic Attestation Audit Simplification

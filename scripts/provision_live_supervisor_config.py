@@ -771,6 +771,7 @@ def build_live_config(
     validated_fleet_worker_cap(rendered)
     validate_provider_accounts(rendered)
     common.validate_review_bridge_policy(rendered)
+    common.github_review_identity(rendered)
     apply_repository_source_roots(rendered, repository_source_roots)
     apply_repository_integration_roots(rendered, repository_integration_roots)
     apply_task_state_store(

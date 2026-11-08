@@ -902,6 +902,7 @@ def incomplete_rollup_checks(rollup: Any) -> list[str]:
 def is_canonical_review_gate_green(rollup: Any) -> bool:
     if not isinstance(rollup, list) or not rollup:
         return False
+    seen_success = False
     for item in latest_check_runs(rollup):
         if not isinstance(item, Mapping):
             continue
@@ -916,9 +917,11 @@ def is_canonical_review_gate_green(rollup: Any) -> bool:
         values = [value for value in values if value]
         if any(value in FAILURE_VALUES for value in values):
             return False
+        if any(value in PENDING_VALUES for value in values):
+            return False
         if any(value in SUCCESS_VALUES for value in values):
-            return True
-    return False
+            seen_success = True
+    return seen_success
 
 
 def integration_status_rollup(
@@ -958,6 +961,82 @@ def make_integrator_tag_lookup(
         return data
 
     return _lookup
+
+
+def _exact_head_independent_reviewer_approval(
+    candidate: TaskCandidate,
+    gate: ReviewGate,
+    decision: review_gate.GateDecision,
+    *,
+    pr_number: int,
+) -> tuple[str, str] | None:
+    """Return ``(reviewer, message)`` iff the task store holds a
+    ``review_approved`` for the exact PR head by an assigned reviewer distinct
+    from the owner.
+    """
+
+    del gate  # ``decision`` already evaluated ``gate`` against the live PR.
+    if (
+        decision.policy != review_gate.POLICY_REVIEW_BEFORE_MERGE
+        or not decision.allow_merge
+        or decision.reason != "exact_head_approved"
+    ):
+        return None
+    contract = decision.contract
+    if not isinstance(contract, Mapping):
+        return None
+    if str(contract.get("source") or "").strip().lower() != "active":
+        return None
+    if str(contract.get("status") or "").strip().lower() != "review_approved":
+        return None
+    if not contract.get("requires_independent_review"):
+        return None
+    owner = str(contract.get("owner") or "").strip()
+    reviewer = str(contract.get("reviewer") or "").strip()
+    if not owner or not reviewer:
+        return None
+    normalized_owner = review_gate.normalize_agent(owner)
+    normalized_reviewer = review_gate.normalize_agent(reviewer)
+    if (
+        not normalized_owner
+        or not normalized_reviewer
+        or normalized_reviewer == normalized_owner
+        or normalized_reviewer == review_gate.normalize_agent("Human/Ops")
+    ):
+        return None
+    if candidate.owner and review_gate.normalize_agent(candidate.owner) != normalized_owner:
+        return None
+    if (
+        candidate.reviewer
+        and review_gate.normalize_agent(candidate.reviewer) != normalized_reviewer
+    ):
+        return None
+    approval = decision.approval
+    if (
+        not isinstance(approval, Mapping)
+        or approval.get("revoked_at")
+        or approval.get("revocation_type")
+        or approval.get("scan_error")
+        or approval.get("binding_error")
+        or not approval.get("binding_present")
+    ):
+        return None
+    if str(approval.get("authority") or "") != review_gate.APPROVAL_KIND_REVIEWER:
+        return None
+    if review_gate.normalize_agent(approval.get("reviewer")) != normalized_reviewer:
+        return None
+    if (
+        str(approval.get("approved_head_sha") or "").strip().lower()
+        != decision.head_oid.lower()
+    ):
+        return None
+    if approval.get("approved_pr_number") != pr_number:
+        return None
+    message = (
+        str(approval.get("message") or "").strip()
+        or f"Exact-head review approved for {candidate.task_id}."
+    )
+    return reviewer, message
 
 
 def ignored_diagnostic_note(checks: CheckSummary) -> str:
@@ -3189,28 +3268,47 @@ def integrate_candidate(
         )
         json_runner = GitHubJsonCommandRunner(runner, root=target_root)
         tag_lookup = make_integrator_tag_lookup(json_runner)
-        has_review = canonical_review_gate_ci.review_proof_tag_exists(
-            repository=repo_slug, head_sha=decision.head_oid, lookup=tag_lookup
+        approve_ref = (
+            f"refs/tags/"
+            f"{github_review_bridge.review_proof_tag_name(decision=github_review_bridge.APPROVE, head_sha=decision.head_oid)}"
         )
-        has_operator = canonical_review_gate_ci.operator_acceptance_proof_tag_exists(
-            repository=repo_slug, head_sha=decision.head_oid, lookup=tag_lookup
+        operator_ref = (
+            f"refs/tags/"
+            f"{github_review_bridge.operator_acceptance_proof_tag_name(head_sha=decision.head_oid)}"
         )
-        reopen_ref = f"refs/tags/{github_review_bridge.review_proof_tag_name(decision=github_review_bridge.REOPEN, head_sha=decision.head_oid)}"
+        reopen_ref = (
+            f"refs/tags/"
+            f"{github_review_bridge.review_proof_tag_name(decision=github_review_bridge.REOPEN, head_sha=decision.head_oid)}"
+        )
+        approve_inspection = canonical_review_gate_ci.inspect_proof_tag(
+            repository=repo_slug,
+            ref=approve_ref,
+            expected_head_sha=decision.head_oid,
+            lookup=tag_lookup,
+        )
+        operator_inspection = canonical_review_gate_ci.inspect_proof_tag(
+            repository=repo_slug,
+            ref=operator_ref,
+            expected_head_sha=decision.head_oid,
+            lookup=tag_lookup,
+        )
         reopen_inspection = canonical_review_gate_ci.inspect_proof_tag(
             repository=repo_slug,
             ref=reopen_ref,
             expected_head_sha=decision.head_oid,
             lookup=tag_lookup,
         )
+        has_review = approve_inspection.is_valid
+        has_operator = operator_inspection.is_valid
+        head_branch = str(pr.get("headRefName") or "") or candidate.branch
+        base = candidate.target_branch or str(pr.get("baseRefName") or "dev")
+        binding = github_review_bridge.ReviewBinding(
+            pr=number,
+            head_sha=decision.head_oid,
+            head_branch=head_branch,
+            base=base,
+        )
         if (has_review or has_operator) and reopen_inspection.is_absent:
-            head_branch = str(pr.get("headRefName") or "") or candidate.branch
-            base = candidate.target_branch or str(pr.get("baseRefName") or "dev")
-            binding = github_review_bridge.ReviewBinding(
-                pr=number,
-                head_sha=decision.head_oid,
-                head_branch=head_branch,
-                base=base,
-            )
             dispatch_error: str | None = None
             if execute:
                 try:
@@ -3244,6 +3342,55 @@ def integrate_candidate(
                 dry_run=not execute,
                 commands=runner.commands[:],
             )
+        if (
+            approve_inspection.is_absent
+            and operator_inspection.is_absent
+            and reopen_inspection.is_absent
+        ):
+            reviewer_approval = _exact_head_independent_reviewer_approval(
+                candidate, gate, decision, pr_number=number
+            )
+            if reviewer_approval is not None:
+                reviewer_actor, approval_message = reviewer_approval
+                review_identity = orchestrator_common.github_review_identity(target_config)
+                publish_error: str | None = None
+                if execute:
+                    try:
+                        github_review_bridge.bridge_review_decision(
+                            repository=repo_slug,
+                            task_id=candidate.task_id,
+                            actor=reviewer_actor,
+                            decision=github_review_bridge.APPROVE,
+                            message=approval_message,
+                            binding=binding,
+                            identity=review_identity,
+                            runner=json_runner,
+                        )
+                    except Exception as exc:
+                        publish_error = str(exc)
+
+                if publish_error:
+                    detail = (
+                        f"PR #{number} canonical review gate check is not green; "
+                        f"failed to publish approve proof for {decision.head_oid[:12]} "
+                        f"by {reviewer_actor}: {publish_error} and waiting for check to complete."
+                    )
+                else:
+                    detail = (
+                        f"PR #{number} canonical review gate check is not green; "
+                        f"{'published' if execute else 'would publish'} approve proof "
+                        f"for {decision.head_oid[:12]} by {reviewer_actor} and dispatched workflow; "
+                        f"waiting for check to complete."
+                    )
+                return IntegrationResult(
+                    candidate.task_id,
+                    "waiting",
+                    detail,
+                    number,
+                    url,
+                    dry_run=not execute,
+                    commands=runner.commands[:],
+                )
 
     if checks.state == "red":
         detail = f"PR #{number} has failing checks: {', '.join(checks.failing)}."
