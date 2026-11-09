@@ -383,6 +383,14 @@ class ExpressionInputsProvider:
         self._capital_pool_reader = capital_pool_reader
         self._runtime_summary_reader = runtime_summary_reader
 
+    @property
+    def capital_reader_configured(self) -> bool:
+        return self._capital_pool_reader is not None
+
+    @property
+    def ledger_reader_configured(self) -> bool:
+        return self._runtime_summary_reader is not None
+
     def __call__(self, binding: Mapping[str, Any]) -> dict[str, Any]:
         pool_id = str(binding.get("capital_pool_id") or "").strip()
         if not pool_id:

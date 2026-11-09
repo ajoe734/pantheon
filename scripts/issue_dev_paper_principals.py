@@ -116,6 +116,9 @@ CONSUMER_FILES = {
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
+    # Shared by paper-signal-producer and paper-fleet-reconciler: only the capital
+    # reader principal, never the deployment volume's governance/registry files.
+    "paper-capital-reader": ("DEPLOYMENT_CAPITAL_SERVICE_TOKEN",),
 }
 REFRESH_SECONDS = 60 * 60
 

@@ -1637,6 +1637,35 @@ def _runner_strategy() -> Any:
     )
 
 
+def expression_startup_report(
+    provider: Any, *, layer_on: bool
+) -> tuple[str, str | None]:
+    """One startup log line and the degraded reason for a missing capital reader.
+
+    Names only whether each reader was configured; never a credential or URL.
+    The reason is ``None`` unless the expression layer is on and the capital
+    reader is absent, in which case every decision would be budget_unavailable.
+    """
+
+    capital = bool(getattr(provider, "capital_reader_configured", False))
+    ledger = bool(getattr(provider, "ledger_reader_configured", False))
+    line = (
+        "expression layer %s; capital reader %s; ledger reader %s"
+        % (
+            "on" if layer_on else "off",
+            "configured" if capital else "not configured",
+            "configured" if ledger else "not configured",
+        )
+    )
+    reason = None
+    if layer_on and not capital:
+        reason = (
+            "capital_pool: capital reader is not configured; "
+            "expression decisions will be budget_unavailable"
+        )
+    return line, reason
+
+
 def healthcheck() -> int:
     """Validate a recent successful paper-only producer tick."""
 
@@ -1675,10 +1704,16 @@ def main() -> int:  # pragma: no cover
     if max_ticks < 0:
         raise ValueError("PAPER_PRODUCER_MAX_TICKS must be >= 0")
     health_file = os.getenv("PAPER_PRODUCER_HEALTH_FILE", "").strip()
+    strategy = _runner_strategy()
     producer = PaperSignalProducer(
-        store_for=_redis_store_factory(signal_store_url), strategy=_runner_strategy()
+        store_for=_redis_store_factory(signal_store_url), strategy=strategy
     )
     log.info("paper_signal_producer started; interval=%.0fs", interval)
+    startup_line, startup_gap = expression_startup_report(
+        getattr(strategy, "_expression_inputs", None),
+        layer_on=expression_layer_enabled(),
+    )
+    log.info(startup_line)
     health: dict[str, Any] = {
         "worker_name": _WORKER_NAME,
         "status": "starting",
@@ -1695,6 +1730,9 @@ def main() -> int:  # pragma: no cover
         "live_capital_enabled": False,
         "live_order_submission_enabled": False,
     }
+    if startup_gap:
+        health["status"] = "degraded"
+        health["last_failure_reason"] = startup_gap
     write_health(health_file, health)
 
     tick = 0
@@ -1734,9 +1772,14 @@ def main() -> int:  # pragma: no cover
                     for binding_id, reason in sorted(degraded_bindings.items())
                 )
             else:
-                health["status"] = "ok"
-                health["last_success_at"] = now_iso
-                health["last_failure_reason"] = None
+                if startup_gap:
+                    health["status"] = "degraded"
+                    health["last_failure_at"] = now_iso
+                    health["last_failure_reason"] = startup_gap
+                else:
+                    health["status"] = "ok"
+                    health["last_success_at"] = now_iso
+                    health["last_failure_reason"] = None
             health["active_binding_count"] = len(bindings)
             health["enqueued_signal_count"] = sum(counts.values())
             health["degraded_binding_count"] = len(degraded_bindings)

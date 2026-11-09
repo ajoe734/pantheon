@@ -1,0 +1,25 @@
+{
+  "task_id": "PAPER-EXPRESSION-CAPITAL-PRINCIPAL-MOUNT-20261109",
+  "hosted_behaviour_exercised": false,
+  "statement": "Functional evidence only. No VM, SSH, hosted BFF, workflow dispatch, broker or model call was made; hosted verification belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "changes": {
+    "issuer": "CONSUMER_FILES gains paper-capital-reader carrying only DEPLOYMENT_CAPITAL_SERVICE_TOKEN (subject runtime-manager, role capital-reader, same 24h TTL and renewal path).",
+    "compose": "dev-paper-capital-reader-tokens volume: issuer mounts it at /issued/paper-capital-reader; paper-signal-producer and paper-fleet-reconciler mount it read only at /run/pantheon-principals. The deployment volume is not mounted into them.",
+    "producer": "expression_startup_report logs one line (layer, capital reader, ledger reader configured or not; no credential) and a missing capital reader with the layer on sets health status degraded with a reason starting capital_pool: that persists across ticks.",
+    "deploy": "BFF-only adoption gate in deploy_nonprod_vm.sh now also requires paper-signal-producer and paper-fleet-reconciler to have the read only principals mount, so first adoption needs a root deploy."
+  },
+  "item_5_note": "Baseline capture, artifact restore and isolated L12 harness do not enumerate principal volumes or consumers; they derive them from docker-compose.yml and issue_dev_paper_principals.CONSUMER_FILES, so the new consumer is covered through those. Harness test extended; baseline and restore suites unchanged and as green as before.",
+  "contract_against_b7153eefd": {
+    "command": "principal_mount_gaps(yaml.safe_load(git show b7153eefd:docker-compose.yml))",
+    "flagged": [
+      "paper-fleet-reconciler: DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE has no mount at /run/pantheon-principals",
+      "paper-signal-producer: DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE has no mount at /run/pantheon-principals"
+    ],
+    "other_services_flagged": []
+  },
+  "commands": [
+    {"cmd": "pytest scripts/test_paper_runtime_topology_contract.py scripts/test_dev_paper_principal_renewal.py scripts/test_issue_dev_paper_principals.py scripts/test_current_l12_compose_wiring.py", "result": "87 passed (before the additional tests)"},
+    {"cmd": "pytest services/execution/lean_runtime/test_expression_inputs.py services/execution/lean_runtime/test_paper_signal_producer.py", "result": "passed"},
+    {"cmd": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_run_isolated_l12_runtime_e2e.py scripts/test_capture_dev_artifact_baseline.py scripts/test_deploy_nonprod_artifact_restore.py scripts/test_paper_runtime_topology_contract.py scripts/test_dev_paper_principal_renewal.py scripts/test_issue_dev_paper_principals.py scripts/test_current_l12_compose_wiring.py services/execution/lean_runtime", "result": "1021 passed, 15 skipped, 6 failed; the 6 failures are in test_deploy_nonprod_artifact_restore.py (ssh transport tests) and fail identically on the tree without these changes"}
+  ]
+}

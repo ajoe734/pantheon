@@ -15,6 +15,7 @@ from services.execution.lean_runtime.paper_signal_producer import (
     BoundedPaperStrategy,
     build_smoke_signal,
     fetch_eligible_paper_bindings,
+    expression_startup_report,
     healthcheck,
     main,
 )
@@ -2481,3 +2482,48 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
                 decision = strategy(artifact_binding, self.NOW)
             self.assertNotIn("expression", decision)
         self.assertEqual(fetch.calls, [])
+
+
+class ExpressionStartupReportTest(unittest.TestCase):
+    def _provider(self, configured: bool):
+        from services.execution.lean_runtime.expression_inputs import ExpressionInputsProvider
+
+        reader = (lambda _pool: {}) if configured else None
+        return ExpressionInputsProvider(
+            capital_pool_reader=reader, runtime_summary_reader=lambda _rt: {}
+        )
+
+    def test_configured_readers_log_without_degraded_reason(self) -> None:
+        line, reason = expression_startup_report(self._provider(True), layer_on=True)
+        self.assertEqual(line, "expression layer on; capital reader configured; ledger reader configured")
+        self.assertIsNone(reason)
+
+    def test_missing_capital_reader_with_layer_on_names_capital_pool(self) -> None:
+        line, reason = expression_startup_report(self._provider(False), layer_on=True)
+        self.assertIn("capital reader not configured", line)
+        self.assertIn("ledger reader configured", line)
+        self.assertTrue(reason and reason.startswith("capital_pool:"))
+
+    def test_layer_off_never_degrades_and_line_carries_no_credential(self) -> None:
+        line, reason = expression_startup_report(self._provider(False), layer_on=False)
+        self.assertIsNone(reason)
+        self.assertNotIn("token", line.lower())
+        _, none_reason = expression_startup_report(None, layer_on=False)
+        self.assertIsNone(none_reason)
+
+    def test_entrypoint_strategy_without_mount_reports_the_gap(self) -> None:
+        from services.execution.lean_runtime import paper_signal_producer
+        from services.execution.lean_runtime.test_expression_inputs import _compose_environment
+
+        env = _compose_environment("paper-signal-producer", None)
+        env["PANTHEON_PAPER_EXPRESSION_LAYER"] = "on"
+        env["PAPER_SIGNAL_STRATEGY"] = "artifact"
+        env.pop("DEPLOYMENT_CAPITAL_SERVICE_TOKEN", None)
+        with patch.dict("os.environ", env, clear=True):
+            strategy = paper_signal_producer._runner_strategy()
+            line, reason = expression_startup_report(
+                strategy._expression_inputs,
+                layer_on=paper_signal_producer.expression_layer_enabled(),
+            )
+        self.assertIn("capital reader not configured", line)
+        self.assertIn("capital_pool", reason or "")

@@ -2863,3 +2863,18 @@ def test_source_refresh_recreates_when_compose_tag_matches_running_image(tmp_pat
     assert any(" up " in f" {call} " for call in calls)
     assert state == baseline
     assert "image ID" not in result.stderr
+
+
+def test_bff_adoption_gate_requires_root_deploy_for_paper_capital_reader_services() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    owners = re.search(r"for owner in ([a-z0-9 -]+); do\n\s+owner_id=", script)
+    assert owners is not None
+    names = owners.group(1).split()
+    # Mounted-and-configured is what the gate inspects; both paper services now need the mount.
+    assert "paper-signal-producer" in names and "paper-fleet-reconciler" in names
+    compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))["services"]
+    for name in names:
+        assert any(
+            m.split(":")[1:2] == ["/run/pantheon-principals"] and m.endswith(":ro")
+            for m in compose[name]["volumes"]
+        ), name

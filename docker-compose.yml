@@ -42,6 +42,8 @@ services:
       - dev-paper-training-worker-tokens:/issued/training-session-preview-worker
       - dev-paper-research-tokens:/issued/research-orchestrator-svc
       - dev-paper-agora-projector-tokens:/issued/source-ingest-agora-projector
+      # Capital reader principal only, for the paper producer and fleet reconciler.
+      - dev-paper-capital-reader-tokens:/issued/paper-capital-reader
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -2424,6 +2426,7 @@ services:
       WORKER_SCRIPT_PATH: services/execution/lean_runtime/paper_runtime.py
     volumes:
       - runtime-data:/data/runtime
+      - dev-paper-capital-reader-tokens:/run/pantheon-principals:ro
     depends_on:
       runtime-manager:
         condition: service_healthy
@@ -2478,6 +2481,7 @@ services:
       PANTHEON_CANARY_EXECUTION_ENABLED: "false"
     volumes:
       - worker-health-data:/data/health
+      - dev-paper-capital-reader-tokens:/run/pantheon-principals:ro
     depends_on:
       runtime-manager:
         condition: service_healthy
@@ -3080,6 +3084,7 @@ volumes:
   dev-paper-training-worker-tokens:
   dev-paper-research-tokens:
   dev-paper-agora-projector-tokens:
+  dev-paper-capital-reader-tokens:
   broker-data:
   bff-data:
   capital-data:
