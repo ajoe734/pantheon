@@ -1,7 +1,7 @@
 {
   "task_id": "TAIFEX-SSF-DAILY-REPORT-CSV-20261109",
   "title": "TAIFEX daily futures report is CSV with Chinese headers and the adapter writes an empty tombstone",
-  "recorded_at_utc": "2026-11-09T16:40:15Z",
+  "recorded_at_utc": "2026-11-09T17:00:45Z",
   "owner": "Antigravity2",
   "reviewer": "Claude",
   "hosted_verification_note": "No hosted workflow was dispatched (neither nonprod-deploy.yml nor dev-tw-market-refresh.yml), no VM or SSH access was performed, and no hosted result is claimed. Functional and contract evidence only is recorded here.",
@@ -27,9 +27,14 @@
       "result": "55 passed in 193.63s"
     },
     {
-      "command": "PATH=\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/bin:$PATH\" python3 -m pytest -q scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs scripts/test_source_ingest_deploy_diagnostics_contract.py::test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse scripts/test_source_ingest_deploy_diagnostics_contract.py::test_regression_no_wildcard_no_host_widening_and_never_merged_host_lists scripts/test_dev_tw_market_refresh.py::test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+      "command": "PATH=\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/bin:$PATH\" python3 -m pytest -q scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs scripts/test_deploy_nonprod_vm.py::test_bff_adoption_gate_requires_root_deploy_for_paper_capital_reader_services scripts/test_source_ingest_deploy_diagnostics_contract.py::test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse scripts/test_source_ingest_deploy_diagnostics_contract.py::test_regression_no_wildcard_no_host_widening_and_never_merged_host_lists scripts/test_dev_tw_market_refresh.py::test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
       "exit_code": 0,
-      "result": "4 passed in 3.38s"
+      "result": "5 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_active_universe.py services/source_ingestion/tests/test_provider_management_coverage.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_dev_tw_market_refresh.py::test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+      "exit_code": 0,
+      "result": "105 passed, 1 skipped in 42.40s"
     },
     {
       "command": "PATH=\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/bin:$PATH\" python3 -m pytest -q services/execution/lean_runtime/test_instrument_candidates.py services/execution/lean_runtime/test_expression_policy.py services/data-plane/tests/test_data_plane_schemas.py",
