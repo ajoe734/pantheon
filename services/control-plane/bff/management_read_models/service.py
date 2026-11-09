@@ -3060,7 +3060,7 @@ class ManagementService:
             lambda st: st.list_approval_records(),
         )
         reviews = rows("governance_review_queue_items", lambda st: st.list_governance_review_queue_items())
-        incidents = rows("incidents", lambda st: st.list_incidents())
+        incidents = rows("incidents", lambda st: read_open_incidents(st))
         jobs, sources["jobs"] = self._shell_summary_jobs_read(store, degraded_state)
         pending_states = {"pending", "in_review"}
         pending_approvals = count(approvals, {*pending_states, "proposed", "under_review", "reviewed"}, "decision_state", "status")
@@ -3199,7 +3199,7 @@ class ManagementService:
                     if not deadline_exhausted:
                         def _read_incidents() -> List[Dict[str, Any]]:
                             if hasattr(store, "list_incidents"):
-                                return store.list_incidents() or []
+                                return read_open_incidents(store)
                             return store.list_incident_alerts() or []
 
                         group_futures["incident"] = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, _read_incidents)
@@ -3352,9 +3352,9 @@ class ManagementService:
                     else f"{len(open_incidents)} active incident(s)." if open_incidents else "No active incidents."
                 ),
                 "details": (
-                    {"total_incidents": None, "open_incidents": None, **_failure_details("incident")}
+                    {"open_incidents": None, **_failure_details("incident")}
                     if incident_failed
-                    else {"total_incidents": len(incidents), "open_incidents": len(open_incidents)}
+                    else {"open_incidents": len(open_incidents)}
                 ),
                 "target_refs": [{"label": "Incidents", "href": "/bff/alerts"}],
             }
@@ -4529,7 +4529,7 @@ class ManagementService:
         incident_alerts = []
         try:
             if hasattr(store, "list_incidents"):
-                raw_incidents = store.list_incidents() or []
+                raw_incidents = read_open_incidents(store)
             elif hasattr(store, "list_incident_alerts"):
                 raw_incidents = store.list_incident_alerts() or []
             else:
