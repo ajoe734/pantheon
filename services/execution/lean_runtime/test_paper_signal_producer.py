@@ -2269,3 +2269,215 @@ class TestExpressionDecisionStep(unittest.TestCase):
             signal["metadata"]["expression_decision"]["reason_code"],
             {"candidates_unavailable", "no_feasible_instrument"},
         )
+
+
+class TestExpressionInputsProductionWiring(unittest.TestCase):
+    """The production strategy built as ``main`` builds it, fed by the real shapes.
+
+    Nothing is injected past the wiring: ``_runner_strategy`` reads the pool
+    from the capital service and the ledger from the telemetry runtime summary;
+    only the HTTP transport is replaced, with the shapes read on 2026-11-09.
+    """
+
+    NOW = TestExpressionDecisionStep.NOW
+    BAR = TestExpressionDecisionStep.BAR
+    INPUTS = TestExpressionDecisionStep.INPUTS
+    _artifact = TestExpressionDecisionStep._artifact
+    _binding = TestExpressionDecisionStep._binding
+
+    POOL_BUDGET = 100000.0
+    POLICY = {
+        "risk_policy_id": "rp-pool-rb-expr",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_asset_classes": ["equity", "future"],
+    }
+    ENV = {
+        "PANTHEON_PAPER_EXPRESSION_LAYER": "on",
+        "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
+        "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": "capital-reader",
+        "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+        "PANTHEON_TELEMETRY_SERVICE_TOKEN": "telemetry-reader",
+        "PANTHEON_TENANT_ID": "default",
+    }
+
+    def _pool(self, *, policy=True, budget=POOL_BUDGET):
+        pool = {
+            "pool_id": "pool-rb-expr",
+            "tenant_id": "default",
+            "name": "persona paper pool",
+            "owner_id": "default",
+            "owner_type": "org",
+            "status": "active",
+            "currency": "TWD",
+            "budget": budget,
+            "single_runtime_enforced": True,
+            "metadata": {"internal": True, "execution_context": "paper"},
+        }
+        if policy is not False:
+            pool["metadata"]["risk_policy"] = dict(self.POLICY if policy is True else policy)
+        return pool
+
+    @staticmethod
+    def _fresh_summary():
+        # The hosted summaries of 2026-11-09: no fill yet, positions null.
+        return {
+            "runtime_id": "runtime-rb-expr",
+            "binding_id": "rb-expr",
+            "ledger_fill_count": 0,
+            "executed_trade_count": 0,
+            "positions": None,
+        }
+
+    def _fetch(self, *, pool=None, summary=None, summary_error=None):
+        calls: list[str] = []
+        pool = self._pool() if pool is None else pool
+        summary = self._fresh_summary() if summary is None else summary
+
+        def fetch(url, headers, timeout):
+            calls.append(url)
+            if "/api/capital-pools/" in url:
+                assert headers["Authorization"] == "Bearer capital-reader"
+                return pool
+            if "/api/telemetry/runtime-summaries/" in url:
+                assert headers["Authorization"] == "Bearer telemetry-reader"
+                if summary_error is not None:
+                    raise summary_error
+                return summary
+            raise AssertionError(url)
+
+        fetch.calls = calls
+        return fetch
+
+    def _decide(self, symbol, price, *, fetch, env=None):
+        import urllib.parse  # noqa: F401
+        from services.execution.lean_runtime import expression_inputs, paper_signal_producer
+
+        art = self._artifact()
+        art["parameters"]["symbols"] = [symbol]
+        binding = self._binding(art, closes=(price * 0.9552, price), symbol=symbol)
+        store = InMemoryPendingSignalStore()
+        with patch.dict("os.environ", env or self.ENV, clear=True), patch.object(
+            expression_inputs, "_http_get_json", fetch
+        ):
+            strategy = paper_signal_producer._runner_strategy()
+            producer = PaperSignalProducer(store_for=lambda _: store, strategy=strategy)
+            self.assertEqual(producer.produce(binding, self.NOW), 1)
+        [signal] = store.get_pending()
+        return signal
+
+    def test_runner_strategy_carries_the_provider_and_calls_it_per_binding(self) -> None:
+        from services.execution.lean_runtime import expression_inputs, paper_signal_producer
+
+        with patch.dict("os.environ", self.ENV, clear=True):
+            strategy = paper_signal_producer._runner_strategy()
+        self.assertIsInstance(strategy, paper_signal_producer.CurrentArtifactStrategy)
+        self.assertIsInstance(strategy._expression_inputs, expression_inputs.ExpressionInputsProvider)
+        fetch = self._fetch()
+        signal = self._decide("2330.TWSE", 2235.0, fetch=fetch)
+        self.assertEqual(len(fetch.calls), 2)
+        self.assertTrue(fetch.calls[0].endswith("/api/capital-pools/pool-rb-expr"))
+        self.assertTrue(fetch.calls[1].endswith("/api/telemetry/runtime-summaries/runtime-rb-expr"))
+        budget = signal["metadata"]["expression_replay_input"]["budget"]
+        self.assertEqual(budget["equity"], self.POOL_BUDGET)
+        self.assertEqual(budget["available_cash"], self.POOL_BUDGET)
+        self.assertEqual(budget["gross_limit"], self.POLICY["gross_limit"] * self.POOL_BUDGET)
+        self.assertEqual(budget["gross_used"], 0.0)
+        self.assertEqual(budget["max_leverage"], self.POLICY["max_leverage"])
+        book = signal["metadata"]["expression_replay_input"]["book_before"]
+        self.assertEqual(book, {"positions": [], "gross_notional": 0.0})
+
+    def test_hosted_long_views_choose_the_cash_share_and_never_no_trade(self) -> None:
+        from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+
+        for symbol, price, code in (
+            ("2330.TWSE", 2235.0, "2330"),
+            ("0050.TWSE", 92.5, "0050"),
+            ("2317.TWSE", 225.0, "2317"),
+        ):
+            with self.subTest(symbol=symbol):
+                signal = self._decide(symbol, price, fetch=self._fetch())
+                meta = signal["metadata"]
+                self.assertEqual(meta["view_direction"], "LONG")
+                self.assertEqual(meta["strength"], 1.0)
+                decision = meta["expression_decision"]
+                self.assertEqual(decision["candidates_considered"], [f"eq:{code}"])
+                self.assertEqual(decision["reason_code"], "long_cash")
+                self.assertEqual((signal["action"], signal["direction"]), ("BUY", "LONG"))
+                # Dev plan 4.4: N* = strength x fraction x remaining gross, units
+                # clamp(round(N*/price), 1, max_units_by_risk); max_units_by_risk
+                # is bounded by cash (full payment) and by remaining gross.
+                remaining = Decimal(str(self.POLICY["gross_limit"])) * Decimal(str(self.POOL_BUDGET))
+                spend = min(Decimal(str(self.POOL_BUDGET)), remaining)
+                max_units = int((spend / Decimal(str(price))).to_integral_value(rounding=ROUND_DOWN))
+                target = Decimal("1.0") * Decimal("1.0") * remaining
+                expected = min(
+                    max(int((target / Decimal(str(price))).quantize(Decimal(1), rounding=ROUND_HALF_UP)), 1),
+                    max_units,
+                )
+                self.assertEqual(meta["instrument_id"], f"eq:{code}")
+                self.assertEqual(meta["units"], expected)
+                self.assertEqual(signal["quantity"], expected)
+                self.assertLessEqual(expected * price, self.POOL_BUDGET)
+                self.assertGreaterEqual(expected, 1)
+
+    def test_policy_missing_is_a_budget_unavailable_no_trade_naming_the_input(self) -> None:
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(pool=self._pool(policy=False)))
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(signal["action"], "HOLD")
+        self.assertEqual(decision["reason_code"], "candidates_unavailable")
+        self.assertTrue(decision["detail"].startswith("budget_unavailable: risk_policy"), decision)
+        self.assertNotEqual(decision["detail"], "gross_limit")
+
+    def test_pool_budget_missing_is_named(self) -> None:
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(pool=self._pool(budget=None)))
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(decision["reason_code"], "candidates_unavailable")
+        self.assertTrue(decision["detail"].startswith("budget_unavailable: pool_budget"), decision)
+
+    def test_ledger_unreadable_is_a_budget_unavailable_no_trade_naming_the_input(self) -> None:
+        import urllib.error
+
+        error = urllib.error.HTTPError("http://telemetry", 503, "unavailable", {}, None)
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(summary_error=error))
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(signal["action"], "HOLD")
+        self.assertEqual(decision["reason_code"], "candidates_unavailable")
+        self.assertTrue(decision["detail"].startswith("budget_unavailable: ledger"), decision)
+
+    def test_unconfigured_services_fail_closed_naming_the_inputs(self) -> None:
+        env = {"PANTHEON_PAPER_EXPRESSION_LAYER": "on"}
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(), env=env)
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(decision["reason_code"], "candidates_unavailable")
+        self.assertTrue(decision["detail"].startswith("budget_unavailable: capital_pool"), decision)
+
+    def test_a_real_gross_limit_still_reports_gross_limit(self) -> None:
+        policy = dict(self.POLICY, gross_limit=0.01, max_leverage=0.01)  # 1,000 < one 2,235 share
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(pool=self._pool(policy=policy)))
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(decision["reason_code"], "no_feasible_instrument")
+        self.assertEqual(decision["detail"], "gross_limit")
+
+    def test_flag_off_and_legacy_artifact_never_read_the_services(self) -> None:
+        fetch = self._fetch()
+        art = self._artifact(expression=False)
+        art["parameters"]["symbols"] = ["2330.TWSE"]
+        binding = self._binding(art, closes=(2135.0, 2235.0), symbol="2330.TWSE")
+        from services.execution.lean_runtime import expression_inputs, paper_signal_producer
+
+        for env, artifact_binding in (
+            ({**self.ENV, "PANTHEON_PAPER_EXPRESSION_LAYER": "off"}, binding),
+            (self.ENV, binding),
+        ):
+            with patch.dict("os.environ", env, clear=True), patch.object(
+                expression_inputs, "_http_get_json", fetch
+            ):
+                strategy = paper_signal_producer._runner_strategy()
+                decision = strategy(artifact_binding, self.NOW)
+            self.assertNotIn("expression", decision)
+        self.assertEqual(fetch.calls, [])

@@ -6358,10 +6358,16 @@ class PaperRuntimeService:
 _SERVICE: PaperRuntimeService | None = None
 
 
-def get_service(runtime_context: PantheonRuntimeContext | None = None) -> PaperRuntimeService:
+def get_service(
+    runtime_context: PantheonRuntimeContext | None = None,
+    capital_pool_reader: Callable[[str], Mapping[str, Any] | None] | None = None,
+) -> PaperRuntimeService:
     global _SERVICE
     if _SERVICE is None:
-        _SERVICE = PaperRuntimeService(runtime_context=runtime_context)
+        _SERVICE = PaperRuntimeService(
+            runtime_context=runtime_context,
+            capital_pool_reader=capital_pool_reader,
+        )
     return _SERVICE
 
 
@@ -6445,9 +6451,23 @@ class _Handler(BaseHTTPRequestHandler):
         self._write_json(404, {"status": "not_found", "path": parsed_path})
 
 
-def main(runtime_context: PantheonRuntimeContext | None = None) -> None:
+def main(
+    runtime_context: PantheonRuntimeContext | None = None,
+    capital_pool_reader: Callable[[str], Mapping[str, Any] | None] | None = None,
+) -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-    service = get_service(runtime_context=runtime_context)
+    if capital_pool_reader is None:
+        # The reconciler launches this module directly as the worker script, so
+        # the order gate's pool-policy reader is resolved here as well as in
+        # runtime_bootstrap. ``None`` (unconfigured) keeps the legacy path.
+        from services.execution.lean_runtime.expression_inputs import (
+            capital_pool_reader_from_env,
+        )
+
+        capital_pool_reader = capital_pool_reader_from_env()
+    service = get_service(
+        runtime_context=runtime_context, capital_pool_reader=capital_pool_reader
+    )
     service.start()
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8010"))

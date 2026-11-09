@@ -215,3 +215,18 @@ def test_opposite_holding_is_closed_regardless_of_position_order(rows) -> None:
     for positions in ([a, b], [b, a]):
         out = ep.decide(view, candidates, {"positions": positions}, BUDGET, PARAMS)
         assert (out["instrument_id"], out["side"], out["units"], out["reason_code"]) == (srf, "buy", 1, "close_leg")
+
+
+class TestBudgetUnavailableNoTrade:
+    def test_record_names_the_missing_input_and_is_a_no_trade(self) -> None:
+        from services.execution.lean_runtime import expression_policy
+
+        view = {"decision_id": "dec-1", "underlying": "2330", "direction": "LONG", "strength": 1.0}
+        record = expression_policy.budget_unavailable_no_trade(view, "risk_policy", "pool has none")
+        assert record["reason_code"] == "candidates_unavailable"
+        assert record["detail"] == "budget_unavailable: risk_policy (pool has none)"
+        assert record["candidates_considered"] == []
+        assert expression_policy.is_no_trade(record)
+        assert expression_policy.enforce(record, [], view) == record
+        bare = expression_policy.budget_unavailable_no_trade(view, "ledger")
+        assert bare["detail"] == "budget_unavailable: ledger"

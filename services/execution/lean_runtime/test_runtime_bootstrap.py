@@ -218,3 +218,144 @@ class RuntimeBootstrapLiveGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuntimeBootstrapOrderGatePolicyTests(unittest.TestCase):
+    """The production bootstrap hands the order gate a reader for the pool policy."""
+
+    POOL = {
+        "pool_id": "pool-paper-env",
+        "tenant_id": "default",
+        "name": "persona paper pool",
+        "owner_id": "default",
+        "owner_type": "org",
+        "status": "active",
+        "currency": "TWD",
+        "budget": 100000.0,
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "risk_policy": {
+                "risk_policy_id": "rp-pool-paper-env",
+                "version": "1.0",
+                "status": "active",
+                "allowed_stages": ["paper"],
+                "gross_limit": 2.0,
+                "net_limit": 2.0,
+                "max_leverage": 2.0,
+                "allowed_asset_classes": ["equity", "future"],
+            },
+        },
+    }
+
+    def _bootstrap_reader(self, env):
+        from services.execution.lean_runtime import expression_inputs, runtime_bootstrap
+
+        urls: list[str] = []
+
+        def fetch(url, headers, timeout):
+            urls.append(url)
+            self.assertEqual(headers["Authorization"], "Bearer capital-reader")
+            return self.POOL
+
+        captured: dict = {}
+
+        def fake_main(**kwargs):
+            captured.update(kwargs)
+
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            runtime_bootstrap, "main", fake_main
+        ), patch.object(expression_inputs, "_http_get_json", fetch):
+            runtime_bootstrap.run([])
+        return captured, urls
+
+    def _algo(self, reader, events):
+        from services.execution.lean_runtime.paper_runtime import PaperExecutionAlgorithm
+
+        return PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            capital_pool_id="pool-paper-env",
+            capital_pool_reader=reader,
+            in_process_broker=True,
+        )
+
+    @staticmethod
+    def _submit_future(algo, signal_id, price, quantity):
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": price,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+                "decision_id": f"dec-{signal_id}",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id=signal_id,
+            side="buy",
+            quantity=quantity,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+
+    def test_bootstrap_passes_the_capital_reader_and_the_gate_enforces_the_pool_policy(self):
+        env = _env(
+            PANTHEON_CAPITAL_API_URL="http://capital:8092",
+            DEPLOYMENT_CAPITAL_SERVICE_TOKEN="capital-reader",
+            PANTHEON_TENANT_ID="default",
+        )
+        captured, urls = self._bootstrap_reader(env)
+        reader = captured["capital_pool_reader"]
+        self.assertTrue(callable(reader))
+        self.assertEqual(captured["runtime_context"].capital.capital_pool_id, "pool-paper-env")
+
+        events: list = []
+        algo = self._algo(reader, events)
+        # 2.247x of equity: above max_leverage 2.0 and gross_limit 2.0.
+        self._submit_future(algo, "s-over", 2247.0, 1.0)
+        # 0.5x of equity: inside both limits.
+        self._submit_future(algo, "s-inside", 500.0, 1.0)
+
+        self.assertTrue(urls and all(u.endswith("/api/capital-pools/pool-paper-env") for u in urls))
+        rejected = [e for e in events if e.event_type == "order_rejection"]
+        self.assertEqual(len(rejected), 1)
+        meta = rejected[0].metadata
+        self.assertIn(meta["reason"], {"gross_limit", "leverage_limit"})
+        self.assertEqual(meta["limit"], 2.0)
+        self.assertGreater(meta["required"], 2.0)
+        self.assertIn("available", meta)
+        self.assertEqual(meta["risk_status"], "rejected")
+        self.assertEqual(algo.performance_ledger()["fill_count"], 1)
+        self.assertEqual(list(algo.instrument_positions), [next(iter(algo.instrument_positions))])
+
+    def test_gross_limit_binds_when_leverage_is_not_set(self):
+        pool = json.loads(json.dumps(self.POOL))
+        del pool["metadata"]["risk_policy"]["max_leverage"]
+        events: list = []
+        algo = self._algo(lambda _pool_id: pool, events)
+        self._submit_future(algo, "s-gross", 2247.0, 1.0)
+        [rejection] = [e for e in events if e.event_type == "order_rejection"]
+        self.assertEqual(rejection.metadata["reason"], "gross_limit")
+        self.assertEqual(rejection.metadata["limit"], 2.0)
+
+    def test_equity_only_pool_rejects_a_future_order(self):
+        pool = json.loads(json.dumps(self.POOL))
+        pool["metadata"]["risk_policy"]["allowed_asset_classes"] = ["equity"]
+        events: list = []
+        algo = self._algo(lambda _pool_id: pool, events)
+        self._submit_future(algo, "s-asset", 500.0, 1.0)
+        [rejection] = [e for e in events if e.event_type == "order_rejection"]
+        self.assertEqual(rejection.metadata["reason"], "asset_class_not_allowed")
+
+    def test_unconfigured_capital_service_keeps_the_previous_resolution_path(self):
+        captured, urls = self._bootstrap_reader(_env())
+        self.assertIsNone(captured["capital_pool_reader"])
+        self.assertEqual(urls, [])

@@ -3932,3 +3932,48 @@ class TestInstrumentCounterfactualRows(unittest.TestCase):
         store = RuntimeSummaryProjectionStore()
         summary = store.project_event(self._row_event({"decision_id": "d-1"}, event_id="evt-bad"))
         self.assertNotIn("instrument_counterfactuals", summary)
+
+
+class TestLedgerCashProjection(unittest.TestCase):
+    """``ledger_cash`` rides on fill events and is published on the summary.
+
+    The expression-layer inputs read it so the cash they size against is the
+    paper ledger's, not a second store.
+    """
+
+    @staticmethod
+    def _fill(lfc: int, cash: Any, **kwargs: Any) -> dict[str, Any]:
+        event = TestInstrumentAwarePositionProjection._fill(
+            lfc=lfc, quantity=kwargs.get("quantity", 10.0), price=kwargs.get("price", 2235.0)
+        )
+        if cash is not None:
+            event["metadata"]["ledger_cash"] = cash
+        return event
+
+    def test_no_fill_means_no_ledger_cash(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        summary = store.project_event(_event())
+        self.assertNotIn("ledger_cash", summary)
+
+    def test_fill_publishes_ledger_cash_and_the_latest_fill_wins(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        first = store.project_event(self._fill(1, 77650.0))
+        self.assertEqual(first["ledger_cash"], 77650.0)
+        self.assertEqual(first["ledger_cash_fill_count"], 1)
+        second = store.project_event(self._fill(2, 55300.0))
+        self.assertEqual(second["ledger_cash"], 55300.0)
+        self.assertEqual(second["ledger_cash_fill_count"], 2)
+
+    def test_a_replayed_older_fill_cannot_move_cash_backwards(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(self._fill(1, 77650.0))
+        store.project_event(self._fill(2, 55300.0))
+        replay = store.project_event(self._fill(1, 77650.0))
+        self.assertEqual(replay["ledger_cash"], 55300.0)
+
+    def test_a_non_finite_or_boolean_cash_is_ignored(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(self._fill(1, 77650.0))
+        for bad in (float("nan"), float("inf"), True, "55300"):
+            summary = store.project_event(self._fill(2, bad))
+            self.assertEqual(summary["ledger_cash"], 77650.0)
