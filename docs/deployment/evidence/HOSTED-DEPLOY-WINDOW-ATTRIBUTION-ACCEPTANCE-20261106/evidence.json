@@ -1,0 +1,309 @@
+{
+  "schema_version": "pantheon.hosted-acceptance-evidence.v1",
+  "task_id": "HOSTED-DEPLOY-WINDOW-ATTRIBUTION-ACCEPTANCE-20261106",
+  "title": "Hosted acceptance for attribution latency and the deploy window and whole stack compensation",
+  "status": "passed",
+  "verdict": "accepted",
+  "recorded_at": "2026-11-09T13:34:12Z",
+  "environment": {
+    "name": "dev",
+    "project_id": "pantheon-dev-20260902",
+    "vm": "pantheon-dev-deploy",
+    "bff_url": "https://api.dev.mvl-cap.tw",
+    "fe_url": "https://app.dev.mvl-cap.tw"
+  },
+  "deployed_pair": {
+    "backend_repo": "ajoe734/pantheon",
+    "backend_branch": "dev",
+    "backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+    "frontend_repo": "ajoe734/execute-plans",
+    "frontend_branch": "dev",
+    "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+    "release_candidate_id": "a5e62003ad521acdc78efeccce68b728e99b0cf3e1aa1728ccde0d7c83146420",
+    "pair_id": "fdf37194e6547a67dd2cc625e79af6a3e360b67ab77f8194d0955e4f027bc8b4",
+    "compatibility_manifest_sha256": "f6d2e78f064e1a364bd0a90d0bdfb8e171adb03c068b18b5a1ee9d3c0c46f67a",
+    "frontend_dist_sha256": "2c6bd18596cc0318bd3e539c9a7f419b22e621c6ef69ac162526c1ee43b2dd64",
+    "served_manifest_sha256": "768f9576d2983639b54554c16fee32c5ea037c392c498434e290348a43cf117f",
+    "candidate_readback_manifest_sha256": "693d162ce4c0ae8992242fb84a2a115050c2563f36afcea65ea7f0ffee07cc5e",
+    "accepted_at": "2026-11-09T08:33:12Z",
+    "verified_at": "2026-11-09T08:33:39.194689Z",
+    "root_deploy_run_id": "42579393176",
+    "root_deploy_run_url": "https://github.com/ajoe734/pantheon/actions/runs/42579393176",
+    "integration_gate_run_id": "42582167747",
+    "integration_gate_run_url": "https://github.com/ajoe734/execute-plans/actions/runs/42582167747",
+    "frontend_deploy_run_id": "42584608989",
+    "frontend_deploy_run_url": "https://github.com/ajoe734/execute-plans/actions/runs/42584608989"
+  },
+  "prerequisites": {
+    "BFF-ATTRIBUTION-STRATEGY-LABEL-VIEW-20261106": {
+      "pr": 6986,
+      "head_sha": "0ffac6057afec04bd4f7d45d4a59e08f4392f076",
+      "merge_commit": "95071b438617e9a319822966e5c093f9420e4d61",
+      "evidence_path": "docs/deployment/evidence/BFF-ATTRIBUTION-STRATEGY-LABEL-VIEW-20261106/evidence.json"
+    },
+    "DEV-DEPLOY-MARKET-REFRESH-BEFORE-MUTATION-20261106": {
+      "pr": 6977,
+      "head_sha": "f158928f55f8eeccfe5502eddd141e6f0c3bf7ce",
+      "merge_commit": "4bbc1388478369939bc89e2405d8ed1ea4ec1416",
+      "evidence_path": "docs/deployment/evidence/DEV-DEPLOY-MARKET-REFRESH-BEFORE-MUTATION-20261106/evidence.json"
+    },
+    "DEV-DEPLOY-COMPENSATION-WHOLE-STACK-20261106": {
+      "pr": 6981,
+      "head_sha": "bcfcbe5ceab0e801f74d0bed16c858b364db0154",
+      "merge_commit": "6c68dee668c4edd1c20a7d1e152197fa52d0c465",
+      "evidence_path": "docs/deployment/evidence/DEV-DEPLOY-COMPENSATION-WHOLE-STACK-20261106/evidence.json"
+    },
+    "supporting_fixes": [
+      {
+        "task_id": "DEV-STACK-CAPTURE-R2-20261106",
+        "merge_commit": "2638f809cd4c933aeb26df017979eb122552e5dd",
+        "summary": "Fixed capture_dev_artifact_baseline.py UnboundLocalError on r2 in stack baseline capture"
+      },
+      {
+        "task_id": "DEV-STACK-RESTORE-OWNER-IDENTITY-20261107",
+        "merge_commit": "e65bdb388",
+        "summary": "Aligned whole-stack compensation owner verification with recreated application containers while keeping stateful infra container IDs pinned"
+      },
+      {
+        "task_id": "DEV-DEPLOY-COMPENSATION-DRILL-20261107",
+        "merge_commit": "e559d7938",
+        "summary": "Added governed workflow_dispatch drill_compensate_after_deploy input to exercise real whole-stack compensation path on demand"
+      }
+    ]
+  },
+  "baseline_before_fixes": {
+    "observed_at": "2026-11-06",
+    "backend_sha": "0cd59ab28",
+    "attribution_latency_and_registry_payload": {
+      "endpoint": "GET /bff/management/performance-attribution?period=latest",
+      "latency_ms_range": [5144, 9107],
+      "bff_cpu_seconds_range": [3.8, 7.6],
+      "registry_call": "GET /api/registry/strategy-specs",
+      "registry_rows_returned": 5031,
+      "registry_payload_bytes": 24350000
+    },
+    "deploy_window_failures": {
+      "taiwan_close_utc": "05:30:00Z",
+      "delayed_scheduled_refresh_utc_window": "14:49:00Z..15:08:00Z",
+      "failed_root_deploy_run_ids": ["41430756299", "41621635076", "41988080438"],
+      "reason": "market_input_stale after stack mutation"
+    },
+    "partial_compensation_drift": {
+      "affected_run_ids": ["41812400967", "41988080438"],
+      "restored_services_count": 3,
+      "unrestored_containers_approx": 45,
+      "failure_mode": "Only operator-bff, agora-interaction-worker, and loop-run-projector-scheduler were restored while ~45 compose containers remained on the rejected candidate image"
+    }
+  },
+  "raw_output_digests": {
+    "uncondensed_evidence_file_sha256": "f6e4685e8b37ba7e77c8583d9bbf80ebd8f77511006a6467e9e48d04af815e16",
+    "uncondensed_git_blob_oid": "0aded2e297dcab577fd333c929e7ebfef21d6ece",
+    "criterion_1_steps_and_snapshots_sha256": "eda4f5dcf4156717eddc1c7be2d298ddb12bb1250f903ec7673cfaeac0d43de7",
+    "criterion_2_per_read_timings_sha256": "67f01e909b240341defb798660e7874c635df5cc7e59f825d0ebc987536b87c3",
+    "criterion_3_registry_log_windows_sha256": "a3171404f86eb7fdc33ab30e3a9e870a0d8a34d964dba460a30b0f3f37323452",
+    "criterion_4_compensation_readback_manifest_sha256": "6b1ae64f00eb2f175e1f67b018b9308f645049664e0e94ee733b5dc540d90e7c",
+    "criterion_4_stack_57_services_image_map_sha256": "16871bfa8be51f51d65c39442d09de628c6d842da4e777e6930c68075097c16e",
+    "criterion_4_owners_readback_sha256": "9bcde163c4e13d5ed6db6d8201a5ca2677b46a9810272cfc9967cf766b88c75b",
+    "closing_release_candidate_readback_manifest_sha256": "693d162ce4c0ae8992242fb84a2a115050c2563f36afcea65ea7f0ffee07cc5e",
+    "closing_release_served_manifest_sha256": "768f9576d2983639b54554c16fee32c5ea037c392c498434e290348a43cf117f",
+    "closing_release_verification_section_sha256": "271c20a88ed4d6083e911e5ef1333979d3e5d63c184d8770e58b64633a9077ee"
+  },
+  "acceptance_criteria": {
+    "1_deploy_window_refresh_before_stack_mutation": {
+      "status": "passed",
+      "run_id": "42579393176",
+      "run_url": "https://github.com/ajoe734/pantheon/actions/runs/42579393176",
+      "job_id": "129034288803",
+      "job_name": "Deploy dev under shared environment lease",
+      "backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+      "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "previous_backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+      "previous_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "lease_id": "463c3a0d-0d6c-453b-813c-51eb8345ff2d",
+      "taiwan_market_session_date": "2026-11-09",
+      "taiwan_market_close_utc": "2026-11-09T05:30:00Z",
+      "job_started_at": "2026-11-09T07:26:48Z",
+      "step_order_verification": {
+        "refresh_ran_before_baseline_capture": true,
+        "refresh_ran_before_stack_mutation": true,
+        "step_15_acquire_lease_utc": "2026-11-09T07:27:47Z..2026-11-09T07:27:48Z",
+        "step_17_refresh_only_before_mutation_utc": "2026-11-09T07:27:49Z..2026-11-09T07:32:51Z",
+        "step_19_capture_prior_artifacts_utc": "2026-11-09T07:32:51Z..2026-11-09T07:33:30Z",
+        "step_21_deploy_vm_stack_utc": "2026-11-09T07:33:31Z..2026-11-09T07:46:28Z",
+        "step_28_ensure_paper_baseline_utc": "2026-11-09T07:50:21Z..2026-11-09T07:52:00Z",
+        "step_32_paper_lifecycle_probe_utc": "2026-11-09T07:52:01Z..2026-11-09T07:52:19Z",
+        "steps_and_snapshots_raw_sha256": "eda4f5dcf4156717eddc1c7be2d298ddb12bb1250f903ec7673cfaeac0d43de7"
+      },
+      "pre_mutation_refresh_execution": {
+        "command": "bash scripts/deploy_nonprod_vm.sh --refresh-only",
+        "stale_session_refresh_exercised": true,
+        "preflight_decision": "bounded source refresh preflight passed; proceeding with refresh",
+        "connector_id": "tw-twse-tpex-official-market",
+        "ingest_run_id": "ingest-79645fffc264",
+        "accepted_snapshots_at": "2026-11-09T07:32:02.481Z",
+        "snapshot_ids": {
+          "2330.TWSE": "mss-1723061c5d7aca329fb5c1dd",
+          "0050.TWSE": "mss-b79ffeab5d6eb7ae383b2031",
+          "2317.TWSE": "mss-ac2b30927a8e21f239fed75c",
+          "2330.TW": "mss-1723061c5d7aca329fb5c1dd"
+        },
+        "post_refresh_proof_status": "noop (already_fresh for session_date 2026-11-09)"
+      },
+      "paper_baseline_result": {
+        "status": "ok",
+        "state": "paper_running",
+        "provisioning_state": "succeeded",
+        "provisioning_step": "authoritative_readback_complete",
+        "capital_mode": "paper",
+        "live_capital_side_effects": false,
+        "persona_id": "persona-a12343c3a6616691aa05",
+        "deployment_plan_id": "plan-persona-paper-5d3ee11c8c0cf82290e2",
+        "runtime_binding_id": "rb-d09776f7bb2542e5b18a12c0bb908cec",
+        "runtime_id": "rt-90077347",
+        "hosted_lifecycle_probe_outcome": "passed",
+        "governed_case_key": "dev-paper-release-42579393176-1",
+        "signal_id": "sig-217f74b2db3f7797d64ad329bf6fcb94",
+        "market_input_snapshot_id": "mss-1723061c5d7aca329fb5c1dd"
+      }
+    },
+    "2_attribution_latency_and_strategy_labels": {
+      "status": "passed",
+      "endpoint": "GET /bff/management/performance-attribution?period=latest",
+      "requirement_median_under_ms": 2000,
+      "sequential_reads_required": 10,
+      "per_read_timings_raw_sha256": "67f01e909b240341defb798660e7874c635df5cc7e59f825d0ebc987536b87c3",
+      "primary_measurement": {
+        "measured_window_utc": "2026-11-09T02:08:13Z..2026-11-09T02:08:24Z",
+        "backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+        "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+        "pair_id": "b8520d25978671e10564970fd8a3537d98dc0f0aed0251eb6ee42487ff149274",
+        "sequential_reads_count": 10,
+        "median_ms": 1163.8,
+        "min_ms": 819.6,
+        "max_ms": 1416.3,
+        "strategy_rows_count": 19,
+        "labelled_strategy_rows_count": 19,
+        "unlabelled_strategy_rows_count": 0
+      },
+      "prior_pair_measurements_summary": [
+        {
+          "measured_at_utc": "2026-11-07T07:45:00Z",
+          "backend_sha": "f5c57bb1008eb5fbd759fbc9fa4150b6c8c47ba1",
+          "frontend_sha": "a71b5c9afb2a5a54bac03948f1cf29f2899e9e33",
+          "sequential_reads_count": 10,
+          "median_ms": 1010.0,
+          "min_ms": 776,
+          "max_ms": 1275,
+          "strategy_rows_count": 22,
+          "labelled_strategy_rows_count": 22,
+          "unlabelled_strategy_rows_count": 0
+        },
+        {
+          "measured_window_utc": "2026-11-06T11:25:00Z..2026-11-06T11:38:00Z",
+          "backend_sha": "2638f809cd4c933aeb26df017979eb122552e5dd",
+          "frontend_sha": "3c99c7ae1cc0d393fe3c2392f4bfd6e4b2a8cc3f",
+          "cold_batch_1_median_ms": 2806.0,
+          "warm_batches_2_to_5_medians_ms": [1195.0, 1040.0, 1071.0, 1078.0],
+          "strategy_rows_count": 5,
+          "labelled_strategy_rows_count": 5,
+          "unlabelled_strategy_rows_count": 0
+        }
+      ]
+    },
+    "3_registry_strategy_specs_view_parameter_audit": {
+      "status": "passed",
+      "container": "pantheon-registry-1",
+      "expected_query": "GET /api/registry/strategy-specs?view=persona_binding",
+      "forbidden_query": "GET /api/registry/strategy-specs (without view parameter)",
+      "registry_log_windows_raw_sha256": "a3171404f86eb7fdc33ab30e3a9e870a0d8a34d964dba460a30b0f3f37323452",
+      "windows": [
+        {
+          "window_utc": "2026-11-09T02:08:13Z..2026-11-09T02:08:24Z",
+          "backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+          "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+          "attribution_reads": 10,
+          "view_persona_binding_reads": 10,
+          "unfiltered_strategy_specs_reads": 0
+        },
+        {
+          "window_utc": "2026-11-07T07:45:00Z",
+          "backend_sha": "f5c57bb1008eb5fbd759fbc9fa4150b6c8c47ba1",
+          "frontend_sha": "a71b5c9afb2a5a54bac03948f1cf29f2899e9e33",
+          "attribution_reads": 10,
+          "view_persona_binding_reads": 10,
+          "unfiltered_strategy_specs_reads": 0
+        },
+        {
+          "window_utc": "2026-11-06T11:25:00Z..2026-11-06T11:38:00Z",
+          "backend_sha": "2638f809cd4c933aeb26df017979eb122552e5dd",
+          "frontend_sha": "3c99c7ae1cc0d393fe3c2392f4bfd6e4b2a8cc3f",
+          "batches_audited": 4,
+          "view_persona_binding_reads_total": 42,
+          "unfiltered_strategy_specs_reads": 0
+        }
+      ]
+    },
+    "4_whole_stack_compensated_deploy": {
+      "status": "passed",
+      "compensation_run_id": "42546069567",
+      "compensation_run_url": "https://github.com/ajoe734/pantheon/actions/runs/42546069567",
+      "started_at": "2026-11-09T01:32:09Z",
+      "completed_at": "2026-11-09T02:05:17Z",
+      "drill_kind": "intentional-compensation-drill",
+      "candidate_backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+      "candidate_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "restored_baseline_backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+      "restored_baseline_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "compensation_artifact_name": "pantheon-dev-artifact-compensation-42546069567-1",
+      "compensation_readback_manifest_sha256": "6b1ae64f00eb2f175e1f67b018b9308f645049664e0e94ee733b5dc540d90e7c",
+      "stack_57_services_image_map_sha256": "16871bfa8be51f51d65c39442d09de628c6d842da4e777e6930c68075097c16e",
+      "owners_readback_sha256": "9bcde163c4e13d5ed6db6d8201a5ca2677b46a9810272cfc9967cf766b88c75b",
+      "image_readback_verified": true,
+      "protected_owners_unchanged": true,
+      "baseline_nonsecret_config_verified": true,
+      "recorded_services_count": 57,
+      "services_restored_to_baseline_count": 57,
+      "services_left_on_candidate_image_count": 0,
+      "candidate_only_stopped": [],
+      "prior_natural_compensation_incident_and_fix": {
+        "run_id": "42397678868",
+        "run_url": "https://github.com/ajoe734/pantheon/actions/runs/42397678868",
+        "occurred_at": "2026-11-07T17:43:00Z",
+        "candidate_backend_sha": "f6d40b77da32309498863a6d66debcc2449268e2",
+        "candidate_frontend_sha": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+        "baseline_backend_sha": "6528ce4ee8b38477ae8ba0da6418b16ebcd0c7d3",
+        "baseline_frontend_sha": "a71b5c9afb2a5a54bac03948f1cf29f2899e9e33",
+        "summary": "Whole-stack restore returned all 57 compose services to baseline image IDs, but dev_release_artifact_driver.py:823 exited 75 because whole-stack restore recreated application owner containers while the legacy check required unchanged container IDs. Fixed in DEV-STACK-RESTORE-OWNER-IDENTITY-20261107 (e65bdb388) and proven end-to-end in run 42546069567."
+      }
+    },
+    "5_measured_values_recorded_with_deployed_shas": {
+      "status": "passed",
+      "recorded_pairs": [
+        {
+          "role": "closing_accepted_pair_and_deploy_window_proof",
+          "backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+          "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+          "pair_id": "fdf37194e6547a67dd2cc625e79af6a3e360b67ab77f8194d0955e4f027bc8b4",
+          "root_deploy_run_id": "42579393176"
+        },
+        {
+          "role": "whole_stack_compensation_baseline_and_attribution_latency_proof",
+          "backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+          "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+          "pair_id": "b8520d25978671e10564970fd8a3537d98dc0f0aed0251eb6ee42487ff149274",
+          "compensation_run_id": "42546069567"
+        },
+        {
+          "role": "prior_attribution_latency_proof_20261107",
+          "backend_sha": "f5c57bb1008eb5fbd759fbc9fa4150b6c8c47ba1",
+          "frontend_sha": "a71b5c9afb2a5a54bac03948f1cf29f2899e9e33"
+        },
+        {
+          "role": "initial_attribution_latency_proof_20261106",
+          "backend_sha": "2638f809cd4c933aeb26df017979eb122552e5dd",
+          "frontend_sha": "3c99c7ae1cc0d393fe3c2392f4bfd6e4b2a8cc3f"
+        }
+      ]
+    }
+  }
+}
