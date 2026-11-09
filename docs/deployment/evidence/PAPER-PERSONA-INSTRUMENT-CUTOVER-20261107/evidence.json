@@ -1,0 +1,312 @@
+{
+  "schema_version": "pantheon.cutover.evidence.v1",
+  "task_id": "PAPER-PERSONA-INSTRUMENT-CUTOVER-20261107",
+  "title": "Governed cutover of paper personas to the instrument expression layer",
+  "recorded_at_utc": "2026-11-08T23:05:00Z",
+  "author": "Human/Ops",
+  "reviewer": "Claude",
+  "hosted_environment": {
+    "environment": "pantheon-dev",
+    "app_origin": "https://app.dev.mvl-cap.tw",
+    "bff_origin": "https://api.dev.mvl-cap.tw",
+    "served_bff_commit": "78a37e06c7bfe43a6f2023729a0798b452e2f646",
+    "served_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+    "deploy_workflow_run_id": 42502558089,
+    "accepted_at_utc": "2026-11-08T18:05:17Z",
+    "no_store_hand_edited": true
+  },
+  "retired_personas": [
+    {
+      "persona_id": "persona-be19a1fac471247f2b2a",
+      "name": "青禾｜2330 台股 Paper 學習 R2",
+      "symbol": "2330.TWSE",
+      "pre_cutover_quantity": -6.0,
+      "capital_pool_id": "pool-persona-paper-298e138c136c9840b0e4",
+      "runtime_id": "rt-535a82a3",
+      "runtime_binding_id": "rb-a1c3ada3d5894d57bc2e012f337753be",
+      "artifact_id": "artifact-persona-paper-298e138c136c9840b0e4",
+      "governed_path": "POST /bff/v1/commands (PersonaAction/RetirePaperPersonaCase -> PersonaProvisioningCoordinator.retire_case)",
+      "command_ids": [
+        "cmd-9a0c6d3ed5554289bdf7f981168f2183",
+        "cmd-1e2a32c486cb4fbb8544d1bcb3a6217d"
+      ],
+      "created_at_utc": "2026-11-01T23:50:00.883200Z",
+      "retirement_started_at_utc": "2026-11-08T18:50:13Z",
+      "retired_at_utc": "2026-11-08T18:54:11.912757Z",
+      "authoritative_readback_state": "retired",
+      "authoritative_retirement_status": "retired"
+    },
+    {
+      "persona_id": "persona-9d4fb3f44cbc5e7cb84f",
+      "name": "衡岳｜0050 台股 Paper 學習",
+      "symbol": "0050.TWSE",
+      "pre_cutover_quantity": -6.0,
+      "capital_pool_id": "pool-persona-paper-01390a4b72713295b001",
+      "runtime_id": "rt-8b0d8649",
+      "runtime_binding_id": "rb-fd733d7c192f45898bbe0e90c8555878",
+      "artifact_id": "artifact-persona-paper-01390a4b72713295b001",
+      "governed_path": "POST /bff/v1/commands (PersonaAction/RetirePaperPersonaCase -> PersonaProvisioningCoordinator.retire_case)",
+      "command_ids": [
+        "cmd-f87a335b75c94b4a808b4d419aa24f92",
+        "cmd-e115b63c1a2644fab9409e0d25113b6e"
+      ],
+      "created_at_utc": "2026-11-01T23:48:14.740973Z",
+      "retirement_started_at_utc": "2026-11-08T18:54:40Z",
+      "retired_at_utc": "2026-11-08T18:55:21.355211Z",
+      "authoritative_readback_state": "retired",
+      "authoritative_retirement_status": "retired"
+    },
+    {
+      "persona_id": "persona-d9363cffc0efbbbcbeb9",
+      "name": "澄川｜2317 台股 Paper 學習",
+      "symbol": "2317.TWSE",
+      "pre_cutover_quantity": -4.0,
+      "capital_pool_id": "pool-persona-paper-8ae996980eeccb80d928",
+      "runtime_id": "rt-c98e4223",
+      "runtime_binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+      "artifact_id": "artifact-persona-paper-8ae996980eeccb80d928",
+      "governed_path": "POST /bff/v1/commands (PersonaAction/RetirePaperPersonaCase -> PersonaProvisioningCoordinator.retire_case)",
+      "command_ids": [
+        "cmd-19fb98d8664b4b38880dd9a2d0a38dd1",
+        "cmd-4fd4b67f671d461990eb6dc04a6d6af4"
+      ],
+      "created_at_utc": "2026-11-01T23:45:50.743285Z",
+      "retirement_started_at_utc": "2026-11-08T18:55:31Z",
+      "retired_at_utc": "2026-11-08T18:56:07.889314Z",
+      "authoritative_readback_state": "retired",
+      "authoritative_retirement_status": "retired"
+    },
+    {
+      "persona_id": "persona-2bd3c6df7cdf5ab31495",
+      "case_key": "dev-paper-release-42181697809-1",
+      "symbol": "2330.TW",
+      "pre_cutover_quantity": -1.0,
+      "governed_path": "scripts/retire_dev_paper_release_cases.py -> PersonaProvisioningCoordinator.retire_case",
+      "created_at_utc": "2026-11-06T07:56:57.745816Z",
+      "retired_at_utc": "2026-11-06T22:59:07.312957Z",
+      "authoritative_readback_state": "retired"
+    },
+    {
+      "persona_id": "persona-b09ed5e153524f257144",
+      "case_key": "dev-paper-release-42189951083-1",
+      "symbol": "2330.TW",
+      "pre_cutover_quantity": -1.0,
+      "governed_path": "scripts/retire_dev_paper_release_cases.py -> PersonaProvisioningCoordinator.retire_case",
+      "created_at_utc": "2026-11-06T09:02:16.795479Z",
+      "retired_at_utc": "2026-11-06T22:59:13.267249Z",
+      "authoritative_readback_state": "retired"
+    }
+  ],
+  "provisioned_successors": [
+    {
+      "persona_id": "persona-2448c7053e33ea48da47",
+      "replaces_persona_id": "persona-be19a1fac471247f2b2a",
+      "name": "青禾｜2330 台股 Paper 學習 R3",
+      "symbol": "2330.TWSE",
+      "provisioned_at_utc": "2026-11-08T12:19:41.761558Z",
+      "running_at_utc": "2026-11-08T12:20:47.663487Z",
+      "state": "paper_running",
+      "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+      "runtime_id": "rt-ad81501b",
+      "runtime_binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+      "artifact_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+      "expression_policy": {
+        "kind": "notional_target_v1",
+        "version": "1.0",
+        "parameters": {
+          "allow_pyramiding": false,
+          "lever_min_strength": 0.5,
+          "close_before_reverse": true,
+          "notional_fraction_at_full_strength": 1.0
+        }
+      },
+      "pool_risk_policy": {
+        "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+        "status": "active",
+        "version": "1.0",
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ],
+        "allowed_stages": [
+          "paper"
+        ],
+        "max_leverage": 2.0,
+        "gross_limit": 2.0,
+        "net_limit": 2.0
+      }
+    },
+    {
+      "persona_id": "persona-ee7112a829d38b9135ac",
+      "replaces_persona_id": "persona-9d4fb3f44cbc5e7cb84f",
+      "name": "衡岳｜0050 台股 Paper 學習 R2",
+      "symbol": "0050.TWSE",
+      "provisioned_at_utc": "2026-11-08T18:09:41.077514Z",
+      "running_at_utc": "2026-11-08T18:11:56.231182Z",
+      "state": "paper_running",
+      "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+      "runtime_id": "rt-3b65a843",
+      "runtime_binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+      "artifact_id": "artifact-persona-paper-a81b4fd15944698341aa",
+      "expression_policy": {
+        "kind": "notional_target_v1",
+        "version": "1.0",
+        "parameters": {
+          "allow_pyramiding": false,
+          "lever_min_strength": 0.5,
+          "close_before_reverse": true,
+          "notional_fraction_at_full_strength": 1.0
+        }
+      },
+      "pool_risk_policy": {
+        "risk_policy_id": "rp-pool-persona-paper-a81b4fd15944698341aa",
+        "status": "active",
+        "version": "1.0",
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ],
+        "allowed_stages": [
+          "paper"
+        ],
+        "max_leverage": 2.0,
+        "gross_limit": 2.0,
+        "net_limit": 2.0
+      }
+    },
+    {
+      "persona_id": "persona-6507750312870d03a241",
+      "replaces_persona_id": "persona-d9363cffc0efbbbcbeb9",
+      "name": "澄川｜2317 台股 Paper 學習 R2",
+      "symbol": "2317.TWSE",
+      "provisioned_at_utc": "2026-11-08T18:10:44.485779Z",
+      "running_at_utc": "2026-11-08T18:12:37.709752Z",
+      "state": "paper_running",
+      "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+      "runtime_id": "rt-3252fa75",
+      "runtime_binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+      "artifact_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+      "expression_policy": {
+        "kind": "notional_target_v1",
+        "version": "1.0",
+        "parameters": {
+          "allow_pyramiding": false,
+          "lever_min_strength": 0.5,
+          "close_before_reverse": true,
+          "notional_fraction_at_full_strength": 1.0
+        }
+      },
+      "pool_risk_policy": {
+        "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+        "status": "active",
+        "version": "1.0",
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ],
+        "allowed_stages": [
+          "paper"
+        ],
+        "max_leverage": 2.0,
+        "gross_limit": 2.0,
+        "net_limit": 2.0
+      }
+    }
+  ],
+  "successor_drawdown_baselines": {
+    "task_id": "PAPER-SUCCESSOR-BASELINES-20261108",
+    "pr": 7083,
+    "head_sha": "04586863720d5e465cdc60db1dd97330ae661094",
+    "merge_commit_sha": "a141fea06ed450d6b05232397c86d9361cc7d499",
+    "merged_at_utc": "2026-11-08T18:40:32Z",
+    "config_path": "services/evolution/config/threshold_sweep_baselines.json",
+    "schema_version": "pantheon.evolution.threshold_sweep_baselines.v2",
+    "total_baseline_entry_count": 16,
+    "total_artifact_count": 8,
+    "successor_entries": [
+      {
+        "artifact_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+        "instrument_class": "cash_share",
+        "expected_drawdown": 0.08,
+        "approval_state": "approved"
+      },
+      {
+        "artifact_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+        "instrument_class": "stock_future",
+        "expected_drawdown": 0.16,
+        "approval_state": "approved"
+      },
+      {
+        "artifact_id": "artifact-persona-paper-a81b4fd15944698341aa",
+        "instrument_class": "cash_share",
+        "expected_drawdown": 0.08,
+        "approval_state": "approved"
+      },
+      {
+        "artifact_id": "artifact-persona-paper-a81b4fd15944698341aa",
+        "instrument_class": "stock_future",
+        "expected_drawdown": 0.16,
+        "approval_state": "approved"
+      },
+      {
+        "artifact_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+        "instrument_class": "cash_share",
+        "expected_drawdown": 0.08,
+        "approval_state": "approved"
+      },
+      {
+        "artifact_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+        "instrument_class": "stock_future",
+        "expected_drawdown": 0.16,
+        "approval_state": "approved"
+      }
+    ]
+  },
+  "expression_layer_flag": {
+    "github_repository": "ajoe734/pantheon",
+    "variable_name": "DEV_PAPER_EXPRESSION_LAYER",
+    "runtime_env_name": "PANTHEON_PAPER_EXPRESSION_LAYER",
+    "value": "on",
+    "set_at_utc": "2026-11-08T18:58:47Z",
+    "wiring_task_id": "DEV-DEPLOY-EXPRESSION-LAYER-FLAG-20261108",
+    "wiring_merge_commit": "8e53d0ff2f82df8d5b662ec05ef902a066a19e40"
+  },
+  "old_artifact_telemetry_readback": [
+    {
+      "runtime_id": "rt-535a82a3",
+      "runtime_binding_id": "rb-a1c3ada3d5894d57bc2e012f337753be",
+      "artifact_id": "artifact-persona-paper-298e138c136c9840b0e4",
+      "persona_id": "persona-be19a1fac471247f2b2a",
+      "telemetry_endpoint": "GET /api/telemetry/runtime-summaries/rt-535a82a3",
+      "http_status": 200,
+      "ledger_fill_count": 6,
+      "executed_trade_count": 6,
+      "pnl": 820.0,
+      "bff_artifact_readback_status": 200
+    },
+    {
+      "runtime_id": "rt-8b0d8649",
+      "runtime_binding_id": "rb-fd733d7c192f45898bbe0e90c8555878",
+      "artifact_id": "artifact-persona-paper-01390a4b72713295b001",
+      "persona_id": "persona-9d4fb3f44cbc5e7cb84f",
+      "telemetry_endpoint": "GET /api/telemetry/runtime-summaries/rt-8b0d8649",
+      "http_status": 200,
+      "ledger_fill_count": 6,
+      "executed_trade_count": 6,
+      "pnl": 44.15000000000873,
+      "bff_artifact_readback_status": 200
+    },
+    {
+      "runtime_id": "rt-c98e4223",
+      "runtime_binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+      "artifact_id": "artifact-persona-paper-8ae996980eeccb80d928",
+      "persona_id": "persona-d9363cffc0efbbbcbeb9",
+      "telemetry_endpoint": "GET /api/telemetry/runtime-summaries/rt-c98e4223",
+      "http_status": 200,
+      "ledger_fill_count": 6,
+      "executed_trade_count": 6,
+      "pnl": 41.5,
+      "bff_artifact_readback_status": 200
+    }
+  ]
+}
