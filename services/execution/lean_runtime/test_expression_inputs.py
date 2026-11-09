@@ -18,6 +18,41 @@ from services.execution.lean_runtime.expression_inputs import (
     runtime_summary_reader_from_env,
 )
 
+def _compose_environment(service_name: str, token_file: str | None) -> dict[str, str]:
+    """The producer/reconciler environment exactly as docker-compose.yml and the issuer set it."""
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    from scripts.issue_dev_paper_principals import issue_environment
+
+    root = Path(__file__).resolve().parents[3]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+    issued = issue_environment(
+        {
+            "PANTHEON_ENV": "dev",
+            "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+            "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+            "PANTHEON_DEV_BFF_JWT_SECRET": "compose-environment-key-" * 2,
+            "PANTHEON_DEV_BFF_JWT_ISSUER": "compose-issuer",
+            "PANTHEON_DEV_BFF_JWT_AUDIENCE": "compose-audience",
+        },
+        now=2_000_000_000,
+    )
+    env: dict[str, str] = {}
+    for name, raw in compose["services"][service_name]["environment"].items():
+        match = re.match(r"^\$\{([A-Z0-9_]+):-(.*)\}$", str(raw))
+        env[name] = (match.group(2) or issued.get(match.group(1), "")) if match else str(raw)
+    assert env["DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE"] == "/run/pantheon-principals/DEPLOYMENT_CAPITAL_SERVICE_TOKEN"
+    if token_file is None:
+        env.pop("DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE")
+    else:
+        # The mounted principals directory, relocated into a temporary directory.
+        env["DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE"] = token_file
+    return env
+
+
 POLICY = {
     "risk_policy_id": "rp-pool-1",
     "version": "1.0",
@@ -336,6 +371,40 @@ class HttpReaderTests(unittest.TestCase):
             self.assertEqual(caught.exception.missing, "ledger")
         with self.assertRaises(ExpressionInputsUnavailable):
             reader("")
+
+
+class ProducerComposeEnvironmentTest(unittest.TestCase):
+    """Build the provider the way the entrypoint does, from the compose environment."""
+
+    def _provider(self, service: str, file_present: bool) -> ExpressionInputsProvider:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "DEPLOYMENT_CAPITAL_SERVICE_TOKEN"
+            if file_present:
+                path.write_text("issued-capital-reader-token", encoding="utf-8")
+                path.chmod(0o600)  # the issuer writes principal files 0600
+            env = _compose_environment(service, str(path))
+            env["PANTHEON_PAPER_EXPRESSION_LAYER"] = "on"
+            from services.execution.lean_runtime.expression_inputs import build_production_expression_inputs
+
+            return build_production_expression_inputs(env)
+
+    def test_mounted_principal_configures_capital_and_ledger_readers(self) -> None:
+        provider = self._provider("paper-signal-producer", True)
+        self.assertTrue(provider.capital_reader_configured)
+        self.assertTrue(provider.ledger_reader_configured)
+
+    def test_absent_mount_reproduces_the_hosted_capital_service_not_configured(self) -> None:
+        provider = self._provider("paper-signal-producer", False)
+        self.assertFalse(provider.capital_reader_configured)
+        with self.assertRaises(ExpressionInputsUnavailable) as caught:
+            provider({"capital_pool_id": "pool-1", "runtime_id": "rt-1"})
+        self.assertEqual(caught.exception.missing, "capital_pool")
+
+    def test_reconciler_environment_resolves_the_same_principal(self) -> None:
+        self.assertTrue(self._provider("paper-fleet-reconciler", True).capital_reader_configured)
 
 
 if __name__ == "__main__":
