@@ -278,6 +278,32 @@ def test_active_universe_fanout_to_taifex_provider_scopes_ssf_and_preserves_chip
     assert {r.metadata["underlying_code"] for r in ssf_records} == {"2317"}
     assert {r.metadata["contract"] for r in ssf_records} == {"DHF"}
 
+    csv_fixture = (
+        Path(__file__).resolve().parents[2]
+        / "execution"
+        / "lean_runtime"
+        / "fixtures"
+        / "taifex_20261109"
+        / "DailyMarketReportFut.csv"
+    )
+    ssf_csv_payload = {**ssf_payload, "DailyMarketReportFut": csv_fixture.read_bytes()}
+    ssf_csv_records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
+            "request": {"payload": ssf_csv_payload},
+        },
+        trace_id="trace-fanout-ssf-csv",
+        job_parameters=jobs_by_dataset["taifex_ssf_contracts"],
+    )
+    assert len(ssf_csv_records) == 2
+    assert {r.metadata["underlying_code"] for r in ssf_csv_records} == {"2317"}
+    assert {(r.metadata["contract"], r.metadata["contract_month"]) for r in ssf_csv_records} == {
+        ("DHF", "202611"),
+        ("DHF", "202612"),
+    }
+    assert not any(r.metadata["normalized_row"].get("tombstone") for r in ssf_csv_records)
+
     fut_records = execute_provider_owned_adapter(
         connector=adapter.connector(),
         fetch={

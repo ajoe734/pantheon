@@ -519,7 +519,7 @@ def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_t
     assert "taifex_refresh" in refresh_by_id
     twse_idx, twse_step = refresh_by_id["refresh"]
     taifex_idx, taifex_step = refresh_by_id["taifex_refresh"]
-    assert twse_idx < taifex_idx, "TAIFEX refresh must run after TWSE refresh"
+    assert taifex_idx < twse_idx, "TAIFEX refresh must run before TWSE refresh"
 
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"

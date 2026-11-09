@@ -1978,10 +1978,15 @@ def _taifex_text_rows(value: Any) -> tuple[dict[str, Any], ...]:
         try:
             return _taifex_text_rows(json.loads(text))
         except json.JSONDecodeError:
-            reader = csv.DictReader(io.StringIO(text))
-            return tuple({str(k).lstrip("﻿"): v for k, v in row.items()} for row in reader)
+            try:
+                reader = csv.DictReader(io.StringIO(text))
+                return tuple({str(k).lstrip("﻿"): v for k, v in row.items() if k is not None} for row in reader)
+            except csv.Error:
+                return tuple()
     if isinstance(value, Mapping):
         return (dict(value),)
+    if not hasattr(value, "__iter__"):
+        return tuple()
     return tuple(dict(item) for item in value if isinstance(item, Mapping))
 
 
@@ -2034,6 +2039,14 @@ def _third_wednesday_iso(contract_month: str) -> str:
     year, month = int(contract_month[:4]), int(contract_month[4:6])
     first = datetime(year, month, 1)
     return (first + timedelta(days=(2 - first.weekday()) % 7 + 14)).date().isoformat()
+
+
+def _has_any_key(row: Mapping[str, Any], *keys: str) -> bool:
+    for key in keys:
+        if key in row:
+            return True
+    squashed = {_squash_key(str(key)) for key in row}
+    return any(_squash_key(key) in squashed for key in keys)
 
 
 def taifex_ssf_normalized_rows(
@@ -2119,21 +2132,30 @@ def taifex_ssf_normalized_rows(
     absent_underlyings: set[str] = set()
     latest_market_date = ""
     limit = max_records or TAIFEX_SSF_MAX_RECORDS
-    for row in _taifex_text_rows(payload.get("DailyMarketReportFut")):
-        price_date = _roc_date_to_iso(row.get("Date"))
-        if price_date and price_date > latest_market_date:
+    market_rows = _taifex_text_rows(payload.get("DailyMarketReportFut"))
+    parsed_ssf_regular_rows = 0
+    for row in market_rows:
+        price_date = _roc_date_to_iso(_first(row, "Date", "日期"))
+        valid_price_date = bool(price_date and re.match(r"^\d{4}-\d{2}-\d{2}$", price_date))
+        if valid_price_date and price_date > latest_market_date:
             latest_market_date = price_date
-        code = _text(row.get("Contract"))
-        month = _text(_first(row, "ContractMonth(Week)", "ContractMonth"))
-        if not _SSF_CONTRACT_CODE.match(code) or not _SSF_CONTRACT_MONTH.match(month) or _text(row.get("TradingSession")) != "一般":
+        code = _text(_first(row, "Contract", "契約代號"))
+        month = _text(_first(row, "ContractMonth(Week)", "ContractMonth", "到期月份(週別)"))
+        session = _text(_first(row, "TradingSession", "交易時段"))
+        if (
+            not valid_price_date
+            or not _SSF_CONTRACT_CODE.match(code)
+            or not _SSF_CONTRACT_MONTH.match(month)
+            or session != "一般"
+            or not _has_any_key(row, "SettlementPrice", "結算價")
+        ):
             continue
-        settlement = _float(row.get("SettlementPrice"))
+        parsed_ssf_regular_rows += 1
+        settlement = _float(_first(row, "SettlementPrice", "結算價"))
         if settlement is not None and (not math.isfinite(settlement) or settlement <= 0):
             settlement = None
         unit_row = units.get(code[:2])
         if unit_row is None:
-            continue
-        if not price_date:
             continue
         unit_underlying = _normalize_ssf_underlying_code(unit_row.get("underlying_code"))
         if code not in margins:
@@ -2164,8 +2186,8 @@ def taifex_ssf_normalized_rows(
             "venue": "TAIFEX",
             "settlement_price": settlement,
             "price_date": price_date,
-            "volume": _int(row.get("Volume")) or 0,
-            "open_interest": _int(row.get("OpenInterest")) or 0,
+            "volume": _int(_first(row, "Volume", "合計成交量")) or 0,
+            "open_interest": _int(_first(row, "OpenInterest", "未沖銷契約數")) or 0,
             "last_trading_day": _third_wednesday_iso(month),
             "last_trading_day_basis": "third_wednesday_no_holiday_shift",
             "last_final_settlement": last_final.get(code),
@@ -2177,6 +2199,10 @@ def taifex_ssf_normalized_rows(
         results.append(normalized)
         if len(results) >= limit:
             break
+    if not market_rows or parsed_ssf_regular_rows == 0:
+        raise SourceEvidenceError(
+            "DailyMarketReportFut parse failure: no single-stock futures regular-session row could be read"
+        )
     snapshot_contracts = sorted({r["contract"] for r in results if r.get("contract")})
     snapshot_contract_ids = sorted({r["contract_id"] for r in results if r.get("contract_id")})
     snapshot_underlyings = sorted(

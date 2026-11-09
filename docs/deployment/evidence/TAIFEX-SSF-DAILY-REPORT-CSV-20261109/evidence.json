@@ -1,0 +1,40 @@
+{
+  "task_id": "TAIFEX-SSF-DAILY-REPORT-CSV-20261109",
+  "title": "TAIFEX daily futures report is CSV with Chinese headers and the adapter writes an empty tombstone",
+  "recorded_at_utc": "2026-11-09T16:40:15Z",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "hosted_verification_note": "No hosted workflow was dispatched (neither nonprod-deploy.yml nor dev-tw-market-refresh.yml), no VM or SSH access was performed, and no hosted result is claimed. Functional and contract evidence only is recorded here.",
+  "summary": {
+    "daily_market_report_fut_csv_support": "Updated taifex_ssf_normalized_rows in services/source_ingestion/connectors/taiwan_official.py to read DailyMarketReportFut rows with either the Chinese CSV column names served by https://openapi.taifex.com.tw/v1/DailyMarketReportFut (日期, 契約代號, 到期月份(週別), 交易時段, 結算價, 合計成交量, 未沖銷契約數) or the existing English JSON keys (Date, Contract, ContractMonth(Week)/ContractMonth, TradingSession, SettlementPrice, Volume, OpenInterest). Added real UTF-8 BOM-prefixed CSV sample fixture services/execution/lean_runtime/fixtures/taifex_20261109/DailyMarketReportFut.csv and README.md.",
+    "classified_parse_failure_and_tombstone_guard": "When DailyMarketReportFut is empty, an error body, has unknown header names, or yields zero single-stock futures regular-session rows, taifex_ssf_normalized_rows raises SourceEvidenceError naming DailyMarketReportFut so IngestionScheduler records the ingest run as failed (validation / source_evidence_rejected) and MarketDataStorageWriter writes no tombstone and no normalized row, keeping the previous good partition in force. A tombstone is emitted only when DailyMarketReportFut was parsed successfully and truly holds no in-scope contract.",
+    "workflow_step_order": "Reordered .github/workflows/dev-tw-market-refresh.yml so Execute bounded TAIFEX contract refresh (id: taifex_refresh, continue-on-error: true, --non-blocking) runs before Execute bounded Taiwan market refresh (id: refresh) while keeping both steps' egress host lists unchanged."
+  },
+  "commands": [
+    {
+      "command": "PATH=\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/bin:$PATH\" python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py",
+      "exit_code": 0,
+      "result": "42 passed, 1 skipped in 10.04s"
+    },
+    {
+      "command": "PATH=\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/bin:$PATH\" python3 -m pytest -q services/source_ingestion/tests/test_active_universe.py services/source_ingestion/tests/test_provider_management_coverage.py",
+      "exit_code": 0,
+      "result": "41 passed in 9.70s"
+    },
+    {
+      "command": "PATH=\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/bin:$PATH\" python3 -m pytest -q scripts/test_dev_tw_market_refresh.py",
+      "exit_code": 0,
+      "result": "55 passed in 193.63s"
+    },
+    {
+      "command": "PATH=\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/bin:$PATH\" python3 -m pytest -q scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs scripts/test_source_ingest_deploy_diagnostics_contract.py::test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse scripts/test_source_ingest_deploy_diagnostics_contract.py::test_regression_no_wildcard_no_host_widening_and_never_merged_host_lists scripts/test_dev_tw_market_refresh.py::test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+      "exit_code": 0,
+      "result": "4 passed in 3.38s"
+    },
+    {
+      "command": "PATH=\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/bin:$PATH\" python3 -m pytest -q services/execution/lean_runtime/test_instrument_candidates.py services/execution/lean_runtime/test_expression_policy.py services/data-plane/tests/test_data_plane_schemas.py",
+      "exit_code": 0,
+      "result": "118 passed"
+    }
+  ]
+}
