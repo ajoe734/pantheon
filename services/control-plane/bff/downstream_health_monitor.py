@@ -14,6 +14,13 @@ Key guarantees
   restarts, and replicas that share the BFF data volume.
 * Telemetry and incident operations keep the same source event ID.  Delivery is
   at-least-once with bounded exponential backoff, DLQ, and explicit replay.
+* Ordering: incident_resolve depends on its incident_open and stays strict
+  (never sent before the open is delivered).  A telemetry dependency is
+  settled once delivered, dead_letter or quarantined, so an infrastructure
+  incident is never held back by a failed telemetry write; the incident is
+  sent with its evidence stating telemetry was not delivered.  Pending, retry
+  or claimed dependencies still block.  The delivery age bound and quarantine
+  remain the last resort.
 * An incident mapping is not cleared until the incidents authority confirms the
   recovery transition.
 * Undelivered rows with no delivery activity inside the delivery age bound are
@@ -1375,8 +1382,10 @@ class _DurableHealthStore:
         incident_id: str,
     ) -> bool:
         # An incident_resolve row whose dependency can never be delivered
-        # (dead_letter, quarantined or missing) is blocked forever by
-        # claim_due, so it is not in-flight work. Dependencies are looked up
+        # (missing, or a dead_letter/quarantined non-telemetry dependency such
+        # as its incident_open) is blocked forever by claim_due, so it is not
+        # in-flight work. A failed telemetry dependency is settled and does
+        # not block, so such a resolve is active work. Dependencies are looked up
         # by delivery_id (primary key); incident_open is intentionally
         # unchanged.
         with self._connect() as connection:
@@ -1396,7 +1405,10 @@ class _DurableHealthStore:
                       LEFT JOIN delivery_outbox AS upstream
                         ON upstream.delivery_id = dependency.value
                       WHERE upstream.delivery_id IS NULL
-                         OR upstream.status IN ('dead_letter', 'quarantined')
+                         OR (
+                           upstream.status IN ('dead_letter', 'quarantined')
+                           AND upstream.channel <> 'telemetry'
+                         )
                     )
                   )
                 LIMIT 1
@@ -1529,6 +1541,25 @@ class _DurableHealthStore:
             )
         return released
 
+    def failed_telemetry_dependencies(
+        self, delivery: Mapping[str, Any]
+    ) -> List[str]:
+        """Event ids of telemetry dependencies that were never delivered."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT upstream.event_id AS event_id
+                FROM json_each(?) AS dependency
+                JOIN delivery_outbox AS upstream
+                  ON upstream.delivery_id = dependency.value
+                WHERE upstream.channel = 'telemetry'
+                  AND upstream.status IN ('dead_letter', 'quarantined')
+                ORDER BY upstream.delivery_id
+                """,
+                (str(delivery["dependency_ids_json"]),),
+            ).fetchall()
+        return [str(row["event_id"]) for row in rows]
+
     def claim_due(
         self,
         *,
@@ -1557,6 +1588,10 @@ class _DurableHealthStore:
                     LEFT JOIN delivery_outbox AS upstream
                       ON upstream.delivery_id = dependency.value
                     WHERE upstream.status IS NOT 'delivered'
+                      AND NOT (
+                        upstream.channel = 'telemetry'
+                        AND upstream.status IN ('dead_letter', 'quarantined')
+                      )
                   )
                 ORDER BY created_at, delivery_id
                 LIMIT ?
@@ -3355,11 +3390,24 @@ class DownstreamHealthMonitor:
                         base_backoff_seconds=self._delivery_backoff,
                     )
                     continue
+                body = json.loads(str(delivery["body_json"]))
+                if channel in {"incident_open", "incident_resolve"}:
+                    failed_telemetry = self._store.failed_telemetry_dependencies(
+                        delivery
+                    )
+                    if failed_telemetry and channel == "incident_open":
+                        # Sent past a failed telemetry write; only the
+                        # evidence text changes, no contract field is added.
+                        body["evidence_summary"] = (
+                            f"{body.get('evidence_summary', '')}; telemetry "
+                            f"event {', '.join(failed_telemetry)} was not "
+                            "delivered"
+                        )
                 token = _POST_HEADERS.set(headers)
                 try:
                     ok, status = _post_json(
                         str(delivery["url"]),
-                        json.loads(str(delivery["body_json"])),
+                        body,
                         self._http_timeout,
                     )
                 finally:
