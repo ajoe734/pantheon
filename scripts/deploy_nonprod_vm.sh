@@ -2196,6 +2196,19 @@ if action == "bounded":
         env["SOURCE_INGEST_BOUNDED_DATASET"] = bounded_dataset
 elif action == "restore":
     env.update({"PANTHEON_EXTERNAL_EGRESS": "deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "", "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only"})
+# "compose up --no-build" starts whatever image the Compose name resolves to.
+# Never recreate source-ingest on any image other than the recorded running one
+# (a stale tag once started a rejected candidate here): stop before recreating.
+if expected_img:
+    try:
+        model = json.loads(subprocess.check_output(cmd + ["config", "--format", "json"], env=env, text=True))
+        ref = (model["services"]["source-ingest"].get("image") or "pantheon-source-ingest")
+        resolved = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", ref],
+                                  capture_output=True, text=True, check=True).stdout.strip()
+    except (subprocess.SubprocessError, OSError, ValueError, KeyError, AttributeError):
+        raise SystemExit("source-ingest compose image reference could not be resolved; not recreating") from None
+    if resolved != expected_img:
+        raise SystemExit(f"source-ingest compose image {ref} resolves to {resolved} != recorded running image {expected_img}; not recreating")
 subprocess.run(cmd + ["up", "-d", "--no-deps", "--no-build", "source-ingest"], env=env, check=True)
 cid = subprocess.check_output(cmd + ["ps", "-q", "source-ingest"], text=True).strip()
 if not cid:

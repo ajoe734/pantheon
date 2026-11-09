@@ -2802,3 +2802,64 @@ def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_
             fe_sha,
             bff_sha,
         )
+
+
+# --- bounded source refresh must not recreate source-ingest on another image ---
+
+def _refresh_runtime_python() -> str:
+    text = (ROOT / "scripts" / "deploy_nonprod_vm.sh").read_text()
+    start = text.index("manage_source_ingest_refresh_runtime() {")
+    body = text[start:]
+    return body.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+
+
+def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: str = "bounded"):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    log = tmp_path / "docker.log"
+    docker = fake / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "$*" >> "$DOCKER_LOG"\n'
+        'case "$*" in\n'
+        '  *" config --format json"*) echo \'{"services":{"source-ingest":{"image":"pantheon-source-ingest"}}}\' ;;\n'
+        '  "image inspect --format {{.Id}} pantheon-source-ingest") echo "$TAG_ID" ;;\n'
+        '  *" up "*) echo "$TAG_ID" > "$STATE" ;;\n'
+        '  *" ps -q source-ingest"*) echo cid1 ;;\n'
+        '  "inspect --format {{.Image}} cid1") cat "$STATE" ;;\n'
+        '  *) : ;;\n'
+        'esac\n'
+    )
+    docker.chmod(0o755)
+    env_file = tmp_path / "env.json"
+    state = tmp_path / "state"
+    # The runtime builds the docker env from this file, so the fake's inputs go here.
+    env_file.write_text(json.dumps(["A=1", f"DOCKER_LOG={log}", f"TAG_ID={tag_id}", f"STATE={state}"]))
+    script = tmp_path / "refresh.py"
+    script.write_text(_refresh_runtime_python())
+    state.write_text(running + "\n")
+    result = subprocess.run(
+        ["python3", str(script), str(env_file), action, running, ""],
+        capture_output=True, text=True,
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "DOCKER_LOG": str(log), "TAG_ID": tag_id, "STATE": str(state)},
+    )
+    return result, log.read_text().splitlines() if log.exists() else [], state.read_text().strip()
+
+
+@pytest.mark.parametrize("action", ["bounded", "restore"])
+def test_source_refresh_stops_before_recreating_when_compose_tag_points_elsewhere(tmp_path, action):
+    baseline, candidate = "sha256:" + "9" * 64, "sha256:" + "4" * 64
+    result, calls, state = _run_refresh_runtime(tmp_path, tag_id=candidate, running=baseline, action=action)
+    assert result.returncode != 0
+    assert baseline in result.stderr and candidate in result.stderr and "not recreating" in result.stderr
+    assert not any(" up " in f" {call} " for call in calls)
+    assert state == baseline  # the running image was never replaced
+
+
+@pytest.mark.parametrize("action", ["bounded", "restore"])
+def test_source_refresh_recreates_when_compose_tag_matches_running_image(tmp_path, action):
+    baseline = "sha256:" + "9" * 64
+    result, calls, state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action)
+    assert any(" up " in f" {call} " for call in calls)
+    assert state == baseline
+    assert "image ID" not in result.stderr

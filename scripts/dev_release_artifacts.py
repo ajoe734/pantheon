@@ -535,6 +535,39 @@ def _stack_problems(stack: dict, current: dict[str, list[dict]]) -> tuple[dict[s
     return hard, soft
 
 
+def compose_image_refs(docker: Docker, compose_files: tuple[tuple[Path, str], ...],
+                       services) -> dict[str, str]:
+    """Image reference Compose resolves per service WITHOUT any restore override.
+
+    Only the first (base) Compose file is rendered: later files are the
+    candidate image override, which must not decide where the names point.
+    """
+    path, digest = compose_files[0]
+    if _file_digest(path)[0] != digest:
+        raise ArtifactError("Compose configuration changed before restore")
+    model = _json(docker.call("compose", "-p", "pantheon", "-f", str(path), "config", "--format", "json").encode())
+    declared = model.get("services") if isinstance(model, dict) else None
+    if not isinstance(declared, dict):
+        raise ArtifactError("Compose configuration has no services")
+    refs = {}
+    for service in sorted(services):
+        row = declared.get(service)
+        if not isinstance(row, dict):
+            continue  # Compose cannot start an undeclared service; no name to re-point.
+        image = row.get("image") or f"pantheon-{service}"
+        if not isinstance(image, str) or not image or image.startswith("-") or "@" in image:
+            raise StackError(f"{service}: Compose image reference cannot be re-pointed", [service])
+        refs[service] = image
+    return refs
+
+
+def _resolved_image_id(docker: Docker, ref: str) -> str | None:
+    try:
+        return _json(docker.call("image", "inspect", "--format", IMAGE_FORMAT, ref).encode())["id"]
+    except (ArtifactError, KeyError, TypeError):
+        return None
+
+
 def _mixed(problems: dict[str, str]) -> StackMixedError:
     return StackMixedError("stack is mixed: " + ", ".join(sorted(problems)), problems)
 
@@ -542,7 +575,8 @@ def _mixed(problems: dict[str, str]) -> StackMixedError:
 def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], None],
                    recreated=(), sleep: Callable[[float], None] = time.sleep,
                    monotonic: Callable[[], float] = time.monotonic,
-                   budget_seconds: int = STACK_READBACK_SECONDS) -> dict:
+                   budget_seconds: int = STACK_READBACK_SECONDS,
+                   compose_refs: dict[str, str] | None = None) -> dict:
     """Prove each recorded service runs its recorded image, healthy within budget.
 
     A wrong image, missing container or surviving candidate-only service fails at
@@ -560,6 +594,16 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
         if monotonic() >= deadline:
             raise _mixed(soft)
         sleep(STACK_POLL_SECONDS)
+    if compose_refs:
+        # A later "compose up" without an override must not start a candidate.
+        stale = {}
+        for service, ref in sorted(compose_refs.items()):
+            check_lease()
+            expected = stack["services"].get(service)
+            if expected and _resolved_image_id(docker, ref) != expected["image_id"]:
+                stale[service] = "compose-image-mismatch"
+        if stale:
+            raise _mixed(stale)
     drift = {}
     for service in sorted(set(recreated) & set(stack["services"])):
         check_lease()
@@ -694,11 +738,23 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
     observed = {service: _current(docker, service)["image_id"] for service in SERVICES}
     if any(observed[service] != bundle["services"][service]["image_id"] for service in SERVICES):
         raise ArtifactError("restored image readback mismatch")
+    # Point each Compose image name back at the restored image so a later plain
+    # "compose up" cannot start the rejected candidate. Protect tags are kept.
+    restored_ids = ({service: row["image_id"] for service, row in stack["services"].items()}
+                    if stack is not None else
+                    {service: bundle["services"][service]["image_id"] for service in SERVICES})
+    refs = compose_image_refs(docker, compose_files, restored_ids)
+    for service, ref in refs.items():
+        check_lease()
+        try:
+            docker.call("tag", restored_ids[service], ref)
+        except ArtifactError as error:
+            raise StackError(f"{service}: failed to re-point the Compose image name", [service]) from error
     result = {"image_readback_verified": True, "services": observed}
     if stack is not None:
         result["stack"] = readback_stack(stack, docker=docker, check_lease=check_lease,
                                          recreated=recreated, sleep=sleep, monotonic=monotonic,
-                                         budget_seconds=readback_seconds)
+                                         budget_seconds=readback_seconds, compose_refs=refs)
         result["recreated_services"] = sorted(recreated)
         result["started_services"] = sorted(started)
     check_lease()
