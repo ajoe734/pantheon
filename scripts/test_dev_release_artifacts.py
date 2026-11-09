@@ -53,9 +53,10 @@ class FakeDocker:
         if args[0] == "inspect":
             return json.dumps(self.containers[artifacts.SERVICES[int(args[-1], 16) - 1]])
         if args[:2] == ("image", "inspect"):
-            if args[-1] not in self.images:
+            ref = getattr(self, "tags", {}).get(args[-1], args[-1])
+            if ref not in self.images:
                 raise artifacts.ArtifactError("fixture image missing")
-            return json.dumps(self.images[args[-1]])
+            return json.dumps(self.images[ref])
         if args[:2] == ("image", "save"):
             Path(args[3]).write_text(json.dumps(self.images[args[-1]]))
             if self.fail_save:
@@ -67,6 +68,9 @@ class FakeDocker:
             row = json.loads(Path(args[-1]).read_text())
             self.images[row["id"]] = row
             return "loaded"
+        if args[0] == "compose" and "config" in args:
+            return json.dumps({"services": {name: {"build": {"context": "."}, "image": "pantheon-" + name}
+                                            for name in artifacts.SERVICES}})
         if args[0] == "compose":
             if self.fail_up:
                 raise artifacts.ArtifactError("fixture recreate failure")
@@ -500,7 +504,7 @@ def test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite(tm
 
 # --- Whole-stack compensation (fake Docker at the real hosted scale) --------
 
-STACK_SIZE = 54
+STACK_SIZE = 57
 SEALED = artifacts.SERVICES
 OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 1)) + ("source-ingest",)
 ONE_SHOT = "minio-init"
@@ -540,6 +544,7 @@ class StackDocker:
             # What Compose would apply without the override: the failure mode
             # seen on source-ingest (tenant reset by a default).
             self.compose_defaults[service] = {"PANTHEON_TENANT_ID": "compose-default", "GIT_SHA": "f" * 40}
+            self.tags["pantheon-" + service] = image   # what a plain "compose up" would start
 
     def add_image(self, image):
         self.images[image] = {"id": image, "revision": SOURCE, "repo_digests": None}
@@ -554,6 +559,7 @@ class StackDocker:
                 continue
             image = _sid("c", index)
             self.add_image(image)
+            self.tags["pantheon-" + service] = image   # the candidate build moved the names
             row.update(image_id=image, status="running" if service != ONE_SHOT else "exited",
                        health=None if service == ONE_SHOT else "healthy",
                        env={"PANTHEON_TENANT_ID": "compose-default", "GIT_SHA": "f" * 40})
@@ -582,9 +588,10 @@ class StackDocker:
             if args[2] == artifacts.CONTAINER_FORMAT:
                 return json.dumps({"image_id": row["image_id"], "status": row["status"], "health": row["health"]})
         if args[:2] == ("image", "inspect"):
-            if args[-1] not in self.images:
+            ref = self.tags.get(args[-1], args[-1])
+            if ref not in self.images:
                 raise artifacts.ArtifactError("fixture image missing")
-            return json.dumps(self.images[args[-1]])
+            return json.dumps(self.images[ref])
         if args[:2] == ("image", "save"):
             Path(args[3]).write_text(json.dumps(self.images[args[-1]]))
             return ""
@@ -604,6 +611,9 @@ class StackDocker:
             service, row = self.by_cid(args[1])
             row["status"], row["health"] = "running", "healthy"
             return ""
+        if args[0] == "compose" and "config" in args:
+            return json.dumps({"services": {name: {"build": {"context": "."}, "image": "pantheon-" + name}
+                                            for name in self.names}})
         if args[0] == "compose":
             paths = [args[i + 1] for i, value in enumerate(args) if value == "-f"]
             override = json.loads(Path(paths[-1]).read_text())["services"]
@@ -917,3 +927,34 @@ def test_image_format_against_real_docker_for_all_label_shapes(tmp_path):
     finally:
         for name in names.values():
             subprocess.run(["docker", "image", "rm", "-f", name], capture_output=True)
+
+
+def test_restore_repoints_every_compose_image_name_to_the_baseline(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    docker.mutate_to_candidate()
+    assert all(docker.tags["pantheon-" + s].startswith("sha256:c") for s in docker.names if s != "grafana-like")
+    restore_stack(stack_case)
+    assert len(stack["services"]) == STACK_SIZE
+    for service, row in stack["services"].items():
+        assert docker.tags["pantheon-" + service] == row["image_id"], service
+    # protect tags are unchanged in kind and nothing was pruned
+    assert any(t.startswith("pantheon-protect/") for t in docker.tags)
+    assert not any(call[:2] in (("image", "rm"), ("image", "prune")) for call in docker.calls)
+
+
+def test_readback_names_service_whose_compose_image_still_resolves_to_candidate(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    docker.mutate_to_candidate()
+    real = docker.call
+
+    def call(*args):
+        result = real(*args)
+        if args[0] == "tag" and args[2] == "pantheon-svc-03":
+            docker.tags["pantheon-svc-03"] = _sid("c", 3)   # tag did not stick
+        return result
+
+    docker.call = call
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        restore_stack(stack_case)
+    assert caught.value.services == ("svc-03",)
+    assert "svc-03" in str(caught.value)

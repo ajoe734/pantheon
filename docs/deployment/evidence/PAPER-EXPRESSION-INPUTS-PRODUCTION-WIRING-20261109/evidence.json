@@ -1,0 +1,45 @@
+{
+  "schema_version": "pantheon.functional.evidence.v1",
+  "task_id": "PAPER-EXPRESSION-INPUTS-PRODUCTION-WIRING-20261109",
+  "title": "Production paper producer gives the expression layer a book and a risk budget",
+  "recorded_at_utc": "2026-11-09T15:00:00Z",
+  "author": "Claude",
+  "reviewer": "Antigravity",
+  "hosted_behaviour_exercised": false,
+  "hosted_statement": "Hosted behaviour was NOT exercised. No VM, SSH, hosted BFF, workflow dispatch, live order, broker sandbox or model provider call was made. All evidence below is functional (unit/contract tests with the real 2026-11-09 shapes and only the HTTP transport replaced). Hosted verification belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "root_cause": "_runner_strategy returned CurrentArtifactStrategy() without expression_inputs; nothing wrote metadata.expression_inputs in production, so build_candidates saw no gross_limit/available_cash and fail-closed max_units_by_risk to 0 (reported as gross_limit).",
+  "changes": {
+    "services/execution/lean_runtime/expression_inputs.py": "new: CapitalPoolReader (GET /api/capital-pools/{id}), RuntimeSummaryReader (telemetry runtime summary), build_expression_inputs (pure), ExpressionInputsProvider using resolve_bound_pool_risk_policy; ExpressionInputsUnavailable names the missing input",
+    "services/execution/lean_runtime/paper_signal_producer.py": "_runner_strategy installs build_production_expression_inputs(); _expression_step turns ExpressionInputsUnavailable into a candidates_unavailable NoTrade with detail 'budget_unavailable: <input>'",
+    "services/execution/lean_runtime/expression_policy.py": "budget_unavailable_no_trade record helper (no algorithm change)",
+    "services/execution/lean_runtime/instrument_candidates.py": "_remaining_gross also honours max_leverage x equity when both are supplied (tighter bound wins); budgets without them are unchanged",
+    "services/telemetry/runtime_summary.py": "summary now publishes ledger_cash, ledger_cash_fill_count, ledger_cash_as_of from paper_fill_simulated metadata (highest ledger fill count wins; cleared on binding rollover)",
+    "services/execution/lean_runtime/paper_runtime.py": "main()/get_service() accept capital_pool_reader; main() defaults it from the environment because the reconciler launches paper_runtime.py directly",
+    "services/execution/lean_runtime/runtime_bootstrap.py": "run() passes capital_pool_reader_from_env() to main()",
+    "docker-compose.yml": "paper-signal-producer gets PANTHEON_TELEMETRY_API_URL, PANTHEON_CAPITAL_API_URL and the capital read principal env; paper-fleet-reconciler (parent env of every paper runtime worker) gets the capital URL and principal env"
+  },
+  "input_sources": {
+    "limits": "pool metadata.risk_policy via services.capital.risk_policy.resolve_bound_pool_risk_policy; gross_limit and max_leverage are multiples of equity, converted to an absolute amount by build_expression_inputs; no number is hardcoded",
+    "cash_and_positions": "telemetry runtime summary for binding.runtime_id (ledger_cash, positions); the provisioned pool budget while the ledger has no fill",
+    "equity": "ledger_cash + cash-share holdings value + futures unrealized (matches paper_runtime.ledger_reconciliation_snapshot)"
+  },
+  "acceptance_mapping": {
+    "1": "test_paper_signal_producer.py::TestExpressionInputsProductionWiring::test_runner_strategy_carries_the_provider_and_calls_it_per_binding (strategy built by _runner_strategy exactly as main does; provider present and called; budget carries equity, available_cash, absolute gross_limit, gross_used, max_leverage; book carries positions and gross_notional)",
+    "2": "test_expression_inputs.py (real pool policy shape, real runtime summary shape; limits only from policy, no constants) and test_runtime_summary_projection.py::TestLedgerCashProjection",
+    "3": "TestExpressionInputsProductionWiring::test_hosted_long_views_choose_the_cash_share_and_never_no_trade (2330 @2235, 0050 @92.5, 2317 @225; strength 1.0; only eq:<code> candidate; pool budget 100000; gross_limit 2.0 -> Chosen eq buy with units from dev plan 4.4 capped by cash: 44, 1081, 444). 0050 and 2317 prices are plan/fixture figures, not hosted readings",
+    "4": "TestExpressionInputsProductionWiring: policy_missing, pool_budget_missing, ledger_unreadable, unconfigured_services, and a real gross limit bind still reports gross_limit",
+    "5": "test_runtime_bootstrap.py::RuntimeBootstrapOrderGatePolicyTests (run() hands main() the reader; gate rejects 2.247x with limit 2.0 and required/available/limit, accepts 0.5x; gross_limit alone, equity-only asset class)",
+    "6": "flag-off and legacy artifact test (no service read, no expression key); existing producer/runtime tests unchanged and passing"
+  },
+  "commands": [
+    {"cmd": "python -m pytest services/execution/lean_runtime/test_expression_inputs.py services/execution/lean_runtime/test_instrument_candidates.py services/execution/lean_runtime/test_expression_policy.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_runtime_bootstrap.py services/telemetry/test_runtime_summary_projection.py services/capital/test_risk_policy.py scripts/test_paper_runtime_topology_contract.py -q", "result": "286 passed, 36 subtests passed"},
+    {"cmd": "python -m pytest services/execution/lean_runtime/test_paper_runtime.py services/execution/lean_runtime/test_runtime_context.py -q", "result": "128 passed, 27 subtests passed"},
+    {"cmd": "python -m pytest scripts/test_current_l12_compose_wiring.py scripts/test_persona_provisioning_compose_contract.py scripts/test_loop_writer_image_contracts.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_bootstrap_dev_paper_baseline.py -q", "result": "335 passed, 7 failed; the 7 failures are all in scripts/test_dev_environment_lease_deploy_contract.py (deploy-script contracts: restart admission, release-case retire action, provider gate), files this task does not touch"}
+  ],
+  "known_limits": [
+    "Deployment credential: the capital reader reuses the runtime-manager/deployment capital read principal env (RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN or DEPLOYMENT_CAPITAL_SERVICE_TOKEN, optionally _FILE). If the producer or worker environment does not carry it, the producer fails closed with budget_unavailable: capital_pool, and the order gate keeps its previous resolution path (reader not built). Whether the hosted environment provides that principal to these containers is not verified here.",
+    "ledger_cash is only refreshed by paper_fill_simulated events; cash changes with no fill event (for example futures settlement) are not reflected until the next fill.",
+    "available_cash = min(ledger cash, equity - reserved margin): conservative for futures margin, exact for cash shares.",
+    "Pre-existing asset-class gating is still done by the order gate, not by candidate generation."
+  ]
+}

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -615,11 +616,38 @@ class ExpectedRun:
     head_branch: str = FRONTEND_BRANCH
 
 
+TRANSIENT_HTTP_STATUS_CODES = frozenset({502, 503, 504})
+TRANSIENT_TRANSPORT_ERRORS = (
+    http.client.RemoteDisconnected,
+    ConnectionResetError,
+    TimeoutError,
+    urllib.error.URLError,
+)
+GET_RETRY_MAX_ATTEMPTS = 4
+GET_RETRY_BASE_DELAY_SECONDS = 0.5
+
+
 class GitHubClient:
-    def __init__(self, *, api_url: str, token: str, repository: str) -> None:
+    def __init__(
+        self,
+        *,
+        api_url: str,
+        token: str,
+        repository: str,
+        max_get_attempts: int = GET_RETRY_MAX_ATTEMPTS,
+        retry_backoff_seconds: float = GET_RETRY_BASE_DELAY_SECONDS,
+        sleep: Callable[[float], None] | None = None,
+    ) -> None:
+        if max_get_attempts < 1:
+            raise ControllerError("max_get_attempts must be at least 1")
+        if retry_backoff_seconds < 0:
+            raise ControllerError("retry_backoff_seconds must be non-negative")
         self.api_url = api_url.rstrip("/")
         self.token = token
         self.repository = repository
+        self.max_get_attempts = max_get_attempts
+        self.retry_backoff_seconds = retry_backoff_seconds
+        self.sleep = sleep
 
     def request(
         self,
@@ -637,24 +665,57 @@ class GitHubClient:
         if payload is not None:
             data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(
-            f"{self.api_url}{path}",
-            data=data,
-            headers=headers,
-            method=method,
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw = response.read()
-        except urllib.error.HTTPError as exc:
-            detail = exc.read(4096).decode("utf-8", errors="replace")
-            raise ControllerError(
-                f"GitHub API {method} {path} failed with HTTP {exc.code}: {detail}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise ControllerError(
-                f"GitHub API {method} {path} failed: {exc.reason}"
-            ) from exc
+        is_read_only = method.upper() == "GET"
+        max_attempts = self.max_get_attempts if is_read_only else 1
+        sleep_fn = self.sleep if self.sleep is not None else time.sleep
+        raw = b""
+        for attempt in range(1, max_attempts + 1):
+            request = urllib.request.Request(
+                f"{self.api_url}{path}",
+                data=data,
+                headers=headers,
+                method=method,
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    raw = response.read()
+                break
+            except urllib.error.HTTPError as exc:
+                raw_detail = exc.read(4096) if getattr(exc, "fp", None) is not None else b""
+                detail = (
+                    raw_detail.decode("utf-8", errors="replace").strip()
+                    or str(getattr(exc, "reason", "") or "").strip()
+                )
+                if (
+                    is_read_only
+                    and exc.code in TRANSIENT_HTTP_STATUS_CODES
+                    and attempt < max_attempts
+                ):
+                    sleep_fn(self.retry_backoff_seconds * (2 ** (attempt - 1)))
+                    continue
+                raise ControllerError(
+                    f"GitHub API {method} {path} failed with HTTP {exc.code}: {detail}"
+                ) from exc
+            except TRANSIENT_TRANSPORT_ERRORS as exc:
+                if is_read_only and attempt < max_attempts:
+                    sleep_fn(self.retry_backoff_seconds * (2 ** (attempt - 1)))
+                    continue
+                if (
+                    isinstance(exc, urllib.error.URLError)
+                    and getattr(exc, "reason", None) is not None
+                ):
+                    detail = str(exc.reason).strip()
+                else:
+                    detail = str(exc).strip()
+                error_name = type(exc).__name__
+                last_error = (
+                    f"{error_name}: {detail}"
+                    if detail and error_name not in detail
+                    else (detail or error_name)
+                )
+                raise ControllerError(
+                    f"GitHub API {method} {path} failed: {last_error}"
+                ) from exc
         if not raw:
             return None
         try:

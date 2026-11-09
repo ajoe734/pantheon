@@ -1157,6 +1157,25 @@ class ExpressionEnvelopeExecutorTests(unittest.TestCase):
         self.assertNotIn("risk_policy", ctx)
         self.assertNotIn("risk_policy_id", ctx)
 
+    def test_futures_session_settlement_inputs_and_replay_input_forwarded_to_signal_context(self):
+        algo = _TaiwanAlgo()
+        signal = self._signal(
+            trade_date="2026-11-10",
+            session_settlement_prices={"ssf:SRF:202611": 94.0},
+            session_settlement_price_reasons={},
+            futures_mark_unavailable_reason=None,
+            open_futures_contracts=["ssf:SRF:202611"],
+            expression_replay_input={"decision_id": "dec-expr-1", "candidates": []},
+        )
+        signal["action"] = "HOLD"
+        execute(signal, algo)
+        ctx = algo.rejection_contexts[0]
+        self.assertEqual(ctx["trade_date"], "2026-11-10")
+        self.assertEqual(ctx["session_settlement_prices"], {"ssf:SRF:202611": 94.0})
+        self.assertEqual(ctx["open_futures_contracts"], ["ssf:SRF:202611"])
+        self.assertEqual(ctx["expression_replay_input"]["decision_id"], "dec-expr-1")
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1795,3 +1795,280 @@ def test_unapproved_custom_derivatives_connector_still_fails_reconcile_approval_
 
     assert action.status == "conflict"
     assert action.details["failed_policy_gates"] == ["require_connector_approved"]
+
+
+_SSF_CSV_FIXTURES_20261109 = (
+    _Path(__file__).resolve().parents[2] / "execution" / "lean_runtime" / "fixtures" / "taifex_20261109"
+)
+
+
+def _ssf_csv_payload_20261109() -> dict:
+    payload = _ssf_payload()
+    csv_path = _SSF_CSV_FIXTURES_20261109 / "DailyMarketReportFut.csv"
+    raw_bytes = csv_path.read_bytes()
+    assert raw_bytes.startswith(b"\xef\xbb\xbf")
+    payload["DailyMarketReportFut"] = raw_bytes
+    return payload
+
+
+def test_taifex_ssf_daily_market_report_csv_chinese_headers_normalizes_scoped_contracts() -> None:
+    csv_path = _SSF_CSV_FIXTURES_20261109 / "DailyMarketReportFut.csv"
+    raw_bytes = csv_path.read_bytes()
+    assert raw_bytes.startswith(b"\xef\xbb\xbf")
+
+    for market_input in (raw_bytes, raw_bytes.decode("utf-8"), _tw_official._decode_taifex_bytes(raw_bytes), _tw_official._taifex_text_rows(raw_bytes)):
+        payload = _ssf_payload()
+        payload["DailyMarketReportFut"] = market_input
+        rows = _tw_official.taifex_ssf_normalized_rows(
+            payload,
+            underlying_codes=["2330", "0050", "2317"],
+            available_time="2026-11-06T16:30:00Z",
+        )
+        assert len(rows) == 10
+        assert all(row["kind"] == "stock_future" for row in rows)
+        assert not any(row.get("tombstone") for row in rows)
+        assert all("/" not in row["contract_month"] for row in rows)
+        assert all(row["raw_market_row"]["交易時段"] == "一般" for row in rows)
+        assert {(row["contract"], row["contract_month"]) for row in rows} == {
+            ("CDF", "202611"),
+            ("CDF", "202612"),
+            ("QFF", "202611"),
+            ("QFF", "202612"),
+            ("DHF", "202611"),
+            ("DHF", "202612"),
+            ("NYF", "202611"),
+            ("NYF", "202612"),
+            ("SRF", "202611"),
+            ("SRF", "202612"),
+        }
+
+        qff_202611 = _ssf_row(rows, "QFF", "202611")
+        assert (
+            qff_202611["settlement_price"],
+            qff_202611["volume"],
+            qff_202611["open_interest"],
+            qff_202611["unit"],
+            qff_202611["price_date"],
+            qff_202611["underlying_code"],
+        ) == (2133.0, 126386, 65034, 100, "2026-11-06", "2330")
+
+        qff_202612 = _ssf_row(rows, "QFF", "202612")
+        assert (
+            qff_202612["settlement_price"],
+            qff_202612["volume"],
+            qff_202612["open_interest"],
+            qff_202612["unit"],
+            qff_202612["price_date"],
+        ) == (2139.0, 20930, 30246, 100, "2026-11-06")
+
+        cdf_202611 = _ssf_row(rows, "CDF", "202611")
+        assert (
+            cdf_202611["settlement_price"],
+            cdf_202611["volume"],
+            cdf_202611["open_interest"],
+            cdf_202611["unit"],
+            cdf_202611["price_date"],
+        ) == (2133.0, 29709, 21285, 2000, "2026-11-06")
+
+        cdf_202612 = _ssf_row(rows, "CDF", "202612")
+        assert (
+            cdf_202612["settlement_price"],
+            cdf_202612["volume"],
+            cdf_202612["open_interest"],
+            cdf_202612["unit"],
+            cdf_202612["price_date"],
+        ) == (2139.0, 5003, 10597, 2000, "2026-11-06")
+
+        dhf_202611 = _ssf_row(rows, "DHF", "202611")
+        assert (
+            dhf_202611["settlement_price"],
+            dhf_202611["volume"],
+            dhf_202611["open_interest"],
+            dhf_202611["unit"],
+            dhf_202611["price_date"],
+            dhf_202611["underlying_code"],
+        ) == (225.0, 14260, 18116, 2000, "2026-11-06", "2317")
+
+        dhf_202612 = _ssf_row(rows, "DHF", "202612")
+        assert (
+            dhf_202612["settlement_price"],
+            dhf_202612["volume"],
+            dhf_202612["open_interest"],
+            dhf_202612["unit"],
+            dhf_202612["price_date"],
+        ) == (226.0, 2635, 4981, 2000, "2026-11-06")
+
+        srf_202611 = _ssf_row(rows, "SRF", "202611")
+        assert (
+            srf_202611["settlement_price"],
+            srf_202611["volume"],
+            srf_202611["open_interest"],
+            srf_202611["unit"],
+            srf_202611["price_date"],
+            srf_202611["underlying_code"],
+        ) == (92.35, 30754, 22008, 1000, "2026-11-06", "0050")
+
+        srf_202612 = _ssf_row(rows, "SRF", "202612")
+        assert (
+            srf_202612["settlement_price"],
+            srf_202612["volume"],
+            srf_202612["open_interest"],
+            srf_202612["unit"],
+            srf_202612["price_date"],
+        ) == (92.5, 5879, 9463, 1000, "2026-11-06")
+
+        nyf_202611 = _ssf_row(rows, "NYF", "202611")
+        assert (
+            nyf_202611["settlement_price"],
+            nyf_202611["volume"],
+            nyf_202611["open_interest"],
+            nyf_202611["unit"],
+            nyf_202611["price_date"],
+            nyf_202611["underlying_code"],
+        ) == (92.35, 27171, 22056, 10000, "2026-11-06", "0050")
+
+        nyf_202612 = _ssf_row(rows, "NYF", "202612")
+        assert (
+            nyf_202612["settlement_price"],
+            nyf_202612["volume"],
+            nyf_202612["open_interest"],
+            nyf_202612["unit"],
+            nyf_202612["price_date"],
+        ) == (92.5, 1152, 3453, 10000, "2026-11-06")
+
+
+def test_taifex_ssf_daily_market_report_parse_failure_records_failed_ingest_and_preserves_previous_partition(
+    tmp_path,
+) -> None:
+    from services.execution.lean_runtime.instrument_candidates import read_normalized_ssf_rows
+    from services.foundation import DeadLetterQueue
+    from services.source_ingestion.connectors.base import IngestRunStatus
+    from services.source_ingestion.ingest_manager import IngestManager
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+    from services.source_ingestion.scheduler import IngestionScheduler, JsonlIngestScheduleStore
+
+    adapter = _tw_official.TaifexDerivativesChipAdapter(
+        dataset="taifex_ssf_contracts",
+        contracts=("2330", "0050", "2317"),
+    )
+    connector = adapter.connector()
+    manager = IngestManager()
+    manager.register_connector(connector)
+    schedule_store = JsonlIngestScheduleStore(tmp_path / "ingest_schedule.jsonl")
+    dlq = DeadLetterQueue()
+    scheduler = IngestionScheduler(
+        manager=manager,
+        store=schedule_store,
+        dead_letter_queue=dlq,
+        max_attempts=1,
+    )
+    storage_root = tmp_path / "market_storage"
+    writer = MarketDataStorageWriter(storage_root)
+
+    good_payload = _ssf_csv_payload_20261109()
+    good_result = scheduler.run_once(
+        connector_id=connector.connector_id,
+        fetch_batch=lambda _watermark: adapter.records_from_payload(
+            good_payload,
+            dataset="taifex_ssf_contracts",
+            contracts=["2330", "0050", "2317"],
+            available_time="2026-11-06T16:30:00Z",
+        ),
+        trace_id="trace-good-20261109",
+    )
+    assert good_result.run.status == IngestRunStatus.COMPLETED
+    good_manifest = writer.write_run(result=good_result, connector=connector)
+    assert len(good_manifest.normalized_refs) == 1
+    assert good_manifest.normalized_refs[0]["row_count"] == 10
+    partition_dir = storage_root / "normalized" / "taifex_ssf_contracts" / "date=2026-11-06"
+    assert len(list(partition_dir.glob("*.jsonl"))) == 1
+
+    bad_market_tables = [
+        ("unknown_headers", "\ufeff未知日期,未知契約,未知月份,未知時段,未知結算價\n20261106,QFF,202611,一般,2133\n"),
+        ("unknown_settlement_header", "\ufeff日期,契約代號,到期月份(週別),交易時段,未知結算價\n20261106,QFF,202611,一般,2133\n"),
+        ("empty_string", ""),
+        ("empty_bom_bytes", b"\xef\xbb\xbf"),
+        ("header_only_csv", "\ufeff日期,契約代號,到期月份(週別),交易時段,結算價\n"),
+        ("html_error_body", "<html><body>503 Service Unavailable</body></html>"),
+        ("json_error_body", '{"error": "upstream unavailable"}'),
+        (
+            "only_after_hours_and_spread",
+            "\ufeff日期,契約代號,到期月份(週別),交易時段,結算價\n"
+            "20261106,QFF,202611,盤後,NULL\n"
+            "20261106,QFF,202611/202612,一般,-\n",
+        ),
+    ]
+    for label, bad_market in bad_market_tables:
+        bad_payload = dict(good_payload, DailyMarketReportFut=bad_market)
+        with pytest.raises(SourceEvidenceError, match="DailyMarketReportFut"):
+            adapter.records_from_payload(
+                bad_payload,
+                dataset="taifex_ssf_contracts",
+                contracts=["2330", "0050", "2317"],
+                available_time="2026-11-06T17:00:00Z",
+            )
+        failed_result = scheduler.run_once(
+            connector_id=connector.connector_id,
+            fetch_batch=lambda _watermark, bp=bad_payload: adapter.records_from_payload(
+                bp,
+                dataset="taifex_ssf_contracts",
+                contracts=["2330", "0050", "2317"],
+                available_time="2026-11-06T17:00:00Z",
+            ),
+            trace_id=f"trace-bad-{label}",
+        )
+        assert failed_result.run.status == IngestRunStatus.FAILED
+        assert "DailyMarketReportFut" in (failed_result.run.events[-1].message or "")
+        assert failed_result.records == ()
+        assert failed_result.typed_failure is not None
+        assert failed_result.typed_failure["category"] == "validation"
+        assert failed_result.typed_failure["code"] == "source_evidence_rejected"
+        assert failed_result.dlq_entries and "DailyMarketReportFut" in failed_result.dlq_entries[0].reason
+
+        failed_manifest = writer.write_run(result=failed_result, connector=connector)
+        assert failed_manifest.raw_refs == ()
+        assert failed_manifest.normalized_refs == ()
+
+    # Previous good partition stays in force with no tombstone and no extra files written.
+    assert len(list(partition_dir.glob("*.jsonl"))) == 1
+    persisted_rows = read_normalized_ssf_rows(storage_root)
+    assert persisted_rows is not None
+    assert len(persisted_rows) == 10
+    assert not any(r.get("tombstone") for r in persisted_rows)
+    assert {(r["contract"], r["contract_month"]) for r in persisted_rows} == {
+        ("CDF", "202611"),
+        ("CDF", "202612"),
+        ("QFF", "202611"),
+        ("QFF", "202612"),
+        ("DHF", "202611"),
+        ("DHF", "202612"),
+        ("NYF", "202611"),
+        ("NYF", "202612"),
+        ("SRF", "202611"),
+        ("SRF", "202612"),
+    }
+
+
+def test_taifex_ssf_true_absence_in_chinese_csv_emits_tombstone() -> None:
+    payload = _ssf_csv_payload_20261109()
+    csv_lines = payload["DailyMarketReportFut"].decode("utf-8-sig").splitlines()
+    no_dhf_csv = "\ufeff" + "\n".join(line for line in csv_lines if ",DHF," not in line) + "\n"
+    trimmed = {
+        **payload,
+        "SingleStockFuturesMargining": [
+            r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "DHF"
+        ],
+        "DailyMarketReportFut": no_dhf_csv.encode("utf-8"),
+    }
+    rows = _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(
+        trimmed,
+        dataset="taifex_ssf_contracts",
+        contracts=["2317"],
+        available_time="2026-11-06T17:00:00Z",
+    )
+    assert len(rows) == 1
+    assert rows[0]["tombstone"] is True
+    assert rows[0]["kind"] == "stock_future_tombstone"
+    assert rows[0]["snapshot_scope"] == ["2317"]
+    assert rows[0]["date"] == "2026-11-06"
+

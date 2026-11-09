@@ -42,6 +42,8 @@ services:
       - dev-paper-training-worker-tokens:/issued/training-session-preview-worker
       - dev-paper-research-tokens:/issued/research-orchestrator-svc
       - dev-paper-agora-projector-tokens:/issued/source-ingest-agora-projector
+      # Capital reader principal only, for the paper producer and fleet reconciler.
+      - dev-paper-capital-reader-tokens:/issued/paper-capital-reader
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -2412,13 +2414,21 @@ services:
       RECONCILER_RESTART_BACKOFF_SECONDS: ${RECONCILER_RESTART_BACKOFF_SECONDS:-5}
       RECONCILER_DRAIN_TIMEOUT_SECONDS: ${RECONCILER_DRAIN_TIMEOUT_SECONDS:-10}
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      # Inherited by every paper runtime worker: the order gate reads the
+      # persona pool's governed risk policy through the capital service.
+      PANTHEON_CAPITAL_API_URL: http://capital:8092
+      DEPLOYMENT_CAPITAL_SERVICE_TOKEN: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN:-}
+      DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE:-}
       PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT: /data/source-ingest/market_data_store
       PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
       PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
       SIGNAL_STORE_URL: redis://signal-store:6379
       WORKER_SCRIPT_PATH: services/execution/lean_runtime/paper_runtime.py
     volumes:
       - runtime-data:/data/runtime
+      - dev-paper-capital-reader-tokens:/run/pantheon-principals:ro
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       runtime-manager:
         condition: service_healthy
@@ -2452,11 +2462,18 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      # Expression-layer inputs: pool policy and budget from the capital
+      # service, cash and positions from the telemetry runtime summary.
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_CAPITAL_API_URL: http://capital:8092
+      DEPLOYMENT_CAPITAL_SERVICE_TOKEN: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN:-}
+      DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE:-}
       RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
       # CurrentArtifactStrategy only accepts the Source-owned persisted
       # snapshot contract.  The default remains paper-only and fails closed
       # when a binding lacks an executable artifact or a valid snapshot.
       PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT: /data/source-ingest/market_data_store
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
       PAPER_SIGNAL_STRATEGY: ${PAPER_SIGNAL_STRATEGY:-artifact}
@@ -2467,6 +2484,8 @@ services:
       PANTHEON_CANARY_EXECUTION_ENABLED: "false"
     volumes:
       - worker-health-data:/data/health
+      - dev-paper-capital-reader-tokens:/run/pantheon-principals:ro
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       runtime-manager:
         condition: service_healthy
@@ -3069,6 +3088,7 @@ volumes:
   dev-paper-training-worker-tokens:
   dev-paper-research-tokens:
   dev-paper-agora-projector-tokens:
+  dev-paper-capital-reader-tokens:
   broker-data:
   bff-data:
   capital-data:

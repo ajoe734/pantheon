@@ -1000,3 +1000,68 @@ def test_older_market_date_replay_with_newer_available_time_aligns_contract_mast
         }
         assert "ssf:DHF:202611" in c_2317
 
+
+
+class TestMaxLeverageBoundsRemainingGross:
+    """``max_leverage`` is a multiple of equity; the tighter of it and gross_limit binds."""
+
+    def _cash_units(self, budget):
+        from services.execution.lean_runtime.instrument_candidates import build_candidates
+
+        [cash] = build_candidates("2330", "2026-11-09", {}, budget, cash_price=2235.0)
+        return cash["max_units_by_risk"]
+
+    def test_gross_limit_alone_is_unchanged(self) -> None:
+        budget = {"available_cash": 1_000_000.0, "gross_limit": 200000.0, "gross_used": 0.0}
+        assert self._cash_units(budget) == 89
+
+    def test_leverage_multiple_binds_when_tighter_than_gross_limit(self) -> None:
+        budget = {
+            "equity": 100000.0,
+            "available_cash": 1_000_000.0,
+            "gross_limit": 200000.0,
+            "gross_used": 0.0,
+            "max_leverage": 1.0,
+        }
+        assert self._cash_units(budget) == 44  # 100,000 / 2,235
+
+    def test_looser_leverage_does_not_raise_the_limit(self) -> None:
+        budget = {
+            "equity": 100000.0,
+            "available_cash": 1_000_000.0,
+            "gross_limit": 200000.0,
+            "gross_used": 0.0,
+            "max_leverage": 5.0,
+        }
+        assert self._cash_units(budget) == 89
+
+
+def test_lookup_final_settlement_price_reads_dataset_root_and_callable(tmp_path: Path) -> None:
+    from services.execution.lean_runtime.futures_session_inputs import DatasetFinalSettlementSource
+
+    _write_partition(
+        tmp_path,
+        "2026-11-18",
+        "run-settlement",
+        [
+            {
+                "dataset": "taifex_ssf_contracts",
+                "market_date": "2026-11-18",
+                "contract": "SRF",
+                "underlying_code": "0050",
+                "contract_month": "202611",
+                "final_settlement_price": 95.25,
+                "final_settlement_date": "2026-11-18",
+                "available_time": "2026-11-18T06:00:00Z",
+                "ingest_time": "2026-11-18T06:00:01Z",
+            }
+        ],
+    )
+    resolved_dir = ic.lookup_final_settlement_price("SRF", "202611", tmp_path, as_of_trading_day="2026-11-18")
+    assert resolved_dir is not None and resolved_dir["final_settlement_price"] == 95.25
+    assert ic.lookup_final_settlement_price("SRF", "202611", tmp_path, as_of_trading_day="2026-11-17") is None
+    source = DatasetFinalSettlementSource(tmp_path)
+    resolved_src = ic.lookup_final_settlement_price("SRF", "202611", source, as_of_trading_day="2026-11-18")
+    assert resolved_src is not None and resolved_src["final_settlement_price"] == 95.25
+
+

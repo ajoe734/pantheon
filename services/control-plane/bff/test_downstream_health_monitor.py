@@ -406,7 +406,15 @@ class TestDeliveryHeadOfLine:
 
     def test_blocked_oldest_window_does_not_starve_newer_rows(self, tmp_path):
         monitor = _safety_monitor(tmp_path)
-        _queue_telemetry(monitor, "dead-dependency")
+        # BFF-HEALTH-OPEN-BLOCKED-TELEMETRY-20261109: a dead telemetry
+        # dependency no longer blocks, so the permanently blocked dependency
+        # here is a dead incident_open row.
+        monitor._store.queue_delivery(
+            delivery_id="telemetry:dead-dependency", event_id="dead-dependency",
+            channel="incident_open", target_name="svc-z",
+            url="http://inc:8090/x", body={"x": 1}, dependency_ids=[],
+            max_attempts=5,
+        )
         _set_rows(monitor, ["telemetry:dead-dependency"], status="dead_letter")
         older = _rfc3339(datetime.now(timezone.utc) - timedelta(seconds=120))
         with sqlite3.connect(monitor.state_path) as connection:
@@ -1363,8 +1371,10 @@ class TestResolveBlockedByDeadDependency:
     @pytest.mark.parametrize(
         ("dep_status", "expected"),
         [
-            ("dead_letter", False),
-            ("quarantined", False),
+            # Failed telemetry is settled (BFF-HEALTH-OPEN-BLOCKED-TELEMETRY-
+            # 20261109), so the resolve is sendable work, not blocked.
+            ("dead_letter", True),
+            ("quarantined", True),
             ("pending", True),
             ("retry", True),
             ("claimed", True),
@@ -1377,6 +1387,15 @@ class TestResolveBlockedByDeadDependency:
         monitor = self._seed(tmp_path, dep_status)
         _set_rows(monitor, [self._RES], status=resolve_status)
         assert self._active(monitor) is expected
+
+    @pytest.mark.parametrize("open_status", ["dead_letter", "quarantined"])
+    def test_resolve_with_dead_open_dependency_is_not_active(
+        self, tmp_path, open_status
+    ):
+        monitor = self._seed(tmp_path, "delivered")
+        _set_rows(monitor, [self._OPEN], status=open_status)
+        _set_rows(monitor, [self._RES], status="pending")
+        assert self._active(monitor) is False
 
     def test_missing_dependency_row_is_not_active(self, tmp_path):
         monitor = self._seed(tmp_path, "delivered", drop_dep=True)

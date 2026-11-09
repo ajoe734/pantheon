@@ -31,6 +31,10 @@ from services.execution.artifact_loader import (
     ExecutionMode,
 )
 from services.execution.ibkr_adapter import normalize_us_symbol
+from services.execution.lean_runtime.expression_inputs import (
+    ExpressionInputsUnavailable,
+    build_production_expression_inputs,
+)
 from services.execution.lean_runtime.symbol_parser import (
     SymbolParseError,
     _CRYPTO_QUOTES,
@@ -288,6 +292,12 @@ def apply_expression_record(
     consumes the bar.
     """
     from services.execution.lean_runtime.expression_policy import is_no_trade
+    from services.execution.lean_runtime.futures_session_inputs import (
+        attach_futures_session_inputs,
+    )
+    from services.execution.lean_runtime.instrument_candidates import (
+        parse_instrument_id,
+    )
 
     record = dict(stored["record"])
     metadata = decision.setdefault("metadata", {})
@@ -296,9 +306,26 @@ def apply_expression_record(
     metadata["view_direction"] = view.get("direction")
     metadata["decision_id"] = record.get("decision_id") or decision.get("decision_id")
     metadata["expression_decision"] = record
-    if stored.get("replay_input") is not None:
-        metadata["expression_replay_input"] = dict(stored["replay_input"])
+    decision_day = str(decision.get("timestamp") or "")[:10]
+    if decision_day:
+        metadata.setdefault("trade_date", decision_day)
+        metadata.setdefault("as_of_trading_day", decision_day)
+    candidates_list: list[dict[str, Any]] = []
+    book_before: Mapping[str, Any] | None = None
+    replay_input = stored.get("replay_input")
+    if isinstance(replay_input, Mapping):
+        metadata["expression_replay_input"] = dict(replay_input)
+        raw_cands = replay_input.get("candidates")
+        if isinstance(raw_cands, Sequence) and not isinstance(raw_cands, (str, bytes)):
+            candidates_list = [dict(c) for c in raw_cands if isinstance(c, Mapping)]
+        if isinstance(replay_input.get("book_before"), Mapping):
+            book_before = replay_input["book_before"]
     metadata["reason_code"] = record.get("reason_code")
+    attach_futures_session_inputs(
+        decision,
+        book_before,
+        trade_date=metadata.get("trade_date") or decision_day,
+    )
     if is_no_trade(record):
         decision["action"] = "HOLD"
         return decision
@@ -309,10 +336,60 @@ def apply_expression_record(
     decision["direction"] = "LONG" if (side == "buy") != closing else "SHORT"
     decision["quantity"] = int(record["units"])
     decision["quantity_type"] = "SHARES"
-    metadata["instrument_id"] = str(record["instrument_id"])
-    metadata["kind"] = stored.get("kind")
+    inst_id = str(record["instrument_id"])
+    metadata["instrument_id"] = inst_id
+    chosen_candidate = next(
+        (c for c in candidates_list if c.get("instrument_id") == inst_id),
+        {},
+    )
+    effective_kind = stored.get("kind") or chosen_candidate.get("kind")
+    if effective_kind is None and inst_id.startswith("ssf:"):
+        effective_kind = "stock_future"
+    metadata["kind"] = effective_kind
     metadata["units"] = int(record["units"])
-    metadata["multiplier"] = stored.get("multiplier") or 1
+    metadata["multiplier"] = (
+        stored.get("multiplier")
+        or chosen_candidate.get("multiplier")
+        or 1
+    )
+    if candidates_list:
+        admitted = list(candidates_list)
+        if closing and not any(c.get("instrument_id") == inst_id for c in admitted):
+            admitted.append(
+                {
+                    "instrument_id": inst_id,
+                    "kind": effective_kind,
+                    "multiplier": metadata["multiplier"],
+                }
+            )
+        metadata["candidates"] = admitted
+    if effective_kind == "stock_future" or inst_id.startswith("ssf:"):
+        parsed_inst: dict[str, Any] = {}
+        if inst_id.startswith("ssf:"):
+            try:
+                parsed_inst = parse_instrument_id(inst_id)
+            except ValueError:
+                parsed_inst = {}
+        contract_val = chosen_candidate.get("contract") or parsed_inst.get("contract")
+        month_val = chosen_candidate.get("contract_month") or parsed_inst.get("contract_month")
+        if contract_val is not None:
+            metadata["contract"] = contract_val
+        if month_val is not None:
+            metadata["contract_month"] = month_val
+        if chosen_candidate.get("price") is not None:
+            metadata["futures_settlement_price"] = chosen_candidate["price"]
+        for cand_key in (
+            "price_basis",
+            "price_date",
+            "initial_margin_per_unit",
+            "maintenance_margin_per_unit",
+            "fee_per_unit_per_side",
+            "tax_rate_per_side",
+            "expiry",
+            "last_trading_day",
+        ):
+            if chosen_candidate.get(cand_key) is not None:
+                metadata[cand_key] = chosen_candidate[cand_key]
     return decision
 
 
@@ -375,8 +452,14 @@ class CurrentArtifactStrategy:
         )
 
         underlying = normalize_underlying_code(symbol)
+        unavailable: ExpressionInputsUnavailable | None = None
         if self._expression_inputs is not None:
-            inputs = dict(self._expression_inputs(b_dict) or {})
+            try:
+                inputs = dict(self._expression_inputs(b_dict) or {})
+            except ExpressionInputsUnavailable as exc:
+                log.warning("expression inputs unavailable for %s: %s", symbol, exc)
+                unavailable = exc
+                inputs = {}
         else:
             inputs = dict(metadata.get("expression_inputs") or {})
         book = dict(inputs.get("persona_book") or {})
@@ -384,7 +467,10 @@ class CurrentArtifactStrategy:
         event_time = str(market_input.get("event_time") or "").strip()
         price_date = event_time[:10] or None
         builder = self._candidates_builder or build_candidates
+        candidates: list[dict[str, Any]] = []
         try:
+            if unavailable is not None:
+                raise unavailable
             candidates = builder(
                 underlying,
                 now_iso[:10],
@@ -395,6 +481,8 @@ class CurrentArtifactStrategy:
                 normalized_root=os.getenv(SSF_NORMALIZED_ROOT_ENV) or None,
                 decision_id=decision_id,
             )
+        except ExpressionInputsUnavailable:
+            candidates = []
         except Exception as exc:  # noqa: BLE001 - candidate failure fails closed to a NoTrade
             log.warning("expression candidates unavailable for %s: %s", symbol, exc)
             candidates = []
@@ -405,14 +493,21 @@ class CurrentArtifactStrategy:
             "strength": view.get("strength"),
         }
         params = dict(strategy_artifact["expression_policy"].get("parameters") or {})
-        record = expression_policy.decide_validated(
-            decision_view,
-            candidates,
-            book,
-            budget,
-            params,
-            decider=self._decider or expression_policy.decide,
-        )
+        if unavailable is not None:
+            # The limits or the book could not be read: a real NoTrade naming
+            # the missing input, never a misleading gross_limit binding.
+            record = expression_policy.budget_unavailable_no_trade(
+                decision_view, unavailable.missing, unavailable.detail
+            )
+        else:
+            record = expression_policy.decide_validated(
+                decision_view,
+                candidates,
+                book,
+                budget,
+                params,
+                decider=self._decider or expression_policy.decide,
+            )
         chosen_candidate = next(
             (c for c in candidates if c.get("instrument_id") == record.get("instrument_id")),
             {},
@@ -1342,8 +1437,21 @@ class PaperSignalProducer:
         store = self._store_for(binding)
 
         enqueued = 0
+        binding_metadata = b_dict.get("metadata") if isinstance(b_dict.get("metadata"), Mapping) else {}
+        inline_book = (
+            b_dict.get("persona_book")
+            or binding_metadata.get("persona_book")
+            or (
+                binding_metadata.get("expression_inputs", {}).get("persona_book")
+                if isinstance(binding_metadata.get("expression_inputs"), Mapping)
+                else None
+            )
+        )
         if isinstance(out, list):
             # Legacy list-of-signals flow
+            from services.execution.lean_runtime.futures_session_inputs import (
+                attach_futures_session_inputs,
+            )
             from services.execution.lean_runtime.signal_producer import is_signal_already_admitted
             for sig in out:
                 if "metadata" not in sig:
@@ -1351,6 +1459,14 @@ class PaperSignalProducer:
                 if isinstance(sig["metadata"], dict):
                     sig["metadata"]["is_real_order"] = False
                     sig["metadata"]["is_real_capital"] = False
+                    sig_book = sig["metadata"].get("persona_book") or inline_book
+                    if sig_book is not None and "session_settlement_prices" not in sig["metadata"]:
+                        attach_futures_session_inputs(
+                            sig,
+                            sig_book,
+                            trade_date=sig["metadata"].get("trade_date")
+                            or str(sig.get("timestamp") or now_iso)[:10],
+                        )
                 _paper_signal_identity(sig, b_dict, now_iso)
                 if is_signal_already_admitted(store, str(sig.get("signal_id") or "")):
                     continue
@@ -1358,6 +1474,9 @@ class PaperSignalProducer:
                 enqueued += 1
         elif isinstance(out, dict):
             # First-class decision dict flow
+            from services.execution.lean_runtime.futures_session_inputs import (
+                attach_futures_session_inputs,
+            )
             from services.execution.lean_runtime.signal_producer import (
                 DecisionSignalProducer,
                 is_signal_already_admitted,
@@ -1409,7 +1528,14 @@ class PaperSignalProducer:
             if isinstance(out["metadata"], dict):
                 out["metadata"]["is_real_order"] = False
                 out["metadata"]["is_real_capital"] = False
-                binding_metadata = b_dict.get("metadata") if isinstance(b_dict.get("metadata"), Mapping) else {}
+                out_book = out["metadata"].get("persona_book") or inline_book
+                if out_book is not None and "session_settlement_prices" not in out["metadata"]:
+                    attach_futures_session_inputs(
+                        out,
+                        out_book,
+                        trade_date=out["metadata"].get("trade_date")
+                        or str(out.get("timestamp") or now_iso)[:10],
+                    )
                 tenant_id = (
                     out.get("tenant_id")
                     or out["metadata"].get("tenant_id")
@@ -1604,13 +1730,44 @@ def _runner_strategy() -> Any:
 
     profile = os.getenv("PAPER_SIGNAL_STRATEGY", "artifact").strip().lower()
     if profile in {"artifact", "current-artifact", "current_artifact"}:
-        return CurrentArtifactStrategy()
+        return CurrentArtifactStrategy(
+            expression_inputs=build_production_expression_inputs()
+        )
     if profile == "smoke":
         return BoundedPaperStrategy()
     raise ValueError(
         "PAPER_SIGNAL_STRATEGY must be 'artifact' (default) or explicit 'smoke'; "
         f"got {profile!r}."
     )
+
+
+def expression_startup_report(
+    provider: Any, *, layer_on: bool
+) -> tuple[str, str | None]:
+    """One startup log line and the degraded reason for a missing capital reader.
+
+    Names only whether each reader was configured; never a credential or URL.
+    The reason is ``None`` unless the expression layer is on and the capital
+    reader is absent, in which case every decision would be budget_unavailable.
+    """
+
+    capital = bool(getattr(provider, "capital_reader_configured", False))
+    ledger = bool(getattr(provider, "ledger_reader_configured", False))
+    line = (
+        "expression layer %s; capital reader %s; ledger reader %s"
+        % (
+            "on" if layer_on else "off",
+            "configured" if capital else "not configured",
+            "configured" if ledger else "not configured",
+        )
+    )
+    reason = None
+    if layer_on and not capital:
+        reason = (
+            "capital_pool: capital reader is not configured; "
+            "expression decisions will be budget_unavailable"
+        )
+    return line, reason
 
 
 def healthcheck() -> int:
@@ -1651,10 +1808,16 @@ def main() -> int:  # pragma: no cover
     if max_ticks < 0:
         raise ValueError("PAPER_PRODUCER_MAX_TICKS must be >= 0")
     health_file = os.getenv("PAPER_PRODUCER_HEALTH_FILE", "").strip()
+    strategy = _runner_strategy()
     producer = PaperSignalProducer(
-        store_for=_redis_store_factory(signal_store_url), strategy=_runner_strategy()
+        store_for=_redis_store_factory(signal_store_url), strategy=strategy
     )
     log.info("paper_signal_producer started; interval=%.0fs", interval)
+    startup_line, startup_gap = expression_startup_report(
+        getattr(strategy, "_expression_inputs", None),
+        layer_on=expression_layer_enabled(),
+    )
+    log.info(startup_line)
     health: dict[str, Any] = {
         "worker_name": _WORKER_NAME,
         "status": "starting",
@@ -1671,6 +1834,9 @@ def main() -> int:  # pragma: no cover
         "live_capital_enabled": False,
         "live_order_submission_enabled": False,
     }
+    if startup_gap:
+        health["status"] = "degraded"
+        health["last_failure_reason"] = startup_gap
     write_health(health_file, health)
 
     tick = 0
@@ -1710,9 +1876,14 @@ def main() -> int:  # pragma: no cover
                     for binding_id, reason in sorted(degraded_bindings.items())
                 )
             else:
-                health["status"] = "ok"
-                health["last_success_at"] = now_iso
-                health["last_failure_reason"] = None
+                if startup_gap:
+                    health["status"] = "degraded"
+                    health["last_failure_at"] = now_iso
+                    health["last_failure_reason"] = startup_gap
+                else:
+                    health["status"] = "ok"
+                    health["last_success_at"] = now_iso
+                    health["last_failure_reason"] = None
             health["active_binding_count"] = len(bindings)
             health["enqueued_signal_count"] = sum(counts.values())
             health["degraded_binding_count"] = len(degraded_bindings)

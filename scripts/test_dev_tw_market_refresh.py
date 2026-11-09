@@ -423,6 +423,9 @@ if args[0] == "compose":
             sys.exit(0)
         print(state["compose_image_id"])
         sys.exit(0)
+    elif sub[0] == "config":
+        print(json.dumps({{"services": {{"source-ingest": {{"image": "pantheon-source-ingest"}}}}}}))
+        sys.exit(0)
     elif sub[0] == "up":
         services = sub[4:]
         log_event("compose_up", services=services, env={{k: os.environ[k] for k in os.environ if k.startswith("PANTHEON_") or k.startswith("SOURCE_INGEST_")}})
@@ -460,6 +463,10 @@ elif args[0] == "stop":
 
 elif args[0] == "start":
     log_event("docker_start", names=args[1:])
+    sys.exit(0)
+
+elif args[0] == "image" and len(args) > 1 and args[1] == "inspect":
+    print(state.get("resolved_compose_image_id", state.get("image_id", "sha256:" + "a" * 64)))
     sys.exit(0)
 
 elif args[0] == "inspect":
@@ -2149,7 +2156,8 @@ def test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_conne
     assert "taifex_refresh" in by_id, "Missing TAIFEX refresh step id=taifex_refresh"
     twse_idx, twse_step = by_id["refresh"]
     taifex_idx, taifex_step = by_id["taifex_refresh"]
-    assert twse_idx < taifex_idx, "TAIFEX contract refresh must run after TWSE market refresh"
+    assert taifex_idx < twse_idx, "TAIFEX contract refresh must run before TWSE market refresh"
+    assert twse_step.get("if") in (None, ""), "TWSE market refresh must never be prevented by a TAIFEX failure"
 
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"

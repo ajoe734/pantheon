@@ -1,0 +1,17 @@
+{
+  "task_id": "DEV-COMPENSATION-COMPOSE-TAGS-20261109",
+  "kind": "functional",
+  "hosted_verification": "pending coordinator; no VM, SSH or workflow dispatch used",
+  "tests": {
+    "scripts/test_dev_release_artifacts.py": "passed (includes 57-service compose-name restore and compose-image-mismatch readback tests)",
+    "scripts/test_dev_release_artifact_driver.py": "passed",
+    "scripts/test_deploy_nonprod_vm.py": "4 new source-refresh tests passed",
+    "pre_existing_environment_failures": "11 tests in test_deploy_nonprod_vm/test_deploy_nonprod_artifact_restore/test_dev_tw_market_refresh_workflow fail identically on the unmodified branch"
+  },
+  "acceptance": {
+    "1": "restore re-tags each compose image name to the restored image ID",
+    "2": "readback raises StackMixedError naming the service (compose-image-mismatch)",
+    "3": "refresh stops before recreate when the compose name resolves elsewhere",
+    "4": "protect tags, sealed archives unchanged; no prune; no second restore path"
+  }
+}

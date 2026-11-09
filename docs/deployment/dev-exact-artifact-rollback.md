@@ -295,3 +295,23 @@ Loops 1–12 with trigger/terminal/next-consumer/worker/reload evidence, Loop 5
 provenance, executable Loop 8 RuntimeBinding, Loop 9 paper lifecycle, and the
 authenticated Management, Agora and Management-AI journeys. None is inferred
 from supervisor health, library tests, source proof or this deployment design.
+
+## Compose image names after a stack restore
+
+`restore_images` recreates containers through an override that pins image IDs.
+That alone left the Compose image names (for example
+`pantheon-source-ingest`) on the rejected candidate build, so the next plain
+`docker compose up --no-build` started the candidate. After the existing
+restore, each restored service's Compose image name (resolved from the base
+Compose file only, never the candidate override) is now re-tagged to its
+restored image ID. The stack readback fails with
+`compose-image-mismatch`, naming the service, if a name still resolves to a
+different image. `pantheon-protect/*` tags and the three sealed archives are
+unchanged and nothing is pruned.
+
+The bounded and restore source-ingest refresh in `deploy_nonprod_vm.sh` also
+resolves the Compose image name before `compose up` and stops, without
+recreating, if it differs from the image running when the refresh began.
+
+Evidence is functional (fake Docker at 57 services, shell fixture); hosted
+verification is performed separately by the coordinator.

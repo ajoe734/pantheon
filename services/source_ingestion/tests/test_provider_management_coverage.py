@@ -83,15 +83,10 @@ def _sample_payload_for_adapter(adapter_token: str, dataset: str | None = None) 
                     "InitialMarginRate": "13.50%",
                     "Date": "20261106",
                 }],
-                "DailyMarketReportFut": [{
-                    "Date": "20261106",
-                    "Contract": "QFF",
-                    "ContractMonth(Week)": "202611",
-                    "Volume": "126386",
-                    "SettlementPrice": "2133",
-                    "OpenInterest": "65034",
-                    "TradingSession": "一般",
-                }],
+                "DailyMarketReportFut": (
+                    "\ufeff日期,契約代號,到期月份(週別),開盤價,最高價,最低價,最後成交價,漲跌價,漲跌%,合計成交量,結算價,未沖銷契約數,最後最佳買價,最後最佳賣價,歷史最高價,歷史最低價,是否因訊息面暫停交易,交易時段,價差對單式委託成交量\n"
+                    "20261106,QFF,202611,2025,2194,2023,2135,-112,-4.98%,126386,2133,65034,2135,2136,2635,2023,,一般,\n"
+                ),
                 "stockLists": {"QF": {"family": "QF", "underlying_code": "2330", "unit": 100, "is_etf": False}},
             }
         if dataset == "taifex_options_chip":

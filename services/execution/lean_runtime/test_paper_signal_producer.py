@@ -15,6 +15,7 @@ from services.execution.lean_runtime.paper_signal_producer import (
     BoundedPaperStrategy,
     build_smoke_signal,
     fetch_eligible_paper_bindings,
+    expression_startup_report,
     healthcheck,
     main,
 )
@@ -2269,3 +2270,431 @@ class TestExpressionDecisionStep(unittest.TestCase):
             signal["metadata"]["expression_decision"]["reason_code"],
             {"candidates_unavailable", "no_feasible_instrument"},
         )
+
+
+class TestExpressionInputsProductionWiring(unittest.TestCase):
+    """The production strategy built as ``main`` builds it, fed by the real shapes.
+
+    Nothing is injected past the wiring: ``_runner_strategy`` reads the pool
+    from the capital service and the ledger from the telemetry runtime summary;
+    only the HTTP transport is replaced, with the shapes read on 2026-11-09.
+    """
+
+    NOW = TestExpressionDecisionStep.NOW
+    BAR = TestExpressionDecisionStep.BAR
+    INPUTS = TestExpressionDecisionStep.INPUTS
+    _artifact = TestExpressionDecisionStep._artifact
+    _binding = TestExpressionDecisionStep._binding
+
+    POOL_BUDGET = 100000.0
+    POLICY = {
+        "risk_policy_id": "rp-pool-rb-expr",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_asset_classes": ["equity", "future"],
+    }
+    ENV = {
+        "PANTHEON_PAPER_EXPRESSION_LAYER": "on",
+        "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
+        "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": "capital-reader",
+        "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+        "PANTHEON_TELEMETRY_SERVICE_TOKEN": "telemetry-reader",
+        "PANTHEON_TENANT_ID": "default",
+    }
+
+    def _pool(self, *, policy=True, budget=POOL_BUDGET):
+        pool = {
+            "pool_id": "pool-rb-expr",
+            "tenant_id": "default",
+            "name": "persona paper pool",
+            "owner_id": "default",
+            "owner_type": "org",
+            "status": "active",
+            "currency": "TWD",
+            "budget": budget,
+            "single_runtime_enforced": True,
+            "metadata": {"internal": True, "execution_context": "paper"},
+        }
+        if policy is not False:
+            pool["metadata"]["risk_policy"] = dict(self.POLICY if policy is True else policy)
+        return pool
+
+    @staticmethod
+    def _fresh_summary():
+        # The hosted summaries of 2026-11-09: no fill yet, positions null.
+        return {
+            "runtime_id": "runtime-rb-expr",
+            "binding_id": "rb-expr",
+            "ledger_fill_count": 0,
+            "executed_trade_count": 0,
+            "positions": None,
+        }
+
+    def _fetch(self, *, pool=None, summary=None, summary_error=None):
+        calls: list[str] = []
+        pool = self._pool() if pool is None else pool
+        summary = self._fresh_summary() if summary is None else summary
+
+        def fetch(url, headers, timeout):
+            calls.append(url)
+            if "/api/capital-pools/" in url:
+                assert headers["Authorization"] == "Bearer capital-reader"
+                return pool
+            if "/api/telemetry/runtime-summaries/" in url:
+                assert headers["Authorization"] == "Bearer telemetry-reader"
+                if summary_error is not None:
+                    raise summary_error
+                return summary
+            raise AssertionError(url)
+
+        fetch.calls = calls
+        return fetch
+
+    def _decide(self, symbol, price, *, fetch, env=None):
+        import urllib.parse  # noqa: F401
+        from services.execution.lean_runtime import expression_inputs, paper_signal_producer
+
+        art = self._artifact()
+        art["parameters"]["symbols"] = [symbol]
+        binding = self._binding(art, closes=(price * 0.9552, price), symbol=symbol)
+        store = InMemoryPendingSignalStore()
+        with patch.dict("os.environ", env or self.ENV, clear=True), patch.object(
+            expression_inputs, "_http_get_json", fetch
+        ):
+            strategy = paper_signal_producer._runner_strategy()
+            producer = PaperSignalProducer(store_for=lambda _: store, strategy=strategy)
+            self.assertEqual(producer.produce(binding, self.NOW), 1)
+        [signal] = store.get_pending()
+        return signal
+
+    def test_runner_strategy_carries_the_provider_and_calls_it_per_binding(self) -> None:
+        from services.execution.lean_runtime import expression_inputs, paper_signal_producer
+
+        with patch.dict("os.environ", self.ENV, clear=True):
+            strategy = paper_signal_producer._runner_strategy()
+        self.assertIsInstance(strategy, paper_signal_producer.CurrentArtifactStrategy)
+        self.assertIsInstance(strategy._expression_inputs, expression_inputs.ExpressionInputsProvider)
+        fetch = self._fetch()
+        signal = self._decide("2330.TWSE", 2235.0, fetch=fetch)
+        self.assertEqual(len(fetch.calls), 2)
+        self.assertTrue(fetch.calls[0].endswith("/api/capital-pools/pool-rb-expr"))
+        self.assertTrue(fetch.calls[1].endswith("/api/telemetry/runtime-summaries/runtime-rb-expr"))
+        budget = signal["metadata"]["expression_replay_input"]["budget"]
+        self.assertEqual(budget["equity"], self.POOL_BUDGET)
+        self.assertEqual(budget["available_cash"], self.POOL_BUDGET)
+        self.assertEqual(budget["gross_limit"], self.POLICY["gross_limit"] * self.POOL_BUDGET)
+        self.assertEqual(budget["gross_used"], 0.0)
+        self.assertEqual(budget["max_leverage"], self.POLICY["max_leverage"])
+        book = signal["metadata"]["expression_replay_input"]["book_before"]
+        self.assertEqual(book, {"positions": [], "gross_notional": 0.0})
+
+    def test_hosted_long_views_choose_the_cash_share_and_never_no_trade(self) -> None:
+        from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+
+        for symbol, price, code in (
+            ("2330.TWSE", 2235.0, "2330"),
+            ("0050.TWSE", 92.5, "0050"),
+            ("2317.TWSE", 225.0, "2317"),
+        ):
+            with self.subTest(symbol=symbol):
+                signal = self._decide(symbol, price, fetch=self._fetch())
+                meta = signal["metadata"]
+                self.assertEqual(meta["view_direction"], "LONG")
+                self.assertEqual(meta["strength"], 1.0)
+                decision = meta["expression_decision"]
+                self.assertEqual(decision["candidates_considered"], [f"eq:{code}"])
+                self.assertEqual(decision["reason_code"], "long_cash")
+                self.assertEqual((signal["action"], signal["direction"]), ("BUY", "LONG"))
+                # Dev plan 4.4: N* = strength x fraction x remaining gross, units
+                # clamp(round(N*/price), 1, max_units_by_risk); max_units_by_risk
+                # is bounded by cash (full payment) and by remaining gross.
+                remaining = Decimal(str(self.POLICY["gross_limit"])) * Decimal(str(self.POOL_BUDGET))
+                spend = min(Decimal(str(self.POOL_BUDGET)), remaining)
+                max_units = int((spend / Decimal(str(price))).to_integral_value(rounding=ROUND_DOWN))
+                target = Decimal("1.0") * Decimal("1.0") * remaining
+                expected = min(
+                    max(int((target / Decimal(str(price))).quantize(Decimal(1), rounding=ROUND_HALF_UP)), 1),
+                    max_units,
+                )
+                self.assertEqual(meta["instrument_id"], f"eq:{code}")
+                self.assertEqual(meta["units"], expected)
+                self.assertEqual(signal["quantity"], expected)
+                self.assertLessEqual(expected * price, self.POOL_BUDGET)
+                self.assertGreaterEqual(expected, 1)
+
+    def test_policy_missing_is_a_budget_unavailable_no_trade_naming_the_input(self) -> None:
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(pool=self._pool(policy=False)))
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(signal["action"], "HOLD")
+        self.assertEqual(decision["reason_code"], "candidates_unavailable")
+        self.assertTrue(decision["detail"].startswith("budget_unavailable: risk_policy"), decision)
+        self.assertNotEqual(decision["detail"], "gross_limit")
+
+    def test_pool_budget_missing_is_named(self) -> None:
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(pool=self._pool(budget=None)))
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(decision["reason_code"], "candidates_unavailable")
+        self.assertTrue(decision["detail"].startswith("budget_unavailable: pool_budget"), decision)
+
+    def test_ledger_unreadable_is_a_budget_unavailable_no_trade_naming_the_input(self) -> None:
+        import urllib.error
+
+        error = urllib.error.HTTPError("http://telemetry", 503, "unavailable", {}, None)
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(summary_error=error))
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(signal["action"], "HOLD")
+        self.assertEqual(decision["reason_code"], "candidates_unavailable")
+        self.assertTrue(decision["detail"].startswith("budget_unavailable: ledger"), decision)
+
+    def test_unconfigured_services_fail_closed_naming_the_inputs(self) -> None:
+        env = {"PANTHEON_PAPER_EXPRESSION_LAYER": "on"}
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(), env=env)
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(decision["reason_code"], "candidates_unavailable")
+        self.assertTrue(decision["detail"].startswith("budget_unavailable: capital_pool"), decision)
+
+    def test_a_real_gross_limit_still_reports_gross_limit(self) -> None:
+        policy = dict(self.POLICY, gross_limit=0.01, max_leverage=0.01)  # 1,000 < one 2,235 share
+        signal = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(pool=self._pool(policy=policy)))
+        decision = signal["metadata"]["expression_decision"]
+        self.assertEqual(decision["reason_code"], "no_feasible_instrument")
+        self.assertEqual(decision["detail"], "gross_limit")
+
+    def test_flag_off_and_legacy_artifact_never_read_the_services(self) -> None:
+        fetch = self._fetch()
+        art = self._artifact(expression=False)
+        art["parameters"]["symbols"] = ["2330.TWSE"]
+        binding = self._binding(art, closes=(2135.0, 2235.0), symbol="2330.TWSE")
+        from services.execution.lean_runtime import expression_inputs, paper_signal_producer
+
+        for env, artifact_binding in (
+            ({**self.ENV, "PANTHEON_PAPER_EXPRESSION_LAYER": "off"}, binding),
+            (self.ENV, binding),
+        ):
+            with patch.dict("os.environ", env, clear=True), patch.object(
+                expression_inputs, "_http_get_json", fetch
+            ):
+                strategy = paper_signal_producer._runner_strategy()
+                decision = strategy(artifact_binding, self.NOW)
+            self.assertNotIn("expression", decision)
+        self.assertEqual(fetch.calls, [])
+
+    def test_runner_strategy_with_real_dataset_layout_chooses_0050_future_and_2330_2317_cash(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from services.source_ingestion.connectors.taiwan_official import (
+            TaifexDerivativesChipAdapter,
+        )
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+        fixtures_dir = Path(__file__).resolve().parent / "fixtures" / "taifex_20261106"
+        payload = {
+            "SingleStockFuturesMargining": json.loads((fixtures_dir / "SingleStockFuturesMargining.json").read_text(encoding="utf-8")),
+            "SingleStockFuturesETFMargining": json.loads((fixtures_dir / "SingleStockFuturesETFMargining.json").read_text(encoding="utf-8")),
+            "DailyMarketReportFut": json.loads((fixtures_dir / "DailyMarketReportFut.json").read_text(encoding="utf-8")),
+            "FinalSettlementPriceSSF": json.loads((fixtures_dir / "FinalSettlementPriceSSF.json").read_text(encoding="utf-8")),
+            "stockLists": (fixtures_dir / "stockLists.html").read_text(encoding="utf-8"),
+        }
+        adapter = TaifexDerivativesChipAdapter()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "market_data_store"
+            writer = MarketDataStorageWriter(root)
+            records = adapter.records_from_payload(
+                payload,
+                dataset="taifex_ssf_contracts",
+                available_time="2026-11-06T16:30:00Z",
+            )
+            writer.write_run(
+                result=SimpleNamespace(records=records, run=SimpleNamespace(ingest_run_id="run-20261106")),
+                connector=adapter.connector(),
+            )
+            part_files = list((root / "normalized" / "taifex_ssf_contracts" / "date=2026-11-06").glob("*.jsonl"))
+            self.assertEqual(len(part_files), 1)
+
+            env = {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(root)}
+
+            # 1. 0050: SRF candidate has unit=1000, initial_margin_per_unit=8700, max_units_by_risk=2;
+            #    unchanged policy chooses ssf:SRF:202611 x 2 (long_lever) because strength=1.0 >= 0.6
+            #    and futures exposure 185,000 > cash exposure 92,500.
+            sig_0050 = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=env)
+            meta_0050 = sig_0050["metadata"]
+            cands_0050 = {c["instrument_id"]: c for c in meta_0050["expression_replay_input"]["candidates"]}
+            self.assertIn("ssf:SRF:202611", cands_0050)
+            srf = cands_0050["ssf:SRF:202611"]
+            self.assertEqual(srf["unit"], 1000)
+            self.assertEqual(srf["initial_margin_per_unit"], 8700.0)
+            self.assertEqual(srf["max_units_by_risk"], 2)
+            self.assertEqual(meta_0050["instrument_id"], "ssf:SRF:202611")
+            self.assertEqual(meta_0050["kind"], "stock_future")
+            self.assertEqual(meta_0050["units"], 2)
+            self.assertEqual(meta_0050["reason_code"], "long_lever")
+            self.assertEqual((sig_0050["action"], sig_0050["direction"], sig_0050["quantity"]), ("BUY", "LONG", 2))
+            self.assertEqual(sig_0050["quantity_type"], "SHARES")
+            # Critical order gate fields populated on signal metadata:
+            self.assertEqual(meta_0050["contract"], "SRF")
+            self.assertEqual(meta_0050["contract_month"], "202611")
+            self.assertEqual(meta_0050["price_basis"], "futures_daily_settlement_prev_session")
+            self.assertEqual(meta_0050["price_date"], "2026-11-06")
+            self.assertEqual(meta_0050["futures_settlement_price"], 92.35)
+            self.assertEqual(meta_0050["initial_margin_per_unit"], 8700.0)
+            self.assertEqual(meta_0050["maintenance_margin_per_unit"], 6700.0)
+            self.assertEqual(meta_0050["fee_per_unit_per_side"], 8.0)
+            self.assertEqual(meta_0050["tax_rate_per_side"], 0.00002)
+            self.assertEqual(meta_0050["expiry"], "2026-11-18")
+            self.assertEqual(meta_0050["last_trading_day"], "2026-11-18")
+            self.assertEqual(meta_0050["trade_date"], "2026-11-09")
+            self.assertIsInstance(meta_0050["candidates"], list)
+
+            # 2. 2330: QFF candidate has max_units_by_risk=0 because one contract's notional 213,300
+            #    exceeds the 200,000 gross limit; unchanged policy chooses eq:2330 x 44 (long_cash).
+            sig_2330 = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(), env=env)
+            meta_2330 = sig_2330["metadata"]
+            cands_2330 = {c["instrument_id"]: c for c in meta_2330["expression_replay_input"]["candidates"]}
+            self.assertIn("ssf:QFF:202611", cands_2330)
+            self.assertEqual(cands_2330["ssf:QFF:202611"]["max_units_by_risk"], 0)
+            self.assertEqual(cands_2330["ssf:QFF:202611"]["price"] * cands_2330["ssf:QFF:202611"]["unit"], 213300.0)
+            self.assertEqual(meta_2330["instrument_id"], "eq:2330")
+            self.assertEqual(meta_2330["kind"], "cash_share")
+            self.assertEqual(meta_2330["units"], 44)
+            self.assertEqual(meta_2330["reason_code"], "long_cash")
+
+            # 3. 2317: DHF candidate has max_units_by_risk=0 because one contract's notional 450,000
+            #    exceeds the 200,000 gross limit; unchanged policy chooses eq:2317 x 444 (long_cash).
+            sig_2317 = self._decide("2317.TWSE", 225.0, fetch=self._fetch(), env=env)
+            meta_2317 = sig_2317["metadata"]
+            cands_2317 = {c["instrument_id"]: c for c in meta_2317["expression_replay_input"]["candidates"]}
+            self.assertIn("ssf:DHF:202611", cands_2317)
+            self.assertEqual(cands_2317["ssf:DHF:202611"]["max_units_by_risk"], 0)
+            self.assertEqual(cands_2317["ssf:DHF:202611"]["price"] * cands_2317["ssf:DHF:202611"]["unit"], 450000.0)
+            self.assertEqual(meta_2317["instrument_id"], "eq:2317")
+            self.assertEqual(meta_2317["kind"], "cash_share")
+            self.assertEqual(meta_2317["units"], 444)
+            self.assertEqual(meta_2317["reason_code"], "long_cash")
+
+            # 4. Unset, unreadable, tombstone, and stale dataset roots all offer cash share and record
+            #    candidates_unavailable on the cash candidate's source_refs.
+            unset_sig = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=self.ENV)
+            unset_cands = unset_sig["metadata"]["expression_replay_input"]["candidates"]
+            self.assertEqual([c["instrument_id"] for c in unset_cands], ["eq:0050"])
+            self.assertIn(
+                {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"},
+                unset_cands[0]["source_refs"],
+            )
+
+            unreadable_env = {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(Path(tmpdir) / "nonexistent")}
+            unreadable_sig = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=unreadable_env)
+            unreadable_cands = unreadable_sig["metadata"]["expression_replay_input"]["candidates"]
+            self.assertEqual([c["instrument_id"] for c in unreadable_cands], ["eq:0050"])
+            self.assertIn(
+                {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"},
+                unreadable_cands[0]["source_refs"],
+            )
+
+            tombstone_root = Path(tmpdir) / "tombstone_store"
+            tombstone_part = tombstone_root / "normalized" / "taifex_ssf_contracts" / "date=2026-11-06"
+            tombstone_part.mkdir(parents=True, exist_ok=True)
+            (tombstone_part / "run-1630.jsonl").write_text(
+                "\n".join(json.dumps({"metadata": {"normalized_row": dict(r.metadata["normalized_row"])}}) for r in records)
+                + "\n",
+                encoding="utf-8",
+            )
+            tombstone_rows = [
+                {
+                    **dict(r.metadata["normalized_row"]),
+                    "available_time": "2026-11-06T17:00:00Z",
+                    "tombstone": True,
+                }
+                for r in records
+                if r.metadata.get("underlying_code") == "0050"
+            ]
+            (tombstone_part / "run-tombstone.jsonl").write_text(
+                "\n".join(json.dumps({"metadata": {"normalized_row": r}}) for r in tombstone_rows) + "\n",
+                encoding="utf-8",
+            )
+            tombstone_env = {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(tombstone_root)}
+            tombstone_sig = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=tombstone_env)
+            tombstone_cands = tombstone_sig["metadata"]["expression_replay_input"]["candidates"]
+            self.assertEqual([c["instrument_id"] for c in tombstone_cands], ["eq:0050"])
+            self.assertIn(
+                {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"},
+                tombstone_cands[0]["source_refs"],
+            )
+
+            stale_root = Path(tmpdir) / "stale_store"
+            stale_part = stale_root / "normalized" / "taifex_ssf_contracts" / "date=2026-10-20"
+            stale_part.mkdir(parents=True, exist_ok=True)
+            stale_rows = [
+                {
+                    **dict(r.metadata["normalized_row"]),
+                    "market_date": "2026-10-20",
+                    "settlement_price_date": "2026-10-20",
+                    "margin_date": "2026-10-20",
+                }
+                for r in records
+            ]
+            (stale_part / "run-stale.jsonl").write_text(
+                "\n".join(json.dumps({"metadata": {"normalized_row": r}}) for r in stale_rows) + "\n",
+                encoding="utf-8",
+            )
+            stale_env = {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(stale_root)}
+            stale_sig = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=stale_env)
+            stale_cands = stale_sig["metadata"]["expression_replay_input"]["candidates"]
+            self.assertEqual([c["instrument_id"] for c in stale_cands], ["eq:0050"])
+            self.assertIn(
+                {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"},
+                stale_cands[0]["source_refs"],
+            )
+
+
+
+class ExpressionStartupReportTest(unittest.TestCase):
+    def _provider(self, configured: bool):
+        from services.execution.lean_runtime.expression_inputs import ExpressionInputsProvider
+
+        reader = (lambda _pool: {}) if configured else None
+        return ExpressionInputsProvider(
+            capital_pool_reader=reader, runtime_summary_reader=lambda _rt: {}
+        )
+
+    def test_configured_readers_log_without_degraded_reason(self) -> None:
+        line, reason = expression_startup_report(self._provider(True), layer_on=True)
+        self.assertEqual(line, "expression layer on; capital reader configured; ledger reader configured")
+        self.assertIsNone(reason)
+
+    def test_missing_capital_reader_with_layer_on_names_capital_pool(self) -> None:
+        line, reason = expression_startup_report(self._provider(False), layer_on=True)
+        self.assertIn("capital reader not configured", line)
+        self.assertIn("ledger reader configured", line)
+        self.assertTrue(reason and reason.startswith("capital_pool:"))
+
+    def test_layer_off_never_degrades_and_line_carries_no_credential(self) -> None:
+        line, reason = expression_startup_report(self._provider(False), layer_on=False)
+        self.assertIsNone(reason)
+        self.assertNotIn("token", line.lower())
+        _, none_reason = expression_startup_report(None, layer_on=False)
+        self.assertIsNone(none_reason)
+
+    def test_entrypoint_strategy_without_mount_reports_the_gap(self) -> None:
+        from services.execution.lean_runtime import paper_signal_producer
+        from services.execution.lean_runtime.test_expression_inputs import _compose_environment
+
+        env = _compose_environment("paper-signal-producer", None)
+        env["PANTHEON_PAPER_EXPRESSION_LAYER"] = "on"
+        env["PAPER_SIGNAL_STRATEGY"] = "artifact"
+        env.pop("DEPLOYMENT_CAPITAL_SERVICE_TOKEN", None)
+        with patch.dict("os.environ", env, clear=True):
+            strategy = paper_signal_producer._runner_strategy()
+            line, reason = expression_startup_report(
+                strategy._expression_inputs,
+                layer_on=paper_signal_producer.expression_layer_enabled(),
+            )
+        self.assertIn("capital reader not configured", line)
+        self.assertIn("capital_pool", reason or "")
