@@ -194,3 +194,35 @@ def test_contract_flags_exactly_the_two_services_on_the_b7153eefd_compose() -> N
         pytest.skip("commit b7153eefd is not available in this checkout")
     gaps = principal_mount_gaps(yaml.safe_load(result.stdout))
     assert sorted(gap.split(":")[0] for gap in gaps) == ["paper-fleet-reconciler", "paper-signal-producer"]
+
+
+def test_producer_and_reconciler_mount_source_ingest_dataset_read_only_and_match_writer_root() -> None:
+    from services.execution.lean_runtime.instrument_candidates import (
+        NORMALIZED_DATASET_PATH,
+        SSF_DATASET,
+    )
+    from services.execution.lean_runtime.paper_signal_producer import (
+        SSF_NORMALIZED_ROOT_ENV,
+    )
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    services = compose["services"]
+    source_ingest = services["source-ingest"]
+    assert "source-ingest-data:/data/source-ingest" in source_ingest["volumes"]
+    source_data_dir = Path(source_ingest["environment"]["SOURCE_INGEST_DATA_DIR"])
+    writer = MarketDataStorageWriter(source_data_dir / "market_data_store")
+    writer_dataset_dir = writer.root / "normalized" / SSF_DATASET
+
+    for service_name in ("paper-signal-producer", "paper-fleet-reconciler"):
+        service = services[service_name]
+        source_mounts = [
+            m for m in service["volumes"] if m.startswith("source-ingest-data:")
+        ]
+        assert source_mounts == ["source-ingest-data:/data/source-ingest:ro"]
+        assert source_mounts[0].endswith(":ro")
+        root_var = service["environment"][SSF_NORMALIZED_ROOT_ENV]
+        assert root_var == "/data/source-ingest/market_data_store"
+        assert Path(root_var) / NORMALIZED_DATASET_PATH == writer_dataset_dir
+    assert "source-ingest-data" in compose["volumes"]
+

@@ -346,3 +346,20 @@ def test_benchmark_opt_in_is_preserved_and_static_paper_runtime_retired() -> Non
     lean_live = exec_compose["services"]["pantheon-lean-live"]
     assert lean_live.get("profiles") == ["live"]
 
+
+def test_paper_producer_and_reconciler_mount_taifex_ssf_dataset_read_only() -> None:
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    writer_dir = (
+        MarketDataStorageWriter(Path("/data/source-ingest/market_data_store")).root
+        / "normalized"
+        / "taifex_ssf_contracts"
+    )
+    for svc in ("paper-signal-producer", "paper-fleet-reconciler"):
+        volumes = SERVICES[svc].get("volumes") or []
+        assert "source-ingest-data:/data/source-ingest:ro" in volumes
+        env = _env(svc)
+        assert env.get("PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT") == "/data/source-ingest/market_data_store"
+        assert Path(env["PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT"]) / "normalized/taifex_ssf_contracts" == writer_dir
+
+

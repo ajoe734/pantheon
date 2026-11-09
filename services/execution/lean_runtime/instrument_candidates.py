@@ -514,12 +514,14 @@ def lookup_final_settlement_price(
     source: Any,
     *,
     settlement_day: str | date | None = None,
+    as_of_trading_day: str | date | None = None,
 ) -> dict[str, Any] | None:
     """Resolve ``FinalSettlementPriceSSF`` for ``(contract, contract_month)``.
 
     Accepts raw ``FinalSettlementPriceSSF`` rows, a payload mapping containing
     ``FinalSettlementPriceSSF``, normalized SSF rows carrying
-    ``last_final_settlement``, or an explicit mapping keyed by
+    ``last_final_settlement``, a normalized dataset root ``Path``/``str``, a
+    callable dataset reader, or an explicit mapping keyed by
     ``ssf:<contract>:<month>``, ``(contract, month)``, or ``month``.
     Returns ``None`` when no valid positive finite settlement price is present.
     """
@@ -550,6 +552,43 @@ def lookup_final_settlement_price(
 
     if source is None:
         return None
+    if isinstance(source, (str, Path)):
+        text_root = str(source).strip()
+        if not text_root:
+            return None
+        effective_day = as_of_trading_day if as_of_trading_day is not None else settlement_day
+        disk_rows = read_normalized_ssf_rows(
+            text_root,
+            as_of_trading_day=effective_day,
+        )
+        if not disk_rows:
+            return None
+        return lookup_final_settlement_price(
+            clean_contract,
+            clean_month,
+            list(reversed(disk_rows)),
+            settlement_day=settlement_day,
+            as_of_trading_day=as_of_trading_day,
+        )
+    if callable(source):
+        try:
+            resolved = source(
+                clean_contract,
+                clean_month,
+                settlement_day=settlement_day,
+                as_of_trading_day=as_of_trading_day,
+            )
+        except TypeError:
+            resolved = source()
+        if resolved is None or resolved is source:
+            return None
+        return lookup_final_settlement_price(
+            clean_contract,
+            clean_month,
+            resolved,
+            settlement_day=settlement_day,
+            as_of_trading_day=as_of_trading_day,
+        )
     if isinstance(source, Mapping):
         if "FinalSettlementPriceSSF" in source:
             return lookup_final_settlement_price(
@@ -557,6 +596,7 @@ def lookup_final_settlement_price(
                 clean_month,
                 source.get("FinalSettlementPriceSSF"),
                 settlement_day=settlement_day,
+                as_of_trading_day=as_of_trading_day,
             )
         for key in (inst_id, (clean_contract, clean_month), f"{clean_contract}:{clean_month}", clean_month):
             if key in source:
@@ -574,6 +614,8 @@ def lookup_final_settlement_price(
     if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
         for item in source:
             if not isinstance(item, Mapping):
+                continue
+            if item.get("tombstone") or item.get("_snapshot_truncated"):
                 continue
             row_contract = str(
                 item.get("Contract")
@@ -952,6 +994,8 @@ def build_candidates(
             candidate = _future_candidate(row, last_day=last_day, risk_budget=risk_budget, persona_book=persona_book)
             if candidate is not None:
                 candidates.append(candidate)
+    if len(candidates) == 1 and {"reason": "candidates_unavailable", "dataset": SSF_DATASET} not in cash_refs:
+        cash_refs.append({"reason": "candidates_unavailable", "dataset": SSF_DATASET})
     candidates[1:] = sorted(candidates[1:], key=lambda item: item["instrument_id"])
     if decision_id is not None:
         for candidate in candidates:

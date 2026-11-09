@@ -1,0 +1,122 @@
+{
+  "task_id": "PAPER-FUTURES-DATASET-SESSION-WIRING-20261109",
+  "title": "TAIFEX dataset and futures session inputs are not wired into the producer and the paper runtime",
+  "status": "validated_locally",
+  "hosted_behaviour_exercised": false,
+  "hosted_statement": "Hosted behaviour was not exercised; all validation was executed locally against unit and integration test suites using captured TAIFEX 2026-11-06 normalized dataset fixtures and real service construction paths.",
+  "policy_instrument_choices_under_real_budget_and_dataset": {
+    "budget_shape": {
+      "available_cash": 100000.0,
+      "gross_limit": 200000.0,
+      "gross_used": 0.0,
+      "max_leverage": 2.0
+    },
+    "0050": {
+      "underlying": "0050",
+      "chosen_instrument_id": "ssf:SRF:202611",
+      "chosen_kind": "stock_future",
+      "chosen_units": 2,
+      "reason_code": "long_lever",
+      "candidate_summary": {
+        "eq:0050": {
+          "unit": 1,
+          "price": 92.5,
+          "max_units_by_risk": 1081
+        },
+        "ssf:SRF:202611": {
+          "unit": 1000,
+          "price": 92.35,
+          "notional_per_unit": 92350.0,
+          "initial_margin_per_unit": 8700.0,
+          "maintenance_margin_per_unit": 6700.0,
+          "max_units_by_risk": 2
+        },
+        "ssf:NYF:202611": {
+          "unit": 10000,
+          "price": 92.4,
+          "notional_per_unit": 924000.0,
+          "initial_margin_per_unit": 87000.0,
+          "maintenance_margin_per_unit": 67000.0,
+          "max_units_by_risk": 0
+        }
+      },
+      "why": "With view direction LONG and strength 1.0 (>= lever_min_strength 0.5) and target_notional 200,000 TWD, ssf:SRF:202611 is feasible with max_units_by_risk=2 (2 * 92,350 = 184,700 <= 200,000 gross_limit and 2 * 8,700 = 17,400 <= 100,000 available_cash), delivering 184,700 TWD notional exposure closer to the 200,000 target than eq:0050 (capped at 100,000 cash spend = 99,992.5 TWD). ssf:NYF:202611 has max_units_by_risk=0 because one 10,000-share contract notional (924,000 TWD) exceeds the 200,000 gross_limit."
+    },
+    "2330": {
+      "underlying": "2330",
+      "chosen_instrument_id": "eq:2330",
+      "chosen_kind": "cash_share",
+      "chosen_units": 44,
+      "reason_code": "long_cash",
+      "candidate_summary": {
+        "eq:2330": {
+          "unit": 1,
+          "price": 2235.0,
+          "max_units_by_risk": 44
+        },
+        "ssf:QFF:202611": {
+          "unit": 100,
+          "price": 2133.0,
+          "notional_per_unit": 213300.0,
+          "initial_margin_per_unit": 28795.5,
+          "maintenance_margin_per_unit": 22076.55,
+          "max_units_by_risk": 0
+        },
+        "ssf:CDF:202611": {
+          "unit": 2000,
+          "price": 2133.0,
+          "notional_per_unit": 4266000.0,
+          "initial_margin_per_unit": 575910.0,
+          "maintenance_margin_per_unit": 441531.0,
+          "max_units_by_risk": 0
+        }
+      },
+      "why": "Both 2330 stock futures have max_units_by_risk=0 because one mini QFF contract notional (100 * 2,133 = 213,300 TWD) and one standard CDF contract notional (2,000 * 2,133 = 4,266,000 TWD) exceed the 200,000 TWD gross_limit. The unchanged policy therefore selects the only feasible instrument, eq:2330 (44 shares, long_cash)."
+    },
+    "2317": {
+      "underlying": "2317",
+      "chosen_instrument_id": "eq:2317",
+      "chosen_kind": "cash_share",
+      "chosen_units": 444,
+      "reason_code": "long_cash",
+      "candidate_summary": {
+        "eq:2317": {
+          "unit": 1,
+          "price": 225.0,
+          "max_units_by_risk": 444
+        },
+        "ssf:DHF:202611": {
+          "unit": 2000,
+          "price": 225.0,
+          "notional_per_unit": 450000.0,
+          "initial_margin_per_unit": 60750.0,
+          "maintenance_margin_per_unit": 46575.0,
+          "max_units_by_risk": 0
+        }
+      },
+      "why": "The 2317 stock future ssf:DHF:202611 has max_units_by_risk=0 because one 2,000-share contract notional (2,000 * 225 = 450,000 TWD) exceeds the 200,000 TWD gross_limit. The unchanged policy therefore selects the only feasible instrument, eq:2317 (444 shares, long_cash)."
+    }
+  },
+  "validation_commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_paper_runtime_topology_contract.py scripts/test_current_l12_compose_wiring.py services/execution/lean_runtime/test_futures_session_inputs.py services/execution/lean_runtime/test_expression_inputs.py services/execution/lean_runtime/test_expression_policy.py services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_runtime_bootstrap.py -q",
+      "exit_code": 0,
+      "summary": "111 passed, 1 warning, 15 subtests passed in 37.48s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_instrument_candidates.py -q",
+      "exit_code": 0,
+      "summary": "38 passed in 6.59s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_paper_signal_producer.py -q",
+      "exit_code": 0,
+      "summary": "106 passed, 1 warning, 9 subtests passed in 21.82s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_paper_runtime.py -q",
+      "exit_code": 0,
+      "summary": "112 passed, 27 subtests passed in 34.21s"
+    }
+  ]
+}

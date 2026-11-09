@@ -2483,6 +2483,177 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             self.assertNotIn("expression", decision)
         self.assertEqual(fetch.calls, [])
 
+    def test_runner_strategy_with_real_dataset_layout_chooses_0050_future_and_2330_2317_cash(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from services.source_ingestion.connectors.taiwan_official import (
+            TaifexDerivativesChipAdapter,
+        )
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+        fixtures_dir = Path(__file__).resolve().parent / "fixtures" / "taifex_20261106"
+        payload = {
+            "SingleStockFuturesMargining": json.loads((fixtures_dir / "SingleStockFuturesMargining.json").read_text(encoding="utf-8")),
+            "SingleStockFuturesETFMargining": json.loads((fixtures_dir / "SingleStockFuturesETFMargining.json").read_text(encoding="utf-8")),
+            "DailyMarketReportFut": json.loads((fixtures_dir / "DailyMarketReportFut.json").read_text(encoding="utf-8")),
+            "FinalSettlementPriceSSF": json.loads((fixtures_dir / "FinalSettlementPriceSSF.json").read_text(encoding="utf-8")),
+            "stockLists": (fixtures_dir / "stockLists.html").read_text(encoding="utf-8"),
+        }
+        adapter = TaifexDerivativesChipAdapter()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "market_data_store"
+            writer = MarketDataStorageWriter(root)
+            records = adapter.records_from_payload(
+                payload,
+                dataset="taifex_ssf_contracts",
+                available_time="2026-11-06T16:30:00Z",
+            )
+            writer.write_run(
+                result=SimpleNamespace(records=records, run=SimpleNamespace(ingest_run_id="run-20261106")),
+                connector=adapter.connector(),
+            )
+            part_files = list((root / "normalized" / "taifex_ssf_contracts" / "date=2026-11-06").glob("*.jsonl"))
+            self.assertEqual(len(part_files), 1)
+
+            env = {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(root)}
+
+            # 1. 0050: SRF candidate has unit=1000, initial_margin_per_unit=8700, max_units_by_risk=2;
+            #    unchanged policy chooses ssf:SRF:202611 x 2 (long_lever) because strength=1.0 >= 0.6
+            #    and futures exposure 185,000 > cash exposure 92,500.
+            sig_0050 = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=env)
+            meta_0050 = sig_0050["metadata"]
+            cands_0050 = {c["instrument_id"]: c for c in meta_0050["expression_replay_input"]["candidates"]}
+            self.assertIn("ssf:SRF:202611", cands_0050)
+            srf = cands_0050["ssf:SRF:202611"]
+            self.assertEqual(srf["unit"], 1000)
+            self.assertEqual(srf["initial_margin_per_unit"], 8700.0)
+            self.assertEqual(srf["max_units_by_risk"], 2)
+            self.assertEqual(meta_0050["instrument_id"], "ssf:SRF:202611")
+            self.assertEqual(meta_0050["kind"], "stock_future")
+            self.assertEqual(meta_0050["units"], 2)
+            self.assertEqual(meta_0050["reason_code"], "long_lever")
+            self.assertEqual((sig_0050["action"], sig_0050["direction"], sig_0050["quantity"]), ("BUY", "LONG", 2))
+            self.assertEqual(sig_0050["quantity_type"], "SHARES")
+            # Critical order gate fields populated on signal metadata:
+            self.assertEqual(meta_0050["contract"], "SRF")
+            self.assertEqual(meta_0050["contract_month"], "202611")
+            self.assertEqual(meta_0050["price_basis"], "futures_daily_settlement_prev_session")
+            self.assertEqual(meta_0050["price_date"], "2026-11-06")
+            self.assertEqual(meta_0050["futures_settlement_price"], 92.35)
+            self.assertEqual(meta_0050["initial_margin_per_unit"], 8700.0)
+            self.assertEqual(meta_0050["maintenance_margin_per_unit"], 6700.0)
+            self.assertEqual(meta_0050["fee_per_unit_per_side"], 8.0)
+            self.assertEqual(meta_0050["tax_rate_per_side"], 0.00002)
+            self.assertEqual(meta_0050["expiry"], "2026-11-18")
+            self.assertEqual(meta_0050["last_trading_day"], "2026-11-18")
+            self.assertEqual(meta_0050["trade_date"], "2026-11-09")
+            self.assertIsInstance(meta_0050["candidates"], list)
+
+            # 2. 2330: QFF candidate has max_units_by_risk=0 because one contract's notional 213,300
+            #    exceeds the 200,000 gross limit; unchanged policy chooses eq:2330 x 44 (long_cash).
+            sig_2330 = self._decide("2330.TWSE", 2235.0, fetch=self._fetch(), env=env)
+            meta_2330 = sig_2330["metadata"]
+            cands_2330 = {c["instrument_id"]: c for c in meta_2330["expression_replay_input"]["candidates"]}
+            self.assertIn("ssf:QFF:202611", cands_2330)
+            self.assertEqual(cands_2330["ssf:QFF:202611"]["max_units_by_risk"], 0)
+            self.assertEqual(cands_2330["ssf:QFF:202611"]["price"] * cands_2330["ssf:QFF:202611"]["unit"], 213300.0)
+            self.assertEqual(meta_2330["instrument_id"], "eq:2330")
+            self.assertEqual(meta_2330["kind"], "cash_share")
+            self.assertEqual(meta_2330["units"], 44)
+            self.assertEqual(meta_2330["reason_code"], "long_cash")
+
+            # 3. 2317: DHF candidate has max_units_by_risk=0 because one contract's notional 450,000
+            #    exceeds the 200,000 gross limit; unchanged policy chooses eq:2317 x 444 (long_cash).
+            sig_2317 = self._decide("2317.TWSE", 225.0, fetch=self._fetch(), env=env)
+            meta_2317 = sig_2317["metadata"]
+            cands_2317 = {c["instrument_id"]: c for c in meta_2317["expression_replay_input"]["candidates"]}
+            self.assertIn("ssf:DHF:202611", cands_2317)
+            self.assertEqual(cands_2317["ssf:DHF:202611"]["max_units_by_risk"], 0)
+            self.assertEqual(cands_2317["ssf:DHF:202611"]["price"] * cands_2317["ssf:DHF:202611"]["unit"], 450000.0)
+            self.assertEqual(meta_2317["instrument_id"], "eq:2317")
+            self.assertEqual(meta_2317["kind"], "cash_share")
+            self.assertEqual(meta_2317["units"], 444)
+            self.assertEqual(meta_2317["reason_code"], "long_cash")
+
+            # 4. Unset, unreadable, tombstone, and stale dataset roots all offer cash share and record
+            #    candidates_unavailable on the cash candidate's source_refs.
+            unset_sig = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=self.ENV)
+            unset_cands = unset_sig["metadata"]["expression_replay_input"]["candidates"]
+            self.assertEqual([c["instrument_id"] for c in unset_cands], ["eq:0050"])
+            self.assertIn(
+                {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"},
+                unset_cands[0]["source_refs"],
+            )
+
+            unreadable_env = {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(Path(tmpdir) / "nonexistent")}
+            unreadable_sig = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=unreadable_env)
+            unreadable_cands = unreadable_sig["metadata"]["expression_replay_input"]["candidates"]
+            self.assertEqual([c["instrument_id"] for c in unreadable_cands], ["eq:0050"])
+            self.assertIn(
+                {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"},
+                unreadable_cands[0]["source_refs"],
+            )
+
+            tombstone_root = Path(tmpdir) / "tombstone_store"
+            tombstone_part = tombstone_root / "normalized" / "taifex_ssf_contracts" / "date=2026-11-06"
+            tombstone_part.mkdir(parents=True, exist_ok=True)
+            (tombstone_part / "run-1630.jsonl").write_text(
+                "\n".join(json.dumps({"metadata": {"normalized_row": dict(r.metadata["normalized_row"])}}) for r in records)
+                + "\n",
+                encoding="utf-8",
+            )
+            tombstone_rows = [
+                {
+                    **dict(r.metadata["normalized_row"]),
+                    "available_time": "2026-11-06T17:00:00Z",
+                    "tombstone": True,
+                }
+                for r in records
+                if r.metadata.get("underlying_code") == "0050"
+            ]
+            (tombstone_part / "run-tombstone.jsonl").write_text(
+                "\n".join(json.dumps({"metadata": {"normalized_row": r}}) for r in tombstone_rows) + "\n",
+                encoding="utf-8",
+            )
+            tombstone_env = {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(tombstone_root)}
+            tombstone_sig = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=tombstone_env)
+            tombstone_cands = tombstone_sig["metadata"]["expression_replay_input"]["candidates"]
+            self.assertEqual([c["instrument_id"] for c in tombstone_cands], ["eq:0050"])
+            self.assertIn(
+                {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"},
+                tombstone_cands[0]["source_refs"],
+            )
+
+            stale_root = Path(tmpdir) / "stale_store"
+            stale_part = stale_root / "normalized" / "taifex_ssf_contracts" / "date=2026-10-20"
+            stale_part.mkdir(parents=True, exist_ok=True)
+            stale_rows = [
+                {
+                    **dict(r.metadata["normalized_row"]),
+                    "market_date": "2026-10-20",
+                    "settlement_price_date": "2026-10-20",
+                    "margin_date": "2026-10-20",
+                }
+                for r in records
+            ]
+            (stale_part / "run-stale.jsonl").write_text(
+                "\n".join(json.dumps({"metadata": {"normalized_row": r}}) for r in stale_rows) + "\n",
+                encoding="utf-8",
+            )
+            stale_env = {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(stale_root)}
+            stale_sig = self._decide("0050.TWSE", 92.5, fetch=self._fetch(), env=stale_env)
+            stale_cands = stale_sig["metadata"]["expression_replay_input"]["candidates"]
+            self.assertEqual([c["instrument_id"] for c in stale_cands], ["eq:0050"])
+            self.assertIn(
+                {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"},
+                stale_cands[0]["source_refs"],
+            )
+
+
 
 class ExpressionStartupReportTest(unittest.TestCase):
     def _provider(self, configured: bool):
