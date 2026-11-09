@@ -31,6 +31,10 @@ from services.execution.artifact_loader import (
     ExecutionMode,
 )
 from services.execution.ibkr_adapter import normalize_us_symbol
+from services.execution.lean_runtime.expression_inputs import (
+    ExpressionInputsUnavailable,
+    build_production_expression_inputs,
+)
 from services.execution.lean_runtime.symbol_parser import (
     SymbolParseError,
     _CRYPTO_QUOTES,
@@ -375,8 +379,14 @@ class CurrentArtifactStrategy:
         )
 
         underlying = normalize_underlying_code(symbol)
+        unavailable: ExpressionInputsUnavailable | None = None
         if self._expression_inputs is not None:
-            inputs = dict(self._expression_inputs(b_dict) or {})
+            try:
+                inputs = dict(self._expression_inputs(b_dict) or {})
+            except ExpressionInputsUnavailable as exc:
+                log.warning("expression inputs unavailable for %s: %s", symbol, exc)
+                unavailable = exc
+                inputs = {}
         else:
             inputs = dict(metadata.get("expression_inputs") or {})
         book = dict(inputs.get("persona_book") or {})
@@ -384,7 +394,10 @@ class CurrentArtifactStrategy:
         event_time = str(market_input.get("event_time") or "").strip()
         price_date = event_time[:10] or None
         builder = self._candidates_builder or build_candidates
+        candidates: list[dict[str, Any]] = []
         try:
+            if unavailable is not None:
+                raise unavailable
             candidates = builder(
                 underlying,
                 now_iso[:10],
@@ -395,6 +408,8 @@ class CurrentArtifactStrategy:
                 normalized_root=os.getenv(SSF_NORMALIZED_ROOT_ENV) or None,
                 decision_id=decision_id,
             )
+        except ExpressionInputsUnavailable:
+            candidates = []
         except Exception as exc:  # noqa: BLE001 - candidate failure fails closed to a NoTrade
             log.warning("expression candidates unavailable for %s: %s", symbol, exc)
             candidates = []
@@ -405,14 +420,21 @@ class CurrentArtifactStrategy:
             "strength": view.get("strength"),
         }
         params = dict(strategy_artifact["expression_policy"].get("parameters") or {})
-        record = expression_policy.decide_validated(
-            decision_view,
-            candidates,
-            book,
-            budget,
-            params,
-            decider=self._decider or expression_policy.decide,
-        )
+        if unavailable is not None:
+            # The limits or the book could not be read: a real NoTrade naming
+            # the missing input, never a misleading gross_limit binding.
+            record = expression_policy.budget_unavailable_no_trade(
+                decision_view, unavailable.missing, unavailable.detail
+            )
+        else:
+            record = expression_policy.decide_validated(
+                decision_view,
+                candidates,
+                book,
+                budget,
+                params,
+                decider=self._decider or expression_policy.decide,
+            )
         chosen_candidate = next(
             (c for c in candidates if c.get("instrument_id") == record.get("instrument_id")),
             {},
@@ -1604,7 +1626,9 @@ def _runner_strategy() -> Any:
 
     profile = os.getenv("PAPER_SIGNAL_STRATEGY", "artifact").strip().lower()
     if profile in {"artifact", "current-artifact", "current_artifact"}:
-        return CurrentArtifactStrategy()
+        return CurrentArtifactStrategy(
+            expression_inputs=build_production_expression_inputs()
+        )
     if profile == "smoke":
         return BoundedPaperStrategy()
     raise ValueError(

@@ -658,6 +658,11 @@ def _remaining_gross(persona_book: Mapping[str, Any] | None, risk_budget: Mappin
     limit = risk_budget.get("gross_limit")
     if limit is None:
         return Decimal(0)
+    leverage = risk_budget.get("max_leverage")
+    equity = risk_budget.get("equity")
+    if leverage is not None and equity is not None:
+        # ``max_leverage`` is a multiple of equity; the tighter bound wins.
+        limit = min(_decimal(limit), _decimal(leverage) * _decimal(equity))
     used = risk_budget.get("gross_used")
     if used is None:
         used = (persona_book or {}).get("gross_notional", 0)
