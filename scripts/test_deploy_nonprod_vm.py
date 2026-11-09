@@ -2467,7 +2467,7 @@ def test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_r
 
     refresh_steps = refresh_wf["jobs"]["refresh"]["steps"]
     refresh_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(refresh_steps) if s.get("id")}
-    assert refresh_by_id["refresh"][0] < refresh_by_id["taifex_refresh"][0]
+    assert refresh_by_id["taifex_refresh"][0] < refresh_by_id["refresh"][0]
     assert refresh_by_id["taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
     assert refresh_by_id["taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
     assert refresh_by_id["taifex_refresh"][1]["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
