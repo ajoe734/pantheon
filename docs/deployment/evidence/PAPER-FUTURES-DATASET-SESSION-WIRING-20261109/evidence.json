@@ -101,22 +101,22 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_paper_runtime_topology_contract.py scripts/test_current_l12_compose_wiring.py services/execution/lean_runtime/test_futures_session_inputs.py services/execution/lean_runtime/test_expression_inputs.py services/execution/lean_runtime/test_expression_policy.py services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_runtime_bootstrap.py -q",
       "exit_code": 0,
-      "summary": "111 passed, 1 warning, 15 subtests passed in 35.58s"
+      "summary": "111 passed, 1 warning, 15 subtests passed in 37.48s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_instrument_candidates.py -q",
       "exit_code": 0,
-      "summary": "38 passed in 6.92s"
+      "summary": "38 passed in 6.59s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_paper_signal_producer.py -q",
       "exit_code": 0,
-      "summary": "106 passed, 1 warning, 9 subtests passed in 22.94s"
+      "summary": "106 passed, 1 warning, 9 subtests passed in 21.82s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_paper_runtime.py -q",
       "exit_code": 0,
-      "summary": "112 passed, 27 subtests passed in 34.01s"
+      "summary": "112 passed, 27 subtests passed in 34.21s"
     }
   ]
 }

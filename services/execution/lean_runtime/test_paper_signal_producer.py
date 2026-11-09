@@ -2491,7 +2491,6 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
 
         from services.source_ingestion.connectors.taiwan_official import (
             TaifexDerivativesChipAdapter,
-            taifex_ssf_normalized_rows,
         )
         from services.source_ingestion.market_data_storage import MarketDataStorageWriter
 
@@ -2602,17 +2601,20 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             tombstone_root = Path(tmpdir) / "tombstone_store"
             tombstone_part = tombstone_root / "normalized" / "taifex_ssf_contracts" / "date=2026-11-06"
             tombstone_part.mkdir(parents=True, exist_ok=True)
-            tombstone_rows = list(
-                taifex_ssf_normalized_rows(
-                    {
-                        **payload,
-                        "SingleStockFuturesETFMargining": [],
-                        "DailyMarketReportFut": [],
-                    },
-                    underlying_codes=["0050"],
-                    available_time="2026-11-06T17:00:00Z",
-                )
+            (tombstone_part / "run-1630.jsonl").write_text(
+                "\n".join(json.dumps({"metadata": {"normalized_row": dict(r.metadata["normalized_row"])}}) for r in records)
+                + "\n",
+                encoding="utf-8",
             )
+            tombstone_rows = [
+                {
+                    **dict(r.metadata["normalized_row"]),
+                    "available_time": "2026-11-06T17:00:00Z",
+                    "tombstone": True,
+                }
+                for r in records
+                if r.metadata.get("underlying_code") == "0050"
+            ]
             (tombstone_part / "run-tombstone.jsonl").write_text(
                 "\n".join(json.dumps({"metadata": {"normalized_row": r}}) for r in tombstone_rows) + "\n",
                 encoding="utf-8",
