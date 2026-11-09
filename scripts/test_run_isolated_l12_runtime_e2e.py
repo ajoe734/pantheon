@@ -1108,3 +1108,18 @@ def test_runtime_evolution_fixture_uses_selected_tenant_against_real_evolution_a
     assert proposals_resp.status_code == 200
     assert all(item.get("tenant_id") == runtime.TENANT_ID for item in proposals_resp.json())
 
+
+
+def test_isolated_stack_issues_the_paper_capital_reader_file_the_paper_services_name() -> None:
+    import yaml
+
+    from scripts import issue_dev_paper_principals as issuer
+
+    env = harness._isolated_dev_principal_env(_isolated_signer_env())
+    compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text(encoding="utf-8"))
+    assert env["DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE"] == "/run/pantheon-principals/DEPLOYMENT_CAPITAL_SERVICE_TOKEN"
+    assert issuer.CONSUMER_FILES["paper-capital-reader"] == ("DEPLOYMENT_CAPITAL_SERVICE_TOKEN",)
+    for name in ("paper-signal-producer", "paper-fleet-reconciler"):
+        service = compose["services"][name]
+        assert service["environment"]["DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE"] == "${DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE:-}"
+        assert "dev-paper-capital-reader-tokens:/run/pantheon-principals:ro" in service["volumes"]

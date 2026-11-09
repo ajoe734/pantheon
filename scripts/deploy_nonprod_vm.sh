@@ -5360,7 +5360,7 @@ prepare_dev_paper_principals() {
   if [[ "${PANTHEON_DEPLOY_COMPONENT}" == bff && "${PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED}" == true ]]; then
     # First adoption changes owner contracts and mounts: BFF-only is insufficient.
     local owner owner_id
-    for owner in governance registry deployment runtime-manager deployment-outbox-consumer persona-evaluator-agent; do
+    for owner in governance registry deployment runtime-manager deployment-outbox-consumer persona-evaluator-agent paper-signal-producer paper-fleet-reconciler; do
       owner_id="$(docker compose -p pantheon -f docker-compose.yml ps -q "${owner}")"
       [[ -n "${owner_id}" ]] || { info "paper principal adoption requires root deploy"; return 1; }
       docker inspect "${owner_id}" | python3 -c '
