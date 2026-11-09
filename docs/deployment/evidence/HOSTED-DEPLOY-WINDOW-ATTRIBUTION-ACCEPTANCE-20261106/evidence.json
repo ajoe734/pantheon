@@ -1,0 +1,1021 @@
+{
+  "schema_version": "pantheon.hosted-acceptance-evidence.v1",
+  "task_id": "HOSTED-DEPLOY-WINDOW-ATTRIBUTION-ACCEPTANCE-20261106",
+  "title": "Hosted acceptance for attribution latency and the deploy window and whole stack compensation",
+  "status": "passed",
+  "verdict": "accepted",
+  "recorded_at": "2026-11-09T13:34:12Z",
+  "environment": {
+    "name": "dev",
+    "project_id": "pantheon-dev-20260902",
+    "vm": "pantheon-dev-deploy",
+    "bff_url": "https://api.dev.mvl-cap.tw",
+    "fe_url": "https://app.dev.mvl-cap.tw"
+  },
+  "deployed_pair": {
+    "backend_repo": "ajoe734/pantheon",
+    "backend_branch": "dev",
+    "backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+    "frontend_repo": "ajoe734/execute-plans",
+    "frontend_branch": "dev",
+    "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+    "release_candidate_id": "a5e62003ad521acdc78efeccce68b728e99b0cf3e1aa1728ccde0d7c83146420",
+    "pair_id": "fdf37194e6547a67dd2cc625e79af6a3e360b67ab77f8194d0955e4f027bc8b4",
+    "compatibility_manifest_sha256": "f6d2e78f064e1a364bd0a90d0bdfb8e171adb03c068b18b5a1ee9d3c0c46f67a",
+    "frontend_dist_sha256": "2c6bd18596cc0318bd3e539c9a7f419b22e621c6ef69ac162526c1ee43b2dd64",
+    "served_manifest_sha256": "768f9576d2983639b54554c16fee32c5ea037c392c498434e290348a43cf117f",
+    "accepted_at": "2026-11-09T08:33:12Z",
+    "verified_at": "2026-11-09T08:33:39.194689Z",
+    "root_deploy_run_id": "42579393176",
+    "root_deploy_run_url": "https://github.com/ajoe734/pantheon/actions/runs/42579393176",
+    "integration_gate_run_id": "42582167747",
+    "integration_gate_run_url": "https://github.com/ajoe734/execute-plans/actions/runs/42582167747",
+    "frontend_deploy_run_id": "42584608989",
+    "frontend_deploy_run_url": "https://github.com/ajoe734/execute-plans/actions/runs/42584608989"
+  },
+  "prerequisites": {
+    "BFF-ATTRIBUTION-STRATEGY-LABEL-VIEW-20261106": {
+      "pr": 6986,
+      "head_sha": "0ffac6057afec04bd4f7d45d4a59e08f4392f076",
+      "merge_commit": "95071b438617e9a319822966e5c093f9420e4d61",
+      "evidence_path": "docs/deployment/evidence/BFF-ATTRIBUTION-STRATEGY-LABEL-VIEW-20261106/evidence.json"
+    },
+    "DEV-DEPLOY-MARKET-REFRESH-BEFORE-MUTATION-20261106": {
+      "pr": 6977,
+      "head_sha": "f158928f55f8eeccfe5502eddd141e6f0c3bf7ce",
+      "merge_commit": "4bbc1388478369939bc89e2405d8ed1ea4ec1416",
+      "evidence_path": "docs/deployment/evidence/DEV-DEPLOY-MARKET-REFRESH-BEFORE-MUTATION-20261106/evidence.json"
+    },
+    "DEV-DEPLOY-COMPENSATION-WHOLE-STACK-20261106": {
+      "pr": 6981,
+      "head_sha": "bcfcbe5ceab0e801f74d0bed16c858b364db0154",
+      "merge_commit": "6c68dee668c4edd1c20a7d1e152197fa52d0c465",
+      "evidence_path": "docs/deployment/evidence/DEV-DEPLOY-COMPENSATION-WHOLE-STACK-20261106/evidence.json"
+    },
+    "supporting_fixes": [
+      {
+        "task_id": "DEV-STACK-CAPTURE-R2-20261106",
+        "merge_commit": "2638f809cd4c933aeb26df017979eb122552e5dd",
+        "summary": "Fixed capture_dev_artifact_baseline.py UnboundLocalError on r2 in stack baseline capture"
+      },
+      {
+        "task_id": "DEV-STACK-RESTORE-OWNER-IDENTITY-20261107",
+        "merge_commit": "e65bdb388",
+        "summary": "Aligned whole-stack compensation owner verification with recreated application containers while keeping stateful infra container IDs pinned"
+      },
+      {
+        "task_id": "DEV-DEPLOY-COMPENSATION-DRILL-20261107",
+        "merge_commit": "e559d7938",
+        "summary": "Added governed workflow_dispatch drill_compensate_after_deploy input to exercise real whole-stack compensation path on demand"
+      }
+    ]
+  },
+  "baseline_before_fixes": {
+    "observed_at": "2026-11-06",
+    "backend_sha": "0cd59ab28",
+    "attribution_latency_and_registry_payload": {
+      "endpoint": "GET /bff/management/performance-attribution?period=latest",
+      "latency_ms_range": [
+        5144,
+        9107
+      ],
+      "bff_cpu_seconds_range": [
+        3.8,
+        7.6
+      ],
+      "registry_call": "GET /api/registry/strategy-specs",
+      "registry_rows_returned": 5031,
+      "registry_payload_bytes": 24350000
+    },
+    "deploy_window_failures": {
+      "taiwan_close_utc": "05:30:00Z",
+      "delayed_scheduled_refresh_utc_window": "14:49:00Z..15:08:00Z",
+      "failed_root_deploy_runs": [
+        {
+          "date": "2026-11-02",
+          "run_id": "41430756299",
+          "reason": "market_input_stale after stack mutation"
+        },
+        {
+          "date": "2026-11-03",
+          "run_id": "41621635076",
+          "reason": "market_input_stale after stack mutation"
+        },
+        {
+          "date": "2026-11-05",
+          "run_id": "41988080438",
+          "reason": "market_input_stale after stack mutation"
+        }
+      ]
+    },
+    "partial_compensation_drift": {
+      "affected_runs": [
+        "41812400967",
+        "41988080438"
+      ],
+      "restored_services_count": 3,
+      "unrestored_containers_approx": 45,
+      "failure_mode": "Only operator-bff, agora-interaction-worker, and loop-run-projector-scheduler were restored while ~45 compose containers remained on the rejected candidate image"
+    }
+  },
+  "acceptance_criteria": {
+    "1_deploy_window_refresh_before_stack_mutation": {
+      "status": "passed",
+      "run_id": "42579393176",
+      "run_url": "https://github.com/ajoe734/pantheon/actions/runs/42579393176",
+      "job_id": "129034288803",
+      "job_name": "Deploy dev under shared environment lease",
+      "backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+      "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "previous_backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+      "previous_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "lease_id": "463c3a0d-0d6c-453b-813c-51eb8345ff2d",
+      "taiwan_market_session_date": "2026-11-09",
+      "taiwan_market_close_utc": "2026-11-09T05:30:00Z",
+      "job_started_at": "2026-11-09T07:26:48Z",
+      "step_order_verification": {
+        "refresh_ran_before_baseline_capture": true,
+        "refresh_ran_before_stack_mutation": true,
+        "steps": [
+          {
+            "number": 15,
+            "name": "Acquire shared dev environment lease",
+            "started_at": "2026-11-09T07:27:47Z",
+            "completed_at": "2026-11-09T07:27:48Z"
+          },
+          {
+            "number": 17,
+            "name": "Refresh Taiwan market session under lease before stack mutation",
+            "command": "bash scripts/deploy_nonprod_vm.sh --refresh-only",
+            "started_at": "2026-11-09T07:27:49Z",
+            "completed_at": "2026-11-09T07:32:51Z"
+          },
+          {
+            "number": 19,
+            "name": "Capture actual prior artifacts under pinned dev lease",
+            "started_at": "2026-11-09T07:32:51Z",
+            "completed_at": "2026-11-09T07:33:30Z"
+          },
+          {
+            "number": 21,
+            "name": "Deploy dev VM stack under lease",
+            "started_at": "2026-11-09T07:33:31Z",
+            "completed_at": "2026-11-09T07:46:28Z"
+          },
+          {
+            "number": 28,
+            "name": "Ensure governed dev paper baseline under lease",
+            "started_at": "2026-11-09T07:50:21Z",
+            "completed_at": "2026-11-09T07:52:00Z"
+          },
+          {
+            "number": 32,
+            "name": "Dev canonical paper lifecycle hosted probe",
+            "started_at": "2026-11-09T07:52:01Z",
+            "completed_at": "2026-11-09T07:52:19Z"
+          }
+        ]
+      },
+      "pre_mutation_refresh_execution": {
+        "stale_session_refresh_exercised": true,
+        "preflight_started_at": "2026-11-09T07:27:54.469Z",
+        "preflight_decision_at": "2026-11-09T07:27:54.681Z",
+        "preflight_decision": "bounded source refresh preflight passed; proceeding with refresh",
+        "connector_id": "tw-twse-tpex-official-market",
+        "ingest_run_id": "ingest-79645fffc264",
+        "source_id": "tw-official:tw_price_daily:TWSE:2330:933f1b3279a4e60e",
+        "accepted_snapshots_at": "2026-11-09T07:32:02.481Z",
+        "accepted_snapshots": {
+          "2330.TWSE": {
+            "snapshot_id": "mss-1723061c5d7aca329fb5c1dd",
+            "event_time": "2026-11-09T00:00:00Z",
+            "closes": 59
+          },
+          "0050.TWSE": {
+            "snapshot_id": "mss-b79ffeab5d6eb7ae383b2031",
+            "event_time": "2026-11-09T00:00:00Z",
+            "closes": 46
+          },
+          "2317.TWSE": {
+            "snapshot_id": "mss-ac2b30927a8e21f239fed75c",
+            "event_time": "2026-11-09T00:00:00Z",
+            "closes": 59
+          },
+          "2330.TW": {
+            "snapshot_id": "mss-1723061c5d7aca329fb5c1dd",
+            "event_time": "2026-11-09T00:00:00Z",
+            "closes": 59
+          }
+        },
+        "post_refresh_proof": {
+          "checked_at": "2026-11-09T07:32:45.233414+00:00",
+          "reason": "already_fresh",
+          "session_date": "2026-11-09",
+          "snapshot_id": "mss-1723061c5d7aca329fb5c1dd",
+          "status": "noop",
+          "taipei_date": "2026-11-09"
+        }
+      },
+      "paper_baseline_result": {
+        "status": "ok",
+        "state": "paper_running",
+        "provisioning_state": "succeeded",
+        "provisioning_step": "authoritative_readback_complete",
+        "capital_mode": "paper",
+        "live_capital_side_effects": false,
+        "attempts": 3,
+        "persona_id": "persona-a12343c3a6616691aa05",
+        "deployment_plan_id": "plan-persona-paper-5d3ee11c8c0cf82290e2",
+        "runtime_binding_id": "rb-d09776f7bb2542e5b18a12c0bb908cec",
+        "runtime_id": "rt-90077347",
+        "hosted_lifecycle_probe": {
+          "governed_case_key": "dev-paper-release-42579393176-1",
+          "outcome": "passed",
+          "observed_at": "2026-11-09T07:52:05Z",
+          "signal_id": "sig-217f74b2db3f7797d64ad329bf6fcb94",
+          "signal_event_time": "2026-11-09T07:51:34Z",
+          "market_input_snapshot_id": "mss-1723061c5d7aca329fb5c1dd",
+          "market_input_event_time": "2026-11-09T00:00:00Z",
+          "market_input_observed_at": "2026-11-09T07:31:35Z"
+        }
+      }
+    },
+    "2_attribution_latency_and_strategy_labels": {
+      "status": "passed",
+      "endpoint": "GET /bff/management/performance-attribution?period=latest",
+      "requirement_median_under_ms": 2000,
+      "sequential_reads_required": 10,
+      "primary_measurement": {
+        "measured_window_utc": "2026-11-09T02:08:13Z..2026-11-09T02:08:24Z",
+        "backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+        "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+        "pair_id": "b8520d25978671e10564970fd8a3537d98dc0f0aed0251eb6ee42487ff149274",
+        "sequential_reads_count": 10,
+        "latencies_ms": [
+          847.6,
+          1265.7,
+          984.2,
+          1213.9,
+          1416.3,
+          1070.3,
+          1113.8,
+          819.6,
+          1221.2,
+          1344.1
+        ],
+        "median_ms": 1163.8,
+        "min_ms": 819.6,
+        "max_ms": 1416.3,
+        "strategy_rows_count": 19,
+        "labelled_strategy_rows_count": 19,
+        "unlabelled_strategy_rows_count": 0
+      },
+      "prior_pair_measurements": [
+        {
+          "measured_at_utc": "2026-11-07T07:45:00Z",
+          "backend_sha": "f5c57bb1008eb5fbd759fbc9fa4150b6c8c47ba1",
+          "frontend_sha": "a71b5c9afb2a5a54bac03948f1cf29f2899e9e33",
+          "sequential_reads_count": 10,
+          "latencies_ms": [
+            956,
+            1132,
+            985,
+            1275,
+            829,
+            1034,
+            830,
+            1113,
+            776,
+            1154
+          ],
+          "median_ms": 1010.0,
+          "min_ms": 776,
+          "max_ms": 1275,
+          "strategy_rows_count": 22,
+          "labelled_strategy_rows_count": 22,
+          "unlabelled_strategy_rows_count": 0
+        },
+        {
+          "measured_window_utc": "2026-11-06T11:25:00Z..2026-11-06T11:38:00Z",
+          "backend_sha": "2638f809cd4c933aeb26df017979eb122552e5dd",
+          "frontend_sha": "3c99c7ae1cc0d393fe3c2392f4bfd6e4b2a8cc3f",
+          "batches": [
+            {
+              "batch": 1,
+              "note": "first post-deploy cold start",
+              "latencies_ms": [
+                4438,
+                2500,
+                1341,
+                1445,
+                2939,
+                3260,
+                2673,
+                4748,
+                1261,
+                3076
+              ],
+              "median_ms": 2806.0
+            },
+            {
+              "batch": 2,
+              "latencies_ms": [
+                2138,
+                1236,
+                949,
+                2529,
+                1086,
+                1094,
+                1528,
+                1093,
+                1154,
+                1520
+              ],
+              "median_ms": 1195.0
+            },
+            {
+              "batch": 3,
+              "latencies_ms": [
+                1174,
+                1017,
+                1320,
+                882,
+                1337,
+                1062,
+                1301,
+                907,
+                948,
+                868
+              ],
+              "median_ms": 1040.0
+            },
+            {
+              "batch": 4,
+              "latencies_ms": [
+                1346,
+                991,
+                1054,
+                1087,
+                1195,
+                1020,
+                1126,
+                1170,
+                960,
+                987
+              ],
+              "median_ms": 1071.0
+            },
+            {
+              "batch": 5,
+              "latencies_ms": [
+                1045,
+                932,
+                1378,
+                1031,
+                1155,
+                1073,
+                1423,
+                1083,
+                1277,
+                1025
+              ],
+              "median_ms": 1078.0
+            }
+          ],
+          "strategy_rows_count": 5,
+          "labelled_strategy_rows_count": 5,
+          "unlabelled_strategy_rows_count": 0,
+          "sample_strategy_labels": {
+            "strategy-persona-15517cc78a4a243393e3": "Persona 台股權值趨勢波段成長 (15517cc78a4a243393e3)",
+            "strategy-persona-5d3ee11c8c0cf82290e2": "Persona 台股大型權值品質成長 (5d3ee11c8c0cf82290e2)",
+            "strategy-persona-62dd9ffca3bc0a76cf60": "Persona 台股高股息動能平衡 (62dd9ffca3bc0a76cf60)",
+            "strategy-persona-a8d7e9eb130d9913786b": "Persona 法人籌碼與營收加速成長 (a8d7e9eb130d9913786b)",
+            "strategy-persona-f8786dfbe1c7dbdc7203": "Persona 半導體資本支出動能 (f8786dfbe1c7dbdc7203)"
+          }
+        }
+      ]
+    },
+    "3_registry_strategy_specs_view_parameter_audit": {
+      "status": "passed",
+      "container": "pantheon-registry-1",
+      "expected_query": "GET /api/registry/strategy-specs?view=persona_binding",
+      "forbidden_query": "GET /api/registry/strategy-specs (without view parameter)",
+      "windows": [
+        {
+          "window_utc": "2026-11-09T02:08:13Z..2026-11-09T02:08:24Z",
+          "backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+          "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+          "attribution_reads": 10,
+          "view_persona_binding_reads": 10,
+          "unfiltered_strategy_specs_reads": 0
+        },
+        {
+          "window_utc": "2026-11-07T07:45:00Z",
+          "backend_sha": "f5c57bb1008eb5fbd759fbc9fa4150b6c8c47ba1",
+          "frontend_sha": "a71b5c9afb2a5a54bac03948f1cf29f2899e9e33",
+          "attribution_reads": 10,
+          "view_persona_binding_reads": 10,
+          "unfiltered_strategy_specs_reads": 0
+        },
+        {
+          "window_utc": "2026-11-06T11:25:00Z..2026-11-06T11:38:00Z",
+          "backend_sha": "2638f809cd4c933aeb26df017979eb122552e5dd",
+          "frontend_sha": "3c99c7ae1cc0d393fe3c2392f4bfd6e4b2a8cc3f",
+          "batches_audited": 4,
+          "view_persona_binding_reads_per_batch": [
+            10,
+            12,
+            10,
+            10
+          ],
+          "unfiltered_strategy_specs_reads": 0
+        }
+      ]
+    },
+    "4_whole_stack_compensated_deploy": {
+      "status": "passed",
+      "compensation_run_id": "42546069567",
+      "compensation_run_url": "https://github.com/ajoe734/pantheon/actions/runs/42546069567",
+      "started_at": "2026-11-09T01:32:09Z",
+      "completed_at": "2026-11-09T02:05:17Z",
+      "drill_metadata": {
+        "drill": true,
+        "kind": "intentional-compensation-drill",
+        "run_id": "42546069567",
+        "run_attempt": "1",
+        "readback_file": "dev-compensation-artifact-readback.json",
+        "compensation_completed": true
+      },
+      "candidate_backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+      "candidate_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "restored_baseline_backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+      "restored_baseline_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "compensation_artifact_name": "pantheon-dev-artifact-compensation-42546069567-1",
+      "compensation_readback_manifest_sha256": "6b1ae64f00eb2f175e1f67b018b9308f645049664e0e94ee733b5dc540d90e7c",
+      "image_readback_verified": true,
+      "protected_owners_unchanged": true,
+      "baseline_nonsecret_config_verified": true,
+      "recorded_services_count": 57,
+      "services_restored_to_baseline_count": 57,
+      "services_left_on_candidate_image_count": 0,
+      "candidate_only_stopped": [],
+      "stack_readback": {
+        "candidate_only_stopped": [],
+        "scope": "stack",
+        "services": {
+          "agora-interaction-worker": {
+            "baseline_image_id": "sha256:c2b0bf501b9546aa0ac6b81f5f0ab2031aefb63c68f4e08bc49ea6fade8f3808",
+            "observed_image_id": "sha256:c2b0bf501b9546aa0ac6b81f5f0ab2031aefb63c68f4e08bc49ea6fade8f3808"
+          },
+          "alpha-replication-worker": {
+            "baseline_image_id": "sha256:cac72a0193bf322cac88e33218b525e09e0d408526496704c8b3c49e3e571763",
+            "observed_image_id": "sha256:cac72a0193bf322cac88e33218b525e09e0d408526496704c8b3c49e3e571763"
+          },
+          "broker": {
+            "baseline_image_id": "sha256:2ff38d62abb56c935f99885c82fbdd957794324ffc4b16c71c3b0c421bc8feae",
+            "observed_image_id": "sha256:2ff38d62abb56c935f99885c82fbdd957794324ffc4b16c71c3b0c421bc8feae"
+          },
+          "capital": {
+            "baseline_image_id": "sha256:dd2c65b54f9efd557215cb725e79f4e97adcea613822bc21f8ef3162856db244",
+            "observed_image_id": "sha256:dd2c65b54f9efd557215cb725e79f4e97adcea613822bc21f8ef3162856db244"
+          },
+          "consultation-svc": {
+            "baseline_image_id": "sha256:861242e2b6a39c55c8e60e107a57cec4a51be1807409ec41b6f85c2ef719cbc1",
+            "observed_image_id": "sha256:861242e2b6a39c55c8e60e107a57cec4a51be1807409ec41b6f85c2ef719cbc1"
+          },
+          "deployment": {
+            "baseline_image_id": "sha256:77135dbd4554bd8552dd7baf43c97609992903909dd7e9acebb89f2a1d64b4f5",
+            "observed_image_id": "sha256:77135dbd4554bd8552dd7baf43c97609992903909dd7e9acebb89f2a1d64b4f5"
+          },
+          "deployment-outbox-consumer": {
+            "baseline_image_id": "sha256:cebe917fee97752396244d5d9cd653492fe1d644d64d51811aee8dc0cc495bbc",
+            "observed_image_id": "sha256:cebe917fee97752396244d5d9cd653492fe1d644d64d51811aee8dc0cc495bbc"
+          },
+          "dev-paper-principal-issuer": {
+            "baseline_image_id": "sha256:266bed2df10c0f810e4eaed9495638443573a9caa87979228d4695bbe6c7623f",
+            "observed_image_id": "sha256:266bed2df10c0f810e4eaed9495638443573a9caa87979228d4695bbe6c7623f"
+          },
+          "evaluation": {
+            "baseline_image_id": "sha256:6bdfc1e8c761aeb9306bf60585816867d7f0f496a20841762da351c5b8931a7f",
+            "observed_image_id": "sha256:6bdfc1e8c761aeb9306bf60585816867d7f0f496a20841762da351c5b8931a7f"
+          },
+          "evolution": {
+            "baseline_image_id": "sha256:52af3aef39725645059ad407c2aaa61e7f7abddcd2d4bce6ecf35cab6ab6ead6",
+            "observed_image_id": "sha256:52af3aef39725645059ad407c2aaa61e7f7abddcd2d4bce6ecf35cab6ab6ead6"
+          },
+          "evolution-daily-sweep-scheduler": {
+            "baseline_image_id": "sha256:47bf04258a469f3db7406802da3d57dfed99c9c51c9ef2b1ec91a646a7e280a0",
+            "observed_image_id": "sha256:47bf04258a469f3db7406802da3d57dfed99c9c51c9ef2b1ec91a646a7e280a0"
+          },
+          "evolution-dispatch-worker": {
+            "baseline_image_id": "sha256:28a2141e9128f8dd1d4513222f56903155ab24b8026b6e17a67385bccb9f3539",
+            "observed_image_id": "sha256:28a2141e9128f8dd1d4513222f56903155ab24b8026b6e17a67385bccb9f3539"
+          },
+          "evolution-threshold-sweep-producer": {
+            "baseline_image_id": "sha256:eb8343d6fe034cd93ca31f50ca08cba51829608640e8e30d732c5e5f4b32f002",
+            "observed_image_id": "sha256:eb8343d6fe034cd93ca31f50ca08cba51829608640e8e30d732c5e5f4b32f002"
+          },
+          "feedback": {
+            "baseline_image_id": "sha256:856ec930cf923d7357d1d03a8b8019202f4e8d6228e1352116f3b17443958571",
+            "observed_image_id": "sha256:856ec930cf923d7357d1d03a8b8019202f4e8d6228e1352116f3b17443958571"
+          },
+          "governance": {
+            "baseline_image_id": "sha256:9bccb6e20f2e5235da8f45aa012a3b075fbc7bee1a6844f80aba927c128a8bdc",
+            "observed_image_id": "sha256:9bccb6e20f2e5235da8f45aa012a3b075fbc7bee1a6844f80aba927c128a8bdc"
+          },
+          "incidents": {
+            "baseline_image_id": "sha256:16066626565662c907f811c6db2ebbde614a59f92a97196d1009eea2b88b4cc8",
+            "observed_image_id": "sha256:16066626565662c907f811c6db2ebbde614a59f92a97196d1009eea2b88b4cc8"
+          },
+          "lineage-read": {
+            "baseline_image_id": "sha256:cca85755b0ddf5d3ca027068fe9eeb7133076bc5ea749f900206e3e17c417bcc",
+            "observed_image_id": "sha256:cca85755b0ddf5d3ca027068fe9eeb7133076bc5ea749f900206e3e17c417bcc"
+          },
+          "loop-run-projector-scheduler": {
+            "baseline_image_id": "sha256:e9bc5ed07265abf72619cb8e0dffbcf43cd2445e1e8c52fd911bbcdc1f656791",
+            "observed_image_id": "sha256:e9bc5ed07265abf72619cb8e0dffbcf43cd2445e1e8c52fd911bbcdc1f656791"
+          },
+          "memory": {
+            "baseline_image_id": "sha256:22ceebcbd3905aac5787b8f50596fae6549dc6c13dbfcbc4ada94445255209e3",
+            "observed_image_id": "sha256:22ceebcbd3905aac5787b8f50596fae6549dc6c13dbfcbc4ada94445255209e3"
+          },
+          "minio": {
+            "baseline_image_id": "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+            "observed_image_id": "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+          },
+          "minio-init": {
+            "baseline_image_id": "sha256:591b097ea2d44edb157b86938d332c749291d01785b20457f31ffef9664b3fdb",
+            "observed_image_id": "sha256:591b097ea2d44edb157b86938d332c749291d01785b20457f31ffef9664b3fdb"
+          },
+          "monitor-agent": {
+            "baseline_image_id": "sha256:d02e7ea1d9ba2adeab9850f3dbae07f5c3fc120c42047e44e5d9da8b57ad9621",
+            "observed_image_id": "sha256:d02e7ea1d9ba2adeab9850f3dbae07f5c3fc120c42047e44e5d9da8b57ad9621"
+          },
+          "nats": {
+            "baseline_image_id": "sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00",
+            "observed_image_id": "sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00"
+          },
+          "openclaw-data-init": {
+            "baseline_image_id": "sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+            "observed_image_id": "sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+          },
+          "openclaw-gateway": {
+            "baseline_image_id": "sha256:fbe948ed2871375a7efa40cc3e0f2a18bf201d38543ace367a7b9e29523010ae",
+            "observed_image_id": "sha256:fbe948ed2871375a7efa40cc3e0f2a18bf201d38543ace367a7b9e29523010ae"
+          },
+          "openclaw-gateway-adapter": {
+            "baseline_image_id": "sha256:2e59458a9a8b2b9c4760ea7e07584a7babfac7909013bcc64b174b9e2274904f",
+            "observed_image_id": "sha256:2e59458a9a8b2b9c4760ea7e07584a7babfac7909013bcc64b174b9e2274904f"
+          },
+          "operator-bff": {
+            "baseline_image_id": "sha256:92eb8aae4c9373d64e0ccd7e31c99a89e3a5a65131d155137e0f9d59bfe532c0",
+            "observed_image_id": "sha256:92eb8aae4c9373d64e0ccd7e31c99a89e3a5a65131d155137e0f9d59bfe532c0"
+          },
+          "optimizer-svc": {
+            "baseline_image_id": "sha256:7d0c0cd396bdacba72b2904a221732155e5d1ff7513c001771445b338eeca1e8",
+            "observed_image_id": "sha256:7d0c0cd396bdacba72b2904a221732155e5d1ff7513c001771445b338eeca1e8"
+          },
+          "paper-fleet-reconciler": {
+            "baseline_image_id": "sha256:0607aec989496ec1903d575cb2ea1d868666d4138bb02a3a6b7d8c52c48473d5",
+            "observed_image_id": "sha256:0607aec989496ec1903d575cb2ea1d868666d4138bb02a3a6b7d8c52c48473d5"
+          },
+          "paper-signal-producer": {
+            "baseline_image_id": "sha256:4b05bb0e205e3eb849b83f50b41f10897f18b2191ca6218f31f606d3873e96da",
+            "observed_image_id": "sha256:4b05bb0e205e3eb849b83f50b41f10897f18b2191ca6218f31f606d3873e96da"
+          },
+          "persona": {
+            "baseline_image_id": "sha256:a9a738a582e49ea046b36e95cb2ffda7befbf60f28aa0706b3e8d25d83c77f38",
+            "observed_image_id": "sha256:a9a738a582e49ea046b36e95cb2ffda7befbf60f28aa0706b3e8d25d83c77f38"
+          },
+          "persona-evaluator-agent": {
+            "baseline_image_id": "sha256:f573661ad6fb25920430c6cd24d3cece28304e31583739044109a21efcdd2d84",
+            "observed_image_id": "sha256:f573661ad6fb25920430c6cd24d3cece28304e31583739044109a21efcdd2d84"
+          },
+          "policy-learning-shadow-eval-scheduler": {
+            "baseline_image_id": "sha256:c0638a74ab681e5d8c7c3b951816771800d5f33afe015c0017e7fe56e859d82f",
+            "observed_image_id": "sha256:c0638a74ab681e5d8c7c3b951816771800d5f33afe015c0017e7fe56e859d82f"
+          },
+          "policy-learning-svc": {
+            "baseline_image_id": "sha256:8c12a173b12a986d4044137131251d8f52632914f70f0362d4459f71e1c25a2d",
+            "observed_image_id": "sha256:8c12a173b12a986d4044137131251d8f52632914f70f0362d4459f71e1c25a2d"
+          },
+          "postgres": {
+            "baseline_image_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+            "observed_image_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+          },
+          "postmortems": {
+            "baseline_image_id": "sha256:ded02f03e8d4d7070eb9501fa5df4a6a0c9bf46b2ca2ae115e38a431107612f0",
+            "observed_image_id": "sha256:ded02f03e8d4d7070eb9501fa5df4a6a0c9bf46b2ca2ae115e38a431107612f0"
+          },
+          "promotion": {
+            "baseline_image_id": "sha256:6ff1928522d2cfd78e3817c90516c5726702b020694fb1bf1c0966d8b3152ba7",
+            "observed_image_id": "sha256:6ff1928522d2cfd78e3817c90516c5726702b020694fb1bf1c0966d8b3152ba7"
+          },
+          "reconciliation-drift-consumer": {
+            "baseline_image_id": "sha256:2fd20e073c140ff8a742b8d13374ba65dcec734b75cfceca9b9e49ef5be4ff6c",
+            "observed_image_id": "sha256:2fd20e073c140ff8a742b8d13374ba65dcec734b75cfceca9b9e49ef5be4ff6c"
+          },
+          "reconciliation-drift-incident-listener": {
+            "baseline_image_id": "sha256:3b26a0eeb86d8db5bf00c256669cf417c5b1eeef588525165a3939361ac1e089",
+            "observed_image_id": "sha256:3b26a0eeb86d8db5bf00c256669cf417c5b1eeef588525165a3939361ac1e089"
+          },
+          "reconciliation-drift-scheduler": {
+            "baseline_image_id": "sha256:e597253ca7dddffd04dab68f728c5032c5368c8a4c4072c6a1516a8098f7330b",
+            "observed_image_id": "sha256:e597253ca7dddffd04dab68f728c5032c5368c8a4c4072c6a1516a8098f7330b"
+          },
+          "reconciliation-drift-svc": {
+            "baseline_image_id": "sha256:72cd044b9323aacbe91867a28cf3c652b352b52035990a0c8082d19fbc1b75e3",
+            "observed_image_id": "sha256:72cd044b9323aacbe91867a28cf3c652b352b52035990a0c8082d19fbc1b75e3"
+          },
+          "registry": {
+            "baseline_image_id": "sha256:54b9a89939b2306168220cb37cecf8fa45b5eb09d20265d653a8ea7a71ef92cf",
+            "observed_image_id": "sha256:54b9a89939b2306168220cb37cecf8fa45b5eb09d20265d653a8ea7a71ef92cf"
+          },
+          "research-orchestrator-svc": {
+            "baseline_image_id": "sha256:084d250798b2d449dee0030ef64af84dbc9ef77604dd4edceffb62dc9257818a",
+            "observed_image_id": "sha256:084d250798b2d449dee0030ef64af84dbc9ef77604dd4edceffb62dc9257818a"
+          },
+          "research-worker-gateway-svc": {
+            "baseline_image_id": "sha256:4912d0ed5fadcc5c0303240af05e13c7e64c0aa9668e8a923bfabefcf511ba3d",
+            "observed_image_id": "sha256:4912d0ed5fadcc5c0303240af05e13c7e64c0aa9668e8a923bfabefcf511ba3d"
+          },
+          "router": {
+            "baseline_image_id": "sha256:347c032bfa4666b2b20414148cf028958b7d1a05e075e30a761be2da4b505d15",
+            "observed_image_id": "sha256:347c032bfa4666b2b20414148cf028958b7d1a05e075e30a761be2da4b505d15"
+          },
+          "runtime-manager": {
+            "baseline_image_id": "sha256:e264dd0cf183bd5d57508cc67f043752633c6d027870b69666ce542626afb0e0",
+            "observed_image_id": "sha256:e264dd0cf183bd5d57508cc67f043752633c6d027870b69666ce542626afb0e0"
+          },
+          "search-index-scheduler": {
+            "baseline_image_id": "sha256:13c142cd95e8e84584d773088f3f9fe8e22bfd411d24c7b4621fabda59f3e43b",
+            "observed_image_id": "sha256:13c142cd95e8e84584d773088f3f9fe8e22bfd411d24c7b4621fabda59f3e43b"
+          },
+          "search-svc": {
+            "baseline_image_id": "sha256:64187da585d283c0cfa29783df4f6f1001be25307be0d138d5182d3a35474927",
+            "observed_image_id": "sha256:64187da585d283c0cfa29783df4f6f1001be25307be0d138d5182d3a35474927"
+          },
+          "signal-store": {
+            "baseline_image_id": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+            "observed_image_id": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+          },
+          "source-ingest": {
+            "baseline_image_id": "sha256:9bee6b39707d87ad5bc082a941061bbdbe2b73c5795d5ea2e5dbf05eaef8f652",
+            "observed_image_id": "sha256:9bee6b39707d87ad5bc082a941061bbdbe2b73c5795d5ea2e5dbf05eaef8f652"
+          },
+          "source-ingest-controller-migrate": {
+            "baseline_image_id": "sha256:28c8485a3f4348577fb24ee17b5a3e5cf445247da1e52b75f2bea1c0443dd10c",
+            "observed_image_id": "sha256:28c8485a3f4348577fb24ee17b5a3e5cf445247da1e52b75f2bea1c0443dd10c"
+          },
+          "source-ingest-scheduler": {
+            "baseline_image_id": "sha256:4786a83aa5b5be11d13ee5b76326ddd6690711f9a2d2295ac3a4a0a680a9ac2a",
+            "observed_image_id": "sha256:4786a83aa5b5be11d13ee5b76326ddd6690711f9a2d2295ac3a4a0a680a9ac2a"
+          },
+          "strategy-distillation-worker": {
+            "baseline_image_id": "sha256:46ea3ffbae6866545273bbac8a2b7bbb481dc1d3fa03d346cda0dc229190c37e",
+            "observed_image_id": "sha256:46ea3ffbae6866545273bbac8a2b7bbb481dc1d3fa03d346cda0dc229190c37e"
+          },
+          "telemetry": {
+            "baseline_image_id": "sha256:26b1dc33bdb1d48fb6f6faebbe62116b52d1811c6e48a3498433b465ee3ba615",
+            "observed_image_id": "sha256:26b1dc33bdb1d48fb6f6faebbe62116b52d1811c6e48a3498433b465ee3ba615"
+          },
+          "training-session-preview-worker": {
+            "baseline_image_id": "sha256:cdc118ea743ce0cde6ef4330c2e7571203f9e77908e1992dc9d28f4d876376c0",
+            "observed_image_id": "sha256:cdc118ea743ce0cde6ef4330c2e7571203f9e77908e1992dc9d28f4d876376c0"
+          },
+          "training-session-svc": {
+            "baseline_image_id": "sha256:4380749dc080b8018812154304fece3109eb5b3f447f3058ba6b405ffd6e4de1",
+            "observed_image_id": "sha256:4380749dc080b8018812154304fece3109eb5b3f447f3058ba6b405ffd6e4de1"
+          },
+          "web-channel": {
+            "baseline_image_id": "sha256:0616ec15498a9b581e2f46d160c32fe901701e6b906b301bca8fc41fc12bb019",
+            "observed_image_id": "sha256:0616ec15498a9b581e2f46d160c32fe901701e6b906b301bca8fc41fc12bb019"
+          }
+        }
+      },
+      "owners_readback": {
+        "capital": {
+          "container_id": "5f8c83cdcbf715de4a92e6270c21cf2129e8abd8b37fe0e31ed6d0cde0b95d44",
+          "image_id": "sha256:dd2c65b54f9efd557215cb725e79f4e97adcea613822bc21f8ef3162856db244",
+          "restart_count": 0,
+          "started_at": "2026-11-09T02:03:11.71302705Z"
+        },
+        "deployment": {
+          "container_id": "4453ec9299ab548efa7df28f6fd9755d34bf5497cd3d3b93f8a09269c79c98d4",
+          "image_id": "sha256:77135dbd4554bd8552dd7baf43c97609992903909dd7e9acebb89f2a1d64b4f5",
+          "restart_count": 0,
+          "started_at": "2026-11-09T02:03:18.561982265Z"
+        },
+        "deployment-outbox-consumer": {
+          "container_id": "acec461759f0fa5bc07289d01282de46c4e99b8fedbcd375b508d468656b3638",
+          "image_id": "sha256:cebe917fee97752396244d5d9cd653492fe1d644d64d51811aee8dc0cc495bbc",
+          "restart_count": 0,
+          "started_at": "2026-11-09T02:04:27.228220952Z"
+        },
+        "dev-paper-principal-issuer": {
+          "container_id": "fd0476fa39319e69df6b21a6bd6b38e48105989271bca66d57d29dcee4160c71",
+          "image_id": "sha256:266bed2df10c0f810e4eaed9495638443573a9caa87979228d4695bbe6c7623f",
+          "restart_count": 0,
+          "started_at": "2026-11-09T02:03:11.690972082Z"
+        },
+        "governance": {
+          "container_id": "348d33988fb7a610dc47a0927e7cf406e70a67801e450e50d8825c3401cd880c",
+          "image_id": "sha256:9bccb6e20f2e5235da8f45aa012a3b075fbc7bee1a6844f80aba927c128a8bdc",
+          "restart_count": 0,
+          "started_at": "2026-11-09T02:03:11.693289042Z"
+        },
+        "registry": {
+          "container_id": "f0cfec8c7a8cef6c08b9ce4e7b8577a5655ffc32faa7441beb8f674e492b4707",
+          "image_id": "sha256:54b9a89939b2306168220cb37cecf8fa45b5eb09d20265d653a8ea7a71ef92cf",
+          "restart_count": 0,
+          "started_at": "2026-11-09T02:03:11.620010747Z"
+        },
+        "runtime-manager": {
+          "container_id": "e3d8c55dd09689f3abedf983cb4345853b43a4b8e728beca0b40d8879b2a0cd9",
+          "image_id": "sha256:e264dd0cf183bd5d57508cc67f043752633c6d027870b69666ce542626afb0e0",
+          "restart_count": 0,
+          "started_at": "2026-11-09T02:04:21.34807508Z"
+        }
+      },
+      "prior_natural_compensation_incident_and_fix": {
+        "run_id": "42397678868",
+        "run_url": "https://github.com/ajoe734/pantheon/actions/runs/42397678868",
+        "occurred_at": "2026-11-07T17:43:00Z",
+        "candidate_backend_sha": "f6d40b77da32309498863a6d66debcc2449268e2",
+        "candidate_frontend_sha": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+        "baseline_backend_sha": "6528ce4ee8b38477ae8ba0da6418b16ebcd0c7d3",
+        "baseline_frontend_sha": "a71b5c9afb2a5a54bac03948f1cf29f2899e9e33",
+        "summary": "Whole-stack restore returned all 57 compose services to baseline image IDs, but dev_release_artifact_driver.py:823 exited 75 because whole-stack restore recreated application owner containers while the legacy check required unchanged container IDs. Fixed in DEV-STACK-RESTORE-OWNER-IDENTITY-20261107 (e65bdb388) and proven end-to-end in run 42546069567."
+      }
+    },
+    "5_measured_values_recorded_with_deployed_shas": {
+      "status": "passed",
+      "recorded_pairs": [
+        {
+          "role": "closing_accepted_pair_and_deploy_window_proof",
+          "backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+          "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+          "pair_id": "fdf37194e6547a67dd2cc625e79af6a3e360b67ab77f8194d0955e4f027bc8b4",
+          "root_deploy_run_id": "42579393176"
+        },
+        {
+          "role": "whole_stack_compensation_baseline_and_attribution_latency_proof",
+          "backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+          "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+          "pair_id": "b8520d25978671e10564970fd8a3537d98dc0f0aed0251eb6ee42487ff149274",
+          "compensation_run_id": "42546069567"
+        },
+        {
+          "role": "prior_attribution_latency_proof_20261107",
+          "backend_sha": "f5c57bb1008eb5fbd759fbc9fa4150b6c8c47ba1",
+          "frontend_sha": "a71b5c9afb2a5a54bac03948f1cf29f2899e9e33"
+        },
+        {
+          "role": "initial_attribution_latency_proof_20261106",
+          "backend_sha": "2638f809cd4c933aeb26df017979eb122552e5dd",
+          "frontend_sha": "3c99c7ae1cc0d393fe3c2392f4bfd6e4b2a8cc3f"
+        }
+      ]
+    }
+  },
+  "closing_release_verification": {
+    "candidate_frontend_readback": {
+      "baseline_nonsecret_config_verified": true,
+      "frontend": {
+        "backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+        "dist_sha256": "2c6bd18596cc0318bd3e539c9a7f419b22e621c6ef69ac162526c1ee43b2dd64",
+        "frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+        "manifest_sha256": "768f9576d2983639b54554c16fee32c5ea037c392c498434e290348a43cf117f",
+        "target": "/var/www/pantheon-dev-fe-releases/20261109T082954Z-f6d528080a7a-gate-42582167747-42584608989-1-3764107-operator-live"
+      },
+      "identity": {
+        "attempt": "1",
+        "candidate_backend_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+        "candidate_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+        "candidate_id": "a5e62003ad521acdc78efeccce68b728e99b0cf3e1aa1728ccde0d7c83146420",
+        "controller_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+        "previous_backend_sha": "97e05d957eba2e893b3fb8707092e47a6d340a45",
+        "previous_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+        "run_id": "42579393176"
+      },
+      "image_readback_verified": true,
+      "images": {
+        "agora-interaction-worker": "sha256:8b2269b0dc47f2c0460a2ee7e0e10aa4fc5f4f0f49ba1b2b30b2f814db41dc9c",
+        "loop-run-projector-scheduler": "sha256:c0c98e2b3901aec935e4f82834b3b7a1b1a9c22dc4fd02db0ad610530d488ea4",
+        "operator-bff": "sha256:b9aaa0d12d20cd438e6d0944c1e1738b78d18fd05a1eef66c97a485c68aae59d"
+      },
+      "manifest_sha256": "693d162ce4c0ae8992242fb84a2a115050c2563f36afcea65ea7f0ffee07cc5e",
+      "operation": "verify",
+      "owners": {
+        "capital": {
+          "container_id": "32561598ddf3797732d5ad99600fc09182415c65391fc19b3fbe5ef903799c63",
+          "image_id": "sha256:3d3e7114c86473193be844751bd9a885a0beefac6f5eb4820fd391ff9133ed0a",
+          "restart_count": 0,
+          "started_at": "2026-11-09T07:40:30.284570788Z"
+        },
+        "deployment": {
+          "container_id": "0eb2b2aefbab095aaa66aebfea640c036c1a8db5e85a83657c82f90ada3c4e4c",
+          "image_id": "sha256:dcaef15fc076f4152430a885578799b4c55fe486efd780a4e8c9a14abc12f36c",
+          "restart_count": 0,
+          "started_at": "2026-11-09T07:40:38.102149492Z"
+        },
+        "deployment-outbox-consumer": {
+          "container_id": "ca6da78605ccaf5e1af12003b3dde91d842218241fffc4502c59dbf432600cdd",
+          "image_id": "sha256:9cd67aa1f67820787ec84f4fb5357f4b5d9e4463509879ca52e9e9ac4c0d470a",
+          "restart_count": 0,
+          "started_at": "2026-11-09T07:41:30.449243579Z"
+        },
+        "dev-paper-principal-issuer": {
+          "container_id": "950f0dd8a7e4cce5a16f70b5544490be0f380f91fc128b3087a3d9988ad8e80a",
+          "image_id": "sha256:6f54c661f931db9bd82d3806f2e6f0ae81a4d9646f140ad8df58ae9080157580",
+          "restart_count": 0,
+          "started_at": "2026-11-09T07:38:21.596637516Z"
+        },
+        "governance": {
+          "container_id": "8a41fa1ac8c3820dda9d92ad43a482eecbe1dee45dd43f0ba504fe4e6fe215a6",
+          "image_id": "sha256:c2957c81e3d5135c7663c4c67ce8022bae45b6f7e38e46109fef187b67a2f79a",
+          "restart_count": 0,
+          "started_at": "2026-11-09T07:40:30.250603321Z"
+        },
+        "registry": {
+          "container_id": "ead612d2574df4631428c45d51feb4946739564420c28ba4c154394012e53eb1",
+          "image_id": "sha256:a83efbc515bf05e03a7b66920444395546cf15e0897bf7936c64ad3af5a47072",
+          "restart_count": 0,
+          "started_at": "2026-11-09T07:40:30.26244146Z"
+        },
+        "runtime-manager": {
+          "container_id": "3140a8821d2a79c15ce1cc2b685864f819773261d3dc72fcf77288dd336daf9d",
+          "image_id": "sha256:d975194f5d84c9f3dbdaba6267c227dbd04b174e8bcc8cda56da1df085be4a00",
+          "restart_count": 0,
+          "started_at": "2026-11-09T07:41:24.721781873Z"
+        }
+      },
+      "pre_restore_source_observations": [],
+      "protected_owners_unchanged": true,
+      "public": {
+        "authenticated_viewer_readback_verified": true,
+        "dev_login_enabled": true,
+        "fe_manifest_bytes_verified": true,
+        "source_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+        "strict_auth_denials_verified": true
+      },
+      "schema_version": "pantheon.dev-artifact-readback.v1"
+    },
+    "served_verification": {
+      "observed_bff_sha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+      "observed_fe_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "observed_pair_id": "fdf37194e6547a67dd2cc625e79af6a3e360b67ab77f8194d0955e4f027bc8b4",
+      "served_manifest": {
+        "acceptedAt": "2026-11-09T08:33:12Z",
+        "agoraCompatibility": {
+          "backend": {
+            "repo": "ajoe734/pantheon",
+            "runtime_commit": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+            "tree": "2533e618cd68579440c0592883817c2758aae492"
+          },
+          "blocking_reasons": [],
+          "compatibility_status": "accepted",
+          "contract_family": "agora.v1.13",
+          "environment": "dev",
+          "frontend": {
+            "repo": "ajoe734/execute-plans",
+            "runtime_commit": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+            "tree": "1da5df6005183e001246cbee8a734c56843619b1"
+          },
+          "gate_controller": {
+            "commit": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+            "repo": "ajoe734/pantheon",
+            "tree": "2533e618cd68579440c0592883817c2758aae492"
+          },
+          "hash_policy": {
+            "file_hash": "sha256-exact-git-bytes-v1",
+            "generated_types_hash": "sha256-path-tab-filehash-lf-v1"
+          },
+          "manifest_sha256": "f6d2e78f064e1a364bd0a90d0bdfb8e171adb03c068b18b5a1ee9d3c0c46f67a",
+          "release_candidate": {
+            "backend": {
+              "branch": "dev",
+              "commit": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+              "repository": "ajoe734/pantheon",
+              "tree": "2533e618cd68579440c0592883817c2758aae492"
+            },
+            "compatibility_manifest": {
+              "contract_family": "agora.v1.13",
+              "manifest_version": "1.0",
+              "sha256": "f6d2e78f064e1a364bd0a90d0bdfb8e171adb03c068b18b5a1ee9d3c0c46f67a",
+              "source_status": "accepted"
+            },
+            "compatibility_status": "compatible",
+            "environment": "dev",
+            "frontend": {
+              "branch": "dev",
+              "commit": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+              "repository": "ajoe734/execute-plans",
+              "tree": "1da5df6005183e001246cbee8a734c56843619b1"
+            },
+            "release_candidate_id": "a5e62003ad521acdc78efeccce68b728e99b0cf3e1aa1728ccde0d7c83146420",
+            "schema_version": "pantheon.dev-release-candidate.v1"
+          },
+          "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
+          "source_handoffs": {
+            "backend": {
+              "commit": "773ed904a96f41c562f6f482dbd92b10d36024f9",
+              "path": "docs/contracts/agora/backend-generation-input.v1_13.json",
+              "sha256": "2e75a2f8d190f3d1bad5bab2fac8effe169e4123f14854988a97cc9daaacf25c"
+            },
+            "frontend": {
+              "commit": "a41bf2fa8c6a0360e68926796357ba0c24cd9267",
+              "path": "docs/contracts/agora/frontend-generation-output.v1_13.json",
+              "sha256": "d45a5c384a3e6dea5013810161e6cd71b9131312da157d58040e394408346443"
+            }
+          }
+        },
+        "app": "execute-plans",
+        "artifactDigest": "2c6bd18596cc0318bd3e539c9a7f419b22e621c6ef69ac162526c1ee43b2dd64",
+        "artifactDigestSha256": "2c6bd18596cc0318bd3e539c9a7f419b22e621c6ef69ac162526c1ee43b2dd64",
+        "bff": {
+          "baseUrl": "https://api.dev.mvl-cap.tw",
+          "sourceCommitKnown": true,
+          "sourceCommitSha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877"
+        },
+        "bffCommit": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+        "bffCommitEvidence": true,
+        "bffHost": "https://api.dev.mvl-cap.tw",
+        "bffSourceCommitSha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+        "buildMode": {
+          "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+          "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false",
+          "VITE_BFF_FALLBACK": "strict",
+          "VITE_BFF_MODE": "live",
+          "VITE_BFF_REAL_WRITES": "true"
+        },
+        "commit": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+        "deployedAt": "20261109T082954Z",
+        "deploymentProfile": "operator-live",
+        "deploymentState": "accepted",
+        "emergencyOverride": {
+          "actor": null,
+          "enabled": false,
+          "reasonSha256": null
+        },
+        "environment": "pantheon-dev-fe",
+        "frontend": {
+          "commitSha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+          "repository": "ajoe734/execute-plans"
+        },
+        "frontendSha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+        "gate": {
+          "runId": "42582167747",
+          "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/42582167747",
+          "workflow": "pantheon-integration-gate.yml"
+        },
+        "githubArtifactDigest": "sha256:472d4e460367eec61a1b9a3344f6d61b122b4bf7d22cc51338a5a3035adbd254",
+        "integrationGateRunId": "42582167747",
+        "pair": {
+          "operatorLiveArtifactDigestSha256": "2c6bd18596cc0318bd3e539c9a7f419b22e621c6ef69ac162526c1ee43b2dd64",
+          "pairId": "fdf37194e6547a67dd2cc625e79af6a3e360b67ab77f8194d0955e4f027bc8b4",
+          "readOnlyArtifactDigestSha256": "583fe7ea6d218a96187d7430d22cfc8d8cb40b32780aa733db1534f3b4146d5a",
+          "writeProofArtifactDigestSha256": "8f4329899a0869c55d4fa883b25cc416324e0aeb889ff5e256c81114c92ee4fc"
+        },
+        "pairId": "fdf37194e6547a67dd2cc625e79af6a3e360b67ab77f8194d0955e4f027bc8b4",
+        "previousArtifactDigest": "2c6bd18596cc0318bd3e539c9a7f419b22e621c6ef69ac162526c1ee43b2dd64",
+        "previousCommit": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+        "previousReleaseName": "20261109T012601Z-f6d528080a7a-gate-42542278753-42543973856-1-1118960-operator-live",
+        "probes": {
+          "candidatePreSwitch": "passed",
+          "postSwitch": "passed",
+          "rollbackRequired": false
+        },
+        "profile": "operator-live",
+        "releaseAdmission": {
+          "backend": {
+            "branch": "dev",
+            "commitSha": "bdd2b8e546dfe511d57f64be5ecc2db20c831877",
+            "repository": "ajoe734/pantheon"
+          },
+          "compatibilityManifestSha256": "f6d2e78f064e1a364bd0a90d0bdfb8e171adb03c068b18b5a1ee9d3c0c46f67a",
+          "compatibilityStatus": "compatible",
+          "controller": {
+            "repository": "ajoe734/pantheon",
+            "runId": "42579393176",
+            "workflow": "nonprod-deploy.yml"
+          },
+          "frontend": {
+            "branch": "dev",
+            "commitSha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+            "repository": "ajoe734/execute-plans"
+          },
+          "releaseCandidateId": "a5e62003ad521acdc78efeccce68b728e99b0cf3e1aa1728ccde0d7c83146420",
+          "schemaVersion": "pantheon.dev-release-candidate-admission.v1"
+        },
+        "releaseName": "20261109T082954Z-f6d528080a7a-gate-42582167747-42584608989-1-3764107",
+        "repository": "ajoe734/execute-plans",
+        "schemaVersion": 1,
+        "sourceBranch": "dev",
+        "sourceRef": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6"
+      },
+      "status": "verified",
+      "verified_at": "2026-11-09T08:33:39.194689Z"
+    }
+  }
+}
