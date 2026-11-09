@@ -1200,3 +1200,20 @@ def test_expression_replay_gate_is_deterministic_and_fails_closed():
     # A smaller notional fraction earns less on the recorded fall: the child is worse.
     smaller = expression_replay_gate(parent, {"notional_fraction_at_full_strength": 0.1}, records)
     assert smaller["passed"] is False and smaller["reason"] == "child_replay_worse_than_parent"
+
+
+def test_persistent_breach_counts_instrument_class_governed_breaches_by_mark_date(rig):
+    """Class-sourced governed breaches (DRIFT-INSTRUMENT-CLASS-BASELINE) count like any other."""
+    decision = retrain_decision()
+    rig.decisions.put(decision)
+    rig.owners.three_marks()
+    for item in rig.owners.history:
+        for check in item["drift_checks"]:
+            check["instrument_class"] = "cash_share"
+            check["baseline_source"]["instrument_class"] = "cash_share"
+    report = rig.qualifier.run(tenant_id=TENANT, sweep_id="s-class")
+    item = row(report, decision.decision_id)
+    observed = criterion(item, "persistent_breach")
+    assert observed["result"] == "passed"
+    assert observed["observed"]["distinct_breach_days"] == 3
+    assert observed["observed"]["mark_dates"] == ["2026-11-02", "2026-11-03", "2026-11-04"]

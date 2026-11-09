@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 import jsonschema
+import pytest
 
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
@@ -3864,3 +3865,178 @@ def test_causal_drawdown_event_id_is_recorded_on_baseline_sourced_check_only() -
     untouched = [{"metric": "drawdown", "baseline_source": {"artifact_id": "a"}}]
     drift._record_causal_drawdown_event(untouched, {})
     assert "drawdown_event_id" not in untouched[0]
+
+
+# ---------------------------------------------------------------------------
+# DRIFT-INSTRUMENT-CLASS-BASELINE-20261109: successor persona baselines exist
+# only under baselines_by_instrument_class and are read for the class the
+# runtime summary reports (hosted shapes of the two successor entries).
+# ---------------------------------------------------------------------------
+
+_SUCCESSOR_POLICY_SOURCE = (
+    "docs/deployment/evidence/PAPER-SUCCESSOR-BASELINES-20261108/policy.md#reviewer-decision"
+)
+_SUCCESSOR_CLASS_BASELINES = {
+    "artifact-persona-paper-06d4775a9b6a8f63b311": {
+        "cash_share": 0.00235,
+        "stock_future": 0.235,
+    },
+    "artifact-persona-paper-a81b4fd15944698341aa": {
+        "cash_share": 0.0001245,
+        "stock_future": 0.1245,
+    },
+}
+
+
+def _write_successor_class_baselines(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "baselines": {},
+                "baselines_by_instrument_class": {
+                    artifact_id: {
+                        instrument_class: {
+                            "expected_drawdown": value,
+                            "policy_source": _SUCCESSOR_POLICY_SOURCE,
+                        }
+                        for instrument_class, value in classes.items()
+                    }
+                    for artifact_id, classes in _SUCCESSOR_CLASS_BASELINES.items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _run_successor_tick(tmp_path, artifact_id, drawdown, summary_fields):
+    baselines = tmp_path / "baselines.json"
+    _write_successor_class_baselines(baselines)
+    return _run_drawdown_tick(
+        baselines,
+        drawdown=drawdown,
+        artifact_id=artifact_id,
+        summary_Transform=lambda summary, _emitted: (
+            summary.pop("instrument_class", None),
+            summary.update(summary_fields),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "artifact_id,instrument_class",
+    [
+        (artifact_id, instrument_class)
+        for artifact_id in _SUCCESSOR_CLASS_BASELINES
+        for instrument_class in ("cash_share", "stock_future")
+    ],
+)
+def test_class_only_baseline_is_read_for_summary_class_and_breach_is_governed(
+    tmp_path, artifact_id, instrument_class
+) -> None:
+    baseline = _SUCCESSOR_CLASS_BASELINES[artifact_id][instrument_class]
+    payload, evaluation, reports, _classify = _run_successor_tick(
+        tmp_path,
+        artifact_id,
+        baseline * 1.6,
+        {"instrument_class": instrument_class, "positions": []},
+    )
+    assert evaluation["summary"]["baseline_metric_count"] == 1
+    assert "baseline_unresolved" not in evaluation
+    check = _drawdown_check(evaluation)
+    assert check["baseline"] == baseline
+    assert check["governed_threshold_breached"] is True
+    assert check["instrument_class"] == instrument_class
+    assert check["baseline_source"] == {
+        "artifact_id": artifact_id,
+        "baseline_key": "expected_drawdown",
+        "instrument_class": instrument_class,
+        "policy_source": _SUCCESSOR_POLICY_SOURCE,
+    }
+    assert len(reports) == 1
+    assert payload["incident_ids"] == ["inc-drawdown-001"]
+
+
+def test_class_only_baseline_below_governed_multiple_is_not_breached(tmp_path) -> None:
+    artifact_id = "artifact-persona-paper-06d4775a9b6a8f63b311"
+    _payload, evaluation, reports, _classify = _run_successor_tick(
+        tmp_path,
+        artifact_id,
+        0.00235 * 1.1,
+        {"instrument_class": "cash_share", "positions": []},
+    )
+    assert evaluation["summary"]["baseline_metric_count"] == 1
+    assert _drawdown_check(evaluation)["governed_threshold_breached"] is False
+    assert reports == []
+
+
+@pytest.mark.parametrize(
+    "summary_fields,reason_fragment",
+    [
+        ({"positions": []}, "no instrument class"),
+        ({"instrument_class": ""}, "missing or invalid instrument_class"),
+        ({"instrument_class": "index_future"}, "instrument_class='index_future'"),
+        (
+            {
+                "positions": [
+                    {"kind": "cash_share"},
+                    {"kind": "stock_future"},
+                ]
+            },
+            "ambiguous instrument classes",
+        ),
+    ],
+)
+def test_class_only_baseline_without_usable_class_yields_no_baseline_and_reason(
+    tmp_path, summary_fields, reason_fragment
+) -> None:
+    artifact_id = "artifact-persona-paper-a81b4fd15944698341aa"
+    payload, evaluation, reports, classify = _run_successor_tick(
+        tmp_path, artifact_id, 0.5, summary_fields
+    )
+    assert evaluation["summary"]["baseline_metric_count"] == 0
+    assert evaluation["drift_checks"] == []
+    unresolved = evaluation["baseline_unresolved"]
+    assert len(unresolved) == 1
+    assert unresolved[0]["artifact_id"] == artifact_id
+    assert unresolved[0]["baseline_key"] == "expected_drawdown"
+    assert reason_fragment in unresolved[0]["reason"]
+    assert reports == []
+    assert payload["incident_ids"] == []
+    assert classify.call_count == 0
+
+
+def test_class_entries_never_fall_back_to_flat_baseline(tmp_path) -> None:
+    baselines = tmp_path / "baselines.json"
+    artifact_id = "artifact-persona-paper-06d4775a9b6a8f63b311"
+    baselines.write_text(
+        json.dumps(
+            {
+                "baselines": {
+                    artifact_id: {
+                        "expected_drawdown": 0.04,
+                        "policy_source": _APPROVED_POLICY_SOURCE,
+                    }
+                },
+                "baselines_by_instrument_class": {
+                    artifact_id: {
+                        "cash_share": {
+                            "expected_drawdown": 0.00235,
+                            "policy_source": _SUCCESSOR_POLICY_SOURCE,
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    _payload, evaluation, _reports, _classify = _run_drawdown_tick(
+        baselines,
+        drawdown=0.5,
+        artifact_id=artifact_id,
+        summary_Transform=lambda summary, _emitted: summary.update(
+            {"instrument_class": "stock_future"}
+        ),
+    )
+    assert evaluation["summary"]["baseline_metric_count"] == 0
+    assert "stock_future" in evaluation["baseline_unresolved"][0]["reason"]
