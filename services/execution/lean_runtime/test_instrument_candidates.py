@@ -1034,3 +1034,34 @@ class TestMaxLeverageBoundsRemainingGross:
             "max_leverage": 5.0,
         }
         assert self._cash_units(budget) == 89
+
+
+def test_lookup_final_settlement_price_reads_dataset_root_and_callable(tmp_path: Path) -> None:
+    from services.execution.lean_runtime.futures_session_inputs import DatasetFinalSettlementSource
+
+    _write_partition(
+        tmp_path,
+        "2026-11-18",
+        "run-settlement",
+        [
+            {
+                "dataset": "taifex_ssf_contracts",
+                "market_date": "2026-11-18",
+                "contract": "SRF",
+                "underlying_code": "0050",
+                "contract_month": "202611",
+                "final_settlement_price": 95.25,
+                "final_settlement_date": "2026-11-18",
+                "available_time": "2026-11-18T06:00:00Z",
+                "ingest_time": "2026-11-18T06:00:01Z",
+            }
+        ],
+    )
+    resolved_dir = ic.lookup_final_settlement_price("SRF", "202611", tmp_path, as_of_trading_day="2026-11-18")
+    assert resolved_dir is not None and resolved_dir["final_settlement_price"] == 95.25
+    assert ic.lookup_final_settlement_price("SRF", "202611", tmp_path, as_of_trading_day="2026-11-17") is None
+    source = DatasetFinalSettlementSource(tmp_path)
+    resolved_src = ic.lookup_final_settlement_price("SRF", "202611", source, as_of_trading_day="2026-11-18")
+    assert resolved_src is not None and resolved_src["final_settlement_price"] == 95.25
+
+

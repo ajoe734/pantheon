@@ -92,6 +92,12 @@ _EXPRESSION_CONTEXT_KEYS = (
     "momentum",
     "view_direction",
     "expression_decision",
+    "expression_replay_input",
+    "session_settlement_prices",
+    "session_settlement_price_reasons",
+    "futures_mark_unavailable_reason",
+    "open_futures_contracts",
+    "final_settlement_source",
 )
 
 # Instrument kinds the paper ledger can fill today.

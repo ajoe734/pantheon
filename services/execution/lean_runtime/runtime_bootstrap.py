@@ -21,7 +21,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from services.execution.lean_runtime.expression_inputs import capital_pool_reader_from_env
-from services.execution.lean_runtime.paper_runtime import main
+from services.execution.lean_runtime.futures_session_inputs import (
+    final_settlement_source_from_env,
+)
+from services.execution.lean_runtime.paper_runtime import PaperRuntimeService, main
 from services.execution.lean_runtime.runtime_context import (
     PantheonRuntimeContext,
     RuntimeContextError,
@@ -194,6 +197,36 @@ class _SidecarHandler(BaseHTTPRequestHandler):
         self._write_json(404, {"status": "not_found", "path": self.path})
 
 
+def build_paper_runtime_service(
+    argv: list[str] | None = None,
+    **kwargs: Any,
+) -> PaperRuntimeService:
+    """Build ``PaperRuntimeService`` with the production bootstrap wiring."""
+    args = _parse_args(argv or [])
+    role = os.getenv("PANTHEON_RUNTIME_ROLE", "pantheon-paper-execution-runtime")
+    runtime_context = kwargs.pop(
+        "runtime_context",
+        _load_runtime_context(
+            launch_manifest=args.launch_manifest,
+            role=role,
+        ),
+    )
+    capital_pool_reader = kwargs.pop(
+        "capital_pool_reader",
+        capital_pool_reader_from_env(),
+    )
+    final_settlement_source = kwargs.pop(
+        "final_settlement_source",
+        final_settlement_source_from_env(),
+    )
+    return PaperRuntimeService(
+        runtime_context=runtime_context,
+        capital_pool_reader=capital_pool_reader,
+        final_settlement_source=final_settlement_source,
+        **kwargs,
+    )
+
+
 def run(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     role = os.getenv("PANTHEON_RUNTIME_ROLE", "pantheon-paper-execution-runtime")
@@ -223,6 +256,7 @@ def run(argv: list[str] | None = None) -> None:
         main(
             runtime_context=runtime_context,
             capital_pool_reader=capital_pool_reader_from_env(),
+            final_settlement_source=final_settlement_source_from_env(),
         )
     else:
         host = os.getenv("HOST", "0.0.0.0")

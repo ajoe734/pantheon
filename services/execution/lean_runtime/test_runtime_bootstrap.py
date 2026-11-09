@@ -359,3 +359,37 @@ class RuntimeBootstrapOrderGatePolicyTests(unittest.TestCase):
         captured, urls = self._bootstrap_reader(_env())
         self.assertIsNone(captured["capital_pool_reader"])
         self.assertEqual(urls, [])
+
+    def test_bootstrap_wires_dataset_final_settlement_source(self):
+        from services.execution.lean_runtime.futures_session_inputs import DatasetFinalSettlementSource
+        from services.execution.lean_runtime.instrument_candidates import lookup_final_settlement_price
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "market_data_store"
+            part = root / "normalized" / "taifex_ssf_contracts" / "date=2026-11-18"
+            part.mkdir(parents=True, exist_ok=True)
+            row = {
+                "dataset": "taifex_ssf_contracts",
+                "market_date": "2026-11-18",
+                "contract": "SRF",
+                "underlying_code": "0050",
+                "contract_month": "202611",
+                "final_settlement_price": 95.25,
+                "final_settlement_date": "2026-11-18",
+                "available_time": "2026-11-18T06:00:00Z",
+                "ingest_time": "2026-11-18T06:00:01Z",
+            }
+            (part / "run-1.jsonl").write_text(
+                json.dumps({"metadata": {"normalized_row": row}}) + "\n",
+                encoding="utf-8",
+            )
+
+            env = _env(PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT=str(root))
+            captured, _ = self._bootstrap_reader(env)
+            source = captured["final_settlement_source"]
+            self.assertIsInstance(source, DatasetFinalSettlementSource)
+            resolved = lookup_final_settlement_price("SRF", "202611", source, as_of_trading_day="2026-11-18")
+            self.assertIsNotNone(resolved)
+            self.assertEqual(resolved["final_settlement_price"], 95.25)
+
+

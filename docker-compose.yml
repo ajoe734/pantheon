@@ -2420,6 +2420,7 @@ services:
       DEPLOYMENT_CAPITAL_SERVICE_TOKEN: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN:-}
       DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE:-}
       PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT: /data/source-ingest/market_data_store
       PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
       PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
       SIGNAL_STORE_URL: redis://signal-store:6379
@@ -2427,6 +2428,7 @@ services:
     volumes:
       - runtime-data:/data/runtime
       - dev-paper-capital-reader-tokens:/run/pantheon-principals:ro
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       runtime-manager:
         condition: service_healthy
@@ -2471,6 +2473,7 @@ services:
       # snapshot contract.  The default remains paper-only and fails closed
       # when a binding lacks an executable artifact or a valid snapshot.
       PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT: /data/source-ingest/market_data_store
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
       PAPER_SIGNAL_STRATEGY: ${PAPER_SIGNAL_STRATEGY:-artifact}
@@ -2482,6 +2485,7 @@ services:
     volumes:
       - worker-health-data:/data/health
       - dev-paper-capital-reader-tokens:/run/pantheon-principals:ro
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       runtime-manager:
         condition: service_healthy
