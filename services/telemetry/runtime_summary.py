@@ -820,6 +820,7 @@ class RuntimeSummaryProjectionStore:
                     "last_fill",
                     "_positions_by_symbol", "_marks_by_symbol", "_valuation_failure", "_valuation_attempt_at", "positions", "position_count",
                     "ledger_fill_count", "positions_status", "positions_unavailable_reason",
+                    "ledger_cash", "ledger_cash_fill_count", "ledger_cash_as_of",
                     "_cost_by_symbol", "_cost_applied_fill_count", "_cost_pending_fills", "_cost_withheld",
                     "_currency_by_symbol", "_broker_by_symbol", "_instrument_by_key",
                     "last_heartbeat_at", "last_heartbeat_event_id",
@@ -1076,6 +1077,21 @@ class RuntimeSummaryProjectionStore:
                     and (raw_lfc <= applied_lfc or str(raw_lfc) in pending_fills)
                 )
                 if not is_duplicate_lfc:
+                    # The paper ledger's cash after this fill, kept so readers
+                    # (the expression-layer inputs) can size against published
+                    # truth. The highest ledger fill count wins, so a late or
+                    # replayed fill cannot move cash backwards.
+                    raw_cash = metadata.get("ledger_cash")
+                    if (
+                        usable_lfc
+                        and isinstance(raw_cash, (int, float))
+                        and not isinstance(raw_cash, bool)
+                        and math.isfinite(float(raw_cash))
+                        and raw_lfc >= int(current.get("ledger_cash_fill_count") or 0)
+                    ):
+                        current["ledger_cash"] = float(raw_cash)
+                        current["ledger_cash_fill_count"] = raw_lfc
+                        current["ledger_cash_as_of"] = event_time
                     trade_count = int(current.get("executed_trade_count") or 0) + 1
                     current["executed_trade_count"] = trade_count
                     # total_trades may also arrive via metrics; the executed counter is

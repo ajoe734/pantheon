@@ -387,6 +387,9 @@ class PaperExecutionAlgorithm:
         self.Securities: dict[str, _Security] = {}
         self._open_bracket_orders: list[dict[str, Any]] = []
         self._current_signal_metadata: dict[str, Any] = {}
+        self._drained_signal_contexts: list[dict[str, Any]] = []
+        self._after_signal_context_hook: Callable[[], None] | None = None
+        self._last_futures_mark_diagnostic: dict[str, Any] | None = None
         self._active_episodes: dict[str, str] = {}
         self._last_fill_episode_id: str | None = None
         self._reversal_info: dict[str, Any] | None = None
@@ -526,11 +529,46 @@ class PaperExecutionAlgorithm:
             authoritative=True,
         )
 
+    def _has_open_or_pending_stock_futures(self) -> bool:
+        return any(
+            pos.get("kind") == "stock_future"
+            and (
+                abs(float(pos.get("quantity", 0.0))) > 1e-12
+                or pos.get("status") == "settlement_pending"
+            )
+            for pos in self._instrument_positions.values()
+        )
+
+    def _open_active_stock_future_contracts(self) -> list[str]:
+        return sorted(
+            inst_id
+            for (_b_id, _norm_u, inst_id), pos in self._instrument_positions.items()
+            if pos.get("kind") == "stock_future"
+            and abs(float(pos.get("quantity", 0.0))) > 1e-12
+            and pos.get("status") != "settlement_pending"
+        )
+
+    def futures_mark_diagnostic(self) -> dict[str, Any] | None:
+        if self._last_futures_mark_diagnostic is None:
+            return None
+        return json.loads(json.dumps(self._last_futures_mark_diagnostic))
+
     def SetCurrentSignalContext(self, metadata: dict[str, Any] | None) -> None:  # noqa: N802
-        self._current_signal_metadata = dict(metadata or {})
+        ctx = dict(metadata or {})
+        self._current_signal_metadata = ctx
+        if ctx:
+            recorded = dict(ctx)
+            recorded["_had_open_futures_before_signal"] = (
+                self._has_open_or_pending_stock_futures()
+            )
+            self._drained_signal_contexts.append(recorded)
+            if len(self._drained_signal_contexts) > 256:
+                self._drained_signal_contexts = self._drained_signal_contexts[-256:]
 
     def ClearCurrentSignalContext(self) -> None:  # noqa: N802
         self._current_signal_metadata = {}
+        if callable(self._after_signal_context_hook):
+            self._after_signal_context_hook()
 
     def SetRiskPolicy(self, policy: RiskPolicy | Mapping[str, Any] | None) -> None:  # noqa: N802
         if policy is None:
@@ -951,6 +989,7 @@ class PaperExecutionAlgorithm:
             "net_notional": abs(signed_net_notional),
             "signed_net_notional": signed_net_notional,
             "margin_call_active": bool(self._margin_call_active),
+            "futures_mark_diagnostic": self.futures_mark_diagnostic(),
         }
 
     def assert_ledger_reconciliation(self) -> dict[str, Any]:
@@ -2191,6 +2230,15 @@ class PaperExecutionAlgorithm:
             )
             self._security(inst_id).Price = mark_val
 
+        self._last_futures_mark_diagnostic = {
+            "status": "marked",
+            "trade_date": date_str,
+            "reason": None,
+            "missing_contracts": {},
+            "marked_contracts": {
+                inst_id: mark_val for _pos, inst_id, mark_val in pending_updates
+            },
+        }
         snap = self.assert_ledger_reconciliation()
         if not check_maintenance or already_marked_this_session:
             if check_maintenance:
@@ -2358,6 +2406,7 @@ class PaperExecutionAlgorithm:
                 month,
                 final_settlement_source,
                 settlement_day=ltd,
+                as_of_trading_day=parsed_day,
             )
             if lookup is None:
                 pos["status"] = "settlement_pending"
@@ -3041,6 +3090,7 @@ class PaperExecutionAlgorithm:
             "total_costs": float(self._total_costs),
             "margin_call_active": bool(self._margin_call_active),
             "margin_call_since": self._margin_call_since,
+            "futures_mark_diagnostic": self.futures_mark_diagnostic(),
             "fill_count": int(self._fill_count),
             "ledger_started_at": self._ledger_started_at,
             "first_fill_at": self._first_fill_at,
@@ -3815,6 +3865,14 @@ class PaperExecutionAlgorithm:
             self._last_futures_mark_session_date = (
                 str(raw_last_futures_mark).strip() if raw_last_futures_mark else None
             )
+            raw_mark_diag = payload.get("futures_mark_diagnostic")
+            if raw_mark_diag is not None:
+                if not isinstance(raw_mark_diag, dict):
+                    raise ValueError("paper performance ledger futures_mark_diagnostic must be an object or null")
+                json.dumps(raw_mark_diag, allow_nan=False)
+                self._last_futures_mark_diagnostic = dict(raw_mark_diag)
+            else:
+                self._last_futures_mark_diagnostic = None
             self._settled_futures_contracts = set(raw_settled_contracts)
             self._active_episodes = restored_episodes
             self.Securities = {}
@@ -3888,6 +3946,7 @@ class PaperExecutionAlgorithm:
             "margin_call_active": bool(self._margin_call_active),
             "margin_call_since": self._margin_call_since,
             "last_futures_mark_session_date": self._last_futures_mark_session_date,
+            "futures_mark_diagnostic": self._last_futures_mark_diagnostic,
             "settled_futures_contracts": sorted(self._settled_futures_contracts),
         }
         temporary: Path | None = None
@@ -4922,7 +4981,14 @@ class PaperRuntimeService:
         final_settlement_source: Any = None,
         capital_pool_reader: Callable[[str], Mapping[str, Any] | None] | None = None,
     ) -> None:
-        self._final_settlement_source = final_settlement_source
+        if final_settlement_source is None:
+            from services.execution.lean_runtime.futures_session_inputs import (
+                final_settlement_source_from_env,
+            )
+
+            self._final_settlement_source = final_settlement_source_from_env()
+        else:
+            self._final_settlement_source = final_settlement_source
         if runtime_context is None:
             mf, stg = os.getenv("PANTHEON_RUNTIME_CONTEXT_MANIFEST"), os.getenv("PANTHEON_DEPLOYMENT_STAGE") or os.getenv("PANTHEON_RUNTIME_MODE")
             try:
@@ -5035,6 +5101,7 @@ class PaperRuntimeService:
             binding_resolver=self._binding_resolver,
             capital_pool_reader=capital_pool_reader,
         )
+        self._algo._after_signal_context_hook = self._maybe_process_futures_lifecycle
         self._performance_state_restore_error: str | None = None
         try:
             self._drawdown_tracker.restore(self._algo.performance_window_state())
@@ -5164,6 +5231,7 @@ class PaperRuntimeService:
                     self._last_error = None
                 else:
                     self._last_skipped_status = None
+                    self._algo._drained_signal_contexts.clear()
                     self._consumer.drain(algo=self._algo)
                     self._maybe_process_futures_lifecycle()
                     self._last_drain_at = _iso_now()
@@ -5186,38 +5254,119 @@ class PaperRuntimeService:
             return self.snapshot()
 
     def _maybe_process_futures_lifecycle(self) -> None:
-        has_futures = any(
-            pos.get("kind") == "stock_future"
-            and (
-                abs(float(pos.get("quantity", 0.0))) > 1e-12
-                or pos.get("status") == "settlement_pending"
+        contexts = list(self._algo._drained_signal_contexts)
+        self._algo._drained_signal_contexts.clear()
+        if not contexts:
+            contexts = [dict(self._algo._current_signal_metadata)]
+
+        for raw_meta in contexts:
+            had_open_before = bool(raw_meta.get("_had_open_futures_before_signal"))
+            if not had_open_before and not self._algo._has_open_or_pending_stock_futures():
+                continue
+            meta = {
+                k: v
+                for k, v in raw_meta.items()
+                if k != "_had_open_futures_before_signal"
+            }
+            session_date = (
+                os.getenv("PANTHEON_FUTURES_SESSION_DATE", "").strip()
+                or str(
+                    meta.get("trade_date")
+                    or meta.get("as_of_trading_day")
+                    or meta.get("as_of_date")
+                    or meta.get("signal_date")
+                    or ""
+                ).strip()
             )
-            for pos in self._algo._instrument_positions.values()
-        )
-        if not has_futures:
-            return
-        meta = self._algo._current_signal_metadata
-        session_date = (
-            os.getenv("PANTHEON_FUTURES_SESSION_DATE", "").strip()
-            or str(
-                meta.get("trade_date")
-                or meta.get("as_of_date")
-                or meta.get("signal_date")
-                or ""
-            ).strip()
-        )
-        if not session_date or self._algo._parse_strict_iso_date(session_date) is None:
-            return
-        final_source = (
-            meta.get("final_settlement_source")
-            if meta.get("final_settlement_source") is not None
-            else self._final_settlement_source
-        )
-        if final_source is not None:
-            self._algo.SettleExpiringFutures(session_date, final_source)
-        settlement_prices = meta.get("session_settlement_prices")
-        if isinstance(settlement_prices, Mapping) and settlement_prices:
-            self._algo.MarkFuturesSession(session_date, settlement_prices)
+            if not session_date or self._algo._parse_strict_iso_date(session_date) is None:
+                continue
+
+            prev_ctx = self._algo._current_signal_metadata
+            self._algo._current_signal_metadata = dict(meta)
+            try:
+                final_source = (
+                    meta.get("final_settlement_source")
+                    if meta.get("final_settlement_source") is not None
+                    else self._final_settlement_source
+                )
+                if self._algo._has_open_or_pending_stock_futures():
+                    self._algo.SettleExpiringFutures(session_date, final_source)
+
+                open_active = self._algo._open_active_stock_future_contracts()
+                if not open_active:
+                    continue
+
+                has_mark_inputs = (
+                    had_open_before
+                    or "session_settlement_prices" in meta
+                    or "session_settlement_price_reasons" in meta
+                    or "futures_mark_unavailable_reason" in meta
+                    or "open_futures_contracts" in meta
+                )
+                if not has_mark_inputs:
+                    continue
+
+                raw_prices = meta.get("session_settlement_prices")
+                settlement_prices = (
+                    dict(raw_prices) if isinstance(raw_prices, Mapping) else {}
+                )
+                raw_reasons = meta.get("session_settlement_price_reasons")
+                reasons_map = (
+                    dict(raw_reasons) if isinstance(raw_reasons, Mapping) else {}
+                )
+                missing_by_contract: dict[str, str] = {}
+                validated_prices: dict[str, float] = {}
+                for inst_id in open_active:
+                    pos = self._algo.get_instrument_position(inst_id) or {}
+                    contract = str(pos.get("contract") or "")
+                    month = str(pos.get("contract_month") or "")
+                    cm_key = f"{contract}:{month}" if contract and month else ""
+                    raw_val = (
+                        settlement_prices.get(inst_id)
+                        if inst_id in settlement_prices
+                        else (
+                            settlement_prices.get(cm_key)
+                            if cm_key and cm_key in settlement_prices
+                            else settlement_prices.get(contract)
+                        )
+                    )
+                    price_ok = False
+                    if raw_val is not None and not isinstance(raw_val, bool):
+                        try:
+                            f_val = float(raw_val)
+                            if math.isfinite(f_val) and f_val > 0:
+                                validated_prices[inst_id] = f_val
+                                price_ok = True
+                        except (TypeError, ValueError):
+                            price_ok = False
+                    if not price_ok:
+                        reason_val = str(
+                            reasons_map.get(inst_id)
+                            or meta.get("futures_mark_unavailable_reason")
+                            or "settlement_price_missing"
+                        ).strip()
+                        missing_by_contract[inst_id] = reason_val or "settlement_price_missing"
+
+                if missing_by_contract:
+                    summary_reason = (
+                        str(meta.get("futures_mark_unavailable_reason") or "").strip()
+                        or "; ".join(
+                            f"{cid}:{missing_by_contract[cid]}"
+                            for cid in sorted(missing_by_contract)
+                        )
+                    )
+                    self._algo._last_futures_mark_diagnostic = {
+                        "status": "skipped_missing_settlement_price",
+                        "trade_date": session_date,
+                        "reason": summary_reason,
+                        "missing_contracts": dict(missing_by_contract),
+                        "marked_contracts": {},
+                    }
+                    self._algo._persist_state()
+                else:
+                    self._algo.MarkFuturesSession(session_date, validated_prices)
+            finally:
+                self._algo._current_signal_metadata = prev_ctx
 
     def process_futures_session(
         self,
@@ -5339,6 +5488,7 @@ class PaperRuntimeService:
                     "positions": self._algo.positions(),
                     "open_bracket_orders": self._algo.open_bracket_orders(),
                     "recent_order_events": list(self._recent_order_events),
+                    "futures_mark_diagnostic": self._algo.futures_mark_diagnostic(),
                     "performance_telemetry": dict(self._performance_telemetry),
                     "last_error": self._last_error,
                 },
@@ -6358,10 +6508,18 @@ class PaperRuntimeService:
 _SERVICE: PaperRuntimeService | None = None
 
 
-def get_service(runtime_context: PantheonRuntimeContext | None = None) -> PaperRuntimeService:
+def get_service(
+    runtime_context: PantheonRuntimeContext | None = None,
+    capital_pool_reader: Callable[[str], Mapping[str, Any] | None] | None = None,
+    final_settlement_source: Any = None,
+) -> PaperRuntimeService:
     global _SERVICE
     if _SERVICE is None:
-        _SERVICE = PaperRuntimeService(runtime_context=runtime_context)
+        _SERVICE = PaperRuntimeService(
+            runtime_context=runtime_context,
+            capital_pool_reader=capital_pool_reader,
+            final_settlement_source=final_settlement_source,
+        )
     return _SERVICE
 
 
@@ -6445,9 +6603,32 @@ class _Handler(BaseHTTPRequestHandler):
         self._write_json(404, {"status": "not_found", "path": parsed_path})
 
 
-def main(runtime_context: PantheonRuntimeContext | None = None) -> None:
+def main(
+    runtime_context: PantheonRuntimeContext | None = None,
+    capital_pool_reader: Callable[[str], Mapping[str, Any] | None] | None = None,
+    final_settlement_source: Any = None,
+) -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-    service = get_service(runtime_context=runtime_context)
+    if capital_pool_reader is None:
+        # The reconciler launches this module directly as the worker script, so
+        # the order gate's pool-policy reader is resolved here as well as in
+        # runtime_bootstrap. ``None`` (unconfigured) keeps the legacy path.
+        from services.execution.lean_runtime.expression_inputs import (
+            capital_pool_reader_from_env,
+        )
+
+        capital_pool_reader = capital_pool_reader_from_env()
+    if final_settlement_source is None:
+        from services.execution.lean_runtime.futures_session_inputs import (
+            final_settlement_source_from_env,
+        )
+
+        final_settlement_source = final_settlement_source_from_env()
+    service = get_service(
+        runtime_context=runtime_context,
+        capital_pool_reader=capital_pool_reader,
+        final_settlement_source=final_settlement_source,
+    )
     service.start()
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8010"))

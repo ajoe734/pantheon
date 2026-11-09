@@ -1,0 +1,54 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-RELEASE-CONTROLLER-POLL-TRANSIENT-RETRY-20261109",
+  "title": "One transient GitHub disconnect in the release controller poll rejects and rolls back a healthy dev release",
+  "recorded_at_utc": "2026-11-09T18:41:10Z",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "base_sha": "b02a468eaa824eee9dd834b2c9552307ae6ecf57",
+  "change_class": "corrective",
+  "hosted_verification_note": "No hosted workflow was dispatched (neither nonprod-deploy.yml nor any execute-plans workflow), no VM or SSH access was performed, no operator keys were read, and no hosted BFF endpoint was called. Functional and unit evidence only is recorded here.",
+  "summary": {
+    "root_cause": "During dev release run 42663987948 (backend 87961f7339568c5f99dfdd0127f792a1b796b43c, frontend f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6), GitHubClient.get_run polling execute-plans deploy run 42670481577 encountered a single http.client.RemoteDisconnected ('Remote end closed connection without response'). Because GitHubClient.request only caught urllib.error.HTTPError and urllib.error.URLError without retrying transient read errors or catching RemoteDisconnected/ConnectionResetError/TimeoutError, the controller exited 1 with a raw traceback and triggered full release rejection and rollback.",
+    "fix": "Updated GitHubClient.request in scripts/cross_repo_release_controller.py so read-only GET requests retry transient transport errors (http.client.RemoteDisconnected, ConnectionResetError, TimeoutError, urllib.error.URLError) and transient HTTP status codes (502, 503, 504) up to GET_RETRY_MAX_ATTEMPTS=4 (1 initial attempt + 3 retries) with exponential backoff (0.5s, 1.0s, 2.0s; 3.5s total added wait, well inside poll_seconds=10.0s and the poll deadline). When the error persists past the retry bound, GitHubClient.request raises ControllerError naming the HTTP method, request path, and last error so main() exits cleanly without a raw traceback. Non-read-only requests (POST workflow dispatches and any other mutation) and non-transient HTTP statuses (including 401, 403, 404, 422) are never retried."
+  },
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "A read only GET made by GitHubClient.request that fails with a transient transport error (http.client.RemoteDisconnected or ConnectionResetError or TimeoutError or urllib.error.URLError or HTTP 502 or 503 or 504) is retried a bounded number of times with a short backoff and then succeeds and a test shows dispatch_and_wait continuing to the run's real conclusion after get_run raises RemoteDisconnected once",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "When the transient error persists past the bound the controller fails with a ControllerError that names the method and path and the last error and never with a raw traceback and a test covers it and the total added wait stays well inside the existing poll deadline",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Requests that are not read only (the workflow dispatch POST and any other mutation) are not retried by this change and HTTP 401 and 403 and 404 and 422 are never retried and tests cover a POST failing once and a 403 on a GET",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "The existing controller tests pass unchanged and the evidence records the exact commands and results and states plainly that no hosted workflow was dispatched",
+      "verdict": "pass"
+    }
+  ],
+  "declared_artifacts": [
+    "scripts/cross_repo_release_controller.py",
+    "scripts/test_cross_repo_release_controller.py",
+    "docs/deployment/evidence/DEV-RELEASE-CONTROLLER-POLL-TRANSIENT-RETRY-20261109/evidence.json"
+  ],
+  "commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_cross_repo_release_controller.py",
+      "exit_code": 0,
+      "result": "89 passed in 11.89s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_cross_repo_release_controller.py -k \"transient or remote_disconnected or post_dispatch\"",
+      "exit_code": 0,
+      "result": "14 passed, 75 deselected in 2.04s"
+    }
+  ]
+}

@@ -140,11 +140,15 @@ def test_compose_limits_issuer_and_mounts_each_reader_read_only():
     assert issuer["profiles"] == ["dev-paper-principals"]
     assert not issuer.get("privileged") and not issuer.get("ports")
     source_volumes = {v.split(":")[1].split("/")[-1]: v.split(":")[0] for v in issuer["volumes"]}
+    # A consumer directory normally carries the name of its one service. The
+    # paper capital reader directory is shared by exactly these two services.
+    shared_consumers = {"paper-capital-reader": ("paper-signal-producer", "paper-fleet-reconciler")}
     for consumer, variables in CONSUMER_FILES.items():
-        mounts = services[consumer]["volumes"]
-        assert source_volumes[consumer] + ":/run/pantheon-principals:ro" in mounts
-        for variable in variables:
-            assert variable + "_FILE" in services[consumer]["environment"]
+        for service in shared_consumers.get(consumer, (consumer,)):
+            mounts = services[service]["volumes"]
+            assert source_volumes[consumer] + ":/run/pantheon-principals:ro" in mounts
+            for variable in variables:
+                assert variable + "_FILE" in services[service]["environment"]
     outbox = services["deployment-outbox-consumer"]
     assert source_volumes["deployment"] + ":/run/pantheon-principals:ro" in outbox["volumes"]
     assert outbox["environment"]["RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN_FILE"] == "${DEPLOYMENT_REGISTRY_SERVICE_TOKEN_FILE:-}"
@@ -236,3 +240,32 @@ def test_evolution_owner_read_files_rotate_and_are_removed_on_withdrawal(tmp_pat
         assert verify(renewed, now=NOW + REFRESH_SECONDS + 1)["sub"].startswith("pantheon-dev-evolution-")
     revoke_files(tmp_path, {**env, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
     assert not any((tmp_path / "evolution" / n).exists() for n in names)
+
+
+def test_paper_capital_reader_directory_is_issued_renewed_and_capital_only(tmp_path):
+    consumer = "paper-capital-reader"
+    assert CONSUMER_FILES[consumer] == ("DEPLOYMENT_CAPITAL_SERVICE_TOKEN",)
+    deployment = set(CONSUMER_FILES["deployment"])
+    assert deployment - set(CONSUMER_FILES[consumer])  # deployment keeps governance/registry
+    env = configured()
+    refresh_files(tmp_path, env, now=NOW)
+    directory = tmp_path / consumer
+    assert sorted(p.name for p in directory.iterdir()) == ["DEPLOYMENT_CAPITAL_SERVICE_TOKEN"]
+    path = directory / "DEPLOYMENT_CAPITAL_SERVICE_TOKEN"
+    first = configured_service_token("DEPLOYMENT_CAPITAL_SERVICE_TOKEN", {"DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": str(path)})
+    claims = verify(first)
+    assert claims["sub"] == "runtime-manager" and claims["roles"] == ["capital-reader"]
+    assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
+    assert path.stat().st_mode & 0o777 == 0o600
+    # Same renewal headroom rule as every other consumer: inside the window it is unhealthy.
+    assert healthy_files(tmp_path, env, now=NOW + 1)
+    assert not healthy_files(tmp_path, env, now=NOW + TTL_SECONDS - REFRESH_SECONDS)
+    renewed_at = NOW + TTL_SECONDS - REFRESH_SECONDS
+    refresh_files(tmp_path, env, now=renewed_at)
+    second = configured_service_token("DEPLOYMENT_CAPITAL_SERVICE_TOKEN", {"DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": str(path)})
+    assert second != first
+    assert verify(second, now=NOW + TTL_SECONDS + 1)["exp"] == renewed_at + TTL_SECONDS
+    assert healthy_files(tmp_path, env, now=NOW + TTL_SECONDS + 1)
+    # Withdrawal removes only the fixed file in this directory.
+    revoke_files(tmp_path, {**env, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
+    assert not path.exists()

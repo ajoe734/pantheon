@@ -128,6 +128,20 @@ def _no_trade(
     }
 
 
+def budget_unavailable_no_trade(
+    view: Mapping[str, Any], missing: str, detail: str = ""
+) -> dict[str, Any]:
+    """NoTrade for an expression input that could not be read (fail closed).
+
+    ``detail`` names the missing input so the event never reports a limit that
+    did not actually bind.
+    """
+    text = f"budget_unavailable: {missing}"
+    if detail:
+        text = f"{text} ({detail})"
+    return _no_trade(view, [], "candidates_unavailable", text)
+
+
 def _binding_constraint(
     direction: str,
     candidates: Sequence[Mapping[str, Any]],

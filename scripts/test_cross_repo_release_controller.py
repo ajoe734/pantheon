@@ -1604,3 +1604,372 @@ def test_new_controller_code_between_gate_and_deploy_keeps_same_candidate() -> N
     assert client.dispatches[1][1]["candidate_sha"] == FRONTEND_SHA
     assert client.dispatches[0][1]["bff_sha"] == BACKEND_SHA
     assert client.controller_sha == "3" * 40
+
+
+class _FakeHTTPResponse:
+    def __init__(self, payload: dict[str, Any] | None) -> None:
+        self._raw = (
+            b""
+            if payload is None
+            else json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        )
+
+    def __enter__(self) -> _FakeHTTPResponse:
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self._raw
+
+
+@pytest.mark.parametrize(
+    "error_factory",
+    [
+        lambda url: __import__("http.client").client.RemoteDisconnected(
+            "Remote end closed connection without response"
+        ),
+        lambda url: ConnectionResetError(104, "Connection reset by peer"),
+        lambda url: TimeoutError("read operation timed out"),
+        lambda url: urllib.error.URLError("temporary network outage"),
+        lambda url: urllib.error.HTTPError(
+            url,
+            502,
+            "Bad Gateway",
+            {},
+            __import__("io").BytesIO(b'{"message":"bad gateway"}'),
+        ),
+        lambda url: urllib.error.HTTPError(
+            url,
+            503,
+            "Service Unavailable",
+            {},
+            __import__("io").BytesIO(b'{"message":"service unavailable"}'),
+        ),
+        lambda url: urllib.error.HTTPError(
+            url,
+            504,
+            "Gateway Timeout",
+            {},
+            __import__("io").BytesIO(b'{"message":"gateway timeout"}'),
+        ),
+    ],
+)
+def test_github_client_get_retries_transient_transport_and_5xx_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    error_factory: Any,
+) -> None:
+    from scripts.cross_repo_release_controller import GitHubClient
+
+    path = "/repos/ajoe734/execute-plans/actions/runs/42670481577"
+    url = f"https://api.github.test{path}"
+    calls: list[tuple[str, str]] = []
+    sleeps: list[float] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int = 30) -> Any:
+        calls.append((request.get_method(), request.full_url))
+        if len(calls) < 3:
+            raise error_factory(url)
+        return _FakeHTTPResponse({"id": 42670481577, "status": "completed", "conclusion": "success"})
+
+    monkeypatch.setattr("scripts.cross_repo_release_controller.urllib.request.urlopen", fake_urlopen)
+    client = GitHubClient(
+        api_url="https://api.github.test",
+        token="test-token",
+        repository="ajoe734/execute-plans",
+        sleep=sleeps.append,
+    )
+
+    payload = client.request("GET", path)
+
+    assert payload == {"id": 42670481577, "status": "completed", "conclusion": "success"}
+    assert calls == [("GET", url), ("GET", url), ("GET", url)]
+    assert sleeps == [0.5, 1.0]
+
+
+def test_dispatch_and_wait_continues_to_real_conclusion_after_get_run_remote_disconnected_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import http.client
+    from scripts.cross_repo_release_controller import (
+        ExpectedRun,
+        GitHubClient,
+        dispatch_and_wait,
+    )
+
+    run_id = 42670481577
+    title = f"Deploy release candidate {CANDIDATE_ID}"
+    expected = ExpectedRun(
+        workflow=DEPLOY_WORKFLOW,
+        title=title,
+        head_sha=FRONTEND_SHA,
+        head_branch="dev",
+    )
+    queued_run = _run(
+        run_id,
+        workflow=DEPLOY_WORKFLOW,
+        title=title,
+        status="queued",
+        conclusion=None,
+        head_sha=FRONTEND_SHA,
+    )
+    completed_run = _run(
+        run_id,
+        workflow=DEPLOY_WORKFLOW,
+        title=title,
+        status="completed",
+        conclusion="success",
+        head_sha=FRONTEND_SHA,
+    )
+
+    dispatched = False
+    get_run_attempts = 0
+    retry_sleeps: list[float] = []
+    poll_sleeps: list[float] = []
+    calls: list[tuple[str, str]] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int = 30) -> Any:
+        nonlocal dispatched, get_run_attempts
+        method = request.get_method()
+        url = request.full_url
+        calls.append((method, url))
+        if method == "POST" and url.endswith(f"/actions/workflows/{DEPLOY_WORKFLOW}/dispatches"):
+            dispatched = True
+            return _FakeHTTPResponse(None)
+        if method == "GET" and f"/actions/workflows/{DEPLOY_WORKFLOW}/runs?" in url:
+            return _FakeHTTPResponse({"workflow_runs": [queued_run] if dispatched else []})
+        if method == "GET" and url.endswith(f"/actions/runs/{run_id}"):
+            get_run_attempts += 1
+            if get_run_attempts == 1:
+                raise http.client.RemoteDisconnected(
+                    "Remote end closed connection without response"
+                )
+            if get_run_attempts == 2:
+                return _FakeHTTPResponse(queued_run)
+            return _FakeHTTPResponse(completed_run)
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr("scripts.cross_repo_release_controller.urllib.request.urlopen", fake_urlopen)
+    client = GitHubClient(
+        api_url="https://api.github.test",
+        token="test-token",
+        repository="ajoe734/execute-plans",
+        sleep=retry_sleeps.append,
+    )
+
+    result = dispatch_and_wait(
+        client,
+        expected=expected,
+        inputs={"candidate_sha": FRONTEND_SHA},
+        timeout_seconds=60,
+        poll_seconds=10.0,
+        sleep=poll_sleeps.append,
+    )
+
+    assert result["id"] == run_id
+    assert result["status"] == "completed"
+    assert result["conclusion"] == "success"
+    assert get_run_attempts == 3
+    assert retry_sleeps == [0.5]
+    assert poll_sleeps == [10.0]
+    assert sum(1 for method, _ in calls if method == "POST") == 1
+
+
+def test_persistent_transient_error_raises_controller_error_without_traceback_and_within_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import http.client
+    from scripts.cross_repo_release_controller import (
+        GET_RETRY_MAX_ATTEMPTS,
+        GitHubClient,
+        main,
+    )
+
+    run_id = 42670481577
+    run_path = f"/repos/ajoe734/execute-plans/actions/runs/{run_id}"
+    retry_sleeps: list[float] = []
+    get_run_calls = 0
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int = 30) -> Any:
+        nonlocal get_run_calls
+        method = request.get_method()
+        url = request.full_url
+        if method == "GET" and url.endswith("/git/ref/heads/dev"):
+            return _FakeHTTPResponse({"object": {"sha": FRONTEND_SHA}})
+        if method == "GET" and f"/actions/workflows/{GATE_WORKFLOW}/runs?" in url:
+            if get_run_calls == 0 and not any(
+                "dispatches" in prev for prev in getattr(fake_urlopen, "seen", [])
+            ):
+                return _FakeHTTPResponse({"workflow_runs": []})
+            return _FakeHTTPResponse(
+                {
+                    "workflow_runs": [
+                        _run(
+                            run_id,
+                            workflow=GATE_WORKFLOW,
+                            title=f"Release candidate {CANDIDATE_ID}",
+                            status="queued",
+                            conclusion=None,
+                            head_sha=FRONTEND_SHA,
+                        )
+                    ]
+                }
+            )
+        if method == "POST" and url.endswith("/dispatches"):
+            fake_urlopen.seen = getattr(fake_urlopen, "seen", []) + [url]  # type: ignore[attr-defined]
+            return _FakeHTTPResponse(None)
+        if method == "GET" and url.endswith(run_path):
+            get_run_calls += 1
+            raise http.client.RemoteDisconnected(
+                "Remote end closed connection without response"
+            )
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr("scripts.cross_repo_release_controller.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("scripts.cross_repo_release_controller.time.sleep", retry_sleeps.append)
+    monkeypatch.setattr(
+        "scripts.cross_repo_release_controller.fetch_url_json",
+        lambda url, timeout_seconds=30: _default_fetch_fn(url),
+    )
+    monkeypatch.setenv("CROSS_REPO_RELEASE_TOKEN", "test-token")
+
+    client = GitHubClient(
+        api_url="https://api.github.test",
+        token="test-token",
+        repository="ajoe734/execute-plans",
+    )
+    with pytest.raises(ControllerError) as exc_info:
+        client.get_run(run_id)
+
+    message = str(exc_info.value)
+    assert "GET" in message
+    assert run_path in message
+    assert "RemoteDisconnected" in message
+    assert "Remote end closed connection without response" in message
+    assert get_run_calls == GET_RETRY_MAX_ATTEMPTS == 4
+    assert retry_sleeps == [0.5, 1.0, 2.0]
+    poll_deadline_seconds = 60
+    assert sum(retry_sleeps) == 3.5 < poll_deadline_seconds
+
+    # Verify CLI main() exits cleanly with ControllerError and never emits a raw traceback.
+    retry_sleeps.clear()
+    get_run_calls = 0
+    fake_urlopen.seen = []  # type: ignore[attr-defined]
+    exit_code = main(
+        [
+            "--api-url",
+            "https://api.github.test",
+            "--frontend-sha",
+            FRONTEND_SHA,
+            "--backend-sha",
+            BACKEND_SHA,
+            "--bff-base-url",
+            "https://bff.test",
+            "--fe-base-url",
+            "https://fe.test",
+            "--release-candidate-id",
+            CANDIDATE_ID,
+            "--compatibility-manifest-sha256",
+            MANIFEST_SHA,
+            "--controller-run-id",
+            CONTROLLER_RUN_ID,
+            "--evidence-out",
+            str(tmp_path / "evidence.json"),
+            "--gate-timeout-seconds",
+            str(poll_deadline_seconds),
+            "--deploy-timeout-seconds",
+            str(poll_deadline_seconds),
+            "--poll-seconds",
+            "10",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+    assert "ERROR: GitHub API GET" in captured.err
+    assert run_path in captured.err
+    assert "RemoteDisconnected: Remote end closed connection without response" in captured.err
+    assert get_run_calls == GET_RETRY_MAX_ATTEMPTS == 4
+    assert sum(retry_sleeps) == 3.5 < poll_deadline_seconds
+
+
+def test_post_dispatch_and_non_read_only_requests_are_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import http.client
+    from scripts.cross_repo_release_controller import GitHubClient
+
+    dispatch_path = (
+        f"/repos/ajoe734/execute-plans/actions/workflows/{DEPLOY_WORKFLOW}/dispatches"
+    )
+    calls: list[tuple[str, str]] = []
+    sleeps: list[float] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int = 30) -> Any:
+        calls.append((request.get_method(), request.full_url))
+        raise http.client.RemoteDisconnected(
+            "Remote end closed connection without response"
+        )
+
+    monkeypatch.setattr("scripts.cross_repo_release_controller.urllib.request.urlopen", fake_urlopen)
+    client = GitHubClient(
+        api_url="https://api.github.test",
+        token="test-token",
+        repository="ajoe734/execute-plans",
+        sleep=sleeps.append,
+    )
+
+    with pytest.raises(ControllerError) as exc_info:
+        client.dispatch(DEPLOY_WORKFLOW, {"candidate_sha": FRONTEND_SHA})
+
+    assert len(calls) == 1
+    assert calls[0][0] == "POST"
+    assert sleeps == []
+    assert "POST" in str(exc_info.value)
+    assert dispatch_path in str(exc_info.value)
+    assert "RemoteDisconnected" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 404, 422])
+def test_non_transient_http_401_403_404_422_on_get_are_never_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+) -> None:
+    import io
+    from scripts.cross_repo_release_controller import GitHubClient
+
+    run_path = "/repos/ajoe734/execute-plans/actions/runs/42670481577"
+    calls: list[tuple[str, str]] = []
+    sleeps: list[float] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int = 30) -> Any:
+        calls.append((request.get_method(), request.full_url))
+        raise urllib.error.HTTPError(
+            request.full_url,
+            status_code,
+            "Client Error",
+            {},
+            io.BytesIO(f'{{"message":"http {status_code} rejected"}}'.encode("utf-8")),
+        )
+
+    monkeypatch.setattr("scripts.cross_repo_release_controller.urllib.request.urlopen", fake_urlopen)
+    client = GitHubClient(
+        api_url="https://api.github.test",
+        token="test-token",
+        repository="ajoe734/execute-plans",
+        sleep=sleeps.append,
+    )
+
+    with pytest.raises(ControllerError) as exc_info:
+        client.get_run(42670481577)
+
+    assert len(calls) == 1
+    assert calls[0] == ("GET", f"https://api.github.test{run_path}")
+    assert sleeps == []
+    assert f"GitHub API GET {run_path} failed with HTTP {status_code}" in str(exc_info.value)
+    assert f"http {status_code} rejected" in str(exc_info.value)
+
