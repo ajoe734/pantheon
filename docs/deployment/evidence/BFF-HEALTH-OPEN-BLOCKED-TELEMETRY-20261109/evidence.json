@@ -1,0 +1,29 @@
+{
+  "task_id": "BFF-HEALTH-OPEN-BLOCKED-TELEMETRY-20261109",
+  "hosted_verification": "NOT RUN. No hosted, VM or SSH access was used; only functional (unit) evidence is recorded. The coordinator measures quarantined incident_open counts after deployment.",
+  "before_counts_from_brief_hosted_read_2026_11_09": {
+    "incident_open_2026_11_07_to_09": {"quarantined": 77, "delivered_approx": 57},
+    "last_24h_before_2026-11-09T15:00Z": {
+      "open": {"delivered": 15, "quarantined": 38},
+      "resolve": {"delivered": 15, "quarantined": 38},
+      "telemetry": {"delivered": 92581, "dead_letter": 357}
+    }
+  },
+  "change": {
+    "claim_due": "a dependency whose channel is telemetry is settled when delivered, dead_letter or quarantined; pending/retry/claimed still block; incident_open dependencies stay strict (resolve never sent before its open is delivered)",
+    "incident_body": "when sent past a failed telemetry dependency, only evidence_summary is extended with 'telemetry event <id> was not delivered'; incident_id, source_event_id, telemetry_event_ids unchanged; no field added to the strict contract",
+    "has_active_incident_delivery": "dead-dependency rule from BFF-HEALTH-RESOLVE-BLOCKED-DEP-20261108 KEPT but narrowed to non-telemetry dependencies (missing row, or dead_letter/quarantined incident_open). Reason: a resolve whose open is dead is still blocked forever by claim_due, so the rule stays reachable; a resolve behind failed telemetry is now sendable and counts as active.",
+    "unchanged": "6h age bound and quarantine remain last resort; telemetry retry window and dead-letter replay untouched; no second outbox or reconcile loop"
+  },
+  "updated_existing_tests": [
+    "test_downstream_health_monitor.py TestResolveBlockedByDeadDependency: dead_letter/quarantined telemetry dep now expects active=True (premise intentionally reversed); added dead/quarantined incident_open cases expecting False",
+    "TestDeliveryHeadOfLine: permanently blocked dependency changed from dead telemetry to a dead incident_open row; assertions unchanged",
+    "test_bff_downstream_health_monitor.py test_probe_all_resolves_at_next_reconcile_when_telemetry_dead_letters_before_resolve: blocker changed to a dead incident_open; step 4 asserts replayed telemetry is harmless and resolve stays pending behind the dead open"
+  ],
+  "new_tests": "TestIncidentOpensPastFailedTelemetry (4 tests): hosted sequence open-at-next-claim then recovery resolve, telemetry-as-failing-target opens within retry window, pending/retry telemetry still blocks, resolve never before open; replay of dead telemetry does not re-post or reopen",
+  "commands": [
+    {"cmd": ".venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_downstream_health_monitor.py", "result": "153 passed"},
+    {"cmd": "same file, -k PastFailedTelemetry, with the claim_due telemetry exemption temporarily removed (NOT committed)", "result": "3 failed, 1 passed: open_sent_after_telemetry_dead_letters, telemetry_target_incident_opens, resolve_never_sent_before_open fail without the change"}
+  ],
+  "inventory": "no new test file; bff_test_architecture_inventory.json unchanged"
+}

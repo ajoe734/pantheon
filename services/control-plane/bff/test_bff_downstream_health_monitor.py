@@ -735,10 +735,16 @@ class TestRecoveryTracking:
             ),
         }
 
-        # 1. Outage opens the incident; telemetry and incidents are reachable.
+        # 1. Outage queues the incident open; since
+        # BFF-HEALTH-OPEN-BLOCKED-TELEMETRY-20261109 a failed telemetry write
+        # no longer blocks, so the permanently blocked dependency here is an
+        # incident_open that dead-letters (incidents rejects it).
+        def open_rejected(url, body, timeout):
+            return (False, -1) if "consume-infrastructure-health" in url else (True, 201)
+
         with patch(
             "services.control_plane.bff.downstream_health_monitor._post_json",
-            return_value=(True, 201),
+            side_effect=open_rejected,
         ):
             _run(
                 monitor._handle_probe_result(
@@ -750,7 +756,10 @@ class TestRecoveryTracking:
                     )
                 )
             )
-            monitor._deliver_due_sync()
+            for _ in range(6):
+                with monitor._store._connect() as conn:
+                    conn.execute("UPDATE delivery_outbox SET next_attempt_at=0")
+                monitor._deliver_due_sync()
         inc_id = monitor._store.get_incident("governance")["incident_id"]
 
         # 2. Target recovers while telemetry is unreachable past the retry
@@ -836,8 +845,177 @@ class TestRecoveryTracking:
                     conn.execute("UPDATE delivery_outbox SET next_attempt_at=0")
                 monitor._deliver_due_sync()
         after = {r["channel"]: r for r in monitor.list_delivery_records()}
-        assert after["incident_resolve"]["status"] == "delivered"
+        # The open stays dead-lettered, so the strict open->resolve order
+        # keeps the resolve unsent; replaying telemetry alone is harmless.
+        assert after["telemetry"]["status"] == "delivered"
+        assert after["incident_open"]["status"] == "dead_letter"
+        assert after["incident_resolve"]["status"] == "pending"
         assert monitor._store.get_incident("governance")["status"] == "resolved"
+
+
+class TestIncidentOpensPastFailedTelemetry:
+    """BFF-HEALTH-OPEN-BLOCKED-TELEMETRY-20261109."""
+
+    def _monitor(self):
+        from services.control_plane.bff.downstream_health_monitor import DownstreamTarget
+
+        monitor = DownstreamHealthMonitor(
+            telemetry_url="http://tel:8080",
+            telemetry_service_jwt="jwt-token",
+            incidents_url="http://inc:8090",
+            tenant_id="tenant-test",
+            probe_interval_seconds=60,
+            failure_threshold=1,
+            delivery_max_attempts=5,
+            delivery_backoff_seconds=0.1,
+        )
+        monitor._resolve_target_registry = lambda: {  # type: ignore[assignment]
+            "governance": DownstreamTarget(
+                name="governance", base_url="http://gov:8080", health_path="/__health__"
+            ),
+            "telemetry": DownstreamTarget(
+                name="telemetry", base_url="http://tel:8080", health_path="/__health__"
+            ),
+        }
+        return monitor
+
+    @staticmethod
+    def _fail(target, at="2026-11-09T00:38:00Z"):
+        return DownstreamProbeResult(
+            target_name=target, ok=False, status_code=0, latency_ms=10.0,
+            checked_at=at, failure_reason="URLError: connection refused",
+            consecutive_failures=1,
+        )
+
+    @staticmethod
+    def _drain(monitor, rounds=6):
+        for _ in range(rounds):
+            with monitor._store._connect() as conn:
+                conn.execute("UPDATE delivery_outbox SET next_attempt_at=0")
+            monitor._deliver_due_sync()
+
+    def _run_outage(self, monitor, target, incident_posts):
+        def post(url, body, timeout):
+            if "/api/incidents/" in url:
+                incident_posts.append((url, body))
+                return True, 201
+            return False, -1  # telemetry unreachable
+
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            side_effect=post,
+        ):
+            _run(monitor._handle_probe_result(self._fail(target)))
+            self._drain(monitor)
+
+    def test_open_sent_after_telemetry_dead_letters_then_resolves(self):
+        monitor = self._monitor()
+        posts: List[Any] = []
+        self._run_outage(monitor, "governance", posts)
+
+        rows = {r["channel"]: r for r in monitor.list_delivery_records()}
+        assert rows["telemetry"]["status"] == "dead_letter"
+        assert rows["incident_open"]["status"] == "delivered"
+        opens = [b for u, b in posts if "consume-infrastructure-health" in u]
+        assert len(opens) == 1
+        body = opens[0]
+        event_id = rows["incident_open"]["event_id"]
+        assert body["source_event_id"] == event_id
+        assert body["telemetry_event_ids"] == [event_id]
+        assert body["incident_id"] == monitor._store.get_incident("governance")["incident_id"]
+        assert "was not delivered" in body["evidence_summary"]
+        assert event_id in body["evidence_summary"]
+        assert set(body) == {
+            "schema_version", "incident_id", "tenant_id", "producer",
+            "source_event_id", "title", "status", "severity", "component",
+            "telemetry_event_ids", "evidence_summary",
+        }
+        assert monitor._store.get_incident("governance")["status"] == "open"
+
+        # Recovery while telemetry is still down: the resolve follows the
+        # delivered open and is not held by the dead telemetry write.
+        def post_ok_incidents(url, body, timeout):
+            posts.append((url, body))
+            return (True, 200) if "/api/incidents/" in url else (False, -1)
+
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            side_effect=post_ok_incidents,
+        ):
+            _run(
+                monitor._handle_probe_result(
+                    DownstreamProbeResult(
+                        target_name="governance", ok=True, status_code=200,
+                        latency_ms=3.0, checked_at="2026-11-09T02:00:00Z",
+                    )
+                )
+            )
+            self._drain(monitor)
+        assert monitor._store.get_incident("governance")["status"] == "resolved"
+
+        # Replaying the dead telemetry is harmless: no new incident post.
+        incident_calls = len([1 for u, _ in posts if "/api/incidents/" in u])
+        monitor._store.replay_dead_letters(
+            actor_id="op", approval_ref="ref", reason="replay", channel="telemetry"
+        )
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            return_value=(True, 200),
+        ) as replay_post:
+            self._drain(monitor, rounds=3)
+        assert all("/api/incidents/" not in c.args[0] for c in replay_post.call_args_list)
+        assert incident_calls == len([1 for u, _ in posts if "/api/incidents/" in u])
+        assert monitor._store.get_incident("governance")["status"] == "resolved"
+
+    def test_telemetry_target_incident_opens_within_retry_window(self):
+        monitor = self._monitor()
+        posts: List[Any] = []
+        self._run_outage(monitor, "telemetry", posts)
+        opens = [b for u, b in posts if "consume-infrastructure-health" in u]
+        assert len(opens) == 1
+        assert opens[0]["component"]["service_name"] == "telemetry"
+        assert monitor._store.get_incident("telemetry")["status"] == "open"
+
+    def test_pending_or_retry_telemetry_still_blocks_open(self):
+        monitor = self._monitor()
+        posts: List[Any] = []
+
+        def post(url, body, timeout):
+            if "/api/incidents/" in url:
+                posts.append(url)
+                return True, 201
+            return False, -1
+
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            side_effect=post,
+        ):
+            _run(monitor._handle_probe_result(self._fail("governance")))
+            self._drain(monitor, rounds=1)  # one attempt: telemetry in retry
+        rows = {r["channel"]: r for r in monitor.list_delivery_records()}
+        assert rows["telemetry"]["status"] == "retry"
+        assert rows["incident_open"]["status"] == "pending"
+        assert posts == []
+
+    def test_resolve_never_sent_before_open_delivered(self):
+        monitor = self._monitor()
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            return_value=(False, 503),
+        ):
+            _run(monitor._handle_probe_result(self._fail("governance")))
+            _run(
+                monitor._handle_probe_result(
+                    DownstreamProbeResult(
+                        target_name="governance", ok=True, status_code=200,
+                        latency_ms=3.0, checked_at="2026-11-09T00:40:00Z",
+                    )
+                )
+            )
+            self._drain(monitor, rounds=6)
+        rows = {r["channel"]: r for r in monitor.list_delivery_records()}
+        assert rows["incident_open"]["status"] in {"retry", "dead_letter"}
+        assert rows["incident_resolve"]["status"] == "pending"
 
 
 # ---------------------------------------------------------------------------
