@@ -49,3 +49,39 @@ def test_market_scope_alpha_still_wins_and_missing_alpha_is_empty() -> None:
     rec = {"strategy_id": "s-3", "alpha": "top", "market_scope": {"alpha": "scope"}}
     assert ctx.project_strategy_dto(dict(rec))["alpha"] == "scope"
     assert ctx.project_strategy_dto({"strategy_id": "s-4"})["alpha"] == ""
+
+
+def test_create_via_bff_persists_alpha_and_reads_back_in_detail_and_list(monkeypatch) -> None:
+    from services.registry.storage import RegistryStore
+    from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+    from services.control_plane.bff.tests.test_strategy_ranking_router import _client
+
+    alpha = "stage-isolated-draft-metadata-acceptance"
+    store = RegistryStore()
+    writer = CanonicalStrategyWriteOwner(store)
+    headers = {"Authorization": "Bearer alpha-op:operator:tenant-a"}
+    with _client() as client:
+        monkeypatch.setattr(client.app.state, "strategy_write_owner", writer)
+        create = client.post("/bff/strategies", headers={**headers, "Idempotency-Key": "alpha-1"},
+                             json={"name": "Alpha RT", "alpha": alpha})
+        assert create.status_code == 201, create.text
+        sid = create.json()["data"]["id"]
+        persisted = store.list_by_strategy(sid)[0].metadata
+        assert persisted["alpha"] == alpha
+        assert persisted["market_scope"]["alpha"] == alpha
+
+        class ReadProjection:
+            def get_strategy_spec(self, strategy_id):
+                return writer.get_strategy(strategy_id)
+
+            def list_strategy_specs(self, *a, **k):
+                return [writer.get_strategy(sid)]
+
+        monkeypatch.setattr(client.app.state, "read_store", ReadProjection())
+        got = client.get(f"/bff/strategies/{sid}", headers=headers)
+        assert got.status_code == 200, got.text
+        assert got.json()["data"]["alpha"] == alpha
+        listed = client.get("/bff/strategies", headers=headers)
+        assert listed.status_code == 200, listed.text
+        rows = [r for r in listed.json()["data"] if r.get("id") == sid]
+        assert rows and rows[0]["alpha"] == alpha
