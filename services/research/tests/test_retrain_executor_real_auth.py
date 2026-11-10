@@ -155,6 +155,9 @@ class _PersonaOwner:
 
     def __init__(self) -> None:
         self.personas: dict[str, dict[str, Any]] = {}
+        # The Training clock is pinned to the fixture time, so the owner's record
+        # is stamped relative to that same instant.
+        self.recorded_now = datetime.now(timezone.utc)
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -169,7 +172,7 @@ class _PersonaOwner:
                     self.end_headers()
                     return
                 if parts[-1] == "training-target":
-                    recorded = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)
+                    recorded = (owner.recorded_now - timedelta(minutes=1)).replace(microsecond=0)
                     body = {"persona": {
                         "persona_id": parts[2], "tenant_id": TENANT, "status": "active", "generation": 1,
                         "authority_status": "authoritative", "controller_record_ref": f"ctrl:{parts[2]}",
@@ -262,9 +265,15 @@ def world(tmp_path_factory):
 
     mp.setattr(support, "_INSTRUMENTS", INSTRUMENTS)
     mp.setattr(support, "_canonical_records", canonical_records)
-    fixture = support.materialize_strict_authority(root / "authority", trusted_now=datetime.now(timezone.utc), bars_per_instrument=BARS)
+    # Two days behind the wall clock: the strict authority allows one day of
+    # staleness, so only a pinned Training clock can accept this dataset.  That
+    # is what a suite straddling UTC midnight looks like.
+    trusted_now = datetime.now(timezone.utc) - timedelta(days=2)
+    w.trusted_now = trusted_now
+    fixture = support.materialize_strict_authority(root / "authority", trusted_now=trusted_now, bars_per_instrument=BARS)
 
     persona = _PersonaOwner()
+    persona.recorded_now = trusted_now
     w.persona = persona
     better = _artifact(artifact_id="artifact-retrain-better-v1", lookback=2)
     worse = _artifact(artifact_id="artifact-retrain-worse-v1", lookback=3)
@@ -297,6 +306,7 @@ def world(tmp_path_factory):
     training = importlib.util.module_from_spec(spec)
     sys.modules["training_session_retrain_real_auth"] = training
     spec.loader.exec_module(training)
+    mp.setattr(training, "_trusted_now", lambda: trusted_now)  # same pin as strict_test_support
     training.store = training.TrainingSessionStore(fixture.data_dir)
     w.training = training
     sys.path.remove(str(TRAINING_DIR))
@@ -428,6 +438,14 @@ def test_better_candidate_creates_a_candidate_child_and_leaves_the_session_activ
     assert candidate["status"] == "completed"
     assert candidate["preview"]["evaluation_proof"]["backend"]["run_id"].startswith("vbt-real-")
     assert candidate["governance_gate_state"] == "passed"
+
+
+def test_evaluation_started_after_the_fixture_date_has_passed_reaches_the_same_outcome(world):
+    assert world.training._trusted_now() == world.trusted_now
+    assert datetime.now(timezone.utc).date() > world.trusted_now.date()
+    run = _run(world, "artifact-retrain-better-v1", "dec-clock-pin-001")
+    assert run["status"] == "completed", run
+    assert run["outcome"] == "candidate_created", (run.get("outcome_reason"), run.get("rejection"))
 
 
 def test_executor_only_uses_the_evaluation_routes_and_never_the_commit_path(world):
