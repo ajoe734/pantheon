@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>NBER Working Papers</title>
+    <link>https://www.nber.org/papers</link>
+    <item>
+      <guid>https://www.nber.org/papers/w33101</guid>
+      <title>Macroeconomic Regime Switches and Equity Factor Timing</title>
+      <link>https://www.nber.org/papers/w33101</link>
+      <pubDate>2026-11-08T12:00:00Z</pubDate>
+      <description>Business cycle leading indicators improve factor rotation Sharpe ratios across export-driven Asian markets.</description>
+    </item>
+  </channel>
+</rss>

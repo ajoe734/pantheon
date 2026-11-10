@@ -2118,6 +2118,58 @@ class PersonaProvisioningCoordinator:
             receipt=receipt,
         )
 
+    @staticmethod
+    def _strategy_artifact_ref(record: ProvisioningRecord) -> str | None:
+        ref = record.request_payload.get("strategy_artifact_ref")
+        if ref is None:
+            return None
+        if not isinstance(ref, str) or not ref.strip():
+            raise PersonaProvisioningCoordinationError(
+                "strategy_artifact_ref must be a non-empty string when provided"
+            )
+        return ref.strip()
+
+    def _admitted_artifact_body(
+        self,
+        record: ProvisioningRecord,
+        ref: str,
+        *,
+        explicit_market: str | None,
+    ) -> dict[str, Any]:
+        """Return the admitted artifact body, failing closed unless approved."""
+
+        receipt = self._owner_get(
+            "registry", f"/api/registry/strategy-artifacts/{_path_id(ref)}"
+        )
+        if receipt is None:
+            raise PersonaProvisioningCoordinationError(
+                f"strategy_artifact_ref {ref!r} was not found in Registry"
+            )
+        entry = _registry_entry(receipt)
+        if (
+            entry.get("registry_id") != ref
+            or entry.get("artifact_type") != "execution_bundle"
+            or entry.get("artifact_state") != "approved"
+        ):
+            raise PersonaProvisioningCoordinationError(
+                f"strategy_artifact_ref {ref!r} is not an approved execution_bundle"
+            )
+        metadata = entry.get("metadata")
+        body = metadata.get("strategy_artifact") if isinstance(metadata, Mapping) else None
+        if not isinstance(body, Mapping):
+            raise PersonaProvisioningCoordinationError(
+                f"strategy_artifact_ref {ref!r} is missing metadata.strategy_artifact"
+            )
+        body = deepcopy(dict(body))
+        if explicit_market is not None:
+            params = body.get("parameters")
+            if not isinstance(params, Mapping) or params.get("market") != explicit_market:
+                raise PersonaProvisioningCoordinationError(
+                    f"strategy_artifact_ref {ref!r} does not match expected market "
+                    f"{explicit_market!r}"
+                )
+        return body
+
     def _strategy_artifact_payload(
         self,
         record: ProvisioningRecord,
@@ -2270,6 +2322,25 @@ class PersonaProvisioningCoordinator:
                     "close_before_reverse": True,
                 },
             }
+        admitted_ref = None if baseline else self._strategy_artifact_ref(record)
+        if admitted_ref is not None:
+            # Replace only the template strategy content with the admitted
+            # artifact's; identity, lineage and provenance stay saga-owned.
+            admitted = self._admitted_artifact_body(
+                record, admitted_ref, explicit_market=explicit_market
+            )
+            for key in (
+                "algorithm_ref",
+                "strategy_logic",
+                "parameters",
+                "mutation_surface",
+                "expression_policy",
+            ):
+                if key in admitted:
+                    artifact[key] = admitted[key]
+                else:
+                    artifact.pop(key, None)
+            artifact["provenance_refs"].append(f"strategy-artifact:{admitted_ref}")
         return {
             "registry_id": artifact_id,
             "artifact_state": "candidate",
@@ -2301,6 +2372,11 @@ class PersonaProvisioningCoordinator:
                     None if baseline else ids.baseline_strategy_artifact_id
                 ),
                 "provisioning_request_hash": record.request_hash,
+                **(
+                    {"source_strategy_artifact_ref": admitted_ref}
+                    if admitted_ref is not None
+                    else {}
+                ),
                 **({"market": explicit_market} if explicit_market is not None else {}),
             },
         }
