@@ -221,7 +221,7 @@ cleanup_policy=automatic
 | 主要用途 | 快速整合 | 正式發布演練 | 使用者服務 |
 | Git 來源 | exact protected `dev` tips | 已通過 Dev 的 release manifest | 已通過 Staging 的相同 manifest |
 | 外部 provider | 關閉 | 關閉或 sandbox | 逐項明確批准 |
-| 真實 writes | 預設關閉 | 預設關閉 | 依 production policy |
+| 真實 writes | 持久 `operator-live` 開啟（操作者 2026-11-10 確認）；`read-only`、standby/bootstrap 關閉 | 預設關閉 | 依 production policy |
 | 資料 | Dev 專用 | sanitized snapshot | 正式資料 |
 | Secrets | `dev` scope | `staging` scope | `production` scope |
 | 人工批准 | 不需要 | 建立不需要；失敗不得晉級 | 切換前需要 |

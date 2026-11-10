@@ -1,6 +1,6 @@
 {
   "task": "DOC-DEV-HOSTING-LIVE-WRITES-20261110",
-  "change": "Documentation only: dev-hosting Required Frontend Build Env and dev acceptance criteria now state operator-live builds with VITE_BFF_REAL_WRITES=true (operator confirmed 2026-11-10, enforced by scripts/auto_deploy_dev_pair.py); read-only, standby, bootstrap, staging baseline and production keep false; strict BFF auth and role/tenant checks govern every write; VITE_BFF_ALLOW_DEV_STUB_WRITES and VITE_BFF_EMBEDDED_BEARER_TOKEN stay false in every profile.",
+  "change": "Documentation only (incl. §5 environment table real-writes row aligned): dev-hosting Required Frontend Build Env and dev acceptance criteria now state operator-live builds with VITE_BFF_REAL_WRITES=true (operator confirmed 2026-11-10, enforced by scripts/auto_deploy_dev_pair.py); read-only, standby, bootstrap, staging baseline and production keep false; strict BFF auth and role/tenant checks govern every write; VITE_BFF_ALLOW_DEV_STUB_WRITES and VITE_BFF_EMBEDDED_BEARER_TOKEN stay false in every profile.",
   "files": [
     "docs/frontend/execute-plans-dev-hosting.md",
     "docs/deployment/vm-dev-staging-prod-management-plan.md"
