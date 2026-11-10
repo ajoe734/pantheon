@@ -2327,6 +2327,17 @@ def _evaluate_persona_provisioning_status(
     return new_state
 
 
+def _clone_json_value(value: Any) -> Any:
+    """Fast recursive clone for JSON-compatible containers with immutable leaves."""
+    if isinstance(value, dict):
+        return {k: _clone_json_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clone_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_json_value(item) for item in value)
+    return value
+
+
 # --- _project_persona_dto ---
 def _project_persona_dto(
     raw: Dict[str, Any],
@@ -2458,11 +2469,7 @@ def _project_persona_dto(
             required_data_sources=required_data_sources,
             thin=thin_source_health,
         )
-        overlay_owned_keys = (
-            {"data_source_status", "data_sources", "source_health_bindings"}
-            if thin_source_health
-            else set()
-        )
+        overlay_owned_keys = {"data_source_status", "data_sources", "source_health_bindings"}
         metadata["data_source_status"] = data_source_status
         metadata["data_sources"] = data_sources
         metadata["source_health_bindings"] = source_health_bindings
@@ -2478,13 +2485,13 @@ def _project_persona_dto(
     ):
         value = metadata.get(source_key)
         if value is not None:
-            # Overlay outputs are fresh copies already (thin list path only).
-            dto[dto_key] = value if source_key in overlay_owned_keys else json.loads(json.dumps(value))
+            # Overlay outputs are fresh copies already.
+            dto[dto_key] = value if source_key in overlay_owned_keys else _clone_json_value(value)
     if required_data_sources:
-        dto["requiredDataSources"] = json.loads(json.dumps(required_data_sources))
+        dto["requiredDataSources"] = _clone_json_value(required_data_sources)
     performance = metadata.get("performance") if isinstance(metadata.get("performance"), dict) else {}
     if performance:
-        dto["metrics"] = json.loads(json.dumps(performance))
+        dto["metrics"] = _clone_json_value(performance)
     if overlay:
         for k, v in overlay.items():
             if v is not None:
@@ -2505,7 +2512,20 @@ def _strategy_routed_persona_count(strategy_id: str) -> int:
 
 # --- _routed_strategies_for_persona ---
 def _routed_strategies_for_persona(persona_id: str) -> int:
-    items = _get_active_read_store().list_strategy_specs(persona_id=persona_id) or []
+    clean_id = str(persona_id or "").strip()
+    if not clean_id:
+        return 0
+    store = _get_active_read_store()
+    rks = getattr(store, "research_knowledge_source", None)
+    if (
+        getattr(type(store), "list_strategy_specs", None) is ReadSurfacePorts.list_strategy_specs
+        and "list_strategy_specs" not in getattr(store, "__dict__", {})
+        and "list_strategy_specs" not in getattr(rks, "__dict__", {})
+        and bool(getattr(rks, "_has_injected_strategy_specs", False))
+        and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+    ):
+        return int(_routed_strategy_counts_by_persona().get(clean_id, 0))
+    items = store.list_strategy_specs(persona_id=clean_id) or []
     return len(items)
 
 
@@ -2816,6 +2836,82 @@ def _list_persona_records(
         )
     )
     return result
+
+
+# --- _get_persona_record_for_detail ---
+def _get_persona_record_for_detail(
+    persona_id: str,
+    tenant_id: Optional[str] = None,
+    *,
+    read_store: Optional[Any] = None,
+    fallback_owner: str = "pantheon-bff",
+) -> Optional[Dict[str, Any]]:
+    """Bounded single-persona read for detail routes without projecting the full directory."""
+    clean_id = str(persona_id or "").strip()
+    if not clean_id:
+        return None
+    active_store = _get_active_read_store(explicit=read_store)
+    clean_tenant = str(tenant_id or "").strip()
+    raw: Optional[Dict[str, Any]] = None
+    if active_store is not None:
+        pcr = getattr(active_store, "persona_capital_runtime", None)
+        pcr_persona = getattr(pcr, "persona", None)
+        has_list_override = (
+            "list_personas" in getattr(active_store, "__dict__", {})
+            or "list_personas" in getattr(pcr, "__dict__", {})
+            or "list_personas" in getattr(pcr_persona, "__dict__", {})
+        )
+        if hasattr(active_store, "get_persona") and not has_list_override:
+            item = active_store.get_persona(clean_id)
+            if isinstance(item, dict):
+                raw = dict(item)
+        elif hasattr(active_store, "list_personas"):
+            for item in active_store.list_personas() or []:
+                if not isinstance(item, dict):
+                    continue
+                pid = str(item.get("id") or item.get("persona_id") or "").strip()
+                if pid == clean_id:
+                    raw = dict(item)
+                    break
+
+    store = _persona_provisioning_store()
+    prov_record = None
+    try:
+        if hasattr(store, "get_by_persona"):
+            prov_record = store.get_by_persona(clean_tenant, clean_id)
+        else:
+            read_prov = store.list_by_tenant if clean_tenant else store.list_all
+            for rec in read_prov(*((clean_tenant,) if clean_tenant else ())):
+                if getattr(rec, "persona_id", None) == clean_id:
+                    prov_record = rec
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("Persona provisioning store lookup failed for dependency %s", "persona_provisioning_store")
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Persona durable readback is unavailable",
+            "Authoritative provisioning store is unreachable or degraded",
+            precondition_failed="persona_provisioning_store",
+            suggestion="Inspect persona provisioning persistence health before retrying",
+        ) from exc
+
+    if prov_record is not None:
+        try:
+            persona_proj, _ = _persona_record_for_provisioning(
+                prov_record,
+                payload=prov_record.request_payload,
+                owner=str(prov_record.request_payload.get("requested_by") or fallback_owner or "pantheon-bff"),
+                existing=raw,
+            )
+            raw = persona_proj
+        except ProvisioningConflict:
+            log.warning("Skipping Persona provisioning projection with conflicting owner scope")
+
+    if raw is not None and clean_tenant and _persona_record_tenant_id(raw) != clean_tenant:
+        return None
+    return raw
 
 
 # --- PersonaDirectorySnapshot ---
@@ -3610,6 +3706,137 @@ def _project_persona_fleet_item(
         "activeIncidents": active_incidents,
         "active_incidents": active_incidents,
         "allowedActions": allowed_actions,
+    }
+
+
+def _project_persona_management_operational_surface(
+    raw_persona: Dict[str, Any],
+    *,
+    bindings: Sequence[Dict[str, Any]],
+    sessions: Sequence[Dict[str, Any]],
+    all_runtime_bindings: List[Dict[str, Any]],
+    all_incidents: List[Dict[str, Any]],
+    pools_by_id: Optional[Mapping[str, Optional[Dict[str, Any]]]] = None,
+    plans_by_id: Optional[Mapping[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Bounded operational projection for persona-management detail.
+
+    Computes only the fields returned by ``GET /api/v1/operator/persona-management/{persona_id}``
+    (``health``, ``runtimeBindings``, ``capitalPools``, ``activeIncidents``,
+    ``latestTelemetry``) without projecting the rich source-health DTO overlay,
+    routed strategies, evolution decisions, or repeating per-persona owner reads.
+    """
+    persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
+    raw_meta = raw_persona.get("metadata") if isinstance(raw_persona.get("metadata"), Mapping) else {}
+
+    binding_ids = {
+        str(binding.get("id") or binding.get("binding_id") or "").strip()
+        for binding in bindings
+        if isinstance(binding, Mapping)
+        and str(binding.get("id") or binding.get("binding_id") or "").strip()
+    }
+    for meta_key in ("persona_capital_binding_id", "binding_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            binding_ids.add(val)
+
+    capital_pool_ids = {
+        str(binding.get("capital_pool_id") or "").strip()
+        for binding in bindings
+        if isinstance(binding, Mapping)
+        and str(binding.get("capital_pool_id") or "").strip()
+    }
+    for meta_key in ("capital_pool_id", "internal_paper_capital_pool_id", "legacy_paper_capital_pool_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            capital_pool_ids.add(val)
+
+    runtime_refs = {
+        str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
+        for session in sessions
+        if isinstance(session, Mapping)
+        and str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
+    }
+    for meta_key in ("runtime_binding_id", "runtime_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            runtime_refs.add(val)
+
+    plan_ids: set[str] = set()
+    meta_plan_id = str(raw_meta.get("deployment_plan_id") or "").strip()
+    if meta_plan_id:
+        plan_ids.add(meta_plan_id)
+    auth_readback = raw_meta.get("provisioning_authoritative_readback")
+    if isinstance(auth_readback, Mapping):
+        dep_rb = auth_readback.get("deployment")
+        if isinstance(dep_rb, Mapping):
+            rb_plan_id = str(dep_rb.get("plan_id") or "").strip()
+            if rb_plan_id:
+                plan_ids.add(rb_plan_id)
+
+    runtime_bindings = [
+        binding
+        for binding in all_runtime_bindings
+        if _persona_fleet_runtime_matches(
+            binding,
+            binding_ids=binding_ids,
+            capital_pool_ids=capital_pool_ids,
+            runtime_refs=runtime_refs,
+            persona_id=persona_id,
+            plan_ids=plan_ids,
+            plans_by_id=plans_by_id,
+        )
+    ]
+    runtime_ids = {
+        str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+        for binding in runtime_bindings
+        if str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+    }
+
+    store = _get_active_read_store()
+    telemetry_summaries = [
+        summary
+        for runtime_id in sorted(runtime_ids)
+        for summary in [store.get_telemetry_summary(runtime_id)]
+        if summary
+    ]
+    telemetry_summaries = _sort_records_latest_first(telemetry_summaries, ("collected_at", "updated_at", "created_at"))
+    latest_telemetry = telemetry_summaries[0] if telemetry_summaries else None
+
+    active_incidents = [
+        incident
+        for incident in all_incidents
+        if str(incident.get("status") or "").lower() in {"open", "active", "investigating"}
+        and (
+            str(incident.get("persona_id") or "").strip() == persona_id
+            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
+            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
+            or str(incident.get("runtime_id") or "").strip() in runtime_ids
+        )
+    ]
+
+    capital_pools: List[Dict[str, Any]] = []
+    for pool_id in sorted(capital_pool_ids):
+        if pools_by_id is not None and pool_id in pools_by_id:
+            pool = pools_by_id[pool_id]
+        else:
+            pool = store.get_capital_pool(pool_id)
+        if pool:
+            capital_pools.append(pool)
+
+    health = _project_persona_fleet_health(
+        persona=raw_persona,
+        runtime_bindings=runtime_bindings,
+        telemetry_summaries=telemetry_summaries,
+        active_incidents=active_incidents,
+    )
+
+    return {
+        "health": health,
+        "capitalPools": capital_pools,
+        "runtimeBindings": runtime_bindings,
+        "activeIncidents": active_incidents,
+        "latestTelemetry": latest_telemetry,
     }
 
 
@@ -11864,6 +12091,7 @@ def _persona_fleet_runtime_matches(
     runtime_refs: set[str],
     persona_id: Optional[str] = None,
     plan_ids: Optional[set[str]] = None,
+    plans_by_id: Optional[Mapping[str, Dict[str, Any]]] = None,
 ) -> bool:
     runtime_ids = {
         str(runtime_binding.get(key) or "").strip()
@@ -11892,7 +12120,12 @@ def _persona_fleet_runtime_matches(
     if plan_id:
         if plan_ids and plan_id in plan_ids:
             return True
-        plan = _get_active_read_store().get_deployment_plan(plan_id) or {}
+        if not binding_ids and not capital_pool_ids:
+            return False
+        if plans_by_id is not None:
+            plan = plans_by_id.get(plan_id) or {}
+        else:
+            plan = _get_active_read_store().get_deployment_plan(plan_id) or {}
         plan_binding_ids = {
             str(value).strip()
             for value in (plan.get("binding_ids") or [])
@@ -14321,18 +14554,18 @@ def _source_truth_projection(
         # schedule/freshness/health/usage blobs skip cloning them.
         return projection
     projection.update({
-        "connector_schedule": json.loads(json.dumps(schedule)),
-        "connectorSchedule": json.loads(json.dumps(schedule)),
-        "connector_freshness": json.loads(json.dumps(freshness)),
-        "connectorFreshness": json.loads(json.dumps(freshness)),
-        "source_health": json.loads(json.dumps(health)),
-        "sourceHealth": json.loads(json.dumps(health)),
+        "connector_schedule": _clone_json_value(schedule),
+        "connectorSchedule": _clone_json_value(schedule),
+        "connector_freshness": _clone_json_value(freshness),
+        "connectorFreshness": _clone_json_value(freshness),
+        "source_health": _clone_json_value(health),
+        "sourceHealth": _clone_json_value(health),
     })
     if isinstance(truth.get("usage_aggregate_30d"), dict):
-        projection["usage_aggregate_30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
-        projection["usageAggregate30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
+        projection["usage_aggregate_30d"] = _clone_json_value(truth["usage_aggregate_30d"])
+        projection["usageAggregate30d"] = _clone_json_value(truth["usage_aggregate_30d"])
     if truth.get("recommendation") is not None:
-        projection["recommendation"] = json.loads(json.dumps(truth["recommendation"]))
+        projection["recommendation"] = _clone_json_value(truth["recommendation"])
     return projection
 
 
@@ -15124,7 +15357,7 @@ class PersonaService:
                     continue
                 connector_id = str(connector.get("connector_id") or "").strip()
                 if connector_id:
-                    truth.setdefault(connector_id, {})["connector"] = json.loads(json.dumps(connector))
+                    truth.setdefault(connector_id, {})["connector"] = _clone_json_value(connector)
         except Exception:  # read-only enrichment must never break persona surfaces
             pass
 
@@ -15136,12 +15369,12 @@ class PersonaService:
                 health = source.get("health") if isinstance(source.get("health"), dict) else {}
                 connector_id = str(health.get("source_id") or "").strip()
                 if connector_id:
-                    truth.setdefault(connector_id, {})["health"] = json.loads(json.dumps(health))
-                    truth[connector_id]["usage_aggregate_30d"] = json.loads(
-                        json.dumps(source.get("usage_aggregate_30d") or {})
+                    truth.setdefault(connector_id, {})["health"] = _clone_json_value(health)
+                    truth[connector_id]["usage_aggregate_30d"] = _clone_json_value(
+                        source.get("usage_aggregate_30d") or {}
                     )
                     if source.get("recommendation") is not None:
-                        truth[connector_id]["recommendation"] = json.loads(json.dumps(source.get("recommendation")))
+                        truth[connector_id]["recommendation"] = _clone_json_value(source.get("recommendation"))
         except Exception:  # read-only enrichment must never break persona surfaces
             pass
 
@@ -15201,7 +15434,7 @@ class PersonaService:
                 ),
             ),
         )
-        return json.loads(json.dumps(shared))
+        return _clone_json_value(shared)
 
     def _compute_source_health_overlay(
         self,
@@ -15211,8 +15444,8 @@ class PersonaService:
         truth_by_connector: Dict[str, Dict[str, Any]],
         thin: bool = False,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
-        dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
-        srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
+        dss = _clone_json_value(data_source_status) if isinstance(data_source_status, dict) else {}
+        srcs = _clone_json_value(data_sources) if isinstance(data_sources, list) else []
         provider_statuses = dss.get("provider_statuses")
         if not isinstance(provider_statuses, dict):
             provider_statuses = {}
@@ -15293,15 +15526,15 @@ class PersonaService:
         dss["sourceHealthSource"] = dss["source_health_source"]
         dss["live_ingestion_enabled"] = bool(has_live_truth)
         if not thin:
-            dss["connector_health"] = json.loads(json.dumps(connector_health))
-            dss["connectorHealth"] = json.loads(json.dumps(connector_health))
+            dss["connector_health"] = _clone_json_value(connector_health)
+            dss["connectorHealth"] = _clone_json_value(connector_health)
         dss["live_source_connector_ids"] = list(dict.fromkeys(live_connector_ids))
         dss["liveSourceConnectorIds"] = dss["live_source_connector_ids"]
         dss["static_source_labels"] = sorted(set(static_source_labels))
         dss["staticSourceLabels"] = dss["static_source_labels"]
         if not thin:
-            dss["required_source_health"] = json.loads(json.dumps(bindings))
-            dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
+            dss["required_source_health"] = _clone_json_value(bindings)
+            dss["requiredSourceHealth"] = _clone_json_value(bindings)
         _upgrade_all_green_data_source_state(dss)
         return dss, srcs, bindings
 
@@ -15450,6 +15683,27 @@ class PersonaService:
 
     def list_approval_decisions(self) -> List[Dict[str, Any]]:
         read_store = self.get_read_store()
+        target_store = getattr(read_store, "_inner", read_store)
+        ooda = getattr(target_store, "ooda_management", None)
+        rq = getattr(ooda, "review_queue", None)
+        reader = getattr(rq, "_approval_decisions_reader", None)
+        if (
+            callable(reader)
+            and getattr(type(target_store), "list_approval_decisions", None) is ReadSurfacePorts.list_approval_decisions
+            and "list_approval_decisions" not in getattr(read_store, "__dict__", {})
+            and "list_approval_decisions" not in getattr(target_store, "__dict__", {})
+            and "list_approval_queue_items" not in getattr(ooda, "__dict__", {})
+            and "list_approval_queue_items" not in getattr(rq, "__dict__", {})
+        ):
+            if not getattr(reader, "_is_request_scoped_review_reader", False) and hasattr(rq, "_wrap_request_scoped_reader"):
+                reader = rq._wrap_request_scoped_reader("approval_decisions", reader)
+                rq._approval_decisions_reader = reader
+            try:
+                return [item for item in (reader() or []) if isinstance(item, dict)]
+            except Exception:
+                if target_store is not read_store:
+                    return []
+                raise
         return list(read_store.list_approval_decisions() or [])
 
     def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:

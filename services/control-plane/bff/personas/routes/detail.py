@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
+from services.control_plane.bff.core.owner_reads import request_read_scope
 from services.control_plane.bff.models import ErrorCode
 from ..service import (
     _PERSONA_PATCH_SERVER_MANAGED_FIELDS,
@@ -16,6 +17,7 @@ from ..service import (
     _ensure_persona_exists,
     _filter_audit_events_by_target,
     _get_persona_directory_snapshot,
+    _get_persona_record_for_detail,
     _list_governance_audit_events,
     _merged_skill_records,
     _merged_tool_records,
@@ -23,6 +25,7 @@ from ..service import (
     _persona_record_for_provisioning,
     _project_persona_dto,
     _project_persona_fleet_item,
+    _project_persona_management_operational_surface,
     _retrieve_canonical_persona_memory,
     _routed_strategies_for_persona,
     build_persona_runtime_profile,
@@ -53,34 +56,35 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
     @router.get("/api/v1/personas/{persona_id}")
     def get_persona_detail(persona_id: str, authorization: Optional[str] = Header(default=None)):
         """PS-02: Persona Detail with bindings."""
-        identity = _extract_identity(authorization)
-        _require_read_role(identity)
+        with request_read_scope():
+            identity = _extract_identity(authorization)
+            _require_read_role(identity)
 
-        snapshot_at = utc_now()
-        persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-        persona = _service.get_persona(persona_id)
-        if not persona:
-            _raise_if_read_surface_unavailable(persona_surface, label="Persona")
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Persona not found",
-                f"Persona {persona_id} does not exist",
-            )
+            snapshot_at = utc_now()
+            persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
+            persona = _service.get_persona(persona_id)
+            if not persona:
+                _raise_if_read_surface_unavailable(persona_surface, label="Persona")
+                raise _bff_error(
+                    404,
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    "Persona not found",
+                    f"Persona {persona_id} does not exist",
+                )
 
-        bindings = _service.get_bindings_for_persona(persona_id) or []
-        payload = dict(persona)
-        payload["bindings"] = bindings
+            bindings = _service.get_bindings_for_persona(persona_id) or []
+            payload = dict(persona)
+            payload["bindings"] = bindings
 
-        return {
-            "data": payload,
-            "meta": _read_surface_meta(
-                "personas",
-                "persona_detail",
-                snapshot_at=snapshot_at,
-                surface=persona_surface,
-            ),
-        }
+            return {
+                "data": payload,
+                "meta": _read_surface_meta(
+                    "personas",
+                    "persona_detail",
+                    snapshot_at=snapshot_at,
+                    surface=persona_surface,
+                ),
+            }
 
 
     @router.get("/api/v1/personas/{persona_id}/capabilities")
@@ -136,407 +140,415 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         Composes: PS-02 (persona detail + bindings), CP-03/CP-04 (capital pool bindings),
                   PS-03 (persona sessions), PS-05 (teaching sessions).
         """
-        identity = _extract_identity(authorization)
-        _require_read_role(identity)
+        with request_read_scope():
+            identity = _extract_identity(authorization)
+            _require_read_role(identity)
 
-        # PS-02: Persona detail
-        persona = _service.get_persona(persona_id)
-        if not persona:
-            _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=utc_now()), label="Persona")
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Persona not found",
-                f"Persona {persona_id} does not exist",
-            )
-
-        snapshot_at = utc_now()
-        surfaces = {}
-
-        # PS-02: Persona bindings (bindings where this persona is the owner)
-        persona_bindings = _service.get_bindings_for_persona(persona_id)
-        persona_bindings_available = persona_bindings is not None
-        if persona_bindings is None:
-            persona_bindings = []
-        surfaces["persona_bindings"] = _dataset_surface_status(
-            "persona_bindings",
-            snapshot_at=snapshot_at,
-            has_data=persona_bindings_available,
-            missing_message="Persona bindings unavailable for this persona.",
-        )
-
-        # CP-04: Enrich each binding with its capital pool detail
-        enriched_bindings = []
-        for binding in persona_bindings:
-            binding_detail = dict(binding)
-            pool = _service.get_capital_pool(binding.get("capital_pool_id"))
-            if pool:
-                binding_detail["capital_pool"] = pool
-            enriched_bindings.append(binding_detail)
-
-        capital_pool_surface = _dataset_surface_status(
-            "capital_pools",
-            snapshot_at=snapshot_at,
-            has_data=bool(enriched_bindings),
-            missing_message="No capital pool bindings available for this persona.",
-        )
-        if surfaces["persona_bindings"]["status"] != "ok":
-            surfaces["capital_pool_bindings"] = dict(surfaces["persona_bindings"])
-        else:
-            surfaces["capital_pool_bindings"] = capital_pool_surface
-
-        # PS-03: Active sessions for this persona
-        sessions = _service.get_sessions_for_persona(persona_id)
-        sessions_available = sessions is not None
-        if sessions is None:
-            sessions = []
-        surfaces["persona_sessions"] = _dataset_surface_status(
-            "sessions",
-            snapshot_at=snapshot_at,
-            has_data=sessions_available,
-            missing_message="Persona sessions unavailable for this persona.",
-        )
-
-        # PS-05: Teaching sessions for this persona
-        teaching_sessions = _service.get_teaching_sessions_for_persona(persona_id)
-        teaching_sessions_available = teaching_sessions is not None
-        if teaching_sessions is None:
-            teaching_sessions = []
-        surfaces["teaching_sessions"] = _dataset_surface_status(
-            "teaching_sessions",
-            snapshot_at=snapshot_at,
-            has_data=teaching_sessions_available,
-            missing_message="Teaching sessions unavailable for this persona.",
-        )
-
-        # Backend-shaped allowed actions (acceptance: backend_shaped_persona_actions)
-        allowed_actions = _service.get_persona_allowed_actions(persona_id)
-        allowed_actions_available = allowed_actions is not None
-        if allowed_actions is None:
-            allowed_actions = {}
-        surfaces["allowed_actions"] = _dataset_surface_status(
-            "allowed_actions",
-            snapshot_at=snapshot_at,
-            has_data=allowed_actions_available,
-            missing_message="Allowed actions unavailable for this persona.",
-        )
-
-        # PERSONA-ONBOARD-2026-05-28 / F4: include readiness health surface so the
-        # detail page can render the same gap reasons as /bff/management/persona-fleet.
-        # Reuse _project_persona_fleet_item() so health computation stays consistent.
-        health_payload = None
-        runtime_bindings_for_persona: List[Dict[str, Any]] = []
-        capital_pools_for_persona: List[Dict[str, Any]] = []
-        active_incidents_for_persona: List[Dict[str, Any]] = []
-        latest_telemetry_summary: Optional[Dict[str, Any]] = None
-        try:
-            fleet_item = _project_persona_fleet_item(
-                persona,
-                all_runtime_bindings=_service.list_runtime_bindings(),
-                all_incidents=_service.list_incidents(),
-                all_evolution_decisions=_service.list_evolution_decisions(),
-            )
-        except Exception:  # pragma: no cover - defensive: never break detail page
-            fleet_item = None
-            surfaces["persona_health"] = _composed_surface_status(
-                snapshot_at=snapshot_at,
-                available=False,
-                missing_message="Persona health surface failed to compose.",
-            )
-        else:
-            health_payload = fleet_item.get("health")
-            runtime_bindings_for_persona = fleet_item.get("runtimeBindings") or []
-            capital_pools_for_persona = fleet_item.get("capitalPools") or []
-            active_incidents_for_persona = fleet_item.get("activeIncidents") or []
-            latest_telemetry_summary = (fleet_item.get("telemetrySummary") or {}).get("latest")
-            surfaces["persona_health"] = _composed_surface_status(
-                snapshot_at=snapshot_at,
-                available=bool(health_payload),
-                missing_message="Persona health surface unavailable.",
-            )
-
-        # BFF-WRITE-P0-WIZARD-008 / P0-8 & BFF-PERSONA-OPERATING-CONTEXT-20261107:
-        # Resolve deploymentPlans and approvals for this persona via authoritative
-        # references (plan_id, persona_id, persona_capital_binding_id, runtime_binding_id,
-        # capital_pool_id, artifact_id, registry_id, approval_decision_id) and owner reads.
-        persona_meta = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
-        auth_readback = (
-            persona_meta.get("provisioning_authoritative_readback")
-            if isinstance(persona_meta.get("provisioning_authoritative_readback"), dict)
-            else {}
-        )
-        dep_readback = auth_readback.get("deployment") if isinstance(auth_readback.get("deployment"), dict) else {}
-        gov_readback = auth_readback.get("governance") if isinstance(auth_readback.get("governance"), dict) else {}
-        reg_readback = auth_readback.get("registry") if isinstance(auth_readback.get("registry"), dict) else {}
-
-        persona_binding_ids = {
-            str(b.get("id") or b.get("binding_id") or "").strip()
-            for b in persona_bindings
-            if str(b.get("id") or b.get("binding_id") or "").strip()
-        }
-        for meta_key in ("persona_capital_binding_id", "binding_id"):
-            val = str(persona_meta.get(meta_key) or "").strip()
-            if val:
-                persona_binding_ids.add(val)
-
-        runtime_binding_ids = {
-            str(rb.get("binding_id") or rb.get("runtime_binding_id") or rb.get("id") or "").strip()
-            for rb in runtime_bindings_for_persona
-            if isinstance(rb, dict)
-            and str(rb.get("binding_id") or rb.get("runtime_binding_id") or rb.get("id") or "").strip()
-        }
-        for meta_key in ("runtime_binding_id", "runtime_id"):
-            val = str(persona_meta.get(meta_key) or "").strip()
-            if val:
-                runtime_binding_ids.add(val)
-
-        persona_capital_pool_ids = {
-            str(b.get("capital_pool_id") or "").strip()
-            for b in persona_bindings
-            if isinstance(b, dict) and str(b.get("capital_pool_id") or "").strip()
-        } | {
-            str(p.get("pool_id") or p.get("id") or "").strip()
-            for p in capital_pools_for_persona
-            if isinstance(p, dict) and str(p.get("pool_id") or p.get("id") or "").strip()
-        } | {
-            str(rb.get("capital_pool_id") or "").strip()
-            for rb in runtime_bindings_for_persona
-            if isinstance(rb, dict) and str(rb.get("capital_pool_id") or "").strip()
-        }
-        for meta_key in ("capital_pool_id", "internal_paper_capital_pool_id", "legacy_paper_capital_pool_id"):
-            val = str(persona_meta.get(meta_key) or "").strip()
-            if val:
-                persona_capital_pool_ids.add(val)
-
-        known_plan_ids = {
-            str(rb.get("plan_id") or rb.get("deployment_plan_id") or "").strip()
-            for rb in runtime_bindings_for_persona
-            if isinstance(rb, dict) and str(rb.get("plan_id") or rb.get("deployment_plan_id") or "").strip()
-        }
-        for candidate_plan_id in (
-            persona_meta.get("deployment_plan_id"),
-            dep_readback.get("plan_id"),
-        ):
-            val = str(candidate_plan_id or "").strip()
-            if val:
-                known_plan_ids.add(val)
-
-        all_candidate_binding_ids = persona_binding_ids | runtime_binding_ids
-        expected_tenant = str(
-            persona.get("tenant_id")
-            or persona_meta.get("tenant_id")
-            or ""
-        ).strip()
-        if not expected_tenant:
-            try:
-                expected_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None).get("id") or "").strip()
-            except Exception:
-                expected_tenant = ""
-
-        def _record_tenant_matches(record: Dict[str, Any]) -> bool:
-            rec_meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-            rec_tenant = str(
-                record.get("tenant_id")
-                or record.get("tenantId")
-                or record.get("owner_tenant")
-                or rec_meta.get("tenant_id")
-                or rec_meta.get("tenantId")
-                or ""
-            ).strip()
-            return not rec_tenant or not expected_tenant or rec_tenant == expected_tenant
-
-        def _plan_matches_persona(plan: Dict[str, Any]) -> bool:
-            if not isinstance(plan, dict) or not _record_tenant_matches(plan):
-                return False
-            pid = str(plan.get("id") or plan.get("plan_id") or "").strip()
-            if pid and pid in known_plan_ids:
-                return True
-            plan_meta = plan.get("metadata") if isinstance(plan.get("metadata"), dict) else {}
-            plan_persona = str(
-                plan.get("sponsor_persona_id")
-                or plan.get("persona_id")
-                or plan_meta.get("persona_id")
-                or ""
-            ).strip()
-            if plan_persona and plan_persona == persona_id:
-                return True
-            plan_pcb = str(
-                plan.get("persona_capital_binding_id")
-                or plan_meta.get("persona_capital_binding_id")
-                or ""
-            ).strip()
-            if plan_pcb and plan_pcb in persona_binding_ids:
-                return True
-            plan_binding_id = str(plan.get("binding_id") or plan.get("runtime_binding_id") or "").strip()
-            if plan_binding_id and plan_binding_id in all_candidate_binding_ids:
-                return True
-            if all_candidate_binding_ids & {
-                str(bid).strip() for bid in (plan.get("binding_ids") or []) if str(bid).strip()
-            }:
-                return True
-            plan_pool_id = str(plan.get("capital_pool_id") or plan.get("target_pool_id") or "").strip()
-            if plan_pool_id and plan_pool_id in persona_capital_pool_ids:
-                return True
-            return False
-
-        deployment_plans_for_persona: List[Dict[str, Any]] = []
-        approvals_for_persona: List[Dict[str, Any]] = []
-        try:
-            all_plans = _service.list_deployment_plans()
-            seen_plan_ids: set[str] = set()
-            for plan in all_plans:
-                if _plan_matches_persona(plan):
-                    pid = str(plan.get("id") or plan.get("plan_id") or "").strip()
-                    if pid:
-                        if pid in seen_plan_ids:
-                            continue
-                        seen_plan_ids.add(pid)
-                    deployment_plans_for_persona.append(plan)
-
-            get_plan_fn = getattr(_service, "get_deployment_plan", None)
-            if callable(get_plan_fn):
-                for pid in sorted(known_plan_ids - seen_plan_ids):
-                    fetched_plan = get_plan_fn(pid)
-                    if isinstance(fetched_plan, dict) and _plan_matches_persona(fetched_plan):
-                        seen_plan_ids.add(pid)
-                        deployment_plans_for_persona.append(fetched_plan)
-
-            plan_ids = set(seen_plan_ids) | known_plan_ids
-            artifact_and_registry_ids: set[str] = set()
-            known_approval_ids: set[str] = set()
-            for candidate_target in (
-                persona_meta.get("strategy_artifact_id"),
-                persona_meta.get("artifact_id"),
-                persona_meta.get("strategy_registry_id"),
-                persona_meta.get("registry_id"),
-                reg_readback.get("artifact_id"),
-                reg_readback.get("registry_id"),
-                dep_readback.get("artifact_id"),
-            ):
-                val = str(candidate_target or "").strip()
-                if val:
-                    artifact_and_registry_ids.add(val)
-
-            for candidate_apv in (
-                persona_meta.get("approval_decision_id"),
-                persona_meta.get("strategy_artifact_approval_decision_id"),
-                gov_readback.get("approval_decision_id"),
-                gov_readback.get("decision_id"),
-                dep_readback.get("approval_decision_id"),
-            ):
-                val = str(candidate_apv or "").strip()
-                if val:
-                    known_approval_ids.add(val)
-
-            for rb in runtime_bindings_for_persona:
-                if not isinstance(rb, dict):
-                    continue
-                for rb_target in (rb.get("artifact_id"), rb.get("registry_id")):
-                    val = str(rb_target or "").strip()
-                    if val:
-                        artifact_and_registry_ids.add(val)
-                rb_meta = rb.get("metadata") if isinstance(rb.get("metadata"), dict) else {}
-                attestation = (
-                    rb_meta.get("authoritative_loader_attestation")
-                    if isinstance(rb_meta.get("authoritative_loader_attestation"), dict)
-                    else {}
+            # PS-02: Persona detail
+            persona = _service.get_persona(persona_id)
+            if not persona:
+                _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=utc_now()), label="Persona")
+                raise _bff_error(
+                    404,
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    "Persona not found",
+                    f"Persona {persona_id} does not exist",
                 )
-                for rb_apv in (
-                    rb.get("approval_decision_id"),
-                    rb_meta.get("approval_decision_id"),
-                    attestation.get("approval_decision_id"),
-                ):
-                    val = str(rb_apv or "").strip()
-                    if val:
-                        known_approval_ids.add(val)
-                for rb_att_target in (attestation.get("artifact_id"), attestation.get("registry_id")):
-                    val = str(rb_att_target or "").strip()
-                    if val:
-                        artifact_and_registry_ids.add(val)
 
-            for plan in deployment_plans_for_persona:
-                if not isinstance(plan, dict):
-                    continue
-                for plan_target in (
-                    plan.get("artifact_id"),
-                    plan.get("strategy_artifact_id"),
-                    plan.get("registry_id"),
-                ):
-                    val = str(plan_target or "").strip()
-                    if val:
-                        artifact_and_registry_ids.add(val)
-                plan_apv = str(plan.get("approval_decision_id") or "").strip()
-                if plan_apv:
-                    known_approval_ids.add(plan_apv)
+            snapshot_at = utc_now()
+            surfaces = {}
 
-            approval_target_ids = plan_ids | artifact_and_registry_ids
-            all_approvals = _service.list_approval_decisions()
-            seen_approval_ids: set[str] = set()
+            # PS-02: Persona bindings (bindings where this persona is the owner)
+            persona_bindings = _service.get_bindings_for_persona(persona_id)
+            persona_bindings_available = persona_bindings is not None
+            if persona_bindings is None:
+                persona_bindings = []
+            surfaces["persona_bindings"] = _dataset_surface_status(
+                "persona_bindings",
+                snapshot_at=snapshot_at,
+                has_data=persona_bindings_available,
+                missing_message="Persona bindings unavailable for this persona.",
+            )
 
-            def _approval_matches_persona(decision: Dict[str, Any]) -> bool:
-                if not isinstance(decision, dict) or not _record_tenant_matches(decision):
+            # CP-04: Enrich each binding with its capital pool detail
+            pools_by_id: Dict[str, Optional[Dict[str, Any]]] = {}
+            enriched_bindings = []
+            for binding in persona_bindings:
+                binding_detail = dict(binding)
+                pool_id = binding.get("capital_pool_id")
+                pool_key = str(pool_id or "").strip()
+                if pool_key:
+                    if pool_key not in pools_by_id:
+                        pools_by_id[pool_key] = _service.get_capital_pool(pool_id)
+                    pool = pools_by_id[pool_key]
+                else:
+                    pool = _service.get_capital_pool(pool_id)
+                if pool:
+                    binding_detail["capital_pool"] = pool
+                enriched_bindings.append(binding_detail)
+
+            capital_pool_surface = _dataset_surface_status(
+                "capital_pools",
+                snapshot_at=snapshot_at,
+                has_data=bool(enriched_bindings),
+                missing_message="No capital pool bindings available for this persona.",
+            )
+            if surfaces["persona_bindings"]["status"] != "ok":
+                surfaces["capital_pool_bindings"] = dict(surfaces["persona_bindings"])
+            else:
+                surfaces["capital_pool_bindings"] = capital_pool_surface
+
+            # PS-03: Active sessions for this persona
+            sessions = _service.get_sessions_for_persona(persona_id)
+            sessions_available = sessions is not None
+            if sessions is None:
+                sessions = []
+            surfaces["persona_sessions"] = _dataset_surface_status(
+                "sessions",
+                snapshot_at=snapshot_at,
+                has_data=sessions_available,
+                missing_message="Persona sessions unavailable for this persona.",
+            )
+
+            # PS-05: Teaching sessions for this persona
+            teaching_sessions = _service.get_teaching_sessions_for_persona(persona_id)
+            teaching_sessions_available = teaching_sessions is not None
+            if teaching_sessions is None:
+                teaching_sessions = []
+            surfaces["teaching_sessions"] = _dataset_surface_status(
+                "teaching_sessions",
+                snapshot_at=snapshot_at,
+                has_data=teaching_sessions_available,
+                missing_message="Teaching sessions unavailable for this persona.",
+            )
+
+            # Backend-shaped allowed actions (acceptance: backend_shaped_persona_actions)
+            allowed_actions = _service.get_persona_allowed_actions(persona_id)
+            allowed_actions_available = allowed_actions is not None
+            if allowed_actions is None:
+                allowed_actions = {}
+            surfaces["allowed_actions"] = _dataset_surface_status(
+                "allowed_actions",
+                snapshot_at=snapshot_at,
+                has_data=allowed_actions_available,
+                missing_message="Allowed actions unavailable for this persona.",
+            )
+
+            all_plans: Optional[List[Dict[str, Any]]] = None
+            plans_by_id: Dict[str, Dict[str, Any]] = {}
+            try:
+                all_plans = _service.list_deployment_plans()
+                for plan in all_plans:
+                    if isinstance(plan, dict):
+                        for key in ("id", "plan_id"):
+                            pid = str(plan.get(key) or "").strip()
+                            if pid and pid not in plans_by_id:
+                                plans_by_id[pid] = plan
+            except Exception:  # pragma: no cover - defensive: never break detail page
+                all_plans = None
+
+            # PERSONA-ONBOARD-2026-05-28 / F4: include readiness health surface so the
+            # detail page can render the same gap reasons as /bff/management/persona-fleet.
+            health_payload = None
+            runtime_bindings_for_persona: List[Dict[str, Any]] = []
+            capital_pools_for_persona: List[Dict[str, Any]] = []
+            active_incidents_for_persona: List[Dict[str, Any]] = []
+            latest_telemetry_summary: Optional[Dict[str, Any]] = None
+            try:
+                operational_surface = _project_persona_management_operational_surface(
+                    persona,
+                    bindings=persona_bindings,
+                    sessions=sessions,
+                    all_runtime_bindings=_service.list_runtime_bindings(),
+                    all_incidents=_service.list_incidents(),
+                    pools_by_id=pools_by_id,
+                    plans_by_id=plans_by_id if all_plans is not None else None,
+                )
+            except Exception:  # pragma: no cover - defensive: never break detail page
+                operational_surface = None
+                surfaces["persona_health"] = _composed_surface_status(
+                    snapshot_at=snapshot_at,
+                    available=False,
+                    missing_message="Persona health surface failed to compose.",
+                )
+            else:
+                health_payload = operational_surface.get("health")
+                runtime_bindings_for_persona = operational_surface.get("runtimeBindings") or []
+                capital_pools_for_persona = operational_surface.get("capitalPools") or []
+                active_incidents_for_persona = operational_surface.get("activeIncidents") or []
+                latest_telemetry_summary = operational_surface.get("latestTelemetry")
+                surfaces["persona_health"] = _composed_surface_status(
+                    snapshot_at=snapshot_at,
+                    available=bool(health_payload),
+                    missing_message="Persona health surface unavailable.",
+                )
+
+            # BFF-WRITE-P0-WIZARD-008 / P0-8 & BFF-PERSONA-OPERATING-CONTEXT-20261107:
+            # Resolve deploymentPlans and approvals for this persona via authoritative
+            # references (plan_id, persona_id, persona_capital_binding_id, runtime_binding_id,
+            # capital_pool_id, artifact_id, registry_id, approval_decision_id) and owner reads.
+            persona_meta = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+            auth_readback = (
+                persona_meta.get("provisioning_authoritative_readback")
+                if isinstance(persona_meta.get("provisioning_authoritative_readback"), dict)
+                else {}
+            )
+            dep_readback = auth_readback.get("deployment") if isinstance(auth_readback.get("deployment"), dict) else {}
+            gov_readback = auth_readback.get("governance") if isinstance(auth_readback.get("governance"), dict) else {}
+            reg_readback = auth_readback.get("registry") if isinstance(auth_readback.get("registry"), dict) else {}
+
+            persona_binding_ids = {
+                str(b.get("id") or b.get("binding_id") or "").strip()
+                for b in persona_bindings
+                if str(b.get("id") or b.get("binding_id") or "").strip()
+            }
+            for meta_key in ("persona_capital_binding_id", "binding_id"):
+                val = str(persona_meta.get(meta_key) or "").strip()
+                if val:
+                    persona_binding_ids.add(val)
+
+            runtime_binding_ids = {
+                str(rb.get("binding_id") or rb.get("runtime_binding_id") or rb.get("id") or "").strip()
+                for rb in runtime_bindings_for_persona
+                if isinstance(rb, dict)
+                and str(rb.get("binding_id") or rb.get("runtime_binding_id") or rb.get("id") or "").strip()
+            }
+            for meta_key in ("runtime_binding_id", "runtime_id"):
+                val = str(persona_meta.get(meta_key) or "").strip()
+                if val:
+                    runtime_binding_ids.add(val)
+
+            persona_capital_pool_ids = {
+                str(b.get("capital_pool_id") or "").strip()
+                for b in persona_bindings
+                if isinstance(b, dict) and str(b.get("capital_pool_id") or "").strip()
+            } | {
+                str(p.get("pool_id") or p.get("id") or "").strip()
+                for p in capital_pools_for_persona
+                if isinstance(p, dict) and str(p.get("pool_id") or p.get("id") or "").strip()
+            } | {
+                str(rb.get("capital_pool_id") or "").strip()
+                for rb in runtime_bindings_for_persona
+                if isinstance(rb, dict) and str(rb.get("capital_pool_id") or "").strip()
+            }
+            for meta_key in ("capital_pool_id", "internal_paper_capital_pool_id", "legacy_paper_capital_pool_id"):
+                val = str(persona_meta.get(meta_key) or "").strip()
+                if val:
+                    persona_capital_pool_ids.add(val)
+
+            known_plan_ids = {
+                str(rb.get("plan_id") or rb.get("deployment_plan_id") or "").strip()
+                for rb in runtime_bindings_for_persona
+                if isinstance(rb, dict) and str(rb.get("plan_id") or rb.get("deployment_plan_id") or "").strip()
+            }
+            for candidate_plan_id in (
+                persona_meta.get("deployment_plan_id"),
+                dep_readback.get("plan_id"),
+            ):
+                val = str(candidate_plan_id or "").strip()
+                if val:
+                    known_plan_ids.add(val)
+
+            all_candidate_binding_ids = persona_binding_ids | runtime_binding_ids
+            expected_tenant = str(
+                persona.get("tenant_id")
+                or persona_meta.get("tenant_id")
+                or ""
+            ).strip()
+            if not expected_tenant:
+                try:
+                    expected_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None).get("id") or "").strip()
+                except Exception:
+                    expected_tenant = ""
+
+            def _record_tenant_matches(record: Dict[str, Any]) -> bool:
+                rec_meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+                rec_tenant = str(
+                    record.get("tenant_id")
+                    or record.get("tenantId")
+                    or record.get("owner_tenant")
+                    or rec_meta.get("tenant_id")
+                    or rec_meta.get("tenantId")
+                    or ""
+                ).strip()
+                return not rec_tenant or not expected_tenant or rec_tenant == expected_tenant
+
+            def _plan_matches_persona(plan: Dict[str, Any]) -> bool:
+                if not isinstance(plan, dict) or not _record_tenant_matches(plan):
                     return False
-                did = str(decision.get("decision_id") or decision.get("id") or decision.get("item_id") or "").strip()
-                if did and did in known_approval_ids:
+                pid = str(plan.get("id") or plan.get("plan_id") or "").strip()
+                if pid and pid in known_plan_ids:
                     return True
-                target_id = str(decision.get("target_id") or decision.get("plan_id") or "").strip()
-                if target_id and target_id in approval_target_ids:
+                plan_meta = plan.get("metadata") if isinstance(plan.get("metadata"), dict) else {}
+                plan_persona = str(
+                    plan.get("sponsor_persona_id")
+                    or plan.get("persona_id")
+                    or plan_meta.get("persona_id")
+                    or ""
+                ).strip()
+                if plan_persona and plan_persona == persona_id:
+                    return True
+                plan_pcb = str(
+                    plan.get("persona_capital_binding_id")
+                    or plan_meta.get("persona_capital_binding_id")
+                    or ""
+                ).strip()
+                if plan_pcb and plan_pcb in persona_binding_ids:
+                    return True
+                plan_binding_id = str(plan.get("binding_id") or plan.get("runtime_binding_id") or "").strip()
+                if plan_binding_id and plan_binding_id in all_candidate_binding_ids:
+                    return True
+                if all_candidate_binding_ids & {
+                    str(bid).strip() for bid in (plan.get("binding_ids") or []) if str(bid).strip()
+                }:
+                    return True
+                plan_pool_id = str(plan.get("capital_pool_id") or plan.get("target_pool_id") or "").strip()
+                if plan_pool_id and plan_pool_id in persona_capital_pool_ids:
                     return True
                 return False
 
-            for decision in all_approvals:
-                if _approval_matches_persona(decision):
-                    did = str(decision.get("decision_id") or decision.get("id") or decision.get("item_id") or "").strip()
-                    if did:
-                        if did in seen_approval_ids:
+            deployment_plans_for_persona: List[Dict[str, Any]] = []
+            approvals_for_persona: List[Dict[str, Any]] = []
+            if all_plans is not None:
+                try:
+                    seen_plan_ids: set[str] = set()
+                    for plan in all_plans:
+                        if _plan_matches_persona(plan):
+                            pid = str(plan.get("id") or plan.get("plan_id") or "").strip()
+                            if pid:
+                                if pid in seen_plan_ids:
+                                    continue
+                                seen_plan_ids.add(pid)
+                            deployment_plans_for_persona.append(plan)
+
+                    plan_ids = set(seen_plan_ids) | known_plan_ids
+                    artifact_and_registry_ids: set[str] = set()
+                    known_approval_ids: set[str] = set()
+                    for candidate_target in (
+                        persona_meta.get("strategy_artifact_id"),
+                        persona_meta.get("artifact_id"),
+                        persona_meta.get("strategy_registry_id"),
+                        persona_meta.get("registry_id"),
+                        reg_readback.get("artifact_id"),
+                        reg_readback.get("registry_id"),
+                        dep_readback.get("artifact_id"),
+                    ):
+                        val = str(candidate_target or "").strip()
+                        if val:
+                            artifact_and_registry_ids.add(val)
+
+                    for candidate_apv in (
+                        persona_meta.get("approval_decision_id"),
+                        persona_meta.get("strategy_artifact_approval_decision_id"),
+                        gov_readback.get("approval_decision_id"),
+                        gov_readback.get("decision_id"),
+                        dep_readback.get("approval_decision_id"),
+                    ):
+                        val = str(candidate_apv or "").strip()
+                        if val:
+                            known_approval_ids.add(val)
+
+                    for rb in runtime_bindings_for_persona:
+                        if not isinstance(rb, dict):
                             continue
-                        seen_approval_ids.add(did)
-                    approvals_for_persona.append(decision)
+                        for rb_target in (rb.get("artifact_id"), rb.get("registry_id")):
+                            val = str(rb_target or "").strip()
+                            if val:
+                                artifact_and_registry_ids.add(val)
+                        rb_meta = rb.get("metadata") if isinstance(rb.get("metadata"), dict) else {}
+                        attestation = (
+                            rb_meta.get("authoritative_loader_attestation")
+                            if isinstance(rb_meta.get("authoritative_loader_attestation"), dict)
+                            else {}
+                        )
+                        for rb_apv in (
+                            rb.get("approval_decision_id"),
+                            rb_meta.get("approval_decision_id"),
+                            attestation.get("approval_decision_id"),
+                        ):
+                            val = str(rb_apv or "").strip()
+                            if val:
+                                known_approval_ids.add(val)
+                        for rb_att_target in (attestation.get("artifact_id"), attestation.get("registry_id")):
+                            val = str(rb_att_target or "").strip()
+                            if val:
+                                artifact_and_registry_ids.add(val)
 
-            get_apv_fn = getattr(_service, "get_approval_decision", None)
-            if callable(get_apv_fn):
-                for aid in sorted(known_approval_ids - seen_approval_ids):
-                    fetched_apv = get_apv_fn(aid)
-                    if isinstance(fetched_apv, dict) and _approval_matches_persona(fetched_apv):
-                        seen_approval_ids.add(aid)
-                        approvals_for_persona.append(fetched_apv)
-        except Exception:  # pragma: no cover - defensive: never break detail page
-            pass
-        surfaces["deployment_plans"] = _dataset_surface_status(
-            "deployment_plans",
-            snapshot_at=snapshot_at,
-            has_data=bool(deployment_plans_for_persona),
-            missing_message="No deployment plans found for this persona.",
-        )
-        surfaces["approvals"] = _dataset_surface_status(
-            "approval_decisions",
-            snapshot_at=snapshot_at,
-            has_data=bool(approvals_for_persona),
-            missing_message="No approval decisions found for this persona's plans.",
-        )
+                    for plan in deployment_plans_for_persona:
+                        if not isinstance(plan, dict):
+                            continue
+                        for plan_target in (
+                            plan.get("artifact_id"),
+                            plan.get("strategy_artifact_id"),
+                            plan.get("registry_id"),
+                        ):
+                            val = str(plan_target or "").strip()
+                            if val:
+                                artifact_and_registry_ids.add(val)
+                        plan_apv = str(plan.get("approval_decision_id") or "").strip()
+                        if plan_apv:
+                            known_approval_ids.add(plan_apv)
 
-        data = {
-            "persona": persona,
-            "bindings": enriched_bindings,
-            "deploymentPlans": deployment_plans_for_persona,
-            "approvals": approvals_for_persona,
-            "sessions": sessions,
-            "teaching_sessions": teaching_sessions,
-            "allowedActions": allowed_actions,
-            "health": health_payload,
-            "runtimeBindings": runtime_bindings_for_persona,
-            "capitalPools": capital_pools_for_persona,
-            "activeIncidents": active_incidents_for_persona,
-            "latestTelemetry": latest_telemetry_summary,
-        }
+                    approval_target_ids = plan_ids | artifact_and_registry_ids
+                    all_approvals = _service.list_approval_decisions()
+                    seen_approval_ids: set[str] = set()
 
-        return {
-            "data": data,
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": surfaces,
-            },
-        }
+                    def _approval_matches_persona(decision: Dict[str, Any]) -> bool:
+                        if not isinstance(decision, dict) or not _record_tenant_matches(decision):
+                            return False
+                        did = str(decision.get("decision_id") or decision.get("id") or decision.get("item_id") or "").strip()
+                        if did and did in known_approval_ids:
+                            return True
+                        target_id = str(decision.get("target_id") or decision.get("plan_id") or "").strip()
+                        if target_id and target_id in approval_target_ids:
+                            return True
+                        return False
+
+                    for decision in all_approvals:
+                        if _approval_matches_persona(decision):
+                            did = str(decision.get("decision_id") or decision.get("id") or decision.get("item_id") or "").strip()
+                            if did:
+                                if did in seen_approval_ids:
+                                    continue
+                                seen_approval_ids.add(did)
+                            approvals_for_persona.append(decision)
+                except Exception:  # pragma: no cover - defensive: never break detail page
+                    pass
+            surfaces["deployment_plans"] = _dataset_surface_status(
+                "deployment_plans",
+                snapshot_at=snapshot_at,
+                has_data=bool(deployment_plans_for_persona),
+                missing_message="No deployment plans found for this persona.",
+            )
+            surfaces["approvals"] = _dataset_surface_status(
+                "approval_decisions",
+                snapshot_at=snapshot_at,
+                has_data=bool(approvals_for_persona),
+                missing_message="No approval decisions found for this persona's plans.",
+            )
+
+            data = {
+                "persona": persona,
+                "bindings": enriched_bindings,
+                "deploymentPlans": deployment_plans_for_persona,
+                "approvals": approvals_for_persona,
+                "sessions": sessions,
+                "teaching_sessions": teaching_sessions,
+                "allowedActions": allowed_actions,
+                "health": health_payload,
+                "runtimeBindings": runtime_bindings_for_persona,
+                "capitalPools": capital_pools_for_persona,
+                "activeIncidents": active_incidents_for_persona,
+                "latestTelemetry": latest_telemetry_summary,
+            }
+
+            return {
+                "data": data,
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": surfaces,
+                },
+            }
 
 
     @router.get("/bff/personas/{persona_id}")
@@ -545,67 +557,49 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         authorization: Optional[str] = Header(default=None),
     ):
         """BFF: persona detail."""
-        identity = _extract_identity(authorization)
-        _require_read_role(identity)
-        snapshot_at = utc_now()
-        caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        directory = _get_persona_directory_snapshot(caller_tenant, snapshot_at=snapshot_at)
-        raw = directory.records_by_id.get(persona_id)
-        if not raw:
-            try:
-                prov_record = _persona_provisioning_store().get_by_persona(caller_tenant, persona_id)
-                if prov_record is not None:
-                    persona_proj, meta_proj = _persona_record_for_provisioning(
-                        prov_record,
-                        payload=prov_record.request_payload,
-                        owner=str(prov_record.request_payload.get("requested_by") or identity.operator_id),
-                    )
-                    raw = persona_proj
-            except HTTPException:
-                raise
-            except Exception as exc:
-                log.warning("Failed to lookup persona %s from durable provisioning store: dependency %s unavailable", persona_id, "persona_provisioning_store")
+        with request_read_scope():
+            identity = _extract_identity(authorization)
+            _require_read_role(identity)
+            snapshot_at = utc_now()
+            caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+            raw = _get_persona_record_for_detail(
+                persona_id,
+                caller_tenant,
+                fallback_owner=identity.operator_id,
+            )
+            if not raw:
+                _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=snapshot_at), label="Persona")
                 raise _bff_error(
-                    503,
-                    ErrorCode.DEPENDENCY_UNAVAILABLE,
-                    "Persona durable readback is unavailable",
-                    "Authoritative provisioning store is unreachable or degraded",
-                    precondition_failed="persona_provisioning_store",
-                    suggestion="Inspect persona provisioning persistence health before retrying",
-                ) from exc
-        if not raw:
-            _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=snapshot_at), label="Persona")
-            raise _bff_error(
-                404, ErrorCode.RESOURCE_NOT_FOUND,
-                "Persona not found",
-                f"Persona {persona_id} does not exist",
+                    404, ErrorCode.RESOURCE_NOT_FOUND,
+                    "Persona not found",
+                    f"Persona {persona_id} does not exist",
+                )
+            dto = _project_persona_dto(
+                raw,
+                overlay=None,
+                routed_strategies=_routed_strategies_for_persona(persona_id),
             )
-        dto = _project_persona_dto(
-            raw,
-            overlay=None,
-            routed_strategies=_routed_strategies_for_persona(persona_id),
-        )
-        containment = _service.get_persona_containment(persona_id)
-        if containment:
-            containment_state = str(containment.get("containment_state") or "frozen")
-            dto["containment_state"] = containment_state
-            dto["containmentState"] = containment_state
-            dto["frozen"] = containment_state == "frozen"
-            dto["containment"] = containment
-        meta = _read_surface_meta(
-            "personas", "persona_detail",
-            snapshot_at=snapshot_at,
-        )
-        if containment:
-            meta.setdefault("surfaces", {})["containment"] = _dataset_surface_status(
-                "containments",
+            containment = _service.get_persona_containment(persona_id)
+            if containment:
+                containment_state = str(containment.get("containment_state") or "frozen")
+                dto["containment_state"] = containment_state
+                dto["containmentState"] = containment_state
+                dto["frozen"] = containment_state == "frozen"
+                dto["containment"] = containment
+            meta = _read_surface_meta(
+                "personas", "persona_detail",
                 snapshot_at=snapshot_at,
-                has_data=True,
             )
-        return {
-            "data": dto,
-            "meta": meta,
-        }
+            if containment:
+                meta.setdefault("surfaces", {})["containment"] = _dataset_surface_status(
+                    "containments",
+                    snapshot_at=snapshot_at,
+                    has_data=True,
+                )
+            return {
+                "data": dto,
+                "meta": meta,
+            }
 
 
     @router.patch("/bff/personas/{persona_id}")
