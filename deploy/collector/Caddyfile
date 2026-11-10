@@ -1,0 +1,35 @@
+# Read-only HTTPS bundle server for Pantheon collector host (SD §6.2, §6.5, §6.6)
+# Exposes only /status.json and /bundles/* to GET/HEAD requests carrying the bearer token.
+
+{$COLLECTOR_DOMAIN} {
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Cache-Control "no-store"
+        -Server
+    }
+
+    request_body {
+        max_size 4KB
+    }
+
+    @write_methods not method GET HEAD
+    respond @write_methods "{\"error\":\"method_not_allowed_read_only\"}" 405
+
+    @missing_or_bad_token not header Authorization "Bearer {$COLLECTOR_BUNDLE_TOKEN}"
+    respond @missing_or_bad_token "{\"error\":\"unauthorized\"}" 401
+
+    @allowed_paths path /status.json /bundles/*
+    handle @allowed_paths {
+        root * /srv/collector
+        file_server {
+            hide .*
+        }
+    }
+
+    handle {
+        respond "{\"error\":\"not_found\"}" 404
+    }
+}

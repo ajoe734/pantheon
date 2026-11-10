@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Pantheon Collector 90-Day Bundle Pruner Timer
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=pantheon-collector-prune.service
+
+[Install]
+WantedBy=timers.target
