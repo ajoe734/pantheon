@@ -19,6 +19,24 @@ if _RESEARCH_DIR not in sys.path:
 
 from replication.gate_schema import ReplicationRequest, CandidateAdmissionStatus
 from replication.gate import ReplicationGate, create_promotion_request
+from services.research.vectorbt.adapter.vectorbt_adapter import (
+    build_canonical_tw_strategy_artifact,
+    build_governed_tw_replication_dataset,
+    run_replication_backtest_protocol,
+)
+
+_CACHED_SMOKE_BACKTEST = None
+
+
+def _get_smoke_backtest() -> dict:
+    global _CACHED_SMOKE_BACKTEST
+    if _CACHED_SMOKE_BACKTEST is None:
+        _CACHED_SMOKE_BACKTEST = run_replication_backtest_protocol(
+            strategy_artifact=build_canonical_tw_strategy_artifact(),
+            dataset=build_governed_tw_replication_dataset(),
+            run_id="bt-smoke-001",
+        )
+    return dict(_CACHED_SMOKE_BACKTEST)
 
 
 def create_realistic_research_handoff() -> dict:
@@ -26,6 +44,7 @@ def create_realistic_research_handoff() -> dict:
     return {
         "task_id": "RS-002",
         "source_type": "academic_paper",
+        "backtest_evaluation": _get_smoke_backtest(),
         "source_metadata": {
             "api_endpoint": "https://api.openalex.org/works/W3052820607",
             "retrieved_at": "2026-04-06T10:00:00Z",
