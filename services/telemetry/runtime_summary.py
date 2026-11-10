@@ -1788,6 +1788,180 @@ class RuntimeSummaryProjectionStore:
         self._persist()
         return json.loads(json.dumps(current))
 
+    def backfill_missing_trade_episodes(
+        self, trade_episode_store: Any, binding_events_reader: Any
+    ) -> int:
+        """Project canonical lifecycle events that never reached the episode store.
+
+        Candidates are non-retired summaries whose ``ledger_fill_count`` exceeds
+        the number of retained ``paper_fill_simulated`` events. Events come from
+        ``binding_events_reader(binding_id, tenant_id=..., limit=100)``; those of
+        the matching runtime with a journey id are replayed chronologically and,
+        when ``trade_episode_id`` is absent, given a deterministic UUID5 per
+        binding, position key and opening journey. Returns projected event count.
+        """
+        if (
+            trade_episode_store is None
+            or binding_events_reader is None
+            or not hasattr(trade_episode_store, "retained_paper_fill_events")
+            or not hasattr(trade_episode_store, "project_event")
+        ):
+            return 0
+        with self._lock:
+            candidates = [
+                dict(current)
+                for current in self._summaries.values()
+                if isinstance(current, dict)
+                and current.get("retired") is not True
+                and str(current.get("state") or "") != "retired"
+            ]
+        projected = 0
+        for current in candidates:
+            identity = _summary_identity(current)
+            if identity is None:
+                continue
+            tenant_id, runtime_id = identity
+            binding_id = str(
+                current.get("binding_id") or current.get("runtime_binding_id") or ""
+            ).strip()
+            lfc = current.get("ledger_fill_count")
+            if (
+                not binding_id
+                or not isinstance(lfc, int)
+                or isinstance(lfc, bool)
+                or lfc <= 0
+            ):
+                continue
+            retained = trade_episode_store.retained_paper_fill_events(
+                tenant_id=tenant_id, runtime_id=runtime_id, binding_id=binding_id
+            )
+            if lfc <= len(retained):
+                continue
+            try:
+                raw_events = binding_events_reader(
+                    binding_id, tenant_id=tenant_id, limit=100
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("trade episode backfill read failed for %s: %s", binding_id, exc)
+                continue
+            projected += self._project_missing_episodes(
+                trade_episode_store, raw_events or [], binding_id, runtime_id
+            )
+        return projected
+
+    @staticmethod
+    def _project_missing_episodes(
+        trade_episode_store: Any,
+        raw_events: list[Any],
+        binding_id: str,
+        runtime_id: str,
+    ) -> int:
+        def _journey(ev: dict[str, Any]) -> str:
+            env = ev.get("correlation_envelope")
+            return (
+                _clean_text(ev.get("journey_id"))
+                or (_clean_text(env.get("journey_id")) if isinstance(env, dict) else None)
+                or ""
+            )
+
+        def _int(v: Any) -> int:
+            return v if isinstance(v, int) and not isinstance(v, bool) else 0
+
+        def _order(ev: dict[str, Any]) -> tuple[str, int, int]:
+            return (
+                str(ev.get("created_at") or ""),
+                _int(ev.get("sequence_no")),
+                _int(ev.get("ingested_seq")),
+            )
+
+        events = [
+            ev
+            for ev in raw_events
+            if isinstance(ev, dict)
+            and str(ev.get("runtime_id") or runtime_id) == runtime_id
+            and ev.get("event_type") in _LIFECYCLE_IDENTITY_EVENT_TYPES
+            and ev.get("event_id")
+            and _journey(ev)
+        ]
+        events.sort(key=_order)
+        journeys: dict[str, list[dict[str, Any]]] = {}
+        for ev in events:
+            journeys.setdefault(_journey(ev), []).append(ev)
+
+        open_episode: dict[str, tuple[str, float]] = {}
+        projected = 0
+        for journey_id, j_events in journeys.items():
+            fill = next(
+                (e for e in j_events if e.get("event_type") == "paper_fill_simulated"),
+                None,
+            )
+            if fill is None:
+                continue
+            meta = fill.get("metadata") if isinstance(fill.get("metadata"), dict) else {}
+            metrics = fill.get("metrics") if isinstance(fill.get("metrics"), dict) else {}
+            raw_sym = meta.get("symbol") or metrics.get("symbol")
+            pos_key, _desc = _fill_instrument_descriptor(meta, raw_sym)
+            if not isinstance(pos_key, str) or not pos_key.strip():
+                continue
+            post_qty = _finite_number(
+                meta.get("position_quantity", metrics.get("position_quantity"))
+            )
+            existing_id = _clean_text(meta.get("trade_episode_id")) or _clean_text(
+                fill.get("trade_episode_id")
+            )
+            prev = open_episode.get(pos_key)
+            prev_id, prev_qty = prev if prev else (None, 0.0)
+            new_id = existing_id or str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"pantheon:trade-episode:{binding_id}:{pos_key}:{journey_id}",
+                )
+            )
+            reversal: Optional[dict[str, Any]] = None
+            if post_qty is None:
+                ep_id = existing_id or prev_id or new_id
+            elif abs(post_qty) <= 1e-12:
+                ep_id = existing_id or prev_id or new_id
+                open_episode.pop(pos_key, None)
+            elif prev_id is None or abs(prev_qty) <= 1e-12:
+                ep_id = new_id
+                open_episode[pos_key] = (ep_id, post_qty)
+            elif (prev_qty > 0) == (post_qty > 0):
+                ep_id = prev_id
+                open_episode[pos_key] = (ep_id, post_qty)
+            else:
+                ep_id = new_id
+                reversal = {
+                    "closed_episode_id": prev_id,
+                    "close_quantity": -prev_qty,
+                    "opened_episode_id": new_id,
+                    "open_quantity": post_qty,
+                }
+                open_episode[pos_key] = (ep_id, post_qty)
+            for ev in j_events:
+                ev_copy = json.loads(json.dumps(ev))
+                ev_meta = ev_copy.get("metadata")
+                if not isinstance(ev_meta, dict):
+                    ev_meta = {}
+                    ev_copy["metadata"] = ev_meta
+                if not (
+                    _clean_text(ev_copy.get("trade_episode_id"))
+                    or _clean_text(ev_meta.get("trade_episode_id"))
+                ):
+                    ev_meta["trade_episode_id"] = ep_id
+                if reversal and ev_copy.get("event_type") == "paper_fill_simulated":
+                    ev_meta.setdefault("reversal", reversal)
+                try:
+                    if trade_episode_store.project_event(ev_copy) is not None:
+                        projected += 1
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "trade episode backfill projection failed for %s: %s",
+                        ev_copy.get("event_id"),
+                        exc,
+                    )
+        return projected
+
     def backfill_open_position_costs(self, trade_episode_store: Any) -> int:
         """Rebuild missing cost, currency, and broker state once at startup.
 
