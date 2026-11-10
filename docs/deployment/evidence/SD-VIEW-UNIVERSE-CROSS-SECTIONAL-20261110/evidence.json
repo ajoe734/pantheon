@@ -1,0 +1,12 @@
+{
+  "task_id": "SD-VIEW-UNIVERSE-CROSS-SECTIONAL-20261110",
+  "owner": "Claude",
+  "deliverable": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_VIEW_UNIVERSE_CROSS_SECTIONAL.md",
+  "acceptance": {
+    "1_persona_universe_and_point_in_time": "sections 3 and 4",
+    "2_instrument_layer_handoff_and_open_questions": "sections 5 and 7 (Q1-Q9, none decided)",
+    "3_no_source_change": "git diff --name-only shows only docs/"
+  },
+  "source_files_changed": [],
+  "unverified": ["delisted-symbol history in governed daily bars", "point-in-time industry classification", "governed index membership dataset"]
+}
