@@ -1,0 +1,16 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-PERSONA-DETAIL-BOUNDED-READS-20261109-CI-RED-32445B63A324",
+  "source_task": "BFF-PERSONA-DETAIL-BOUNDED-READS-20261109",
+  "source_pr": 7111,
+  "source_head_sha": "07da5028be6b5f773c12e24232483c2ebc4884a1",
+  "failed_check": "Persona provisioning owner contracts",
+  "failed_run_id": 42739330959,
+  "failed_job_id": 129576226918,
+  "root_cause": "Transient file-creation vs write/flush race in scripts/test_dev_remote_guarded_exec.py::test_sender_and_ssh_stay_in_existing_guard_pgid during 'Persona provisioning owner contracts' (run 42739330959, job 129576226918). The fake_ssh fixture executes open(os.environ['TEST_SSH_IDENTITY'], 'w').write(...), creating identity.json with 0 bytes before the JSON payload is flushed, while the test polls wait_until(identity.exists) every 10ms and immediately calls json.loads(identity.read_text()), raising json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0) on an empty read. All 2083 other tests in the job passed. PR #7111 only modifies BFF persona detail routes/service/tests/evidence and does not touch scripts/test_dev_remote_guarded_exec.py or persona provisioning owner contracts.",
+  "fix": "Re-ran failed job of run 42739330959 (gh run rerun 42739330959 --failed, rerun job 129582517482) on exact approved head 07da5028be6b5f773c12e24232483c2ebc4884a1 without modifying the source branch, preserving the canonical review approval and review-proof tag.",
+  "verification": {
+    "Branch CI Gate / Smoke acceptance": "pass (run 42739330916, job 129576474899)",
+    "Persona Owner Contract / Persona provisioning owner contracts": "pass (run 42739330959, job 129582517482)"
+  },
+  "source_pr_status": "Merged into dev at f4104440b457884c626bcd3d795c7effba9f1c3b (2026-11-10T02:28:35Z) by canonical_auto_integrator after rerun passed; no longer stranded."
+}

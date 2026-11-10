@@ -260,3 +260,255 @@ def test_snippet_limit_does_not_hide_an_unavailable_owner(fleet, monkeypatch):
     surface = result["surfaces"]["persona_fleet"]
     assert surface["status"] == "unavailable"
     assert "last persona teaching owner offline" in json.dumps(surface)
+
+
+# ---------------------------------------------------------------------------
+# BFF-AI-FLEET-EMPTY-OK-20261109: a persona that holds no session, teaching
+# session, binding or strategy is a real empty, and a failed owner read is not.
+# These run through the production ReadSurfacePorts composition.
+# ---------------------------------------------------------------------------
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports  # noqa: E402
+from services.control_plane.bff.ports.persona_capital_runtime import CapitalPoolPort  # noqa: E402
+from services.control_plane.bff.ports.persona_training import (  # noqa: E402
+    PersonaRegistryReadsPort,
+    PersonaTrainingDomainPort,
+)
+
+_TENANT_FILTER = lambda rows: [r for r in rows if r.get("tenant_id") in (None, "tenant-a")]  # noqa: E731
+
+
+def _real_persona(persona_id="p-draft", lifecycle_state="draft"):
+    # Shape of the persona rows the fleet reads: no provenance fields.
+    return {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "name": persona_id,
+        "lifecycle_state": lifecycle_state,
+        "tenant_id": "tenant-a",
+    }
+
+
+class _TrainingStore:
+    """The persona registry store behind PersonaRegistryReadsPort."""
+
+    def __init__(self, sessions=None, teaching=None, fail=None):
+        self.sessions = list(sessions or [])
+        self.teaching = list(teaching or [])
+        self.fail = fail
+
+    def list_sessions_for_persona(self, persona_id, status=None):
+        if self.fail == "sessions":
+            raise RuntimeError("sessions owner offline")
+        return list(self.sessions)
+
+    def list_teaching_sessions_for_persona(self, persona_id, status=None):
+        if self.fail == "teaching":
+            raise RuntimeError("teaching owner offline")
+        return list(self.teaching)
+
+
+def _ports(*, personas=None, bindings=None, training_store="default", binding_error=None,
+           strategy_error=None, monkeypatch=None):
+    ports = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"personas": personas if personas is not None else [_real_persona()]},
+    )
+    if binding_error is not None:
+        def broken():
+            raise binding_error
+        ports.persona_capital_runtime.capital = CapitalPoolPort(
+            pools_provider=lambda: [], bindings_provider=broken
+        )
+    elif bindings is not None:
+        ports.persona_capital_runtime.capital = CapitalPoolPort(
+            pools_provider=lambda: [], bindings_provider=lambda: list(bindings)
+        )
+    if training_store == "default":
+        training_store = _TrainingStore()
+    if training_store is not None:
+        ports.persona_training = PersonaTrainingDomainPort(
+            persona_port=PersonaRegistryReadsPort(store=training_store)
+        )
+    if strategy_error is not None:
+        def broken_specs(**kwargs):
+            raise strategy_error
+        monkeypatch.setattr(ports.research_knowledge_source, "list_strategy_specs", broken_specs)
+    return ports
+
+
+def _service(ports):
+    return ManagementService(read_store=ports, utc_now=lambda: NOW)
+
+
+_READS = {
+    "persona_sessions": "get_context_sessions_for_persona",
+    "persona_teaching_sessions": "get_context_teaching_sessions_for_persona",
+    "persona_bindings": "get_context_bindings_for_persona",
+    "persona_strategies": "get_context_strategies_for_persona",
+}
+
+
+def _read(service, subject):
+    return getattr(service, _READS[subject])("p-draft", record_filter=_TENANT_FILTER)
+
+
+@pytest.mark.parametrize("subject", sorted(_READS))
+def test_successful_empty_persona_read_is_ok(subject):
+    rows, obs = _read(_service(_ports()), subject)
+    assert rows == []
+    assert obs["status"] == "ok", obs
+    assert not obs.get("degradation_reason")
+
+
+@pytest.mark.parametrize("subject", sorted(_READS))
+def test_failed_persona_owner_read_is_unavailable(subject, monkeypatch):
+    kwargs = {
+        "persona_sessions": {"training_store": _TrainingStore(fail="sessions")},
+        "persona_teaching_sessions": {"training_store": _TrainingStore(fail="teaching")},
+        "persona_bindings": {"binding_error": RuntimeError("bindings owner offline")},
+        "persona_strategies": {"strategy_error": RuntimeError("strategies owner offline"), "monkeypatch": monkeypatch},
+    }[subject]
+    rows, obs = _read(_service(_ports(**kwargs)), subject)
+    assert rows == []
+    assert obs["status"] == "unavailable", obs
+    assert "owner offline" in obs["degradation_reason"]
+
+
+def test_persona_rows_from_the_owner_are_returned_and_scoped():
+    session = {"id": "s1", "persona_id": "p-draft", "tenant_id": "tenant-a", "status": "active"}
+    foreign = {"id": "s2", "persona_id": "p-draft", "tenant_id": "tenant-b"}
+    binding = {"id": "b1", "binding_id": "b1", "persona_id": "p-draft", "capital_pool_id": "pool1",
+               "tenant_id": "tenant-a"}
+    other = {"id": "b2", "binding_id": "b2", "persona_id": "p-other", "tenant_id": "tenant-a"}
+    service = _service(_ports(training_store=_TrainingStore(sessions=[session, foreign]),
+                              bindings=[binding, other]))
+    rows, obs = _read(service, "persona_sessions")
+    assert [r["id"] for r in rows] == ["s1"] and obs["status"] == "ok"
+    rows, obs = _read(service, "persona_bindings")
+    assert [r["id"] for r in rows] == ["b1"] and obs["status"] == "ok"
+
+
+def test_unconfigured_training_owner_cannot_tell_empty_from_failure():
+    ports = _ports(training_store=None)
+    for subject, strict in (
+        ("persona_sessions", "list_persona_sessions"),
+        ("persona_teaching_sessions", "list_persona_teaching_sessions"),
+    ):
+        rows, obs = _read(_service(ports), subject)
+        assert rows == []
+        assert obs["status"] == "degraded", obs
+        assert strict in obs["degradation_reason"] and "not configured" in obs["degradation_reason"]
+
+
+def test_unconfigured_binding_owner_cannot_tell_empty_from_failure():
+    ports = _ports()
+    ports.persona_capital_runtime.capital = CapitalPoolPort()
+    rows, obs = _read(_service(ports), "persona_bindings")
+    assert rows == []
+    assert obs["status"] == "degraded", obs
+    assert "read_bindings_for_persona" in obs["degradation_reason"]
+    assert "not configured" in obs["degradation_reason"]
+
+
+def test_store_without_a_raising_read_keeps_the_degraded_rule_and_names_the_reader():
+    store = SimpleNamespace(
+        get_bindings_for_persona=lambda _: [],
+        get_sessions_for_persona=lambda _: [],
+        get_teaching_sessions_for_persona=lambda _: [],
+    )
+    service = ManagementService(read_store=store, utc_now=lambda: NOW)
+    for subject, reader in (
+        ("persona_bindings", "get_bindings_for_persona"),
+        ("persona_sessions", "get_sessions_for_persona"),
+        ("persona_teaching_sessions", "get_teaching_sessions_for_persona"),
+    ):
+        rows, obs = _read(service, subject)
+        assert obs["status"] == "degraded", obs
+        assert reader in obs["degradation_reason"] and "cannot tell" in obs["degradation_reason"]
+
+
+def test_swallowing_get_methods_still_return_empty_to_other_callers():
+    ports = _ports(training_store=_TrainingStore(fail="sessions"),
+                   binding_error=RuntimeError("bindings owner offline"))
+    assert ports.get_sessions_for_persona("p-draft") == []
+    assert ports.get_bindings_for_persona("p-draft") == []
+
+
+def test_empty_read_still_fails_closed_for_other_subjects():
+    store = SimpleNamespace(list_evolution_decisions=lambda: [], list_capital_pools=lambda: [])
+    service = ManagementService(read_store=store, utc_now=lambda: NOW)
+    assert service.get_context_evolution_decisions()[1]["status"] == "degraded"
+    assert service.get_context_capital_pools()[1]["status"] == "degraded"
+
+
+def test_allowed_actions_tell_empty_set_from_unheld_persona_and_owner_failure():
+    personas = [_real_persona("p-draft", "draft"), _real_persona("p-paper", "paper_running")]
+    service = _service(_ports(personas=personas))
+
+    actions, obs = service.get_context_persona_allowed_actions("p-draft", record_filter=_TENANT_FILTER)
+    assert actions["canActivate"] is True and obs["status"] == "ok"
+
+    # paper_running is not a state the owner derives any action for: the real
+    # code returns {} for a persona it holds.
+    actions, obs = service.get_context_persona_allowed_actions("p-paper", record_filter=_TENANT_FILTER)
+    assert actions == {} and obs["status"] == "ok", obs
+
+    actions, obs = service.get_context_persona_allowed_actions("p-missing", record_filter=_TENANT_FILTER)
+    assert actions is None and obs["status"] == "degraded"
+    assert "not held by the persona owner" in obs["degradation_reason"]
+
+
+def test_allowed_actions_owner_read_failure_is_unavailable():
+    def broken():
+        raise RuntimeError("persona owner offline")
+
+    ports = _ports()
+    from services.control_plane.bff.ports.persona_capital_runtime import PersonaFleetPort
+    ports.persona_capital_runtime.persona = PersonaFleetPort(records_provider=broken)
+    actions, obs = _service(ports).get_context_persona_allowed_actions("p-draft", record_filter=_TENANT_FILTER)
+    assert actions is None and obs["status"] == "unavailable", obs
+
+
+def test_allowed_actions_of_a_foreign_tenant_persona_are_not_returned():
+    foreign = dict(_real_persona("p-foreign"), tenant_id="tenant-b")
+    service = _service(_ports(personas=[foreign]))
+    actions, obs = service.get_context_persona_allowed_actions("p-foreign", record_filter=_TENANT_FILTER)
+    assert actions is None and obs["status"] == "degraded"
+
+
+def test_fleet_surface_is_ok_with_healthy_owners_and_real_row_shapes(monkeypatch):
+    personas = [_real_persona("p-draft", "draft"), _real_persona("p-research", "research_only"),
+                _real_persona("p-paper", "paper_running")]
+    # Shapes taken from the rows the owners hand the fleet in the mgmt-read-001
+    # fixtures: none carries owner provenance fields.
+    runtime = {"id": "rb-1", "binding_id": "rb-1", "runtime_id": "rt-1", "capital_pool_id": "pool-1",
+               "deployment_stage": "paper", "status": "running", "tenant_id": "tenant-a"}
+    binding = {"id": "binding-1", "binding_id": "binding-1", "persona_id": "p-paper",
+               "capital_pool_id": "pool-1", "status": "active", "tenant_id": "tenant-a"}
+    ports = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": personas,
+            "runtime_bindings": [runtime],
+            "bindings": [binding],
+            "capital_pools": [{"id": "pool-1", "pool_id": "pool-1", "tenant_id": "tenant-a"}],
+            "evolution_decisions": [{"decision_id": "dec-1", "target_id": "p-other", "tenant_id": "tenant-a"}],
+        },
+        lifecycle_telemetry_governance_kwargs={
+            "telemetry_summaries": {
+                "rt-1": {"runtime_id": "rt-1", "pnl": 1.0, "collected_at": NOW, "tenant_id": "tenant-a"},
+            },
+            "incidents": {},
+        },
+        persona_training_kwargs={"persona_port": PersonaRegistryReadsPort(store=_TrainingStore())},
+    )
+    monkeypatch.setattr(bff_main, "read_store", ports)
+    monkeypatch.setattr(bff_main, "_management_ai_context_service", _service(ports))
+    monkeypatch.setattr(bff_main, "_list_persona_records", lambda *args: personas)
+    result = collect()
+    surface = result["surfaces"]["persona_fleet"]
+    assert surface["status"] == "ok", [o for o in surface["owner_observations"] if o["status"] != "ok"]
+    items = result["snippets"]["persona_fleet"]["items"]
+    assert sorted(item["id"] for item in items) == ["p-draft", "p-paper", "p-research"]
+    # The projection the fleet summary is built from is the same as before.
+    paper = next(item for item in items if item["id"] == "p-paper")
+    assert [b["id"] for b in paper["bindings"]] == ["binding-1"]
+    assert next(item for item in items if item["id"] == "p-draft")["bindings"] == []

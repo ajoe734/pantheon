@@ -979,3 +979,157 @@ def test_evolution_journal_preserves_synchronous_dispatch_filters_and_errors() -
     payload = journal_resp.json()
     assert "data" in payload
     assert payload["data"]["id"] == "management_evolution_journal"
+
+
+def test_alerts_returns_completed_contributors_when_governance_times_out() -> None:
+    """BFF-ALERTS-PARTIAL-20261109: when governance exceeds the route budget after
+    incident, kill_switch, and runtime finished, GET /bff/alerts returns the
+    completed alerts with source=bff_composed, status=degraded, reason=read_timeout,
+    and marks unfinished governance surfaces read_timeout."""
+    release = threading.Event()
+
+    def slow_review_queue(**_kwargs):
+        release.wait(0.5)
+        return [
+            {
+                "item_id": "review-dec-001",
+                "item_type": "ApprovalDecision",
+                "risk_level": "high",
+                "status": "pending",
+                "submitted_at": "2026-11-09T08:04:00Z",
+                "submitted_by": "governance-service",
+                "governance_outcome": "pending",
+            }
+        ]
+
+    previous = os.environ.get("PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS")
+    os.environ["PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS"] = "0.05"
+    try:
+        with _isolated_bff() as (client, store):
+            store.list_incidents = lambda **_kwargs: [
+                {
+                    "incident_id": "inc-001",
+                    "title": "Unexpected drawdown in persona-alpha",
+                    "severity": "high",
+                    "status": "open",
+                    "created_at": "2026-11-09T08:01:00Z",
+                }
+            ]
+            store.get_kill_switch_status = lambda: {
+                "active": True,
+                "status": "triggered",
+                "safe_mode_status": "soft",
+                "last_confirmed_at": "2026-11-09T08:02:00Z",
+                "last_triggered_at": "2026-11-09T08:02:30Z",
+            }
+            store.list_runtime_bindings = lambda: [
+                {
+                    "id": "runtime-042",
+                    "runtime_id": "runtime-042",
+                    "deployment_stage": "live",
+                    "status": "running",
+                    "plan_id": "plan-F-042",
+                }
+            ]
+            store.get_telemetry_summary = lambda runtime_id: (
+                {
+                    "runtime_id": "runtime-042",
+                    "window": "1h",
+                    "drawdown": 0.125,
+                    "fill_rate": 0.89,
+                    "avg_slippage_bps": 4.2,
+                    "collected_at": "2026-11-09T08:03:00Z",
+                }
+                if runtime_id == "runtime-042"
+                else None
+            )
+            store.list_governance_review_queue_items = slow_review_queue
+            store.list_approval_queue_items = lambda **_kwargs: []
+            store.dataset_source = lambda dataset: "service_store"
+
+            response = client.get("/bff/alerts", headers=HEADERS)
+    finally:
+        release.set()
+        if previous is None:
+            os.environ.pop("PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS", None)
+        else:
+            os.environ["PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS"] = previous
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert [a["alert_id"] for a in payload["alerts"]] == [
+        "alert-runtime-runtime-042",
+        "alert-kill-switch-state",
+        "alert-incident-inc-001",
+    ]
+    assert payload["summary"]["total_active"] == 3
+    assert payload["summary"]["by_category"] == {
+        "incident": 1,
+        "kill_switch": 1,
+        "runtime": 1,
+        "governance": 0,
+    }
+    surfaces = payload["meta"]["surfaces"]
+    assert surfaces["alerts"]["status"] == "degraded"
+    assert surfaces["alerts"]["source"] == "bff_composed"
+    assert surfaces["alerts"]["reason"] == "read_timeout"
+    assert surfaces["incident_feed"]["status"] == "ok"
+    assert surfaces["kill_switch"]["status"] == "ok"
+    assert surfaces["runtime_roster"]["status"] == "ok"
+    assert surfaces["telemetry_summary"]["status"] == "ok"
+    assert surfaces["review_queue"]["status"] == "degraded"
+    assert surfaces["review_queue"]["reason"] == "read_timeout"
+    assert surfaces["approval_queue"]["status"] == "degraded"
+    assert surfaces["approval_queue"]["reason"] == "read_timeout"
+
+
+def test_alerts_returns_timeout_fallback_when_incident_contributor_times_out() -> None:
+    """BFF-ALERTS-PARTIAL-20261109: when the first contributor (incident) exceeds
+    the route budget so no contributor finishes, GET /bff/alerts returns an empty
+    alert list with source=timeout_fallback and reason=read_timeout."""
+    release = threading.Event()
+
+    def slow_incidents(**_kwargs):
+        release.wait(0.5)
+        return [
+            {
+                "incident_id": "inc-001",
+                "title": "Slow incident owner",
+                "severity": "high",
+                "status": "open",
+                "created_at": "2026-11-09T08:01:00Z",
+            }
+        ]
+
+    previous = os.environ.get("PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS")
+    os.environ["PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS"] = "0.05"
+    try:
+        with _isolated_bff() as (client, store):
+            store.list_incidents = slow_incidents
+            store.get_kill_switch_status = lambda: {
+                "active": True,
+                "status": "triggered",
+                "safe_mode_status": "soft",
+                "last_triggered_at": "2026-11-09T08:02:30Z",
+            }
+            store.list_runtime_bindings = lambda: []
+            store.list_governance_review_queue_items = lambda **_kwargs: []
+            store.list_approval_queue_items = lambda **_kwargs: []
+            store.dataset_source = lambda dataset: "service_store"
+
+            response = client.get("/bff/alerts", headers=HEADERS)
+    finally:
+        release.set()
+        if previous is None:
+            os.environ.pop("PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS", None)
+        else:
+            os.environ["PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS"] = previous
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["alerts"] == []
+    assert payload["summary"]["total_active"] == 0
+    alerts_surface = payload["meta"]["surfaces"]["alerts"]
+    assert alerts_surface["status"] == "degraded"
+    assert alerts_surface["source"] == "timeout_fallback"
+    assert alerts_surface["reason"] == "read_timeout"

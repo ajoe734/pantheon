@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from datetime import datetime, timezone
+import inspect
 import json
 import logging
 import os
@@ -856,12 +857,21 @@ def create_incident_router(
         identity = _extract_ident(authorization)
         _require_read(identity)
         snapshot_at = _utc_now()
+        alerts_composer = _build_alerts_payload
+        completed_sections: Dict[str, Any] = {}
+        composer_kwargs: Dict[str, Any] = {}
+        params = inspect.signature(alerts_composer).parameters
+        if "completed_sections" in params or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        ):
+            composer_kwargs["completed_sections"] = completed_sections
         if run_management_read is not None:
             try:
                 return await run_management_read(
-                    _build_alerts_payload,
+                    alerts_composer,
                     snapshot_at,
                     timeout_seconds=_get_alerts_read_timeout(),
+                    **composer_kwargs,
                 )
             except Exception as exc:
                 from services.control_plane.bff.personas.routes.common import (
@@ -878,7 +888,11 @@ def create_incident_router(
                 log.warning(
                     "bff.alerts degraded fallback: %s (%s)", reason, type(exc).__name__
                 )
-                payload = _service.management_alerts_degraded_payload(snapshot_at)
+                payload = _service.management_alerts_degraded_payload(
+                    snapshot_at,
+                    reason=reason,
+                    completed_sections=dict(completed_sections),
+                )
                 if isinstance(payload, dict) and "meta" in payload and isinstance(payload["meta"], dict):
                     surfaces = payload["meta"].get("surfaces")
                     if isinstance(surfaces, dict) and "alerts" in surfaces and isinstance(surfaces["alerts"], dict):

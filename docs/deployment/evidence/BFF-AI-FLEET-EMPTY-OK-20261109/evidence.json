@@ -1,0 +1,21 @@
+{
+  "task_id": "BFF-AI-FLEET-EMPTY-OK-20261109",
+  "hosted_verification": "NOT RUN. No hosted reading, VM, SSH or workflow dispatch was made. Hosted verification belongs to MGMT-AI-RESIDUALS-ACCEPTANCE-20261109.",
+  "readers": [
+    {"subject": "persona_sessions", "read": "ReadSurfacePorts.list_persona_sessions", "raises_on_owner_failure": true, "classification": "empty_read_is_ok; unwired owner (OwnerReadUnconfiguredError) keeps degraded"},
+    {"subject": "persona_teaching_sessions", "read": "ReadSurfacePorts.list_persona_teaching_sessions", "raises_on_owner_failure": true, "classification": "same as persona_sessions"},
+    {"subject": "persona_bindings", "read": "ReadSurfacePorts.read_bindings_for_persona (new, raises; get_bindings_for_persona still swallows via _cached_port_records)", "raises_on_owner_failure": true, "classification": "empty_read_is_ok; unwired binding source keeps degraded"},
+    {"subject": "persona_strategies", "read": "ReadSurfacePorts.list_strategy_specs(persona_id=) -> research_knowledge_source (raises 503 DEPENDENCY_UNAVAILABLE)", "raises_on_owner_failure": true, "classification": "empty_read_is_ok"},
+    {"subject": "any store without a raising read (get_* only)", "classification": "cannot tell; keeps degraded; degradation_reason names the get_* reader and says it cannot tell failure from empty"},
+    {"subject": "persona_allowed_actions", "classification": "ok for a held persona incl. empty action set ({} for paper_running/research_only); degraded 'not held by the persona owner' for an absent or foreign-tenant persona; unavailable for owner read failure or unavailable persona surface. Tenant scoping now applies to the persona, because real action rows carry no tenant_id and were previously always dropped by the tenant filter."}
+  ],
+  "known_limit": "get_persona_allowed_actions derives canPause from get_sessions_for_persona, which swallows owner errors; a session read failure there can change canPause without marking the observation.",
+  "fail_closed_rule": "_typed_context_list default unchanged; asserted for evolution_decisions and capital_pools (test_empty_read_still_fails_closed_for_other_subjects).",
+  "negative_proof": "With management_read_models/service.py temporarily restored to the pre-change version (git show 45100d5fc~1) and NOT committed, test_persona_fleet_read_failures.py reported 14 failed, 23 passed; the changed file was restored and the suite then reported 37 passed.",
+  "commands": [
+    {"cmd": "/tmp/svc-venv/bin/python -m pytest -q services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py", "result": "37 passed"},
+    {"cmd": "pytest -q tests/test_mgmt_read_001_persona_fleet_owner_observations.py management_read_models tests/test_management_nl_assistant_provider.py test_persona_management.py", "result": "204 passed"},
+    {"cmd": "pytest -q tests/test_bff_test_architecture.py tests/test_pm12_request_scoped_reads.py", "result": "42 passed"}
+  ],
+  "no_existing_assertion_weakened": true
+}

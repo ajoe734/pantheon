@@ -40,6 +40,7 @@ from starlette.exceptions import HTTPException
 from services.control_plane.bff.command_adapters.base import ActionUnavailableError
 from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_cache, selected_tenant
 from services.control_plane.bff.ports.lifecycle_telemetry_governance import DomainGovernancePort
+from services.control_plane.bff.ports.persona_training import OwnerReadUnconfiguredError
 
 
 def _utc_now_rfc3339() -> str:
@@ -389,6 +390,29 @@ class CapitalPoolPort:
         if not persona_id:
             return []
         return self.list_bindings(persona_id=str(persona_id))
+
+    def read_bindings_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        """Bindings of one persona, raising when the owner read failed.
+
+        ``get_bindings_for_persona`` reads an owner failure as an empty list.
+        This read raises the owner's error instead, so a caller can tell a
+        persona that has no binding from a binding read that failed. A binding
+        source that is not wired raises ``OwnerReadUnconfiguredError``.
+        """
+        if not persona_id:
+            return []
+        source, raw, error = _cached_port_records_with_error(
+            "pcr_bindings", self, self._store, "list_bindings", self._bindings_provider
+        )
+        if source == "unavailable":
+            raise error or RuntimeError("persona-capital binding read is unavailable")
+        if source == "missing":
+            raise OwnerReadUnconfiguredError("persona-capital binding store is unconfigured")
+        return [
+            _deep_copy(binding)
+            for binding in raw
+            if self._binding_id(binding) and str(binding.get("persona_id") or "") == str(persona_id)
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -1071,6 +1095,9 @@ class PersonaCapitalRuntimeDomainPort:
 
     def get_bindings_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.capital.get_bindings_for_persona(persona_id)
+
+    def read_bindings_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.capital.read_bindings_for_persona(persona_id)
 
     # Deployment delegates
     def list_deployment_plans(self, **kwargs: Any) -> List[Dict[str, Any]]:

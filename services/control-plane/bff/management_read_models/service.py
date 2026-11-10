@@ -91,6 +91,7 @@ from services.control_plane.bff.governance.human_inbox import (
 )
 from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
 from services.control_plane.bff.management_read_models.models import ManagementObservation
+from services.control_plane.bff.ports.persona_training import OwnerReadUnconfiguredError
 
 
 def _default_bff_error(
@@ -2099,6 +2100,7 @@ class ManagementService:
         "runtime_bindings": ("persona_capital_runtime", "runtime"),
         "capital_pools": ("persona_capital_runtime", "capital"),
         "evolution_decisions": ("persona_capital_runtime", "evolution", "surfaces", "evolution_decisions"),
+        "persona_allowed_actions": ("persona_capital_runtime", "persona"),
     }
 
     def _resolve_domain_surface_status(self, subject_type: str, store: Optional[Any]) -> Optional[Dict[str, Any]]:
@@ -2185,10 +2187,15 @@ class ManagementService:
         kwargs: Optional[Dict[str, Any]] = None,
         load_records: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
-        empty_read_is_ok: bool = False,
+        empty_read_is_ok: Union[bool, Callable[[], bool]] = False,
+        empty_read_reason: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         # ``empty_read_is_ok`` is only for a caller whose load_records raises on
         # a failed owner read, so that an empty list can only be a real empty.
+        # A callable is asked after the read, for a read that learns only while
+        # it runs whether it can tell an empty result from a failed one.
+        # ``empty_read_reason`` names why an empty read that cannot be told
+        # apart from a failure is reported degraded.
         store = self._resolve_store()
         domain_status = self._resolve_domain_surface_status(subject_type, store)
         if domain_status is not None and domain_status.get("status") == "unavailable":
@@ -2236,7 +2243,10 @@ class ManagementService:
             status = "ok"
         elif domain_status is not None and domain_status.get("status") == "unavailable":
             status = "unavailable"
-        elif empty_read_is_ok and (domain_status is None or domain_status.get("status") == "ok"):
+        elif (
+            (empty_read_is_ok() if callable(empty_read_is_ok) else empty_read_is_ok)
+            and (domain_status is None or domain_status.get("status") == "ok")
+        ):
             status = "ok"
         else:
             status = "degraded"
@@ -2246,6 +2256,7 @@ class ManagementService:
             owner=owner,
             status=status,
             not_ok_degradation_reason=(domain_status or {}).get("message")
+            or empty_read_reason
             or f"{subject_type} read returned no records despite a healthy status probe.",
         )
 
@@ -2586,6 +2597,62 @@ class ManagementService:
 
         return {runtime_id: results[runtime_id] for runtime_id in ordered_runtime_ids}
 
+    def _typed_persona_owner_list(
+        self,
+        subject_type: str,
+        persona_id: str,
+        *,
+        owner: str,
+        strict_method: str,
+        fallback_method: str,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Read one persona's rows through the store read that raises.
+
+        ``fallback_method`` is the swallowing read: it returns [] for an owner
+        failure as well as for a real empty, so an empty result from it can
+        not be told apart and keeps the degraded rule. ``strict_method`` raises
+        on an owner failure, so its empty result is a real empty, except when
+        the owner behind it is not wired (``OwnerReadUnconfiguredError``): that
+        read is not proof of an empty owner and is read through the fallback.
+        """
+        store = self._resolve_store()
+        if store is None or not hasattr(store, strict_method):
+            return self._typed_context_list(
+                fallback_method,
+                subject_type=subject_type,
+                owner=owner,
+                args=(persona_id,),
+                record_filter=record_filter,
+                empty_read_reason=(
+                    f"{subject_type} read returned no records: {fallback_method} cannot tell an "
+                    "owner failure from an empty owner and this store has no read that raises."
+                ),
+            )
+        read_can_tell = {"value": True}
+
+        def _load() -> List[Dict[str, Any]]:
+            try:
+                return list(getattr(store, strict_method)(persona_id) or [])
+            except OwnerReadUnconfiguredError:
+                if not hasattr(store, fallback_method):
+                    raise
+                read_can_tell["value"] = False
+                return list(getattr(store, fallback_method)(persona_id) or [])
+
+        return self._typed_context_list(
+            fallback_method,
+            subject_type=subject_type,
+            owner=owner,
+            load_records=_load,
+            record_filter=record_filter,
+            empty_read_is_ok=lambda: read_can_tell["value"],
+            empty_read_reason=(
+                f"{subject_type} read returned no records: the owner behind {strict_method} is not "
+                f"configured, so {fallback_method} cannot tell an owner failure from an empty owner."
+            ),
+        )
+
     def get_context_bindings_for_persona(
         self,
         persona_id: str,
@@ -2593,11 +2660,12 @@ class ManagementService:
         owner: Optional[str] = None,
         record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        return self._typed_context_list(
-            "get_bindings_for_persona",
-            subject_type="persona_bindings",
+        return self._typed_persona_owner_list(
+            "persona_bindings",
+            persona_id,
             owner=owner or persona_id or "management_ai_context",
-            args=(persona_id,),
+            strict_method="read_bindings_for_persona",
+            fallback_method="get_bindings_for_persona",
             record_filter=record_filter,
         )
 
@@ -2608,11 +2676,12 @@ class ManagementService:
         owner: Optional[str] = None,
         record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        return self._typed_context_list(
-            "get_teaching_sessions_for_persona",
-            subject_type="persona_teaching_sessions",
+        return self._typed_persona_owner_list(
+            "persona_teaching_sessions",
+            persona_id,
             owner=owner or persona_id or "management_ai_context",
-            args=(persona_id,),
+            strict_method="list_persona_teaching_sessions",
+            fallback_method="get_teaching_sessions_for_persona",
             record_filter=record_filter,
         )
 
@@ -2630,18 +2699,25 @@ class ManagementService:
         self, persona_id: str, *,
         record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        return self._typed_context_list(
-            "get_sessions_for_persona", subject_type="persona_sessions",
-            owner=persona_id, args=(persona_id,), record_filter=record_filter,
+        return self._typed_persona_owner_list(
+            "persona_sessions",
+            persona_id,
+            owner=persona_id,
+            strict_method="list_persona_sessions",
+            fallback_method="get_sessions_for_persona",
+            record_filter=record_filter,
         )
 
     def get_context_strategies_for_persona(
         self, persona_id: str, *,
         record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        # list_strategy_specs asks the strategy registry and raises a 503 on an
+        # owner failure, so an empty result here is a persona with no strategy.
         return self._typed_context_list(
             "list_strategy_specs", subject_type="persona_strategies",
             owner=persona_id, kwargs={"persona_id": persona_id}, record_filter=record_filter,
+            empty_read_is_ok=True,
         )
 
     def _typed_context_record(
@@ -2675,9 +2751,47 @@ class ManagementService:
         self, persona_id: str, *,
         record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
-        return self._typed_context_record(
-            "get_persona_allowed_actions", "persona_allowed_actions", persona_id,
-            record_filter=record_filter,
+        store = self._resolve_store()
+        if store is None or not hasattr(store, "get_persona"):
+            return self._typed_context_record(
+                "get_persona_allowed_actions", "persona_allowed_actions", persona_id,
+                record_filter=record_filter,
+            )
+        # Allowed actions are derived from a persona record and carry no
+        # tenant of their own, so tenant scoping is applied to the persona the
+        # actions are derived for. The three outcomes stay apart: an owner read
+        # failure is unavailable, a persona the owner does not hold is
+        # degraded, and a held persona with no action is a real empty set.
+        subject_type = "persona_allowed_actions"
+
+        def _unavailable(reason: str) -> Tuple[None, Dict[str, Any]]:
+            return None, self._context_observation(
+                subject_type=subject_type, subject_id=persona_id, owner=persona_id,
+                status="unavailable", source_kind="unavailable", degradation_reason=reason,
+            )
+
+        domain_status = self._resolve_domain_surface_status(subject_type, store)
+        if domain_status is not None and domain_status.get("status") == "unavailable":
+            return _unavailable(
+                domain_status.get("message") or f"{subject_type} read surface is unavailable or unconfigured."
+            )
+        try:
+            persona = store.get_persona(persona_id)
+            actions = store.get_persona_allowed_actions(persona_id) if persona else None
+        except Exception as exc:
+            return _unavailable(f"{subject_type} read failed: {exc}")
+        held = [persona] if persona else []
+        if record_filter is not None:
+            held = record_filter(held)
+        if not held or actions is None:
+            return None, self._context_observation(
+                subject_type=subject_type, subject_id=persona_id, owner=persona_id,
+                status="degraded", source_kind="unavailable",
+                degradation_reason=f"persona {persona_id} is not held by the persona owner.",
+            )
+        return actions, self._observation_from_items(
+            [actions], subject_type=subject_type, owner=persona_id, status="ok",
+            not_ok_degradation_reason=f"{subject_type} read returned no records.",
         )
 
     def _build_context_monitoring_session_result(
@@ -3060,7 +3174,7 @@ class ManagementService:
             lambda st: st.list_approval_records(),
         )
         reviews = rows("governance_review_queue_items", lambda st: st.list_governance_review_queue_items())
-        incidents = rows("incidents", lambda st: st.list_incidents())
+        incidents = rows("incidents", lambda st: read_open_incidents(st))
         jobs, sources["jobs"] = self._shell_summary_jobs_read(store, degraded_state)
         pending_states = {"pending", "in_review"}
         pending_approvals = count(approvals, {*pending_states, "proposed", "under_review", "reviewed"}, "decision_state", "status")
@@ -3199,7 +3313,7 @@ class ManagementService:
                     if not deadline_exhausted:
                         def _read_incidents() -> List[Dict[str, Any]]:
                             if hasattr(store, "list_incidents"):
-                                return store.list_incidents() or []
+                                return read_open_incidents(store)
                             return store.list_incident_alerts() or []
 
                         group_futures["incident"] = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, _read_incidents)
@@ -3352,9 +3466,9 @@ class ManagementService:
                     else f"{len(open_incidents)} active incident(s)." if open_incidents else "No active incidents."
                 ),
                 "details": (
-                    {"total_incidents": None, "open_incidents": None, **_failure_details("incident")}
+                    {"open_incidents": None, **_failure_details("incident")}
                     if incident_failed
-                    else {"total_incidents": len(incidents), "open_incidents": len(open_incidents)}
+                    else {"open_incidents": len(open_incidents)}
                 ),
                 "target_refs": [{"label": "Incidents", "href": "/bff/alerts"}],
             }
@@ -4529,7 +4643,7 @@ class ManagementService:
         incident_alerts = []
         try:
             if hasattr(store, "list_incidents"):
-                raw_incidents = store.list_incidents() or []
+                raw_incidents = read_open_incidents(store)
             elif hasattr(store, "list_incident_alerts"):
                 raw_incidents = store.list_incident_alerts() or []
             else:

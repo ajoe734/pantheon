@@ -411,7 +411,7 @@ def approved_baseline_value(
     return _validated_positive_float(artifact_baselines, baseline_key)
 
 
-def _summary_instrument_class(summary: Mapping[str, Any]) -> tuple[str | None, str | None]:
+def summary_instrument_class(summary: Mapping[str, Any]) -> tuple[str | None, str | None]:
     """Extract the runtime summary's reported instrument class.
 
     Checks explicit summary-level fields (``instrument_class``,
@@ -474,7 +474,7 @@ def _resolve_summary_baseline(
 ) -> tuple[float | None, str | None]:
     """Resolve the baseline for a runtime summary, failing closed when the
     instrument class or its approved baseline is missing."""
-    instrument_class, class_err = _summary_instrument_class(summary)
+    instrument_class, class_err = summary_instrument_class(summary)
     if class_err is not None:
         return (
             None,

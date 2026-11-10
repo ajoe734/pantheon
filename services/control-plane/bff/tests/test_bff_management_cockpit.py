@@ -1288,7 +1288,7 @@ def test_operator_health_successful_empty_reads_are_genuine_zero() -> None:
     assert groups["runtime"]["summary"] == "No active runtime bindings."
     assert groups["runtime"]["details"] == {"total_runtimes": 0, "active_runtimes": 0}
     assert groups["telemetry"]["details"] == {"telemetry_count": 0}
-    assert groups["incident"]["details"] == {"total_incidents": 0, "open_incidents": 0}
+    assert groups["incident"]["details"] == {"open_incidents": 0}
     assert groups["governance"]["summary"] == "Governance queues clear."
     assert groups["governance"]["details"] == {"total_items": 0, "pending_items": 0}
     assert health["overall_status"] == "ok"

@@ -44,6 +44,14 @@ except (ImportError, ValueError):
 # Persona Registry Reads Port
 # ---------------------------------------------------------------------------
 
+class OwnerReadUnconfiguredError(RuntimeError):
+    """The owner behind a read has no backing store wired.
+
+    Unlike an owner failure, this does not show that a read found nothing, so
+    a caller that tells empty from failed must treat it as "cannot tell".
+    """
+
+
 class PersonaRegistryReadsPort:
     """Port for persona, session, teaching, and capability reads.
 
@@ -59,7 +67,7 @@ class PersonaRegistryReadsPort:
 
     def _require_store(self) -> Any:
         if self._store is None:
-            raise RuntimeError(
+            raise OwnerReadUnconfiguredError(
                 "PersonaRegistryReadsPort requires a Persona Registry-backed store"
             )
         return self._store
