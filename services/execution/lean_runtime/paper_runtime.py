@@ -52,6 +52,9 @@ from services.execution.lean_runtime.performance_telemetry import (
     SourceIngestMarkProvider,
     value_portfolio,
 )
+from services.execution.lean_runtime.futures_session_inputs import (
+    DatasetFuturesMarkProvider,
+)
 from services.execution.lean_runtime.bootstrap_contract import ALLOWED_ENGINE_BRIDGE_REMOTES, ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
 from services.execution.lean_runtime.instrument_candidates import (
     governed_twse_holidays,
@@ -1161,9 +1164,12 @@ class PaperExecutionAlgorithm:
                     "decision_id": decision_id,
                 }
 
+        # ``trade_date`` is the D-1 settlement session on a signal carrying open
+        # futures; the entry gate needs the decision day, which stays in
+        # ``as_of_trading_day``.
         trade_date_raw = (
-            self._current_signal_metadata.get("trade_date")
-            or self._current_signal_metadata.get("as_of_trading_day")
+            self._current_signal_metadata.get("as_of_trading_day")
+            or self._current_signal_metadata.get("trade_date")
             or self._current_signal_metadata.get("as_of_date")
             or self._current_signal_metadata.get("signal_date")
         )
@@ -2375,14 +2381,28 @@ class PaperExecutionAlgorithm:
         final_settlement_source: Any = None,
         *,
         holidays: Iterable[Any] | None = None,
+        partition_horizon: Any = None,
     ) -> list[dict[str, Any]]:
-        """Cash-settle open futures contracts whose ``last_trading_day <= trade_date``."""
+        """Cash-settle open futures contracts whose ``last_trading_day <= trade_date``.
+
+        ``trade_date`` is the session being processed. ``partition_horizon`` is
+        the newest dataset partition date that may be read (the decision day):
+        the final settlement of session S lands in a later partition, so a
+        horizon capped at S would never see it.
+        """
         parsed_day = self._parse_strict_iso_date(trade_date)
         if parsed_day is None:
             raise ValueError(
                 f"SettleExpiringFutures requires a strict YYYY-MM-DD trade_date (got {trade_date!r})"
             )
         hol = tuple(holidays) if holidays is not None else self._active_holidays()
+        horizon_day = (
+            self._parse_strict_iso_date(partition_horizon)
+            if partition_horizon is not None
+            else None
+        )
+        if horizon_day is not None and horizon_day < parsed_day:
+            horizon_day = parsed_day
         outcomes: list[dict[str, Any]] = []
         state_mutated = False
         for (b_id, _norm_u, inst_id), pos in list(self._instrument_positions.items()):
@@ -2406,7 +2426,7 @@ class PaperExecutionAlgorithm:
                 month,
                 final_settlement_source,
                 settlement_day=ltd,
-                as_of_trading_day=parsed_day,
+                as_of_trading_day=horizon_day or parsed_day,
             )
             if lookup is None:
                 pos["status"] = "settlement_pending"
@@ -3046,6 +3066,22 @@ class PaperExecutionAlgorithm:
             if pos.get("kind") == "stock_future" and abs(float(pos.get("quantity", 0.0))) > 1e-12:
                 symbols.add(inst_id)
         return sorted(symbols)
+
+    def open_stock_future_position_records(self) -> list[dict[str, Any]]:
+        records: dict[str, dict[str, Any]] = {}
+        for (_b_id, norm_u, inst_id), pos in self._instrument_positions.items():
+            qty = abs(float(pos.get("quantity", 0.0)))
+            if pos.get("kind") != "stock_future" or qty <= 1e-12:
+                continue
+            records[inst_id] = {
+                "instrument_id": inst_id,
+                "kind": "stock_future",
+                "contract": pos.get("contract"),
+                "contract_month": pos.get("contract_month"),
+                "underlying": pos.get("normalised_underlying") or norm_u,
+                "units": qty,
+            }
+        return [records[key] for key in sorted(records)]
 
     def apply_market_marks(self, marks: Mapping[str, MarketMark]) -> None:
         for symbol, mark in marks.items():
@@ -4974,6 +5010,7 @@ class PaperRuntimeService:
         runtime_manager_client: RuntimeManagerClient | None = None,
         telemetry_emitter: RuntimeTelemetryEmitter | None = None,
         mark_provider: SourceIngestMarkProvider | None = None,
+        futures_mark_provider: DatasetFuturesMarkProvider | None = None,
         runtime_context: PantheonRuntimeContext | None = None,
         poll_interval_seconds: float | None = None,
         max_batch_size: int | None = None,
@@ -5085,6 +5122,13 @@ class PaperRuntimeService:
             1,
         )
         self._mark_provider = mark_provider or SourceIngestMarkProvider()
+        # One clock for the futures mark session and the freshness check.
+        self._valuation_now: Callable[[], datetime] = lambda: datetime.now(
+            timezone.utc
+        )
+        self._futures_mark_provider = futures_mark_provider or (
+            DatasetFuturesMarkProvider(now=lambda: self._valuation_now())
+        )
         self._drawdown_tracker = RollingDrawdownTracker(
             window_days=int(os.getenv("PANTHEON_PERFORMANCE_WINDOW_DAYS", "20"))
         )
@@ -5290,7 +5334,11 @@ class PaperRuntimeService:
                     else self._final_settlement_source
                 )
                 if self._algo._has_open_or_pending_stock_futures():
-                    self._algo.SettleExpiringFutures(session_date, final_source)
+                    self._algo.SettleExpiringFutures(
+                        session_date,
+                        final_source,
+                        partition_horizon=meta.get("as_of_trading_day"),
+                    )
 
                 open_active = self._algo._open_active_stock_future_contracts()
                 if not open_active:
@@ -5363,6 +5411,9 @@ class PaperRuntimeService:
                         "marked_contracts": {},
                     }
                     self._algo._persist_state()
+                elif self._algo._last_futures_mark_session_date == session_date:
+                    # One mark and one maintenance margin check per session.
+                    continue
                 else:
                     self._algo.MarkFuturesSession(session_date, validated_prices)
             finally:
@@ -5782,6 +5833,68 @@ class PaperRuntimeService:
             self._fill_publication_error = None
             self._ack_fill_publication(str(record["event_id"]))
 
+    def _emit_instrument_counterfactuals(
+        self, rows: Any, *, created_at: str
+    ) -> int:
+        """Publish ``persona_instrument_counterfactual`` rows, one event each.
+
+        The event id is derived from ``(decision_id, instrument_id)`` so a
+        redelivery collapses at ingest, and the telemetry runtime summary keys
+        its fold the same way.  Delivery is best effort and never raises into
+        the signal path: a failed row is logged and counted by the emitter.
+        """
+        if not isinstance(rows, (list, tuple)):
+            return 0
+        builder = getattr(self._telemetry, "build_event", None)
+        sender = getattr(self._telemetry, "emit_payload", None)
+        if not callable(builder) or not callable(sender):
+            return 0
+        delivered = 0
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            decision_id = _clean_text(row.get("decision_id"))
+            instrument_id = _clean_text(row.get("instrument_id"))
+            if not decision_id or not instrument_id:
+                continue
+            metadata = {
+                "runtime_package": "paper_execution_runtime",
+                "sim_fill_flag": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "submitted_to_broker": False,
+                "capital_scale_pct": 0,
+            }
+            metadata.update(dict(row))
+            try:
+                payload = builder(
+                    "persona_instrument_counterfactual",
+                    {"action": "instrument_counterfactual_graded"},
+                    metadata=metadata,
+                    event_id=str(
+                        uuid.uuid5(
+                            _LIFECYCLE_UUID_NAMESPACE,
+                            f"persona_instrument_counterfactual:{decision_id}:{instrument_id}",
+                        )
+                    ),
+                    created_at=created_at,
+                )
+                if payload is not None and sender(payload):
+                    delivered += 1
+                else:
+                    log.warning(
+                        "instrument counterfactual row %s/%s was not delivered",
+                        decision_id,
+                        instrument_id,
+                    )
+            except Exception:  # noqa: BLE001 - grading rows never block the signal path
+                log.exception(
+                    "instrument counterfactual row %s/%s delivery failed",
+                    decision_id,
+                    instrument_id,
+                )
+        return delivered
+
     def _handle_order_event(self, event: OrderEvent, *, replay: bool = False) -> None:
         if event.event_type == "signal_generation":
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
@@ -5792,6 +5905,13 @@ class PaperRuntimeService:
             # decision record belongs to trade_decision.
             decision_metadata = dict(signal_metadata)
             signal_metadata.pop("expression_decision", None)
+            # Counterfactual grading rows for earlier decisions ride on this
+            # signal; they are published as their own events, not as lifecycle
+            # metadata of this journey.
+            counterfactual_rows = decision_metadata.pop(
+                "instrument_counterfactual_rows", None
+            )
+            signal_metadata.pop("instrument_counterfactual_rows", None)
             try:
                 signal_payload = self._emit_lifecycle_telemetry(
                     "signal_generation",
@@ -5830,6 +5950,9 @@ class PaperRuntimeService:
                     decision_metadata,
                     event_id=decision_event_id,
                     created_at=occurred_at,
+                )
+                self._emit_instrument_counterfactuals(
+                    counterfactual_rows, created_at=occurred_at
                 )
             return
 
@@ -6143,14 +6266,33 @@ class PaperRuntimeService:
             self._flush_pending_performance_pair()
             return
 
-        symbols = self._algo.mark_symbols()
+        all_symbols = self._algo.mark_symbols()
+        # A stock future has no source-ingest snapshot; its mark is the
+        # dataset D-1 daily settlement, the value MarkFuturesSession applies.
+        symbols = [s for s in all_symbols if not s.startswith("ssf:")]
+        futures_symbols = [s for s in all_symbols if s.startswith("ssf:")]
         provider_diagnostic: dict[str, Any]
         provider_marks: dict[str, MarketMark] = {}
         if symbols:
             provider_marks, provider_diagnostic = self._mark_provider.resolve(symbols)
-            self._algo.apply_market_marks(provider_marks)
         else:
             provider_diagnostic = self._mark_provider.snapshot(requested_symbols=[])
+        if futures_symbols:
+            wanted = set(futures_symbols)
+            futures_marks, futures_diagnostic = self._futures_mark_provider.resolve(
+                [
+                    rec
+                    for rec in self._algo.open_stock_future_position_records()
+                    if rec["instrument_id"] in wanted
+                ]
+            )
+            provider_marks = {**provider_marks, **futures_marks}
+            provider_diagnostic = {
+                **provider_diagnostic,
+                "futures_settlement": futures_diagnostic,
+            }
+        if provider_marks:
+            self._algo.apply_market_marks(provider_marks)
 
         ledger = self._algo.performance_ledger()
         if (
@@ -6193,6 +6335,7 @@ class PaperRuntimeService:
                 os.getenv("PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"),
                 172800.0,
             ),
+            now=self._valuation_now(),
         )
         self._performance_telemetry = {
             "status": valuation.status,

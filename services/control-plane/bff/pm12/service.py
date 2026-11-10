@@ -1241,8 +1241,13 @@ def _management_portfolio_holding_entry(
                 if name in mark:
                     return mark.get(name)
             marks_by_symbol = telemetry_dict.get("_marks_by_symbol")
-            if isinstance(marks_by_symbol, dict) and symbol:
-                sym_mark = marks_by_symbol.get(symbol)
+            mark_key = (
+                instrument_id
+                if instrument_kind == "stock_future" and instrument_id.startswith("ssf:")
+                else symbol
+            )
+            if isinstance(marks_by_symbol, dict) and mark_key:
+                sym_mark = marks_by_symbol.get(mark_key)
                 if isinstance(sym_mark, dict):
                     telemetry_binding = str(telemetry_dict.get("binding_id") or "").strip()
                     mark_binding = str(sym_mark.get("binding_id") or "").strip()
@@ -1267,8 +1272,15 @@ def _management_portfolio_holding_entry(
             ("mark_calendar_evidence", "calendar_evidence"),
             mark_field="calendar_evidence",
         )
+        # A stock future is keyed and aged by its contract instrument id (ssf:),
+        # not the underlying cash symbol, as telemetry runtime_summary does.
+        freshness_symbol = (
+            instrument_id
+            if instrument_kind == "stock_future" and instrument_id.startswith("ssf:")
+            else symbol
+        )
         if quote_at is None or not is_portfolio_mark_fresh(
-            symbol=symbol,
+            symbol=freshness_symbol,
             mark_as_of=quote_at,
             now_dt=now_dt,
             max_mark_age_seconds=172800.0,
@@ -1380,8 +1392,16 @@ def _management_portfolio_holding_entry(
             position, "mark_source_ref", "last_known_mark_source_ref"
         ),
         "mark_status": mark_status,
+        "reason_code": _management_optional_text(position.get("reason_code")),
+        "decision_id": _management_optional_text(position.get("decision_id")),
         "links": links,
     }
+
+
+def _management_optional_text(value: Any) -> Optional[str]:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _management_portfolio_source_issues(

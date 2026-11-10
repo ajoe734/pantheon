@@ -3799,6 +3799,60 @@ class TestInstrumentAwarePositionProjection(unittest.TestCase):
             ["cash", self._FUTURE_ID],
         )
 
+    def _futures_mark_projection(self, *, as_of: str, created_at: str) -> dict[str, Any]:
+        store = self._store()
+        store.project_event(
+            self._fill(lfc=1, quantity=2.0, price=2300.0, future=True, margin_after=92000.0)
+        )
+        mark_event = TestPositionCostCurrencyBrokerProjection._mark_snapshot(
+            symbol=self._FUTURE_ID,
+            price=2360.0,
+            as_of=as_of,
+            created_at=created_at,
+            fill_count=1,
+            source_ref="dataset:normalized/taifex_ssf_contracts/price_date=2026-11-13#ssf:QFF:202611",
+        )
+        mark_event["metadata"]["mark_refs"][0]["lineage"] = {
+            "mark_kind": "futures_daily_settlement"
+        }
+        summary = store.project_event(mark_event)
+        return next(r for r in summary["positions"] if r.get("instrument_id") == self._FUTURE_ID)
+
+    def test_futures_daily_settlement_mark_is_fresh_across_a_weekend(self) -> None:
+        # Friday's session settlement valued Monday morning is the latest
+        # completed session, so it is projected as an active mark.
+        row = self._futures_mark_projection(
+            as_of="2026-11-13T05:30:00Z", created_at="2026-11-16T01:00:00Z"
+        )
+        self.assertEqual(row["mark_price"], 2360.0)
+        self.assertEqual(row["mark_as_of"], "2026-11-13T05:30:00Z")
+        self.assertIn("price_date=2026-11-13", row["mark_source_ref"])
+        self.assertNotIn("mark_stale", row)
+
+    def test_futures_daily_settlement_mark_is_fresh_at_one_session_lag(self) -> None:
+        # FUTURES_MARK_MAX_SESSION_LAG = 1: Thursday's settlement valued Monday
+        # morning (Friday is the latest completed session) is still active.
+        row = self._futures_mark_projection(
+            as_of="2026-11-12T05:30:00Z", created_at="2026-11-16T01:00:00Z"
+        )
+        from services.execution.lean_runtime import performance_telemetry
+
+        # Lag-1 freshness only holds once the session-lag rule (PR #7120) has
+        # landed; on a base without it the one-session-old mark is stale.
+        if getattr(performance_telemetry, "FUTURES_MARK_MAX_SESSION_LAG", 0) >= 1:
+            self.assertEqual(row["mark_price"], 2360.0)
+            self.assertNotIn("mark_stale", row)
+        else:
+            self.assertTrue(row["mark_stale"])
+
+    def test_futures_daily_settlement_mark_is_stale_beyond_session_lag(self) -> None:
+        row = self._futures_mark_projection(
+            as_of="2026-11-11T05:30:00Z", created_at="2026-11-16T01:00:00Z"
+        )
+        self.assertNotIn("mark_price", row)
+        self.assertTrue(row["mark_stale"])
+        self.assertEqual(row["last_known_mark_price"], 2360.0)
+
     def test_cash_fill_carrying_instrument_fields_keeps_symbol_key(self) -> None:
         store = self._store()
         summary = store.project_event(
@@ -3977,3 +4031,129 @@ class TestLedgerCashProjection(unittest.TestCase):
         for bad in (float("nan"), float("inf"), True, "55300"):
             summary = store.project_event(self._fill(2, bad))
             self.assertEqual(summary["ledger_cash"], 77650.0)
+
+
+class TestPositionDecisionIdentityProjection(unittest.TestCase):
+    """Open positions carry the decision that opened or last changed them.
+
+    Event shapes are the real 2026-11-10 paper decisions: trade_decision
+    carries metadata.decision_id and metadata.expression_decision, the fill
+    carries the instrument fields and no reason of its own.
+    """
+
+    _CASH_DECISION = "dec-rb-3823397e125e4579ba5f4174067087ed-b5fa95075d12d756f69c821b"
+    _FUTURE_DECISION = "dec-rb-3516fc86e6f84649a499fc89f3c562b3-b16d6712794d6cec3472fe30"
+
+    @staticmethod
+    def _decision(
+        *, decision_id: str, instrument_id: str, reason_code: str, units: int, n: int
+    ) -> dict[str, Any]:
+        event = TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol="2330",
+            ledger_fill_count=None,
+            created_at=f"2026-11-10T07:01:3{n}Z",
+            event_id=f"evt-decision-{n}",
+            extra_metadata={
+                "decision_id": decision_id,
+                "view_direction": "long",
+                "expression_decision": {
+                    "instrument_id": instrument_id,
+                    "reason_code": reason_code,
+                    "units": units,
+                    "side": "buy",
+                },
+            },
+        )
+        event["event_type"] = "trade_decision"
+        event.pop("metrics")
+        return event
+
+    @staticmethod
+    def _fill(*, lfc: int, qty: float, price: float, meta: dict[str, Any]) -> dict[str, Any]:
+        return TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol="2330",
+            quantity=qty,
+            price=price,
+            ledger_fill_count=lfc,
+            created_at=f"2026-11-10T07:01:4{lfc}Z",
+            extra_metadata=meta,
+        )
+
+    def test_cash_share_and_stock_future_rows_carry_decision_identity(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(
+            self._decision(
+                decision_id=self._CASH_DECISION,
+                instrument_id="eq:2330",
+                reason_code="long_cash",
+                units=43,
+                n=1,
+            )
+        )
+        store.project_event(
+            self._fill(
+                lfc=1,
+                qty=43.0,
+                price=2285.0,
+                meta={"instrument_id": "eq:2330", "kind": "cash_share", "multiplier": 1.0},
+            )
+        )
+        store.project_event(
+            self._decision(
+                decision_id=self._FUTURE_DECISION,
+                instrument_id="ssf:SRF:202611",
+                reason_code="long_lever",
+                units=2,
+                n=2,
+            )
+        )
+        summary = store.project_event(
+            self._fill(
+                lfc=2,
+                qty=2.0,
+                price=97.1,
+                meta={
+                    "instrument_id": "ssf:SRF:202611",
+                    "kind": "stock_future",
+                    "multiplier": 100.0,
+                    "contract_month": "202611",
+                    "initial_margin_reserved": 8700.0,
+                },
+            )
+        )
+        rows = {r.get("instrument_id"): r for r in summary["positions"]}
+        cash = rows["eq:2330"]
+        self.assertEqual(cash["decision_id"], self._CASH_DECISION)
+        self.assertEqual(cash["reason_code"], "long_cash")
+        future = rows["ssf:SRF:202611"]
+        self.assertEqual(future["decision_id"], self._FUTURE_DECISION)
+        self.assertEqual(future["reason_code"], "long_lever")
+
+    def test_later_fill_overwrites_and_missing_decision_leaves_row_without_keys(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        summary = store.project_event(
+            self._fill(lfc=1, qty=5.0, price=2299.0, meta={})
+        )
+        row = summary["positions"][0]
+        self.assertNotIn("decision_id", row)
+        self.assertNotIn("reason_code", row)
+        store.project_event(
+            self._decision(
+                decision_id=self._CASH_DECISION,
+                instrument_id="eq:2330",
+                reason_code="long_cash",
+                units=3,
+                n=1,
+            )
+        )
+        summary = store.project_event(
+            self._fill(
+                lfc=2,
+                qty=3.0,
+                price=2300.0,
+                meta={"instrument_id": "eq:2330", "kind": "cash_share", "multiplier": 1.0},
+            )
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["decision_id"], self._CASH_DECISION)
+        self.assertEqual(row["reason_code"], "long_cash")

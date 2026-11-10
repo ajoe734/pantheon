@@ -1,0 +1,114 @@
+{
+  "task_id": "MGMT-AI-RESIDUALS-ACCEPTANCE-20261109",
+  "title": "Hosted acceptance that the AI fleet surface and the alert feed hold under real load",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "verdict": "pass",
+  "measured_at": "2026-11-10T04:17:00Z to 2026-11-10T04:22:00Z",
+  "measured_by": "Human/Ops through a real login on the hosted dev environment (Antigravity committed the operator's hosted acceptance text and facts without rerunning hosted checks or accessing any VM/SSH)",
+  "operator_acceptance_text": "Pair: BFF a51fd808c (image revision label equal) and FE fe5899413, deploy run https://github.com/ajoe734/pantheon/actions/runs/42747427456 success at 04:17Z. It contains BFF-AI-FLEET-EMPTY-OK-20261109 (#7108), BFF-ALERTS-PARTIAL-20261109 (#7109) and BFF-ALERTS-WIRING-20261110 (#7110).\nAC1 pass: the pair above.\nAC2 pass: the non-stream ask context had persona_fleet status ok with 0 non-ok observations; the baseline on bdd2b8e54 was degraded with 40 empty-read observations. Fleet summary: 10 current personas (paper_running 4, research_only 3, draft 3), 153 retired, healthy 4, degraded 0, critical 0. This equals /bff/personas by_state, which had retired 153, research_only 3, draft 3 and paper_running 4.\nAC3 pass: 30 consecutive GET /bff/alerts reads gave 28 bff_composed ok and 2 bff_composed degraded. The 2 degraded responses are the partial path, with BFF log 'bff.alerts degraded fallback: read_timeout (ManagementReadTimeout)', and still carried all 4 runtime alerts. 0 responses were an empty timeout_fallback; the baseline was 1 of 30. Latency 549-3408 ms. 3 cold loads of /management/alerts, each after a fresh login, showed 4 rows with bff_composed ok each time. With the fallback intercepted the page still shows 暫時無法取得警報資料。.\nAC4: no password or token was written anywhere.\nContext: the Management AI panel answer at 04:19Z was again correct (12 of 12 accepted, 11 ready and 1 ok, 4 bindings, 33 of 33, 4 critical runtime alerts). The 4 critical alerts are real: each current runtime's telemetry has a fill-rate event of 0.0 with ledger_fill_count 0.\nLimitations: management_cockpit was degraded in one ask because the human inbox persona_readiness contributor exceeded its own budget under load. One non-stream ask showed loop_health unavailable, while GET /bff/v5/loop-health took 392-3251 ms over 8 reads against a 2.0 second AI prefetch bound; follow-up BFF-AI-LOOP-BUDGET-20261110 raises the bound.",
+  "hosted_pair": {
+    "bff_commit": "a51fd808c4f9f6b93cb33cddace2eb68941f021d",
+    "bff_short": "a51fd808c",
+    "image_revision_label_equal": true,
+    "frontend_short": "fe5899413",
+    "deploy_run": "https://github.com/ajoe734/pantheon/actions/runs/42747427456",
+    "deploy_status": "success at 2026-11-10T04:17Z",
+    "contains": [
+      {
+        "task_id": "BFF-AI-FLEET-EMPTY-OK-20261109",
+        "repository": "ajoe734/pantheon",
+        "pr": 7108,
+        "merge_commit": "29c3ed10039f5fa204d7106c0d14ed7cf0ee38ce"
+      },
+      {
+        "task_id": "BFF-ALERTS-PARTIAL-20261109",
+        "repository": "ajoe734/pantheon",
+        "pr": 7109,
+        "merge_commit": "0ba2af5ceda36ea2a6ff556fdd176c19f0e63e58"
+      },
+      {
+        "task_id": "BFF-ALERTS-WIRING-20261110",
+        "repository": "ajoe734/pantheon",
+        "pr": 7110,
+        "merge_commit": "8c3197b351a5703631bfff48bc03b14b25497e1d"
+      }
+    ]
+  },
+  "acceptance": {
+    "AC1_accepted_hosted_pair": {
+      "status": "pass",
+      "summary": "BFF a51fd808c (image revision label equal) and FE fe5899413, deploy run https://github.com/ajoe734/pantheon/actions/runs/42747427456 success at 04:17Z, containing BFF-AI-FLEET-EMPTY-OK-20261109 (#7108), BFF-ALERTS-PARTIAL-20261109 (#7109) and BFF-ALERTS-WIRING-20261110 (#7110)."
+    },
+    "AC2_persona_fleet_and_summary": {
+      "status": "pass",
+      "non_stream_ask_context": {
+        "persona_fleet_status": "ok",
+        "non_ok_observations": 0,
+        "baseline_on_bdd2b8e54": {
+          "status": "degraded",
+          "empty_read_observations": 40
+        }
+      },
+      "fleet_summary": {
+        "current_personas": 10,
+        "by_state": {
+          "paper_running": 4,
+          "research_only": 3,
+          "draft": 3,
+          "retired": 153
+        },
+        "healthy": 4,
+        "degraded": 0,
+        "critical": 0
+      },
+      "bff_personas_by_state": {
+        "retired": 153,
+        "research_only": 3,
+        "draft": 3,
+        "paper_running": 4
+      },
+      "matches_bff_personas": true
+    },
+    "AC3_alerts_reads_and_cold_page_loads": {
+      "status": "pass",
+      "consecutive_get_bff_alerts": {
+        "total_reads": 30,
+        "bff_composed_ok": 28,
+        "bff_composed_degraded": 2,
+        "empty_timeout_fallback": 0,
+        "baseline_empty_timeout_fallback": "1 of 30",
+        "latency_ms_range": "549-3408 ms",
+        "degraded_responses_detail": "The 2 degraded responses are the partial path, with BFF log 'bff.alerts degraded fallback: read_timeout (ManagementReadTimeout)', and still carried all 4 runtime alerts."
+      },
+      "cold_alerts_page_loads": {
+        "count": 3,
+        "method": "each after a fresh login on /management/alerts",
+        "rows_shown_each_time": 4,
+        "surface_each_time": "bff_composed ok"
+      },
+      "intercepted_fallback_check": {
+        "shown_text": "暫時無法取得警報資料。"
+      }
+    },
+    "AC4_no_secrets": {
+      "status": "pass",
+      "password_or_token_written": false
+    }
+  },
+  "context": {
+    "management_ai_panel_answer_at_04_19Z": {
+      "correct": true,
+      "loops_accepted": "12 of 12",
+      "loop_statuses": "11 ready and 1 ok",
+      "bindings": 4,
+      "bff_health": "33 of 33",
+      "critical_runtime_alerts": 4,
+      "critical_alerts_truth": "The 4 critical alerts are real: each current runtime's telemetry has a fill-rate event of 0.0 with ledger_fill_count 0."
+    }
+  },
+  "limitations": [
+    "management_cockpit was degraded in one ask because the human inbox persona_readiness contributor exceeded its own budget under load.",
+    "One non-stream ask showed loop_health unavailable, while GET /bff/v5/loop-health took 392-3251 ms over 8 reads against a 2.0 second AI prefetch bound; follow-up BFF-AI-LOOP-BUDGET-20261110 raises the bound."
+  ]
+}

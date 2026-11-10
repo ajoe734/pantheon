@@ -937,6 +937,7 @@ def test_restore_repoints_every_compose_image_name_to_the_baseline(stack_case):
     assert len(stack["services"]) == STACK_SIZE
     for service, row in stack["services"].items():
         assert docker.tags["pantheon-" + service] == row["image_id"], service
+    assert any(call[:5] == ("compose", "-p", "pantheon", "--profile", "*") and "config" in call for call in docker.calls)
     # protect tags are unchanged in kind and nothing was pruned
     assert any(t.startswith("pantheon-protect/") for t in docker.tags)
     assert not any(call[:2] in (("image", "rm"), ("image", "prune")) for call in docker.calls)

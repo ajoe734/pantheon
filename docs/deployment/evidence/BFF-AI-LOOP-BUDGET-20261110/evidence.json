@@ -1,0 +1,12 @@
+{
+  "task_id": "BFF-AI-LOOP-BUDGET-20261110",
+  "change": "_MGMT_NL_LOOP_HEALTH_TIMEOUT_DEFAULT_SECONDS 2.0 -> 6.0 in assistant/management_service.py; env override and 10 s cap unchanged; BFF_API_CONTRACT.md line 1034 records value and hosted timings.",
+  "tests_added": "test_mgmt_nl_loop_health_timeout_default_is_six_seconds_with_override_and_cap in tests/test_bff_b6_management_nl_ask.py",
+  "existing_timeout_coverage": "test_bff_b6_management_nl_ask.py step 5 (timeout env 0.03, delayed controller store rows) asserts loop_health status unavailable, reason read_timeout, ask still 202; unchanged and passing.",
+  "commands": [
+    {"cmd": "pytest services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py -q", "result": "21 passed"},
+    {"cmd": "pytest <new test> with default temporarily set back to 2.0", "result": "1 failed: assert 2.0 == 6.0 (old default not committed; restored to 6.0 afterwards)"},
+    {"cmd": "pytest test_bff_b6_management_nl_ask.py test_management_nl_assistant_provider.py -q (default 6.0)", "result": "103 passed"}
+  ],
+  "hosted_verification": "NOT RUN. No hosted, VM or SSH access was used; hosted verification is left to the operator acceptance task. Hosted timings cited come from the task brief, not from this work."
+}
