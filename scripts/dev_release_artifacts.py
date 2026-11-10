@@ -25,6 +25,7 @@ SCHEMA = "pantheon.dev-bff-image-bundle.v1"
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 IMAGE = re.compile(r"sha256:[0-9a-f]{64}")
+PINNED_REF = re.compile(r"[^\s@:-][^\s@]*@sha256:[0-9a-f]{64}")
 IMAGE_FORMAT = '{"id":{{json .Id}},"revision":{{with index .Config "Labels"}}{{json (index . "org.opencontainers.image.revision")}}{{else}}null{{end}},"repo_digests":{{json .RepoDigests}}}'
 CONTAINER_FORMAT = '{"image_id":{{json .Image}},"status":{{json .State.Status}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}}'
 BASELINE_PRINCIPAL_CONFIG = {
@@ -541,6 +542,9 @@ def compose_image_refs(docker: Docker, compose_files: tuple[tuple[Path, str], ..
 
     Only the first (base) Compose file is rendered: later files are the
     candidate image override, which must not decide where the names point.
+    A digest-pinned reference ("name[:tag]@sha256:...") is returned unchanged:
+    it cannot be re-tagged, so the restore skips tagging it and readback
+    instead proves it resolves to the recorded image. Any other shape raises.
     """
     path, digest = compose_files[0]
     if _file_digest(path)[0] != digest:
@@ -555,7 +559,9 @@ def compose_image_refs(docker: Docker, compose_files: tuple[tuple[Path, str], ..
         if not isinstance(row, dict):
             continue  # Compose cannot start an undeclared service; no name to re-point.
         image = row.get("image") or f"pantheon-{service}"
-        if not isinstance(image, str) or not image or image.startswith("-") or "@" in image:
+        if not isinstance(image, str) or not image or image.startswith("-") or any(c.isspace() for c in image):
+            raise StackError(f"{service}: Compose image reference cannot be re-pointed", [service])
+        if "@" in image and not PINNED_REF.fullmatch(image):
             raise StackError(f"{service}: Compose image reference cannot be re-pointed", [service])
         refs[service] = image
     return refs
@@ -745,6 +751,8 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
                     {service: bundle["services"][service]["image_id"] for service in SERVICES})
     refs = compose_image_refs(docker, compose_files, restored_ids)
     for service, ref in refs.items():
+        if "@" in ref:
+            continue  # digest pin: cannot be re-tagged; readback verifies it resolves to the recorded image
         check_lease()
         try:
             docker.call("tag", restored_ids[service], ref)
