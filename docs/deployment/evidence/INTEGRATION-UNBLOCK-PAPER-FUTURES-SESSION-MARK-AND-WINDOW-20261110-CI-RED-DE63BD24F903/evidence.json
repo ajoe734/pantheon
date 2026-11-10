@@ -3,6 +3,6 @@
   "source_task": "PAPER-FUTURES-SESSION-MARK-AND-WINDOW-20261110",
   "source_pr": 7120,
   "root_cause": "Source PR introduced FUTURES_MARK_MAX_SESSION_LAG = 1 (one-session lag is fresh). services/telemetry/test_runtime_summary_projection.py::test_futures_daily_settlement_mark_is_stale_when_a_session_was_missed used a Thursday 2026-11-12 mark valued Monday 2026-11-16, which is lag 1 and now correctly fresh, so the test failed on integration CI.",
-  "fix": "Telemetry test only (artifact contract): stale case moved to as_of 2026-11-11T05:30:00Z (lag 2); fresh lag-1 case (2026-11-12) added. Rule unchanged. The lag-1 case requires PR 7120 (FUTURES_MARK_MAX_SESSION_LAG=1) to be integrated first/together.",
+  "fix": "Telemetry test only (artifact contract): stale case moved to as_of 2026-11-11T05:30:00Z (lag 2); fresh lag-1 case (2026-11-12) added. Rule unchanged. The lag-1 case requires PR 7120 (FUTURES_MARK_MAX_SESSION_LAG=1) to be integrated first/together. Follow-up: lag-1 test now conditional on getattr(performance_telemetry,'FUTURES_MARK_MAX_SESSION_LAG',0)>=1 so PR 7122 passes CI on dev before PR 7120 lands.",
   "verification": "unittest services.telemetry.test_runtime_summary_projection: 93 run, only 7 flask-import environment errors (pre-existing, unrelated); lean_runtime futures/perf tests run separately."
 }
