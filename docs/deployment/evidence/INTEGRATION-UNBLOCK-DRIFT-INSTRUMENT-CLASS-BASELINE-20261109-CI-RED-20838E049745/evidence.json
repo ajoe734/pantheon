@@ -1,0 +1,14 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-DRIFT-INSTRUMENT-CLASS-BASELINE-20261109-CI-RED-20838E049745",
+  "source_task": "DRIFT-INSTRUMENT-CLASS-BASELINE-20261109",
+  "source_pr": 7103,
+  "failing_check": "Research suite (run 42723466896, job 129523175644)",
+  "failed_tests": [
+    "services/research/tests/test_retrain_executor_real_auth.py::test_candidate_created_run_is_labelled_and_ends_its_task",
+    "services/research/tests/test_retrain_executor_real_auth.py::test_no_candidate_run_is_labelled_and_ends_its_task"
+  ],
+  "root_cause": "Not caused by PR #7103 (it touches no services/research files). The research suite ran 23:49Z-00:01Z and crossed UTC midnight. The retrain real-auth fixture builds its Training authority dataset with trusted_now=datetime.now(utc) at fixture time (Nov 9); the two failing tests ran after midnight (run ids rrun-20261110-*) and the owner rejected evaluation (outcome evaluation_rejected instead of candidate_created/no_candidate) because the dataset was a day stale. All other ~700 tests passed.",
+  "classification": "midnight-straddle time-dependent flake, unrelated to source change",
+  "remedy": "Re-run the Research suite job after run 42723466896 finishes (rerun refused while the run is in_progress), or let the integrator re-trigger CI on the source PR; no source-branch push needed. Optional follow-up: make the fixture's trusted_now/dataset date stable or freeze time.",
+  "files_changed_in_this_task": []
+}
