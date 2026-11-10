@@ -1,0 +1,78 @@
+# Third-location collector stack (SD-STRATEGY-DISCOVERY §6)
+# Runs on an isolated non-GCP host (DigitalOcean / Hetzner Singapore) with no GCP credentials.
+# Only port 443 (Caddy bundle server) is exposed externally.
+
+services:
+  rsshub:
+    image: diygod/rsshub:chromium-bundled-2026-11-01
+    container_name: pantheon-collector-rsshub
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: memory
+      CACHE_EXPIRE: "600"
+      ALLOW_USER_SUPPLY_UNSAFE_DOMAIN: "false"
+      LOGGER_LEVEL: warning
+    networks:
+      - collector_internal
+    expose:
+      - "1200"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+
+  collector-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pantheon-collector-worker:1.0.0
+    container_name: pantheon-collector-worker
+    restart: "no"
+    depends_on:
+      - rsshub
+    environment:
+      COLLECTOR_CONTACT_EMAIL: "${COLLECTOR_CONTACT_EMAIL:-collector-ops@example.invalid}"
+      COLLECTOR_AUTHOR_HMAC_SALT_FILE: "/run/secrets/author_hmac_salt"
+      YOUTUBE_DATA_API_KEY_FILE: "/run/secrets/youtube_data_api_key"
+      GEMINI_API_KEY_FILE: "/run/secrets/gemini_api_key"
+    volumes:
+      - ./fetch-policy.json:/app/fetch-policy.json:ro
+      - ${COLLECTOR_DATA_ROOT:-/var/lib/pantheon-collector}/bundles:/data/bundles
+      - ${COLLECTOR_DATA_ROOT:-/var/lib/pantheon-collector}/state:/data/state
+      - ${COLLECTOR_DATA_ROOT:-/var/lib/pantheon-collector}/library:/data/library:ro
+      - ${COLLECTOR_SECRETS_DIR:-/etc/pantheon-collector}/author_hmac.salt:/run/secrets/author_hmac_salt:ro
+    networks:
+      - collector_internal
+    security_opt:
+      - no-new-privileges:true
+    command: ["validate-config", "--policy-file", "/app/fetch-policy.json"]
+
+  bundle-server:
+    image: caddy:2.8-alpine
+    container_name: pantheon-collector-bundle-server
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    environment:
+      COLLECTOR_DOMAIN: "${COLLECTOR_DOMAIN:-collector.pantheon-collector.invalid}"
+      COLLECTOR_BUNDLE_TOKEN: "${COLLECTOR_BUNDLE_TOKEN:?COLLECTOR_BUNDLE_TOKEN must be set in .env}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${COLLECTOR_DATA_ROOT:-/var/lib/pantheon-collector}:/srv/collector:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - collector_internal
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+
+networks:
+  collector_internal:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,480 @@
+{
+  "schema_version": "collector_fetch_policy.v1",
+  "collector_version": "1.0.0",
+  "purpose": "aggregate market attention and sentiment research",
+  "contact_user_agent": "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
+  "browser_user_agent_mode": "stock_chromium",
+  "stealth_fetching": false,
+  "cloudflare_turnstile_bypass": false,
+  "proxy_rotation": false,
+  "captcha_solving": false,
+  "logged_in_sessions": false,
+  "cookie_reuse": false,
+  "raw_retention_days": 90,
+  "auto_pause_consecutive_blocks": 2,
+  "disabled_by_build_sources": [
+    "yahoo",
+    "cnyes",
+    "anue"
+  ],
+  "dropped_sources": [
+    "collector-tw-tpex-flows"
+  ],
+  "sources": {
+    "collector-tw-macro-cbc": {
+      "source_id": "collector-tw-macro-cbc",
+      "section_ref": "5.1",
+      "description": "Central Bank of the Republic of China (Taiwan) Open Data API statistics",
+      "base_urls": [
+        "https://cpx.cbc.gov.tw/API/DataAPI/Get"
+      ],
+      "series_codes": [
+        "BP01D01",
+        "EF15M01",
+        "EF17M01",
+        "EG2AY01"
+      ],
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 10,
+      "min_interval_seconds": 1.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://cpx.cbc.gov.tw/Data/ExportToAPIInfo (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "中央銀行全球資訊網政府網站資料開放宣告 (Central Bank of the Republic of China (Taiwan) Open Data)",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-macro-ndc": {
+      "source_id": "collector-tw-macro-ndc",
+      "section_ref": "5.1",
+      "description": "NDC business indicators (景氣燈號, leading/coincident index) via data.gov.tw dataset 6099",
+      "base_urls": [
+        "https://data.gov.tw/api/v2/rest/dataset/6099",
+        "https://ws.ndc.gov.tw/Download.ashx"
+      ],
+      "dataset_id": "6099",
+      "cadence": "monthly",
+      "cadence_seconds": 2678400,
+      "max_requests_per_run": 4,
+      "min_interval_seconds": 2.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://data.gov.tw/license (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "國家發展委員會景氣指標查詢系統（政府資料開放平臺資料集 6099，依政府資料開放授權條款第1版提供）",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-macro-dgbas": {
+      "source_id": "collector-tw-macro-dgbas",
+      "section_ref": "5.1",
+      "description": "DGBAS CPI spreadsheet download and GDP/unemployment statistical tables",
+      "base_urls": [
+        "https://www.stat.gov.tw/"
+      ],
+      "datasets": [
+        "cpi_monthly_xls",
+        "gdp_unemployment_table"
+      ],
+      "cadence": "monthly",
+      "cadence_seconds": 2678400,
+      "max_requests_per_run": 6,
+      "min_interval_seconds": 2.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.stat.gov.tw/cp.aspx?n=3164 (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "行政院主計總處政府資料開放授權條款（依政府資料開放授權條款 data.gov.tw 提供）",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-twse-openapi": {
+      "source_id": "collector-tw-twse-openapi",
+      "section_ref": "5.1",
+      "description": "TWSE OpenAPI fundamentals (monthly revenue, statements, margin, valuation); fetched directly by Pantheon in production",
+      "base_urls": [
+        "https://openapi.twse.com.tw/v1/"
+      ],
+      "endpoints": [
+        "/opendata/t187ap05_L",
+        "/opendata/t187ap06_L_basi",
+        "/opendata/t187ap07_L_basi",
+        "/exchangeReport/MI_MARGN",
+        "/exchangeReport/BWIBBU_ALL"
+      ],
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 10,
+      "min_interval_seconds": 1.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://openapi.twse.com.tw/v1/swagger.json (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "臺灣證券交易所 OpenAPI（依政府資料開放授權條款 data.gov.tw 提供）",
+      "logged_in": false,
+      "enabled": false
+    },
+    "collector-gdelt": {
+      "source_id": "collector-gdelt",
+      "section_ref": "5.1",
+      "description": "GDELT DOC 2.0 API (max 250 records per call, 3-month default window)",
+      "base_urls": [
+        "https://api.gdeltproject.org/api/v2/doc/doc"
+      ],
+      "max_records_per_call": 250,
+      "default_window": "3months",
+      "cadence": "hourly",
+      "cadence_seconds": 3600,
+      "max_requests_per_run": 5,
+      "min_interval_seconds": 2.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://www.gdeltproject.org/about.html#termsofuse (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "The GDELT Project (https://www.gdeltproject.org/)",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-macro-dbnomics": {
+      "source_id": "collector-macro-dbnomics",
+      "section_ref": "5.1",
+      "description": "DBnomics international macro series for US/EU/JP/CN context",
+      "base_urls": [
+        "https://api.db.nomics.world/v22/series"
+      ],
+      "series_ids": [
+        "FED/H15/RIFSPFF_N.D",
+        "ECB/FM/M.U2.EUR.4F.KR.MRR_FR.LEV",
+        "BOJ/FM01/STRDCLUCON",
+        "NBS/M_A010101/A01010101"
+      ],
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 8,
+      "min_interval_seconds": 1.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://docs.db.nomics.world/legal-terms/ (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "DBnomics (https://db.nomics.world/) - inherits upstream provider terms",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-papers": {
+      "source_id": "collector-papers",
+      "section_ref": "5.2",
+      "description": "Composite paper corpus (arXiv q-fin.*/stat.ML, OpenAlex works, NBER/journal RSS via RSSHub)",
+      "base_urls": [
+        "https://export.arxiv.org/api/query",
+        "https://api.openalex.org/works",
+        "http://rsshub:1200/"
+      ],
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 15,
+      "min_interval_seconds": 3.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://info.arxiv.org/help/api/tou.html; https://help.openalex.org/access/pricing/ (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "arXiv metadata CC0 1.0 (PDFs internal extraction only, never redistributed); OpenAlex CC0 1.0; NBER RSS",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-paper-arxiv": {
+      "source_id": "collector-paper-arxiv",
+      "section_ref": "5.2",
+      "description": "arXiv export API filtered to q-fin.* and stat.ML (1 req / 3s, single connection, internal PDF extraction only)",
+      "base_urls": [
+        "https://export.arxiv.org/api/query"
+      ],
+      "categories": [
+        "q-fin.*",
+        "stat.ML"
+      ],
+      "max_connections": 1,
+      "redistribution_allowed": false,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 10,
+      "min_interval_seconds": 3.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://info.arxiv.org/help/api/tou.html (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "arXiv.org metadata (CC0 1.0); full-text PDFs stored for internal extraction only and never re-served",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-paper-openalex": {
+      "source_id": "collector-paper-openalex",
+      "section_ref": "5.2",
+      "description": "OpenAlex REST API quantitative finance and asset pricing works (CC0)",
+      "base_urls": [
+        "https://api.openalex.org/works"
+      ],
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 10,
+      "min_interval_seconds": 1.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://help.openalex.org/access/pricing/ (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "OpenAlex (CC0 1.0 Universal)",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-paper-nber-rss": {
+      "source_id": "collector-paper-nber-rss",
+      "section_ref": "5.2",
+      "description": "NBER and journal RSS feeds via unmodified RSSHub container",
+      "base_urls": [
+        "http://rsshub:1200/"
+      ],
+      "routes": [
+        "/nber/papers",
+        "/openalex/works",
+        "/arxiv/query"
+      ],
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 6,
+      "min_interval_seconds": 2.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://github.com/DIYgod/RSSHub (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "NBER / OpenAlex / arXiv RSS via RSSHub",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-threads": {
+      "source_id": "collector-tw-threads",
+      "section_ref": "5.3",
+      "description": "Threads logged-out first-page keyword search and public posts via Scrapling browser fetcher",
+      "base_urls": [
+        "https://www.threads.com/search",
+        "https://www.threads.com/@"
+      ],
+      "cadence": "daily",
+      "cadence_seconds": 21600,
+      "max_requests_per_run": 5,
+      "min_interval_seconds": 10.0,
+      "fetcher": "browser",
+      "respect_robots": false,
+      "robots_decision": "exempted_by_operator_2026-11-10",
+      "terms_ref": "https://www.facebook.com/legal/automated_data_collection_terms (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-instagram-popular": {
+      "source_id": "collector-tw-instagram-popular",
+      "section_ref": "5.3",
+      "description": "Instagram logged-out popular-tag pages only (/explore/tags/<tag>/ -> /popular/<tag>/); profile and keyword search forbidden",
+      "base_urls": [
+        "https://www.instagram.com/explore/tags/",
+        "https://www.instagram.com/popular/"
+      ],
+      "allowed_path_prefixes": [
+        "/explore/tags/",
+        "/popular/"
+      ],
+      "forbidden_path_prefixes": [
+        "/explore/search/",
+        "/accounts/login",
+        "/p/",
+        "/reel/"
+      ],
+      "popular_tags_only": true,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 3,
+      "min_interval_seconds": 15.0,
+      "fetcher": "browser",
+      "respect_robots": false,
+      "robots_decision": "exempted_by_operator_2026-11-10",
+      "terms_ref": "https://www.facebook.com/legal/automated_data_collection_terms (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-cmoney-forum": {
+      "source_id": "collector-tw-cmoney-forum",
+      "section_ref": "5.3",
+      "description": "股市爆料同學會 (CMoney forum) public stock pages; disabled by default until licence request is answered (O-4)",
+      "base_urls": [
+        "https://www.cmoney.tw/forum/stock/"
+      ],
+      "cadence": "daily",
+      "cadence_seconds": 21600,
+      "max_requests_per_run": 5,
+      "min_interval_seconds": 10.0,
+      "fetcher": "browser",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.cmoney.tw/member/tos.aspx (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "",
+      "logged_in": false,
+      "enabled": false
+    },
+    "collector-tw-ptt-stock": {
+      "source_id": "collector-tw-ptt-stock",
+      "section_ref": "5.3",
+      "description": "PTT Stock board official web front (www.ptt.cc/bbs/Stock/); Content-Signal ai-train=no respected (analysis only, no training)",
+      "base_urls": [
+        "https://www.ptt.cc/bbs/Stock/"
+      ],
+      "ai_train_allowed": false,
+      "cadence": "daily",
+      "cadence_seconds": 21600,
+      "max_requests_per_run": 10,
+      "min_interval_seconds": 5.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.ptt.cc/robots.txt (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-ptt-mirrors": {
+      "source_id": "collector-tw-ptt-mirrors",
+      "section_ref": "5.3",
+      "description": "PTT mirrors (pttweb.cc, disp.cc Stock RSS); fallback only, disabled by default (O-11)",
+      "base_urls": [
+        "https://rss.disp.cc/Stock.xml",
+        "https://www.pttweb.cc/bbs/Stock"
+      ],
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 4,
+      "min_interval_seconds": 10.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://disp.cc/tos; https://www.pttweb.cc/ (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "",
+      "logged_in": false,
+      "enabled": false
+    },
+    "collector-youtube-finance": {
+      "source_id": "collector-youtube-finance",
+      "section_ref": "5.3",
+      "description": "YouTube Data API v3 search.list and videos.list for Taiwan finance channels (captions.download forbidden)",
+      "base_urls": [
+        "https://www.googleapis.com/youtube/v3/search",
+        "https://www.googleapis.com/youtube/v3/videos"
+      ],
+      "daily_quota_limit_units": 10000,
+      "search_cost_units": 100,
+      "videos_cost_units": 1,
+      "forbid_captions_download": true,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 20,
+      "min_interval_seconds": 1.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://www.youtube.com/t/terms; https://developers.google.com/youtube/v3/determine_quota_cost (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-youtube-gemini-notes": {
+      "source_id": "collector-youtube-gemini-notes",
+      "section_ref": "5.3",
+      "description": "Gemini API video understanding for public YouTube finance URLs (free tier cap <= 8h video/day)",
+      "base_urls": [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+      ],
+      "daily_video_seconds_limit": 28800,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 10,
+      "min_interval_seconds": 2.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://aistudio.google.com/docs/video-understanding (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-library-books": {
+      "source_id": "collector-library-books",
+      "section_ref": "5.4",
+      "description": "Operator-supplied owned/licensed PDF/EPUB books in local collector library parsed by Docling",
+      "base_urls": [
+        "file:///data/library/books"
+      ],
+      "parser": "docling",
+      "redistribution_allowed": false,
+      "cadence": "monthly",
+      "cadence_seconds": 2678400,
+      "max_requests_per_run": 20,
+      "min_interval_seconds": 0.0,
+      "fetcher": "api",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "operator-owned-or-licensed-library://collector/books (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-news-rss": {
+      "source_id": "collector-news-rss",
+      "section_ref": "5.5",
+      "description": "Taiwan finance news feeds via unmodified RSSHub container (cna, udn, ltn, chinatimes, cw); Yahoo and Anue/cnyes DISABLED_BY_BUILD",
+      "base_urls": [
+        "http://rsshub:1200/"
+      ],
+      "routes": [
+        "/cna/realtime",
+        "/udn/news/breakingnews/2",
+        "/ltn/news/business",
+        "/chinatimes/realtimenews/260410",
+        "/cw/master"
+      ],
+      "forbidden_routes": [
+        "yahoo",
+        "cnyes",
+        "anue"
+      ],
+      "cadence": "hourly",
+      "cadence_seconds": 3600,
+      "max_requests_per_run": 10,
+      "min_interval_seconds": 1.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "not_applicable_api",
+      "terms_ref": "https://github.com/DIYgod/RSSHub (read 2026-11-10)",
+      "attribution_required": false,
+      "attribution": "",
+      "logged_in": false,
+      "enabled": true
+    }
+  }
+}
