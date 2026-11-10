@@ -50,6 +50,13 @@ from services.source_ingestion.hypothesis_card import (
     extraction_origin,
     extractor_from_env,
 )
+from services.source_ingestion.hypothesis_compiler import (
+    COMPILED,
+    NEEDS_DATA,
+    NOT_EXPRESSIBLE,
+    SUPPORT_ADDED,
+    HypothesisCompiler,
+)
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeedStatus
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 
@@ -1667,8 +1674,10 @@ class DistillationWorker:
         retry_base_seconds: float = 5.0,
         registry_sync: Callable[[RegistrySyncRequest], RegistrySyncResult] | None = None,
         hypothesis_extractor: HypothesisExtractor | None = None,
+        hypothesis_compiler: HypothesisCompiler | None = None,
     ) -> None:
         self._hypothesis_extractor = hypothesis_extractor
+        self._hypothesis_compiler = hypothesis_compiler
         self._queue = job_queue or DistillationJobQueue()
         self._seed_store = seed_store or StrategySpecSeedStore()
         self._materializer = SeedMaterializationService(
@@ -1913,7 +1922,32 @@ class DistillationWorker:
                         claim_token=job.lease_token,
                     )
                     return "skipped", reason
-                source = _with_hypothesis_card(source, outcome.card)
+                card = outcome.card
+                if self._hypothesis_compiler is not None:
+                    compiled = self._hypothesis_compiler.compile(outcome.card)
+                    if compiled.status in {NOT_EXPRESSIBLE, NEEDS_DATA, SUPPORT_ADDED}:
+                        # No new draft: refusal is recorded, or an existing
+                        # draft's support_count was incremented instead.
+                        reason = {
+                            NOT_EXPRESSIBLE: "hypothesis_not_expressible",
+                            NEEDS_DATA: "hypothesis_needs_data",
+                            SUPPORT_ADDED: "hypothesis_rule_support_added",
+                        }[compiled.status]
+                        detail = compiled.dataset or compiled.reason or compiled.fingerprint
+                        self._queue.mark_skipped(
+                            job.job_id,
+                            reason=f"{reason}: {detail}" if detail else reason,
+                            processed_at=now,
+                            claim_token=job.lease_token,
+                        )
+                        return "skipped", reason
+                    if compiled.status == COMPILED and compiled.artifact is not None:
+                        # The seed builder preserves hypothesis_card wholesale.
+                        card = {
+                            **card,
+                            "factor_rule_v1": {**compiled.artifact, "rule_fingerprint": compiled.fingerprint},
+                        }
+                source = _with_hypothesis_card(source, card)
 
         try:
             item = _synthesize_evidence_item(source, version_key)
@@ -2040,6 +2074,7 @@ def make_distillation_worker(
     max_attempts: int = 3,
     registry_sync: Callable[[RegistrySyncRequest], RegistrySyncResult] | None = None,
     hypothesis_extractor: HypothesisExtractor | None = None,
+    hypothesis_compiler: HypothesisCompiler | None = None,
 ) -> DistillationWorker:
     """Factory for a default-configured DistillationWorker."""
     queue = job_queue if job_queue is not None else DistillationJobQueue(
@@ -2055,6 +2090,7 @@ def make_distillation_worker(
         lease_seconds=lease_seconds,
         retry_base_seconds=retry_base_seconds,
         registry_sync=registry_sync,
+        hypothesis_compiler=hypothesis_compiler,
         hypothesis_extractor=(
             hypothesis_extractor
             if hypothesis_extractor is not None
