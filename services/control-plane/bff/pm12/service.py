@@ -1380,8 +1380,16 @@ def _management_portfolio_holding_entry(
             position, "mark_source_ref", "last_known_mark_source_ref"
         ),
         "mark_status": mark_status,
+        "reason_code": _management_optional_text(position.get("reason_code")),
+        "decision_id": _management_optional_text(position.get("decision_id")),
         "links": links,
     }
+
+
+def _management_optional_text(value: Any) -> Optional[str]:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _management_portfolio_source_issues(

@@ -4015,3 +4015,129 @@ class TestLedgerCashProjection(unittest.TestCase):
         for bad in (float("nan"), float("inf"), True, "55300"):
             summary = store.project_event(self._fill(2, bad))
             self.assertEqual(summary["ledger_cash"], 77650.0)
+
+
+class TestPositionDecisionIdentityProjection(unittest.TestCase):
+    """Open positions carry the decision that opened or last changed them.
+
+    Event shapes are the real 2026-11-10 paper decisions: trade_decision
+    carries metadata.decision_id and metadata.expression_decision, the fill
+    carries the instrument fields and no reason of its own.
+    """
+
+    _CASH_DECISION = "dec-rb-3823397e125e4579ba5f4174067087ed-b5fa95075d12d756f69c821b"
+    _FUTURE_DECISION = "dec-rb-3516fc86e6f84649a499fc89f3c562b3-b16d6712794d6cec3472fe30"
+
+    @staticmethod
+    def _decision(
+        *, decision_id: str, instrument_id: str, reason_code: str, units: int, n: int
+    ) -> dict[str, Any]:
+        event = TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol="2330",
+            ledger_fill_count=None,
+            created_at=f"2026-11-10T07:01:3{n}Z",
+            event_id=f"evt-decision-{n}",
+            extra_metadata={
+                "decision_id": decision_id,
+                "view_direction": "long",
+                "expression_decision": {
+                    "instrument_id": instrument_id,
+                    "reason_code": reason_code,
+                    "units": units,
+                    "side": "buy",
+                },
+            },
+        )
+        event["event_type"] = "trade_decision"
+        event.pop("metrics")
+        return event
+
+    @staticmethod
+    def _fill(*, lfc: int, qty: float, price: float, meta: dict[str, Any]) -> dict[str, Any]:
+        return TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol="2330",
+            quantity=qty,
+            price=price,
+            ledger_fill_count=lfc,
+            created_at=f"2026-11-10T07:01:4{lfc}Z",
+            extra_metadata=meta,
+        )
+
+    def test_cash_share_and_stock_future_rows_carry_decision_identity(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(
+            self._decision(
+                decision_id=self._CASH_DECISION,
+                instrument_id="eq:2330",
+                reason_code="long_cash",
+                units=43,
+                n=1,
+            )
+        )
+        store.project_event(
+            self._fill(
+                lfc=1,
+                qty=43.0,
+                price=2285.0,
+                meta={"instrument_id": "eq:2330", "kind": "cash_share", "multiplier": 1.0},
+            )
+        )
+        store.project_event(
+            self._decision(
+                decision_id=self._FUTURE_DECISION,
+                instrument_id="ssf:SRF:202611",
+                reason_code="long_lever",
+                units=2,
+                n=2,
+            )
+        )
+        summary = store.project_event(
+            self._fill(
+                lfc=2,
+                qty=2.0,
+                price=97.1,
+                meta={
+                    "instrument_id": "ssf:SRF:202611",
+                    "kind": "stock_future",
+                    "multiplier": 100.0,
+                    "contract_month": "202611",
+                    "initial_margin_reserved": 8700.0,
+                },
+            )
+        )
+        rows = {r.get("instrument_id"): r for r in summary["positions"]}
+        cash = rows["eq:2330"]
+        self.assertEqual(cash["decision_id"], self._CASH_DECISION)
+        self.assertEqual(cash["reason_code"], "long_cash")
+        future = rows["ssf:SRF:202611"]
+        self.assertEqual(future["decision_id"], self._FUTURE_DECISION)
+        self.assertEqual(future["reason_code"], "long_lever")
+
+    def test_later_fill_overwrites_and_missing_decision_leaves_row_without_keys(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        summary = store.project_event(
+            self._fill(lfc=1, qty=5.0, price=2299.0, meta={})
+        )
+        row = summary["positions"][0]
+        self.assertNotIn("decision_id", row)
+        self.assertNotIn("reason_code", row)
+        store.project_event(
+            self._decision(
+                decision_id=self._CASH_DECISION,
+                instrument_id="eq:2330",
+                reason_code="long_cash",
+                units=3,
+                n=1,
+            )
+        )
+        summary = store.project_event(
+            self._fill(
+                lfc=2,
+                qty=3.0,
+                price=2300.0,
+                meta={"instrument_id": "eq:2330", "kind": "cash_share", "multiplier": 1.0},
+            )
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["decision_id"], self._CASH_DECISION)
+        self.assertEqual(row["reason_code"], "long_cash")

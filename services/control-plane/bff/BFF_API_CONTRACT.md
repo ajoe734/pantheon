@@ -1072,6 +1072,8 @@ Read-only; no new route. These fields extend the existing `GET /bff/management/p
 | `margin_reserved` | Initial margin the ledger reserved for the open contracts (currency units); `null` for a cash share. |
 | `asset_class` | An explicit value wins; otherwise derived from `instrument_kind` (`stock_future` -> `future`, `cash_share` -> `equity`), else `other`. |
 | `holding_id` | `{runtime_id}:{key}`; the key is the position's own id, else the `instrument_id` of a non-cash instrument, else the symbol, so a future never shares an id with its underlying's cash row. |
+| `reason_code` | Reason code of the decision that opened or last changed the position (`long_cash`, `long_lever`, ...), folded by the telemetry runtime summary from the `trade_decision` event (`metadata.expression_decision.reason_code`, else `metadata.reason_code`) for the fill's instrument, falling back to the fill's own `reason_code`; `null` when the runtime summary row has none. Served under this snake case key; the frontend reads it as `reasonCode`. |
+| `decision_id` | `metadata.decision_id` of the same decision; `null` when none. Attribution facts are unchanged. |
 
 ### Valuation
 
