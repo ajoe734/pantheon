@@ -2521,8 +2521,7 @@ def _routed_strategies_for_persona(persona_id: str) -> int:
         getattr(type(store), "list_strategy_specs", None) is ReadSurfacePorts.list_strategy_specs
         and "list_strategy_specs" not in getattr(store, "__dict__", {})
         and "list_strategy_specs" not in getattr(rks, "__dict__", {})
-        and bool(getattr(rks, "_has_injected_strategy_specs", False))
-        and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+        and "_fetch_canonical_strategy_specs" not in getattr(rks, "__dict__", {})
     ):
         return int(_routed_strategy_counts_by_persona().get(clean_id, 0))
     items = store.list_strategy_specs(persona_id=clean_id) or []
@@ -15752,6 +15751,7 @@ class PersonaService:
         read_store = self.get_read_store()
         return read_store.get_persona_league_entry(persona_id)
 
+    @request_read_scope()
     def patch_persona(
         self,
         persona_id: str,

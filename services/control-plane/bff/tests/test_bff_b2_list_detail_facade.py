@@ -2157,3 +2157,896 @@ def test_persona_detail_field_for_field_identity_and_cpu_reduction(monkeypatch: 
             persona_service._current_persona_service.reset(token)
 
 
+# ============================================================================
+# 17. BFF-PERSONA-ROUTED-COUNT-HOSTED-20261110: Hosted Registry Bounded Count
+# ============================================================================
+
+
+def _build_hosted_registry_strategy_fixture() -> dict[str, Any]:
+    """Build 3,376 canonical registry strategy spec entries across 163 personas.
+
+    Covers:
+    - 157 personas with routed strategies (persona-0 .. persona-155 + persona-pack-a-momentum)
+    - 6 personas with 0 routed strategies (persona-157 .. persona-162)
+    - Superseded-only personas (persona-superseded-v1, persona-superseded-v2)
+    - Real fixture pack spec loaded from services/control-plane/bff/data/fixtures_pack_a.json
+    - Multi-version strategy family with semver ordering (1.10.0 > 1.2.0 > 1.0.0)
+    - Multi-version family whose latest version is retired
+    - Single-version retired entries (artifact_state, metadata.lifecycle_state, metadata.state)
+    - Metadata fallback bindings (personaIds, persona_ids, persona_id, inner.metadata.persona_id)
+    - Whitespace-padded duplicate persona IDs
+    """
+    from pathlib import Path
+    from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
+    from services.control_plane.bff.tests.test_bff_persona_list_compact_rows import (
+        _CONNECTOR,
+        _real_raw,
+        _real_truth,
+    )
+    from services.registry.storage import persona_binding_counts
+
+    fixture_pack_path = Path(__file__).resolve().parent.parent / "data" / "fixtures_pack_a.json"
+    fixture_pack = json.loads(fixture_pack_path.read_text(encoding="utf-8"))
+    pack_a_spec = fixture_pack["datasets"]["strategy_specs"]["strategy-pack-a-momentum"]
+    pack_a_ver = pack_a_spec["versions"][0]
+
+    truth = _real_truth()
+    prov_store = MemoryPersonaProvisioningStore()
+    raws: list[dict[str, Any]] = []
+    persona_ids_all = [f"persona-{i}" for i in range(156)] + [
+        "persona-pack-a-momentum",
+        "persona-157",
+        "persona-158",
+        "persona-159",
+        "persona-160",
+        "persona-161",
+        "persona-162",
+    ]
+    assert len(persona_ids_all) == 163
+
+    for idx, pid in enumerate(persona_ids_all):
+        raw = _real_raw(idx)
+        raw["id"] = pid
+        raw["persona_id"] = pid
+        raw["name"] = f"Persona {pid}"
+        raw["display_name"] = f"Persona {pid}"
+        raw["tenant_id"] = "tenant-default"
+        raw["lifecycle_state"] = "active" if idx == 0 else "research_only"
+        raw["strategy_family"] = "momentum"
+        raw["metadata"]["tenant_id"] = "tenant-default"
+        raw["metadata"]["owner"] = "op-b2"
+        raw["metadata"]["data_source_status"]["required_source_health"] = [truth[_CONNECTOR]]
+        raws.append(raw)
+        prov_store.reserve(
+            tenant_id="tenant-default",
+            idempotency_key=f"idem-hosted-{idx}",
+            request_hash=f"hash-hosted-{idx}",
+            normalized_name=f"hosted-{idx}",
+            persona_id=pid,
+            request_payload={"name": f"Persona {pid}", "market": "TW", "requested_by": "op-b2"},
+        )
+
+    registry_entries: list[dict[str, Any]] = []
+
+    # 1. Fixture pack strategy-pack-a-momentum from fixtures_pack_a.json (1 entry)
+    registry_entries.append(
+        {
+            "entry": {
+                "registry_id": pack_a_ver["spec_version_id"],
+                "artifact_type": "strategy_spec",
+                "artifact_state": pack_a_ver["lifecycle_state"],
+                "version": pack_a_ver["spec_version"],
+                "strategy_id": pack_a_spec["strategy_id"],
+                "owner_tenant": "tenant-default",
+                "created_at": pack_a_ver["created_at"],
+                "updated_at": pack_a_ver["updated_at"],
+                "metadata": {
+                    "spec_version_id": pack_a_ver["spec_version_id"],
+                    "spec_version": pack_a_ver["spec_version"],
+                    "title": pack_a_ver["title"],
+                    "lifecycle_state": pack_a_ver["lifecycle_state"],
+                    "source_kind": pack_a_ver["source_kind"],
+                    "persona_ids": list(pack_a_ver["persona_ids"]),
+                    "strategy_spec": copy.deepcopy(pack_a_ver) if "copy" in globals() else json.loads(json.dumps(pack_a_ver)),
+                },
+            }
+        }
+    )
+
+    # 2. Multi-version semver family (3 entries): 1.0.0 -> persona-superseded-v1,
+    #    1.2.0 -> persona-superseded-v2, 1.10.0 (current) -> persona-0 + persona-pack-a-momentum
+    for ver_idx, (ver, pids, ts) in enumerate(
+        [
+            ("1.0.0", ["persona-superseded-v1"], "2026-08-01T00:00:00Z"),
+            ("1.10.0", [" persona-0 ", "persona-0", "persona-pack-a-momentum"], "2026-08-02T00:00:00Z"),
+            ("1.2.0", ["persona-superseded-v2"], "2026-08-03T00:00:00Z"),
+        ],
+        start=1,
+    ):
+        registry_entries.append(
+            {
+                "entry": {
+                    "registry_id": f"reg-multi-semver-v{ver_idx}",
+                    "artifact_type": "strategy_spec",
+                    "artifact_state": "approved",
+                    "version": ver,
+                    "strategy_id": "strategy-multi-semver",
+                    "owner_tenant": "tenant-default",
+                    "created_at": ts,
+                    "updated_at": ts,
+                    "metadata": {
+                        "spec_version_id": f"reg-multi-semver-v{ver_idx}",
+                        "spec_version": ver,
+                        "title": "Multi Semver Strategy",
+                        "personaIds": pids,
+                        "strategy_spec": {
+                            "strategy_id": "strategy-multi-semver",
+                            "spec_version": ver,
+                            "title": "Multi Semver Strategy",
+                            "lifecycle_state": "approved",
+                            "hypothesis": "Multi-version semver ordering check " * 5,
+                            "market_scope": {"symbols": ["2330.TW"], "frequency": "1d"},
+                            "execution_profile": {"execution_mode_hint": "paper"},
+                            "governance": {"approval_required": True, "risk_level": "medium"},
+                        },
+                    },
+                }
+            }
+        )
+
+    # 3. Multi-version family where current version (2.0.0) is retired (2 entries)
+    for ver_idx, (ver, state, ts) in enumerate(
+        [
+            ("1.0.0", "approved", "2026-08-01T00:00:00Z"),
+            ("2.0.0", "retired", "2026-08-05T00:00:00Z"),
+        ],
+        start=1,
+    ):
+        registry_entries.append(
+            {
+                "entry": {
+                    "registry_id": f"reg-retired-latest-v{ver_idx}",
+                    "artifact_type": "strategy_spec",
+                    "artifact_state": state,
+                    "version": ver,
+                    "strategy_id": "strategy-retired-latest",
+                    "owner_tenant": "tenant-default",
+                    "created_at": ts,
+                    "updated_at": ts,
+                    "metadata": {
+                        "spec_version_id": f"reg-retired-latest-v{ver_idx}",
+                        "spec_version": ver,
+                        "persona_id": "persona-157",
+                        "strategy_spec": {
+                            "strategy_id": "strategy-retired-latest",
+                            "spec_version": ver,
+                            "lifecycle_state": state,
+                            "persona_ids": ["persona-157"],
+                        },
+                    },
+                }
+            }
+        )
+
+    # 4. Single-version retired entries across different state fields (3 entries)
+    for r_idx, pid in enumerate(["persona-158", "persona-159", "persona-160"]):
+        registry_entries.append(
+            {
+                "entry": {
+                    "registry_id": f"reg-retired-single-{r_idx}",
+                    "artifact_type": "strategy_spec",
+                    "artifact_state": "retired" if r_idx == 0 else None,
+                    "version": "1.0.0",
+                    "strategy_id": f"strategy-retired-single-{r_idx}",
+                    "owner_tenant": "tenant-default",
+                    "created_at": "2026-08-10T00:00:00Z",
+                    "updated_at": "2026-08-10T00:00:00Z",
+                    "metadata": {
+                        "spec_version_id": f"reg-retired-single-{r_idx}",
+                        "spec_version": "1.0.0",
+                        "lifecycle_state": "retired" if r_idx == 1 else None,
+                        "state": "retired" if r_idx == 2 else None,
+                        "persona_ids": [pid],
+                        "strategy_spec": {
+                            "strategy_id": f"strategy-retired-single-{r_idx}",
+                            "spec_version": "1.0.0",
+                            "lifecycle_state": "retired",
+                            "persona_ids": [pid],
+                        },
+                    },
+                }
+            }
+        )
+
+    # 5. Remaining entries to reach exact hosted scale of 3,376 canonical registry entries:
+    #    - 156 active strategy families (one per persona-0 .. persona-155),
+    #      first 111 families have 22 versions (2,442 entries) and next 45 families have 20 versions (900 entries),
+    #      plus 25 retired families (25 entries): 9 + 2,442 + 900 + 25 = 3,376 entries.
+    for fam_idx in range(156):
+        target_pid = f"persona-{fam_idx}"
+        ver_count = 22 if fam_idx < 111 else 20
+        sid = f"strategy-hosted-fam-{fam_idx}"
+        for v in range(1, ver_count + 1):
+            semver = f"1.0.{v}"
+            bound_pid = target_pid if v == ver_count else "persona-superseded-v1"
+            registry_entries.append(
+                {
+                    "entry": {
+                        "registry_id": f"reg-hosted-{fam_idx}-v{v}",
+                        "artifact_type": "strategy_spec",
+                        "artifact_state": "approved",
+                        "version": semver,
+                        "strategy_id": sid,
+                        "owner_tenant": "tenant-default",
+                        "created_at": f"2026-09-{(v % 28) + 1:02d}T00:00:00Z",
+                        "updated_at": f"2026-09-{(v % 28) + 1:02d}T00:00:00Z",
+                        "metadata": {
+                            "spec_version_id": f"reg-hosted-{fam_idx}-v{v}",
+                            "spec_version": semver,
+                            "title": f"Hosted Strategy {fam_idx}",
+                            "persona_ids": [bound_pid],
+                            "strategy_spec": {
+                                "strategy_id": sid,
+                                "spec_version": semver,
+                                "title": f"Hosted Strategy {fam_idx}",
+                                "lifecycle_state": "approved",
+                                "persona_ids": [bound_pid],
+                                "hypothesis": f"Canonical hosted strategy hypothesis {fam_idx} v{v} " * 4,
+                                "objective": "Deliver risk-adjusted paper execution signals.",
+                                "market_scope": {"symbols": ["2330.TW", "2317.TW"], "frequency": "1h"},
+                                "execution_profile": {
+                                    "execution_mode_hint": "paper",
+                                    "capital_pool_id": "pool-0",
+                                },
+                                "governance": {"approval_required": True, "risk_level": "medium"},
+                                "metadata": {"notes": "m" * 256},
+                            },
+                        },
+                    }
+                }
+            )
+
+    for ret_idx in range(25):
+        sid = f"strategy-hosted-retired-extra-{ret_idx}"
+        registry_entries.append(
+            {
+                "entry": {
+                    "registry_id": f"reg-hosted-retired-extra-{ret_idx}",
+                    "artifact_type": "strategy_spec",
+                    "artifact_state": "retired",
+                    "version": "1.0.0",
+                    "strategy_id": sid,
+                    "owner_tenant": "tenant-default",
+                    "created_at": "2026-09-15T00:00:00Z",
+                    "updated_at": "2026-09-15T00:00:00Z",
+                    "metadata": {
+                        "spec_version_id": f"reg-hosted-retired-extra-{ret_idx}",
+                        "spec_version": "1.0.0",
+                        "title": f"Retired Extra {ret_idx}",
+                        "lifecycle_state": "retired",
+                        "persona_ids": [f"persona-{157 + (ret_idx % 6)}"],
+                        "strategy_spec": {
+                            "strategy_id": sid,
+                            "spec_version": "1.0.0",
+                            "lifecycle_state": "retired",
+                            "persona_ids": [f"persona-{157 + (ret_idx % 6)}"],
+                        },
+                    },
+                }
+            }
+        )
+
+    assert len(registry_entries) == 3376
+    flat_rows = [item["entry"] for item in registry_entries]
+    binding_counts = persona_binding_counts(flat_rows)
+    assert len(binding_counts) == 157
+    assert binding_counts["persona-0"] == 2
+    assert binding_counts["persona-pack-a-momentum"] == 2
+    assert binding_counts["persona-1"] == 1
+    for z_idx in range(157, 163):
+        assert binding_counts.get(f"persona-{z_idx}", 0) == 0
+    assert binding_counts.get("persona-superseded-v1", 0) == 0
+    assert binding_counts.get("persona-superseded-v2", 0) == 0
+
+    return {
+        "truth": truth,
+        "prov_store": prov_store,
+        "raws": raws,
+        "registry_entries": registry_entries,
+        "binding_counts": binding_counts,
+        "persona_ids_all": persona_ids_all,
+    }
+
+
+def test_hosted_persona_detail_uses_bounded_persona_binding_counts_and_never_full_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1: With PANTHEON_REGISTRY_API_URL set, GET /bff/personas/{id} uses persona_binding_counts and fails on any full spec fetch."""
+    import services.control_plane.bff.command_adapters.base as adapter_base
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.ports import ReadSurfacePorts, create_persona_registry_write_owner
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    fx = _build_hosted_registry_strategy_fixture()
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.hosted.internal")
+
+    requested_urls: list[str] = []
+
+    def strict_counts_only_http(url: str, **_kwargs: Any) -> Any:
+        requested_urls.append(url)
+        if not url.endswith("/api/registry/strategy-specs?view=persona_binding_counts"):
+            raise AssertionError(f"Forbidden full strategy spec fetch on hosted path: {url}")
+        return dict(fx["binding_counts"])
+
+    monkeypatch.setattr(adapter_base, "http_request_json", strict_counts_only_http)
+
+    base_store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"personas": fx["raws"]},
+    )
+    # Use uninjected DefaultResearchKnowledgeSourcePort as on hosted production
+    hosted_rks = DefaultResearchKnowledgeSourcePort()
+    assert hosted_rks._has_injected_strategy_specs is False
+
+    def forbidden_full_read(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("Full strategy spec read must never be called when counting routed strategies")
+
+    monkeypatch.setattr(DefaultResearchKnowledgeSourcePort, "_fetch_canonical_strategy_specs", forbidden_full_read)
+    monkeypatch.setattr(DefaultResearchKnowledgeSourcePort, "_fetch_canonical_strategy_specs_uncached", forbidden_full_read)
+    monkeypatch.setattr(DefaultResearchKnowledgeSourcePort, "_list_strategy_specs_uncached", forbidden_full_read)
+    monkeypatch.setattr(DefaultResearchKnowledgeSourcePort, "list_strategy_specs", forbidden_full_read)
+
+    store = ReadSurfacePorts(
+        operations_consultation=base_store.operations_consultation,
+        persona_capital_runtime=base_store.persona_capital_runtime,
+        ooda_management=base_store.ooda_management,
+        research_knowledge_source=hosted_rks,
+        lifecycle_telemetry_governance=base_store.lifecycle_telemetry_governance,
+        persona_training=base_store.persona_training,
+        job_read=base_store.job_read,
+        paper_runtime_monitoring_sessions_provider=lambda: [],
+        reconciliation_drift_reads=base_store.reconciliation_drift_reads,
+    )
+    monkeypatch.setattr(persona_service, "_PERSONA_PROVISIONING_STORE", fx["prov_store"])
+
+    tok_auth = owner_reads.authorization.set("Bearer op-b2:operator:tenant-default")
+    tok_tenant = owner_reads.selected_tenant.set("tenant-default")
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            service = PersonaService(
+                write_owner=create_persona_registry_write_owner(),
+                ranking_write_owner=object(),
+                read_store=store,
+                command_store=CommandStore(os.path.join(td, "cmd.jsonl")),
+                provisioning_store=fx["prov_store"],
+                bff_error_fn=_test_bff_error,
+            )
+            monkeypatch.setattr(service, "_source_ingest_truth_by_connector", lambda: fx["truth"])
+            monkeypatch.setattr(persona_service, "_composed_persona_service", service)
+            monkeypatch.setattr(persona_service, "utc_now", lambda: _TS)
+
+            app = FastAPI()
+            app.include_router(
+                create_personas_router(
+                    service=service,
+                    extract_identity_fn=_test_extract_identity,
+                    require_read_role_fn=_test_require_read_role,
+                    require_operator_role_fn=_test_require_operator_role,
+                    bff_error_fn=_test_bff_error,
+                )
+            )
+            client = TestClient(app)
+
+            for pid, expected_count in (
+                ("persona-0", 2),
+                ("persona-pack-a-momentum", 2),
+                ("persona-1", 1),
+                ("persona-157", 0),
+            ):
+                requested_urls.clear()
+                resp = client.get(f"/bff/personas/{pid}", headers=OPERATOR_HEADERS)
+                assert resp.status_code == 200, resp.text
+                assert resp.json()["data"]["routedStrategies"] == expected_count
+                assert requested_urls == [
+                    "http://registry.hosted.internal/api/registry/strategy-specs?view=persona_binding_counts"
+                ]
+    finally:
+        owner_reads.authorization.reset(tok_auth)
+        owner_reads.selected_tenant.reset(tok_tenant)
+
+
+def test_all_routed_strategies_for_persona_callers_match_full_read_across_real_spec_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC2: Every caller of _routed_strategies_for_persona gets the exact same count as the full read across retired, multi-version, fixture pack, and zero-strategy personas."""
+    import services.control_plane.bff.command_adapters.base as adapter_base
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+    from services.control_plane.bff.ports import ReadSurfacePorts, create_persona_registry_write_owner
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    fx = _build_hosted_registry_strategy_fixture()
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.hosted.internal")
+
+    tok_auth = owner_reads.authorization.set("Bearer op-b2:operator:tenant-default")
+    tok_tenant = owner_reads.selected_tenant.set("tenant-default")
+    try:
+        # Step 1: Compute full-read reference counts on the same 3,376 registry entries
+        monkeypatch.setattr(
+            adapter_base,
+            "http_request_json",
+            lambda url, **_kw: fx["registry_entries"] if not url.endswith("view=persona_binding_counts") else fx["binding_counts"],
+        )
+        full_port = DefaultResearchKnowledgeSourcePort()
+        sample_personas = [
+            "persona-0",                  # multi-strategy (hosted family + multi-semver 1.10.0 + whitespace dedup) -> 2
+            "persona-pack-a-momentum",    # fixture pack strategy-pack-a-momentum + multi-semver 1.10.0 -> 2
+            "persona-1",                  # standard 1-strategy active persona -> 1
+            "persona-155",                # 20-version family persona -> 1
+            "persona-157",                # multi-version retired-latest + retired extra -> 0
+            "persona-158",                # retired artifact_state -> 0
+            "persona-159",                # retired metadata.lifecycle_state -> 0
+            "persona-160",                # retired metadata.state -> 0
+            "persona-161",                # zero strategies -> 0
+            "persona-162",                # zero strategies -> 0
+            "persona-superseded-v1",      # bound only on superseded v1.0.0 -> 0
+            "persona-superseded-v2",      # bound only on superseded v1.2.0 -> 0
+        ]
+        full_read_counts: dict[str, int] = {}
+        with request_read_scope():
+            for pid in fx["persona_ids_all"] + ["persona-superseded-v1", "persona-superseded-v2"]:
+                full_read_counts[pid] = len(full_port.list_strategy_specs(persona_id=pid) or [])
+
+        assert full_read_counts["persona-0"] == 2
+        assert full_read_counts["persona-pack-a-momentum"] == 2
+        assert full_read_counts["persona-1"] == 1
+        assert full_read_counts["persona-155"] == 1
+        for zero_pid in (
+            "persona-157",
+            "persona-158",
+            "persona-159",
+            "persona-160",
+            "persona-161",
+            "persona-162",
+            "persona-superseded-v1",
+            "persona-superseded-v2",
+        ):
+            assert full_read_counts[zero_pid] == 0
+
+        # Step 2: Enforce bounded count-only HTTP read and test every caller of _routed_strategies_for_persona
+        count_urls: list[str] = []
+
+        def bounded_only_http(url: str, **_kw: Any) -> Any:
+            count_urls.append(url)
+            if not url.endswith("/api/registry/strategy-specs?view=persona_binding_counts"):
+                raise AssertionError(f"Full spec read forbidden: {url}")
+            return dict(fx["binding_counts"])
+
+        monkeypatch.setattr(adapter_base, "http_request_json", bounded_only_http)
+
+        base_store = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={"personas": fx["raws"]},
+        )
+        hosted_rks = DefaultResearchKnowledgeSourcePort()
+        store = ReadSurfacePorts(
+            operations_consultation=base_store.operations_consultation,
+            persona_capital_runtime=base_store.persona_capital_runtime,
+            ooda_management=base_store.ooda_management,
+            research_knowledge_source=hosted_rks,
+            lifecycle_telemetry_governance=base_store.lifecycle_telemetry_governance,
+            persona_training=base_store.persona_training,
+            job_read=base_store.job_read,
+            paper_runtime_monitoring_sessions_provider=lambda: [],
+            reconciliation_drift_reads=base_store.reconciliation_drift_reads,
+        )
+        raw_by_id = {r["persona_id"]: r for r in fx["raws"]}
+
+        class _InMemoryPersonaWriteOwner:
+            def update_persona(self, persona_id: str, **kwargs: Any) -> Optional[dict[str, Any]]:
+                rec = raw_by_id.get(persona_id)
+                if rec is None:
+                    return None
+                updated = json.loads(json.dumps(rec))
+                if kwargs.get("name"):
+                    updated["name"] = kwargs["name"]
+                if isinstance(kwargs.get("metadata"), dict):
+                    updated.setdefault("metadata", {}).update(kwargs["metadata"])
+                raw_by_id[persona_id] = updated
+                return updated
+
+        write_owner = _InMemoryPersonaWriteOwner()
+        monkeypatch.setattr(persona_service, "_PERSONA_PROVISIONING_STORE", fx["prov_store"])
+
+        with tempfile.TemporaryDirectory() as td:
+            service = PersonaService(
+                write_owner=write_owner,
+                ranking_write_owner=object(),
+                read_store=store,
+                command_store=CommandStore(os.path.join(td, "cmd.jsonl")),
+                provisioning_store=fx["prov_store"],
+                bff_error_fn=_test_bff_error,
+            )
+            monkeypatch.setattr(service, "_source_ingest_truth_by_connector", lambda: fx["truth"])
+            monkeypatch.setattr(persona_service, "_composed_persona_service", service)
+            monkeypatch.setattr(persona_service, "utc_now", lambda: _TS)
+            token = persona_service._current_persona_service.set(service)
+            try:
+                app = FastAPI()
+                app.include_router(
+                    create_personas_router(
+                        service=service,
+                        extract_identity_fn=_test_extract_identity,
+                        require_read_role_fn=_test_require_read_role,
+                        require_operator_role_fn=_test_require_operator_role,
+                        bff_error_fn=_test_bff_error,
+                    )
+                )
+                client = TestClient(app)
+
+                # Verify all 163 + 2 personas match on _routed_strategies_for_persona
+                with request_read_scope():
+                    for pid, expected in full_read_counts.items():
+                        assert persona_service._routed_strategies_for_persona(pid) == expected
+
+                raw_by_id = {r["persona_id"]: r for r in fx["raws"]}
+                for idx, pid in enumerate(sample_personas):
+                    expected = full_read_counts[pid]
+                    if pid not in raw_by_id:
+                        continue
+                    raw = raw_by_id[pid]
+
+                    # Caller 1: GET /bff/personas/{persona_id} (routes/detail.py:580)
+                    r_detail = client.get(f"/bff/personas/{pid}", headers=OPERATOR_HEADERS)
+                    assert r_detail.status_code == 200, r_detail.text
+                    assert r_detail.json()["data"]["routedStrategies"] == expected
+
+                    # Caller 2: POST /bff/personas/{persona_id}/provisioning/reconcile (routes/provisioning.py:116)
+                    r_reconcile = client.post(
+                        f"/bff/personas/{pid}/provisioning/reconcile",
+                        headers=OPERATOR_HEADERS,
+                    )
+                    assert r_reconcile.status_code == 200, r_reconcile.text
+                    assert r_reconcile.json()["data"]["routedStrategies"] == expected
+
+                    # Caller 3: PATCH /bff/personas/{persona_id} (PersonaService.patch_persona, service.py:15795 & 15863)
+                    before_patch_urls = len(count_urls)
+                    r_patch = client.patch(
+                        f"/bff/personas/{pid}",
+                        json={"name": f"Updated {pid}"},
+                        headers={**OPERATOR_HEADERS, "Idempotency-Key": f"idem-patch-{idx}"},
+                    )
+                    assert r_patch.status_code == 200, r_patch.text
+                    assert r_patch.json()["data"]["routedStrategies"] == expected
+                    assert len(count_urls) - before_patch_urls == 1
+
+                    with request_read_scope():
+                        # Caller 4: _project_persona_fleet_item (service.py:3525)
+                        fleet_item = persona_service._project_persona_fleet_item(
+                            raw,
+                            all_runtime_bindings=[],
+                            all_incidents=[],
+                            all_evolution_decisions=[],
+                        )
+                        assert fleet_item["persona"]["routedStrategies"] == expected
+
+                        # Caller 5: _project_persona_league_row (service.py:7165, routed_strategies=None)
+                        league_row = persona_service._project_persona_league_row(
+                            raw,
+                            include_route_policy=False,
+                            include_health=False,
+                            include_allowed_actions=False,
+                            routed_strategies=None,
+                        )
+                        assert league_row["routed_strategy_count"] == expected
+
+                        # Caller 6: _project_persona_fleet_row_impl (service.py:9119, routed_strategies=None)
+                        fleet_row = persona_service._project_persona_fleet_row_impl(
+                            detail=False,
+                            persona=raw,
+                            league_entry={},
+                            binding={},
+                            runtime={},
+                            active_incidents=[],
+                            telemetry_summaries=[],
+                            context_metadata=dict(raw.get("metadata") or {}),
+                            context_persona=raw,
+                            snapshot_at=_TS,
+                            routed_strategies=None,
+                        )
+                        assert fleet_row is not None
+                        assert fleet_row["routed_strategies"] == expected
+            finally:
+                persona_service._current_persona_service.reset(token)
+    finally:
+        owner_reads.authorization.reset(tok_auth)
+        owner_reads.selected_tenant.reset(tok_tenant)
+
+
+def test_persona_detail_registry_count_failures_preserve_exact_status_and_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC3: Registry count read failures keep the exact same status and error payload that detail routes return on full-read failures."""
+    import urllib.error
+    import services.control_plane.bff.command_adapters.base as adapter_base
+    from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.ports import ReadSurfacePorts, create_persona_registry_write_owner
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    fx = _build_hosted_registry_strategy_fixture()
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.hosted.internal")
+
+    base_store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"personas": fx["raws"][:2]},
+    )
+    hosted_rks = DefaultResearchKnowledgeSourcePort()
+    store = ReadSurfacePorts(
+        operations_consultation=base_store.operations_consultation,
+        persona_capital_runtime=base_store.persona_capital_runtime,
+        ooda_management=base_store.ooda_management,
+        research_knowledge_source=hosted_rks,
+        lifecycle_telemetry_governance=base_store.lifecycle_telemetry_governance,
+        persona_training=base_store.persona_training,
+        job_read=base_store.job_read,
+        paper_runtime_monitoring_sessions_provider=lambda: [],
+        reconciliation_drift_reads=base_store.reconciliation_drift_reads,
+    )
+    monkeypatch.setattr(persona_service, "_PERSONA_PROVISIONING_STORE", fx["prov_store"])
+
+    tok_auth = owner_reads.authorization.set("Bearer op-b2:operator:tenant-default")
+    tok_tenant = owner_reads.selected_tenant.set("tenant-default")
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            service = PersonaService(
+                write_owner=create_persona_registry_write_owner(),
+                ranking_write_owner=object(),
+                read_store=store,
+                command_store=CommandStore(os.path.join(td, "cmd.jsonl")),
+                provisioning_store=fx["prov_store"],
+                bff_error_fn=_test_bff_error,
+            )
+            monkeypatch.setattr(service, "_source_ingest_truth_by_connector", lambda: fx["truth"])
+            monkeypatch.setattr(persona_service, "_composed_persona_service", service)
+            monkeypatch.setattr(persona_service, "utc_now", lambda: _TS)
+
+            app = FastAPI()
+            app.include_router(
+                create_personas_router(
+                    service=service,
+                    extract_identity_fn=_test_extract_identity,
+                    require_read_role_fn=_test_require_read_role,
+                    require_operator_role_fn=_test_require_operator_role,
+                    bff_error_fn=_test_bff_error,
+                )
+            )
+            client = TestClient(app)
+
+            failure_cases = [
+                (
+                    "http_401",
+                    lambda url, **_k: (_ for _ in ()).throw(
+                        urllib.error.HTTPError(url, 401, "Unauthorized", hdrs=None, fp=None)
+                    ),
+                    403,
+                    "FORBIDDEN",
+                    "strategy_audience_mismatch",
+                ),
+                (
+                    "http_403",
+                    lambda url, **_k: (_ for _ in ()).throw(
+                        urllib.error.HTTPError(url, 403, "Forbidden", hdrs=None, fp=None)
+                    ),
+                    403,
+                    "FORBIDDEN",
+                    "strategy_audience_mismatch",
+                ),
+                (
+                    "http_500",
+                    lambda url, **_k: (_ for _ in ()).throw(
+                        urllib.error.HTTPError(url, 500, "Internal Server Error", hdrs=None, fp=None)
+                    ),
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    "strategy_registry_http_500",
+                ),
+                (
+                    "http_503",
+                    lambda url, **_k: (_ for _ in ()).throw(
+                        urllib.error.HTTPError(url, 503, "Service Unavailable", hdrs=None, fp=None)
+                    ),
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    "strategy_registry_http_503",
+                ),
+                (
+                    "action_unavailable_403",
+                    lambda _url, **_k: (_ for _ in ()).throw(
+                        ActionUnavailableError("tenant denied", downstream_status=403)
+                    ),
+                    403,
+                    "FORBIDDEN",
+                    "strategy_audience_mismatch",
+                ),
+                (
+                    "action_unavailable_503",
+                    lambda _url, **_k: (_ for _ in ()).throw(
+                        ActionUnavailableError("owner down", downstream_status=503)
+                    ),
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    "strategy_store_unavailable",
+                ),
+                (
+                    "runtime_conn_error",
+                    lambda _url, **_k: (_ for _ in ()).throw(RuntimeError("registry unreachable")),
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    "registry unreachable",
+                ),
+            ]
+
+            for label, failing_http, expected_status, expected_code, expected_reason in failure_cases:
+                urls_seen: list[str] = []
+
+                def wrapped_http(url: str, _fn=failing_http, **kw: Any) -> Any:
+                    urls_seen.append(url)
+                    return _fn(url, **kw)
+
+                monkeypatch.setattr(adapter_base, "http_request_json", wrapped_http)
+                resp = client.get("/bff/personas/persona-0", headers=OPERATOR_HEADERS)
+                assert resp.status_code == expected_status, (label, resp.status_code, resp.text)
+                err = resp.json()["detail"]["error"]
+                assert err["code"] == expected_code, (label, err)
+                assert err["reason"] == expected_reason, (label, err)
+                assert urls_seen == [
+                    "http://registry.hosted.internal/api/registry/strategy-specs?view=persona_binding_counts"
+                ]
+
+                # Compare with full-read error envelope on the exact same failure
+                with pytest.raises(HTTPException) as full_exc:
+                    hosted_rks._fetch_canonical_strategy_specs_uncached()
+                assert resp.status_code == full_exc.value.status_code
+                assert resp.json()["detail"] == full_exc.value.detail
+
+            # Invalid count payloads fail closed with 503 DEPENDENCY_UNAVAILABLE
+            for bad_payload in ([], {"persona-0": -1}, {"persona-0": True}, {"persona-0": "1"}):
+                monkeypatch.setattr(adapter_base, "http_request_json", lambda _url, _p=bad_payload, **_k: _p)
+                resp_bad = client.get("/bff/personas/persona-0", headers=OPERATOR_HEADERS)
+                assert resp_bad.status_code == 503
+                err_bad = resp_bad.json()["detail"]["error"]
+                assert err_bad["code"] == "DEPENDENCY_UNAVAILABLE"
+                assert err_bad["reason"] == "strategy_store_unavailable"
+
+            # Missing caller authorization fails closed with identical 503 error
+            tok_no_auth = owner_reads.authorization.set(None)
+            try:
+                resp_no_auth = client.get("/bff/personas/persona-0", headers=OPERATOR_HEADERS)
+                assert resp_no_auth.status_code == 503
+                with pytest.raises(HTTPException) as full_no_auth:
+                    hosted_rks._fetch_canonical_strategy_specs_uncached()
+                assert resp_no_auth.json()["detail"] == full_no_auth.value.detail
+            finally:
+                owner_reads.authorization.reset(tok_no_auth)
+    finally:
+        owner_reads.authorization.reset(tok_auth)
+        owner_reads.selected_tenant.reset(tok_tenant)
+
+
+def test_persona_detail_hosted_registry_url_cpu_drops_by_at_least_70_percent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC4: BFF CPU for one GET /bff/personas/{id} with PANTHEON_REGISTRY_API_URL set drops by >= 70% on the same machine."""
+    import time
+    import services.control_plane.bff.command_adapters.base as adapter_base
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.ports import ReadSurfacePorts, create_persona_registry_write_owner
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    fx = _build_hosted_registry_strategy_fixture()
+    entries_json = json.dumps(fx["registry_entries"])
+    counts_json = json.dumps(fx["binding_counts"])
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.hosted.internal")
+
+    def registry_http(url: str, **_kw: Any) -> Any:
+        if url.endswith("view=persona_binding_counts"):
+            return json.loads(counts_json)
+        return json.loads(entries_json)
+
+    monkeypatch.setattr(adapter_base, "http_request_json", registry_http)
+
+    base_store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"personas": fx["raws"]},
+    )
+    hosted_rks = DefaultResearchKnowledgeSourcePort()
+    store = ReadSurfacePorts(
+        operations_consultation=base_store.operations_consultation,
+        persona_capital_runtime=base_store.persona_capital_runtime,
+        ooda_management=base_store.ooda_management,
+        research_knowledge_source=hosted_rks,
+        lifecycle_telemetry_governance=base_store.lifecycle_telemetry_governance,
+        persona_training=base_store.persona_training,
+        job_read=base_store.job_read,
+        paper_runtime_monitoring_sessions_provider=lambda: [],
+        reconciliation_drift_reads=base_store.reconciliation_drift_reads,
+    )
+    monkeypatch.setattr(persona_service, "_PERSONA_PROVISIONING_STORE", fx["prov_store"])
+
+    tok_auth = owner_reads.authorization.set("Bearer op-b2:operator:tenant-default")
+    tok_tenant = owner_reads.selected_tenant.set("tenant-default")
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            service = PersonaService(
+                write_owner=create_persona_registry_write_owner(),
+                ranking_write_owner=object(),
+                read_store=store,
+                command_store=CommandStore(os.path.join(td, "cmd.jsonl")),
+                provisioning_store=fx["prov_store"],
+                bff_error_fn=_test_bff_error,
+            )
+            monkeypatch.setattr(service, "_source_ingest_truth_by_connector", lambda: fx["truth"])
+            monkeypatch.setattr(persona_service, "_composed_persona_service", service)
+            monkeypatch.setattr(persona_service, "utc_now", lambda: _TS)
+
+            app = FastAPI()
+            app.include_router(
+                create_personas_router(
+                    service=service,
+                    extract_identity_fn=_test_extract_identity,
+                    require_read_role_fn=_test_require_read_role,
+                    require_operator_role_fn=_test_require_operator_role,
+                    bff_error_fn=_test_bff_error,
+                )
+            )
+            client = TestClient(app)
+
+            def legacy_routed_strategies_for_persona(persona_id: str) -> int:
+                clean_id = str(persona_id or "").strip()
+                if not clean_id:
+                    return 0
+                items = store.list_strategy_specs(persona_id=clean_id) or []
+                return len(items)
+
+            # Warm up route & imports
+            r_warm = client.get("/bff/personas/persona-0", headers=OPERATOR_HEADERS)
+            assert r_warm.status_code == 200
+
+            # Measure AFTER (bounded persona_binding_counts read on hosted registry URL path)
+            t0_after = time.process_time()
+            r_after = client.get("/bff/personas/persona-0", headers=OPERATOR_HEADERS)
+            cpu_after = time.process_time() - t0_after
+            assert r_after.status_code == 200
+
+            # Measure BEFORE (legacy full strategy spec read on hosted registry URL path)
+            orig_fn = persona_service._routed_strategies_for_persona
+            import services.control_plane.bff.personas.routes.detail as detail_routes
+
+            monkeypatch.setattr(persona_service, "_routed_strategies_for_persona", legacy_routed_strategies_for_persona)
+            monkeypatch.setattr(detail_routes, "_routed_strategies_for_persona", legacy_routed_strategies_for_persona)
+            try:
+                t0_before = time.process_time()
+                r_before = client.get("/bff/personas/persona-0", headers=OPERATOR_HEADERS)
+                cpu_before = time.process_time() - t0_before
+                assert r_before.status_code == 200
+            finally:
+                monkeypatch.setattr(persona_service, "_routed_strategies_for_persona", orig_fn)
+                monkeypatch.setattr(detail_routes, "_routed_strategies_for_persona", orig_fn)
+
+            assert json.dumps(r_after.json(), sort_keys=True) == json.dumps(r_before.json(), sort_keys=True)
+            assert cpu_after <= cpu_before * 0.30, (cpu_before, cpu_after)
+    finally:
+        owner_reads.authorization.reset(tok_auth)
+        owner_reads.selected_tenant.reset(tok_tenant)
+
+
+

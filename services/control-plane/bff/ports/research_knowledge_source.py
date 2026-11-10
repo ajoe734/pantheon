@@ -2268,14 +2268,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             )
             if lifecycle_state is None and source_kind is None and persona_id is None:
                 return copy.deepcopy(list(base_items))
-            target_pid = str(persona_id) if persona_id else None
+            target_pid = str(persona_id).strip() if persona_id else None
             filtered: List[Dict[str, Any]] = []
             for item in base_items:
                 if lifecycle_state and item.get("lifecycle_state") != lifecycle_state:
                     continue
                 if source_kind and item.get("source_kind") != source_kind:
                     continue
-                if target_pid and target_pid not in set(item.get("persona_ids") or ()):
+                if target_pid and target_pid not in {
+                    str(v).strip() for v in (item.get("persona_ids") or ()) if str(v).strip()
+                }:
                     continue
                 filtered.append(item)
             return copy.deepcopy(filtered)
@@ -2317,12 +2319,22 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 if isinstance(raw_current.get("provenance"), dict)
                 else {}
             )
+            raw_meta = raw_current.get("metadata") if isinstance(raw_current.get("metadata"), dict) else {}
+            spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
             current_lifecycle_state = str(
                 self._kw05_lifecycle_state(
                     raw_current.get("lifecycle_state")
+                    or raw_current.get("artifact_state")
                     or raw_current.get("status")
+                    or raw_meta.get("lifecycle_state")
+                    or raw_meta.get("state")
+                    or raw_meta.get("status")
                     or strategy_spec.get("lifecycle_state")
+                    or strategy_spec.get("artifact_state")
                     or strategy_spec.get("status")
+                    or spec_meta.get("lifecycle_state")
+                    or spec_meta.get("state")
+                    or spec_meta.get("status")
                 )
                 or ""
             )
@@ -2332,8 +2344,18 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 or strategy_spec.get("source_kind")
                 or ""
             )
-            raw_persona_ids = raw_current.get("persona_ids") or strategy_spec.get("persona_ids") or []
-            persona_list = [str(value) for value in raw_persona_ids if str(value).strip()]
+            raw_persona_ids = (
+                raw_current.get("persona_ids")
+                or strategy_spec.get("persona_ids")
+                or raw_meta.get("personaIds")
+                or raw_meta.get("persona_ids")
+                or ([raw_meta["persona_id"]] if raw_meta.get("persona_id") else [])
+                or spec_meta.get("personaIds")
+                or spec_meta.get("persona_ids")
+                or ([spec_meta["persona_id"]] if spec_meta.get("persona_id") else [])
+                or []
+            )
+            persona_list = [str(value).strip() for value in raw_persona_ids if str(value).strip()]
             persona_ids = set(persona_list)
 
             if lifecycle_state and lifecycle_state != "all" and current_lifecycle_state != lifecycle_state:
@@ -2342,7 +2364,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 continue
             if source_kind and current_source_kind != source_kind:
                 continue
-            if persona_id and str(persona_id) not in persona_ids:
+            if persona_id and str(persona_id).strip() not in persona_ids:
                 continue
 
             current_version = self._kw05_normalize_version_candidate(
@@ -2660,18 +2682,38 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if selected is None:
                 continue
             _strategy_id, _index, raw_current, _candidates, _versions = selected
+            raw_meta = raw_current.get("metadata") if isinstance(raw_current.get("metadata"), dict) else {}
+            spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
             lifecycle = str(
                 self._kw05_lifecycle_state(
                     raw_current.get("lifecycle_state")
+                    or raw_current.get("artifact_state")
                     or raw_current.get("status")
+                    or raw_meta.get("lifecycle_state")
+                    or raw_meta.get("state")
+                    or raw_meta.get("status")
                     or strategy_spec.get("lifecycle_state")
+                    or strategy_spec.get("artifact_state")
                     or strategy_spec.get("status")
+                    or spec_meta.get("lifecycle_state")
+                    or spec_meta.get("state")
+                    or spec_meta.get("status")
                 )
                 or ""
             )
             if lifecycle == "retired":
                 continue
-            raw_ids = raw_current.get("persona_ids") or strategy_spec.get("persona_ids") or []
+            raw_ids = (
+                raw_current.get("persona_ids")
+                or strategy_spec.get("persona_ids")
+                or raw_meta.get("personaIds")
+                or raw_meta.get("persona_ids")
+                or ([raw_meta["persona_id"]] if raw_meta.get("persona_id") else [])
+                or spec_meta.get("personaIds")
+                or spec_meta.get("persona_ids")
+                or ([spec_meta["persona_id"]] if spec_meta.get("persona_id") else [])
+                or []
+            )
             for persona_id in {str(v).strip() for v in raw_ids if str(v).strip()}:
                 counts[persona_id] = counts.get(persona_id, 0) + 1
         return counts
