@@ -519,6 +519,7 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
     """
     db_dsn = os.getenv("TELEMETRY_DB_DSN", "")
     event_reader = None
+    binding_events = None
     if db_dsn:
         write_fn = build_postgres_write_fn(dsn=db_dsn)
         event_reader, binding_events = build_postgres_event_reader(dsn=db_dsn)
@@ -615,6 +616,13 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         trade_episode_projections_path,
         trade_episode_events_path,
     )
+    if binding_events is not None:
+        try:
+            runtime_summary_store.backfill_missing_trade_episodes(
+                trade_episode_projection_store, binding_events
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("trade episode startup backfill failed: %s", exc)
     runtime_summary_store.backfill_open_position_costs(
         trade_episode_projection_store
     )

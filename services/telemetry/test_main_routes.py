@@ -1302,6 +1302,211 @@ class TestMainRoutes(unittest.TestCase):
                 _main._svc = orig_svc
 
 
+class TestTelemetryFuturesEpisodeStartupBackfill(unittest.TestCase):
+    """PAPER-FUTURES-FILL-EPISODE-20261110 with the hosted rt-3b65a843 shape."""
+
+    RUNTIME = "rt-3b65a843"
+    BINDING = "rb-3516fc86e6f84649a499fc89f3c562b3"
+    JOURNEY = "tj_2c054286-acd5-5444-80bc-d0d922962bd0"
+    INST = "ssf:SRF:202611"
+
+    def _journey_events(self, journey, base_ts, fill_event_id, lfc, post_qty, fill_qty):
+        types_ = [
+            "risk_evaluation",
+            "order_submitted",
+            "order_accepted",
+            "paper_fill_simulated",
+            "position_snapshot",
+        ]
+        out = []
+        for seq, et in enumerate(types_, start=1):
+            meta = {
+                "symbol": "0050.TW",
+                "instrument_id": self.INST,
+                "kind": "stock_future",
+                "contract_month": "202611",
+                "multiplier": 2000.0,
+            }
+            if et == "paper_fill_simulated":
+                meta.update(
+                    {
+                        "ledger_fill_count": lfc,
+                        "position_quantity": post_qty,
+                        "ledger_committed": True,
+                    }
+                )
+            out.append(
+                {
+                    "event_id": fill_event_id if et == "paper_fill_simulated" else f"{journey}-{seq}",
+                    "event_type": et,
+                    "created_at": f"{base_ts}",
+                    "tenant_id": _TENANT_ID,
+                    "runtime_id": self.RUNTIME,
+                    "binding_id": self.BINDING,
+                    "journey_id": journey,
+                    "sequence_no": seq,
+                    "ingested_seq": seq,
+                    "metrics": {"fill_quantity": fill_qty, "fill_price": 97.1},
+                    "metadata": meta,
+                }
+            )
+        return out
+
+    def test_startup_backfill_projects_missing_stock_future_episode(self):
+        import json
+        import tempfile
+        import uuid
+        from pathlib import Path
+
+        summary = {
+            "id": self.RUNTIME,
+            "runtime_id": self.RUNTIME,
+            "tenant_id": _TENANT_ID,
+            "binding_id": self.BINDING,
+            "runtime_binding_id": self.BINDING,
+            "deployment_stage": "paper",
+            "environment": "paper",
+            "state": "active",
+            "last_event_at": "2026-11-10T07:01:46Z",
+            "ledger_fill_count": 1,
+            "executed_trade_count": 1,
+            "_positions_by_symbol": {self.INST: 2.0},
+        }
+        events_db = self._journey_events(
+            self.JOURNEY, "2026-11-10T07:01:46Z",
+            "8b86a000-146f-469f-82ee-59313f2a9952", 1, 2.0, 2.0,
+        )
+        calls = []
+
+        def fake_binding_events(binding_id, tenant_id=None, limit=50):
+            calls.append((binding_id, tenant_id, limit))
+            # real reader returns newest first and may include foreign runtimes
+            foreign = dict(events_db[0], event_id="foreign", runtime_id="rt-other")
+            return list(reversed(events_db)) + [foreign]
+
+        expected_ep = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"pantheon:trade-episode:{self.BINDING}:{self.INST}:{self.JOURNEY}",
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            summary_file = Path(tmp_dir) / "runtime_summaries.json"
+            proj_file = Path(tmp_dir) / "trade_episode_projections.json"
+            ev_file = Path(tmp_dir) / "trade_episode_events.json"
+            summary_file.write_text(
+                json.dumps({json.dumps([_TENANT_ID, self.RUNTIME], separators=(",", ":")): summary}),
+                encoding="utf-8",
+            )
+            proj_file.write_text("{}", encoding="utf-8")
+            ev_file.write_text("{}", encoding="utf-8")
+            env = {
+                "TELEMETRY_STORAGE_DIR": tmp_dir,
+                "TELEMETRY_RUNTIME_SUMMARY_STORE": str(summary_file),
+                "TELEMETRY_TRADE_EPISODE_PROJECTION_STORE": str(proj_file),
+                "TELEMETRY_TRADE_EPISODE_EVENTS_STORE": str(ev_file),
+                "TELEMETRY_BUFFER_BACKEND": "memory",
+                "TELEMETRY_DB_DSN": "postgresql://unused/unused",
+            }
+            with patch.dict(os.environ, env), patch.object(
+                _main, "build_postgres_write_fn", return_value=None
+            ), patch.object(
+                _main,
+                "build_postgres_event_reader",
+                return_value=(lambda *a, **k: None, fake_binding_events),
+            ):
+                _main._build_service()
+            self.assertEqual(calls, [(self.BINDING, _TENANT_ID, 100)])
+            stored = json.loads(ev_file.read_text(encoding="utf-8"))
+            self.assertEqual(list(stored), [expected_ep])
+            self.assertEqual(len(stored[expected_ep]), 5)
+            self.assertNotIn("foreign", [e["event_id"] for e in stored[expected_ep]])
+            projections = json.loads(proj_file.read_text(encoding="utf-8"))
+            self.assertIn(expected_ep, projections)
+
+            # restart is idempotent
+            with patch.dict(os.environ, env), patch.object(
+                _main, "build_postgres_write_fn", return_value=None
+            ), patch.object(
+                _main,
+                "build_postgres_event_reader",
+                return_value=(lambda *a, **k: None, fake_binding_events),
+            ):
+                _main._build_service()
+            self.assertEqual(
+                len(json.loads(ev_file.read_text(encoding="utf-8"))[expected_ep]), 5
+            )
+
+    def test_scale_in_close_and_reversal_get_deterministic_episode_ids(self):
+        import uuid
+
+        store_events = {}
+
+        class _Store:
+            def retained_paper_fill_events(self, **_kw):
+                return []
+
+            def project_event(self, ev):
+                store_events.setdefault(ev["metadata"]["trade_episode_id"], []).append(ev)
+                return {}
+
+        journeys = []
+        specs = [
+            ("tj-a", "2026-11-10T07:00:00Z", "f-a", 1, 2.0, 2.0),
+            ("tj-b", "2026-11-10T07:10:00Z", "f-b", 2, 3.0, 1.0),
+            ("tj-c", "2026-11-10T07:20:00Z", "f-c", 3, -2.0, -5.0),
+            ("tj-d", "2026-11-10T07:30:00Z", "f-d", 4, 0.0, 2.0),
+        ]
+        for spec in specs:
+            journeys.extend(self._journey_events(*spec))
+        summary = {
+            "runtime_id": self.RUNTIME, "tenant_id": _TENANT_ID,
+            "binding_id": self.BINDING, "state": "active", "ledger_fill_count": 4,
+        }
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuntimeSummaryProjectionStore(str(Path(tmp) / "s.json"))
+            store._summaries = {"k": summary}
+            n = store.backfill_missing_trade_episodes(
+                _Store(), lambda b, tenant_id=None, limit=50: list(reversed(journeys))
+            )
+        self.assertEqual(n, 20)
+
+        def ep(j):
+            return str(uuid.uuid5(uuid.NAMESPACE_URL, f"pantheon:trade-episode:{self.BINDING}:{self.INST}:{j}"))
+
+        self.assertEqual(set(store_events), {ep("tj-a"), ep("tj-c")})
+        self.assertEqual(len(store_events[ep("tj-a")]), 10)  # entry + scale-in
+        self.assertEqual(len(store_events[ep("tj-c")]), 10)  # reversal-open + close
+        rev_fill = [e for e in store_events[ep("tj-c")] if e["event_id"] == "f-c"][0]
+        self.assertEqual(rev_fill["metadata"]["reversal"]["closed_episode_id"], ep("tj-a"))
+
+    def test_retained_fills_skip_backfill(self):
+        class _Store:
+            def retained_paper_fill_events(self, **_kw):
+                return [{"event_id": "x"}]
+
+            def project_event(self, ev):
+                raise AssertionError("must not project")
+
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuntimeSummaryProjectionStore(str(Path(tmp) / "s.json"))
+            store._summaries = {"k": {
+                "runtime_id": self.RUNTIME, "tenant_id": _TENANT_ID,
+                "binding_id": self.BINDING, "state": "active", "ledger_fill_count": 1,
+            }}
+
+            def reader(*_a, **_k):
+                raise AssertionError("reader must not be called")
+
+            self.assertEqual(store.backfill_missing_trade_episodes(_Store(), reader), 0)
+
+
 class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
     """Reproduces and resolves the lineage read restart gap across telemetry restarts.
 

@@ -1,0 +1,24 @@
+{
+  "task_id": "BFF-HEALTH-INCIDENT-OPEN-TIME-20261110",
+  "hosted_verification": "NOT RUN. No hosted, VM or SSH access was used; the coordinator verifies on hosted after deployment. Only functional (source/test) evidence is recorded.",
+  "before_counts_from_task_next": {
+    "resolved_infra_bff_incidents_since_2026-11-01": 276,
+    "resolved_at_earlier_than_created_at": 133,
+    "run_42731056862_incidents_affected": 15
+  },
+  "change": {
+    "downstream_health_monitor.py": "_incident_body adds created_at = result.window_started_at (same value hashed into _stable_event_id and used as telemetry event created_at) for all three open paths; queue_delivery treats an existing incident_open row whose body equals the new body minus created_at as the same delivery (returns existing row, no conflict, no second row). Any other body difference still raises delivery identity conflict.",
+    "not_changed": "services/incidents source, resolve/reconcile bodies, incident_id, source_event_id, telemetry_event_ids, evidence_summary; no backfill, no new outbox or reconcile loop"
+  },
+  "tests_added": [
+    "test_bff_downstream_health_monitor.py::TestIncidentOpenCreatedAt (5 tests: record_probe_result path, error_rate window path, open_or_update path + byte-identical requeue, legacy pending row kept without conflict, late open created_at < recovery resolved_at)",
+    "services/incidents/test_main_routes.py::test_infrastructure_open_keeps_producer_created_at_before_resolve"
+  ],
+  "existing_assertion_change": "TestIncidentOpensPastFailedTelemetry expected key set gains 'created_at' (the intended new field); nothing weakened.",
+  "commands": [
+    {"cmd": "/tmp/svc-venv/bin/python -m pytest services/control-plane/bff/test_bff_downstream_health_monitor.py -k CreatedAt", "result": "5 passed"},
+    {"cmd": "same with downstream_health_monitor.py reverted (git stash, not committed)", "result": "4 failed, 1 passed (legacy-row test passes by design)"},
+    {"cmd": "/tmp/svc-venv/bin/python -m pytest services/incidents/test_main_routes.py -k infra", "result": "8 passed"},
+    {"cmd": "pytest test_bff_downstream_health_monitor.py test_downstream_health_monitor.py services/incidents/test_main_routes.py", "result": "216 passed, 3 failed; the 3 failures (TestLoop12RealWriterCapture) fail identically on the unmodified baseline"}
+  ]
+}
