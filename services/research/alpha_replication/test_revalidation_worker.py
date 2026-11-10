@@ -1515,3 +1515,161 @@ def test_failed_baseline_with_final_reason_is_never_retried(
     assert baseline["last_failure_reason"] == reason
     _tick(worker, payload)
     assert baseline_owner.requests == []
+
+
+# --- REPLICATION-GATE-REAL-BACKTEST-20261110 tests --------------------------
+
+
+def test_worker_does_not_write_self_attested_governance_values(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+
+    captured_requests = []
+    from services.research.replication.gate import ReplicationGate
+
+    real_evaluate = ReplicationGate.evaluate_candidate
+
+    def spy_evaluate(self, request):
+        captured_requests.append(request)
+        return real_evaluate(self, request)
+
+    with mock.patch.object(
+        worker,
+        "_fetch_strategy_spec_entry",
+        return_value=_registry_entry(payload),
+    ), mock.patch.object(
+        ReplicationGate,
+        "evaluate_candidate",
+        autospec=True,
+        side_effect=spy_evaluate,
+    ):
+        result = worker.run_once(tenant_id="tenant-a")
+
+    assert result["errors"] == []
+    assert len(captured_requests) == 1
+    handoff = captured_requests[0].research_handoff
+    assert "grok_processing_notes" not in handoff
+
+
+def test_worker_end_to_end_real_backtest_promotion_gate_and_research_finding_outbox(
+    tmp_path,
+) -> None:
+    from services.research.research_memory_outbox import ResearchMemoryOutboxStore
+
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload(strategy_spec_id="reg-strategy-spec-tw-alpha-1.0.0")
+    spec = _strategy_spec(strategy_id=payload["strategy_id"])
+    spec["market_scope"] = {
+        "symbols": ["2330", "2317"],
+        "asset_classes": ["equity"],
+        "frequency": "1d",
+        "venues": ["TWSE"],
+    }
+    registry_entry = _registry_entry(payload, spec)
+    queue.enqueue(payload)
+
+    with mock.patch.object(
+        worker,
+        "_fetch_strategy_spec_entry",
+        return_value=registry_entry,
+    ):
+        result = worker.run_once(tenant_id="tenant-a")
+
+    assert result["errors"] == []
+    run = next(iter(authority.runs.values()))
+    assert run.status == "completed"
+    bt_run_id = run.metadata["backtest_run_id"]
+    assert bt_run_id == f"bt-{run.run_id}"
+    assert list(run.artifact_refs) == [f"backtest://{bt_run_id}"]
+
+    promo_entry = run.metadata["promotion_gate_entry"]
+    assert promo_entry["replication_success"] is True
+    eval_summary = promo_entry["evaluation_summary"]
+    assert eval_summary["sharpe_ratio"] > 0.0
+    assert eval_summary["out_of_sample_sharpe_ratio"] == eval_summary["sharpe_ratio"]
+    assert eval_summary["deflated_sharpe_threshold"] > 0.0
+    assert eval_summary["sharpe_ratio"] >= eval_summary["deflated_sharpe_threshold"]
+    assert eval_summary["trial_count"] >= 1
+    assert len(eval_summary["walk_forward_fold_sharpes"]) == 3
+    assert promo_entry["lineage"]["source_run_ids"] == [bt_run_id]
+
+    outbox = ResearchMemoryOutboxStore(tmp_path)
+    records = outbox.list_records(run_id=run.run_id)
+    assert len(records) == 1
+    finding = records[0].to_dict()
+    assert finding["source_event_type"] == "research_finding_published"
+    assert finding["run_id"] == run.run_id
+    assert finding["metadata"]["artifact_refs"] == [
+        {"artifact_type": "backtest_run", "uri": f"backtest://{bt_run_id}"}
+    ]
+    metrics = finding["metadata"]["metrics"]
+    assert metrics["sharpe_ratio"] == eval_summary["sharpe_ratio"]
+    assert metrics["commission_rate"] == 0.001425
+    assert metrics["equity_transaction_tax_rate"] == 0.003
+    assert metrics["etf_transaction_tax_rate"] == 0.001
+
+
+def test_worker_records_insufficient_history_when_pit_history_under_two_years(
+    tmp_path,
+) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload(strategy_spec_id="reg-strategy-spec-tw-short-1.0.0")
+    spec = _strategy_spec(strategy_id=payload["strategy_id"])
+    spec["market_scope"] = {
+        "symbols": ["2330"],
+        "asset_classes": ["equity"],
+        "frequency": "1d",
+        "venues": ["TWSE"],
+    }
+    spec["data_dependencies"] = [
+        {"ref": "dataset:tw-1y-insufficient_history", "kind": "dataset"}
+    ]
+    registry_entry = _registry_entry(payload, spec)
+    queue.enqueue(payload)
+
+    with mock.patch.object(
+        worker,
+        "_fetch_strategy_spec_entry",
+        return_value=registry_entry,
+    ):
+        result = worker.run_once(tenant_id="tenant-a")
+
+    assert result["errors"] == []
+    assert result["insufficient_history_strategy_spec_ids"] == [
+        payload["strategy_spec_id"]
+    ]
+    queued = queue.list_all()[0]
+    assert queued["status"] == "insufficient_history"
+    assert queued["last_revalidation_status"] == "insufficient_history"
+    assert queue.get_metrics()["insufficient_history"] == 1
+
+    run = next(iter(authority.runs.values()))
+    assert run.metadata["candidate_status"] == "insufficient_history"
+    assert run.metadata["replication_status"] == "insufficient_history"
+
+
+def test_worker_refuses_admission_without_real_backtest(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload(strategy_spec_id="reg-strategy-spec-no-bt-1.0.0")
+    spec = _strategy_spec(strategy_id=payload["strategy_id"])
+    spec["skip_backtest"] = True
+    registry_entry = _registry_entry(payload, spec)
+    queue.enqueue(payload)
+
+    with mock.patch.object(
+        worker,
+        "_fetch_strategy_spec_entry",
+        return_value=registry_entry,
+    ):
+        result = worker.run_once(tenant_id="tenant-a")
+
+    assert len(result["errors"]) == 1
+    assert "real_backtest_validation" in result["errors"][0]["error"]
+    run = next(iter(authority.runs.values()))
+    assert run.status == "failed"
+
