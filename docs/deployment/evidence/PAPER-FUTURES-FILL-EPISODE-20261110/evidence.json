@@ -1,0 +1,18 @@
+{
+  "task_id": "PAPER-FUTURES-FILL-EPISODE-20261110",
+  "kind": "functional",
+  "hosted_verification": "deferred to operator acceptance task; no VM/SSH access used",
+  "real_shape": {"runtime_id": "rt-3b65a843", "binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3", "instrument_id": "ssf:SRF:202611", "journey_id": "tj_2c054286-acd5-5444-80bc-d0d922962bd0", "fill_event_id": "8b86a000-146f-469f-82ee-59313f2a9952", "fill_price": 97.1, "qty": 2},
+  "changes": [
+    "paper_runtime._advance_episode_state shared by _commit_fill (key=holding symbol) and _commit_futures_fill (key=instrument_id)",
+    "_persist_state/_load_state keep open_episodes for open _instrument_positions as well as Portfolio",
+    "forced liquidation and SettleExpiringFutures pop instrument_id from _active_episodes",
+    "RuntimeSummaryProjectionStore.backfill_missing_trade_episodes called in main._build_service before backfill_open_position_costs"
+  ],
+  "tests": {
+    "services.execution.lean_runtime (discover)": "522 passed",
+    "services.telemetry test_main_routes + test_runtime_summary_projection + test_paper_runtime_ingest_contract": "169 passed",
+    "new": ["TestPaperFuturesFillEpisode (4)", "TestTelemetryFuturesEpisodeStartupBackfill (3)"]
+  },
+  "existing_tests_changed": "none weakened or deleted; only additions"
+}
