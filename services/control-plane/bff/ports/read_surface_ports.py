@@ -371,6 +371,9 @@ class ReadSurfacePorts:
     def get_bindings_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.get_bindings_for_persona(persona_id)
 
+    def read_bindings_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.persona_capital_runtime.read_bindings_for_persona(persona_id)
+
     def list_deployment_plans(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_deployment_plans(**kwargs)
 
