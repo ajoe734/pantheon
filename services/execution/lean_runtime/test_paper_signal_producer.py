@@ -3152,3 +3152,52 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
         self.assertNotIn("instrument_counterfactual_rows", signal["metadata"])
         self.assertNotIn("instrument_counterfactual_grading", signal["metadata"])
         self.assertIsNone(store.get_decision_record(signal["metadata"]["decision_id"]))
+
+    def test_runtime_row_event_built_by_the_real_emitter_is_schema_valid(self) -> None:
+        import jsonschema
+
+        from services.execution.lean_runtime.paper_runtime import RuntimeTelemetryEmitter
+        from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+
+        store = InMemoryPendingSignalStore()
+        self._first_decision(store)
+        carrier, _binding = self._grade_on_next_bar(store)
+        binding = {
+            "binding_id": "rb-expr", "runtime_id": "runtime-rb-expr",
+            "capital_pool_id": "pool-rb-expr", "artifact_id": "artifact-tw",
+            "artifact_version": "1.0.0", "plan_id": "plan-rb-expr",
+            "persona_capital_binding_id": "pcb-rb-expr", "deployment_mode": "paper",
+        }
+        identity = RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "pantheon-paper-execution-runtime",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": "runtime-rb-expr",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+                "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+                "PANTHEON_WORKSPACE_REF": "workspace-paper",
+                "PANTHEON_AUTH_PROFILE_REF": "auth-profile-paper",
+                "PANTHEON_PERSONA_ID": "persona-paper-ops",
+                "PANTHEON_SESSION_ID": "session-paper-runtime",
+                "PANTHEON_TRACE_ID": "6f1d2c3e-0000-4000-8000-000000000001",
+                "PANTHEON_REQUEST_ID": "request-paper-runtime",
+            }
+        )
+        emitter = RuntimeTelemetryEmitter(
+            identity, type("Resolver", (), {"resolve": lambda self: binding})()
+        )
+        schema = json.loads(
+            (Path(__file__).resolve().parents[2] / "telemetry" / "telemetry_event.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for row in carrier["metadata"]["instrument_counterfactual_rows"]:
+            payload = emitter.build_event(
+                "persona_instrument_counterfactual",
+                {"action": "instrument_counterfactual_graded"},
+                metadata={"is_real_order": False, "is_real_capital": False, **row},
+                event_id="11111111-1111-4111-8111-111111111111",
+                created_at=self.GRADING_NOW,
+            )
+            self.assertIsNotNone(payload)
+            jsonschema.validate(payload, schema)
