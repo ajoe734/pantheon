@@ -120,6 +120,81 @@
       "logged_in": false,
       "enabled": false
     },
+    "collector-tw-twse-t86": {
+      "source_id": "collector-tw-twse-t86",
+      "section_ref": "5.1",
+      "description": "TWSE T86 daily institutional buy/sell flows per-date all-stock website JSON (1 connection, <= 1 req / 5s per 2026-11-10 operator decision O-1)",
+      "base_urls": [
+        "https://www.twse.com.tw/rwd/zh/fund/T86"
+      ],
+      "endpoint_template": "https://www.twse.com.tw/rwd/zh/fund/T86?date={yyyymmdd}&selectType=ALLBUT0999&response=json",
+      "backfill_page_granularity": "per_date_all_stocks",
+      "trading_days_per_year": 244,
+      "two_year_backfill_requests": 488,
+      "max_connections": 1,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 488,
+      "min_interval_seconds": 5.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.twse.com.tw/zh/usage.html (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "臺灣證券交易所三大法人買賣超日報 T86（透過獨立蒐集主機單一連線、每次間隔 >= 5 秒擷取）",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-twse-price-history": {
+      "source_id": "collector-tw-twse-price-history",
+      "section_ref": "5.1",
+      "description": "TWSE daily price history per-date all-stock MI_INDEX website JSON (1 connection, <= 1 req / 5s per 2026-11-10 operator decision O-1)",
+      "base_urls": [
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
+      ],
+      "endpoint_template": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={yyyymmdd}&type=ALLBUT0999&response=json",
+      "backfill_page_granularity": "per_date_all_stocks",
+      "trading_days_per_year": 244,
+      "two_year_backfill_requests": 488,
+      "max_connections": 1,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 488,
+      "min_interval_seconds": 5.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.twse.com.tw/zh/usage.html (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "臺灣證券交易所每日收盤行情歷史資料 MI_INDEX（透過獨立蒐集主機單一連線、每次間隔 >= 5 秒擷取）",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-tpex-price-history": {
+      "source_id": "collector-tw-tpex-price-history",
+      "section_ref": "5.1",
+      "description": "TPEx daily price history per-date all-stock dailyQuotes website JSON (1 connection, <= 1 req / 5s per 2026-11-10 operator decision O-1)",
+      "base_urls": [
+        "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes"
+      ],
+      "endpoint_template": "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date={yyyy_mm_dd}&id=&response=json",
+      "backfill_page_granularity": "per_date_all_stocks",
+      "trading_days_per_year": 244,
+      "two_year_backfill_requests": 488,
+      "max_connections": 1,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 488,
+      "min_interval_seconds": 5.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.tpex.org.tw/web/about/copyright/copyright.php?l=zh-tw (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "證券櫃檯買賣中心上櫃股票每日收盤行情歷史資料（透過獨立蒐集主機單一連線、每次間隔 >= 5 秒擷取）",
+      "logged_in": false,
+      "enabled": true
+    },
     "collector-gdelt": {
       "source_id": "collector-gdelt",
       "section_ref": "5.1",
@@ -317,7 +392,7 @@
     "collector-tw-cmoney-forum": {
       "source_id": "collector-tw-cmoney-forum",
       "section_ref": "5.3",
-      "description": "股市爆料同學會 (CMoney forum) public stock pages; disabled by default until licence request is answered (O-4)",
+      "description": "股市爆料同學會 (CMoney forum) public stock pages; enabled on collector host per 2026-11-10 operator decision (O-4)",
       "base_urls": [
         "https://www.cmoney.tw/forum/stock/"
       ],
@@ -332,7 +407,7 @@
       "attribution_required": false,
       "attribution": "",
       "logged_in": false,
-      "enabled": false
+      "enabled": true
     },
     "collector-tw-ptt-stock": {
       "source_id": "collector-tw-ptt-stock",
