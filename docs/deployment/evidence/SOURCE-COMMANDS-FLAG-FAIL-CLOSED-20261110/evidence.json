@@ -1,0 +1,29 @@
+{
+  "task_id": "SOURCE-COMMANDS-FLAG-FAIL-CLOSED-20261110",
+  "kind": "functional_source_verification",
+  "hosted_verification": "not performed here; deferred to operator acceptance task (no VM/SSH access used)",
+  "behaviour": {
+    "source_ingest": "POST /api/source-ingest/management/commands returns 503 code=source_commands_disabled unless SOURCE_MANAGEMENT_COMMANDS_ENABLED == '1' (read per request, after service auth, before engine.execute_command)",
+    "bff": "all 10 write routes (create, validate, canary, enable, disable, degrade, resume, PUT schedule, replace, retire) return 503 DEPENDENCY_UNAVAILABLE reason=source_management_commands_disabled unless PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED == '1', after RBAC and before any source-ingest call",
+    "reads": "while off, list and detail allowed_actions set every can* to false and blockedReasons starts with the switch name=0; GET /bff/management/data-sources meta.source_commands_enabled reports the flag on v2 and legacy-fallback paths",
+    "unchanged": "compose defaults, strategy seed routes, frontend, controller, legacy fallback"
+  },
+  "tests": {
+    "passed": "231 across test_management_data_sources_v2, tests/test_bff_management_data_sources_contract, test_bff_management_gap_003_contract_schema, test_management_read_budget, test_bff_test_architecture, test_srcm_p1_source_commands, scripts/test_verify_external_source_management_acceptance",
+    "new_coverage": [
+      "source-ingest: every CommandType x flag values None/0/empty/true/yes/2/' 1' rejected, no instance or desired state written; 401 preserved; flag=1 create succeeds",
+      "BFF: every write route x 6 non-'1' values rejected with zero execute_command calls; route table asserted equal to registered write routes via openapi; viewer still 403",
+      "BFF reads: blocked actions + meta flag when off; actions equal calculate_source_allowed_actions and meta true when on; legacy fallback meta"
+    ],
+    "pre_existing_failures_unrelated": [
+      "test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks",
+      "test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied",
+      "test_bff_promotion_review_governance.py::test_cockpit_timeout_degrades_without_blocking_health"
+    ],
+    "pre_existing_failures_note": "all three also fail on the clean baseline without this change (verified by stashing)"
+  },
+  "changed_assertions": [
+    "test_authorized_command_execution_over_http now sets SOURCE_MANAGEMENT_COMMANDS_ENABLED=1 via monkeypatch; it tests the enabled path and the default is now fail-closed",
+    "test_management_data_sources_v2.py gains an autouse fixture setting PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED=1 for the same reason; no assertion weakened or deleted"
+  ]
+}

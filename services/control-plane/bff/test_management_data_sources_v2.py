@@ -391,6 +391,12 @@ def _mounted_client(client_holder: Dict[str, Any]) -> TestClient:
     return client
 
 
+@pytest.fixture(autouse=True)
+def _source_commands_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing tests exercise the enabled write path; kill-switch tests below unset this."""
+    monkeypatch.setenv("PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED", "1")
+
+
 @pytest.fixture
 def fake_client() -> FakeSourceManagementClient:
     return FakeSourceManagementClient()
@@ -1228,3 +1234,135 @@ def test_client_errors_unconfigured_client_and_unavailable_or_empty_legacy_regis
     assert body_empty_leg["data"]["items"] == []
 
 
+
+
+# ==============================================================================
+# SOURCE COMMANDS KILL SWITCH (PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED)
+# ==============================================================================
+
+_FLAG = "PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED"
+
+_WRITE_ROUTES: List[Any] = [
+    ("post", "/bff/management/data-sources", {"definitionId": "srcdef-twse-stock-day-all", "sourceInstanceId": "src-new", "provider": "TWSE", "sourceClass": "market_daily", "reason": "create"}),
+    ("post", "/bff/management/data-sources/src-twse-01/actions/validate", {"expectedRevision": 1, "reason": "r"}),
+    ("post", "/bff/management/data-sources/src-twse-01/actions/canary", {"expectedRevision": 1, "reason": "r"}),
+    ("post", "/bff/management/data-sources/src-twse-01/actions/enable", {"expectedRevision": 1, "reason": "r", "confirmation": True}),
+    ("post", "/bff/management/data-sources/src-twse-01/actions/disable", {"expectedRevision": 1, "reason": "r"}),
+    ("post", "/bff/management/data-sources/src-twse-01/actions/degrade", {"expectedRevision": 1, "reason": "r"}),
+    ("post", "/bff/management/data-sources/src-twse-01/actions/resume", {"expectedRevision": 1, "reason": "r"}),
+    ("put", "/bff/management/data-sources/src-twse-01/schedule", {"expectedRevision": 1, "reason": "r", "schedule": {"cron": "0 * * * *"}}),
+    ("post", "/bff/management/data-sources/src-twse-01/actions/replace", {"expectedRevision": 1, "reason": "r", "confirmation": True, "replacementSourceId": "src-other"}),
+    ("post", "/bff/management/data-sources/src-twse-01/actions/retire", {"expectedRevision": 1, "reason": "r", "confirmation": True}),
+]
+
+
+def _write_route_paths_registered(client: TestClient) -> set:
+    paths = client.app.openapi()["paths"]  # type: ignore[attr-defined]
+    return {
+        (method, path)
+        for path, ops in paths.items()
+        if path.startswith("/bff/management/data-sources")
+        for method in ops
+        if method in {"post", "put"}
+    }
+
+
+def test_kill_switch_write_route_table_covers_every_registered_write_route(bff_client: TestClient) -> None:
+    registered = _write_route_paths_registered(bff_client)
+    covered = set()
+    for method, path, _ in _WRITE_ROUTES:
+        parts = path.split("/")
+        if len(parts) > 4:
+            parts[4] = "{source_instance_id}"
+        covered.add((method, "/".join(parts)))
+    assert covered == registered
+
+
+@pytest.mark.parametrize("flag", [None, "0", "", "true", "yes", "2"])
+@pytest.mark.parametrize("method,path,body", _WRITE_ROUTES)
+def test_write_routes_rejected_unless_flag_exactly_one(
+    bff_client: TestClient,
+    fake_client: FakeSourceManagementClient,
+    monkeypatch: pytest.MonkeyPatch,
+    flag: Optional[str],
+    method: str,
+    path: str,
+    body: Dict[str, Any],
+) -> None:
+    if flag is None:
+        monkeypatch.delenv(_FLAG, raising=False)
+    else:
+        monkeypatch.setenv(_FLAG, flag)
+    fake_client.seed_source("src-twse-01", definition_id="srcdef-twse-stock-day-all", lifecycle_state="configured_disabled", revision=1)
+    calls: List[Any] = []
+    original = fake_client.execute_command
+    fake_client.execute_command = lambda *a, **k: calls.append((a, k)) or original(*a, **k)  # type: ignore[method-assign]
+
+    response = getattr(bff_client, method)(path, json=body, headers={**OPERATOR_HEADERS, "Idempotency-Key": "kill-1"})
+    assert response.status_code == 503, response.text
+    err = response.json()["error"]
+    assert err["code"] == "DEPENDENCY_UNAVAILABLE"
+    assert err["details"]["reason"] == "source_management_commands_disabled"
+    assert err["details"]["switch"] == _FLAG
+    assert _FLAG in err["message"]
+    assert calls == []
+    assert "src-new" not in fake_client.sources
+
+
+def test_kill_switch_still_requires_operator_role(bff_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(_FLAG, raising=False)
+    response = bff_client.post(
+        "/bff/management/data-sources/src-twse-01/actions/validate",
+        json={"expectedRevision": 1, "reason": "r"},
+        headers={**VIEWER_HEADERS, "Idempotency-Key": "k"},
+    )
+    assert response.status_code == 403
+
+
+def test_reads_report_all_actions_blocked_and_meta_flag_when_disabled(
+    bff_client: TestClient, fake_client: FakeSourceManagementClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(_FLAG, raising=False)
+    fake_client.seed_source("src-twse-01", definition_id="srcdef-twse-stock-day-all", lifecycle_state="enabled", revision=2)
+
+    listing = bff_client.get("/bff/management/data-sources", headers=OPERATOR_HEADERS)
+    assert listing.status_code == 200, listing.text
+    payload = listing.json()
+    assert payload["meta"]["source_commands_enabled"] is False
+    for item in payload["data"]["items"]:
+        for key in ("allowed_actions", "allowedActions"):
+            actions = item[key]
+            assert not any(v is True for k, v in actions.items() if k.startswith("can")), actions
+            assert any(_FLAG in r for r in actions["blockedReasons"])
+
+    detail = bff_client.get("/bff/management/data-sources/src-twse-01", headers=OPERATOR_HEADERS)
+    assert detail.status_code == 200, detail.text
+    actions = detail.json()["data"]["allowed_actions"]
+    assert not any(v is True for k, v in actions.items() if k.startswith("can")), actions
+    assert any(_FLAG in r for r in actions["blockedReasons"])
+
+
+def test_reads_unchanged_and_meta_flag_true_when_enabled(
+    bff_client: TestClient, fake_client: FakeSourceManagementClient
+) -> None:
+    from services.source_ingestion.connector_definitions import calculate_source_allowed_actions
+
+    fake_client.seed_source("src-twse-01", definition_id="srcdef-twse-stock-day-all", lifecycle_state="enabled", revision=2)
+    payload = bff_client.get("/bff/management/data-sources", headers=OPERATOR_HEADERS).json()
+    assert payload["meta"]["source_commands_enabled"] is True
+    item = payload["data"]["items"][0]
+    expected = calculate_source_allowed_actions(item["definition"], item["instance"], item["desired"], item["observed"])
+    assert item["allowed_actions"] == expected
+    assert not any(_FLAG in r for r in item["allowed_actions"]["blockedReasons"])
+    assert item["allowed_actions"]["canDisable"] is True
+
+
+def test_meta_flag_reported_on_legacy_fallback_list(fake_client: FakeSourceManagementClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(_FLAG, raising=False)
+    client = _mounted_client_with_store(
+        fake_client,
+        {"source": "service_client", "connectors": _real_seven_registry_connectors()},
+    )
+    response = client.get("/bff/management/data-sources", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["meta"]["source_commands_enabled"] is False
