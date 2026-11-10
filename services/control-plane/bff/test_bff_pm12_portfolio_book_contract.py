@@ -2777,3 +2777,185 @@ def test_portfolio_holdings_value_stock_future_with_multiplier_beside_cash_share
         assert item["mark_price"] is None
         assert item["market_value"] is None
         assert item["unrealized_pnl"] is None
+
+
+def test_portfolio_holdings_carry_decision_reason_from_trade_decision_events(monkeypatch) -> None:
+    """BFF-HOLDINGS-DECISION-REASON-20261110: decision identity reaches the holdings row.
+
+    Events go through the real telemetry projection store (trade_decision then
+    paper_fill_simulated, the real 2026-11-10 shapes), and the rows are read
+    through the production holdings builder.
+    """
+    from services.control_plane.bff.pm12 import service as pm12_service
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    runtime_id = "rt-reason-001"
+    binding_id = "rb-reason-001"
+    future_id = "ssf:SRF:202611"
+    cash_decision = "dec-rb-3823397e125e4579ba5f4174067087ed-b5fa95075d12d756f69c821b"
+    future_decision = "dec-rb-3516fc86e6f84649a499fc89f3c562b3-b16d6712794d6cec3472fe30"
+    runtime_record = {
+        "id": binding_id,
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "capital_pool_id": "pool-tw-equities-core",
+        "artifact_id": "artifact-tw-equities",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "persona_id": "persona-tw-swing-trader",
+        "strategy_id": "strat-tw-swing-breakout",
+        "status": "active",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+    scope = {
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "runtime_id": runtime_id,
+        "binding_id": binding_id,
+    }
+    store = RuntimeSummaryProjectionStore(path=None)
+    base_meta = {"currency": "TWD", "broker": "shioaji_paper"}
+    steps = (
+        (1, "eq:2330", "long_cash", cash_decision, 43.0, 2285.0,
+         {"symbol": "2330", "instrument_id": "eq:2330", "kind": "cash_share", "multiplier": 1.0}),
+        (2, future_id, "long_lever", future_decision, 2.0, 97.1,
+         {"symbol": "2330", "instrument_id": future_id, "kind": "stock_future",
+          "multiplier": 100.0, "contract_month": "202611", "initial_margin_reserved": 8700.0}),
+    )
+    summary = None
+    for n, instrument_id, reason, decision_id, qty, price, fill_meta in steps:
+        store.project_event(
+            {
+                **scope,
+                "event_id": f"evt-reason-decision-{n}",
+                "event_type": "trade_decision",
+                "created_at": f"2026-11-10T07:01:3{n}Z",
+                "metadata": {
+                    "decision_id": decision_id,
+                    "view_direction": "long",
+                    "expression_decision": {
+                        "instrument_id": instrument_id,
+                        "reason_code": reason,
+                        "units": int(qty),
+                        "side": "buy",
+                    },
+                },
+            }
+        )
+        summary = store.project_event(
+            {
+                **scope,
+                "event_id": f"evt-reason-fill-{n}",
+                "event_type": "paper_fill_simulated",
+                "created_at": f"2026-11-10T07:01:4{n}Z",
+                "metrics": {"fill_quantity": qty, "fill_price": price, "action": "market_order"},
+                "metadata": {**base_meta, **fill_meta, "ledger_fill_count": n},
+            }
+        )
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-10T07:30:00Z")
+    body = _holdings_for(monkeypatch, [runtime_record], {runtime_id: summary})
+    items = {item["instrument_id"]: item for item in body["data"]["items"]}
+    assert set(items) == {"eq:2330", future_id}
+    assert items["eq:2330"]["reason_code"] == "long_cash"
+    assert items["eq:2330"]["decision_id"] == cash_decision
+    assert items[future_id]["reason_code"] == "long_lever"
+    assert items[future_id]["decision_id"] == future_decision
+
+    # A summary row with no decision identity serves null for both fields.
+    bare = RuntimeSummaryProjectionStore(path=None)
+    bare_summary = bare.project_event(
+        {
+            **scope,
+            "event_id": "evt-reason-bare-fill",
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-11-10T07:01:41Z",
+            "metrics": {"fill_quantity": 3.0, "fill_price": 241.5, "action": "market_order"},
+            "metadata": {**base_meta, "symbol": "2317.TWSE", "ledger_fill_count": 1},
+        }
+    )
+    bare_body = _holdings_for(monkeypatch, [runtime_record], {runtime_id: bare_summary})
+    (bare_item,) = bare_body["data"]["items"]
+    assert bare_item["reason_code"] is None
+    assert bare_item["decision_id"] is None
+
+
+def _ssf_hosted_summary(**position_overrides):
+    binding_id = "rb-3516fc86e6f84649a499fc89f3c562b3"
+    position = {
+        "instrument_id": "ssf:SRF:202611",
+        "kind": "stock_future",
+        "symbol": "0050.TWSE",
+        "quantity": 2.0,
+        "average_price": 97.1,
+        "mark_price": 97.1,
+        "mark_as_of": "2026-11-09T05:30:00Z",
+        "mark_lineage": {"mark_kind": "futures_daily_settlement"},
+        "mark_source_ref": "dataset:normalized/taifex_ssf_contracts/price_date=2026-11-09#ssf:SRF:202611",
+        "market_value": 194200.0,
+        "margin_reserved": 17400.0,
+        "multiplier": 1000.0,
+        "contract_month": "202611",
+        "currency": "TWD",
+        "unrealized_pnl": 0.0,
+        "realized_pnl": 0.0,
+    }
+    position.update(position_overrides)
+    return {
+        "runtime_id": "rt-3b65a843",
+        "binding_id": binding_id,
+        "deployment_stage": "paper",
+        "environment": "paper",
+        "status": "running",
+        "last_event_at": "2026-11-10T10:33:27Z",
+        "updated_at": "2026-11-10T10:33:27Z",
+        "collected_at": "2026-11-10T10:33:27Z",
+        "positions": [position],
+        "position_count": 1,
+        "_marks_by_symbol": {
+            "ssf:SRF:202611": {
+                "price": 97.1,
+                "as_of": "2026-11-09T05:30:00Z",
+                "lineage": {"mark_kind": "futures_daily_settlement"},
+                "binding_id": binding_id,
+            }
+        },
+    }
+
+
+def _ssf_holdings(monkeypatch, summary):
+    from services.control_plane.bff.pm12 import service as pm12_service
+
+    runtime = {
+        "id": summary["binding_id"],
+        "binding_id": summary["binding_id"],
+        "runtime_id": "rt-3b65a843",
+        "capital_pool_id": "pool-alpha",
+        "status": "active",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-10T10:33:27Z")
+    body = _holdings_for(monkeypatch, [runtime], {"rt-3b65a843": summary})
+    (item,) = body["data"]["items"]
+    return item
+
+
+def test_portfolio_holdings_stock_future_daily_settlement_mark_is_judged_by_futures_session(
+    monkeypatch,
+) -> None:
+    item = _ssf_holdings(monkeypatch, _ssf_hosted_summary())
+    assert item["instrument_kind"] == "stock_future"
+    assert item["mark_status"] == "available"
+    assert item["mark_price"] == 97.1
+    assert item["last_mark_at"] == "2026-11-09T05:30:00Z"
+    assert item["source_status"] != "stale"
+    assert item["telemetry_stale"] is False
+
+
+def test_portfolio_holdings_stock_future_with_telemetry_mark_stale_stays_stale(monkeypatch) -> None:
+    item = _ssf_holdings(monkeypatch, _ssf_hosted_summary(mark_stale=True))
+    assert item["mark_status"] == "stale"
+    assert item["telemetry_stale"] is True

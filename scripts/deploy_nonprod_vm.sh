@@ -2201,7 +2201,7 @@ elif action == "restore":
 # (a stale tag once started a rejected candidate here): stop before recreating.
 if expected_img:
     try:
-        model = json.loads(subprocess.check_output(cmd + ["config", "--format", "json"], env=env, text=True))
+        model = json.loads(subprocess.check_output(cmd + ["config", "--format", "json", "source-ingest"], env=env, text=True))
         ref = (model["services"]["source-ingest"].get("image") or "pantheon-source-ingest")
         resolved = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", ref],
                                   capture_output=True, text=True, check=True).stdout.strip()

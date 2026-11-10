@@ -545,7 +545,7 @@ def compose_image_refs(docker: Docker, compose_files: tuple[tuple[Path, str], ..
     path, digest = compose_files[0]
     if _file_digest(path)[0] != digest:
         raise ArtifactError("Compose configuration changed before restore")
-    model = _json(docker.call("compose", "-p", "pantheon", "-f", str(path), "config", "--format", "json").encode())
+    model = _json(docker.call("compose", "-p", "pantheon", "--profile", "*", "-f", str(path), "config", "--format", "json").encode())
     declared = model.get("services") if isinstance(model, dict) else None
     if not isinstance(declared, dict):
         raise ArtifactError("Compose configuration has no services")

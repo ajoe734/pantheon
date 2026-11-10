@@ -1,0 +1,106 @@
+{
+  "task_id": "BFF-PERSONA-ROUTED-COUNT-HOSTED-20261110",
+  "title": "Persona detail reads every strategy spec to count one persona on hosted",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "generated_at": "2026-11-10T05:06:30Z",
+  "summary": {
+    "root_cause": "In services/control-plane/bff/personas/service.py (_routed_strategies_for_persona, line 2514), the bounded count branch (_routed_strategy_counts_by_persona -> store.count_strategy_persona_bindings) was gated by `bool(getattr(rks, '_has_injected_strategy_specs', False)) and not (os.getenv('PANTHEON_REGISTRY_API_URL') or os.getenv('PANTHEON_REGISTRY_URL'))`. When PANTHEON_REGISTRY_API_URL was set (as on hosted), _routed_strategies_for_persona fell back to store.list_strategy_specs(persona_id=clean_id), which fetched and normalized all 3,376 canonical strategy specs from /api/registry/strategy-specs and filtered persona_id in Python.",
+    "fix": [
+      "Removed the unit-test-only `_has_injected_strategy_specs` and `not (PANTHEON_REGISTRY_API_URL or PANTHEON_REGISTRY_URL)` guards in `services/control-plane/bff/personas/service.py:_routed_strategies_for_persona` so that whenever ReadSurfacePorts is active (and list_strategy_specs / _fetch_canonical_strategy_specs are not monkeypatched on the instance), `_routed_strategies_for_persona` delegates to `_routed_strategy_counts_by_persona()`, which calls `store.count_strategy_persona_bindings()` (`GET /api/registry/strategy-specs?view=persona_binding_counts` on the registry URL path).",
+      "Decorated `PersonaService.patch_persona` with `@request_read_scope()` so its two calls to `_routed_strategies_for_persona(persona_id)` share one request-scoped `persona_routed_strategy_counts` read.",
+      "Aligned `list_strategy_specs`, `_list_strategy_specs_uncached`, and `count_strategy_persona_bindings` in `services/control-plane/bff/ports/research_knowledge_source.py` on persona ID whitespace stripping and metadata fallback extraction (`personaIds`, `persona_ids`, `persona_id`, and `artifact_state` / `metadata.lifecycle_state` / `metadata.state` / `metadata.status`)."
+    ]
+  },
+  "acceptance_criteria": {
+    "ac1_bounded_registry_persona_binding_counts_read": {
+      "requirement": "With PANTHEON_REGISTRY_API_URL set as on hosted, the routed strategy count for one persona uses the bounded registry persona_binding_counts read and never calls the full strategy spec read, and a test proves it by failing on any full spec fetch",
+      "test": "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_hosted_persona_detail_uses_bounded_persona_binding_counts_and_never_full_read",
+      "verified": {
+        "registry_url_requested": "http://registry.hosted.internal/api/registry/strategy-specs?view=persona_binding_counts",
+        "full_spec_requests": 0,
+        "fails_on_any_full_spec_fetch": true
+      }
+    },
+    "ac2_all_callers_match_full_read_across_real_spec_shapes": {
+      "requirement": "Every caller of _routed_strategies_for_persona gets the same count as the full read for the real spec shapes including retired, multi-version, fixture pack, and personas with zero strategies, and a test compares both reads on the same specs",
+      "test": "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_all_routed_strategies_for_persona_callers_match_full_read_across_real_spec_shapes",
+      "callers_verified": [
+        "services/control-plane/bff/personas/routes/detail.py:580 (bff_get_persona / GET /bff/personas/{persona_id})",
+        "services/control-plane/bff/personas/routes/provisioning.py:116 (bff_reconcile_persona_provisioning / POST /bff/personas/{persona_id}/provisioning/reconcile)",
+        "services/control-plane/bff/personas/service.py:15796 & 15864 (PersonaService.patch_persona / PATCH /bff/personas/{persona_id})",
+        "services/control-plane/bff/personas/service.py:3525 (_project_persona_fleet_item)",
+        "services/control-plane/bff/personas/service.py:7165 (_project_persona_league_row)",
+        "services/control-plane/bff/personas/service.py:9119 (_project_persona_fleet_row_impl)"
+      ],
+      "spec_shapes_verified": {
+        "total_canonical_registry_entries": 3376,
+        "total_personas": 163,
+        "personas_with_non_zero_strategies": 157,
+        "personas_with_zero_strategies": 6,
+        "fixture_pack_strategy": "strategy-pack-a-momentum from services/control-plane/bff/data/fixtures_pack_a.json (persona-pack-a-momentum)",
+        "multi_version_semver_ordering": "strategy-multi-semver with 1.0.0 (persona-superseded-v1 -> 0), 1.2.0 (persona-superseded-v2 -> 0), 1.10.0 current (persona-0 -> 2, persona-pack-a-momentum -> 2)",
+        "multi_version_retired_latest": "strategy-retired-latest with 1.0.0 approved and 2.0.0 retired (persona-157 -> 0)",
+        "retired_single_version_shapes": "artifact_state=retired, metadata.lifecycle_state=retired, metadata.state=retired (persona-158, persona-159, persona-160 -> 0)",
+        "whitespace_padded_duplicate_persona_ids": "[' persona-0 ', 'persona-0'] deduplicated to 1 binding"
+      }
+    },
+    "ac3_registry_count_failure_status_and_error_parity": {
+      "requirement": "Registry count read failures keep the same status and error the detail routes return today",
+      "test": "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_persona_detail_registry_count_failures_preserve_exact_status_and_error",
+      "verified_failure_cases": [
+        {"failure": "urllib.error.HTTPError(401)", "status_code": 403, "error_code": "FORBIDDEN", "reason": "strategy_audience_mismatch"},
+        {"failure": "urllib.error.HTTPError(403)", "status_code": 403, "error_code": "FORBIDDEN", "reason": "strategy_audience_mismatch"},
+        {"failure": "urllib.error.HTTPError(500)", "status_code": 503, "error_code": "DEPENDENCY_UNAVAILABLE", "reason": "strategy_registry_http_500"},
+        {"failure": "urllib.error.HTTPError(503)", "status_code": 503, "error_code": "DEPENDENCY_UNAVAILABLE", "reason": "strategy_registry_http_503"},
+        {"failure": "ActionUnavailableError(downstream_status=403)", "status_code": 403, "error_code": "FORBIDDEN", "reason": "strategy_audience_mismatch"},
+        {"failure": "ActionUnavailableError(downstream_status=503)", "status_code": 503, "error_code": "DEPENDENCY_UNAVAILABLE", "reason": "strategy_store_unavailable"},
+        {"failure": "RuntimeError('registry unreachable')", "status_code": 503, "error_code": "DEPENDENCY_UNAVAILABLE", "reason": "registry unreachable"},
+        {"failure": "missing caller authorization", "status_code": 503, "error_code": "DEPENDENCY_UNAVAILABLE", "reason": "strategy_store_unavailable"},
+        {"failure": "invalid count payload ([], negative, bool, str)", "status_code": 503, "error_code": "DEPENDENCY_UNAVAILABLE", "reason": "strategy_store_unavailable"}
+      ]
+    },
+    "ac4_bff_cpu_reduction_on_same_machine": {
+      "requirement": "BFF CPU for one GET /bff/personas/{id} with the registry URL path drops by at least 70 percent and evidence records before and after numbers measured on the same machine",
+      "test": "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_persona_detail_hosted_registry_url_cpu_drops_by_at_least_70_percent",
+      "workload": {
+        "route": "GET /bff/personas/persona-0",
+        "env": "PANTHEON_REGISTRY_API_URL=http://registry.hosted.internal",
+        "canonical_registry_entries": 3376,
+        "personas_count": 163,
+        "iterations": 5
+      },
+      "with_json_deserialization": {
+        "before_cpu_ms_samples": [293.683, 170.309, 175.725, 168.063, 170.027],
+        "after_cpu_ms_samples": [16.924, 16.135, 17.625, 17.64, 15.775],
+        "before_cpu_ms_mean": 195.561,
+        "after_cpu_ms_mean": 16.82,
+        "cpu_reduction_pct": 91.4,
+        "before_wall_ms_mean": 195.174,
+        "after_wall_ms_mean": 16.527,
+        "wall_reduction_pct": 91.53
+      },
+      "in_memory_payload_only": {
+        "before_cpu_ms_samples": [213.017, 92.685, 91.114, 93.216, 88.917],
+        "after_cpu_ms_samples": [14.58, 13.734, 13.447, 14.662, 13.02],
+        "before_cpu_ms_mean": 115.789,
+        "after_cpu_ms_mean": 13.889,
+        "cpu_reduction_pct": 88.01,
+        "before_wall_ms_mean": 115.393,
+        "after_wall_ms_mean": 13.458,
+        "wall_reduction_pct": 88.34
+      }
+    },
+    "ac5_no_test_weakened_or_deleted": {
+      "requirement": "No existing test is weakened or deleted to pass and any changed assertion is justified in evidence",
+      "existing_tests_modified": 0,
+      "existing_tests_deleted": 0,
+      "new_tests_added": [
+        "test_hosted_persona_detail_uses_bounded_persona_binding_counts_and_never_full_read",
+        "test_all_routed_strategies_for_persona_callers_match_full_read_across_real_spec_shapes",
+        "test_persona_detail_registry_count_failures_preserve_exact_status_and_error",
+        "test_persona_detail_hosted_registry_url_cpu_drops_by_at_least_70_percent"
+      ]
+    }
+  }
+}

@@ -870,6 +870,23 @@ def test_loop_health_surface_degraded_and_unavailable_variants_do_not_fail_ask(
             assert "Loop health cannot be determined" in timeout_body["data"]["answer"]
 
 
+def test_mgmt_nl_loop_health_timeout_default_is_six_seconds_with_override_and_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.control_plane.bff.assistant import management_service as ms
+
+    for name in (
+        "PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_LOOP_HEALTH_READ_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert ms._mgmt_nl_loop_health_timeout_seconds() == 6.0
+    monkeypatch.setenv("PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS", "3.5")
+    assert ms._mgmt_nl_loop_health_timeout_seconds() == 3.5
+    monkeypatch.setenv("PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS", "99")
+    assert ms._mgmt_nl_loop_health_timeout_seconds() == 10.0
+
+
 def test_mgmt_nl_collect_context_and_synthesize_answer_loop_health_direct(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
