@@ -1,0 +1,53 @@
+{
+ "task_id": "SD-STRATEGY-DISCOVERY-DEV-PLAN-20261110",
+ "kind": "design_document_evidence",
+ "read_date": "2026-11-10",
+ "document": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10.md",
+ "earlier_document_changed": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_STRATEGY_DISCOVERY_SOURCES_2026-11-10.md (decision notice only)",
+ "hosted_behavior_claimed": false,
+ "repo_base": "origin/dev 48da27b2a",
+ "scope_statement": "plan only; no source/test/workflow/config change",
+ "operator_statement_2026_11_10": [
+  "好，按照你的建議來做。",
+  "另外有這麼多人做量化交易，應該是要有alpha策略因子庫這種東西才對啊"
+ ],
+ "licences_read_via_github_api": {
+  "microsoft/qlib": "MIT",
+  "bkelly-lab/jkp-data": "MIT (code); README states data CC BY-NC 4.0 and WRDS required",
+  "OpenSourceAP/CrossSection": "GPL-2.0",
+  "stefan-jansen/alphalens-reloaded": "Apache-2.0",
+  "TA-Lib/ta-lib-python": "BSD-2-Clause",
+  "microsoft/RD-Agent": "MIT"
+ },
+ "official_sources_read": [
+  {
+   "url": "https://github.com/microsoft/qlib/blob/main/qlib/contrib/data/loader.py"
+  },
+  {
+   "url": "https://arxiv.org/abs/1601.00991"
+  },
+  {
+   "url": "https://jkpfactors.com/"
+  },
+  {
+   "url": "https://jkpfactors.com/data"
+  },
+  {
+   "url": "https://github.com/bkelly-lab/jkp-data"
+  },
+  {
+   "url": "https://www.federalreserve.gov/econres/feds/open-source-cross-sectional-asset-pricing.htm"
+  }
+ ],
+ "qlib_alpha158_feature_name_prefixes": "BETA CLOSE CNTD CNTN CNTP CORD CORR HIGH IMAX IMIN IMXD LOW MA MAX MIN OPEN QTLD QTLU RANK RESI ROC RSQR RSV STD SUMD SUMN SUMP VMA VOLUME VSTD VSUMD VSUMN VSUMP VWAP WVMA plus k-bar KMID KLEN KMID2 KUP KUP2 KLOW KLOW2 KSFT KSFT2",
+ "sources_not_verified": [
+  "JKP Taiwan coverage (country dropdown not readable)",
+  "GTJA 191 primary report",
+  "FinLab and SinoPac factor tool terms"
+ ],
+ "repository_commands": [
+  "sed -n on services/source_ingestion/connectors/taiwan_official.py endpoint table",
+  "grep alpha_template across services and docs/contracts",
+  "sed -n services/evolution/main.py cancel route"
+ ]
+}

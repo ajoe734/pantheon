@@ -5,6 +5,12 @@ Scope of this change: this document and `docs/deployment/evidence/SD-STRATEGY-DI
 No source, test, workflow, configuration or infrastructure change. No host is created and no
 implementation task is created by this work; §13 lists proposed tasks for the operator to open.
 
+> **Decision notice (2026-11-10).** The operator accepted every recommendation of §14
+> ("好，按照你的建議來做") and asked for an alpha factor library. The chosen values, two corrections
+> (TPEx flows already use the TPEx OpenAPI; the TWSE website endpoints are T86 and price-history
+> backfill only), the alpha factor library (AlphaTemplate) and the live task list are in
+> `DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10.md` in this folder; where the two differ, the dev plan wins.
+
 **What is decided and what is not.** §1 lists the operator decisions of 2026-11-10 with the
 verbatim statements. Everything else marked "recommendation" is a proposal; the open questions in
 §14 are the operator's.
