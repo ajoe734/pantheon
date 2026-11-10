@@ -4485,7 +4485,7 @@ def _mgmt_nl_merge_owner_observations(
     return merged
 
 
-_MGMT_NL_LOOP_HEALTH_TIMEOUT_DEFAULT_SECONDS = 2.0
+_MGMT_NL_LOOP_HEALTH_TIMEOUT_DEFAULT_SECONDS = 6.0
 _MGMT_NL_LOOP_HEALTH_PREFETCH: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
     "mgmt_nl_loop_health_prefetch",
     default=None,
