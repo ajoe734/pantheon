@@ -1,0 +1,22 @@
+{
+  "task_id": "DRIFT-INSTRUMENT-CLASS-BASELINE-20261109",
+  "base": "origin/dev e88fcf0a9",
+  "changes": {
+    "services/reconciliation-drift/main.py": "_approved_artifact_baseline_resolution reads approved expected_drawdown per instrument class via sweep.summary_instrument_class and sweep.approved_baseline_value(instrument_class=...); baseline_sources and drift_check record instrument_class and the class entry policy_source; unresolved class records baseline_unresolved reason on the evaluation, never falls back to another class or flat; flat-only artifacts unchanged. _approved_artifact_baselines keeps its 2-tuple signature (adds optional summary).",
+    "services/evolution/threshold_sweep_worker.py": "_summary_instrument_class made public as summary_instrument_class (rename only, no second reader)."
+  },
+  "tests_added": [
+    "test_class_only_baseline_is_read_for_summary_class_and_breach_is_governed (2 hosted artifacts x cash_share/stock_future, scheduled path via real TestClient)",
+    "test_class_only_baseline_below_governed_multiple_is_not_breached",
+    "test_class_only_baseline_without_usable_class_yields_no_baseline_and_reason (missing/invalid/unapproved/mixed)",
+    "test_class_entries_never_fall_back_to_flat_baseline",
+    "test_persistent_breach_counts_instrument_class_governed_breaches_by_mark_date (qualifier unchanged)"
+  ],
+  "existing_assertions_changed": "none; only `import pytest` added to the scheduler test file",
+  "pytest": {
+    "command": "/tmp/svc-venv/bin/python -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/evolution/test_threshold_sweep_worker.py services/evolution/test_program_qualification.py",
+    "result": "209 passed, 4 failed, 3 errors",
+    "preexisting_failures": "Identical 4 failures + 3 errors reproduce on the unmodified base (stash check): 3 errors are ModuleNotFoundError 'flask' in this worker venv; 4 failures are the idle/clean/degraded/controller-error tick tests, unrelated to baselines. All new and baseline-related tests pass."
+  },
+  "not_changed": "No baseline values or policy files. Hosted verification left to EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104."
+}
