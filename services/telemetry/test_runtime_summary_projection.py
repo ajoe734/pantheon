@@ -3829,9 +3829,18 @@ class TestInstrumentAwarePositionProjection(unittest.TestCase):
         self.assertIn("price_date=2026-11-13", row["mark_source_ref"])
         self.assertNotIn("mark_stale", row)
 
-    def test_futures_daily_settlement_mark_is_stale_when_a_session_was_missed(self) -> None:
+    def test_futures_daily_settlement_mark_is_fresh_at_one_session_lag(self) -> None:
+        # FUTURES_MARK_MAX_SESSION_LAG = 1: Thursday's settlement valued Monday
+        # morning (Friday is the latest completed session) is still active.
         row = self._futures_mark_projection(
             as_of="2026-11-12T05:30:00Z", created_at="2026-11-16T01:00:00Z"
+        )
+        self.assertEqual(row["mark_price"], 2360.0)
+        self.assertNotIn("mark_stale", row)
+
+    def test_futures_daily_settlement_mark_is_stale_beyond_session_lag(self) -> None:
+        row = self._futures_mark_projection(
+            as_of="2026-11-11T05:30:00Z", created_at="2026-11-16T01:00:00Z"
         )
         self.assertNotIn("mark_price", row)
         self.assertTrue(row["mark_stale"])
