@@ -1,7 +1,7 @@
 # DEV PLAN — strategy discovery, alpha factor library, validation and evolution
 
 Status: implementation plan (Reviewer: Antigravity). Owner: Claude. Date: 2026-11-10.
-Base: `origin/dev` 48da27b2a. Design: `SD_STRATEGY_DISCOVERY_SOURCES_2026-11-10.md` in this folder
+Base: `origin/dev` 86e19d622. Design: `SD_STRATEGY_DISCOVERY_SOURCES_2026-11-10.md` in this folder
 (merged as #7125, 229426acb). Where the two differ, this plan wins.
 Scope of this change: this plan, a decision notice at the top of the design, and
 `docs/deployment/evidence/SD-STRATEGY-DISCOVERY-DEV-PLAN-20261110/evidence.json`. No source change.
@@ -70,7 +70,7 @@ Verbatim:
 | O-11 | PTT mirrors off | A1 |
 | O-12 | books are files the operator owns or licenses, placed in the collector library | §5 |
 
-## 2. Corrections to the design after verification on 48da27b2a
+## 2. Corrections to the design after verification on 86e19d622
 
 * **TPEx institutional flows already come from the TPEx OpenAPI** (`tpex_3insti_daily_trading`,
   `services/source_ingestion/connectors/taiwan_official.py:251`). The design's
