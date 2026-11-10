@@ -1,0 +1,32 @@
+{
+  "task_id": "STRATEGY-ARTIFACT-FACTOR-RULE-KIND-20261110",
+  "title": "Add the factor_rule_v1 strategy kind with one evaluator for backtest and paper",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "scope": [
+    "services/registry/strategy_artifact.py",
+    "services/registry/strategy_artifact.schema.json",
+    "services/registry/test_strategy_artifact.py",
+    "services/registry/factor_rule.py",
+    "services/registry/test_factor_rule.py",
+    "services/execution/lean_runtime/paper_signal_producer.py",
+    "services/execution/lean_runtime/test_paper_signal_producer.py",
+    "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "services/research/vectorbt/test_adapter.py",
+    "docs/deployment/evidence/STRATEGY-ARTIFACT-FACTOR-RULE-KIND-20261110/evidence.json"
+  ],
+  "acceptance_criteria_verification": {
+    "schema_and_momentum_checksums": "strategy_artifact.schema.json accepts close_to_close_momentum and factor_rule_v1 via oneOf; test_existing_builtin_and_persona_artifact_checksums_unchanged verifies byte-identical SHA-256 checksums for all built-in and persona momentum artifacts.",
+    "operator_grammar_coverage": "services/registry/factor_rule.py implements all 22 operators from Design section 9.2 and all 14 time-series operators from Dev Plan section 3.4 (36 time-series operators total), parses cross-sectional operators (cs_rank, cs_scale, industry_neutralize) when allow_cross_sectional=True, and rejects unknown and cross-sectional operators in per-symbol factor_rule_v1 validation and evaluation.",
+    "point_in_time_input_visibility": "resolve_point_in_time_inputs enforces available_time <= decision_time and event_time + timedelta(days=availability_lag_days) <= decision_time; test_point_in_time_inputs_hide_future_observations and test_availability_lag_days_enforced_even_when_available_time_is_earlier prove future observations are invisible.",
+    "paper_producer_feature_map_and_allowlist": "paper_signal_producer.py passes features and decision_time into evaluate_strategy_view and evaluate_strategy_action and accepts both close_to_close_momentum and factor_rule_v1 in CurrentArtifactStrategy.",
+    "backtest_paper_parity": "TestFactorRuleBacktestAndPaperParity.test_factor_rule_v1_vectorbt_backtest_and_paper_replay_produce_identical_actions proves identical 32-bar action sequences and signed order sizes between vectorbt_adapter and CurrentArtifactStrategy paper replay.",
+    "mutable_controls_and_immutable_structure": "validate_factor_rule_logic rejects bare numeric literals and requires every const_param to be declared in mutation_surface.controls with allowed_range and step while strategy_logic remains immutable under mutate_strategy_artifact."
+  },
+  "commands": [
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest -q services/registry/test_factor_rule.py services/registry/test_strategy_artifact.py services/execution/lean_runtime/test_paper_signal_producer.py services/research/vectorbt/test_adapter.py",
+      "result": "232 passed, 5 subtests passed"
+    }
+  ]
+}
