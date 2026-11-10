@@ -141,16 +141,36 @@ VITE_BFF_BASE_URL="$DEV_BFF_URL"
 VITE_BFF_FALLBACK=strict
 ```
 
-Keep write behavior safe by default:
+Write flags are set per deployment profile:
+
+| Profile | `VITE_BFF_REAL_WRITES` |
+| --- | --- |
+| Hosted dev `operator-live` (persistent) | `true` |
+| Hosted dev `read-only` | `false` |
+| Standby and bootstrap read-only identities | `false` |
+| Staging baseline | `false` |
+| Production | `false` |
+
+The persistent hosted dev profile `operator-live` builds with
+`VITE_BFF_REAL_WRITES=true`. The operator confirmed on 2026-11-10 to keep real
+writes on for `operator-live`, and `scripts/auto_deploy_dev_pair.py` enforces
+it: automatic deployment refuses a hosted baseline unless
+`VITE_BFF_REAL_WRITES` is `true` for `operator-live` and `false` for
+`read-only`. The `read-only` profile, standby and bootstrap identities, the
+staging baseline and production keep it `false`.
+
+Strict BFF authentication and role and tenant checks still govern every write;
+the flag only lets the browser call the real write paths. In every profile,
+including `operator-live`, these stay false:
 
 ```sh
-VITE_BFF_REAL_WRITES=false
 VITE_BFF_ALLOW_DEV_STUB_WRITES=false
+VITE_BFF_EMBEDDED_BEARER_TOKEN=false
 ```
 
-Only set either write flag to true when the operator explicitly asks for the
-specific write-path test and the corresponding BFF governance gates are ready.
-The release evidence must record that override and its expiry.
+Do not enable `VITE_BFF_REAL_WRITES` outside `operator-live` without a separate
+explicit operator authorization with a recorded expiry. Release evidence must
+record any such override.
 
 Do not compile a bearer token, client secret, or all-role development identity
 into the browser bundle. `/bff/auth/dev-login` is a server-side CI credential
