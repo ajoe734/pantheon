@@ -17,7 +17,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 from .models import (
     ALLOWED_ARTIFACT_TRANSITIONS,
@@ -32,6 +32,7 @@ from .models import (
 )
 from .pg_store import DivergentCommandReplayError
 from .storage import (
+    _validate_strategy_summary_page_args,
     build_lineage_graph,
     persona_binding_counts,
     project_strategy_spec_summary_page,
@@ -392,6 +393,26 @@ class RegistryService:
             visible_tenants=visible_tenants, artifact_type=artifact_type,
         )
 
+    def list_strategy_spec_summary_index_rows(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = "strategy_spec",
+    ) -> list[dict]:
+        """Lightweight candidate-index rows projected by the owner store for Phase 1 of strategy_summary_page."""
+        return self.store.list_strategy_spec_summary_index_rows(
+            visible_tenants=visible_tenants, artifact_type=artifact_type,
+        )
+
+    def get_strategy_spec_summary_rows_by_ids(
+        self,
+        registry_ids: Sequence[str],
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_type: Optional[str] = "strategy_spec",
+    ) -> dict[str, dict]:
+        """Full summary leaf rows projected by the owner store only for the requested ``registry_ids`` (Phase 2)."""
+        return self.store.get_strategy_spec_summary_rows_by_ids(
+            registry_ids, visible_tenants=visible_tenants, artifact_type=artifact_type,
+        )
+
     def strategy_spec_summary_page(
         self,
         *,
@@ -405,6 +426,30 @@ class RegistryService:
         page_size: int = 20,
     ) -> dict[str, object]:
         """Owner-filtered and paged canonical strategy summary page."""
+        _validate_strategy_summary_page_args(
+            state=state,
+            exclude_state=exclude_state,
+            page_token=page_token,
+            page_size=page_size,
+        )
+        if hasattr(self.store, "list_strategy_spec_summary_index_rows") and hasattr(
+            self.store, "get_strategy_spec_summary_rows_by_ids"
+        ):
+            index_rows = self.list_strategy_spec_summary_index_rows(
+                visible_tenants=visible_tenants, artifact_type=artifact_type,
+            )
+            return project_strategy_spec_summary_page(
+                index_rows,
+                artifact_state=artifact_state,
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                page_token=page_token,
+                page_size=page_size,
+                full_row_loader=lambda reg_ids: self.get_strategy_spec_summary_rows_by_ids(
+                    reg_ids, visible_tenants=visible_tenants, artifact_type=artifact_type
+                ),
+            )
         rows = self.list_strategy_spec_summary_rows(
             visible_tenants=visible_tenants, artifact_type=artifact_type,
         )
