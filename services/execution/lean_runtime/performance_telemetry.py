@@ -183,27 +183,63 @@ _TAIPEI_TZ = timezone(timedelta(hours=8))
 FUTURES_SETTLEMENT_MARK_KIND = "futures_daily_settlement"
 
 
-def expected_futures_settlement_session(reference_time: datetime) -> date:
-    """The D-1 session whose daily settlement marks an open futures contract.
+def futures_settlement_session_for_day(decision_day: date) -> date:
+    """The D-1 session whose daily settlement applies on ``decision_day``.
 
-    Calendar aware: weekends and governed TWSE holidays are skipped, so a
-    Monday valuation expects the preceding Friday session rather than aging
-    the Friday settlement out by elapsed seconds.
+    Calendar aware: weekends and governed TWSE holidays are skipped. The
+    producer, the runtime margin check and valuation all derive the session
+    through this one helper.
     """
     from services.execution.lean_runtime.instrument_candidates import (
         previous_trading_day,
     )
 
-    taipei_day = reference_time.astimezone(_TAIPEI_TZ).date()
-    return previous_trading_day(taipei_day)
+    return previous_trading_day(decision_day)
+
+
+def expected_futures_settlement_session(reference_time: datetime) -> date:
+    """The newest session whose settlement could have been published by now."""
+    return futures_settlement_session_for_day(
+        reference_time.astimezone(_TAIPEI_TZ).date()
+    )
+
+
+_MAX_SESSION_LAG = 400
+
+
+def futures_session_lag(session: date, expected_session: date) -> int:
+    """Trading sessions by which ``session`` trails ``expected_session``.
+
+    Zero when equal; a session newer than expected also counts as zero. The
+    walk is bounded so an ancient session cannot loop for long.
+    """
+    from services.execution.lean_runtime.instrument_candidates import (
+        previous_trading_day,
+    )
+
+    lag = 0
+    cursor = expected_session
+    while cursor > session and lag < _MAX_SESSION_LAG:
+        cursor = previous_trading_day(cursor)
+        lag += 1
+    return lag
+
+
+# A settlement is published about 22:36Z of its session and the host refresh
+# lands the next Taipei day, so one session of lag is the normal window.
+FUTURES_MARK_MAX_SESSION_LAG = 1
 
 
 def is_futures_settlement_mark_fresh(
     *, mark_as_of: datetime, reference_time: datetime
 ) -> bool:
-    """A futures settlement mark is fresh only for the latest completed session."""
-    return mark_as_of.astimezone(timezone.utc).date() == (
-        expected_futures_settlement_session(reference_time)
+    """Fresh while the mark trails the expected session by at most one session."""
+    return (
+        futures_session_lag(
+            mark_as_of.astimezone(timezone.utc).date(),
+            expected_futures_settlement_session(reference_time),
+        )
+        <= FUTURES_MARK_MAX_SESSION_LAG
     )
 
 

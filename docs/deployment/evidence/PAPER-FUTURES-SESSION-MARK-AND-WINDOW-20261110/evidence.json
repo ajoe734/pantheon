@@ -1,0 +1,31 @@
+{
+  "task_id": "PAPER-FUTURES-SESSION-MARK-AND-WINDOW-20261110",
+  "hosted_behaviour_exercised": false,
+  "statement": "Functional evidence from local tests only. Hosted behaviour was not exercised; no VM, SSH, hosted BFF, workflow dispatch, broker or model call was made. Hosted verification belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "change": [
+    "performance_telemetry.py: futures_settlement_session_for_day (one D-1 helper shared by producer, runtime and valuation), futures_session_lag (trading sessions a session trails the expected one) and a freshness rule: a futures settlement mark is fresh while lag <= 1 session, stale at 2 or more.",
+    "futures_session_inputs.py: attach_futures_session_inputs derives the session D-1 from the decision day (kept in as_of_trading_day), reads partitions up to D, and sets trade_date to the session plus per-contract price dates and reasons; the reader takes max_stale_sessions; DatasetFuturesMarkProvider accepts a row up to one session behind the expected session and stamps the mark with the row's own price_date, so a newer partition's newer price_date wins.",
+    "paper_runtime.py: the entry gate reads the decision day from as_of_trading_day first; SettleExpiringFutures takes partition_horizon so the final settlement of session S is read from a later partition; the lifecycle marks and runs the maintenance check once per session.",
+    "Tests changed because they encoded the superseded semantics: the producer to runtime, margin call and final settlement tests now use the hosted layout (partition D holds price_date D-1; expiry pending on decision day 2026-11-19, settled from partition 2026-11-20); the telemetry aging test treats a one session lag as fresh and a two session lag as stale; the stale case in the missing/stale/tombstone test uses a row two sessions behind."
+  ],
+  "commands": [
+    {"command": "python -m pytest services/execution/lean_runtime/test_futures_session_inputs.py services/execution/lean_runtime/test_performance_telemetry.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_paper_runtime_smoke.py -q", "result": "174 passed, 28 subtests passed"},
+    {"command": "python -m pytest services/execution/lean_runtime/test_paper_runtime.py services/execution/lean_runtime/test_instrument_candidates.py services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_runtime_bootstrap.py -q", "result": "201 passed, 34 subtests passed"}
+  ],
+  "acceptance": {
+    "1": "test_producer_attaches_d_minus_1_session_and_runtime_marks_once: hosted layout (date=2026-11-10 holding price_date 2026-11-09, SRF 202611 97.1) gives session_settlement_prices {ssf:SRF:202611: 97.1} and trade_date 2026-11-09.",
+    "2": "Same test: position mark_price 97.1, mark_as_of 2026-11-09, one MarkFuturesSession call; a second signal of the session does not mark or check again.",
+    "3": "test_producer_records_per_contract_reason_and_runtime_never_marks_from_it: stale, missing and tombstone each carry a per contract reason; runtime records skipped_missing_settlement_price and does not mark.",
+    "4": "test_runtime_bootstrap_dataset_final_settlement_pending_then_settled_for_202611_srf: pending on decision day 2026-11-19 until partition 2026-11-20 carries the 2026-11-18 final settlement, then paper_futures_settled with margin released.",
+    "5": "test_valuation_mark_stays_fresh_between_host_refreshes: fresh at 2026-11-10T23:30Z and 2026-11-11T06:50Z on the hosted layout; see deviation below for the weekend clocks.",
+    "6": "Existing producer, runtime, smoke and futures session suites pass; cash only paths untouched.",
+    "7": "This file."
+  },
+  "deviations": [
+    "Acceptance 5 lists Saturday 2026-11-14T10:00Z and Monday 2026-11-16T06:00Z as fresh on the layout whose newest partition is date=2026-11-10. The later coordinator freshness rule (fresh while expected session minus mark session is at most one trading session) makes that single partition stale on those clocks (four sessions behind). I implemented the coordinator rule: the test asserts the weekend clocks fresh with the partition a real weekday refresh would have written (date=2026-11-13 holding price_date 2026-11-12), and asserts the old single partition is marks_unavailable on 2026-11-12T06:50Z and 2026-11-14T10:00Z, which is the missed refresh detection the rule asks for."
+  ],
+  "findings_not_changed": [
+    "executor.py's signal metadata allowlist was not edited (outside the artifact contract); the decision day therefore travels in the existing as_of_trading_day key rather than a new key.",
+    "On morning bars before the host refresh lands (about 14:56 Taipei) the producer reports settlement_price_stale for the D-1 session and the runtime defers the mark to a later bar; valuation stays fresh through that window."
+  ]
+}
