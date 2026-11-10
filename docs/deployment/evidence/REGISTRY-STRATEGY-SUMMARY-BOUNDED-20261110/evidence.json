@@ -1,0 +1,137 @@
+{
+  "task_id": "REGISTRY-STRATEGY-SUMMARY-BOUNDED-20261110",
+  "title": "Registry strategy summary page extracts every spec row on each call",
+  "status": "verified",
+  "agent": "Antigravity2",
+  "reviewer": "Claude",
+  "measured_at": "2026-11-10T13:40:00Z",
+  "environment": {
+    "os": "Linux 6.8.0-106-generic x86_64",
+    "python": "3.12 (.venv-pantheon)",
+    "postgres": "PostgreSQL 16 (postgres:16-alpine at 127.0.0.1:55432)"
+  },
+  "root_cause": {
+    "registry_sql_and_projection": "PostgresRegistryStore.list_strategy_spec_summary_rows executed strategy_spec_summary_select_sql() across every strategy_specs row on every view=strategy_summary_page call, performing 94 jsonb #> path traversals plus double payload || '{}'::jsonb detoasting on all ~4,136-5,031 stored rows (~3,400 current strategy families plus retired/historical rows), followed by full Python dict construction and deep-copying in strategy_spec_summary_row() and project_strategy_spec_summary_page() before applying persona_id filters or slicing to page_size.",
+    "bff_hide_retired_personas_walk": "GET /bff/strategies?hide_retired_personas=true with no state filter walked every 200-row owner page (17 sequential calls over ~3,379 active strategies) whenever the caller did not match the narrow page_size=20&page_token=None shortcut, causing 17 full registry scans (17 x 3,579 = 60,843 full summary row extractions) per BFF request."
+  },
+  "changes_summary": {
+    "services/registry/storage.py": [
+      "Added lightweight Phase 1 index projection (strategy_spec_summary_index_row, RegistryStore.list_strategy_spec_summary_index_rows) extracting only version-winner, lifecycle, timestamp, and persona-id index fields.",
+      "Added Phase 2 primary-key full summary loader (RegistryStore.get_strategy_spec_summary_rows_by_ids) and observable per-call counters (full_summary_rows_extracted, full_summary_row_ids_extracted).",
+      "Updated project_strategy_spec_summary_page to validate pagination/filter args up front, select current version per strategy_id, compute state_counts, apply state/exclude_state and persona_id filters, sort by last_modified_at, slice the requested page [start : start + page_size], and invoke full_row_loader only for the sliced page's registry_ids.",
+      "Added bounded @lru_cache on _binding_utc_str and _parse_semver_key and avoided redundant entry.to_dict() deep copies in strategy_spec_summary_row."
+    ],
+    "services/registry/pg_store.py": [
+      "Added single-pass Phase 1 index SQL (_strategy_spec_summary_index_single_pass_sql) and column decoder (strategy_spec_summary_index_rows_from_columns) reading only the 5 narrow sub-objects needed for version selection, state_counts, persona_id filtering, and timestamp ordering without payload || '{}'::jsonb detoasting.",
+      "Added PostgresRegistryStore.list_strategy_spec_summary_index_rows and PostgresRegistryStore.get_strategy_spec_summary_rows_by_ids using primary-key lookup WHERE record_id = ANY(%s::text[]) for only the returned page's record_ids."
+    ],
+    "services/registry/split_api.py": [
+      "Updated RegistryService.strategy_spec_summary_page to validate arguments before store access and execute the bounded two-step projection (list_strategy_spec_summary_index_rows + get_strategy_spec_summary_rows_by_ids)."
+    ],
+    "services/registry/contract.md": [
+      "Documented the two-phase bounded projection contract for GET /api/registry/strategy-specs?view=strategy_summary_page."
+    ],
+    "services/control-plane/bff/strategies/service.py": [
+      "Generalized list_strategy_summaries_hide_retired_unfiltered_page to work for any page_size and page_token when hide_retired_personas=true and no state/exclude_state/persona_id filter is set, using 1 unfiltered first page (page_size=200) plus 1 bounded non-draft walk (exclude_state=draft, page_size=200) instead of scanning all 17 pages of unbound draft strategies."
+    ],
+    "services/control-plane/bff/strategies/routes/collection.py": [
+      "Routed all unfiltered hide_retired_personas=true list requests (regardless of page_size or page_token) through list_strategy_summaries_hide_retired_unfiltered_page."
+    ]
+  },
+  "cpu_and_query_benchmarks_same_machine": {
+    "dataset_shape": {
+      "current_active_strategy_families": 3400,
+      "retired_strategy_families": 600,
+      "multi_version_older_rows": 136,
+      "total_strategy_spec_rows": 4136,
+      "payload_shape": "Real strategy_spec payload (~2.2 KB JSONB per row with indicators, signal_logic, market_scope, execution_profile, risk_constraints, evaluation_summary, governance, provenance, and metadata)"
+    },
+    "real_postgresql_16_plus_registry_python_cpu": {
+      "default_first_page_page_size_20": {
+        "before_postgres_sql_ms": 653.57,
+        "before_registry_python_cpu_ms": 564.70,
+        "before_combined_ms": 1218.27,
+        "before_full_rows_extracted": 4136,
+        "after_phase1_index_sql_ms": 68.12,
+        "after_phase2_pk_full_row_sql_ms": 23.41,
+        "after_registry_python_cpu_ms": 35.18,
+        "after_combined_ms": 126.71,
+        "after_full_rows_extracted": 20,
+        "combined_reduction_pct": 89.60,
+        "requirement_min_reduction_pct": 70.0
+      },
+      "persona_filtered_call_1_matching_family": {
+        "before_postgres_sql_ms": 653.57,
+        "before_registry_python_cpu_ms": 558.42,
+        "before_combined_ms": 1211.99,
+        "before_full_rows_extracted": 4136,
+        "after_phase1_index_sql_ms": 67.85,
+        "after_phase2_pk_full_row_sql_ms": 1.54,
+        "after_registry_python_cpu_ms": 34.62,
+        "after_combined_ms": 104.01,
+        "after_full_rows_extracted": 1,
+        "combined_reduction_pct": 91.42,
+        "requirement_min_reduction_pct": 70.0
+      }
+    },
+    "simulated_sql_and_registry_python_cpu_in_process": {
+      "default_first_page_page_size_20": {
+        "before_cpu_ms": 486.4,
+        "after_cpu_ms": 54.2,
+        "reduction_pct": 88.86,
+        "requirement_min_reduction_pct": 70.0
+      },
+      "persona_filtered_call_1_matching_family": {
+        "before_cpu_ms": 482.1,
+        "after_cpu_ms": 49.8,
+        "reduction_pct": 89.67,
+        "requirement_min_reduction_pct": 70.0
+      }
+    },
+    "bff_hide_retired_personas_unfiltered_over_3379_active_strategies": {
+      "dataset": "3,217 unbound drafts + 134 retired-persona approved + 5 running-persona paper_running + 21 idle-persona review + 2 unbound approved + 200 retired strategies = 3,579 rows",
+      "before_registry_http_reads": 17,
+      "before_full_summary_rows_extracted": 60843,
+      "after_registry_http_reads": 2,
+      "after_full_summary_rows_extracted": 362,
+      "full_row_extraction_reduction_pct": 99.40
+    }
+  },
+  "acceptance_criteria_verification": {
+    "ac1_bounded_full_field_extraction_and_persona_pre_filter": {
+      "status": "passed",
+      "test": "services/registry/test_strategy_summary_page_bounded.py::test_strategy_summary_page_extracts_full_fields_only_for_returned_rows_and_filters_persona_before_extraction",
+      "details": "Verified with _SpyMapping on heavy spec keys, store.full_summary_rows_extracted, and Postgres SQL spy that default page (page_size=20) extracts full fields for only 20 rows, persona_id filter extracts full fields for only the 2 matching rows (and 0 when unmatched), and non-returned rows have 0 heavy spec leaf accesses."
+    },
+    "ac2_view_response_parity_across_all_row_shapes": {
+      "status": "passed",
+      "test": "services/registry/test_strategy_summary_page_bounded.py::test_strategy_summary_page_parity_with_legacy_projection_across_all_row_shapes",
+      "details": "Compared legacy full-extraction projection against bounded two-phase projection across 29 query combinations covering multi-version semver/timestamp ordering, retired/draft/unknown lifecycles, all 9 persona_id metadata/spec locations, and tenant visibility (tenant-dev, tenant-other, legacy global)."
+    },
+    "ac3_bff_hide_retired_personas_bounded_registry_reads": {
+      "status": "passed",
+      "test": "services/control-plane/bff/strategies/test_router_isolation.py::test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_3400_strategies",
+      "details": "Verified GET /bff/strategies?hide_retired_personas=true&page_size=20 (and page_size=25, page_token=20) over 3,379 active strategies makes exactly 2 registry reads (page_size=200 unfiltered + page_size=200&exclude_state=draft) and extracts 362 full rows total instead of 17 full scans."
+    },
+    "ac4_cpu_drop_at_least_70_percent": {
+      "status": "passed",
+      "tests": [
+        "services/registry/test_strategy_summary_page_bounded.py::test_strategy_summary_page_cpu_drops_by_at_least_70_percent_over_3400_families",
+        "services/registry/test_strategy_summary_page_bounded.py::test_postgres_strategy_summary_page_cpu_drops_by_at_least_70_percent_over_3400_families"
+      ],
+      "details": "Measured >= 88% CPU reduction in-process and >= 89.6% (default page) / >= 91.4% (persona-filtered call) combined Postgres + Registry Python CPU reduction against real PostgreSQL 16 over 3,400 current + 600 retired strategy families."
+    },
+    "ac5_error_contracts_preserved": {
+      "status": "passed",
+      "tests": [
+        "services/registry/test_strategy_summary_page_bounded.py::test_strategy_summary_page_preserves_error_contract_for_invalid_tokens_conflicting_filters_and_corrupt_entries",
+        "services/control-plane/bff/strategies/test_router_isolation.py::test_bff_strategies_preserves_error_contract_for_owner_failures_invalid_tokens_and_conflicting_filters"
+      ],
+      "details": "Verified invalid page_token returns 400 VALIDATION_FAILED (both before store access and on BFF), conflicting state + exclude_state returns 400 VALIDATION_FAILED, corrupt owner entry returns 500 REGISTRY_CORRUPT_ENTRY, and owner unavailability returns 503 OWNER_UNAVAILABLE."
+    },
+    "ac6_no_existing_test_weakened_or_deleted": {
+      "status": "passed",
+      "changed_assertions_justification": "No existing test assertion was weakened or deleted. In services/registry/test_service.py::test_strategy_spec_summary_page_view_tenant_scope_filters_pagination_and_sql_projection, added an extra assertion verifying strategy_spec_summary_index_rows_from_columns alongside the existing strategy_spec_summary_rows_from_columns check."
+    }
+  }
+}

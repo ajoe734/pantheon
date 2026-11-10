@@ -452,6 +452,259 @@ class StrategiesService:
             "Strategy candidate set exceeds the bounded owner page walk"
         )
 
+    def list_strategy_summaries_hide_retired_unfiltered_page(
+        self,
+        *,
+        persona_lookup: Any,
+        summary_persona_ids_fn: Callable[[Dict[str, Any]], List[str]],
+        operational_counts_fn: Callable[[Any], Dict[str, int]],
+        status_retired: str,
+        page_slice_fn: Callable[
+            [List[Dict[str, Any]], Optional[str], int],
+            Tuple[List[Dict[str, Any]], Optional[str]],
+        ],
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        """Bounded resolution for ``hide_retired_personas=true`` with no state filter.
+
+        Instead of walking every 200-row owner page across thousands of unbound
+        draft strategies, reads the first unfiltered owner page, walks additional
+        unfiltered pages only until enough non-retired-persona rows exist to fill
+        ``(page_token, page_size)``, and resolves exact ``operational_counts`` and
+        ``hidden_retired_persona_count`` from the bounded ``exclude_state=draft``
+        non-draft population plus the remaining unbound draft count.
+        """
+        start = 0
+        if page_token is not None and str(page_token).strip() != "":
+            try:
+                start = int(str(page_token).strip())
+            except (TypeError, ValueError) as exc:
+                if self._bff_error:
+                    raise self._bff_error(
+                        400,
+                        ErrorCode.VALIDATION_FAILED,
+                        "Invalid page_token",
+                        "page_token must be a non-negative integer offset",
+                    ) from exc
+                raise HTTPException(
+                    status_code=400,
+                    detail="page_token must be a non-negative integer offset",
+                ) from exc
+            if start < 0:
+                if self._bff_error:
+                    raise self._bff_error(
+                        400,
+                        ErrorCode.VALIDATION_FAILED,
+                        "Invalid page_token",
+                        "page_token must be a non-negative integer offset",
+                    )
+                raise HTTPException(
+                    status_code=400,
+                    detail="page_token must be a non-negative integer offset",
+                )
+        page_slice_fn([], page_token, page_size)
+        first_page = self.list_strategy_summaries_page(
+            state=None,
+            exclude_state=None,
+            persona_id=None,
+            page_token=None,
+            page_size=STRATEGY_OWNER_PAGE_SIZE,
+        )
+        if first_page is None:
+            return None
+        first_items = first_page.get("items")
+        if not isinstance(first_items, list):
+            raise self._candidate_walk_error("Invalid strategy list payload")
+        for summary in first_items:
+            sid = (
+                str(summary.get("strategy_id") or summary.get("id") or "").strip()
+                if isinstance(summary, dict)
+                else ""
+            )
+            if not sid:
+                raise self._candidate_walk_error("Invalid strategy summary entry")
+
+        unfiltered_total = int(first_page.get("total") or 0)
+        state_counts = self.resolve_strategy_state_counts(owner_page=first_page)
+        first_next_token = first_page.get("next_page_token")
+
+        if not first_next_token:
+            kept = [
+                s
+                for s in first_items
+                if persona_lookup.operational_status(summary_persona_ids_fn(s))
+                != status_retired
+            ]
+            page_summaries, next_page_token = page_slice_fn(kept, page_token, page_size)
+            op_counts = operational_counts_fn(
+                persona_lookup.operational_status(summary_persona_ids_fn(s))
+                for s in first_items
+            )
+            return {
+                "page_summaries": page_summaries,
+                "next_page_token": next_page_token,
+                "total": len(kept),
+                "hidden_retired_persona_count": len(first_items) - len(kept),
+                "state_counts": state_counts,
+                "operational_counts": op_counts,
+            }
+
+        if not getattr(persona_lookup, "available", True):
+            if start + page_size <= len(first_items):
+                page_summaries = list(first_items[start : start + page_size])
+            else:
+                target_page = self.list_strategy_summaries_page(
+                    state=None,
+                    exclude_state=None,
+                    persona_id=None,
+                    page_token=page_token,
+                    page_size=page_size,
+                )
+                if not isinstance(target_page, dict) or not isinstance(
+                    target_page.get("items"), list
+                ):
+                    raise self._candidate_walk_error("Invalid strategy list payload")
+                page_summaries = list(target_page["items"])
+                for summary in page_summaries:
+                    sid = (
+                        str(summary.get("strategy_id") or summary.get("id") or "").strip()
+                        if isinstance(summary, dict)
+                        else ""
+                    )
+                    if not sid:
+                        raise self._candidate_walk_error("Invalid strategy summary entry")
+            next_offset = start + len(page_summaries)
+            next_page_token = (
+                str(next_offset)
+                if (next_offset < unfiltered_total and page_summaries)
+                else None
+            )
+            return {
+                "page_summaries": page_summaries,
+                "next_page_token": next_page_token,
+                "total": unfiltered_total,
+                "hidden_retired_persona_count": 0,
+                "state_counts": state_counts,
+                "operational_counts": {
+                    "running": 0,
+                    "idle": 0,
+                    "retired": 0,
+                    "unbound": 0,
+                    "unknown": unfiltered_total,
+                },
+            }
+
+        walked_items: List[Dict[str, Any]] = list(first_items)
+        kept = [
+            s
+            for s in first_items
+            if persona_lookup.operational_status(summary_persona_ids_fn(s))
+            != status_retired
+        ]
+        next_token: Optional[str] = str(first_next_token)
+        seen_tokens: Set[str] = {next_token}
+        page_number = 1
+        while len(kept) < start + page_size and next_token:
+            if page_number >= STRATEGY_CANDIDATE_WALK_MAX_PAGES:
+                raise self._candidate_walk_error(
+                    "Strategy candidate set exceeds the bounded owner page walk"
+                )
+            page = self.list_strategy_summaries_page(
+                state=None,
+                exclude_state=None,
+                persona_id=None,
+                page_token=next_token,
+                page_size=STRATEGY_OWNER_PAGE_SIZE,
+            )
+            if page is None or not isinstance(page.get("items"), list):
+                raise self._candidate_walk_error("Invalid strategy list payload")
+            page_items = page["items"]
+            for summary in page_items:
+                sid = (
+                    str(summary.get("strategy_id") or summary.get("id") or "").strip()
+                    if isinstance(summary, dict)
+                    else ""
+                )
+                if not sid:
+                    raise self._candidate_walk_error("Invalid strategy summary entry")
+            walked_items.extend(page_items)
+            for s in page_items:
+                if (
+                    persona_lookup.operational_status(summary_persona_ids_fn(s))
+                    != status_retired
+                ):
+                    kept.append(s)
+            raw_next = page.get("next_page_token")
+            if not raw_next:
+                next_token = None
+                break
+            cand_next = str(raw_next)
+            if cand_next in seen_tokens or cand_next == next_token:
+                raise self._candidate_walk_error("Strategy list paging did not advance")
+            seen_tokens.add(cand_next)
+            next_token = cand_next
+            page_number += 1
+
+        seen_by_id: Dict[str, Dict[str, Any]] = {
+            str(s.get("strategy_id") or s.get("id") or "").strip(): s
+            for s in walked_items
+        }
+        non_draft_expected: Optional[int] = None
+        if isinstance(state_counts, dict):
+            non_draft_expected = sum(
+                int(v)
+                for k, v in state_counts.items()
+                if k not in ("draft", "retired")
+            )
+        seen_non_draft = sum(
+            1
+            for s in seen_by_id.values()
+            if not is_true_draft_lifecycle_state(
+                s.get("lifecycle_state") or s.get("state") or s.get("status")
+            )
+        )
+        if next_token is not None and (
+            non_draft_expected is None or seen_non_draft < non_draft_expected
+        ):
+            non_draft_walk = self.list_all_strategy_summary_pages(
+                state=None,
+                exclude_state="draft",
+                persona_id=None,
+            )
+            if non_draft_walk is not None:
+                for s in non_draft_walk.get("items") or ():
+                    sid = (
+                        str(s.get("strategy_id") or s.get("id") or "").strip()
+                        if isinstance(s, dict)
+                        else ""
+                    )
+                    if not sid:
+                        raise self._candidate_walk_error("Invalid strategy summary entry")
+                    seen_by_id.setdefault(sid, s)
+
+        op_counts = operational_counts_fn(
+            persona_lookup.operational_status(summary_persona_ids_fn(s))
+            for s in seen_by_id.values()
+        )
+        remaining_unbound_drafts = max(0, unfiltered_total - len(seen_by_id))
+        op_counts["unbound"] = int(op_counts.get("unbound") or 0) + remaining_unbound_drafts
+        hidden_count = int(op_counts.get("retired") or 0)
+        total = max(0, unfiltered_total - hidden_count)
+        page_summaries = kept[start : start + page_size]
+        next_offset = start + len(page_summaries)
+        next_page_token = (
+            str(next_offset) if (next_offset < total and page_summaries) else None
+        )
+        return {
+            "page_summaries": page_summaries,
+            "next_page_token": next_page_token,
+            "total": total,
+            "hidden_retired_persona_count": hidden_count,
+            "state_counts": state_counts,
+            "operational_counts": op_counts,
+        }
+
     def _candidate_walk_error(self, message: str) -> Exception:
         if self._bff_error:
             return self._bff_error(

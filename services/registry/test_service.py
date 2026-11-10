@@ -3447,7 +3447,11 @@ def test_strategy_artifacts_list_and_detail_tenant_scope_and_x_tenant_id(strict_
 def test_strategy_spec_summary_page_view_tenant_scope_filters_pagination_and_sql_projection(strict_client):
     from .pg_store import (
         _STRATEGY_SUMMARY_CONTAINER_PATHS,
+        _STRATEGY_SUMMARY_INDEX_CONTAINER_PATHS,
+        _strategy_summary_index_leaf_paths,
         _strategy_summary_leaf_paths,
+        strategy_spec_summary_index_rows_from_columns,
+        strategy_spec_summary_index_select_sql,
         strategy_spec_summary_rows_from_columns,
         strategy_spec_summary_select_sql,
     )
@@ -3573,6 +3577,42 @@ def test_strategy_spec_summary_page_view_tenant_scope_filters_pagination_and_sql
         )
     pg_rows = strategy_spec_summary_rows_from_columns(simulated_sql_rows)
     assert pg_rows == mem_rows
+
+    # Verify Postgres index-column projection matches in-memory index rows
+    assert "payload #>" in strategy_spec_summary_index_select_sql()
+    mem_index_rows = store.list_strategy_spec_summary_index_rows(
+        visible_tenants=frozenset({"tenant-a", "__builtin__"}),
+        artifact_type="strategy_spec",
+    )
+    index_leaf_paths = _strategy_summary_index_leaf_paths()
+    simulated_index_sql_rows = []
+    for entry in store.list_all_entries():
+        if entry.owner_tenant not in {"tenant-a", "__builtin__"} or entry.artifact_type.value != "strategy_spec":
+            continue
+        payload = entry.to_dict()
+
+        def _extract_idx(p: tuple[str, ...]):
+            cur: Any = payload
+            for k in p:
+                if not isinstance(cur, dict) or k not in cur:
+                    return None
+                cur = cur[k]
+            return json.dumps(cur)
+
+        def _typeof_idx(p: tuple[str, ...]):
+            cur: Any = payload
+            for k in p:
+                if not isinstance(cur, dict) or k not in cur:
+                    return None
+                cur = cur[k]
+            return "object" if isinstance(cur, dict) else ("array" if isinstance(cur, list) else "scalar")
+
+        simulated_index_sql_rows.append(
+            tuple(_extract_idx(p) for p in index_leaf_paths)
+            + tuple(_typeof_idx(p) for p in _STRATEGY_SUMMARY_INDEX_CONTAINER_PATHS)
+        )
+    pg_index_rows = strategy_spec_summary_index_rows_from_columns(simulated_index_sql_rows)
+    assert pg_index_rows == mem_index_rows
 
 
 def test_postgres_registry_store_list_by_strategy_filters_in_sql_without_full_table_scan():
