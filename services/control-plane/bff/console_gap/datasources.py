@@ -43,6 +43,32 @@ _SECRET_KEYWORDS = frozenset({
     "secret_value",
 })
 
+EMPTY_V2_STORE_FALLBACK_REASON = (
+    "v2 source management store is empty (zero instances); "
+    "serving source-ingest connector registry as degraded legacy_projection."
+)
+
+_LEGACY_PROJECTION_FORBIDDEN_KEYS = frozenset({
+    "allowed_actions",
+    "allowedActions",
+    "persona_fleet_status",
+    "personaFleetStatus",
+    "inferred_persona_fleet_status",
+    "inferredPersonaFleetStatus",
+    "persona_status",
+    "personaStatus",
+    "fleet_status",
+    "fleetStatus",
+})
+
+
+def _sanitize_legacy_projection_row(row: Any) -> Any:
+    """Strip v2 command-action and inferred persona fleet status fields from legacy projection rows."""
+    if not isinstance(row, dict):
+        return redact_sensitive_values(row)
+    cleaned = {k: v for k, v in row.items() if k not in _LEGACY_PROJECTION_FORBIDDEN_KEYS}
+    return redact_sensitive_values(cleaned)
+
 
 def redact_sensitive_values(obj: Any) -> Any:
     """Recursively redact any secret material in responses/logs."""
@@ -213,16 +239,19 @@ def create_datasources_router(
             try:
                 sources_resp = client.list_sources(source_kind=source_kind, lifecycle_state=lifecycle_state)
                 v2_sources = list(sources_resp.get("sources") or [])
-                def_resp = client.list_connector_definitions()
-                for d in def_resp.get("definitions") or []:
-                    if isinstance(d, dict) and d.get("definition_id"):
-                        definitions_map[d["definition_id"]] = d
+                if len(v2_sources) > 0:
+                    def_resp = client.list_connector_definitions()
+                    for d in def_resp.get("definitions") or []:
+                        if isinstance(d, dict) and d.get("definition_id"):
+                            definitions_map[d["definition_id"]] = d
             except SourceManagementClientError as exc:
                 client_error = exc
                 v2_sources = None
 
-        # If v2 sources are available
-        if v2_sources is not None and (len(v2_sources) > 0 or client_error is None):
+        v2_store_empty = v2_sources is not None and len(v2_sources) == 0 and client_error is None
+
+        # If v2 sources are available and non-empty
+        if v2_sources is not None and len(v2_sources) > 0:
             composed_items: List[Dict[str, Any]] = []
             for inst in v2_sources:
                 inst_id = str(inst.get("data_source_id") or inst.get("source_instance_id") or "")
@@ -310,42 +339,68 @@ def create_datasources_router(
         # Fallback to legacy read store registry during migration
         store = _resolve_store()
         if read_source_connector_registry is None:
-            registry = store.get_source_connector_registry()
+            if store is None:
+                registry: Dict[str, Any] = {"source": "missing", "connectors": []}
+            else:
+                registry = store.get_source_connector_registry()
         else:
             registry = await read_source_connector_registry(store)
 
         source: str = str(registry.get("source") or "missing")
-        items: List[Dict[str, Any]] = list(registry.get("connectors") or [])
+        raw_items: List[Dict[str, Any]] = list(registry.get("connectors") or [])
+        items: List[Dict[str, Any]] = [_sanitize_legacy_projection_row(item) for item in raw_items]
+
+        is_empty_v2_legacy_projection = (
+            v2_store_empty
+            and source not in ("missing", "unavailable")
+            and len(items) > 0
+        )
 
         if source in ("missing", "unavailable"):
             surface_state = "unavailable"
+            effective_source = source
+        elif is_empty_v2_legacy_projection:
+            surface_state = "degraded"
+            effective_source = "legacy_projection"
         else:
             surface_state = "ok" if items else "degraded"
+            effective_source = source
 
-        surface = {
+        surface: Dict[str, Any] = {
             "status": surface_state,
-            "source": source,
+            "source": effective_source,
         }
-        if registry.get("reason"):
-            surface["reason"] = registry["reason"]
-        if surface_state == "unavailable":
-            surface["message"] = "Source-ingest registry is unavailable or unconfigured."
-            surface["staleness"] = {
-                "served_from": "unverifiable" if source == "missing" else source,
-                "last_known_at": snapshot_at,
-            }
-        elif surface_state == "degraded":
-            surface["message"] = "Source-ingest registry is readable but currently empty."
+        if is_empty_v2_legacy_projection:
+            empty_store_reason = str(registry.get("reason") or EMPTY_V2_STORE_FALLBACK_REASON)
+            surface["reason"] = empty_store_reason
+            surface["message"] = empty_store_reason
+        else:
+            if registry.get("reason"):
+                surface["reason"] = registry["reason"]
+            if surface_state == "unavailable":
+                surface["message"] = "Source-ingest registry is unavailable or unconfigured."
+                surface["staleness"] = {
+                    "served_from": "unverifiable" if source == "missing" else source,
+                    "last_known_at": snapshot_at,
+                }
+            elif surface_state == "degraded":
+                surface["message"] = "Source-ingest registry is readable but currently empty."
 
         meta = {
             **snapshot_meta(snapshot_at),
             "status": surface_state,
-            "source": source,
+            "source": effective_source,
             "surfaces": {
                 "data_sources": surface,
             },
         }
-        if surface_state == "unavailable":
+        if is_empty_v2_legacy_projection:
+            empty_store_reason = str(registry.get("reason") or EMPTY_V2_STORE_FALLBACK_REASON)
+            meta["reason"] = empty_store_reason
+            meta["degradation"] = {
+                "reason": empty_store_reason,
+            }
+        elif surface_state == "unavailable":
             meta["degradation"] = {
                 "reason": registry.get("reason") or "management data sources are currently unavailable.",
             }
@@ -383,18 +438,23 @@ def create_datasources_router(
                 "meta": meta,
             }
 
+        summary: Dict[str, Any] = {
+            "total_items": len(items),
+            "returned_items": len(page_items),
+            "status": surface_state,
+            "source": effective_source,
+        }
         data: Dict[str, Any] = {
             "id": "management-data-sources",
             "items": page_items,
-            "summary": {
-                "total_items": len(items),
-                "returned_items": len(page_items),
-                "status": surface_state,
-                "source": source,
-            },
+            "summary": summary,
             "status": surface_state,
-            "source": source,
+            "source": effective_source,
         }
+        if is_empty_v2_legacy_projection:
+            empty_store_reason = str(registry.get("reason") or EMPTY_V2_STORE_FALLBACK_REASON)
+            summary["reason"] = empty_store_reason
+            data["reason"] = empty_store_reason
         if registry.get("policy_registry") is not None:
             data["policy_registry"] = registry["policy_registry"]
         if registry.get("financial_data_source_catalog") is not None:

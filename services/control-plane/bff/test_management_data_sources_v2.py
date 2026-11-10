@@ -791,3 +791,440 @@ def test_source_management_client_auth_token_resolution(tmp_path: Any, monkeypat
     assert res == {"status": "ok"}
     assert captured_request["headers"].get("Authorization") == "Bearer valid-service-token"
 
+
+# ==============================================================================
+# EMPTY V2 STORE FALLBACK TO DEGRADED LEGACY PROJECTION (BFF-DATASOURCES-EMPTY-V2-FALLBACK-20261110)
+# ==============================================================================
+
+_REAL_REGISTRY_ENTRY_KEYS = frozenset({
+    "connector_id",
+    "crawler_policy",
+    "fetch_policy",
+    "freshness",
+    "health_metrics",
+    "metadata",
+    "policy",
+    "provider",
+    "schedule",
+    "schema_version",
+    "source_type",
+    "state",
+    "status",
+    "supported_modes",
+})
+
+
+def _make_real_registry_connector_entry(
+    connector_id: str,
+    provider: str,
+    status: str,
+    *,
+    source_type: str = "market_data",
+    extra_fields: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    entry: Dict[str, Any] = {
+        "schema_version": "source_connector_registry_entry.v1",
+        "connector_id": connector_id,
+        "provider": provider,
+        "source_type": source_type,
+        "status": status,
+        "supported_modes": ["scheduled", "on_demand"],
+        "policy": {
+            "license_scope": "official_reference",
+            "allowed_use": ["research_data", "backtest_data"],
+            "retention_days": 365,
+        },
+        "metadata": {
+            "market": "TW" if connector_id.startswith("tw-") else "US",
+            "dataset": f"{connector_id}-daily",
+        },
+        "fetch_policy": {
+            "mode": "external_feed",
+            "max_records": 1000,
+            "timeout_seconds": 30,
+        },
+        "schedule": {
+            "connector_id": connector_id,
+            "enabled": status == "enabled",
+            "interval_seconds": 3600,
+        },
+        "freshness": {
+            "connector_id": connector_id,
+            "status": "fresh" if status == "enabled" else "idle",
+            "last_success_at": "2026-11-10T08:00:00Z" if status == "enabled" else None,
+            "last_watermark": "2026-11-10" if status == "enabled" else None,
+            "staleness_seconds": 120 if status == "enabled" else None,
+        },
+        "health_metrics": {
+            "schema_version": "source_connector_health_metrics.v1",
+            "last_success_at": "2026-11-10T08:00:00Z" if status == "enabled" else None,
+            "row_count": 250 if status == "enabled" else None,
+            "expected_rows": 250,
+            "watermark": "2026-11-10" if status == "enabled" else None,
+            "schema_hash": "a1b2c3d4e5f60718",
+            "staleness_seconds": 120 if status == "enabled" else None,
+            "source_error": None,
+        },
+        "state": {
+            "connector_id": connector_id,
+            "attempts": 5 if status == "enabled" else 0,
+            "successful_attempts": 5 if status == "enabled" else 0,
+            "failed_attempts": 0,
+            "last_error": None,
+            "updated_at": "2026-11-10T08:00:00Z" if status == "enabled" else None,
+        },
+        "crawler_policy": {
+            "connector_id": connector_id,
+            "rate_limit_per_minute": 30,
+            "respect_robots_txt": True,
+        },
+    }
+    if extra_fields:
+        entry.update(extra_fields)
+    return entry
+
+
+def _real_seven_registry_connectors() -> List[Dict[str, Any]]:
+    return [
+        _make_real_registry_connector_entry(
+            "tw-twse-tpex-official-market",
+            "TWSE/TPEx",
+            "enabled",
+        ),
+        _make_real_registry_connector_entry(
+            "tw-taifex-futures-options-chip",
+            "TAIFEX",
+            "disabled",
+        ),
+        _make_real_registry_connector_entry(
+            "dev-paper-us-equity-simulation",
+            "Explicit controlled simulation",
+            "disabled",
+        ),
+        _make_real_registry_connector_entry(
+            "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+            "Explicit controlled simulation",
+            "enabled",
+        ),
+        _make_real_registry_connector_entry(
+            "hosted-all12-h12-01a11-20261023-9aeb-conn",
+            "L12 deployed E2E controlled source",
+            "enabled",
+        ),
+        _make_real_registry_connector_entry(
+            "hosted-all12-h12-01a11-20261026-d834-conn",
+            "L12 deployed E2E controlled source",
+            "enabled",
+        ),
+        _make_real_registry_connector_entry(
+            "hosted-all12-h12-claude-20261027-4923-conn",
+            "L12 deployed E2E controlled source",
+            "enabled",
+        ),
+    ]
+
+
+class _FakeLegacyReadStore:
+    def __init__(self, registry_payload: Dict[str, Any]) -> None:
+        self._registry_payload = registry_payload
+
+    def get_source_connector_registry(self) -> Dict[str, Any]:
+        return dict(self._registry_payload)
+
+
+def _mounted_client_with_store(
+    client_Obj: SourceManagementClient,
+    registry_payload: Dict[str, Any],
+) -> TestClient:
+    app = FastAPI()
+    register_error_handlers(app)
+    store = _FakeLegacyReadStore(registry_payload)
+    app.include_router(
+        create_datasources_router(
+            read_surface=store,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            snapshot_meta=_default_snapshot_meta,
+            utc_now=utc_now,
+            get_source_management_client=lambda: client_Obj,
+            bff_error=bff_error,
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_empty_v2_store_falls_back_to_seven_connector_degraded_legacy_projection(
+    fake_client: FakeSourceManagementClient,
+) -> None:
+    """AC1 & AC4: Configured v2 client returning 0 sources falls back to the 7 source-ingest
+    registry connectors with meta.status='degraded', meta.source='legacy_projection',
+    an empty-store reason, and no allowed_actions or inferred persona fleet status.
+    """
+    assert fake_client.configured is True
+    assert fake_client.list_sources() == {"sources": [], "count": 0}
+
+    seven_connectors = _real_seven_registry_connectors()
+    client = _mounted_client_with_store(
+        fake_client,
+        {
+            "source": "service_client",
+            "schema_version": "source_connector_registry.v1",
+            "connectors": seven_connectors,
+            "provider_examples": ["TWSE/TPEx", "TAIFEX"],
+            "policy_registry": {"max_records_per_job": 1000},
+            "financial_data_source_catalog": {"catalog_version": "v1"},
+            "active_universe_policy": {"policy_id": "tw-us-default"},
+        },
+    )
+
+    response = client.get("/bff/management/data-sources", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    meta = payload["meta"]
+    assert meta["status"] == "degraded"
+    assert meta["source"] == "legacy_projection"
+    assert "empty" in meta["degradation"]["reason"].lower()
+    assert "v2" in meta["degradation"]["reason"].lower()
+    assert meta["reason"] == meta["degradation"]["reason"]
+    assert meta["surfaces"]["data_sources"]["status"] == "degraded"
+    assert meta["surfaces"]["data_sources"]["source"] == "legacy_projection"
+    assert "empty" in meta["surfaces"]["data_sources"]["reason"].lower()
+
+    data = payload["data"]
+    assert data["status"] == "degraded"
+    assert data["source"] == "legacy_projection"
+    assert "empty" in data["reason"].lower()
+    assert data["summary"]["status"] == "degraded"
+    assert data["summary"]["source"] == "legacy_projection"
+    assert data["summary"]["total_items"] == 7
+    assert data["summary"]["returned_items"] == 7
+
+    page_info = payload["page_info"]
+    assert page_info["total"] == 7
+    assert page_info["returned"] == 7
+    assert page_info["has_more"] is False
+    assert page_info["next_page_token"] is None
+
+    items = data["items"]
+    assert len(items) == 7
+    expected_ids = [
+        "tw-twse-tpex-official-market",
+        "tw-taifex-futures-options-chip",
+        "dev-paper-us-equity-simulation",
+        "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+        "hosted-all12-h12-01a11-20261023-9aeb-conn",
+        "hosted-all12-h12-01a11-20261026-d834-conn",
+        "hosted-all12-h12-claude-20261027-4923-conn",
+    ]
+    assert [item["connector_id"] for item in items] == expected_ids
+
+    for item in items:
+        assert set(item.keys()) == _REAL_REGISTRY_ENTRY_KEYS
+        assert item["schema_version"] == "source_connector_registry_entry.v1"
+        assert "allowed_actions" not in item
+        assert "allowedActions" not in item
+        assert "persona_fleet_status" not in item
+        assert "personaFleetStatus" not in item
+        assert "inferred_persona_fleet_status" not in item
+
+
+def test_legacy_projection_strips_allowed_actions_and_inferred_persona_fleet_status(
+    fake_client: FakeSourceManagementClient,
+) -> None:
+    """AC4: Even if upstream registry connector dicts contain action or persona fleet status keys,
+    legacy projection rows strip them so no command can be offered for legacy rows.
+    """
+    polluted_connectors = _real_seven_registry_connectors()
+    polluted_connectors[0] = _make_real_registry_connector_entry(
+        "tw-twse-tpex-official-market",
+        "TWSE/TPEx",
+        "enabled",
+        extra_fields={
+            "allowed_actions": {"canEnable": True, "canValidate": True},
+            "allowedActions": {"canEnable": True, "canValidate": True},
+            "persona_fleet_status": "ready",
+            "personaFleetStatus": "ready",
+            "inferred_persona_fleet_status": "active",
+            "inferredPersonaFleetStatus": "active",
+            "persona_status": "online",
+            "fleet_status": "healthy",
+        },
+    )
+    client = _mounted_client_with_store(
+        fake_client,
+        {
+            "source": "service_client",
+            "connectors": polluted_connectors,
+        },
+    )
+
+    response = client.get("/bff/management/data-sources", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    items = response.json()["data"]["items"]
+    assert len(items) == 7
+    for item in items:
+        assert set(item.keys()) == _REAL_REGISTRY_ENTRY_KEYS
+        assert "allowed_actions" not in item
+        assert "allowedActions" not in item
+        assert "persona_fleet_status" not in item
+        assert "personaFleetStatus" not in item
+        assert "inferred_persona_fleet_status" not in item
+        assert "inferredPersonaFleetStatus" not in item
+        assert "persona_status" not in item
+        assert "fleet_status" not in item
+
+
+def test_populated_v2_store_response_stays_field_for_field_identical(
+    fake_client: FakeSourceManagementClient,
+) -> None:
+    """AC2: When the v2 store returns instances, the response stays field-for-field identical
+    to today even when the legacy registry also has the 7 connectors.
+    """
+    fake_client.seed_source(
+        "src-twse-01",
+        definition_id="srcdef-twse-stock-day-all",
+        lifecycle_state="configured_disabled",
+        revision=1,
+    )
+    client = _mounted_client_with_store(
+        fake_client,
+        {
+            "source": "service_client",
+            "connectors": _real_seven_registry_connectors(),
+        },
+    )
+
+    response = client.get("/bff/management/data-sources", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert set(payload.keys()) == {"data", "page_info", "meta"}
+    assert payload["page_info"] == {
+        "next_page_token": None,
+        "total": 1,
+        "page_size": 50,
+        "returned": 1,
+        "has_more": False,
+    }
+    assert payload["meta"]["status"] == "ok"
+    assert payload["meta"]["source"] == "service_client"
+    assert "degradation" not in payload["meta"]
+    assert "reason" not in payload["meta"]
+    assert payload["meta"]["surfaces"] == {
+        "data_sources": {
+            "status": "ok",
+            "source": "service_client",
+        }
+    }
+
+    data = payload["data"]
+    assert set(data.keys()) == {"id", "items", "summary", "status", "source"}
+    assert data["id"] == "management-data-sources"
+    assert data["status"] == "ok"
+    assert data["source"] == "service_client"
+    assert data["summary"] == {
+        "total_items": 1,
+        "returned_items": 1,
+        "status": "ok",
+        "source": "service_client",
+    }
+    assert len(data["items"]) == 1
+    item = data["items"][0]
+    assert set(item.keys()) == {
+        "schema_version",
+        "source_instance_id",
+        "connector_id",
+        "provider",
+        "source_class",
+        "definition",
+        "instance",
+        "desired",
+        "observed",
+        "allowed_actions",
+        "allowedActions",
+        "lineage_summary",
+    }
+    assert item["schema_version"] == "management_data_source.v2"
+    assert item["source_instance_id"] == "src-twse-01"
+    assert item["allowed_actions"] == item["allowedActions"]
+
+
+def test_client_errors_unconfigured_client_and_unavailable_or_empty_legacy_registry_keep_status(
+    fake_client: FakeSourceManagementClient,
+) -> None:
+    """AC3: Client errors, unconfigured client, unavailable legacy registry, and empty legacy
+    registry keep today's status and error.
+    """
+    # 1. Client error on list_sources with unavailable legacy store -> status="unavailable"
+    error_client = FakeSourceManagementClient()
+
+    def _raise_client_error(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+        raise SourceManagementClientError(
+            "source-ingest management store unreachable",
+            status_code=503,
+            error_code="DEPENDENCY_UNAVAILABLE",
+        )
+
+    error_client.list_sources = _raise_client_error  # type: ignore[method-assign]
+    client_err_unavail = _mounted_client_with_store(
+        error_client,
+        {"source": "unavailable", "connectors": [], "reason": "upstream_connection_refused"},
+    )
+    resp_err_unavail = client_err_unavail.get("/bff/management/data-sources", headers=OPERATOR_HEADERS)
+    assert resp_err_unavail.status_code == 200
+    body_err_unavail = resp_err_unavail.json()
+    assert body_err_unavail["meta"]["status"] == "unavailable"
+    assert body_err_unavail["meta"]["source"] == "unavailable"
+    assert body_err_unavail["meta"]["degradation"]["reason"] == "upstream_connection_refused"
+    assert body_err_unavail["data"]["items"] == []
+
+    # 2. Unconfigured client with populated legacy registry -> keeps today's status="ok", source="service_client"
+    unconfigured_client = SourceManagementClient(base_url="")
+    assert unconfigured_client.configured is False
+    client_unconf = _mounted_client_with_store(
+        unconfigured_client,
+        {"source": "service_client", "connectors": _real_seven_registry_connectors()},
+    )
+    resp_unconf = client_unconf.get("/bff/management/data-sources", headers=OPERATOR_HEADERS)
+    assert resp_unconf.status_code == 200
+    body_unconf = resp_unconf.json()
+    assert body_unconf["meta"]["status"] == "ok"
+    assert body_unconf["meta"]["source"] == "service_client"
+    assert body_unconf["data"]["status"] == "ok"
+    assert body_unconf["data"]["source"] == "service_client"
+    assert len(body_unconf["data"]["items"]) == 7
+
+    # 3. Empty v2 store + unavailable legacy registry (source="missing" and source="unavailable")
+    for unavail_source in ("missing", "unavailable"):
+        client_unavail = _mounted_client_with_store(
+            fake_client,
+            {"source": unavail_source, "connectors": []},
+        )
+        resp_unavail = client_unavail.get("/bff/management/data-sources", headers=OPERATOR_HEADERS)
+        assert resp_unavail.status_code == 200
+        body_unavail = resp_unavail.json()
+        assert body_unavail["meta"]["status"] == "unavailable"
+        assert body_unavail["meta"]["source"] == unavail_source
+        assert body_unavail["data"]["status"] == "unavailable"
+        assert body_unavail["data"]["source"] == unavail_source
+        assert body_unavail["data"]["items"] == []
+        assert body_unavail["meta"]["degradation"]["reason"]
+
+    # 4. Empty v2 store + empty legacy registry (source="service_client", connectors=[])
+    client_empty_leg = _mounted_client_with_store(
+        fake_client,
+        {"source": "service_client", "connectors": []},
+    )
+    resp_empty_leg = client_empty_leg.get("/bff/management/data-sources", headers=OPERATOR_HEADERS)
+    assert resp_empty_leg.status_code == 200
+    body_empty_leg = resp_empty_leg.json()
+    assert body_empty_leg["meta"]["status"] == "degraded"
+    assert body_empty_leg["meta"]["source"] == "service_client"
+    assert body_empty_leg["meta"]["surfaces"]["data_sources"]["message"] == (
+        "Source-ingest registry is readable but currently empty."
+    )
+    assert body_empty_leg["data"]["items"] == []
+
+
