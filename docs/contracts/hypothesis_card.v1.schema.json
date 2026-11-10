@@ -1,0 +1,119 @@
+{
+  "$id": "https://pantheon.local/contracts/hypothesis_card.v1.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "cited_spans": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "exact_text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_record_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_record_id",
+          "start",
+          "end",
+          "exact_text"
+        ],
+        "type": "object"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "type": "array"
+    },
+    "claim": {
+      "maxLength": 600,
+      "minLength": 1,
+      "type": "string"
+    },
+    "conditions": {
+      "items": {
+        "maxLength": 300,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 12,
+      "type": "array"
+    },
+    "direction": {
+      "enum": [
+        "long",
+        "short",
+        "long_short",
+        "neutral",
+        "unspecified"
+      ]
+    },
+    "horizon": {
+      "maxLength": 80,
+      "type": "string"
+    },
+    "mechanism": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "type": "string"
+    },
+    "origin": {
+      "enum": [
+        "paper",
+        "book",
+        "video",
+        "news",
+        "community_theme"
+      ]
+    },
+    "rule_sketch": {
+      "maxLength": 1000,
+      "type": "string"
+    },
+    "signal_inputs": {
+      "items": {
+        "maxLength": 120,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 12,
+      "type": "array"
+    },
+    "testability": {
+      "pattern": "^(testable|not_testable|needs_data:[A-Za-z0-9_.\\-]{1,80})$",
+      "type": "string"
+    },
+    "universe": {
+      "maxLength": 200,
+      "type": "string"
+    }
+  },
+  "required": [
+    "claim",
+    "mechanism",
+    "signal_inputs",
+    "rule_sketch",
+    "horizon",
+    "universe",
+    "direction",
+    "conditions",
+    "cited_spans",
+    "testability",
+    "origin"
+  ],
+  "title": "hypothesis_card.v1",
+  "type": "object"
+}

@@ -18,6 +18,7 @@ Invariants:
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import os
@@ -42,6 +43,12 @@ from services.source_ingestion.seed_materializer import (
     MaterializationMode,
     SeedMaterializationError,
     SeedMaterializationService,
+)
+from services.source_ingestion.hypothesis_card import (
+    HypothesisExtractor,
+    card_to_strategy_seed_metadata,
+    extraction_origin,
+    extractor_from_env,
 )
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeedStatus
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
@@ -1591,6 +1598,25 @@ def _synthesize_evidence_bundle(
     )
 
 
+_EXTERNAL_TEXT_TYPES: frozenset[SourceType] = frozenset(
+    {SourceType.PAPER, SourceType.NEWS, SourceType.SOCIAL}
+)
+
+
+def _with_hypothesis_card(source: SourceRecord, card: Mapping[str, Any]) -> SourceRecord:
+    """Merge a verified card into ``metadata.strategy_seed`` (builder already prefers it).
+
+    Only allowlisted keys derived from the validated card are written; an
+    ``execution_recipe`` already declared by the Source is left as it was.
+    """
+    metadata = copy.deepcopy(dict(source.metadata))
+    nested = metadata.get("strategy_seed")
+    merged = dict(nested) if isinstance(nested, Mapping) else {}
+    merged.update(card_to_strategy_seed_metadata(card))
+    metadata["strategy_seed"] = merged
+    return dataclasses.replace(source, metadata=metadata)
+
+
 @dataclass(frozen=True)
 class RegistrySyncResult:
     """Terminal Registry readback/write result for one source version."""
@@ -1640,7 +1666,9 @@ class DistillationWorker:
         lease_seconds: float = 30.0,
         retry_base_seconds: float = 5.0,
         registry_sync: Callable[[RegistrySyncRequest], RegistrySyncResult] | None = None,
+        hypothesis_extractor: HypothesisExtractor | None = None,
     ) -> None:
+        self._hypothesis_extractor = hypothesis_extractor
         self._queue = job_queue or DistillationJobQueue()
         self._seed_store = seed_store or StrategySpecSeedStore()
         self._materializer = SeedMaterializationService(
@@ -1869,6 +1897,24 @@ class DistillationWorker:
 
         is_refresh = mode == MaterializationMode.REFRESH
 
+        if self._hypothesis_extractor is not None and source.source_type != SourceType.MARKET:
+            origin = extraction_origin(source.source_type.value, source.metadata)
+            if origin is not None or source.source_type in _EXTERNAL_TEXT_TYPES:
+                outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
+                if outcome.card is None:
+                    reason = {
+                        "budget_exhausted": "budget_exhausted",
+                        "rejected": "hypothesis_rejected",
+                    }.get(outcome.status, "no_hypothesis")
+                    self._queue.mark_skipped(
+                        job.job_id,
+                        reason=f"{reason}: {outcome.detail}" if outcome.detail else reason,
+                        processed_at=now,
+                        claim_token=job.lease_token,
+                    )
+                    return "skipped", reason
+                source = _with_hypothesis_card(source, outcome.card)
+
         try:
             item = _synthesize_evidence_item(source, version_key)
             bundle = _synthesize_evidence_bundle(source, item, version_key)
@@ -1993,6 +2039,7 @@ def make_distillation_worker(
     retry_base_seconds: float = 5.0,
     max_attempts: int = 3,
     registry_sync: Callable[[RegistrySyncRequest], RegistrySyncResult] | None = None,
+    hypothesis_extractor: HypothesisExtractor | None = None,
 ) -> DistillationWorker:
     """Factory for a default-configured DistillationWorker."""
     queue = job_queue if job_queue is not None else DistillationJobQueue(
@@ -2008,6 +2055,13 @@ def make_distillation_worker(
         lease_seconds=lease_seconds,
         retry_base_seconds=retry_base_seconds,
         registry_sync=registry_sync,
+        hypothesis_extractor=(
+            hypothesis_extractor
+            if hypothesis_extractor is not None
+            else extractor_from_env(
+                ledger_path=(Path(str(queue_path)).with_name("l2_extraction_ledger.sqlite") if queue_path else None)
+            )
+        ),
     )
 
 
