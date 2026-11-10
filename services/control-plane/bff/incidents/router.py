@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from datetime import datetime, timezone
+import inspect
 import json
 import logging
 import os
@@ -420,6 +421,24 @@ def create_incident_router(
         meta_staleness=meta_staleness,
         surface_degradation_reason=_degradation_reason,
     )
+
+    def _resolve_alerts_composer() -> Callable[..., Dict[str, Any]]:
+        if build_operator_alerts_payload is not None:
+            code = getattr(build_operator_alerts_payload, "__code__", None)
+            closure = getattr(build_operator_alerts_payload, "__closure__", None)
+            if (
+                getattr(build_operator_alerts_payload, "__name__", "") == "<lambda>"
+                and code is not None
+                and getattr(code, "co_freevars", ()) == ("_dep",)
+                and closure
+            ):
+                dep_fn = closure[0].cell_contents
+                if callable(dep_fn):
+                    resolved = dep_fn("_build_operator_alerts_payload")
+                    if callable(resolved):
+                        return resolved
+            return build_operator_alerts_payload
+        return _service.build_operator_alerts_payload
 
     _build_alerts_payload = build_operator_alerts_payload or _service.build_operator_alerts_payload
     _list_audit = list_governance_audit_events or _service.list_audit_events
@@ -856,12 +875,21 @@ def create_incident_router(
         identity = _extract_ident(authorization)
         _require_read(identity)
         snapshot_at = _utc_now()
+        alerts_composer = _resolve_alerts_composer()
+        completed_sections: Dict[str, Any] = {}
+        composer_kwargs: Dict[str, Any] = {}
+        params = inspect.signature(alerts_composer).parameters
+        if "completed_sections" in params or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        ):
+            composer_kwargs["completed_sections"] = completed_sections
         if run_management_read is not None:
             try:
                 return await run_management_read(
-                    _build_alerts_payload,
+                    alerts_composer,
                     snapshot_at,
                     timeout_seconds=_get_alerts_read_timeout(),
+                    **composer_kwargs,
                 )
             except Exception as exc:
                 from services.control_plane.bff.personas.routes.common import (
@@ -878,7 +906,11 @@ def create_incident_router(
                 log.warning(
                     "bff.alerts degraded fallback: %s (%s)", reason, type(exc).__name__
                 )
-                payload = _service.management_alerts_degraded_payload(snapshot_at)
+                payload = _service.management_alerts_degraded_payload(
+                    snapshot_at,
+                    reason=reason,
+                    completed_sections=dict(completed_sections),
+                )
                 if isinstance(payload, dict) and "meta" in payload and isinstance(payload["meta"], dict):
                     surfaces = payload["meta"].get("surfaces")
                     if isinstance(surfaces, dict) and "alerts" in surfaces and isinstance(surfaces["alerts"], dict):

@@ -1,0 +1,50 @@
+{
+  "task_id": "BFF-ALERTS-PARTIAL-20261109",
+  "title": "Operator alert feed still drops every alert when only the governance read is slow",
+  "hosted_before": {
+    "measured_at": "2026-11-09 hosted on BFF bdd2b8e54 (and 2026-11-07 alerts page first load)",
+    "route_readings_2026_11_09": "Of 30 GET /bff/alerts reads on BFF bdd2b8e54, 1 returned timeout_fallback after 3237 ms and 29 returned bff_composed ok",
+    "route_reading_2026_11_07": "Alerts page first load hit read_timeout once, logged as 'bff.alerts degraded fallback: read_timeout (ManagementReadTimeout)'",
+    "vm_load_average": "~10",
+    "contributor_timings_ms_three_runs_admintest_bearer": {
+      "_build_incident_alerts": [24, 33, 27],
+      "_build_governance_alerts": [2109, 2154, 726],
+      "_build_kill_switch_alerts": [0, 0, 0],
+      "_build_runtime_alerts": [222, 318, 268],
+      "_build_operator_alerts_payload_total": [2211, 846, 966]
+    },
+    "owner_read_timings_ms_three_runs": {
+      "list_governance_review_queue_items": [661, 594, 1453],
+      "list_approval_queue_items": [368, 282, 323],
+      "list_runtime_bindings": [108, 126, 108],
+      "list_incidents_open_only": [22, 29, 17],
+      "list_telemetry_summaries": [23, 16, 41]
+    }
+  },
+  "changes": [
+    "services/control-plane/bff/main.py: _build_operator_alerts_payload accepts optional completed_sections dict, runs contributors in order incident -> kill_switch -> runtime -> governance, and records each contributor result (alerts, surface(s)) into completed_sections as it finishes within the management read budget",
+    "services/control-plane/bff/incidents/router.py: GET /bff/alerts passes completed_sections into the alert builder through run_management_read (reusing the cockpit completed_sections pattern and unwrapping app_factory's _dep lambda when composed via compose_bff_app) and forwards completed_sections and failure reason to management_alerts_degraded_payload on timeout/error",
+    "services/control-plane/bff/incidents/service.py: IncidentService.build_operator_alerts_payload uses the same incident -> kill_switch -> runtime -> governance contributor order and records completed_sections; IncidentService.management_alerts_degraded_payload composes completed contributors with meta.surfaces.alerts source='bff_composed', status='degraded', reason='read_timeout' and marks each unfinished contributor surface with reason='read_timeout', returning an empty timeout_fallback list only when no contributor finished",
+    "services/control-plane/bff/BFF_API_CONTRACT.md: documents contributor order, measured hosted timings, partial bff_composed degradation when some contributors finish before the 3.0 s budget expires, and timeout_fallback only when no contributor finished",
+    "No new endpoint, scheduling mechanism, thread pool, or second builder added; 3.0 s PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS budget unchanged; GET /bff/risk/alerts, alert detail, alert acknowledge, and Management AI context continue using the same builder and receive the full result when nothing times out"
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_mgmt_load_005_read_concurrency.py -q",
+      "result": "19 passed in 18.31s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py -q",
+      "result": "18 passed, 1 failed (pre-existing test_zero_duplicate_definitions_ast_readback on _resolve_final_idempotency_key in management_service.py, untouched by this task) in 27.37s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py -q",
+      "result": "24 passed in 13.15s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_management_incident_owner_semantics.py services/control-plane/bff/tests/test_bff_management_cockpit.py -q",
+      "result": "39 passed in 29.16s"
+    }
+  ],
+  "hosted_verification": "NOT RUN. Hosted verification was not run in this task; it is owned by MGMT-AI-RESIDUALS-ACCEPTANCE-20261109."
+}
