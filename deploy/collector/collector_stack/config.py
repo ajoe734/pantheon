@@ -20,6 +20,13 @@ ALLOWED_ROBOTS_DECISIONS = frozenset(
 OPERATOR_ROBOTS_EXEMPT_SOURCES = frozenset(
     {"collector-tw-threads", "collector-tw-instagram-popular"}
 )
+EXCHANGE_WEBSITE_SOURCE_IDS = frozenset(
+    {
+        "collector-tw-twse-t86",
+        "collector-tw-twse-price-history",
+        "collector-tw-tpex-price-history",
+    }
+)
 DISABLED_BY_BUILD_TOKENS = frozenset({"yahoo", "cnyes", "anue"})
 DROPPED_SOURCE_IDS = frozenset({"collector-tw-tpex-flows"})
 
@@ -96,6 +103,7 @@ class SourceFetchPolicy:
     attribution: str
     logged_in: bool
     enabled: bool
+    max_connections: int = 1
     raw_config: Mapping[str, Any] = field(default_factory=dict)
 
     @property
@@ -332,6 +340,24 @@ def validate_collector_config(
         if source_id == "collector-paper-arxiv" and min_interval < 3.0:
             raise CollectorConfigError("collector-paper-arxiv min_interval_seconds must be >= 3.0 per arXiv ToU")
 
+        max_connections = int(entry.get("max_connections") or 1)
+        if max_connections <= 0:
+            raise CollectorConfigError(f"source {source_id} max_connections must be >= 1")
+        if source_id in EXCHANGE_WEBSITE_SOURCE_IDS:
+            if entry.get("max_connections") != 1 or max_connections != 1:
+                raise CollectorConfigError(
+                    f"source {source_id} must set max_connections=1 (single connection for exchange websites)"
+                )
+            if min_interval < 5.0:
+                raise CollectorConfigError(
+                    f"source {source_id} min_interval_seconds must be >= 5.0 (at most 1 request every 5 seconds)"
+                )
+            granularity = str(entry.get("backfill_page_granularity") or "per_date_all_stocks").strip()
+            if granularity != "per_date_all_stocks":
+                raise CollectorConfigError(
+                    f"source {source_id} backfill_page_granularity must be 'per_date_all_stocks', got {granularity!r}"
+                )
+
         cadence = str(entry.get("cadence") or "").strip()
         cadence_seconds = int(entry.get("cadence_seconds") or 86400)
         if not cadence or cadence_seconds <= 0:
@@ -358,6 +384,7 @@ def validate_collector_config(
             attribution=attribution,
             logged_in=False,
             enabled=enabled,
+            max_connections=max_connections,
             raw_config=dict(entry),
         )
 
