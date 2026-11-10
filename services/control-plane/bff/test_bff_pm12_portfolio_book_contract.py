@@ -2880,3 +2880,82 @@ def test_portfolio_holdings_carry_decision_reason_from_trade_decision_events(mon
     (bare_item,) = bare_body["data"]["items"]
     assert bare_item["reason_code"] is None
     assert bare_item["decision_id"] is None
+
+
+def _ssf_hosted_summary(**position_overrides):
+    binding_id = "rb-3516fc86e6f84649a499fc89f3c562b3"
+    position = {
+        "instrument_id": "ssf:SRF:202611",
+        "kind": "stock_future",
+        "symbol": "0050.TWSE",
+        "quantity": 2.0,
+        "average_price": 97.1,
+        "mark_price": 97.1,
+        "mark_as_of": "2026-11-09T05:30:00Z",
+        "mark_lineage": {"mark_kind": "futures_daily_settlement"},
+        "mark_source_ref": "dataset:normalized/taifex_ssf_contracts/price_date=2026-11-09#ssf:SRF:202611",
+        "market_value": 194200.0,
+        "margin_reserved": 17400.0,
+        "multiplier": 1000.0,
+        "contract_month": "202611",
+        "currency": "TWD",
+        "unrealized_pnl": 0.0,
+        "realized_pnl": 0.0,
+    }
+    position.update(position_overrides)
+    return {
+        "runtime_id": "rt-3b65a843",
+        "binding_id": binding_id,
+        "deployment_stage": "paper",
+        "environment": "paper",
+        "status": "running",
+        "last_event_at": "2026-11-10T10:33:27Z",
+        "updated_at": "2026-11-10T10:33:27Z",
+        "collected_at": "2026-11-10T10:33:27Z",
+        "positions": [position],
+        "position_count": 1,
+        "_marks_by_symbol": {
+            "ssf:SRF:202611": {
+                "price": 97.1,
+                "as_of": "2026-11-09T05:30:00Z",
+                "lineage": {"mark_kind": "futures_daily_settlement"},
+                "binding_id": binding_id,
+            }
+        },
+    }
+
+
+def _ssf_holdings(monkeypatch, summary):
+    from services.control_plane.bff.pm12 import service as pm12_service
+
+    runtime = {
+        "id": summary["binding_id"],
+        "binding_id": summary["binding_id"],
+        "runtime_id": "rt-3b65a843",
+        "capital_pool_id": "pool-alpha",
+        "status": "active",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-10T10:33:27Z")
+    body = _holdings_for(monkeypatch, [runtime], {"rt-3b65a843": summary})
+    (item,) = body["data"]["items"]
+    return item
+
+
+def test_portfolio_holdings_stock_future_daily_settlement_mark_is_judged_by_futures_session(
+    monkeypatch,
+) -> None:
+    item = _ssf_holdings(monkeypatch, _ssf_hosted_summary())
+    assert item["instrument_kind"] == "stock_future"
+    assert item["mark_status"] == "available"
+    assert item["mark_price"] == 97.1
+    assert item["last_mark_at"] == "2026-11-09T05:30:00Z"
+    assert item["source_status"] != "stale"
+    assert item["telemetry_stale"] is False
+
+
+def test_portfolio_holdings_stock_future_with_telemetry_mark_stale_stays_stale(monkeypatch) -> None:
+    item = _ssf_holdings(monkeypatch, _ssf_hosted_summary(mark_stale=True))
+    assert item["mark_status"] == "stale"
+    assert item["telemetry_stale"] is True

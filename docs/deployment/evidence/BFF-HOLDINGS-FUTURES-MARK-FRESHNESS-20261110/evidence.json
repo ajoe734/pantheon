@@ -1,0 +1,15 @@
+{
+  "task_id": "BFF-HOLDINGS-FUTURES-MARK-FRESHNESS-20261110",
+  "change": "services/control-plane/bff/pm12/service.py _management_portfolio_holding_entry passes the ssf: instrument_id (stock_future rows only) to the shared is_portfolio_mark_fresh helper and uses it as the _marks_by_symbol lookup key; cash rows unchanged; no freshness rule duplicated; performance_telemetry.py untouched.",
+  "tests_added": [
+    "test_portfolio_holdings_stock_future_daily_settlement_mark_is_judged_by_futures_session (hosted row rt-3b65a843, snapshot_at 2026-11-10T10:33:27Z: mark_status available, source not stale; confirmed failing without the fix)",
+    "test_portfolio_holdings_stock_future_with_telemetry_mark_stale_stays_stale"
+  ],
+  "new_test_file": false,
+  "commands": [
+    {"cmd": "/tmp/svc-venv/bin/python -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -q", "result": "70 passed, 1 failed"},
+    {"cmd": "same, -k h12_76062 on baseline without my changes", "result": "1 failed (test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar_projection; pre-existing, fails in execution-side drain_once with stale_or_future_market_marks before reaching BFF code)"}
+  ],
+  "hosted_behaviour_exercised": false,
+  "note": "Functional evidence only. Hosted behaviour was not exercised; verification belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107."
+}
