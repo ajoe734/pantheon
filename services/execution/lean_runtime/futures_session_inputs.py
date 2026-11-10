@@ -143,8 +143,15 @@ def read_session_settlement_prices_for_open_futures(
     *,
     normalized_root: str | Path | None = None,
     partition_horizon: str | date | None = None,
+    historical_session: bool = False,
 ) -> dict[str, Any]:
     """Read daily settlement prices for open futures contracts on ``trade_date``.
+
+    ``historical_session`` is for grading a session that is no longer the
+    newest one: the row used is the newest row whose ``price_date`` is exactly
+    ``trade_date`` instead of the newest row overall (which would be a later
+    session and therefore "stale").  A session with no such row is still
+    reported missing or stale, never filled from another date.
 
     ``partition_horizon`` is the newest partition date that may be read; it
     defaults to ``trade_date``. A valuation after the session passes the
@@ -257,14 +264,24 @@ def read_session_settlement_prices_for_open_futures(
                 continue
 
         matching_rows: list[tuple[tuple[Any, ...], Mapping[str, Any]]] = []
+        other_session_rows = 0
         for idx, row in enumerate(rows):
             if row.get("tombstone") or row.get("_snapshot_truncated"):
                 continue
             row_contract = str(row.get("contract") or "").strip().upper()
             row_month = str(row.get("contract_month") or "").strip()
             if row_contract == contract and row_month == contract_month:
+                if historical_session and (
+                    (_optional_date(row.get("price_date")) or _snapshot_market_date(row))
+                    != session_day
+                ):
+                    other_session_rows += 1
+                    continue
                 matching_rows.append((_snapshot_sort_key(row, idx), row))
 
+        if not matching_rows and other_session_rows:
+            reasons[inst_id] = "settlement_price_stale"
+            continue
         if not matching_rows:
             reasons[inst_id] = (
                 "settlement_price_missing"

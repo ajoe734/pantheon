@@ -1,0 +1,25 @@
+{
+  "task_id": "PAPER-INSTRUMENT-COUNTERFACTUAL-WRITER-20261110",
+  "hosted_behaviour_exercised": false,
+  "statement": "Functional evidence only, from local tests. No hosted environment, VM, SSH, BFF, deploy workflow, broker or model provider was touched; no hosted result is claimed. Hosted verification belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "change": {
+    "paper_signal_producer.py": "collect_counterfactual_grading / _grade_one_decision: on each daily bar of an expression-layer binding the producer looks up the decisions of the earlier trading sessions inside the admitted snapshot's close window by the ids their bars deterministically produced (decision_id_for_bar), rebuilds the replay record from the recorded expression_replay_input, marks the eq: leg with the snapshot close of the grading session (first trading session after the eq candidate price_date) and every ssf: leg with the dataset daily settlement whose price_date is that session, runs expression_replay.replay + counterfactual_rows (no second pnl formula) and attaches the rows to the carrying signal metadata (instrument_counterfactual_rows) plus diagnostics (instrument_counterfactual_grading). A replay that diverges from the recorded decision is not graded.",
+    "grading state": "Existing put/get_decision_record only (first write wins): '<decision_id>#grading' terminal record (done / not_gradable) written after the carrying signal is enqueued, '<decision_id>#grading-attempt@<bar>' immutable pending record with the reason. No new store, route, scheduler or dataset copy; pending_signal_store.py is untouched.",
+    "futures_session_inputs.py": "read_session_settlement_prices_for_open_futures gains historical_session (default False, default behaviour unchanged): select the newest row whose price_date equals the grading session instead of the newest row overall; another session's row is reported settlement_price_stale.",
+    "paper_runtime.py": "signal_generation handling pops instrument_counterfactual_rows from the lifecycle metadata and publishes one persona_instrument_counterfactual event per row through the telemetry emitter (build_event/emit_payload), event_id derived from decision_id and instrument_id so a redelivery collapses; not part of the canonical lifecycle chain; failures are logged and never raise into the signal path.",
+    "BFF_API_CONTRACT.md": "States when instrument_learning grades become available relative to the decision session and what null means."
+  },
+  "tests": "services/execution/lean_runtime/test_paper_signal_producer.py::TestInstrumentCounterfactualWriter (13 tests): real 2026-11-10 shapes through _runner_strategy with the capital and telemetry HTTP transport replaced and a dataset in the real normalized/taifex_ssf_contracts/date=... layout; carrier signal run through PaperRuntimeService; emitted events folded by RuntimeSummaryProjectionStore; grade_instrument_decisions returns direction_hit_rate 1.0 and a non null instrument_regret for the 0050 decision; repeat and restart emit once; failed enqueue leaves the decision pending; missing partition, stale settlement, tombstone, entry bar, later-bar catch-up, out-of-window, flag off; event built by the real RuntimeTelemetryEmitter validates against telemetry_event.schema.json.",
+  "commands": [
+    {"cmd": "pytest services/execution/lean_runtime/test_paper_signal_producer.py -k TestInstrumentCounterfactualWriter", "result": "13 passed"},
+    {"cmd": "pytest services/execution/lean_runtime services/telemetry/test_runtime_summary_projection.py", "result": "675 passed, 13 skipped, 82 subtests passed"},
+    {"cmd": "pytest services/control-plane/bff/agora/performance/test_performance.py services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/tests/test_persona_case_retire_command.py", "result": "69 passed"}
+  ],
+  "environment_note": "Local python3.12 had no pytest, pydantic, fastapi, httpx or flask; they were installed into a scratch directory outside the repository (pip --target) to run the suites.",
+  "assumptions_and_residual_risks": [
+    "The snapshot's closes are consecutive daily closes ending at the bar's event_time date; an earlier session's close is read by trading-day offset from the end. Only artifacts with a daily bar_frequency are graded.",
+    "Delivery of the row events is best effort through the telemetry emitter (not the lifecycle outbox, because persona_instrument_counterfactual is not in the lifecycle projector's event set); a row whose delivery fails is logged and not retried once the decision is marked done.",
+    "Rows ride on the next signal the producer enqueues; a decision is only picked up while it is inside the snapshot close window (len(closes) sessions).",
+    "Telemetry ingest acceptance of the event was checked against telemetry_event.schema.json only, not against a running ingest service."
+  ]
+}
