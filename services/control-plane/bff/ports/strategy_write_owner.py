@@ -60,6 +60,15 @@ class CanonicalStrategyWriteOwner:
                 "through the governed state machine."
             )
         record = dict(strategy)
+        # Registry strategy_summary_page only projects market_scope.alpha; mirror
+        # the top-level alpha there so it round-trips on list/detail reads.
+        _alpha = str(record.get("alpha") or "").strip()
+        if _alpha:
+            _scope = record.get("market_scope")
+            _scope = dict(_scope) if isinstance(_scope, dict) else {}
+            if not str(_scope.get("alpha") or "").strip():
+                _scope["alpha"] = _alpha
+            record["market_scope"] = _scope
         caller_supplied_versions = "versions" in record
         if "strategy_id" not in record:
             record["strategy_id"] = sid
