@@ -3799,6 +3799,44 @@ class TestInstrumentAwarePositionProjection(unittest.TestCase):
             ["cash", self._FUTURE_ID],
         )
 
+    def _futures_mark_projection(self, *, as_of: str, created_at: str) -> dict[str, Any]:
+        store = self._store()
+        store.project_event(
+            self._fill(lfc=1, quantity=2.0, price=2300.0, future=True, margin_after=92000.0)
+        )
+        mark_event = TestPositionCostCurrencyBrokerProjection._mark_snapshot(
+            symbol=self._FUTURE_ID,
+            price=2360.0,
+            as_of=as_of,
+            created_at=created_at,
+            fill_count=1,
+            source_ref="dataset:normalized/taifex_ssf_contracts/price_date=2026-11-13#ssf:QFF:202611",
+        )
+        mark_event["metadata"]["mark_refs"][0]["lineage"] = {
+            "mark_kind": "futures_daily_settlement"
+        }
+        summary = store.project_event(mark_event)
+        return next(r for r in summary["positions"] if r.get("instrument_id") == self._FUTURE_ID)
+
+    def test_futures_daily_settlement_mark_is_fresh_across_a_weekend(self) -> None:
+        # Friday's session settlement valued Monday morning is the latest
+        # completed session, so it is projected as an active mark.
+        row = self._futures_mark_projection(
+            as_of="2026-11-13T05:30:00Z", created_at="2026-11-16T01:00:00Z"
+        )
+        self.assertEqual(row["mark_price"], 2360.0)
+        self.assertEqual(row["mark_as_of"], "2026-11-13T05:30:00Z")
+        self.assertIn("price_date=2026-11-13", row["mark_source_ref"])
+        self.assertNotIn("mark_stale", row)
+
+    def test_futures_daily_settlement_mark_is_stale_when_a_session_was_missed(self) -> None:
+        row = self._futures_mark_projection(
+            as_of="2026-11-12T05:30:00Z", created_at="2026-11-16T01:00:00Z"
+        )
+        self.assertNotIn("mark_price", row)
+        self.assertTrue(row["mark_stale"])
+        self.assertEqual(row["last_known_mark_price"], 2360.0)
+
     def test_cash_fill_carrying_instrument_fields_keeps_symbol_key(self) -> None:
         store = self._store()
         summary = store.project_event(

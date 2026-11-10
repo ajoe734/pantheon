@@ -123,6 +123,36 @@ def _srf_row(
     return row
 
 
+def _load_reconciliation_drift_main() -> Any:
+    import importlib.util
+    import sys
+
+    service_dir = Path(__file__).resolve().parents[2] / "reconciliation-drift"
+    with patch.dict(
+        os.environ,
+        {
+            "RECONCILIATION_DRIFT_DATA_DIR": tempfile.mkdtemp(),
+            "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+            "PANTHEON_LINEAGE_READ_URL": "http://lineage-read:8094",
+            "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+        },
+    ):
+        sys.modules.pop("store", None)
+        sys.path.insert(0, str(service_dir))
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "reconciliation_drift_futures_mark_test_main", service_dir / "main.py"
+            )
+            assert spec and spec.loader
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            return module
+        finally:
+            sys.modules.pop("store", None)
+            sys.path.remove(str(service_dir))
+
+
 class _StubRuntimeManagerClient:
     def __init__(self, binding: dict[str, Any]) -> None:
         self._binding = dict(binding)
@@ -634,6 +664,257 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 diag["missing_contracts"],
                 {"ssf:SRF:202611": "settlement_price_stale"},
             )
+
+    def _write_opening_partition(self, root: Path) -> None:
+        rows = _captured_20261106_rows()
+        for row in rows:
+            if row.get("contract") == "SRF" and row.get("contract_month") == "202611":
+                row["settlement_price"] = 97.1
+        _write_ssf_partition(root, "2026-11-06", rows)
+
+    def _open_srf_via_production_path(self, root: Path, tmpdir: str):
+        """Open ssf:SRF:202611 x2 at 97.1 through producer -> runtime_bootstrap."""
+        from services.execution.lean_runtime import expression_inputs
+
+        summary_state: dict[str, Any] = {
+            "runtime_id": "runtime-rb-expr",
+            "binding_id": "rb-expr",
+            "ledger_fill_count": 0,
+            "executed_trade_count": 0,
+            "positions": None,
+        }
+
+        def fetch(url: str, headers: dict[str, str], timeout: float) -> Any:
+            if "/api/capital-pools/" in url:
+                return self.POOL
+            if "/api/telemetry/runtime-summaries/" in url:
+                return summary_state
+            raise AssertionError(url)
+
+        env = {
+            "PANTHEON_PAPER_EXPRESSION_LAYER": "on",
+            "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
+            "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": "capital-reader",
+            "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+            "PANTHEON_TELEMETRY_SERVICE_TOKEN": "telemetry-reader",
+            "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(root),
+            "PANTHEON_TENANT_ID": "default",
+        }
+        store = InMemoryPendingSignalStore()
+        art = self._artifact(symbol="0050.TWSE")
+        binding = self._binding(
+            art,
+            symbol="0050.TWSE",
+            closes=(88.0, 92.5),
+            event_time="2026-11-09T00:00:00+08:00",
+            observed_at="2026-11-09T09:00:00Z",
+        )
+        service, emitter = self._runtime_service(
+            store, binding, tmpdir, normalized_root=root
+        )
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            expression_inputs, "_http_get_json", fetch
+        ):
+            producer = PaperSignalProducer(
+                store_for=lambda _: store, strategy=_runner_strategy()
+            )
+            self.assertEqual(producer.produce(binding, "2026-11-09T09:00:00Z"), 1)
+        self._drain_at(service, "2026-11-09T09:00:00Z")
+        pos = service._algo.get_instrument_position("ssf:SRF:202611")
+        self.assertEqual(pos["quantity"], 2.0)
+        self.assertAlmostEqual(pos["average_entry_price"], 97.1, places=4)
+        return service, emitter
+
+    @staticmethod
+    def _perf_events(emitter: Any) -> dict[str, dict[str, Any]]:
+        return {
+            p["event_type"]: p
+            for p in emitter.payloads
+            if p["event_type"] in ("pnl_snapshot", "drawdown_snapshot")
+        }
+
+    def _value_at(self, service: PaperRuntimeService, now_iso: str, root: Path) -> None:
+        from datetime import datetime
+
+        now = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+        service._valuation_now = lambda: now
+        # docker-compose.yml sets this root on the reconciler container.
+        with patch.dict(
+            os.environ, {"PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(root)}
+        ):
+            service._maybe_emit_performance_snapshots()
+
+    def test_open_stock_future_is_valued_at_dataset_daily_settlement_via_production_path(
+        self,
+    ) -> None:
+        from services.execution.lean_runtime.paper_runtime import PaperExecutionAlgorithm
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "market_data_store"
+            # The hosted layout: the 2026-11-10 partition holds rows whose
+            # price_date is the 2026-11-09 session.
+            self._write_opening_partition(root)
+            service, emitter = self._open_srf_via_production_path(root, tmpdir)
+            fetched: list[str] = []
+            service._mark_provider._fetch_json = lambda url, timeout: fetched.append(url)
+            _write_ssf_partition(
+                root,
+                "2026-11-10",
+                [
+                    _srf_row("2026-11-09", 97.1),
+                    _srf_row("2026-11-09", 97.1, contract_month="202612"),
+                ],
+            )
+
+            self._value_at(service, "2026-11-10T07:13:29Z", root)
+
+            self.assertEqual(fetched, [], "no source-ingest read for an ssf symbol")
+            self.assertEqual(service._performance_telemetry.get("status"), "emitted")
+            by_type = self._perf_events(emitter)
+            self.assertEqual(set(by_type), {"pnl_snapshot", "drawdown_snapshot"})
+            pnl = by_type["pnl_snapshot"]
+            # Unrealized is quantity * multiplier * mark - average entry
+            # = 2 * 1000 * (97.1 - 97.1) = 0, so pnl is exactly the fill's
+            # fee 16.0 plus tax 3.884 taken from the cash ledger.
+            self.assertAlmostEqual(pnl["metrics"]["pnl"], -19.884, places=3)
+            [ref] = pnl["metadata"]["mark_refs"]
+            self.assertEqual(ref["symbol"], "ssf:SRF:202611")
+            self.assertEqual(ref["price"], 97.1)
+            self.assertEqual(ref["as_of"][:10], "2026-11-09")
+            self.assertIn("normalized/taifex_ssf_contracts", ref["source_ref"])
+            self.assertIn("2026-11-09", ref["source_ref"])
+            self.assertIn("drawdown_pct", by_type["drawdown_snapshot"]["metrics"])
+
+            # Acceptance 2: MarkFuturesSession applies the same dataset value.
+            info = read_session_settlement_prices_for_open_futures(
+                open_stock_future_positions(
+                    service._algo.open_stock_future_position_records()
+                ),
+                "2026-11-09",
+                normalized_root=root,
+                partition_horizon="2026-11-10",
+            )
+            self.assertEqual(info["session_settlement_prices"], {"ssf:SRF:202611": 97.1})
+            service._algo.MarkFuturesSession("2026-11-09", info["session_settlement_prices"])
+            pos = service._algo.get_instrument_position("ssf:SRF:202611")
+            self.assertEqual(pos["mark_price"], ref["price"])
+            self.assertEqual(pos["mark_as_of"], "2026-11-09")
+            self.assertIsInstance(service._algo, PaperExecutionAlgorithm)
+
+    def test_summary_projection_and_drift_see_futures_valuation(self) -> None:
+        from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "market_data_store"
+            self._write_opening_partition(root)
+            service, emitter = self._open_srf_via_production_path(root, tmpdir)
+            _write_ssf_partition(root, "2026-11-10", [_srf_row("2026-11-09", 97.1)])
+            self._value_at(service, "2026-11-10T07:13:29Z", root)
+
+            store = RuntimeSummaryProjectionStore(path=None)
+            summary: dict[str, Any] = {}
+            for payload in emitter.payloads:
+                # The transport adds the runtime identity the stub emitter omits.
+                event = {
+                    **payload,
+                    "deployment_stage": "paper",
+                    "runtime_id": "runtime-rb-expr",
+                    "tenant_id": "default",
+                    "binding_id": "rb-expr",
+                    "metadata": {
+                        **payload["metadata"],
+                        "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                        "engine_bridge_path": "pantheon/lean",
+                        "engine_bridge_commit": "abc1234",
+                    },
+                }
+                if event["event_type"] in ("pnl_snapshot", "drawdown_snapshot"):
+                    # Fixed valuation instant, so the freshness check is clock free.
+                    event["created_at"] = "2026-11-10T07:13:29Z"
+                projected = store.project_event(event)
+                summary = projected or summary
+
+            self.assertNotIn("_valuation_failure", summary)
+            self.assertAlmostEqual(summary["pnl"], -19.884, places=3)
+            self.assertIn("drawdown", summary)
+            [row] = [
+                r for r in summary["positions"] if r.get("instrument_id") == "ssf:SRF:202611"
+            ]
+            self.assertEqual(row["mark_price"], 97.1)
+            self.assertEqual(row["mark_as_of"][:10], "2026-11-09")
+            self.assertIn("taifex_ssf_contracts", row["mark_source_ref"])
+            self.assertNotIn("mark_unavailable_reason", row)
+            self.assertNotIn("mark_stale", row)
+
+            # Reconciliation drift: the drawdown metric is observed, so an open
+            # futures position alone no longer yields a degraded check.
+            drift = _load_reconciliation_drift_main()
+            observed = drift._resolve_scheduled_metrics(summary)
+            self.assertIn("drawdown", observed)
+            [check] = drift._drift_checks({"drawdown": 0.1245}, observed, {})
+            self.assertNotEqual(check["status"], "degraded")
+            self.assertIsNotNone(check["observed"])
+
+    def test_futures_mark_unavailable_for_missing_stale_and_tombstone_rows(self) -> None:
+        cases = {
+            "missing": ([_srf_row("2026-11-09", 97.1, contract_month="202612")], "settlement_price_missing"),
+            "stale": ([_srf_row("2026-11-06", 97.1)], "settlement_price_stale"),
+            "tombstone": ([_srf_row("2026-11-09", 97.1, tombstone=True)], "contract_tombstoned"),
+        }
+        for name, (rows, reason) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir) / "market_data_store"
+                self._write_opening_partition(root)
+                service, emitter = self._open_srf_via_production_path(root, tmpdir)
+                shutil_root = root / "normalized" / "taifex_ssf_contracts"
+                for child in shutil_root.iterdir():
+                    for f in child.iterdir():
+                        f.unlink()
+                    child.rmdir()
+                _write_ssf_partition(root, "2026-11-10", rows)
+
+                self._value_at(service, "2026-11-10T07:13:29Z", root)
+
+                telemetry = service._performance_telemetry
+                self.assertEqual(telemetry["status"], "marks_unavailable")
+                self.assertEqual(telemetry["code"], "missing_market_marks")
+                self.assertEqual(telemetry["missing_symbols"], ["ssf:SRF:202611"])
+                futures = telemetry["mark_source"]["futures_settlement"]
+                self.assertEqual(futures["reasons"], {"ssf:SRF:202611": reason})
+                self.assertEqual(self._perf_events(emitter), {})
+
+    def test_futures_mark_is_calendar_aware_across_a_weekend_and_not_aged_by_seconds(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "market_data_store"
+            self._write_opening_partition(root)
+            service, emitter = self._open_srf_via_production_path(root, tmpdir)
+            # 2026-11-13 is a Friday; its D-1 session is Thursday 2026-11-12.
+            _write_ssf_partition(root, "2026-11-16", [_srf_row("2026-11-13", 98.0)])
+            # Monday 2026-11-16: expected session is Friday 2026-11-13 (> 48h old).
+            self._value_at(service, "2026-11-16T01:00:00Z", root)
+            self.assertEqual(service._performance_telemetry.get("status"), "emitted")
+            [ref] = self._perf_events(emitter)["pnl_snapshot"]["metadata"]["mark_refs"]
+            self.assertEqual(ref["price"], 98.0)
+            self.assertEqual(ref["as_of"][:10], "2026-11-13")
+
+    def test_runtime_without_open_futures_never_consults_the_futures_provider(self) -> None:
+        class _Forbidden:
+            def resolve(self, positions: Any) -> Any:
+                raise AssertionError("futures provider consulted for a cash-only book")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, emitter = self._runtime_service(
+                InMemoryPendingSignalStore(), self._binding(self._artifact()), tmpdir
+            )
+            service._futures_mark_provider = _Forbidden()
+            service._maybe_emit_performance_snapshots()
+            self.assertEqual(service._performance_telemetry["status"], "no_fills")
+            self.assertNotIn(
+                "futures_settlement", service._performance_telemetry["mark_source"]
+            )
+            self.assertEqual(self._perf_events(emitter), {})
 
     def test_runtime_bootstrap_dataset_final_settlement_pending_then_settled_for_202611_srf(
         self,
