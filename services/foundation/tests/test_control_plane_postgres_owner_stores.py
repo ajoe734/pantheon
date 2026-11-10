@@ -92,22 +92,6 @@ class _FakeConnection:
                 if record != expected:
                     record = None
             return _FakeCursor([(record,)] if record is not None else [])
-        if normalized.startswith("SELECT PAYLOAD, UPDATED_AT, RECORD_ID"):
-            # In-database unique-field lookup (REGISTRY-SEED-UNIQUE-SCAN-20261110):
-            # params are alternating (field, [json candidates]) pairs for objects.
-            table_rows = self.rows.get(table, {})
-            if "JSONB_TYPEOF(PAYLOAD) = 'STRING'" in normalized:
-                return _FakeCursor(
-                    [(p, "", rid) for rid, p in table_rows.items() if isinstance(p, str)]
-                )
-            pairs = list(zip(params[0::2], params[1::2]))
-            hits = [
-                (p, "", rid)
-                for rid, p in table_rows.items()
-                if isinstance(p, dict)
-                and all(json.dumps(p.get(f), sort_keys=True) in c for f, c in pairs)
-            ]
-            return _FakeCursor(hits[:1])
         if normalized.startswith("SELECT PAYLOAD"):
             return _FakeCursor([(payload,) for payload in self.rows.get(table, {}).values()])
         return _FakeCursor([])
