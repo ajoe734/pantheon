@@ -349,6 +349,14 @@ class SemanticExtractionClient:
 
     def _build_prompt(self, request: SemanticExtractionRequest) -> str:
         task_type = request.normalized_task_type()
+        if task_type == ExtractionTaskType.HYPOTHESIS_CARD:
+            from services.source_ingestion.hypothesis_card import build_hypothesis_prompt
+
+            return build_hypothesis_prompt(
+                request.text,
+                source_record_id=request.source_id,
+                origin=str((request.metadata or {}).get("origin") or "unknown"),
+            )
         instructions = [
             f"You are a strict financial knowledge extractor performing task: {task_type.value}.",
             "You MUST answer with one JSON object only, strictly conforming to the extraction schema.",
@@ -825,6 +833,31 @@ class SemanticExtractionClient:
                 cost_usd=cost_usd,
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
                 retry_count=retry_count,
+            )
+
+        if task_type == ExtractionTaskType.HYPOTHESIS_CARD:
+            # Closed schema already enforced above; citation checks happen in
+            # hypothesis_card.finalize_card against the stored (full) text.
+            card = structured.get("hypothesis_card")
+            abstained = bool(structured.get("is_abstained", False)) or card is None
+            return SemanticExtractionResult(
+                extraction_id=str(uuid.uuid4()),
+                source_id=request.source_id,
+                tenant_id=request.tenant_id,
+                task_type=task_type.value,
+                status="abstained" if abstained else "completed",
+                is_abstained=abstained,
+                abstention_reason=(structured.get("abstention_reason") or "insufficient_evidence") if abstained else None,
+                schema_version="hypothesis_card.v1",
+                schema_id=schema_id,
+                model_identity=model_identity,
+                prompt_identity=_DEFAULT_PROMPT_VERSION,
+                config_digest=hashlib.sha256(json.dumps(self._token_limits, sort_keys=True).encode("utf-8")).hexdigest()[:16],
+                usage=usage_obj,
+                cost_usd=cost_usd,
+                latency_ms=(time.monotonic() - start_time) * 1000.0,
+                retry_count=retry_count,
+                hypothesis_card=None if abstained else dict(card),
             )
 
         is_abstained = bool(structured.get("is_abstained", False))

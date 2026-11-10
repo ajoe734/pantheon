@@ -1561,3 +1561,29 @@ def test_existing_builtin_and_persona_artifact_checksums_unchanged():
         assert evaluate_strategy_view(persona_artifact, [100.0, 101.0])["strength"] is None
 
 
+def test_factor_rule_v1_artifact_validates_mutates_and_evaluates() -> None:
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+    artifact = _sample_factor_rule_artifact()
+    validate_strategy_artifact(artifact)
+    registry_id, payload = build_strategy_artifact_registry_payload(
+        {
+            "registry_id": artifact["artifact_id"],
+            "artifact_state": "candidate",
+            "strategy_artifact": artifact,
+        }
+    )
+    assert registry_id == artifact["artifact_id"]
+    assert payload.checksum == strategy_artifact_checksum(artifact)
+
+    closes = [500.0, 505.0, 510.0, 515.0]
+    features = {"rev_yoy": [10.0, 11.0, 10.5, 18.0]}
+    action = evaluate_strategy_action(artifact, closes, features=features)
+    view = evaluate_strategy_view(artifact, closes, features=features)
+    assert action == "BUY"
+    assert view["action"] == "BUY"
+    assert view["direction"] == "LONG"
+    assert 0.0 < view["strength"] <= 1.0
+
+
+

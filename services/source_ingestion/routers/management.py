@@ -35,6 +35,14 @@ if TYPE_CHECKING:
     from ..runtime import SourceIngestionRuntime
 
 
+SOURCE_COMMANDS_FLAG = "SOURCE_MANAGEMENT_COMMANDS_ENABLED"
+
+
+def source_commands_enabled() -> bool:
+    """Fail-closed switch, read per request: only the exact value ``1`` enables commands."""
+    return os.environ.get(SOURCE_COMMANDS_FLAG) == "1"
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -102,6 +110,16 @@ def create_management_router(runtime: SourceIngestionRuntime) -> APIRouter:
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
         runtime._require_service_authorization(authorization, operation="source management command")
+
+        if not source_commands_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "source_commands_disabled",
+                    "message": f"Source management commands are disabled: set {SOURCE_COMMANDS_FLAG}=1 to enable.",
+                    "switch": SOURCE_COMMANDS_FLAG,
+                },
+            )
 
         cmd = SourceManagementCommand(
             command_id=request.command_id or f"srcmd-{uuid.uuid4().hex[:12]}",

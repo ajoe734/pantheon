@@ -258,8 +258,14 @@ class BoundedPaperStrategy:
             try:
                 from services.registry.strategy_artifact import evaluate_strategy_action
                 closes = binding_metadata.get("recent_closes") or b_dict.get("recent_closes")
+                features = binding_metadata.get("features") or b_dict.get("features")
                 if closes and isinstance(closes, Sequence) and len(closes) >= 2:
-                    action = evaluate_strategy_action(strategy_artifact, closes)
+                    action = evaluate_strategy_action(
+                        strategy_artifact,
+                        closes,
+                        features=features if isinstance(features, Mapping) else None,
+                        decision_time=now_iso,
+                    )
                     decision["action"] = action
                     if action == "SELL":
                         decision["direction"] = "SHORT"
@@ -412,6 +418,20 @@ class CurrentArtifactStrategy:
 
     _SUPPORTED_INTERPRETER = (
         "services.registry.strategy_artifact:evaluate_strategy_action"
+    )
+    _SUPPORTED_INTERPRETERS: frozenset[str] = frozenset(
+        {
+            "services.registry.strategy_artifact:evaluate_strategy_action",
+            "services.registry.strategy_artifact:evaluate_strategy_view",
+            "services.registry.factor_rule:evaluate_factor_rule_action",
+            "services.registry.factor_rule:evaluate_factor_rule_view",
+        }
+    )
+    _SUPPORTED_STRATEGY_KINDS: frozenset[str] = frozenset(
+        {
+            "close_to_close_momentum",
+            "factor_rule_v1",
+        }
     )
 
     def __init__(
@@ -608,16 +628,35 @@ class CurrentArtifactStrategy:
             if isinstance(algorithm_ref, Mapping)
             else ""
         )
-        if interpreter != self._SUPPORTED_INTERPRETER:
+        if interpreter not in self._SUPPORTED_INTERPRETERS:
             raise SignalDecisionUnavailable(
                 "artifact_interpreter_unsupported",
                 f"binding {binding_id} requested unsupported interpreter {interpreter!r}",
+            )
+        strategy_logic = strategy_artifact.get("strategy_logic")
+        logic_kind = (
+            str(strategy_logic.get("kind") or "").strip()
+            if isinstance(strategy_logic, Mapping)
+            else ""
+        )
+        if logic_kind not in self._SUPPORTED_STRATEGY_KINDS:
+            raise SignalDecisionUnavailable(
+                "artifact_interpreter_unsupported",
+                f"binding {binding_id} requested unsupported strategy_logic kind {logic_kind!r}",
             )
 
         market_input = _market_input_for_binding(
             b_dict, metadata, strategy_artifact=strategy_artifact, now_iso=now_iso
         )
         closes = market_input["closes"]
+        features = market_input.get("features")
+        decision_time = (
+            market_input.get("event_time")
+            or market_input.get("observed_at")
+            or now_iso
+        )
+        holding_bars = market_input.get("holding_bars")
+        current_direction = market_input.get("current_direction")
         try:
             from services.registry.strategy_artifact import (
                 StrategyArtifactValidationError,
@@ -639,11 +678,25 @@ class CurrentArtifactStrategy:
             if expression_enabled:
                 from services.registry.strategy_artifact import evaluate_strategy_view
 
-                view = evaluate_strategy_view(strategy_artifact, closes)
+                view = evaluate_strategy_view(
+                    strategy_artifact,
+                    closes,
+                    features=features,
+                    decision_time=decision_time,
+                    holding_bars=holding_bars,
+                    current_direction=current_direction,
+                )
                 action = view["action"]
             else:
                 view = None
-                action = evaluate_strategy_action(strategy_artifact, closes)
+                action = evaluate_strategy_action(
+                    strategy_artifact,
+                    closes,
+                    features=features,
+                    decision_time=decision_time,
+                    holding_bars=holding_bars,
+                    current_direction=current_direction,
+                )
         except (StrategyArtifactValidationError, ValueError, TypeError) as exc:
             raise SignalDecisionUnavailable(
                 "market_input_invalid",
@@ -744,6 +797,11 @@ class CurrentArtifactStrategy:
                 "market_input_event_time": market_input.get("event_time"),
                 "market_input_bar": bar_key,
                 "market_input_lineage": market_input.get("lineage"),
+                **(
+                    {"market_input_feature_keys": sorted(str(k) for k in features.keys())}
+                    if isinstance(features, Mapping) and features
+                    else {}
+                ),
                 "market_data": {
                     "close": closes[-1],
                     "event_time": market_input.get("event_time"),
@@ -1136,8 +1194,35 @@ def _market_input_for_binding(
                 decision.reason_code or "market_input_invalid",
                 decision.detail or f"Snapshot admission rejected: {decision.reason_code}",
             )
+    feature_map: dict[str, Any] = {}
+    for feat_source in (
+        metadata.get("features"),
+        binding.get("features"),
+        raw.get("features"),
+    ):
+        if isinstance(feat_source, Mapping):
+            feature_map.update(dict(feat_source))
+    for pv_key in (
+        "open",
+        "high",
+        "low",
+        "volume",
+        "vwap",
+        "TradeValue",
+        "TradeVolume",
+    ):
+        if pv_key not in feature_map and raw.get(pv_key) is not None:
+            feature_map[pv_key] = raw.get(pv_key)
+    feature_map.setdefault("close", normalized_closes)
+
     return {
         "closes": normalized_closes,
+        "features": feature_map,
+        "holding_bars": raw.get("holding_bars", binding.get("holding_bars", metadata.get("holding_bars"))),
+        "current_direction": raw.get(
+            "current_direction",
+            binding.get("current_direction", metadata.get("current_direction")),
+        ),
         "symbol": snapshot_symbol or raw.get("symbol"),
         "source_ref": raw.get("source_ref"),
         "observed_at": raw.get("observed_at"),

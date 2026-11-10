@@ -1,0 +1,13 @@
+{
+  "articles": [
+    {
+      "id": "gdelt-20261110-001",
+      "url": "https://example.news.invalid/taiwan-semiconductor-capex-2026",
+      "title": "Taiwan semiconductor 2330 foundry utilization reaches 2026 high on AI demand",
+      "seendate": "2026-11-10T03:00:00Z",
+      "domain": "example.news.invalid",
+      "language": "en",
+      "tone": 4.25
+    }
+  ]
+}

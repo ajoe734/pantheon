@@ -325,6 +325,10 @@ class StrategySpecSeedBuilder:
             raise StrategySpecSeedError(
                 "execution_recipe may only come from Source.metadata.strategy_seed"
             )
+        card = strategy_metadata.get("hypothesis_card")
+        if isinstance(card, Mapping) and card.get("claim") == hypothesis:
+            # hypothesis_card.v1 verified by the distillation worker (SD §8.2).
+            seed_metadata["hypothesis_card"] = copy.deepcopy(dict(card))
         negative_memory_match = match_negative_memory(
             {
                 "seed_id": effective_seed_id,
@@ -587,6 +591,7 @@ def _strategy_metadata(contexts: Sequence[Mapping[str, Any]]) -> Mapping[str, An
         for key in (
             "hypothesis",
             "strategy_hypothesis",
+            "hypothesis_card",
             "asset_class",
             "asset_classes",
             "market_scope",

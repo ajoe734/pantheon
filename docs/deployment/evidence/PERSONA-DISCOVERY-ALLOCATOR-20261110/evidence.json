@@ -1,0 +1,14 @@
+{
+  "task_id": "PERSONA-DISCOVERY-ALLOCATOR-20261110",
+  "verification": [
+    {"cmd": "pytest services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py", "result": "107 passed"},
+    {"cmd": "pytest services/research/test_discovery_allocator.py", "result": "6 passed"}
+  ],
+  "acceptance": {
+    "1": "strategy_artifact_ref replaces forward artifact template content; identity/lineage/saga unchanged (test_strategy_artifact_ref_replaces_template_content_only; unapproved ref fails closed)",
+    "2": "absent ref unchanged (test_without_strategy_artifact_ref_behavior_is_unchanged + existing suite)",
+    "3": "max 5 personas, capital cap, paper-only (test_discovery_allocator)",
+    "4": "persona_strategy_match score injected as scorer; score and match_id recorded in request metadata and Binding"
+  },
+  "not_done": "docker-compose wiring of a daily allocator job and the schedule/provisioner adapter are not included; allocator is a library with injected ports"
+}

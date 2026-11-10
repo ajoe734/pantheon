@@ -3021,3 +3021,89 @@ def test_non_baseline_paper_persona_writes_expression_policy_controls_and_pool_r
     ] == ["lookback_bars", "momentum_threshold"]
 
 
+
+
+def _template_artifact_field(key: str) -> Any:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    _coordinator(store, transport, _schedule_receipt).coordinate(record)
+    ids = deterministic_provisioning_ids(record)
+    entry = _owner_entry(transport, "strategy-artifacts", ids.strategy_artifact_id)
+    return deepcopy(entry["metadata"]["strategy_artifact"][key])
+
+
+def _admitted_artifact_view(ref: str, *, state: str = "approved") -> dict[str, Any]:
+    return {
+        "entry": {
+            "registry_id": ref,
+            "artifact_type": "execution_bundle",
+            "artifact_state": state,
+            "strategy_id": "discovered-strategy",
+            "version": "9",
+            "metadata": {
+                "strategy_artifact": {
+                    "artifact_id": ref,
+                    "strategy_id": "discovered-strategy",
+                    "version": "9",
+                    "algorithm_ref": {
+                        **_template_artifact_field("algorithm_ref"),
+                        "commit": "a" * 40,
+                    },
+                    "strategy_logic": _template_artifact_field("strategy_logic"),
+                    "parameters": {
+                        **_template_artifact_field("parameters"),
+                        "symbols": ["QQQ"],
+                    },
+                    "mutation_surface": _template_artifact_field("mutation_surface"),
+                    "expression_policy": _template_artifact_field("expression_policy"),
+                }
+            },
+        }
+    }
+
+
+def test_strategy_artifact_ref_replaces_template_content_only() -> None:
+    ref = "admitted-artifact-1"
+    path = f"/api/registry/strategy-artifacts/{ref}"
+    store, record = _record_and_store({"strategy_artifact_ref": ref})
+    transport = FakeOwnerTransport()
+    transport.objects[("registry", path)] = _admitted_artifact_view(ref)
+    result = _coordinator(store, transport, _schedule_receipt).coordinate(record)
+    assert result.state == "provisioning", result.error
+    assert result.current_step == "schedule_registered"
+    ids = deterministic_provisioning_ids(record)
+    entry = _owner_entry(transport, "strategy-artifacts", ids.strategy_artifact_id)
+    artifact = entry["metadata"]["strategy_artifact"]
+    assert artifact["algorithm_ref"]["commit"] == "a" * 40
+    assert artifact["parameters"]["symbols"] == ["QQQ"]
+    assert artifact["artifact_id"] == ids.strategy_artifact_id
+    assert artifact["strategy_id"] == ids.strategy_id
+    assert entry["metadata"]["source_strategy_artifact_ref"] == ref
+    # The baseline artifact is untouched by the reference.
+    baseline = _owner_entry(transport, "strategy-artifacts", ids.baseline_strategy_artifact_id)
+    assert baseline["metadata"]["strategy_artifact"]["strategy_logic"]["kind"] == (
+        "close_to_close_momentum"
+    )
+
+
+def test_strategy_artifact_ref_requires_approved_artifact() -> None:
+    ref = "candidate-artifact"
+    store, record = _record_and_store({"strategy_artifact_ref": ref})
+    transport = FakeOwnerTransport()
+    transport.objects[("registry", f"/api/registry/strategy-artifacts/{ref}")] = (
+        _admitted_artifact_view(ref, state="candidate")
+    )
+    result = _coordinator(store, transport, _schedule_receipt).coordinate(record)
+    assert result.state != "provisioning" or result.current_step != "schedule_registered"
+
+
+def test_without_strategy_artifact_ref_behavior_is_unchanged() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    _coordinator(store, transport, _schedule_receipt).coordinate(record)
+    ids = deterministic_provisioning_ids(record)
+    entry = _owner_entry(transport, "strategy-artifacts", ids.strategy_artifact_id)
+    assert "source_strategy_artifact_ref" not in entry["metadata"]
+    assert entry["metadata"]["strategy_artifact"]["strategy_logic"]["kind"] == (
+        "close_to_close_momentum"
+    )

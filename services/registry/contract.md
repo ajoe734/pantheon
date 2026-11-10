@@ -327,7 +327,7 @@ It does not create a second lifecycle or bypass the generic registry state machi
 | HTTP operation | Description |
 |---|---|
 | `POST /api/registry/strategy-specs` | register a `strategy_spec` artifact with required lineage plus `storage_ref`/`checksum`, or an inline StrategySpec payload from which checksum and inline storage are derived |
-| `GET /api/registry/strategy-specs` | list caller-visible `strategy_spec` entries; supports `view=persona_binding`, `view=persona_binding_counts`, and `view=strategy_summary_page` (`state`, `exclude_state`, `persona_id`, `page_token`, `page_size`) which projects flat summary leaves in Postgres, resolves current semver per strategy family, computes per-state DTO counts (`state_counts`, including `retired`) across the caller tenant's current strategy families in the same single pass, supports `state=retired` (while default and `exclude_state=draft` exclude retired families), `state=review`/`candidate`, and `exclude_state=draft` (which excludes only true drafts while keeping strategies whose stored lifecycle value is not a known state), rejects combining `state` and `exclude_state` with 400, and returns `{items, total, page_size, next_page_token, page_info, state_counts}` without decoding full StrategySpec payloads across the wire |
+| `GET /api/registry/strategy-specs` | list caller-visible `strategy_spec` entries; supports `view=persona_binding`, `view=persona_binding_counts`, and `view=strategy_summary_page` (`state`, `exclude_state`, `persona_id`, `page_token`, `page_size`) which uses a bounded two-step projection in the owner store (Phase 1 projects only lightweight candidate-index fields — identity, semver, lifecycle, persona-binding sources, and timestamps — to resolve the current semver per strategy family, compute per-state DTO counts `state_counts` including `retired` across the caller tenant's current strategy families, apply `state`/`exclude_state`/`persona_id` filters, sort by `last_modified_at`, and slice the page; Phase 2 extracts full summary leaves only for the `registry_id`s in the returned page slice), supports `state=retired` (while default and `exclude_state=draft` exclude retired families), `state=review`/`candidate`, and `exclude_state=draft` (which excludes only true drafts while keeping strategies whose stored lifecycle value is not a known state), rejects combining `state` and `exclude_state` with 400, and returns `{items, total, page_size, next_page_token, page_info, state_counts}` without decoding full StrategySpec payloads across the wire |
 | `GET /api/registry/strategy-specs/{registry_id}` | read one `strategy_spec` registry entry and reject non-StrategySpec artifacts on this facade |
 | `GET /api/registry/strategies/{strategy_id}/strategy-specs` | list only StrategySpec entries for a strategy family (`PostgresRegistryStore.list_by_strategy` filters `payload ->> 'strategy_id' = %s` in SQL rather than scanning all entries), optionally filtered by `artifact_state` |
 | `POST /api/registry/strategy-specs/{registry_id}/advance` | advance a StrategySpec entry through the same `draft -> candidate -> approved -> retired` artifact-state machine |
@@ -352,6 +352,15 @@ draft remains a separate metadata record, not a validated full specification.
 rejects that kind with 400, including keyed requests and otherwise valid payloads.
 The typed validator supplies artifact content, provenance and derived fields;
 generic reads and lawful transitions remain available for those validated entries.
+
+`alpha_template` (`alpha_template.v1`, `docs/contracts/alpha_template.v1.schema.json`)
+creation is exclusive to `POST /api/registry/alpha-templates`; reads are
+`GET /api/registry/alpha-templates[/{registry_id}]` (filters: family, scope, status,
+library). The checked-in seed library (`services/registry/alpha_templates/`: Qlib
+Alpha158 x158 under MIT, Alpha101 time-series x13 and cross-sectional x11 from the
+published formulas) is registered idempotently as built-in entries at startup.
+Cross-sectional templates are stored with `scope=cross_sectional` and refused by the
+per-symbol evaluator.
 
 ### Lineage read
 

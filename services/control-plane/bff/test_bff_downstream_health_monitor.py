@@ -928,7 +928,7 @@ class TestIncidentOpensPastFailedTelemetry:
         assert set(body) == {
             "schema_version", "incident_id", "tenant_id", "producer",
             "source_event_id", "title", "status", "severity", "component",
-            "telemetry_event_ids", "evidence_summary",
+            "telemetry_event_ids", "evidence_summary", "created_at",
         }
         assert monitor._store.get_incident("governance")["status"] == "open"
 
@@ -2475,3 +2475,145 @@ def test_get_state_accelerates_prune_cadence_while_backlog_batch_is_full(tmp_pat
         monitor.get_state()
         assert (time.time() - monitor._last_retention_prune_at) < 5.0
 
+
+
+class TestIncidentOpenCreatedAt:
+    """BFF-HEALTH-INCIDENT-OPEN-TIME-20261110: open carries source event time."""
+
+    WSTART = "2026-11-10T01:07:00Z"
+    CHECKED = "2026-11-10T01:07:04Z"
+
+    def _monitor(self, tmp_path=None):
+        kwargs = {}
+        if tmp_path is not None:
+            kwargs["state_path"] = str(tmp_path / "h.sqlite3")
+        return DownstreamHealthMonitor(
+            telemetry_url="http://tel:8080",
+            telemetry_service_jwt="jwt-token",
+            incidents_url="http://inc:8090",
+            tenant_id="tenant-test",
+            probe_interval_seconds=9999,
+            failure_threshold=1,
+            **kwargs,
+        )
+
+    def _fail(self, **kw):
+        return DownstreamProbeResult(
+            target_name="telemetry", ok=False, status_code=-1, latency_ms=5.0,
+            checked_at=self.CHECKED, failure_reason="timeout",
+            consecutive_failures=3, window_started_at=self.WSTART, **kw,
+        )
+
+    @staticmethod
+    def _open_rows(monitor):
+        with monitor._store._connect() as conn:
+            return [
+                dict(r) for r in conn.execute(
+                    "SELECT * FROM delivery_outbox WHERE channel='incident_open'"
+                ).fetchall()
+            ]
+
+    def _assert_open_created_at(self, monitor):
+        rows = self._open_rows(monitor)
+        assert len(rows) == 1
+        body = json.loads(rows[0]["body_json"])
+        assert body["created_at"] == self.WSTART
+        assert body["created_at"] != self.CHECKED
+        return body
+
+    def test_record_probe_result_path_carries_created_at(self):
+        monitor = self._monitor()
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            return_value=(False, -1),
+        ):
+            _run(monitor._handle_probe_result(self._fail()))
+        self._assert_open_created_at(monitor)
+
+    def test_error_rate_window_path_carries_created_at(self):
+        monitor = self._monitor()
+        window = {
+            "window_started_at": self.WSTART, "last_status_code": 503,
+            "latency_ms": 5.0, "last_observed_at": self.CHECKED,
+            "last_detail": "boom", "sample_count": 4, "failure_count": 4,
+            "error_rate": 1.0,
+        }
+        monitor._queue_error_rate_window_sync("telemetry", window)
+        self._assert_open_created_at(monitor)
+
+    def test_open_or_update_path_carries_created_at_and_requeue_is_identical(self):
+        monitor = self._monitor()
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            return_value=(False, -1),
+        ):
+            monitor._open_or_update_incident_sync(self._fail())
+            first = self._assert_open_created_at(monitor)
+            row_before = self._open_rows(monitor)[0]["body_json"]
+            # Re-queue of the same event: byte identical, no conflict.
+            monitor._store.reserve_incident(
+                target_name="telemetry", event_id=first["source_event_id"]
+            )
+            monitor._open_or_update_incident_sync(self._fail())
+        rows = self._open_rows(monitor)
+        assert len(rows) == 1 and rows[0]["body_json"] == row_before
+
+    def test_legacy_pending_open_without_created_at_is_kept(self):
+        monitor = self._monitor()
+        result = self._fail()
+        event_id = "infra-health-legacy"
+        new_body = monitor._incident_body(
+            result=result, incident_id="infra-bff-legacy", event_id=event_id
+        )
+        legacy_body = {k: v for k, v in new_body.items() if k != "created_at"}
+        kwargs = dict(
+            delivery_id="incident-open:legacy", event_id=event_id,
+            channel="incident_open", target_name="telemetry",
+            url=monitor._incident_create_url(), dependency_ids=[],
+            max_attempts=3,
+        )
+        monitor._store.queue_delivery(body=legacy_body, **kwargs)
+        stored = self._open_rows(monitor)[0]["body_json"]
+        again = monitor._store.queue_delivery(body=new_body, **kwargs)
+        assert again["body_json"] == stored
+        assert "created_at" not in json.loads(stored)
+        assert len(self._open_rows(monitor)) == 1
+        # A genuinely different body still conflicts.
+        changed = dict(new_body, severity="low")
+        with pytest.raises(ValueError, match="delivery identity conflict"):
+            monitor._store.queue_delivery(body=changed, **kwargs)
+
+    def test_late_open_created_at_precedes_recovery_resolved_at(self):
+        monitor = self._monitor()
+        posts: List[Any] = []
+
+        def down(url, body, timeout):
+            return False, -1
+
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            side_effect=down,
+        ):
+            _run(monitor._handle_probe_result(self._fail()))
+
+        def up(url, body, timeout):
+            posts.append((url, body))
+            return True, 200
+
+        recovery = DownstreamProbeResult(
+            target_name="telemetry", ok=True, status_code=200, latency_ms=3.0,
+            checked_at="2026-11-10T01:09:41Z",
+        )
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            side_effect=up,
+        ):
+            _run(monitor._handle_probe_result(recovery))
+            for _ in range(6):
+                with monitor._store._connect() as conn:
+                    conn.execute("UPDATE delivery_outbox SET next_attempt_at=0")
+                monitor._deliver_due_sync()
+        opens = [b for u, b in posts if "consume-infrastructure-health" in u]
+        resolves = [b for u, b in posts if u.endswith("/status")]
+        assert len(opens) == 1 and len(resolves) == 1
+        assert opens[0]["created_at"] < resolves[0]["resolved_at"]

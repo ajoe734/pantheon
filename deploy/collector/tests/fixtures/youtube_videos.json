@@ -1,0 +1,20 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "id": "tw_quant_001",
+      "snippet": {
+        "publishedAt": "2026-11-09T12:00:00Z",
+        "channelId": "UC_tw_quant_channel_99",
+        "channelTitle": "阿哲台股量化實驗室",
+        "title": "2330 與 2317 月營收年增率突破加上外資連買的回測結果",
+        "description": "本集驗證月營收 YoY z-score > 1.5 且 20 日均線向上時，持有 10 個交易日的樣本外表現。"
+      },
+      "statistics": {
+        "viewCount": "45200",
+        "likeCount": "1820",
+        "commentCount": "145"
+      }
+    }
+  ]
+}
