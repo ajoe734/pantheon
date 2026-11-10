@@ -6001,7 +6001,139 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
             self.assertAlmostEqual(mig_snap["equity"], 101_000.0, places=4)
 
 
+class TestPaperFuturesFillEpisode(unittest.TestCase):
+    """PAPER-FUTURES-FILL-EPISODE-20261110: rt-3b65a843 ssf:SRF:202611 +2 @97.1."""
+
+    INST = "ssf:SRF:202611"
+
+    def _algo(self, events, state_path=None):
+        return PaperExecutionAlgorithm(
+            initial_cash=5_000_000.0,
+            event_sink=events.append,
+            persona_binding_id="persona-c6c25b85060b0f642c64",
+            in_process_broker=True,
+            state_path=state_path,
+        )
+
+    def _submit(self, algo, sig, side, qty, price=97.1):
+        algo.SetCurrentSignalContext(
+            {
+                "persona_capital_binding_id": "persona-c6c25b85060b0f642c64",
+                "instrument_id": self.INST,
+                "kind": "stock_future",
+                "contract": "SRF",
+                "contract_month": "202611",
+                "multiplier": 2000.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": price,
+                "price_date": "2026-11-09",
+                "trade_date": "2026-11-10",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "0050.TW",
+            signal_id=sig,
+            side=side,
+            quantity=qty,
+            quantity_type="CONTRACTS",
+            action=side.upper(),
+        )
+
+    @staticmethod
+    def _fills(events):
+        return [e for e in events if e.event_type == "paper_fill_simulated"]
+
+    def test_entry_scale_in_close_and_reversal_carry_episode_ids(self):
+        events = []
+        algo = self._algo(events)
+        self._submit(algo, "s1", "buy", 2.0)
+        self._submit(algo, "s2", "buy", 1.0)
+        fills = self._fills(events)
+        self.assertEqual(len(fills), 2)
+        ep1 = fills[0].metadata.get("trade_episode_id")
+        self.assertTrue(ep1)
+        self.assertEqual(fills[1].metadata.get("trade_episode_id"), ep1)
+        self.assertEqual(algo.open_episodes, {self.INST: ep1})
+
+        self._submit(algo, "s3", "sell", 5.0)  # +3 -> -2 reversal
+        rev = self._fills(events)[2]
+        ep2 = rev.metadata.get("trade_episode_id")
+        self.assertTrue(ep2)
+        self.assertNotEqual(ep2, ep1)
+        self.assertEqual(rev.metadata["reversal"]["closed_episode_id"], ep1)
+        self.assertEqual(rev.metadata["reversal"]["opened_episode_id"], ep2)
+        self.assertEqual(algo.open_episodes, {self.INST: ep2})
+
+        self._submit(algo, "s4", "buy", 2.0)  # flat
+        closing = self._fills(events)[3]
+        self.assertEqual(closing.metadata.get("trade_episode_id"), ep2)
+        self.assertEqual(algo.open_episodes, {})
+
+    def test_open_futures_episode_survives_ledger_persistence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = str(Path(tmp) / "ledger.json")
+            events = []
+            algo = self._algo(events, state_path)
+            self._submit(algo, "s1", "buy", 2.0)
+            ep = self._fills(events)[0].metadata["trade_episode_id"]
+            payload = json.loads(Path(state_path).read_text(encoding="utf-8"))
+            self.assertEqual(payload["open_episodes"], {self.INST: ep})
+            events2 = []
+            restored = self._algo(events2, state_path)
+            self.assertEqual(restored.open_episodes, {self.INST: ep})
+            self._submit(restored, "s2", "buy", 1.0)
+            self.assertEqual(self._fills(events2)[0].metadata["trade_episode_id"], ep)
+
+    def test_expiry_settlement_clears_episode(self):
+        events = []
+        algo = self._algo(events)
+        self._submit(algo, "s1", "buy", 2.0)
+        self.assertIn(self.INST, algo.open_episodes)
+        outcomes = algo.SettleExpiringFutures(
+            "2026-11-18",
+            final_settlement_source=[
+                {
+                    "Date": "20261118",
+                    "ContractCode": "SRF",
+                    "SettlementMonth": "202611",
+                    "SettlementPrice": "98.0",
+                }
+            ],
+        )
+        self.assertEqual(outcomes[0]["status"], "settled")
+        self.assertEqual(algo.open_episodes, {})
+
+    def test_forced_liquidation_clears_episode(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            persona_binding_id="pcb-tw-2330",
+            in_process_broker=True,
+        )
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW", signal_id="sig-open", side="buy", quantity=2.0,
+            quantity_type="CONTRACTS", action="BUY",
+        )
+        self.assertIn("ssf:QFF:202611", algo.open_episodes)
+        algo.MarkFuturesSession("2026-11-09", {"ssf:QFF:202611": 1940.0})
+        algo.MarkFuturesSession("2026-11-10", {"ssf:QFF:202611": 1935.0})
+        self.assertEqual(events[-1].event_type, "paper_forced_liquidation")
+        self.assertEqual(algo.open_episodes, {})
+
+
 if __name__ == "__main__":
     unittest.main()
-
-
