@@ -104,7 +104,7 @@ def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfacePorts]]:
     monkeypatch.setattr(
         store,
         "list_incidents",
-        lambda: [
+        lambda **_kw: [
             {"incident_id": "incident-open", "status": "open"},
             {"incident_id": "incident-closed", "status": "closed"},
         ],

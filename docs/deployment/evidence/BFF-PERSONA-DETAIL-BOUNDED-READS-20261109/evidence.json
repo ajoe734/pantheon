@@ -1,0 +1,49 @@
+{
+  "task_id": "BFF-PERSONA-DETAIL-BOUNDED-READS-20261109",
+  "base_commit": "39f80bb95",
+  "change": "Bounded persona detail reads across GET /bff/personas/{persona_id}, GET /api/v1/personas/{persona_id}, and GET /api/v1/operator/persona-management/{persona_id}. Wrapped all three routes in request_read_scope(). GET /bff/personas/{persona_id} now uses _get_persona_record_for_detail (single persona lookup + provisioning get_by_persona instead of projecting the entire tenant directory) and _routed_strategy_counts_by_persona, while replacing redundant json.loads(json.dumps(...)) deep copies on overlay-owned source-health blobs with _clone_json_value. GET /api/v1/operator/persona-management/{persona_id} now reads deployment plans and approval decisions once per request without per-plan get_deployment_plan or per-approval get_approval_decision fetch loops, passes plans_by_id and pools_by_id into _project_persona_management_operational_surface, and skips computing rich source-health overlays, full persona DTO projection, routed strategy counts, and evolution decisions that the route never returns.",
+  "measurement": {
+    "method": "time.process_time, best of 3 after 1 warmup request on the same machine, comparing base commit 39f80bb95 (dev) vs task branch head across 160 personas with ~290KB source-health connector truth, 160 deployment plans, 160 runtime bindings, 160 approval decisions, and 160 strategy specs.",
+    "bff_get_persona": {
+      "route": "GET /bff/personas/{persona_id}",
+      "testclient_http_before_cpu_s": 0.065519,
+      "testclient_http_after_cpu_s": 0.017379,
+      "testclient_http_reduction_pct": 73.47,
+      "handler_before_cpu_s": 0.05237,
+      "handler_after_cpu_s": 0.004636,
+      "handler_reduction_pct": 91.15,
+      "before_bytes": 800068,
+      "after_bytes": 800068
+    },
+    "get_persona_management": {
+      "route": "GET /api/v1/operator/persona-management/{persona_id}",
+      "testclient_http_before_cpu_s": 0.137345,
+      "testclient_http_after_cpu_s": 0.009979,
+      "testclient_http_reduction_pct": 92.73,
+      "handler_before_cpu_s": 0.129038,
+      "handler_after_cpu_s": 0.002623,
+      "handler_reduction_pct": 97.97,
+      "before_bytes": 138666,
+      "after_bytes": 138666
+    },
+    "get_persona_detail": {
+      "route": "GET /api/v1/personas/{persona_id}",
+      "testclient_http_before_cpu_s": 0.007174,
+      "testclient_http_after_cpu_s": 0.006714,
+      "testclient_http_reduction_pct": 6.41,
+      "handler_before_cpu_s": 0.000266,
+      "handler_after_cpu_s": 0.000206,
+      "handler_reduction_pct": 22.56,
+      "before_bytes": 133086,
+      "after_bytes": 133086
+    }
+  },
+  "acceptance": {
+    "1_bounded_owner_reads_no_per_plan_loop": "test_persona_detail_routes_bounded_owner_reads_no_per_plan_loop in services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py counts owner reads and proves GET /bff/personas/{persona_id} and GET /api/v1/personas/{persona_id} make 0 deployment-plan and 0 approval reads, and GET /api/v1/operator/persona-management/{persona_id} makes at most 1 deployment-plan read and 1 approval read with 0 get_deployment_plan or get_approval_decision calls.",
+    "2_no_rich_source_health_or_unused_blocks_in_persona_management": "test_persona_management_detail_does_not_compute_rich_source_health_or_unused_blocks in services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py patches overlay_source_health_truth, _overlay_source_health_truth, _source_health_bindings_from_requirements, _routed_strategies_for_persona, _project_persona_dto, _project_persona_fleet_item, and list_evolution_decisions to raise AssertionError and verifies GET /api/v1/operator/persona-management/{persona_id} succeeds with 200.",
+    "3_field_for_field_identity_and_503_consistency": "test_persona_detail_field_for_field_identity_and_cpu_reduction verifies JSON field-for-field identity for both detail routes against the pre-change projection on the real record shape; test_owner_unavailable_503_consistency.py passes unchanged (all 503 status codes and error envelopes preserved).",
+    "4_cpu_reduction_ge_50_pct": "See measurement above and test_persona_detail_field_for_field_identity_and_cpu_reduction: GET /bff/personas/{persona_id} CPU drops by 73.47% (TestClient HTTP) / 91.15% (route handler), and GET /api/v1/operator/persona-management/{persona_id} CPU drops by 92.73% (TestClient HTTP) / 97.97% (route handler), exceeding the >=50% threshold.",
+    "5_no_existing_tests_weakened_or_deleted": "No existing test was weakened, modified, or deleted; 3 new tests were added to services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py."
+  },
+  "hosted_verification": "deferred to operator acceptance task; no VM access used"
+}

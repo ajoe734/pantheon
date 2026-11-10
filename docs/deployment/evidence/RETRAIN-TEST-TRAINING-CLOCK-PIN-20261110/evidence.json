@@ -1,0 +1,18 @@
+{
+  "task_id": "RETRAIN-TEST-TRAINING-CLOCK-PIN-20261110",
+  "kind": "functional",
+  "hosted_verification": "not performed; owned by EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104",
+  "changed_files": ["services/research/tests/test_retrain_executor_real_auth.py"],
+  "production_files_changed": false,
+  "change": {
+    "pin": "module fixture patches training._trusted_now to the trusted_now passed to materialize_strict_authority, same patch strict_test_support.py applies (mock.patch.object(module, '_trusted_now', lambda: now))",
+    "fixture_time": "trusted_now is now wall clock minus 2 days (strict authority max_staleness_days is 1), so every test in the file only passes when the Training clock is pinned",
+    "persona_owner_stand_in": "recorded_at is now derived from the pinned trusted_now minus 1 minute instead of the real clock, so it is not in the future of the pinned Training clock; changed value is test-fixture only",
+    "new_test": "test_evaluation_started_after_the_fixture_date_has_passed_reaches_the_same_outcome",
+    "assertions_changed_or_removed": "none"
+  },
+  "results": {
+    "pytest_with_pin": "21 passed (real vectorbt, python 3.12 venv built per branch-ci research install)",
+    "pytest_without_pin": "better_candidate test and new test FAILED, confirming the new test detects the midnight-straddle defect"
+  }
+}

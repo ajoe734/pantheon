@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -440,32 +440,85 @@ def _load_governed_threshold_for_metric(
     return None
 
 
-def _approved_artifact_baselines(
+def _approved_artifact_baseline_resolution(
     artifact_id: Any,
     all_baselines: Dict[str, Dict[str, Any]] | None = None,
-) -> tuple[Dict[str, float], Dict[str, Dict[str, str]]]:
-    """Resolve approved baselines for one artifact from the Evolution-governed file.
+    summary: Mapping[str, Any] | None = None,
+) -> tuple[Dict[str, float], Dict[str, Dict[str, str]], List[Dict[str, str]]]:
+    """Resolve approved baselines for one artifact plus why any could not be.
 
-    Uses the Evolution threshold sweep's own reader so both consumers share one
-    source of truth. Fails closed: no artifact, no approved positive finite
+    Uses the Evolution threshold sweep's own readers (baseline loader, value
+    reader and runtime-summary instrument class reader) so both consumers share
+    one source of truth. Fails closed: no artifact, no approved positive finite
     value, or an unreadable file yields no baseline (never a fabricated one).
+
+    An artifact whose approved baselines live under instrument classes is read
+    only for the class the runtime ``summary`` reports. A missing, invalid or
+    mixed class, or a class without an approved entry, yields no baseline and a
+    recorded reason; it never falls back to another class or to a flat value.
+    An artifact with only a flat approved baseline is read as before.
     """
 
     aid = str(artifact_id or "").strip()
     if not aid:
-        return {}, {}
+        return {}, {}, []
     try:
         from services.evolution import threshold_sweep_worker as sweep
     except ImportError:  # pragma: no cover - image always ships services/evolution
-        return {}, {}
+        return {}, {}, []
     if all_baselines is None:
         all_baselines = sweep.load_baselines(_approved_baselines_path())
     entry = all_baselines.get(aid)
     if entry is None:
-        return {}, {}
+        return {}, {}, []
+    class_entries = entry.get("by_instrument_class")
+    has_class_entries = isinstance(class_entries, Mapping) and bool(class_entries)
+
+    instrument_class: str | None = None
+    class_failure: str | None = None
+    if has_class_entries:
+        instrument_class, class_error = sweep.summary_instrument_class(summary or {})
+        if class_error is not None:
+            class_failure = class_error
+        elif instrument_class is None:
+            class_failure = "runtime summary reports no instrument class"
+
     metrics: Dict[str, float] = {}
     sources: Dict[str, Dict[str, str]] = {}
+    unresolved: List[Dict[str, str]] = []
     for metric, key in APPROVED_BASELINE_KEYS.items():
+        if has_class_entries:
+            reason = class_failure
+            value = None
+            if reason is None:
+                value = sweep.approved_baseline_value(
+                    all_baselines, aid, key, instrument_class=instrument_class
+                )
+                if value is None:
+                    reason = (
+                        f"no approved {key!r} baseline for instrument_class="
+                        f"{instrument_class!r}"
+                    )
+            if value is None:
+                unresolved.append(
+                    {
+                        "metric": metric,
+                        "artifact_id": aid,
+                        "baseline_key": key,
+                        "reason": str(reason),
+                    }
+                )
+                continue
+            metrics[metric] = value
+            sources[metric] = {
+                "artifact_id": aid,
+                "baseline_key": key,
+                "instrument_class": str(instrument_class),
+                "policy_source": str(
+                    class_entries[str(instrument_class)]["policy_source"]
+                ).strip(),
+            }
+            continue
         value = sweep.approved_baseline_value(all_baselines, aid, key)
         if value is None:
             continue
@@ -475,6 +528,17 @@ def _approved_artifact_baselines(
             "baseline_key": key,
             "policy_source": str(entry["policy_source"]).strip(),
         }
+    return metrics, sources, unresolved
+
+
+def _approved_artifact_baselines(
+    artifact_id: Any,
+    all_baselines: Dict[str, Dict[str, Any]] | None = None,
+    summary: Mapping[str, Any] | None = None,
+) -> tuple[Dict[str, float], Dict[str, Dict[str, str]]]:
+    metrics, sources, _unresolved = _approved_artifact_baseline_resolution(
+        artifact_id, all_baselines, summary
+    )
     return metrics, sources
 
 
@@ -575,6 +639,15 @@ def _drift_checks(
                 **(
                     {"baseline_source": (baseline_sources or {})[metric]}
                     if metric in (baseline_sources or {})
+                    else {}
+                ),
+                **(
+                    {
+                        "instrument_class": (baseline_sources or {})[metric][
+                            "instrument_class"
+                        ]
+                    }
+                    if "instrument_class" in (baseline_sources or {}).get(metric, {})
                     else {}
                 ),
                 **governed_threshold_fields,
@@ -3317,8 +3390,12 @@ def _execute_scheduled_reconcile(
         baseline_metrics: Dict[str, Any] = (
             raw_baseline_metrics if isinstance(raw_baseline_metrics, dict) else {}
         )
-        approved_metrics, baseline_sources = _approved_artifact_baselines(
-            summary.get("artifact_id"), approved_baselines
+        (
+            approved_metrics,
+            baseline_sources,
+            baseline_unresolved,
+        ) = _approved_artifact_baseline_resolution(
+            summary.get("artifact_id"), approved_baselines, summary
         )
         # Governed metrics are judged only against the approved artifact baseline;
         # a raw summary baseline never substitutes for a missing approval.
@@ -3430,6 +3507,11 @@ def _execute_scheduled_reconcile(
                     "reconciliation_check_count": len(reconciliation_checks),
                 },
                 "baseline_metrics": baseline_metrics,
+                **(
+                    {"baseline_unresolved": baseline_unresolved}
+                    if baseline_unresolved
+                    else {}
+                ),
                 "observed_metrics": observed_metrics,
                 "drift_checks": drift_checks,
                 "reconciliation_checks": reconciliation_checks,

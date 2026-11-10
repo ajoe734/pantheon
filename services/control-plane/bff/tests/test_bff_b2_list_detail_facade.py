@@ -1650,3 +1650,510 @@ def test_persona_management_keeps_unreconciled_research_only_degraded() -> None:
         finally:
             facade_state.read_store = original
 
+
+# ============================================================================
+# 16. BFF-PERSONA-DETAIL-BOUNDED-READS-20261109: Bounded Owner Reads & CPU
+# ============================================================================
+
+
+def _build_bounded_detail_fixture() -> dict[str, Any]:
+    from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
+    from services.control_plane.bff.tests.test_bff_persona_list_compact_rows import (
+        _CONNECTOR,
+        _real_raw,
+        _real_truth,
+    )
+
+    truth = _real_truth()
+    prov_store = MemoryPersonaProvisioningStore()
+    raws: list[dict[str, Any]] = []
+    for i in range(160):
+        raw = _real_raw(i)
+        raw["tenant_id"] = "tenant-default"
+        raw["lifecycle_state"] = "active" if i == 0 else "research_only"
+        raw["strategy_family"] = "momentum"
+        raw["metadata"]["tenant_id"] = "tenant-default"
+        raw["metadata"]["deployment_plan_id"] = f"plan-missing-{i}"
+        raw["metadata"]["approval_decision_id"] = f"apv-missing-{i}"
+        raw["metadata"]["data_source_status"]["required_source_health"] = [truth[_CONNECTOR]]
+        raw["metadata"]["provisioning_authoritative_readback"] = {
+            "deployment": {"plan_id": f"plan-{i}", "status": "ready_to_deploy"},
+            "governance": {"approval_decision_id": f"apv-{i}", "decision_state": "decided"},
+        }
+        raws.append(raw)
+        prov_store.reserve(
+            tenant_id="tenant-default",
+            idempotency_key=f"idem-bounded-{i}",
+            request_hash=f"hash-bounded-{i}",
+            normalized_name=f"p{i}",
+            persona_id=f"persona-{i}",
+            request_payload={"name": f"P{i}", "market": "TW", "requested_by": "op-b2"},
+        )
+
+    bindings = [
+        {
+            "id": "bind-0",
+            "binding_id": "bind-0",
+            "persona_id": "persona-0",
+            "capital_pool_id": "pool-0",
+            "allocation_weight": 0.25,
+            "status": "active",
+        }
+    ]
+    pools = [
+        {
+            "id": "pool-0",
+            "pool_id": "pool-0",
+            "name": "Alpha Pool",
+            "status": "active",
+        }
+    ]
+
+    plans = [
+        {
+            "id": f"plan-{i}",
+            "plan_id": f"plan-{i}",
+            "tenant_id": "tenant-default",
+            "persona_id": f"persona-{i}",
+            "approval_decision_id": f"apv-{i}",
+            "status": "ready_to_deploy",
+            "deployment_stage": "paper",
+            "metadata": {"detail": "p" * 2000},
+        }
+        for i in range(160)
+    ]
+    rbs = [
+        {
+            "id": f"rb-{i}",
+            "binding_id": f"rb-{i}",
+            "runtime_id": f"rt-{i}",
+            "persona_id": f"persona-{i}",
+            "plan_id": f"plan-unlisted-{i}",
+            "status": "running",
+            "deployment_mode": "paper",
+            "environment": "paper",
+        }
+        for i in range(160)
+    ]
+    approvals = [
+        {
+            "decision_id": f"apv-{i}",
+            "id": f"apv-{i}",
+            "tenant_id": "tenant-default",
+            "target_id": f"plan-{i}",
+            "persona_id": f"persona-{i}",
+            "decision_state": "decided",
+            "status": "approved",
+            "outcome": "approved",
+        }
+        for i in range(160)
+    ]
+    specs = {
+        f"strat-{i}": {
+            "strategy_id": f"strat-{i}",
+            "title": f"Strategy {i}",
+            "name": f"Strategy {i}",
+            "lifecycle_state": "approved",
+            "risk": "medium",
+            "persona_ids": [f"persona-{i % 40}"],
+            "metadata": {},
+            "current_spec_version_id": f"reg-strat-{i}-v1",
+            "current_spec_version": "1.0.0",
+            "versions": [
+                {
+                    "spec_version_id": f"reg-strat-{i}-v{v}",
+                    "spec_version": f"1.0.{v}",
+                    "title": f"Strategy {i}",
+                    "lifecycle_state": "approved",
+                    "risk": "medium",
+                    "persona_ids": [f"persona-{i % 40}"],
+                    "metadata": {"payload": "s" * 1000},
+                    "created_at": f"2026-09-0{v}T00:00:00Z",
+                    "updated_at": f"2026-09-0{v}T00:00:00Z",
+                }
+                for v in range(1, 5)
+            ],
+        }
+        for i in range(160)
+    }
+    return {
+        "truth": truth,
+        "prov_store": prov_store,
+        "raws": raws,
+        "plans": plans,
+        "rbs": rbs,
+        "approvals": approvals,
+        "specs": specs,
+        "bindings": bindings,
+        "pools": pools,
+    }
+
+
+def test_persona_detail_routes_bounded_owner_reads_no_per_plan_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AC1: Detail routes make <= 1 deployment plan read and <= 1 approval read with zero per-item fetches."""
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.ports import create_persona_registry_write_owner
+
+    fx = _build_bounded_detail_fixture()
+    counts = {
+        "personas_provider": 0,
+        "plans_provider": 0,
+        "approvals_reader": 0,
+        "get_deployment_plan": 0,
+        "get_approval_decision": 0,
+        "prov_get_by_persona": 0,
+        "prov_list_by_tenant": 0,
+    }
+
+    def personas_provider() -> list[dict[str, Any]]:
+        counts["personas_provider"] += 1
+        return list(fx["raws"])
+
+    def plans_provider() -> list[dict[str, Any]]:
+        counts["plans_provider"] += 1
+        return list(fx["plans"])
+
+    def approvals_reader() -> list[dict[str, Any]]:
+        counts["approvals_reader"] += 1
+        return list(fx["approvals"])
+
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": fx["raws"],
+            "deployment_plans": fx["plans"],
+            "runtime_bindings": fx["rbs"],
+            "bindings": fx["bindings"],
+            "pools": fx["pools"],
+        },
+        ooda_management_kwargs={
+            "deployment_plans": fx["plans"],
+            "approval_decisions": fx["approvals"],
+        },
+    )
+    store.persona_capital_runtime.persona._records_provider = personas_provider
+    store.persona_capital_runtime.deployment._plans_provider = plans_provider
+    store.ooda_management.review_queue._deployment_plans_reader = plans_provider
+    store.ooda_management.review_queue._approval_decisions_reader = approvals_reader
+    store.research_knowledge_source._strategy_specs = fx["specs"]
+
+    orig_get_plan = store.get_deployment_plan
+    orig_get_apv = store.get_approval_decision
+
+    def spy_get_plan(plan_id: Optional[str]) -> Optional[dict[str, Any]]:
+        counts["get_deployment_plan"] += 1
+        return orig_get_plan(plan_id)
+
+    def spy_get_apv(decision_id: Optional[str]) -> Optional[dict[str, Any]]:
+        counts["get_approval_decision"] += 1
+        return orig_get_apv(decision_id)
+
+    monkeypatch.setattr(store, "get_deployment_plan", spy_get_plan)
+    monkeypatch.setattr(store, "get_approval_decision", spy_get_apv)
+
+    prov_store = fx["prov_store"]
+    orig_get_by_persona = prov_store.get_by_persona
+    orig_list_by_tenant = prov_store.list_by_tenant
+
+    def spy_get_by_persona(tenant_id: str, persona_id: str) -> Any:
+        counts["prov_get_by_persona"] += 1
+        return orig_get_by_persona(tenant_id, persona_id)
+
+    def spy_list_by_tenant(tenant_id: str) -> Any:
+        counts["prov_list_by_tenant"] += 1
+        return orig_list_by_tenant(tenant_id)
+
+    monkeypatch.setattr(prov_store, "get_by_persona", spy_get_by_persona)
+    monkeypatch.setattr(prov_store, "list_by_tenant", spy_list_by_tenant)
+    monkeypatch.setattr(persona_service, "_PERSONA_PROVISIONING_STORE", prov_store)
+
+    with tempfile.TemporaryDirectory() as td:
+        service = PersonaService(
+            write_owner=create_persona_registry_write_owner(),
+            ranking_write_owner=object(),
+            read_store=store,
+            command_store=CommandStore(os.path.join(td, "cmd.jsonl")),
+            provisioning_store=prov_store,
+            bff_error_fn=_test_bff_error,
+        )
+        monkeypatch.setattr(service, "_source_ingest_truth_by_connector", lambda: fx["truth"])
+        monkeypatch.setattr(persona_service, "_composed_persona_service", service)
+        monkeypatch.setattr(persona_service, "utc_now", lambda: _TS)
+
+        app = FastAPI()
+        app.include_router(
+            create_personas_router(
+                service=service,
+                extract_identity_fn=_test_extract_identity,
+                require_read_role_fn=_test_require_read_role,
+                require_operator_role_fn=_test_require_operator_role,
+                bff_error_fn=_test_bff_error,
+            )
+        )
+        client = TestClient(app)
+
+        # 1. GET /bff/personas/{persona_id}
+        for k in counts:
+            counts[k] = 0
+        r_bff = client.get("/bff/personas/persona-0", headers=OPERATOR_HEADERS)
+        assert r_bff.status_code == 200, r_bff.text
+        assert counts["plans_provider"] == 0
+        assert counts["approvals_reader"] == 0
+        assert counts["get_deployment_plan"] == 0
+        assert counts["get_approval_decision"] == 0
+        assert counts["personas_provider"] == 1
+        assert counts["prov_get_by_persona"] == 1
+        assert counts["prov_list_by_tenant"] == 0
+
+        # 2. GET /api/v1/personas/{persona_id}
+        for k in counts:
+            counts[k] = 0
+        r_api = client.get("/api/v1/personas/persona-0", headers=OPERATOR_HEADERS)
+        assert r_api.status_code == 200, r_api.text
+        assert counts["plans_provider"] == 0
+        assert counts["approvals_reader"] == 0
+        assert counts["get_deployment_plan"] == 0
+        assert counts["get_approval_decision"] == 0
+        assert counts["personas_provider"] == 1
+
+        # 3. GET /api/v1/operator/persona-management/{persona_id}
+        for k in counts:
+            counts[k] = 0
+        r_mgmt = client.get("/api/v1/operator/persona-management/persona-0", headers=OPERATOR_HEADERS)
+        assert r_mgmt.status_code == 200, r_mgmt.text
+        assert counts["plans_provider"] == 1
+        assert counts["approvals_reader"] == 1
+        assert counts["get_deployment_plan"] == 0
+        assert counts["get_approval_decision"] == 0
+        assert counts["personas_provider"] == 1
+        mgmt_data = r_mgmt.json()["data"]
+        assert [p["plan_id"] for p in mgmt_data["deploymentPlans"]] == ["plan-0"]
+        assert [a["decision_id"] for a in mgmt_data["approvals"]] == ["apv-0"]
+
+
+def test_persona_management_detail_does_not_compute_rich_source_health_or_unused_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC2: persona-management detail never computes rich source health overlay or unreturned blocks."""
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.ports import create_persona_registry_write_owner
+    import services.control_plane.bff.personas.routes.detail as detail_routes
+
+    fx = _build_bounded_detail_fixture()
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": fx["raws"],
+            "deployment_plans": fx["plans"],
+            "runtime_bindings": fx["rbs"],
+            "bindings": fx["bindings"],
+            "pools": fx["pools"],
+        },
+        ooda_management_kwargs={
+            "deployment_plans": fx["plans"],
+            "approval_decisions": fx["approvals"],
+        },
+    )
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("persona-management detail must not compute rich source health or unused blocks")
+
+    monkeypatch.setattr(persona_service, "_overlay_source_health_truth", forbidden)
+    monkeypatch.setattr(persona_service, "_source_health_bindings_from_requirements", forbidden)
+    monkeypatch.setattr(persona_service, "_routed_strategies_for_persona", forbidden)
+    monkeypatch.setattr(detail_routes, "_project_persona_dto", forbidden)
+    monkeypatch.setattr(detail_routes, "_project_persona_fleet_item", forbidden)
+    monkeypatch.setattr(store, "list_evolution_decisions", forbidden)
+
+    with tempfile.TemporaryDirectory() as td:
+        service = PersonaService(
+            write_owner=create_persona_registry_write_owner(),
+            ranking_write_owner=object(),
+            read_store=store,
+            command_store=CommandStore(os.path.join(td, "cmd.jsonl")),
+            provisioning_store=fx["prov_store"],
+            bff_error_fn=_test_bff_error,
+        )
+        monkeypatch.setattr(service, "overlay_source_health_truth", forbidden)
+        monkeypatch.setattr(service, "list_evolution_decisions", forbidden)
+        monkeypatch.setattr(persona_service, "_composed_persona_service", service)
+        monkeypatch.setattr(persona_service, "utc_now", lambda: _TS)
+
+        app = FastAPI()
+        app.include_router(
+            create_personas_router(
+                service=service,
+                extract_identity_fn=_test_extract_identity,
+                require_read_role_fn=_test_require_read_role,
+                require_operator_role_fn=_test_require_operator_role,
+                bff_error_fn=_test_bff_error,
+            )
+        )
+        client = TestClient(app)
+
+        resp = client.get("/api/v1/operator/persona-management/persona-0", headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["meta"]["surfaces"]["persona_health"]["status"] == "ok"
+        assert body["data"]["health"]["status"] == "healthy"
+        assert len(body["data"]["runtimeBindings"]) == 1
+        assert len(body["data"]["deploymentPlans"]) == 1
+        assert len(body["data"]["approvals"]) == 1
+
+
+def test_persona_detail_field_for_field_identity_and_cpu_reduction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AC3 & AC4: Detail responses stay field-for-field identical and CPU time drops by >= 50%."""
+    import time
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+    from services.control_plane.bff.ports import create_persona_registry_write_owner
+
+    fx = _build_bounded_detail_fixture()
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": fx["raws"],
+            "deployment_plans": fx["plans"],
+            "runtime_bindings": fx["rbs"],
+            "bindings": fx["bindings"],
+            "pools": fx["pools"],
+        },
+        ooda_management_kwargs={
+            "deployment_plans": fx["plans"],
+            "approval_decisions": fx["approvals"],
+        },
+    )
+    store.research_knowledge_source._strategy_specs = fx["specs"]
+    monkeypatch.setattr(persona_service, "_PERSONA_PROVISIONING_STORE", fx["prov_store"])
+
+    with tempfile.TemporaryDirectory() as td:
+        service = PersonaService(
+            write_owner=create_persona_registry_write_owner(),
+            ranking_write_owner=object(),
+            read_store=store,
+            command_store=CommandStore(os.path.join(td, "cmd.jsonl")),
+            provisioning_store=fx["prov_store"],
+            bff_error_fn=_test_bff_error,
+        )
+        monkeypatch.setattr(service, "_source_ingest_truth_by_connector", lambda: fx["truth"])
+        monkeypatch.setattr(persona_service, "_composed_persona_service", service)
+        monkeypatch.setattr(persona_service, "utc_now", lambda: _TS)
+        token = persona_service._current_persona_service.set(service)
+        try:
+            router = create_personas_router(
+                service=service,
+                extract_identity_fn=_test_extract_identity,
+                require_read_role_fn=_test_require_read_role,
+                require_operator_role_fn=_test_require_operator_role,
+                bff_error_fn=_test_bff_error,
+            )
+            app = FastAPI()
+            app.include_router(router)
+            client = TestClient(app)
+
+            # Warm up lazy imports
+            client.get("/api/v1/personas/persona-0", headers=OPERATOR_HEADERS)
+
+            r_bff = client.get("/bff/personas/persona-0", headers=OPERATOR_HEADERS)
+            r_mgmt = client.get("/api/v1/operator/persona-management/persona-0", headers=OPERATOR_HEADERS)
+            assert r_bff.status_code == 200 and r_mgmt.status_code == 200
+
+            # Verify field-for-field identity against legacy directory snapshot + fleet item projection
+            directory = persona_service._get_persona_directory_snapshot("tenant-default", snapshot_at=_TS)
+            legacy_raw = directory.records_by_id["persona-0"]
+            legacy_routed = len(store.list_strategy_specs(persona_id="persona-0") or [])
+            legacy_dto = persona_service._project_persona_dto(legacy_raw, overlay=None, routed_strategies=legacy_routed)
+            assert json.dumps(r_bff.json()["data"], sort_keys=True) == json.dumps(legacy_dto, sort_keys=True)
+
+            legacy_fleet = persona_service._project_persona_fleet_item(
+                store.get_persona("persona-0"),
+                all_runtime_bindings=service.list_runtime_bindings(),
+                all_incidents=service.list_incidents(),
+                all_evolution_decisions=service.list_evolution_decisions(),
+            )
+            mgmt_data = r_mgmt.json()["data"]
+            assert json.dumps(mgmt_data["health"], sort_keys=True) == json.dumps(legacy_fleet["health"], sort_keys=True)
+            assert json.dumps(mgmt_data["runtimeBindings"], sort_keys=True) == json.dumps(
+                legacy_fleet["runtimeBindings"], sort_keys=True
+            )
+            assert json.dumps(mgmt_data["capitalPools"], sort_keys=True) == json.dumps(
+                legacy_fleet["capitalPools"], sort_keys=True
+            )
+            assert json.dumps(mgmt_data["activeIncidents"], sort_keys=True) == json.dumps(
+                legacy_fleet["activeIncidents"], sort_keys=True
+            )
+            assert json.dumps(mgmt_data["latestTelemetry"], sort_keys=True) == json.dumps(
+                (legacy_fleet["telemetrySummary"] or {}).get("latest"), sort_keys=True
+            )
+
+            # Measure CPU reduction: legacy vs bounded on the same machine
+            def legacy_bff_call() -> dict[str, Any]:
+                snap = persona_service._get_persona_directory_snapshot("tenant-default", snapshot_at=_TS)
+                raw = snap.records_by_id["persona-0"]
+                routed = len(store.list_strategy_specs(persona_id="persona-0") or [])
+                return persona_service._project_persona_dto(raw, overlay=None, routed_strategies=routed)
+
+            def bounded_bff_call() -> dict[str, Any]:
+                with request_read_scope():
+                    raw = persona_service._get_persona_record_for_detail(
+                        "persona-0", "tenant-default", fallback_owner="op-b2"
+                    )
+                    routed = persona_service._routed_strategies_for_persona("persona-0")
+                    return persona_service._project_persona_dto(raw, overlay=None, routed_strategies=routed)
+
+            def legacy_mgmt_call() -> dict[str, Any]:
+                p = service.get_persona("persona-0")
+                _ = len(store.list_strategy_specs(persona_id="persona-0") or [])
+                fi = persona_service._project_persona_fleet_item(
+                    p,
+                    all_runtime_bindings=service.list_runtime_bindings(),
+                    all_incidents=service.list_incidents(),
+                    all_evolution_decisions=service.list_evolution_decisions(),
+                )
+                all_p = service.list_deployment_plans()
+                for mid in ("plan-0", "plan-missing-0"):
+                    service.get_deployment_plan(mid)
+                all_a = list(store.ooda_management.review_queue._approval_decisions_reader() or [])
+                all_a.extend(store.ooda_management.list_approval_queue_items() or [])
+                for aid in ("apv-0", "apv-missing-0"):
+                    service.get_approval_decision(aid)
+                return fi
+
+            def bounded_mgmt_call() -> dict[str, Any]:
+                with request_read_scope():
+                    p = service.get_persona("persona-0")
+                    all_p = service.list_deployment_plans()
+                    plans_by_id = {
+                        str(pl.get("plan_id") or pl.get("id") or ""): pl
+                        for pl in all_p
+                        if isinstance(pl, dict) and str(pl.get("plan_id") or pl.get("id") or "")
+                    }
+                    all_a = service.list_approval_decisions()
+                    return persona_service._project_persona_management_operational_surface(
+                        p,
+                        bindings=service.get_bindings_for_persona("persona-0"),
+                        sessions=service.get_sessions_for_persona("persona-0"),
+                        all_runtime_bindings=service.list_runtime_bindings(),
+                        all_incidents=service.list_incidents(),
+                        plans_by_id=plans_by_id,
+                    )
+
+            t0 = time.process_time()
+            legacy_bff_call()
+            dt_legacy_bff = time.process_time() - t0
+
+            t0 = time.process_time()
+            bounded_bff_call()
+            dt_bounded_bff = time.process_time() - t0
+
+            t0 = time.process_time()
+            legacy_mgmt_call()
+            dt_legacy_mgmt = time.process_time() - t0
+
+            t0 = time.process_time()
+            bounded_mgmt_call()
+            dt_bounded_mgmt = time.process_time() - t0
+
+            assert dt_bounded_bff <= dt_legacy_bff * 0.5, (dt_legacy_bff, dt_bounded_bff)
+            assert dt_bounded_mgmt <= dt_legacy_mgmt * 0.5, (dt_legacy_mgmt, dt_bounded_mgmt)
+        finally:
+            persona_service._current_persona_service.reset(token)
+
+

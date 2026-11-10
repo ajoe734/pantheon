@@ -2763,6 +2763,60 @@ class StaticContractTests(unittest.TestCase):
                     self.assertEqual(al.dsn, isolated_dsn)
                     self.assertEqual(al.schema, "public")
 
+    def test_prod_rollback_rto_fast_stop_and_healthcheck_parity(self) -> None:
+        from scripts.deploy import staging_sanitize
+
+        stage_services = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text(encoding="utf-8"))["services"]
+        prod_services = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]
+
+        python_pid1_sigint_services = (
+            "runtime-manager",
+            "lifecycle-projector",
+            "lineage-read",
+            "telemetry",
+            "agora-interaction-worker",
+            "paper-fleet-reconciler",
+            "paper-signal-producer",
+        )
+        for svc_name in python_pid1_sigint_services:
+            self.assertEqual(prod_services[svc_name].get("stop_signal"), "SIGINT", svc_name)
+            self.assertEqual(stage_services[svc_name].get("stop_signal"), "SIGINT", svc_name)
+
+        for key in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS:
+            if key == "operator_bff":
+                continue
+            svc_name = key.replace("_", "-")
+            expected_grace = "5s" if svc_name in ("paper-fleet-reconciler", "paper-signal-producer") else "2s"
+            self.assertEqual(prod_services[svc_name].get("stop_grace_period"), expected_grace, svc_name)
+            self.assertEqual(stage_services[svc_name].get("stop_grace_period"), expected_grace, svc_name)
+        for bff_color in ("operator-bff-blue", "operator-bff-green"):
+            self.assertEqual(prod_services[bff_color].get("stop_grace_period"), "2s", bff_color)
+
+        fast_healthcheck_owners = (
+            "lineage-read",
+            "registry",
+            "telemetry",
+            "incidents",
+            "postmortems",
+            "evolution",
+            "reconciliation-drift-svc",
+            "persona",
+            "source-ingest",
+            "training-session-svc",
+            "policy-learning-svc",
+            "research-orchestrator-svc",
+            "paper-fleet-reconciler",
+            "paper-signal-producer",
+            "memory",
+            "capital",
+            "openclaw-gateway-adapter",
+        )
+        for svc_name in fast_healthcheck_owners:
+            self.assertEqual(prod_services[svc_name]["healthcheck"].get("interval"), "5s", svc_name)
+            self.assertEqual(stage_services[svc_name]["healthcheck"].get("interval"), "5s", svc_name)
+        for paper_svc in ("paper-fleet-reconciler", "paper-signal-producer"):
+            self.assertEqual(prod_services[paper_svc]["healthcheck"].get("start_period"), "5s", paper_svc)
+
 
 if __name__ == "__main__":
     unittest.main()

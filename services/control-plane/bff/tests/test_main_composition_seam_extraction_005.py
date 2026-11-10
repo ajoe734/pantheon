@@ -492,3 +492,315 @@ def test_retired_runtime_exclusion_holds_on_both_alert_list_routes(monkeypatch) 
         ids = {a["alert_id"] for a in resp.json()["alerts"]}
         assert ids == {"alert-runtime-rt-current"}, (path, ids)
     assert not set(store.telemetry_reads) & {r["runtime_id"] for r in _RETIRED_FAILED_RUNTIMES}
+
+
+# --- BFF-ALERTS-PARTIAL-20261109: contributor order & partial composition ---
+
+
+class _PartialAlertsStore:
+    """Store with real contributor row shapes and call-order tracking."""
+
+    def __init__(self, *, slow_contributor=None, sleep_seconds: float = 0.22):
+        self.slow_contributor = slow_contributor
+        self.sleep_seconds = sleep_seconds
+        self.call_order: list[str] = []
+        self.completed_snapshots: dict[str, list[str]] = {}
+        self.active_completed_sections: dict | None = None
+        self.incidents_by_id = {
+            "inc-open": {
+                "incident_id": "inc-open",
+                "title": "Unexpected drawdown in persona-alpha",
+                "severity": "sev1",
+                "status": "open",
+                "opened_at": "2026-11-09T08:01:00Z",
+                "created_at": "2026-11-09T08:01:00Z",
+            }
+        }
+
+    def _record_step(self, contributor: str) -> None:
+        self.call_order.append(contributor)
+        if self.active_completed_sections is not None:
+            self.completed_snapshots[contributor] = list(self.active_completed_sections.keys())
+        if self.slow_contributor == contributor:
+            import time
+            time.sleep(self.sleep_seconds)
+
+    def dataset_source(self, dataset: str) -> str:
+        return "service_store"
+
+    def list_incidents(self, *, open_only: bool = False, **_kwargs):
+        assert open_only is True
+        self._record_step("incident")
+        return [dict(row) for row in self.incidents_by_id.values() if row.get("status") in {"open", "investigating"}]
+
+    def get_incident(self, incident_id: str):
+        row = self.incidents_by_id.get(incident_id)
+        return dict(row) if row else None
+
+    def update_incident_status(self, incident_id: str, *, status: str, resolved_at=None):
+        row = dict(self.incidents_by_id.get(incident_id) or {"incident_id": incident_id})
+        row["status"] = status
+        if resolved_at is not None:
+            row["resolved_at"] = resolved_at
+        self.incidents_by_id[incident_id] = row
+        return row
+
+    def get_kill_switch_status(self):
+        self._record_step("kill_switch")
+        return {
+            "active": True,
+            "status": "triggered",
+            "safe_mode_status": "soft",
+            "last_confirmed_at": "2026-11-09T08:02:00Z",
+            "last_triggered_at": "2026-11-09T08:02:30Z",
+        }
+
+    def list_runtime_bindings(self):
+        self._record_step("runtime")
+        return [
+            {
+                "id": "runtime-042",
+                "runtime_id": "runtime-042",
+                "deployment_stage": "live",
+                "status": "running",
+                "plan_id": "plan-F-042",
+                "updated_at": "2026-11-09T08:03:00Z",
+            }
+        ]
+
+    def get_telemetry_summary(self, runtime_id: str):
+        if runtime_id != "runtime-042":
+            return None
+        return {
+            "runtime_id": "runtime-042",
+            "window": "1h",
+            "drawdown": 0.125,
+            "fill_rate": 0.89,
+            "avg_slippage_bps": 4.2,
+            "collected_at": "2026-11-09T08:03:30Z",
+        }
+
+    def list_governance_review_queue_items(self):
+        self._record_step("governance")
+        return [
+            {
+                "item_id": "review-dec-001",
+                "item_type": "ApprovalDecision",
+                "risk_level": "medium",
+                "status": "escalated",
+                "submitted_at": "2026-11-09T08:00:00Z",
+                "submitted_by": "governance-service",
+                "governance_outcome": "escalated",
+                "allowedActions": {
+                    "canApprove": False,
+                    "canReject": False,
+                    "canRequestRevision": True,
+                },
+                "review_summary": {
+                    "riskSummary": "ApprovalDecision approval decision awaiting governance review.",
+                    "evidence_refs": [],
+                    "linked_approval_decision_id": "dec-001",
+                    "target_type": "ApprovalDecision",
+                    "target_id": "plan-F-042",
+                    "target_version": "v1",
+                },
+            }
+        ]
+
+    def list_approval_queue_items(self):
+        return [
+            {
+                "decision_id": "appr-001",
+                "tenant_id": "tenant-default",
+                "decision_type": "DeploymentPlan",
+                "risk_level": "high",
+                "submitted_at": "2026-11-09T08:00:30Z",
+                "submitted_by": "governance-service",
+                "decision_state": "pending",
+                "allowedActions": {
+                    "canApprove": False,
+                    "canReject": False,
+                    "canRequestRevision": True,
+                },
+                "decision_context": {
+                    "risk_summary": "Approval decision awaiting governance action.",
+                    "evidence_refs": [],
+                    "governance_chain": {
+                        "target_type": "DeploymentPlan",
+                        "target_id": "plan-F-042",
+                        "target_version": "v1",
+                    },
+                    "required_approvals": 1,
+                },
+            }
+        ]
+
+
+def test_live_alert_builder_runs_incident_kill_switch_runtime_before_governance_and_records_sections(
+    monkeypatch,
+) -> None:
+    from services.control_plane.bff import main as bff_main
+
+    store = _PartialAlertsStore()
+    completed_sections: dict = {}
+    store.active_completed_sections = completed_sections
+    monkeypatch.setattr(bff_main, "read_store", store)
+    monkeypatch.setattr(bff_main, "_dataset_surface_status", _runtime_surface_ok)
+
+    payload = bff_main._build_operator_alerts_payload(
+        "2026-11-09T08:10:00Z",
+        completed_sections=completed_sections,
+    )
+
+    assert store.call_order == ["incident", "kill_switch", "runtime", "governance"]
+    assert list(completed_sections.keys()) == ["incident", "kill_switch", "runtime", "governance"]
+    assert store.completed_snapshots == {
+        "incident": [],
+        "kill_switch": ["incident"],
+        "runtime": ["incident", "kill_switch"],
+        "governance": ["incident", "kill_switch", "runtime"],
+    }
+    assert [a["alert_id"] for a in payload["alerts"]] == [
+        "alert-runtime-runtime-042",
+        "alert-kill-switch-state",
+        "alert-incident-inc-open",
+        "alert-approval-appr-001",
+        "alert-governance-review-review-dec-001",
+    ]
+    assert payload["meta"]["surfaces"]["alerts"]["status"] == "ok"
+    assert payload["meta"]["surfaces"]["alerts"]["source"] == "bff_composed"
+
+
+def test_live_alert_builder_partial_and_fallback_on_bff_alerts_and_full_on_other_consumers(
+    monkeypatch,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.auth import policy as auth_policy
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.incidents.router import create_incident_router
+    from services.control_plane.bff.personas.routes.common import run_management_read
+    from services.control_plane.bff.tests.test_incident_router import MockCommandStore
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setattr(bff_main, "_dataset_surface_status", _runtime_surface_ok)
+
+    # 1. Slow governance contributor: incident, kill_switch, and runtime alerts survive
+    slow_gov_store = _PartialAlertsStore(slow_contributor="governance", sleep_seconds=0.22)
+    monkeypatch.setattr(bff_main, "read_store", slow_gov_store)
+    monkeypatch.setenv("PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS", "0.05")
+
+    cmd_store = MockCommandStore()
+    app = FastAPI()
+    app.include_router(
+        create_incident_router(
+            read_surface=slow_gov_store,
+            command_store=cmd_store,
+            durable_writer=slow_gov_store,
+            build_operator_alerts_payload=bff_main._build_operator_alerts_payload,
+            run_management_read=run_management_read,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+        )
+    )
+    register_error_handlers(app)
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer op-tester:operator"}
+
+    resp = client.get("/bff/alerts", headers=headers)
+    assert resp.status_code == 200, resp.text
+    gov_timeout_payload = resp.json()
+    assert [a["alert_id"] for a in gov_timeout_payload["alerts"]] == [
+        "alert-runtime-runtime-042",
+        "alert-kill-switch-state",
+        "alert-incident-inc-open",
+    ]
+    gov_surfaces = gov_timeout_payload["meta"]["surfaces"]
+    assert gov_surfaces["alerts"]["status"] == "degraded"
+    assert gov_surfaces["alerts"]["source"] == "bff_composed"
+    assert gov_surfaces["alerts"]["reason"] == "read_timeout"
+    assert gov_surfaces["incident_feed"]["status"] == "ok"
+    assert gov_surfaces["kill_switch"]["status"] == "ok"
+    assert gov_surfaces["runtime_roster"]["status"] == "ok"
+    assert gov_surfaces["telemetry_summary"]["status"] == "ok"
+    assert gov_surfaces["review_queue"]["status"] == "degraded"
+    assert gov_surfaces["review_queue"]["reason"] == "read_timeout"
+    assert gov_surfaces["approval_queue"]["status"] == "degraded"
+    assert gov_surfaces["approval_queue"]["reason"] == "read_timeout"
+
+    # Also verify against the composed bff_main.app (through app_factory's _dep wrapper)
+    main_client = TestClient(bff_main.app)
+    main_gov_resp = main_client.get("/bff/alerts", headers=headers)
+    assert main_gov_resp.status_code == 200, main_gov_resp.text
+    main_gov_body = main_gov_resp.json()
+    assert [a["alert_id"] for a in main_gov_body["alerts"]] == [
+        "alert-runtime-runtime-042",
+        "alert-kill-switch-state",
+        "alert-incident-inc-open",
+    ]
+    assert main_gov_body["meta"]["surfaces"]["alerts"]["source"] == "bff_composed"
+    assert main_gov_body["meta"]["surfaces"]["alerts"]["status"] == "degraded"
+    assert main_gov_body["meta"]["surfaces"]["alerts"]["reason"] == "read_timeout"
+    assert main_gov_body["meta"]["surfaces"]["review_queue"]["reason"] == "read_timeout"
+    assert main_gov_body["meta"]["surfaces"]["approval_queue"]["reason"] == "read_timeout"
+
+    # 2. Slow incident contributor (runs first): no contributor finishes -> timeout_fallback
+    slow_inc_store = _PartialAlertsStore(slow_contributor="incident", sleep_seconds=0.22)
+    monkeypatch.setattr(bff_main, "read_store", slow_inc_store)
+    inc_resp = client.get("/bff/alerts", headers=headers)
+    assert inc_resp.status_code == 200, inc_resp.text
+    inc_timeout_payload = inc_resp.json()
+    assert inc_timeout_payload["alerts"] == []
+    assert inc_timeout_payload["summary"]["total_active"] == 0
+    inc_alerts_surface = inc_timeout_payload["meta"]["surfaces"]["alerts"]
+    assert inc_alerts_surface["status"] == "degraded"
+    assert inc_alerts_surface["source"] == "timeout_fallback"
+    assert inc_alerts_surface["reason"] == "read_timeout"
+
+    # 3. When nothing times out: /bff/alerts, /bff/risk/alerts, detail routes,
+    # acknowledge route, and Management AI context all use the same builder and
+    # receive the full 5-alert result.
+    fast_store = _PartialAlertsStore(slow_contributor=None)
+    monkeypatch.setattr(bff_main, "read_store", fast_store)
+    monkeypatch.setenv("PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS", "3.0")
+
+    expected_ids = [
+        "alert-runtime-runtime-042",
+        "alert-kill-switch-state",
+        "alert-incident-inc-open",
+        "alert-approval-appr-001",
+        "alert-governance-review-review-dec-001",
+    ]
+    for list_path in ("/bff/alerts", "/bff/risk/alerts"):
+        list_resp = client.get(list_path, headers=headers)
+        assert list_resp.status_code == 200, (list_path, list_resp.text)
+        list_body = list_resp.json()
+        assert [a["alert_id"] for a in list_body["alerts"]] == expected_ids
+        assert list_body["meta"]["surfaces"]["alerts"]["status"] == "ok"
+        assert list_body["meta"]["surfaces"]["alerts"]["source"] == "bff_composed"
+
+    for detail_path in (
+        "/bff/alerts/alert-governance-review-review-dec-001",
+        "/bff/risk/alerts/alert-incident-inc-open",
+    ):
+        detail_resp = client.get(detail_path, headers=headers)
+        assert detail_resp.status_code == 200, (detail_path, detail_resp.text)
+        assert detail_resp.json()["data"]["alert_id"] == detail_path.rsplit("/", 1)[-1]
+
+    ack_resp = client.post(
+        "/bff/alerts/alert-incident-inc-open/acknowledge",
+        headers={**headers, "Idempotency-Key": "idem-ack-partial-005"},
+        json={"note": "investigating"},
+    )
+    assert ack_resp.status_code == 200, ack_resp.text
+    assert ack_resp.json()["status"] == "acknowledged"
+    assert slow_gov_store.get_incident("inc-open")["status"] == "investigating"
+
+    ai_builder = get_build_operator_alerts_payload()
+    assert ai_builder is bff_main._build_operator_alerts_payload
+    ai_alerts_payload = ai_builder("2026-11-09T08:15:00Z")
+    assert [a["alert_id"] for a in ai_alerts_payload["alerts"]] == expected_ids

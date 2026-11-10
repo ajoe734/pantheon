@@ -1400,7 +1400,7 @@ def mount_bff_routers(
             run_management_read=_dep("run_management_read"),
             request_dry_run_requested=_dep("_request_dry_run_requested"),
             dry_run_success_response=_dep("_dry_run_success_response"),
-            build_operator_alerts_payload=lambda s: _dep("_build_operator_alerts_payload")(s),
+            build_operator_alerts_payload=lambda s, **kwargs: _dep("_build_operator_alerts_payload")(s, **kwargs),
             list_governance_audit_events=_dep("_list_governance_audit_events"),
             incident_events=_dep("_incident_events"),
             incident_subscribers=_dep("_incident_subscribers"),

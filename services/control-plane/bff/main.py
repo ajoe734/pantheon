@@ -2008,19 +2008,63 @@ def _build_alert_summary(alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
         "by_severity": by_severity,
         "by_category": by_category,
     }
-def _build_operator_alerts_payload(snapshot_at: str) -> Dict[str, Any]:
-    incident_alerts, incident_surface = _build_incident_alerts(snapshot_at)
-    governance_alerts, governance_surfaces = _build_governance_alerts(snapshot_at)
-    kill_switch_alerts, kill_switch_surface, _ = _build_kill_switch_alerts(snapshot_at)
-    runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
+def _build_operator_alerts_payload(
+    snapshot_at: str,
+    completed_sections: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    from .core.owner_reads import remaining_management_read_budget
+
+    sections = completed_sections if completed_sections is not None else {}
+
+    def _record(
+        name: str,
+        fn: Callable[[], tuple[List[Dict[str, Any]], Any]],
+    ) -> tuple[List[Dict[str, Any]], Any]:
+        before_rem = remaining_management_read_budget()
+        if before_rem is not None and before_rem <= 0.0:
+            from .personas.routes.common import ManagementReadTimeout
+            raise ManagementReadTimeout()
+        try:
+            result = fn()
+        except Exception as exc:
+            after_err_rem = remaining_management_read_budget()
+            if isinstance(exc, TimeoutError) or (
+                after_err_rem is not None and after_err_rem <= 0.0
+            ):
+                from .personas.routes.common import ManagementReadTimeout
+                raise ManagementReadTimeout() from exc
+            raise
+        after_rem = remaining_management_read_budget()
+        if after_rem is not None and after_rem <= 0.0:
+            from .personas.routes.common import ManagementReadTimeout
+            raise ManagementReadTimeout()
+        sections[name] = result
+        return result
+
+    incident_alerts, incident_surface = _record(
+        "incident",
+        lambda: _build_incident_alerts(snapshot_at),
+    )
+    kill_switch_alerts, kill_switch_surface = _record(
+        "kill_switch",
+        lambda: _build_kill_switch_alerts(snapshot_at)[:2],
+    )
+    runtime_alerts, runtime_surfaces = _record(
+        "runtime",
+        lambda: _build_runtime_alerts(snapshot_at),
+    )
+    governance_alerts, governance_surfaces = _record(
+        "governance",
+        lambda: _build_governance_alerts(snapshot_at),
+    )
 
     source_surfaces = [
         incident_surface,
-        governance_surfaces["review_queue"],
-        governance_surfaces["approval_queue"],
         kill_switch_surface,
         runtime_surfaces["runtime_roster"],
         runtime_surfaces["telemetry_summary"],
+        governance_surfaces["review_queue"],
+        governance_surfaces["approval_queue"],
     ]
     alerts_surface = _aggregate_group_surface(
         "alerts",
@@ -2031,7 +2075,7 @@ def _build_operator_alerts_payload(snapshot_at: str) -> Dict[str, Any]:
     )
 
     alerts = sorted(
-        incident_alerts + governance_alerts + kill_switch_alerts + runtime_alerts,
+        incident_alerts + kill_switch_alerts + runtime_alerts + governance_alerts,
         key=_alert_sort_key,
         reverse=True,
     )

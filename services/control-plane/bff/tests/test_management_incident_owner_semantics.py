@@ -111,3 +111,38 @@ def test_investigating_only_tenant_is_degraded_and_counted_open() -> None:
     assert group["details"]["open_incidents"] == 1
     counts = svc.build_shell_summary_counts()
     assert counts["counts"]["open_alerts"] == 1, counts
+
+
+def _open_only_all(requested) -> bool:
+    return bool(requested) and all(q.get("open_only") == ["true"] for q in requested)
+
+
+def test_shell_summary_health_and_alerts_request_open_only_from_owner() -> None:
+    port, requested = _capturing_port()
+    svc = ManagementService(read_store=_ports(port))
+
+    counts = svc.build_shell_summary_counts()
+    assert counts["counts"]["open_alerts"] == 2, counts
+    assert _open_only_all(requested)
+
+    requested.clear()
+    health = svc.get_operator_health_status()
+    group = next(g for g in health.get("data", health)["groups"] if g["group_id"] == "incident")
+    assert group["details"] == {"open_incidents": 2}
+    assert _open_only_all(requested)
+
+    requested.clear()
+    alerts = svc.get_operator_alerts()
+    incident_ids = {a["alert_id"] for a in alerts["alerts"] if a["category"] == "incident"}
+    assert incident_ids == {"inc-open", "inc-inv"}
+    assert alerts["meta"]["surfaces"]["incident_feed"]["status"] == "ok"
+    assert _open_only_all(requested)
+
+
+def test_failed_incident_owner_is_unavailable_not_zero_for_open_only_reads() -> None:
+    svc = _service(DomainIncidentPort(incidents_api_url="http://incident-owner.invalid", opener=_down))
+    health = svc.get_operator_health_status()
+    group = next(g for g in health.get("data", health)["groups"] if g["group_id"] == "incident")
+    assert group["details"]["open_incidents"] is None
+    assert "total_incidents" not in group["details"]
+    assert svc.get_operator_alerts()["meta"]["surfaces"]["incident_feed"]["status"] == "unavailable"

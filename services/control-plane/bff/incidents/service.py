@@ -833,17 +833,53 @@ class IncidentService:
                 })
         return alerts, {"runtime_roster": rs, "telemetry_summary": ts}
 
-    def build_operator_alerts_payload(self, snapshot_at: str) -> Dict[str, Any]:
-        inc_alerts, inc_s = self.build_incident_alerts(snapshot_at)
-        gov_alerts, gov_s = self.build_governance_alerts(snapshot_at)
-        ks_alerts, ks_s, _ = self.build_kill_switch_alerts(snapshot_at)
-        rt_alerts, rt_s = self.build_runtime_alerts(snapshot_at)
-        alerts = sorted(inc_alerts + gov_alerts + ks_alerts + rt_alerts, key=_alert_sort_key, reverse=True)
+    def build_operator_alerts_payload(
+        self,
+        snapshot_at: str,
+        completed_sections: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        from ..core.owner_reads import remaining_management_read_budget
+
+        sections = completed_sections if completed_sections is not None else {}
+
+        def _record(
+            name: str,
+            fn: Callable[[], Tuple[List[Dict[str, Any]], Any]],
+        ) -> Tuple[List[Dict[str, Any]], Any]:
+            before_rem = remaining_management_read_budget()
+            if before_rem is not None and before_rem <= 0.0:
+                from ..personas.routes.common import ManagementReadTimeout
+                raise ManagementReadTimeout()
+            try:
+                result = fn()
+            except Exception as exc:
+                after_err_rem = remaining_management_read_budget()
+                if isinstance(exc, TimeoutError) or (
+                    after_err_rem is not None and after_err_rem <= 0.0
+                ):
+                    from ..personas.routes.common import ManagementReadTimeout
+                    raise ManagementReadTimeout() from exc
+                raise
+            after_rem = remaining_management_read_budget()
+            if after_rem is not None and after_rem <= 0.0:
+                from ..personas.routes.common import ManagementReadTimeout
+                raise ManagementReadTimeout()
+            sections[name] = result
+            return result
+
+        inc_alerts, inc_s = _record("incident", lambda: self.build_incident_alerts(snapshot_at))
+        ks_alerts, ks_s = _record(
+            "kill_switch",
+            lambda: self.build_kill_switch_alerts(snapshot_at)[:2],
+        )
+        rt_alerts, rt_s = _record("runtime", lambda: self.build_runtime_alerts(snapshot_at))
+        gov_alerts, gov_s = _record("governance", lambda: self.build_governance_alerts(snapshot_at))
+        alerts = sorted(inc_alerts + ks_alerts + rt_alerts + gov_alerts, key=_alert_sort_key, reverse=True)
         meta = {
             "snapshot_at": snapshot_at, "acknowledgement_supported": True,
             "surfaces": {
                 "alerts": {"status": "ok" if inc_s.get("status") != "unavailable" else "degraded", "source": "bff_composed"},
-                "incident": inc_s, "kill_switch": ks_s, "review_queue": gov_s["review_queue"],
+                "incident": inc_s, "incident_feed": inc_s, "kill_switch": ks_s, "review_queue": gov_s["review_queue"],
                 "approval_queue": gov_s["approval_queue"], "runtime_roster": rt_s["runtime_roster"],
                 "telemetry_summary": rt_s["telemetry_summary"],
             },
@@ -852,14 +888,142 @@ class IncidentService:
         if staleness is not None: meta["staleness"] = staleness
         return {"alerts": alerts, "summary": _build_alert_summary(alerts), "meta": meta}
 
-    def management_alerts_degraded_payload(self, snapshot_at: str) -> Dict[str, Any]:
-        meta: Dict[str, Any] = {
+    def management_alerts_degraded_payload(
+        self,
+        snapshot_at: str,
+        *,
+        reason: str = "read_timeout",
+        completed_sections: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if completed_sections:
+            def _incomplete_surface(dataset: str) -> Dict[str, Any]:
+                return {
+                    "status": "degraded",
+                    "dataset": dataset,
+                    "source": "management_read_timeout" if reason == "read_timeout" else "incomplete_read",
+                    "reason": reason,
+                    "message": (
+                        f"{dataset} exceeded the operator alert read budget; completed contributors are returned."
+                        if reason == "read_timeout"
+                        else f"{dataset} did not complete ({reason}); completed contributors are returned."
+                    ),
+                    "snapshot_at": snapshot_at,
+                    "staleness": {"served_from": "timeout_degraded", "last_known_at": snapshot_at},
+                }
+
+            def _unpack(entry: Any) -> Tuple[List[Dict[str, Any]], Any]:
+                if isinstance(entry, tuple) and len(entry) >= 2:
+                    return list(entry[0] or []), entry[1]
+                if isinstance(entry, dict):
+                    return list(entry.get("alerts") or []), entry.get("surfaces") or entry.get("surface") or {}
+                return [], {}
+
+            if "incident" in completed_sections:
+                inc_alerts, raw_inc_s = _unpack(completed_sections["incident"])
+                inc_s = (
+                    raw_inc_s.get("incident_feed") or raw_inc_s.get("incident")
+                    if isinstance(raw_inc_s, dict) and ("incident_feed" in raw_inc_s or "incident" in raw_inc_s)
+                    else raw_inc_s
+                )
+            else:
+                inc_alerts = []
+                inc_s = _incomplete_surface("incidents")
+
+            if "kill_switch" in completed_sections:
+                ks_alerts, raw_ks_s = _unpack(completed_sections["kill_switch"])
+                ks_s = (
+                    raw_ks_s.get("kill_switch")
+                    if isinstance(raw_ks_s, dict) and "kill_switch" in raw_ks_s
+                    else raw_ks_s
+                )
+            else:
+                ks_alerts = []
+                ks_s = _incomplete_surface("kill_switch")
+
+            if "runtime" in completed_sections:
+                rt_alerts, raw_rt_s = _unpack(completed_sections["runtime"])
+                rt_roster_s = (
+                    raw_rt_s.get("runtime_roster")
+                    if isinstance(raw_rt_s, dict) and "runtime_roster" in raw_rt_s
+                    else _incomplete_surface("runtime_bindings")
+                )
+                rt_tel_s = (
+                    raw_rt_s.get("telemetry_summary")
+                    if isinstance(raw_rt_s, dict) and "telemetry_summary" in raw_rt_s
+                    else _incomplete_surface("telemetry_summaries")
+                )
+            else:
+                rt_alerts = []
+                rt_roster_s = _incomplete_surface("runtime_bindings")
+                rt_tel_s = _incomplete_surface("telemetry_summaries")
+
+            if "governance" in completed_sections:
+                gov_alerts, raw_gov_s = _unpack(completed_sections["governance"])
+                rq_s = (
+                    raw_gov_s.get("review_queue")
+                    if isinstance(raw_gov_s, dict) and "review_queue" in raw_gov_s
+                    else _incomplete_surface("governance_review_queue_items")
+                )
+                aq_s = (
+                    raw_gov_s.get("approval_queue")
+                    if isinstance(raw_gov_s, dict) and "approval_queue" in raw_gov_s
+                    else _incomplete_surface("approval_queue_items")
+                )
+            else:
+                gov_alerts = []
+                rq_s = _incomplete_surface("governance_review_queue_items")
+                aq_s = _incomplete_surface("approval_queue_items")
+
+            alerts = sorted(
+                inc_alerts + ks_alerts + rt_alerts + gov_alerts,
+                key=_alert_sort_key,
+                reverse=True,
+            )
+            alerts_surface = {
+                "status": "degraded",
+                "source": "bff_composed",
+                "reason": reason,
+                "name": "alerts",
+                "surface": "alerts",
+                "snapshot_at": snapshot_at,
+                "as_of": snapshot_at,
+                "message": (
+                    "Operator alert feed is available, but one or more contributing surfaces timed out."
+                    if reason == "read_timeout"
+                    else "Operator alert feed is available, but one or more contributing surfaces are degraded."
+                ),
+            }
+            meta: Dict[str, Any] = {
+                "snapshot_at": snapshot_at,
+                "acknowledgement_supported": True,
+                "surfaces": {
+                    "alerts": alerts_surface,
+                    "incident_feed": inc_s,
+                    "incident": inc_s,
+                    "review_queue": rq_s,
+                    "approval_queue": aq_s,
+                    "kill_switch": ks_s,
+                    "runtime_roster": rt_roster_s,
+                    "telemetry_summary": rt_tel_s,
+                },
+            }
+            staleness = self.get_staleness()
+            if staleness is not None:
+                meta["staleness"] = staleness
+            return {
+                "alerts": alerts,
+                "summary": _build_alert_summary(alerts),
+                "meta": meta,
+            }
+
+        meta = {
             "snapshot_at": snapshot_at,
             "acknowledgement_supported": True,
             "surfaces": {
                 "alerts": {
                     "status": "degraded",
                     "source": "timeout_fallback",
+                    "reason": reason,
                     "message": "Alert aggregation timed out under concurrent read fanout; degraded empty response returned.",
                 },
             },
