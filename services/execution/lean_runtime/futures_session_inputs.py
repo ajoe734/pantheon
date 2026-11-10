@@ -24,9 +24,12 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from services.execution.lean_runtime.performance_telemetry import (
+    FUTURES_MARK_MAX_SESSION_LAG,
     FUTURES_SETTLEMENT_MARK_KIND,
     MarketMark,
     expected_futures_settlement_session,
+    futures_session_lag,
+    futures_settlement_session_for_day,
 )
 from services.execution.lean_runtime.instrument_candidates import (
     CONTRACT_CODE,
@@ -144,6 +147,7 @@ def read_session_settlement_prices_for_open_futures(
     normalized_root: str | Path | None = None,
     partition_horizon: str | date | None = None,
     historical_session: bool = False,
+    max_stale_sessions: int = 0,
 ) -> dict[str, Any]:
     """Read daily settlement prices for open futures contracts on ``trade_date``.
 
@@ -152,6 +156,12 @@ def read_session_settlement_prices_for_open_futures(
     ``trade_date`` instead of the newest row overall (which would be a later
     session and therefore "stale").  A session with no such row is still
     reported missing or stale, never filled from another date.
+
+    ``max_stale_sessions`` is how many trading sessions a contract's newest row
+    may trail ``trade_date`` (0: the row must carry exactly that session). A
+    row carrying a session newer than ``trade_date`` is never accepted here.
+    The accepted row's own session is reported in
+    ``session_settlement_price_dates``.
 
     ``partition_horizon`` is the newest partition date that may be read; it
     defaults to ``trade_date``. A valuation after the session passes the
@@ -169,6 +179,7 @@ def read_session_settlement_prices_for_open_futures(
     positions = open_stock_future_positions(open_positions)
     contracts = [pos["instrument_id"] for pos in positions]
     prices: dict[str, float] = {}
+    price_dates: dict[str, str] = {}
     reasons: dict[str, str] = {}
 
     if not positions:
@@ -176,6 +187,7 @@ def read_session_settlement_prices_for_open_futures(
             "trade_date": session_iso,
             "open_futures_contracts": [],
             "session_settlement_prices": {},
+            "session_settlement_price_dates": {},
             "session_settlement_price_reasons": {},
             "futures_mark_unavailable_reason": None,
         }
@@ -192,6 +204,7 @@ def read_session_settlement_prices_for_open_futures(
             "trade_date": session_iso,
             "open_futures_contracts": contracts,
             "session_settlement_prices": {},
+            "session_settlement_price_dates": {},
             "session_settlement_price_reasons": reasons,
             "futures_mark_unavailable_reason": "dataset_root_unset",
         }
@@ -205,6 +218,7 @@ def read_session_settlement_prices_for_open_futures(
             "trade_date": session_iso,
             "open_futures_contracts": contracts,
             "session_settlement_prices": {},
+            "session_settlement_price_dates": {},
             "session_settlement_price_reasons": reasons,
             "futures_mark_unavailable_reason": "dataset_unreadable",
         }
@@ -222,6 +236,7 @@ def read_session_settlement_prices_for_open_futures(
             "trade_date": session_iso,
             "open_futures_contracts": contracts,
             "session_settlement_prices": {},
+            "session_settlement_price_dates": {},
             "session_settlement_price_reasons": reasons,
             "futures_mark_unavailable_reason": "dataset_unreadable",
         }
@@ -237,6 +252,7 @@ def read_session_settlement_prices_for_open_futures(
             "trade_date": session_iso,
             "open_futures_contracts": contracts,
             "session_settlement_prices": {},
+            "session_settlement_price_dates": {},
             "session_settlement_price_reasons": reasons,
             "futures_mark_unavailable_reason": reason_code,
         }
@@ -292,7 +308,11 @@ def read_session_settlement_prices_for_open_futures(
 
         _, latest_row = max(matching_rows, key=lambda item: item[0])
         row_price_date = _optional_date(latest_row.get("price_date")) or _snapshot_market_date(latest_row)
-        if row_price_date != session_day:
+        if (
+            row_price_date is None
+            or row_price_date > session_day
+            or futures_session_lag(row_price_date, session_day) > max_stale_sessions
+        ):
             reasons[inst_id] = "settlement_price_stale"
             continue
 
@@ -302,6 +322,7 @@ def read_session_settlement_prices_for_open_futures(
             continue
 
         prices[inst_id] = valid_price
+        price_dates[inst_id] = row_price_date.isoformat()
 
     overall_reason: str | None = None
     if reasons:
@@ -311,6 +332,7 @@ def read_session_settlement_prices_for_open_futures(
         "trade_date": session_iso,
         "open_futures_contracts": contracts,
         "session_settlement_prices": prices,
+        "session_settlement_price_dates": price_dates,
         "session_settlement_price_reasons": reasons,
         "futures_mark_unavailable_reason": overall_reason,
     }
@@ -329,22 +351,31 @@ def attach_futures_session_inputs(
         return decision
 
     metadata = decision.setdefault("metadata", {})
-    raw_trade_date = (
-        trade_date
+    # ``trade_date`` here is the decision day D. The decision day stays in
+    # ``as_of_trading_day`` (a repeat call must not step back again, because
+    # ``trade_date`` then already holds the session).
+    raw_decision_day = (
+        metadata.get("as_of_trading_day")
+        or trade_date
         or metadata.get("trade_date")
-        or metadata.get("as_of_trading_day")
         or str(decision.get("timestamp") or "")[:10]
     )
-    parsed_day = _optional_date(raw_trade_date)
-    if parsed_day is None:
+    decision_day = _optional_date(raw_decision_day)
+    if decision_day is None:
         return decision
 
+    # The settlement that exists on day D is the D-1 session's: same helper as
+    # valuation, so the margin check and valuation share one session and price.
+    session_day = futures_settlement_session_for_day(decision_day)
     session_info = read_session_settlement_prices_for_open_futures(
         open_positions,
-        parsed_day,
+        session_day,
         normalized_root=normalized_root,
+        partition_horizon=decision_day,
     )
+    metadata["as_of_trading_day"] = decision_day.isoformat()
     metadata["trade_date"] = session_info["trade_date"]
+    metadata["session_settlement_price_dates"] = session_info["session_settlement_price_dates"]
     metadata["open_futures_contracts"] = session_info["open_futures_contracts"]
     metadata["session_settlement_prices"] = session_info["session_settlement_prices"]
     metadata["session_settlement_price_reasons"] = session_info["session_settlement_price_reasons"]
@@ -442,24 +473,28 @@ class DatasetFuturesMarkProvider:
         self, positions: Sequence[Mapping[str, Any]]
     ) -> tuple[dict[str, MarketMark], dict[str, Any]]:
         now = self._now()
-        session_day = expected_futures_settlement_session(now)
+        expected_session = expected_futures_settlement_session(now)
         info = read_session_settlement_prices_for_open_futures(
             positions,
-            session_day,
+            expected_session,
             normalized_root=self._normalized_root,
             partition_horizon=now.astimezone(timezone(timedelta(hours=8))).date(),
+            max_stale_sessions=FUTURES_MARK_MAX_SESSION_LAG,
         )
         session_iso = info["trade_date"]
         marks: dict[str, MarketMark] = {}
         for inst_id, price in info["session_settlement_prices"].items():
+            # The mark's session is the row's own price_date, which may trail
+            # the expected session by one until the next host refresh lands.
+            row_session = info["session_settlement_price_dates"][inst_id]
             marks[inst_id] = MarketMark(
                 symbol=inst_id,
                 price=float(price),
                 # RFC 3339 instant of the session's 13:30 Asia/Taipei close, so
                 # the telemetry projection accepts it; the date is the session.
-                as_of=f"{session_iso}T05:30:00Z",
+                as_of=f"{row_session}T05:30:00Z",
                 source_ref=(
-                    f"dataset:{NORMALIZED_DATASET_PATH}/price_date={session_iso}"
+                    f"dataset:{NORMALIZED_DATASET_PATH}/price_date={row_session}"
                     f"#{inst_id}"
                 ),
                 lineage={"mark_kind": FUTURES_SETTLEMENT_MARK_KIND},
@@ -467,6 +502,7 @@ class DatasetFuturesMarkProvider:
         diagnostic = {
             "source": "taifex_ssf_contracts_daily_settlement",
             "session": session_iso,
+            "session_by_contract": dict(info["session_settlement_price_dates"]),
             "open_contracts": list(info["open_futures_contracts"]),
             "resolved_symbols": sorted(marks),
             "reasons": dict(info["session_settlement_price_reasons"]),

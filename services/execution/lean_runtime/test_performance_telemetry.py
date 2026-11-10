@@ -1501,8 +1501,12 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         fresh = value("2026-11-13T05:30:00Z", monday)
         self.assertEqual(fresh.status, "valued")
         self.assertAlmostEqual(fresh.sample.pnl, 2 * 1000.0 * (98.0 - 97.1), places=6)
-        # Thursday's settlement on Monday means a session was missed: stale.
-        stale = value("2026-11-12T05:30:00Z", monday)
+        # Thursday's settlement on Monday trails by one session (the host
+        # refresh has not landed yet): still fresh.
+        lagging = value("2026-11-12T05:30:00Z", monday)
+        self.assertEqual(lagging.status, "valued")
+        # Wednesday's settlement on Monday means a refresh was missed: stale.
+        stale = value("2026-11-11T05:30:00Z", monday)
         self.assertEqual(stale.status, "marks_unavailable")
         self.assertEqual(stale.diagnostic["code"], "stale_or_future_market_marks")
 
