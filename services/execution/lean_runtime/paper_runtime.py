@@ -5809,6 +5809,68 @@ class PaperRuntimeService:
             self._fill_publication_error = None
             self._ack_fill_publication(str(record["event_id"]))
 
+    def _emit_instrument_counterfactuals(
+        self, rows: Any, *, created_at: str
+    ) -> int:
+        """Publish ``persona_instrument_counterfactual`` rows, one event each.
+
+        The event id is derived from ``(decision_id, instrument_id)`` so a
+        redelivery collapses at ingest, and the telemetry runtime summary keys
+        its fold the same way.  Delivery is best effort and never raises into
+        the signal path: a failed row is logged and counted by the emitter.
+        """
+        if not isinstance(rows, (list, tuple)):
+            return 0
+        builder = getattr(self._telemetry, "build_event", None)
+        sender = getattr(self._telemetry, "emit_payload", None)
+        if not callable(builder) or not callable(sender):
+            return 0
+        delivered = 0
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            decision_id = _clean_text(row.get("decision_id"))
+            instrument_id = _clean_text(row.get("instrument_id"))
+            if not decision_id or not instrument_id:
+                continue
+            metadata = {
+                "runtime_package": "paper_execution_runtime",
+                "sim_fill_flag": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "submitted_to_broker": False,
+                "capital_scale_pct": 0,
+            }
+            metadata.update(dict(row))
+            try:
+                payload = builder(
+                    "persona_instrument_counterfactual",
+                    {"action": "instrument_counterfactual_graded"},
+                    metadata=metadata,
+                    event_id=str(
+                        uuid.uuid5(
+                            _LIFECYCLE_UUID_NAMESPACE,
+                            f"persona_instrument_counterfactual:{decision_id}:{instrument_id}",
+                        )
+                    ),
+                    created_at=created_at,
+                )
+                if payload is not None and sender(payload):
+                    delivered += 1
+                else:
+                    log.warning(
+                        "instrument counterfactual row %s/%s was not delivered",
+                        decision_id,
+                        instrument_id,
+                    )
+            except Exception:  # noqa: BLE001 - grading rows never block the signal path
+                log.exception(
+                    "instrument counterfactual row %s/%s delivery failed",
+                    decision_id,
+                    instrument_id,
+                )
+        return delivered
+
     def _handle_order_event(self, event: OrderEvent, *, replay: bool = False) -> None:
         if event.event_type == "signal_generation":
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
@@ -5819,6 +5881,13 @@ class PaperRuntimeService:
             # decision record belongs to trade_decision.
             decision_metadata = dict(signal_metadata)
             signal_metadata.pop("expression_decision", None)
+            # Counterfactual grading rows for earlier decisions ride on this
+            # signal; they are published as their own events, not as lifecycle
+            # metadata of this journey.
+            counterfactual_rows = decision_metadata.pop(
+                "instrument_counterfactual_rows", None
+            )
+            signal_metadata.pop("instrument_counterfactual_rows", None)
             try:
                 signal_payload = self._emit_lifecycle_telemetry(
                     "signal_generation",
@@ -5857,6 +5926,9 @@ class PaperRuntimeService:
                     decision_metadata,
                     event_id=decision_event_id,
                     created_at=occurred_at,
+                )
+                self._emit_instrument_counterfactuals(
+                    counterfactual_rows, created_at=occurred_at
                 )
             return
 

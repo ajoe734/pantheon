@@ -22,7 +22,7 @@ import math
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
 
 from services.execution.artifact_loader import (
@@ -700,6 +700,16 @@ class CurrentArtifactStrategy:
             json.dumps(decision_key, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         decision_id = f"dec-{binding_id}-{decision_digest[:24]}"
+
+        def decision_id_for_bar(bar: str) -> str:
+            """Id this binding's artifact gave the decision of an earlier daily bar."""
+            digest = hashlib.sha256(
+                json.dumps(
+                    {**decision_key, "bar": bar}, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            return f"dec-{binding_id}-{digest[:24]}"
+
         out = {
             "decision_id": decision_id,
             "signal_id": f"sig-{decision_digest[:32]}",
@@ -748,6 +758,14 @@ class CurrentArtifactStrategy:
             # record lookup, so a restart never re-runs builder or decider.
             out["expression"] = {
                 "view": self._expression_base_view(view, decision_id, symbol),
+                # Earlier daily bars are addressable by id; other cadences are
+                # not graded because their bars are not one session each.
+                "grading": (
+                    {"closes": list(closes), "decision_id_for_bar": decision_id_for_bar}
+                    if str(parameters.get("bar_frequency") or "").strip().lower()
+                    in {"1d", "d", "1day", "daily"}
+                    else None
+                ),
                 "evaluate": lambda: self._expression_step(
                     view=view,
                     decision_id=decision_id,
@@ -1398,6 +1416,231 @@ def _paper_signal_identity(
     metadata.setdefault("journey_id", envelope["journey_id"])
 
 
+COUNTERFACTUAL_ROWS_KEY = "instrument_counterfactual_rows"
+COUNTERFACTUAL_GRADING_KEY = "instrument_counterfactual_grading"
+GRADING_PENDING = "pending"
+GRADING_DONE = "done"
+GRADING_NOT_GRADABLE = "not_gradable"
+
+
+def _grading_record_id(decision_id: str) -> str:
+    """Terminal grading record (first write wins) of one recorded decision."""
+    return f"{decision_id}#grading"
+
+
+def _grading_attempt_id(decision_id: str, bar_day: "date") -> str:
+    """One immutable pending-attempt record per decision and grading bar."""
+    return f"{decision_id}#grading-attempt@{bar_day.isoformat()}"
+
+
+def _bar_date(event_time: Any) -> "date | None":
+    """Calendar date of an admitted bar's ``event_time`` in its own offset."""
+    text = str(event_time or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _trading_days_between(first: "date", last: "date") -> int:
+    """Number of trading-day steps from ``first`` forward to ``last``."""
+    from services.execution.lean_runtime.instrument_candidates import is_trading_day
+
+    steps = 0
+    day = first
+    while day < last:
+        day += timedelta(days=1)
+        if is_trading_day(day):
+            steps += 1
+    return steps
+
+
+def _next_trading_day(day: "date") -> "date":
+    from services.execution.lean_runtime.instrument_candidates import is_trading_day
+
+    following = day + timedelta(days=1)
+    while not is_trading_day(following):
+        following += timedelta(days=1)
+    return following
+
+
+def _grade_one_decision(
+    decision_id: str,
+    stored: Mapping[str, Any],
+    *,
+    bar_day: "date",
+    closes: Sequence[float],
+    symbol_underlying: str,
+    now_iso: str,
+    normalized_root: str | None,
+) -> tuple[str, str | None, list[dict[str, Any]]]:
+    """Return ``(status, reason, rows)`` for one recorded decision.
+
+    ``pending`` keeps the decision open for a later bar; ``not_gradable`` closes
+    it with a reason; ``done`` carries the rows.  The rows come from
+    ``expression_replay`` (one pnl formula, shared with the chosen leg).
+
+    The grading session is the first trading session after the session whose
+    close the decision priced from.  Its underlying close is the snapshot close
+    of that session (``closes`` are consecutive daily closes ending at
+    ``bar_day``) and each candidate contract's mark is the dataset daily
+    settlement whose ``price_date`` is that session.
+    """
+    from services.execution.lean_runtime import expression_replay
+    from services.execution.lean_runtime.expression_policy import is_no_trade
+    from services.execution.lean_runtime.futures_session_inputs import (
+        open_stock_future_positions,
+        read_session_settlement_prices_for_open_futures,
+    )
+
+    replay_input = stored.get("replay_input")
+    if not isinstance(replay_input, Mapping):
+        return GRADING_NOT_GRADABLE, "replay_input_missing", []
+    candidates = [dict(c) for c in replay_input.get("candidates") or [] if isinstance(c, Mapping)]
+    view = dict(replay_input.get("view") or {})
+    recorded = stored.get("record")
+    if not candidates or not isinstance(recorded, Mapping):
+        return GRADING_NOT_GRADABLE, "replay_input_incomplete", []
+    if view.get("underlying") != symbol_underlying:
+        return GRADING_NOT_GRADABLE, "underlying_differs_from_this_binding", []
+    if not is_no_trade(recorded) and recorded.get("reason_code") == "close_leg":
+        return GRADING_NOT_GRADABLE, "close_leg_has_no_entry_to_grade", []
+    underlying_leg = next(
+        (c for c in candidates if str(c.get("instrument_id", "")).startswith("eq:")), None
+    )
+    try:
+        entry_day = date.fromisoformat(str((underlying_leg or {}).get("price_date") or ""))
+    except ValueError:
+        entry_day = None
+    if underlying_leg is None or entry_day is None or underlying_leg.get("price") is None:
+        return GRADING_NOT_GRADABLE, "underlying_entry_missing", []
+    grading_day = _next_trading_day(entry_day)
+    if bar_day < grading_day:
+        return GRADING_PENDING, "grading_session_close_not_yet_admitted", []
+    offset = _trading_days_between(grading_day, bar_day)
+    if offset >= len(closes):
+        return GRADING_NOT_GRADABLE, "grading_session_close_outside_snapshot_window", []
+    underlying_close = float(closes[-1 - offset])
+
+    marks: dict[str, list[float]] = {str(underlying_leg["instrument_id"]): [underlying_close]}
+    futures = [c for c in candidates if str(c.get("instrument_id", "")).startswith("ssf:")]
+    if futures:
+        book = [{**c, "kind": "stock_future", "units": 1} for c in futures]
+        session = read_session_settlement_prices_for_open_futures(
+            open_stock_future_positions(book),
+            grading_day,
+            normalized_root=normalized_root,
+            partition_horizon=now_iso[:10],
+            historical_session=True,
+        )
+        prices = session["session_settlement_prices"]
+        missing = [str(c["instrument_id"]) for c in futures if str(c["instrument_id"]) not in prices]
+        if missing:
+            reasons = session["session_settlement_price_reasons"]
+            detail = "; ".join(f"{m}:{reasons.get(m, 'settlement_price_missing')}" for m in sorted(missing))
+            return GRADING_PENDING, f"contract_settlement_unavailable: {detail}", []
+        for candidate in futures:
+            marks[str(candidate["instrument_id"])] = [float(prices[str(candidate["instrument_id"])])]
+
+    record = {
+        "decision_id": decision_id,
+        "view": view,
+        "candidates": candidates,
+        "book_before": dict(replay_input.get("book_before") or {}),
+        "budget": dict(replay_input.get("budget") or {}),
+        "marks": marks,
+    }
+    result = expression_replay.replay([record], replay_input.get("parameters"))["decisions"][0]
+    replayed = result["record"]
+    if is_no_trade(replayed) != is_no_trade(recorded) or (
+        not is_no_trade(recorded)
+        and (
+            replayed.get("instrument_id") != recorded.get("instrument_id")
+            or int(replayed.get("units") or 0) != int(recorded.get("units") or 0)
+        )
+    ):
+        return GRADING_NOT_GRADABLE, "replay_diverged_from_recorded_decision", []
+    return GRADING_DONE, None, expression_replay.counterfactual_rows(record, result)
+
+
+def collect_counterfactual_grading(
+    store: Any,
+    *,
+    event_time: Any,
+    closes: Sequence[float],
+    symbol_underlying: str,
+    now_iso: str,
+    decision_id_for_bar: Callable[[str], str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[str, dict[str, Any]]]]:
+    """Rows for every recorded decision that becomes gradable on this bar.
+
+    Earlier decisions are looked up by the ids their bars deterministically
+    produced (one per earlier trading session inside the snapshot window), so
+    no new index or store is needed.  Returns ``(rows, diagnostics, to_mark)``:
+    ``diagnostics`` lists pending/not-gradable reasons for telemetry and
+    ``to_mark`` the terminal ``done`` records the caller writes once the
+    carrying signal is durably enqueued.  ``not_gradable`` terminal records
+    are written here (nothing is emitted for them).
+    """
+    getter = getattr(store, "get_decision_record", None)
+    putter = getattr(store, "put_decision_record", None)
+    if not callable(getter) or not callable(putter):
+        return [], [], []
+    bar_day = _bar_date(event_time)
+    clean_closes = [float(c) for c in closes]
+    if (
+        bar_day is None
+        or not clean_closes
+        or any(not math.isfinite(c) or c <= 0 for c in clean_closes)
+    ):
+        return [], [], []
+    from services.execution.lean_runtime.instrument_candidates import previous_trading_day
+
+    normalized_root = os.getenv(SSF_NORMALIZED_ROOT_ENV) or None
+    rows: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = []
+    to_mark: list[tuple[str, dict[str, Any]]] = []
+    earlier = bar_day
+    for _ in range(len(clean_closes)):
+        earlier = previous_trading_day(earlier)
+        decision_id = decision_id_for_bar(earlier.isoformat())
+        if getter(_grading_record_id(decision_id)) is not None:
+            continue
+        stored = getter(decision_id)
+        if not isinstance(stored, Mapping):
+            continue
+        try:
+            status, reason, decision_rows = _grade_one_decision(
+                decision_id,
+                stored,
+                bar_day=bar_day,
+                closes=clean_closes,
+                symbol_underlying=symbol_underlying,
+                now_iso=now_iso,
+                normalized_root=normalized_root,
+            )
+        except Exception as exc:  # noqa: BLE001 - grading never blocks signal production
+            log.warning("counterfactual grading failed for %s: %s", decision_id, exc)
+            status, reason, decision_rows = GRADING_PENDING, f"grading_error: {type(exc).__name__}: {exc}", []
+        state = {
+            "status": status,
+            "reason": reason,
+            "graded_on_bar": bar_day.isoformat(),
+            "recorded_at": now_iso,
+        }
+        diagnostics.append({"decision_id": decision_id, **state})
+        if status == GRADING_DONE:
+            rows.extend(decision_rows)
+            to_mark.append((decision_id, state))
+        elif status == GRADING_NOT_GRADABLE:
+            putter(_grading_record_id(decision_id), state)
+        else:
+            putter(_grading_attempt_id(decision_id, bar_day), state)
+    return rows, diagnostics, to_mark
+
+
 class PaperSignalProducer:
     """Generate signals for paper bindings and enqueue them onto their queues.
 
@@ -1559,6 +1802,30 @@ class PaperSignalProducer:
                     "environment", str(environment).strip().lower()
                 )
 
+            grading_to_mark: list[tuple[str, dict[str, Any]]] = []
+            grading_input = expression.get("grading") if isinstance(expression, Mapping) else None
+            if isinstance(grading_input, Mapping) and isinstance(out.get("metadata"), dict):
+                from services.execution.lean_runtime.instrument_candidates import (
+                    normalize_underlying_code,
+                )
+
+                try:
+                    grading_underlying = normalize_underlying_code(str(out.get("symbol") or ""))
+                except ValueError:
+                    grading_underlying = ""
+                grading_rows, grading_diagnostics, grading_to_mark = collect_counterfactual_grading(
+                    store,
+                    event_time=out["metadata"].get("market_input_event_time"),
+                    closes=grading_input["closes"],
+                    symbol_underlying=grading_underlying,
+                    now_iso=now_iso,
+                    decision_id_for_bar=grading_input["decision_id_for_bar"],
+                )
+                if grading_rows:
+                    out["metadata"][COUNTERFACTUAL_ROWS_KEY] = grading_rows
+                if grading_diagnostics:
+                    out["metadata"][COUNTERFACTUAL_GRADING_KEY] = grading_diagnostics
+
             batch = dsp.produce(
                 out,
                 now_iso=now_iso,
@@ -1569,6 +1836,12 @@ class PaperSignalProducer:
                 run_id=out.get("run_id"),
             )
             enqueued = batch.count
+            if enqueued:
+                for graded_id, graded_state in grading_to_mark:
+                    store.put_decision_record(
+                        _grading_record_id(graded_id),
+                        {**graded_state, "carried_by_signal_id": out.get("signal_id")},
+                    )
 
         if enqueued:
             log.info(

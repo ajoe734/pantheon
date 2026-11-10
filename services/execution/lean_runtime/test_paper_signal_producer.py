@@ -2698,3 +2698,457 @@ class ExpressionStartupReportTest(unittest.TestCase):
             )
         self.assertIn("capital reader not configured", line)
         self.assertIn("capital_pool", reason or "")
+
+
+class TestInstrumentCounterfactualWriter(unittest.TestCase):
+    """PAPER-INSTRUMENT-COUNTERFACTUAL-WRITER-20261110.
+
+    The production strategy (as ``main`` builds it), a dataset in the real
+    ``normalized/taifex_ssf_contracts/date=...`` layout and the real
+    2026-11-10 decision shapes; the grading rows leave through the producer,
+    the runtime and the telemetry summary fold.
+    """
+
+    NOW = TestExpressionDecisionStep.NOW
+    BAR = TestExpressionDecisionStep.BAR
+    INPUTS = TestExpressionDecisionStep.INPUTS
+    _artifact = TestExpressionDecisionStep._artifact
+    _binding = TestExpressionDecisionStep._binding
+    POOL_BUDGET = TestExpressionInputsProductionWiring.POOL_BUDGET
+    POLICY = TestExpressionInputsProductionWiring.POLICY
+    ENV = TestExpressionInputsProductionWiring.ENV
+    _pool = TestExpressionInputsProductionWiring._pool
+    _fresh_summary = staticmethod(TestExpressionInputsProductionWiring._fresh_summary)
+    _fetch = TestExpressionInputsProductionWiring._fetch
+
+    DECISION_BAR = "2026-11-09T00:00:00+08:00"
+    DECISION_NOW = "2026-11-10T07:01:37Z"
+    GRADING_BAR = "2026-11-10T00:00:00+08:00"
+    GRADING_NOW = "2026-11-11T07:01:37Z"
+    CASH_ENTRY = 99.7
+    CASH_MARK = 100.9
+    SRF_ENTRY = 97.1
+    SRF_MARK = 98.8
+    NYF_MARK = 98.4
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "market_data_store"
+
+    def _rows(self, day: str, srf_price, nyf_price, *, srf_tombstone=False):
+        from services.execution.lean_runtime.test_futures_session_inputs import _srf_row
+
+        def row(contract, price, margin, *, unit=1000, tombstone=False):
+            return {
+                **_srf_row(day, price, tombstone=tombstone),
+                "contract": contract,
+                "unit": unit,
+                "multiplier": unit,
+                "margin_mode": "fixed",
+                "initial_margin_amount": margin,
+                "maintenance_margin_amount": round(margin * 0.77, 2),
+            }
+
+        return [
+            row("SRF", srf_price, 8700.0, tombstone=srf_tombstone),
+            row("NYF", nyf_price, 87000.0, unit=10000),
+        ]
+
+    def _write(self, partition_day: str, rows, run_id: str) -> None:
+        from services.execution.lean_runtime.test_futures_session_inputs import (
+            _write_ssf_partition,
+        )
+
+        _write_ssf_partition(self.root, partition_day, rows, run_id=run_id)
+
+    def _decision_dataset(self) -> None:
+        self._write("2026-11-09", self._rows("2026-11-09", self.SRF_ENTRY, self.SRF_ENTRY), "run-d")
+
+    def _grading_dataset(self, **kwargs) -> None:
+        self._write(
+            "2026-11-11",
+            self._rows("2026-11-10", kwargs.get("srf", self.SRF_MARK), self.NYF_MARK,
+                       srf_tombstone=kwargs.get("srf_tombstone", False)),
+            "run-g",
+        )
+
+    def _env(self):
+        return {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(self.root)}
+
+    def _produce(self, store, *, bar, now, close, previous, earlier=()):
+        from services.execution.lean_runtime import expression_inputs, paper_signal_producer
+
+        art = self._artifact()
+        art["parameters"]["symbols"] = ["0050.TWSE"]
+        binding = self._binding(art, closes=(*earlier, previous, close), symbol="0050.TWSE")
+        binding["market_input"]["event_time"] = bar
+        binding["market_input"]["observed_at"] = now
+        with patch.dict("os.environ", self._env(), clear=True), patch.object(
+            expression_inputs, "_http_get_json", self._fetch()
+        ):
+            producer = PaperSignalProducer(
+                store_for=lambda _: store, strategy=paper_signal_producer._runner_strategy()
+            )
+            count = producer.produce(binding, now)
+        return count, binding
+
+    @staticmethod
+    def _terminal(store, decision_id):
+        return store.get_decision_record(f"{decision_id}#grading")
+
+    def _first_decision(self, store):
+        self._decision_dataset()
+        count, binding = self._produce(
+            store, bar=self.DECISION_BAR, now=self.DECISION_NOW,
+            close=self.CASH_ENTRY, previous=self.CASH_ENTRY / 1.0448,
+        )
+        self.assertEqual(count, 1)
+        [signal] = store.get_pending()
+        store.ack(signal)
+        return signal, binding
+
+    def test_decision_shape_matches_the_recorded_2026_11_10_fill(self) -> None:
+        store = InMemoryPendingSignalStore()
+        signal, _ = self._first_decision(store)
+        meta = signal["metadata"]
+        replay = meta["expression_replay_input"]
+        by_id = {c["instrument_id"]: c for c in replay["candidates"]}
+        self.assertEqual(sorted(by_id), ["eq:0050", "ssf:NYF:202611", "ssf:SRF:202611"])
+        self.assertEqual((by_id["eq:0050"]["price"], by_id["eq:0050"]["price_basis"]),
+                         (99.7, "stock_close_prev_session"))
+        self.assertEqual(by_id["ssf:SRF:202611"]["price"], 97.1)
+        self.assertEqual(by_id["ssf:SRF:202611"]["max_units_by_risk"], 2)
+        self.assertEqual(by_id["ssf:NYF:202611"]["max_units_by_risk"], 0)
+        self.assertEqual(by_id["ssf:NYF:202611"]["initial_margin_per_unit"], 87000.0)
+        self.assertEqual((meta["instrument_id"], meta["units"], meta["reason_code"]),
+                         ("ssf:SRF:202611", 2, "long_lever"))
+        self.assertNotIn("instrument_counterfactual_rows", meta)
+
+    def _grade_on_next_bar(self, store):
+        self._grading_dataset()
+        count, binding = self._produce(
+            store, bar=self.GRADING_BAR, now=self.GRADING_NOW,
+            close=self.CASH_MARK, previous=self.CASH_ENTRY,
+        )
+        self.assertEqual(count, 1)
+        [carrier] = store.get_pending()
+        return carrier, binding
+
+    def test_next_session_bar_carries_one_row_per_candidate_with_the_chosen_leg(self) -> None:
+        store = InMemoryPendingSignalStore()
+        first, _ = self._first_decision(store)
+        decision_id = first["metadata"]["decision_id"]
+        carrier, _ = self._grade_on_next_bar(store)
+        rows = carrier["metadata"]["instrument_counterfactual_rows"]
+        self.assertEqual([(r["decision_id"], r["instrument_id"]) for r in rows],
+                         [(decision_id, "eq:0050"), (decision_id, "ssf:NYF:202611"), (decision_id, "ssf:SRF:202611")])
+        by_id = {r["instrument_id"]: r for r in rows}
+        self.assertEqual([r["chosen"] for r in rows], [False, False, True])
+        chosen = by_id["ssf:SRF:202611"]
+        self.assertEqual((chosen["entry"], chosen["mark"], chosen["units"]), (97.1, 98.8, 2))
+        self.assertEqual((chosen["underlying_entry"], chosen["underlying_mark"]), (99.7, 100.9))
+        self.assertEqual(by_id["ssf:NYF:202611"]["units"], 0)
+        self.assertEqual(by_id["eq:0050"]["mark"], 100.9)
+        self.assertGreater(chosen["pnl_cf"], 0)
+        self.assertEqual(self._terminal(store, decision_id)["status"], "done")
+        # The decision of the grading bar itself is not graded on that bar.
+        own_id = carrier["metadata"]["decision_id"]
+        self.assertNotIn(own_id, {r["decision_id"] for r in rows})
+        self.assertIsNone(self._terminal(store, own_id))
+
+    # -- runtime -> telemetry summary -> BFF grades ---------------------------
+
+    def _run_carrier_through_runtime(self, carrier, binding):
+        import os
+
+        from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
+        from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+        from services.execution.lean_runtime.test_paper_runtime import (
+            _FakeRuntimeManagerClient,
+            _FakeTelemetryEmitter,
+        )
+
+        identity = RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "pantheon-paper-execution-runtime",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": binding["runtime_id"],
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+                "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+                "PANTHEON_WORKSPACE_REF": "workspace-paper",
+                "PANTHEON_AUTH_PROFILE_REF": "auth-profile-paper",
+                "PANTHEON_PERSONA_ID": "persona-paper-ops",
+                "PANTHEON_SESSION_ID": "session-paper-runtime",
+                "PANTHEON_TRACE_ID": "6f1d2c3e-0000-4000-8000-000000000001",
+                "PANTHEON_REQUEST_ID": "request-paper-runtime",
+            }
+        )
+        runtime_binding = {
+            "binding_id": binding["binding_id"],
+            "runtime_id": binding["runtime_id"],
+            "capital_pool_id": binding["capital_pool_id"],
+            "artifact_id": binding["artifact_id"],
+            "artifact_version": binding["artifact_version"],
+            "deployment_mode": "paper",
+            "plan_id": binding["plan_id"],
+            "persona_capital_binding_id": binding["persona_capital_binding_id"],
+            "status": "active",
+        }
+        telemetry = _FakeTelemetryEmitter()
+        with tempfile.TemporaryDirectory() as outbox, patch.dict(
+            os.environ, {"PANTHEON_LIFECYCLE_OUTBOX_PATH": str(Path(outbox) / "outbox.json")}
+        ):
+            service = PaperRuntimeService(
+                store=InMemoryPendingSignalStore([carrier]),
+                identity=identity,
+                runtime_manager_client=type(
+                    "RM", (), {"list_all": lambda self: [runtime_binding]}
+                )(),
+                telemetry_emitter=telemetry,
+                poll_interval_seconds=3600,
+                max_batch_size=10,
+            )
+            service.drain_once()
+            service._consumer.flush_rebalance(carrier["run_id"], service._algo)
+        return telemetry.events, runtime_binding
+
+    def test_rows_reach_the_runtime_summary_and_grade_the_0050_decision(self) -> None:
+        from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+        store = InMemoryPendingSignalStore()
+        first, _ = self._first_decision(store)
+        decision_id = first["metadata"]["decision_id"]
+        carrier, binding = self._grade_on_next_bar(store)
+        events, runtime_binding = self._run_carrier_through_runtime(carrier, binding)
+
+        types = [e["event_type"] for e in events]
+        self.assertEqual(types.count("persona_instrument_counterfactual"), 3)
+        generation = next(e for e in events if e["event_type"] == "signal_generation")
+        decision = next(e for e in events if e["event_type"] == "trade_decision")
+        self.assertNotIn("instrument_counterfactual_rows", generation["metadata"])
+        self.assertNotIn("instrument_counterfactual_rows", decision["metadata"])
+
+        projection = RuntimeSummaryProjectionStore()
+        summary = {}
+        for event in events:
+            if event["event_type"] != "persona_instrument_counterfactual":
+                continue
+            self.assertNotIn("correlation_envelope", event["metadata"])
+            summary = projection.project_event(
+                {
+                    **event,
+                    "tenant_id": "default",
+                    "environment": "paper",
+                    "deployment_stage": "paper",
+                    "runtime_id": runtime_binding["runtime_id"],
+                    "binding_id": runtime_binding["binding_id"],
+                    "capital_pool_id": runtime_binding["capital_pool_id"],
+                    "artifact_id": runtime_binding["artifact_id"],
+                    "artifact_version": runtime_binding["artifact_version"],
+                    "plan_id": runtime_binding["plan_id"],
+                    "persona_capital_binding_id": runtime_binding["persona_capital_binding_id"],
+                }
+            )
+        stored = summary["instrument_counterfactuals"]
+        self.assertEqual(
+            [(r["decision_id"], r["instrument_id"], r["chosen"]) for r in stored],
+            [
+                (decision_id, "eq:0050", False),
+                (decision_id, "ssf:NYF:202611", False),
+                (decision_id, "ssf:SRF:202611", True),
+            ],
+        )
+        from services.control_plane.bff.agora.performance.attribution import (
+            grade_instrument_decisions,
+        )
+
+        graded = grade_instrument_decisions(stored)
+        self.assertEqual(graded["direction_graded_count"], 1)
+        self.assertEqual(graded["direction_hit_rate"], 1.0)
+        self.assertEqual(graded["instrument_regret_graded_count"], 1)
+        self.assertIsNotNone(graded["instrument_regret"])
+
+    # -- exactly once ---------------------------------------------------------
+
+    def test_a_decision_is_graded_once_across_repeat_and_restart(self) -> None:
+        store = InMemoryPendingSignalStore()
+        first, _ = self._first_decision(store)
+        decision_id = first["metadata"]["decision_id"]
+        carrier, _ = self._grade_on_next_bar(store)
+        store.ack(carrier)
+        self.assertEqual(self._terminal(store, decision_id)["status"], "done")
+        # The same bar again (a repeat poll, then a restarted producer).
+        for _ in range(2):
+            count, _b = self._produce(
+                store, bar=self.GRADING_BAR, now=self.GRADING_NOW,
+                close=self.CASH_MARK, previous=self.CASH_ENTRY,
+            )
+            for signal in store.get_pending():
+                self.assertNotIn("instrument_counterfactual_rows", signal["metadata"])
+                store.ack(signal)
+        # A still later bar does not re-grade either.
+        self._write("2026-11-12", self._rows("2026-11-11", 99.0, 99.2), "run-h")
+        count, _b = self._produce(
+            store, bar="2026-11-11T00:00:00+08:00", now="2026-11-12T07:01:37Z",
+            close=101.2, previous=self.CASH_MARK,
+        )
+        self.assertEqual(count, 1)
+        [later] = store.get_pending()
+        rows = later["metadata"].get("instrument_counterfactual_rows") or []
+        self.assertNotIn(decision_id, {r["decision_id"] for r in rows})
+        self.assertEqual(self._terminal(store, decision_id)["status"], "done")
+
+    def test_failed_enqueue_leaves_the_decision_pending_for_the_next_attempt(self) -> None:
+        class CrashOnce(InMemoryPendingSignalStore):
+            armed = False
+
+            def enqueue(self, payload):
+                if self.armed:
+                    self.armed = False
+                    raise RuntimeError("crash before enqueue")
+                return super().enqueue(payload)
+
+        store = CrashOnce()
+        first, _ = self._first_decision(store)
+        decision_id = first["metadata"]["decision_id"]
+        self._grading_dataset()
+        store.armed = True
+        with self.assertRaises(RuntimeError):
+            self._produce(
+                store, bar=self.GRADING_BAR, now=self.GRADING_NOW,
+                close=self.CASH_MARK, previous=self.CASH_ENTRY,
+            )
+        self.assertIsNone(self._terminal(store, decision_id))
+        count, _b = self._produce(
+            store, bar=self.GRADING_BAR, now=self.GRADING_NOW,
+            close=self.CASH_MARK, previous=self.CASH_ENTRY,
+        )
+        self.assertEqual(count, 1)
+        [carrier] = store.get_pending()
+        self.assertEqual(len(carrier["metadata"]["instrument_counterfactual_rows"]), 3)
+
+    # -- never from a missing, stale or tombstoned price -----------------------
+
+    def _assert_not_graded(self, store, decision_id, reason_part):
+        from datetime import date
+
+        [carrier] = store.get_pending()
+        self.assertNotIn("instrument_counterfactual_rows", carrier["metadata"])
+        # Nothing terminal was recorded: the decision stays pending, with the
+        # reason both in the immutable attempt record and on the signal.
+        self.assertIsNone(self._terminal(store, decision_id))
+        attempt = store.get_decision_record(f"{decision_id}#grading-attempt@2026-11-10")
+        self.assertEqual(attempt["status"], "pending")
+        self.assertIn(reason_part, attempt["reason"])
+        [diagnostic] = [
+            d for d in carrier["metadata"]["instrument_counterfactual_grading"]
+            if d["decision_id"] == decision_id
+        ]
+        self.assertEqual((diagnostic["status"], diagnostic["reason"]), ("pending", attempt["reason"]))
+
+    def test_missing_settlement_partition_emits_nothing_and_says_why(self) -> None:
+        store = InMemoryPendingSignalStore()
+        first, _ = self._first_decision(store)
+        count, _b = self._produce(
+            store, bar=self.GRADING_BAR, now=self.GRADING_NOW,
+            close=self.CASH_MARK, previous=self.CASH_ENTRY,
+        )
+        self.assertEqual(count, 1)
+        self._assert_not_graded(
+            store, first["metadata"]["decision_id"], "contract_settlement_unavailable"
+        )
+
+    def test_stale_settlement_is_never_reused_as_the_mark(self) -> None:
+        store = InMemoryPendingSignalStore()
+        first, _ = self._first_decision(store)
+        # The newest partition still carries the entry session's settlement.
+        self._write("2026-11-11", self._rows("2026-11-09", self.SRF_ENTRY, self.SRF_ENTRY), "run-s")
+        self._produce(
+            store, bar=self.GRADING_BAR, now=self.GRADING_NOW,
+            close=self.CASH_MARK, previous=self.CASH_ENTRY,
+        )
+        self._assert_not_graded(
+            store, first["metadata"]["decision_id"], "settlement_price_stale"
+        )
+
+    def test_tombstoned_contract_emits_nothing(self) -> None:
+        store = InMemoryPendingSignalStore()
+        first, _ = self._first_decision(store)
+        self._grading_dataset(srf_tombstone=True)
+        self._produce(
+            store, bar=self.GRADING_BAR, now=self.GRADING_NOW,
+            close=self.CASH_MARK, previous=self.CASH_ENTRY,
+        )
+        self._assert_not_graded(
+            store, first["metadata"]["decision_id"], "ssf:SRF:202611:contract_tombstoned"
+        )
+
+    def test_the_entry_bar_itself_grades_nothing(self) -> None:
+        store = InMemoryPendingSignalStore()
+        first, _ = self._first_decision(store)
+        self._grading_dataset()
+        # The same bar again with a later clock: the session close is not in yet.
+        self._produce(
+            store, bar=self.DECISION_BAR, now=self.GRADING_NOW,
+            close=self.CASH_ENTRY, previous=self.CASH_ENTRY / 1.0448,
+        )
+        [again] = store.get_pending()
+        self.assertNotIn("instrument_counterfactual_rows", again["metadata"])
+        self.assertIsNone(self._terminal(store, first["metadata"]["decision_id"]))
+
+    def test_restart_on_a_later_bar_grades_from_the_recorded_metadata(self) -> None:
+        # The 2026-11-10 decision is still ungraded on the 2026-11-11 bar (the
+        # producer was down or ran the old build on 2026-11-10 -> 2026-11-11):
+        # its grading session close is the snapshot's previous close.
+        store = InMemoryPendingSignalStore()
+        first, _ = self._first_decision(store)
+        decision_id = first["metadata"]["decision_id"]
+        self._grading_dataset()
+        self._write("2026-11-12", self._rows("2026-11-11", 99.9, 99.9), "run-r")
+        count, _b = self._produce(
+            store, bar="2026-11-11T00:00:00+08:00", now="2026-11-12T07:01:37Z",
+            close=101.2, previous=self.CASH_MARK, earlier=(self.CASH_ENTRY,),
+        )
+        self.assertEqual(count, 1)
+        [carrier] = store.get_pending()
+        rows = carrier["metadata"]["instrument_counterfactual_rows"]
+        self.assertEqual({r["decision_id"] for r in rows}, {decision_id})
+        chosen = next(r for r in rows if r["chosen"])
+        # Marked at the grading session (2026-11-10), not at the later bar.
+        self.assertEqual((chosen["mark"], chosen["underlying_mark"]), (self.SRF_MARK, self.CASH_MARK))
+
+    def test_decision_older_than_the_snapshot_window_is_not_graded(self) -> None:
+        store = InMemoryPendingSignalStore()
+        first, _ = self._first_decision(store)
+        self._grading_dataset()
+        self._write("2026-11-12", self._rows("2026-11-11", 99.9, 99.9), "run-r")
+        # Two closes reach back two sessions; the 2026-11-09 decision is three back.
+        self._write("2026-11-13", self._rows("2026-11-12", 99.9, 99.9), "run-w")
+        self._produce(
+            store, bar="2026-11-12T00:00:00+08:00", now="2026-11-13T07:01:37Z",
+            close=102.0, previous=101.2,
+        )
+        [carrier] = store.get_pending()
+        self.assertNotIn("instrument_counterfactual_rows", carrier["metadata"])
+        self.assertIsNone(self._terminal(store, first["metadata"]["decision_id"]))
+
+    def test_flag_off_produces_exactly_todays_signal(self) -> None:
+        from services.execution.lean_runtime import paper_signal_producer
+
+        store = InMemoryPendingSignalStore()
+        art = self._artifact(expression=False)
+        art["parameters"]["symbols"] = ["0050.TWSE"]
+        binding = self._binding(art, closes=(99.0, 99.7), symbol="0050.TWSE")
+        env = {**self._env(), "PANTHEON_PAPER_EXPRESSION_LAYER": "off"}
+        with patch.dict("os.environ", env, clear=True):
+            producer = PaperSignalProducer(
+                store_for=lambda _: store, strategy=paper_signal_producer._runner_strategy()
+            )
+            self.assertEqual(producer.produce(binding, self.DECISION_NOW), 1)
+        [signal] = store.get_pending()
+        self.assertNotIn("instrument_counterfactual_rows", signal["metadata"])
+        self.assertNotIn("instrument_counterfactual_grading", signal["metadata"])
+        self.assertIsNone(store.get_decision_record(signal["metadata"]["decision_id"]))
