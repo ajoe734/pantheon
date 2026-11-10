@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional
 
@@ -47,6 +48,27 @@ EMPTY_V2_STORE_FALLBACK_REASON = (
     "v2 source management store is empty (zero instances); "
     "serving source-ingest connector registry as degraded legacy_projection."
 )
+
+BFF_SOURCE_COMMANDS_FLAG = "PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED"
+SOURCE_COMMANDS_DISABLED_REASON = "source_management_commands_disabled"
+SOURCE_COMMANDS_DISABLED_MESSAGE = (
+    f"Source management commands are disabled: set {BFF_SOURCE_COMMANDS_FLAG}=1 to enable data source writes."
+)
+
+
+def bff_source_commands_enabled() -> bool:
+    """Fail-closed switch, read per request: only the exact value ``1`` enables writes."""
+    return os.environ.get(BFF_SOURCE_COMMANDS_FLAG) == "1"
+
+
+def _apply_commands_disabled_to_actions(actions: Dict[str, Any]) -> Dict[str, Any]:
+    """While the switch is off, report every source action as not allowed with a named reason."""
+    if bff_source_commands_enabled():
+        return actions
+    blocked = {k: False for k, v in actions.items() if k.startswith("can")}
+    reasons = [BFF_SOURCE_COMMANDS_FLAG + "=0"] + [r for r in (actions.get("blockedReasons") or []) if r]
+    return {**actions, **blocked, "blockedReasons": reasons}
+
 
 _LEGACY_PROJECTION_FORBIDDEN_KEYS = frozenset({
     "allowed_actions",
@@ -272,7 +294,7 @@ def create_datasources_router(
                     desired = {"desired_lifecycle": inst.get("lifecycle_state", "configured_disabled"), "revision": inst.get("revision", 1)}
                     observed = {"effective_lifecycle": inst.get("lifecycle_state", "configured_disabled"), "validation_state": "pending", "canary_state": "not_run", "health_state": "healthy"}
 
-                allowed_actions = calculate_source_allowed_actions(defn, inst, desired, observed)
+                allowed_actions = _apply_commands_disabled_to_actions(calculate_source_allowed_actions(defn, inst, desired, observed))
                 dto = {
                     "schema_version": "management_data_source.v2",
                     "source_instance_id": inst_id,
@@ -307,6 +329,7 @@ def create_datasources_router(
             }
             meta: Dict[str, Any] = {
                 **snapshot_meta(snapshot_at),
+                "source_commands_enabled": bff_source_commands_enabled(),
                 "status": "ok",
                 "source": "service_client",
                 "surfaces": {
@@ -388,6 +411,7 @@ def create_datasources_router(
 
         meta = {
             **snapshot_meta(snapshot_at),
+            "source_commands_enabled": bff_source_commands_enabled(),
             "status": surface_state,
             "source": effective_source,
             "surfaces": {
@@ -576,7 +600,7 @@ def create_datasources_router(
                     "deployment_sha": "sha256-current",
                 }
 
-        allowed_actions = calculate_source_allowed_actions(defn, instance, desired, observed)
+        allowed_actions = _apply_commands_disabled_to_actions(calculate_source_allowed_actions(defn, instance, desired, observed))
         data = {
             "id": f"source-detail-{source_instance_id}",
             "source_instance_id": source_instance_id,
@@ -760,6 +784,16 @@ def create_datasources_router(
         # 1. RBAC
         identity = extract_identity(authorization)
         _operator_role_check(identity)
+
+        # 1b. Kill switch (fail-closed, read per request) before anything reaches source-ingest
+        if not bff_source_commands_enabled():
+            raise _error_handler(
+                status_code=503,
+                code="DEPENDENCY_UNAVAILABLE",
+                message=SOURCE_COMMANDS_DISABLED_MESSAGE,
+                reason=SOURCE_COMMANDS_DISABLED_REASON,
+                details_extra={"switch": BFF_SOURCE_COMMANDS_FLAG},
+            )
 
         # 2. Idempotency key check
         clean_idempotency_key = str(idempotency_key or "").strip()
