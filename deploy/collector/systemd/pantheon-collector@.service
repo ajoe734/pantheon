@@ -1,0 +1,13 @@
+[Unit]
+Description=Pantheon Collector Source Run (%i)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/pantheon-collector
+ExecStartPre=/usr/bin/docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config
+ExecStart=/usr/bin/docker compose run --rm collector-worker --policy-file /app/fetch-policy.json --root-dir /data run --source %i
+User=root
+Group=root
+NoNewPrivileges=true

@@ -1,0 +1,20 @@
+{
+  "results": [
+    {
+      "id": "https://openalex.org/W4390001122",
+      "doi": "https://doi.org/10.1000/jfe.2026.011",
+      "title": "Supply Chain Momentum and Gross Margin Expansion in Semiconductor Equities",
+      "publication_date": "2026-11-05",
+      "cited_by_count": 14,
+      "abstract_inverted_index": {
+        "Monthly": [0],
+        "revenue": [1],
+        "momentum": [2],
+        "predicts": [3],
+        "subsequent": [4],
+        "equity": [5],
+        "returns.": [6]
+      }
+    }
+  ]
+}
