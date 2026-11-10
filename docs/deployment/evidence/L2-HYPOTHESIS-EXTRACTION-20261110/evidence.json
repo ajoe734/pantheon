@@ -1,0 +1,17 @@
+{
+  "task_id": "L2-HYPOTHESIS-EXTRACTION-20261110",
+  "tests": {
+    "command": "python -m pytest services/source_ingestion -q",
+    "new_file": "services/source_ingestion/tests/test_hypothesis_extraction.py (14 passed)",
+    "suite": "1190 passed, 13 skipped, 3 failed; all 3 failures are ModuleNotFoundError: asyncpg in the local venv (also fails on clean dev for the one checked)"
+  },
+  "acceptance": {
+    "1": "test_external_text_goes_through_deny_all_agent_and_merges_card (paper/news/theme digest/book)",
+    "2": "card validated against hypothesis_card.v1 and carried in seed metadata.hypothesis_card",
+    "3": "test_fabricated_citation_rejected_and_recorded",
+    "4": "test_injected_extra_keys_rejected (route/sink/tool_calls/extra) ; payload has no tools key",
+    "5": "test_no_card_means_no_draft_and_market_stays_skipped",
+    "6": "test_daily_cap_stops_with_budget_exhausted_default_is_400"
+  },
+  "notes": "Extraction is off unless PANTHEON_L2_EXTRACTION_ENABLED=1; without it the legacy path is unchanged. Hosted verification is DISCOVERY-W2-HOSTED-ACCEPTANCE."
+}
