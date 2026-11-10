@@ -294,6 +294,40 @@ def _fill_instrument_descriptor(
     return symbol, descriptor
 
 
+def _clean_text(value: Any) -> Optional[str]:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _trade_decision_identity(
+    metadata: dict[str, Any],
+) -> tuple[Optional[str], dict[str, str]]:
+    """Return ``(instrument_id, {decision_id, reason_code})`` of a trade_decision.
+
+    The paper signal producer carries the decision identity on
+    ``metadata.decision_id`` and the chosen expression on
+    ``metadata.expression_decision`` ({instrument_id, reason_code, units, side}).
+    ``metadata.reason_code`` is accepted when the expression record has none.
+    """
+    expression = metadata.get("expression_decision")
+    if not isinstance(expression, dict):
+        expression = {}
+    identity: dict[str, str] = {}
+    decision_id = _clean_text(metadata.get("decision_id"))
+    if decision_id:
+        identity["decision_id"] = decision_id
+    reason_code = _clean_text(expression.get("reason_code")) or _clean_text(
+        metadata.get("reason_code")
+    )
+    if reason_code:
+        identity["reason_code"] = reason_code
+    instrument_id = _clean_text(expression.get("instrument_id")) or _clean_text(
+        metadata.get("instrument_id")
+    )
+    return instrument_id, identity
+
+
 def _round6(val: float) -> float:
     rounded = round(float(val), 6)
     return 0.0 if rounded == 0.0 else rounded
@@ -451,6 +485,11 @@ def _rebuild_positions(
         if isinstance(current.get("_instrument_by_key"), dict)
         else {}
     )
+    decision_by_key = (
+        current.get("_decision_by_key")
+        if isinstance(current.get("_decision_by_key"), dict)
+        else {}
+    )
     binding_id = str(current.get("binding_id") or "")
     failure = current.get("_valuation_failure")
     latest_event_at = reference_at or _parse_rfc3339(
@@ -479,6 +518,11 @@ def _rebuild_positions(
                 row["margin_reserved"] = _round6(
                     float(descriptor.get("margin_reserved") or 0.0)
                 )
+        decision_identity = decision_by_key.get(position_key)
+        if isinstance(decision_identity, dict):
+            for identity_key in ("decision_id", "reason_code"):
+                if decision_identity.get(identity_key):
+                    row[identity_key] = decision_identity[identity_key]
         fill_currency = currency_by_symbol.get(position_key)
         if isinstance(fill_currency, str) and fill_currency.strip():
             row["currency"] = fill_currency.strip()
@@ -720,6 +764,37 @@ class RuntimeSummaryProjectionStore:
 
     _VALID_STAGES = frozenset({"paper", "canary", "live", "frozen"})
 
+    @staticmethod
+    def _fill_decision_identity(
+        current: dict[str, Any],
+        metadata: dict[str, Any],
+        fill_descriptor: dict[str, Any],
+        symbol: Any,
+    ) -> dict[str, str]:
+        """Decision identity of the decision that produced this fill.
+
+        The trade_decision event for the fill's instrument wins; a fill that
+        reports its own ``decision_id``/``reason_code`` is the fallback.
+        """
+        pending = current.get("_pending_decision_by_instrument")
+        if isinstance(pending, dict):
+            candidates = [
+                fill_descriptor.get("instrument_id"),
+                f"eq:{symbol}" if isinstance(symbol, str) else None,
+                f"eq:{symbol.split('.')[0]}" if isinstance(symbol, str) else None,
+            ]
+            for candidate in candidates:
+                if candidate and isinstance(pending.get(candidate), dict):
+                    return dict(pending[candidate])
+        identity: dict[str, str] = {}
+        decision_id = _clean_text(metadata.get("decision_id"))
+        reason_code = _clean_text(metadata.get("reason_code"))
+        if decision_id:
+            identity["decision_id"] = decision_id
+        if reason_code:
+            identity["reason_code"] = reason_code
+        return identity
+
     def project_event(self, event: dict[str, Any]) -> Optional[dict[str, Any]]:
         """Update the runtime summary from one validated, accepted telemetry event."""
         stage = str(event.get("deployment_stage") or "").lower()
@@ -825,6 +900,7 @@ class RuntimeSummaryProjectionStore:
                     "ledger_cash", "ledger_cash_fill_count", "ledger_cash_as_of",
                     "_cost_by_symbol", "_cost_applied_fill_count", "_cost_pending_fills", "_cost_withheld",
                     "_currency_by_symbol", "_broker_by_symbol", "_instrument_by_key",
+                    "_decision_by_key", "_pending_decision_by_instrument",
                     "last_heartbeat_at", "last_heartbeat_event_id",
                     "state", "connectivity_status", "broker_status",
                     "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
@@ -1054,6 +1130,22 @@ class RuntimeSummaryProjectionStore:
             # ``bracket_order_logged`` only records order intent and must never
             # inflate fill counts or positions.  Only the simulated-fill event
             # proves that the paper ledger actually changed.
+            if event_type == "trade_decision":
+                decided_instrument, decided_identity = _trade_decision_identity(
+                    metadata
+                )
+                if decided_instrument and decided_identity:
+                    pending_decisions = current.get(
+                        "_pending_decision_by_instrument"
+                    )
+                    pending_decisions = (
+                        dict(pending_decisions)
+                        if isinstance(pending_decisions, dict)
+                        else {}
+                    )
+                    pending_decisions[decided_instrument] = decided_identity
+                    current["_pending_decision_by_instrument"] = pending_decisions
+
             if event_type == "paper_fill_simulated":
                 symbol = metadata.get("symbol") or metrics.get("symbol")
                 fill_qty = metrics.get("fill_quantity")
@@ -1150,6 +1242,18 @@ class RuntimeSummaryProjectionStore:
                                     broker_by_symbol = {}
                                 broker_by_symbol[pos_key] = raw_broker.strip()
                                 current["_broker_by_symbol"] = broker_by_symbol
+                            fill_identity = self._fill_decision_identity(
+                                current, metadata, fill_descriptor, symbol
+                            )
+                            if fill_identity:
+                                decision_by_key = current.get("_decision_by_key")
+                                decision_by_key = (
+                                    dict(decision_by_key)
+                                    if isinstance(decision_by_key, dict)
+                                    else {}
+                                )
+                                decision_by_key[pos_key] = fill_identity
+                                current["_decision_by_key"] = decision_by_key
                             if fill_descriptor.get("instrument_id"):
                                 instrument_meta = current.get("_instrument_by_key")
                                 if not isinstance(instrument_meta, dict):
