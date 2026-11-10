@@ -81,34 +81,136 @@
       "additionalProperties": false
     },
     "strategy_logic": {
-      "type": "object",
-      "required": [
-        "kind",
-        "lookback_parameter",
-        "threshold_parameter",
-        "positive_action",
-        "non_positive_action"
-      ],
-      "properties": {
-        "kind": {
-          "const": "close_to_close_momentum"
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "lookback_parameter",
+            "threshold_parameter",
+            "positive_action",
+            "non_positive_action"
+          ],
+          "properties": {
+            "kind": {
+              "const": "close_to_close_momentum"
+            },
+            "lookback_parameter": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threshold_parameter": {
+              "type": "string",
+              "minLength": 1
+            },
+            "positive_action": {
+              "enum": ["BUY", "SELL", "HOLD"]
+            },
+            "non_positive_action": {
+              "enum": ["BUY", "SELL", "HOLD"]
+            }
+          },
+          "additionalProperties": false
         },
-        "lookback_parameter": {
-          "type": "string",
-          "minLength": 1
-        },
-        "threshold_parameter": {
-          "type": "string",
-          "minLength": 1
-        },
-        "positive_action": {
-          "enum": ["BUY", "SELL", "HOLD"]
-        },
-        "non_positive_action": {
-          "enum": ["BUY", "SELL", "HOLD"]
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "inputs",
+            "signal",
+            "entry",
+            "exit",
+            "strength"
+          ],
+          "properties": {
+            "kind": {
+              "const": "factor_rule_v1"
+            },
+            "inputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "dataset",
+                  "field",
+                  "availability_lag_days"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                  },
+                  "dataset": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "field": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "availability_lag_days": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "signal": {
+              "$ref": "#/$defs/factor_expression"
+            },
+            "entry": {
+              "type": "object",
+              "required": [
+                "long_when",
+                "short_when"
+              ],
+              "properties": {
+                "long_when": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/factor_expression" },
+                    { "type": "null" }
+                  ]
+                },
+                "short_when": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/factor_expression" },
+                    { "type": "null" }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "exit": {
+              "type": "object",
+              "required": [
+                "max_holding_bars",
+                "flat_when"
+              ],
+              "properties": {
+                "max_holding_bars": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/const_param_ref" },
+                    { "type": "null" }
+                  ]
+                },
+                "flat_when": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/factor_expression" },
+                    { "type": "null" }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "strength": {
+              "$ref": "#/$defs/factor_expression"
+            }
+          },
+          "additionalProperties": false
         }
-      },
-      "additionalProperties": false
+      ]
     },
     "parameters": {
       "type": "object",
@@ -380,6 +482,91 @@
       "type": "array",
       "items": {"type": "string", "minLength": 1},
       "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "const_param_ref": {
+      "type": "object",
+      "required": ["const_param"],
+      "properties": {
+        "const_param": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "input_ref": {
+      "type": "object",
+      "required": ["ref"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "factor_expression": {
+      "oneOf": [
+        { "$ref": "#/$defs/const_param_ref" },
+        { "$ref": "#/$defs/input_ref" },
+        {
+          "type": "object",
+          "required": ["op", "args"],
+          "properties": {
+            "op": {
+              "enum": [
+                "lag",
+                "delta",
+                "pct_change",
+                "ts_mean",
+                "ts_std",
+                "ts_zscore",
+                "ts_rank",
+                "ts_min",
+                "ts_max",
+                "ts_sum",
+                "ts_corr",
+                "ts_cov",
+                "ts_slope",
+                "ts_rsquare",
+                "ts_resi",
+                "ts_quantile",
+                "ts_argmax",
+                "ts_argmin",
+                "ts_decay_linear",
+                "ratio",
+                "add",
+                "sub",
+                "mul",
+                "div",
+                "abs",
+                "sign",
+                "clip01",
+                "log",
+                "signed_power",
+                "max2",
+                "min2",
+                "gt",
+                "lt",
+                "and",
+                "or",
+                "not"
+              ]
+            },
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "items": {
+                "$ref": "#/$defs/factor_expression"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
     }
   },
   "additionalProperties": false

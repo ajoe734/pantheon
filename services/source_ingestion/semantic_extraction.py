@@ -83,6 +83,7 @@ class ExtractionTaskType(str, Enum):
     STRATEGY_SEED = "strategy_seed"
     TRADE_LESSON = "trade_lesson"
     COMPREHENSIVE = "comprehensive"
+    HYPOTHESIS_CARD = "hypothesis_card"
 
 
 class AbstentionReason(str, Enum):
@@ -396,6 +397,8 @@ class SemanticExtractionAdmission:
         "mit",
         "apache-2.0",
         "cc-by-4.0",
+        # Collector licence scopes (SD §8.2): added explicitly, one by one.
+        "collector_public_web",
     })
 
     @classmethod
@@ -581,6 +584,7 @@ class SemanticExtractionResult:
     latency_ms: float = 0.0
     retry_count: int = 0
     created_at: str = field(default_factory=_utc_now)
+    hypothesis_card: Optional[Mapping[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -609,6 +613,7 @@ class SemanticExtractionResult:
             "latency_ms": self.latency_ms,
             "retry_count": self.retry_count,
             "created_at": self.created_at,
+            "hypothesis_card": dict(self.hypothesis_card) if self.hypothesis_card is not None else None,
         }
 
     @classmethod
@@ -644,6 +649,7 @@ class SemanticExtractionResult:
             latency_ms=float(data.get("latency_ms", 0.0)),
             retry_count=int(data.get("retry_count", 0)),
             created_at=str(data.get("created_at") or _utc_now()),
+            hypothesis_card=dict(data["hypothesis_card"]) if data.get("hypothesis_card") else None,
         )
 
 
@@ -653,6 +659,10 @@ class SemanticExtractionResult:
 
 def get_semantic_extraction_json_schema(task_type: ExtractionTaskType) -> dict[str, Any]:
     """Generates the strict JSON Schema for structured extraction validation."""
+    if task_type == ExtractionTaskType.HYPOTHESIS_CARD:
+        from services.source_ingestion.hypothesis_card import hypothesis_card_model_schema
+
+        return hypothesis_card_model_schema()
     intent_schema = {
         "type": "object",
         "properties": {

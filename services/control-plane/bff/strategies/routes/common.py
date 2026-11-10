@@ -659,7 +659,14 @@ class StrategyRouteContext:
             or (detail or {}).get("capitalPoolId")
             or ""
         ).strip()
-        alpha = str(market_scope.get("alpha") or "")
+        alpha = str(
+            market_scope.get("alpha")
+            or detail_dict.get("alpha")
+            or detail_metadata.get("alpha")
+            or summary.get("alpha")
+            or summary_metadata.get("alpha")
+            or ""
+        )
         allowed = (detail or {}).get("allowedActions") or summary.get("allowedActions") or {}
         available_actions: List[str] = []
         if isinstance(allowed, dict):

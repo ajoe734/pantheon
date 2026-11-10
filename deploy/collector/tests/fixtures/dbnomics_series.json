@@ -1,0 +1,12 @@
+{
+  "series": {
+    "docs": [
+      {
+        "series_code": "FED/H15/RIFSPFF_N.D",
+        "unit": "percent",
+        "period": ["2026-11-08", "2026-11-09"],
+        "value": [4.58, 4.58]
+      }
+    ]
+  }
+}

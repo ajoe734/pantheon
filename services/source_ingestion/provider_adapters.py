@@ -24,6 +24,7 @@ from .connectors.finmind_taiwan import (
     FinMindTaiwanBrokerDailyReportAdapter,
     FinMindTaiwanDatasetAdapter,
 )
+from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter
 from .connectors.social import AdmittedSocialMediaAdapter
 from .connectors.taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
 from .connectors.taiwan_official import (
@@ -927,6 +928,17 @@ def _alpha_db(
     )
 
 
+def _collector_bundle(
+    adapter: CollectorBundleAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    """Pull verified bundles newer than the cursor; any mismatch raises with no write."""
+
+    cursor = request.get("cursor") or request.get("watermark") or None
+    return adapter.pull(cursor=str(cursor) if cursor else None, trace_id=trace_id).records
+
+
 PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
     "TaiwanOfficialMarketDatasetAdapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
     "MopsSourceIngestAdapter": "MopsSourceIngestAdapter.records_from_payload",
@@ -950,6 +962,7 @@ PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
     "AlphaVantageUsEquityDailyAdapter": "AlphaVantageUsEquityDailyAdapter.records_from_time_series_payload",
     "IbkrBrokerReadbackAdapter": "IbkrBrokerReadbackAdapter.records_from_readback_file",
     "ShioajiBrokerReadbackAdapter": "ShioajiBrokerReadbackAdapter.records_from_readback_file",
+    "CollectorBundleAdapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN,
 }
 
 
@@ -1079,6 +1092,15 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=AdmittedSocialMediaAdapter,
         handler=_social,
         config_keys=("max_records", "platform", "symbols", "secret_ref_id"),
+    ),
+    COLLECTOR_BUNDLE_ADAPTER_TOKEN: ProviderAdapterSpec(
+        token=COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+        adapter_cls=CollectorBundleAdapter,
+        handler=_collector_bundle,
+        config_keys=(
+            "source_id", "source_type", "platform", "publisher", "trust_score", "attribution_required",
+            "license_scope", "cadence_seconds", "dataset", "host", "max_records",
+        ),
     ),
     "ExternalAlphaDbAdapter.records_from_payload": ProviderAdapterSpec(
         token="ExternalAlphaDbAdapter.records_from_payload",

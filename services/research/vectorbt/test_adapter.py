@@ -609,3 +609,110 @@ class TestZeroActivitySharpe(unittest.TestCase):
             _sharpe_undefined_reason({**metrics, "total_return": 0.0, "max_drawdown": 0.0}),
             "zero_return_variance",
         )
+
+
+class TestFactorRuleBacktestAndPaperParity(unittest.TestCase):
+    """STRATEGY-ARTIFACT-FACTOR-RULE-KIND-20261110 backtest-to-paper parity tests."""
+
+    def test_factor_rule_v1_vectorbt_backtest_and_paper_replay_produce_identical_actions(self) -> None:
+        import math
+        from adapter.vectorbt_adapter import (
+            BacktestRunResult,
+            _artifact_action_sequence,
+            _artifact_order_sizes,
+            _bar_features_for_index,
+        )
+        from services.execution.lean_runtime.paper_signal_producer import (
+            CurrentArtifactStrategy,
+        )
+        from services.execution.lean_runtime.test_current_artifact_signal import _binding
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        artifact["parameters"]["order_quantity"] = 1000
+        artifact["parameters"]["z_window"] = 4
+        artifact["parameters"]["entry_z"] = 0.7
+        artifact["parameters"]["exit_z"] = -0.5
+        artifact["parameters"]["hold_bars"] = 3
+        for ctrl in artifact["mutation_surface"]["controls"]:
+            ctrl["current_value"] = artifact["parameters"][ctrl["parameter_key"]]
+
+        # 32 daily bars with varying revenue YoY series driving BUY, HOLD, and SELL (both flat_when and max_holding_bars)
+        rev_yoy_series = [
+            10.0, 11.0, 10.5, 18.0,  # bar 3 -> z > 0.7 -> BUY
+            15.0, 15.0, 15.0,        # bars 4, 5 -> HOLD; bar 6 -> 3rd held bar -> max_holding_bars SELL
+            14.5, 14.0, 8.0,         # bar 9 -> sharp drop -> z < -0.5 -> flat_when SELL
+            9.0, 10.0, 11.0, 19.0,   # bar 13 -> z > 0.7 -> BUY
+            20.0, 21.0, 12.0,        # bar 16 -> z < -0.5 -> SELL
+            12.5, 13.0, 13.2, 13.1,
+            13.0, 18.5, 18.0, 17.8,
+            11.0, 11.5, 12.0, 12.2,
+            12.4, 16.5, 17.0,
+        ]
+        assert len(rev_yoy_series) == 32
+        closes_2330 = [500.0 + (i % 7) * 2.5 for i in range(32)]
+        closes_2317 = [150.0 + (i % 5) * 1.5 for i in range(32)]
+
+        raw_ds = _canonical_dataset(closes_2330, closes_2317)
+        raw_ds["features_by_instrument"] = {
+            "2330.TWSE": {"rev_yoy": rev_yoy_series},
+            "2317.TWSE": {"rev_yoy": rev_yoy_series},
+        }
+        prepared = GovernedVectorbtInputAdapter().prepare(raw_ds)
+
+        vbt_actions_by_inst = _artifact_action_sequence(prepared, artifact)
+        vbt_sizes_by_inst = _artifact_order_sizes(prepared, artifact)
+        self.assertEqual(list(vbt_actions_by_inst.keys()), ["2330.TWSE"])
+        vbt_actions = vbt_actions_by_inst["2330.TWSE"]
+        vbt_sizes = vbt_sizes_by_inst["2330.TWSE"]
+
+        # Warmup bars (indices 0, 1, 2 for z_window=4) have None action and NaN order size
+        self.assertEqual(vbt_actions[:3], [None, None, None])
+        self.assertTrue(all(math.isnan(x) for x in vbt_sizes[:3]))
+
+        # Replay the exact same bars through the paper signal producer (CurrentArtifactStrategy)
+        paper_strategy = CurrentArtifactStrategy(expression_layer=False)
+        paper_actions: list[str | None] = [None, None, None]
+        paper_sizes: list[float] = [float("nan")] * 3
+        for idx in range(3, len(closes_2330)):
+            bar_features, bar_date = _bar_features_for_index(prepared, "2330.TWSE", idx)
+            binding = _binding(
+                artifact,
+                binding_id="rb-parity-2330",
+                include_market_input=False,
+            )
+            binding["symbol"] = "2330.TW"
+            binding["market_input"] = {
+                "symbol": "2330.TW",
+                "closes": closes_2330[: idx + 1],
+                "features": bar_features,
+                "source_ref": "source-ingest://normalized/tw-price/2330",
+                "event_time": f"{bar_date}T05:30:00Z",
+                "observed_at": f"{bar_date}T06:00:00Z",
+            }
+            decision = paper_strategy(binding, f"{bar_date}T06:05:00Z")
+            act = decision["action"]
+            paper_actions.append(act)
+            if act == "BUY":
+                paper_sizes.append(float(decision["quantity"]))
+            elif act == "SELL":
+                paper_sizes.append(-float(decision["quantity"]))
+            else:
+                paper_sizes.append(float("nan"))
+
+        # Identical action sequence across all 32 bars
+        self.assertEqual(vbt_actions, paper_actions)
+        # Ensure all three action types (BUY, SELL, HOLD) actually occurred in the parity replay
+        evaluated_actions = vbt_actions[3:]
+        self.assertIn("BUY", evaluated_actions)
+        self.assertIn("SELL", evaluated_actions)
+        self.assertIn("HOLD", evaluated_actions)
+
+        # Identical signed order sizes across all 32 bars
+        for i in range(len(vbt_sizes)):
+            if math.isnan(vbt_sizes[i]):
+                self.assertTrue(math.isnan(paper_sizes[i]), f"bar {i} mismatch")
+            else:
+                self.assertEqual(vbt_sizes[i], paper_sizes[i], f"bar {i} mismatch")
+

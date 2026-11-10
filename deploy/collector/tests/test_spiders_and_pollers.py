@@ -1,0 +1,247 @@
+"""Offline fixture tests for every spider and poller in SD §5 except dropped TPEx flows (AC2)."""
+
+from __future__ import annotations
+
+import io
+import json
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from collector_stack.bundle import verify_bundle_directory
+from collector_stack.config import (
+    DEFAULT_POLICY_PATH,
+    CollectorConfigError,
+    load_collector_config,
+)
+from collector_stack.fetchers import FixtureTransport
+from collector_stack.pollers import (
+    GdeltDocPoller,
+    RssHubNewsPoller,
+    YouTubeDataApiPoller,
+)
+from collector_stack.privacy import AuthorHasher
+from collector_stack.runner import CollectorRunner
+
+
+def _build_ndc_zip_bytes(csv_bytes: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("ndc_business_indicators_6099.csv", csv_bytes)
+    return buf.getvalue()
+
+
+def _build_fixture_transport(fixtures_dir: Path) -> FixtureTransport:
+    ndc_zip = _build_ndc_zip_bytes((fixtures_dir / "ndc_6099.csv").read_bytes())
+    transport = FixtureTransport()
+
+    # §5.1 Macro and economic data
+    transport.register(
+        "https://cpx.cbc.gov.tw/API/DataAPI/Get",
+        (fixtures_dir / "cbc_bp01d01.json").read_bytes(),
+    )
+    transport.register(
+        "https://ws.ndc.gov.tw/Download.ashx",
+        ndc_zip,
+    )
+    transport.register(
+        "https://www.stat.gov.tw/Point.aspx",
+        (fixtures_dir / "dgbas_macro.html").read_bytes(),
+    )
+    transport.register(
+        "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
+        (fixtures_dir / "twse_t187ap05_l.json").read_bytes(),
+    )
+    transport.register(
+        "https://api.gdeltproject.org/api/v2/doc/doc",
+        (fixtures_dir / "gdelt_doc.json").read_bytes(),
+    )
+    transport.register(
+        "https://api.db.nomics.world/v22/series/",
+        (fixtures_dir / "dbnomics_series.json").read_bytes(),
+    )
+
+    # §5.2 Papers and research
+    transport.register(
+        "https://export.arxiv.org/api/query",
+        (fixtures_dir / "arxiv_qfin.xml").read_bytes(),
+    )
+    transport.register(
+        "https://api.openalex.org/works",
+        (fixtures_dir / "openalex_works.json").read_bytes(),
+    )
+    transport.register(
+        "http://rsshub:1200/nber/papers",
+        (fixtures_dir / "rsshub_nber.xml").read_bytes(),
+    )
+
+    # §5.3 Community and social
+    transport.register(
+        "https://www.threads.com/search",
+        (fixtures_dir / "threads_search.html").read_bytes(),
+    )
+    transport.register(
+        "https://www.instagram.com/explore/tags/",
+        (fixtures_dir / "instagram_popular_tag.html").read_bytes(),
+        final_url="https://www.instagram.com/popular/%E5%8F%B0%E8%82%A1/?utm_source=explore_tag",
+    )
+    transport.register(
+        "https://www.cmoney.tw/forum/stock/",
+        (fixtures_dir / "cmoney_forum_2330.html").read_bytes(),
+    )
+    transport.register(
+        "https://www.ptt.cc/bbs/Stock/index.html",
+        (fixtures_dir / "ptt_stock_index.html").read_bytes(),
+    )
+    transport.register(
+        "https://rss.disp.cc/Stock.xml",
+        (fixtures_dir / "ptt_mirror_disp_stock.xml").read_bytes(),
+    )
+    transport.register(
+        "https://www.googleapis.com/youtube/v3/search",
+        (fixtures_dir / "youtube_search.json").read_bytes(),
+    )
+    transport.register(
+        "https://www.googleapis.com/youtube/v3/videos",
+        (fixtures_dir / "youtube_videos.json").read_bytes(),
+    )
+    transport.register(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        (fixtures_dir / "gemini_video_summary.json").read_bytes(),
+    )
+
+    # §5.5 News via RSSHub
+    transport.register(
+        "http://rsshub:1200/cna/realtime",
+        (fixtures_dir / "rsshub_cna.xml").read_bytes(),
+    )
+    return transport
+
+
+@pytest.mark.parametrize(
+    ("source_id", "min_expected_items", "require_attribution"),
+    [
+        # §5.1 Macro and economic data (TPEx flows dropped per Dev Plan §2)
+        ("collector-tw-macro-cbc", 2, True),
+        ("collector-tw-macro-ndc", 2, True),
+        ("collector-tw-macro-dgbas", 3, True),
+        ("collector-tw-twse-openapi", 2, True),
+        ("collector-gdelt", 1, True),
+        ("collector-macro-dbnomics", 2, True),
+        # §5.2 Papers and research
+        ("collector-paper-arxiv", 1, False),
+        ("collector-paper-openalex", 1, False),
+        ("collector-paper-nber-rss", 1, False),
+        ("collector-papers", 3, False),
+        # §5.3 Community and social
+        ("collector-tw-threads", 2, False),
+        ("collector-tw-instagram-popular", 2, False),
+        ("collector-tw-cmoney-forum", 1, False),
+        ("collector-tw-ptt-stock", 1, False),
+        ("collector-tw-ptt-mirrors", 1, False),
+        ("collector-youtube-finance", 1, False),
+        ("collector-youtube-gemini-notes", 1, False),
+        # §5.4 Books and curated knowledge
+        ("collector-library-books", 2, False),
+        # §5.5 News via RSSHub
+        ("collector-news-rss", 1, False),
+    ],
+)
+def test_every_section_5_source_runs_on_captured_fixture_with_no_network_call(
+    tmp_path: Path,
+    fixtures_dir: Path,
+    test_hasher: AuthorHasher,
+    source_id: str,
+    min_expected_items: int,
+    require_attribution: bool,
+) -> None:
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    library_dir = tmp_path / "library" / "books"
+    library_dir.mkdir(parents=True, exist_ok=True)
+    (library_dir / "quant_factors_handbook.pdf").write_bytes(
+        (fixtures_dir / "sample_book.md").read_bytes()
+    )
+
+    transport = _build_fixture_transport(fixtures_dir)
+    runner = CollectorRunner(
+        config,
+        root_dir=tmp_path,
+        library_dir=library_dir,
+        hasher=test_hasher,
+        transport=transport,
+    )
+
+    outcome = runner.run_source(
+        source_id,
+        run_id=f"fixture-{source_id}",
+        started_at="2026-11-10T09:00:00Z",
+        finished_at="2026-11-10T09:00:10Z",
+        allow_disabled=True,
+    )
+    assert outcome.status == "complete"
+    manifest = verify_bundle_directory(outcome.bundle.bundle_dir)
+    assert manifest["source_id"] == source_id
+    assert len(manifest["items"]) >= min_expected_items
+    if require_attribution:
+        assert len(manifest["attribution"].strip()) > 0
+
+    lines = [
+        json.loads(line)
+        for line in outcome.bundle.items_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(lines) == len(manifest["items"])
+
+    # Social sources must have 64-char HMAC hashed_author and no display names
+    if source_id in {
+        "collector-tw-threads",
+        "collector-tw-instagram-popular",
+        "collector-tw-cmoney-forum",
+        "collector-tw-ptt-stock",
+        "collector-tw-ptt-mirrors",
+        "collector-youtube-finance",
+    }:
+        for row in lines:
+            assert len(row["hashed_author"]) == 64
+
+    # ArXiv poller must have filtered out the hep-th entry and kept only q-fin.PM/stat.ML
+    if source_id == "collector-paper-arxiv":
+        assert len(lines) == 1
+        assert "2611.01234v1" in lines[0]["id"]
+        assert lines[0]["metrics"]["redistribution_allowed"] is False
+
+    # Book library poller must carry page_start / page_end and redistribution_allowed=False
+    if source_id == "collector-library-books":
+        assert lines[0]["metrics"]["page_start"] == 1
+        assert lines[0]["metrics"]["page_end"] == 18
+        assert lines[1]["metrics"]["page_start"] == 19
+        assert lines[1]["metrics"]["page_end"] == 42
+        assert lines[0]["metrics"]["redistribution_allowed"] is False
+
+
+def test_source_specific_guardrails_gdelt_youtube_rsshub_and_books(
+    tmp_path: Path, fixtures_dir: Path, test_hasher: AuthorHasher
+) -> None:
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    transport = _build_fixture_transport(fixtures_dir)
+
+    # GDELT refuses > 250 records per call
+    gdelt = GdeltDocPoller(config.get_source("collector-gdelt"), transport=transport)
+    with pytest.raises(CollectorConfigError, match="250"):
+        gdelt.collect(max_records=500)
+
+    # YouTube refuses captions.download
+    yt = YouTubeDataApiPoller(
+        config.get_source("collector-youtube-finance"),
+        transport=transport,
+        hasher=test_hasher,
+    )
+    with pytest.raises(CollectorConfigError, match="captions.download"):
+        yt.collect(attempt_captions_download=True)
+
+    # RSSHub news refuses yahoo and cnyes/anue as DISABLED_BY_BUILD
+    news = RssHubNewsPoller(config.get_source("collector-news-rss"), transport=transport)
+    for bad_route in ("/yahoo/news", "/cnyes/news", "/anue/headline", "/ptt/Stock"):
+        with pytest.raises(CollectorConfigError):
+            news.collect(routes=[bad_route])

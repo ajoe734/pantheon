@@ -1,0 +1,34 @@
+{
+  "task_id": "ALPHA-TEMPLATE-LIBRARY-20261110",
+  "title": "Implement AlphaTemplate and seed it from Qlib Alpha158 and Alpha101",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "scope": [
+    "docs/contracts/alpha_template.v1.schema.json",
+    "services/registry/alpha_template.py",
+    "services/registry/test_alpha_template.py",
+    "services/registry/alpha_templates/",
+    "services/registry/models.py",
+    "services/registry/registry_entry_schema.json",
+    "services/registry/service.py",
+    "services/registry/contract.md",
+    "services/registry/test_first_release_contract.py",
+    "docs/deployment/evidence/ALPHA-TEMPLATE-LIBRARY-20261110/evidence.json"
+  ],
+  "acceptance_criteria_verification": {
+    "contract_and_registry_storage": "alpha_template.v1.schema.json carries the plan 3.3 fields (plus `parameters` holding const_param values). ArtifactType.ALPHA_TEMPLATE; POST /api/registry/alpha-templates, GET /api/registry/alpha-templates[/{id}] (filters family/scope/status/library); generic POST /entries rejects the kind; built-in library registered idempotently at startup. Proof: test_registry_store_and_list, test_http_store_list_and_generic_route_rejection.",
+    "alpha158_reference_parity": "158 templates (9 KBAR + 4 PRICE + 29 rolling ops x windows 5/10/20/30/60) in alpha_templates/qlib_alpha158.v1.json. test_alpha158_matches_reference_on_fixture compares all 158 against an independent pure-Python implementation of the Qlib definitions on a seeded 140-bar OHLCV fixture at 3 bars, rel tol 1e-8. Qlib sample-std (ddof=1) is reproduced via std_scale=sqrt(d/(d-1)); Qlib Rank via (ts_rank*(d-1)+1)/d; IMAX/IMIN tie-break differs (latest bar) but not on non-tied fixture data.",
+    "alpha101": "13 time-series formulas (#6,#7,#9,#12,#23,#26,#35,#41,#43,#46,#53,#54,#101) implemented from the paper text; value-checked against direct formulas where independent of Ts_Rank, finite-checked otherwise (Ts_Rank is the normalised percentile). 11 cross-sectional formulas (#2,#3,#4,#13,#14,#28,#32,#33,#40,#44,#55) stored with scope=cross_sectional; evaluate_alpha_template refuses them and factor_rule's per-symbol parser rejects their AST (test_cross_sectional_templates_stored_and_refused).",
+    "origin_licence_attribution": "Every template carries origin{library,ref}, licence (MIT for Qlib; arXiv formula attribution for Alpha101) and attribution; test_every_template_validates_and_carries_provenance and test_no_gpl_or_noncommercial_material. No OSAP/JKP code or data is included; no Qlib code is copied or imported."
+  },
+  "commands": [
+    {
+      "cmd": "python -m pytest -q services/registry/test_alpha_template.py",
+      "result": "13 passed"
+    },
+    {
+      "cmd": "python -m pytest -q services/registry --ignore=services/registry/test_strategy_summary_page_bounded.py",
+      "result": "4 failed (test_registry_auth_wiring deployment_view, test_service deployment_view x3: ModuleNotFoundError in services/runtime-manager/main.py in this environment, unrelated), remaining passed; test_strategy_summary_page_bounded not collectable (psycopg not installed here)"
+    }
+  ]
+}

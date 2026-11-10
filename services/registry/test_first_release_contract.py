@@ -147,6 +147,7 @@ def test_no_unlisted_mutating_routes_are_mounted():
         ("POST", "/api/registry/strategy-artifacts/{registry_id}/advance"),
         ("POST", "/api/registry/allocation-policy-artifacts"),
         ("POST", "/api/registry/allocation-policy-artifacts/{registry_id}/advance"),
+        ("POST", "/api/registry/alpha-templates"),
     }
     allowed = contract_routes | pre_existing_out_of_scope
 

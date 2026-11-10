@@ -29,7 +29,8 @@
         "evaluation_result",
         "critique_result",
         "optimizer_result",
-        "allocation_policy"
+        "allocation_policy",
+        "alpha_template"
       ]
     },
     "strategy_id": {

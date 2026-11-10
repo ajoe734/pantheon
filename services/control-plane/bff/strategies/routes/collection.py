@@ -77,16 +77,39 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         # Full candidate set selected by state / exclude_state / persona_id,
         # before the hide filter. None until a path has loaded it.
         candidates: Optional[List[Dict[str, Any]]] = None
+        precomputed_operational_counts: Optional[Dict[str, int]] = None
         operational_counts_failed = False
         operational_counts_reason = "candidate set could not be read"
         hidden_retired_persona_count = 0
+        bounded_hide = (
+            ctx.service.list_strategy_summaries_hide_retired_unfiltered_page(
+                persona_lookup=persona_lookup,
+                summary_persona_ids_fn=summary_persona_ids,
+                operational_counts_fn=operational_counts,
+                status_retired=STATUS_RETIRED,
+                page_slice_fn=ctx.page_slice,
+                page_token=page_token,
+                page_size=page_size,
+            )
+            if (
+                ctx.service
+                and hide_retired_personas
+                and norm_state is None
+                and norm_exclude_state is None
+                and persona_id is None
+                and hasattr(
+                    ctx.service, "list_strategy_summaries_hide_retired_unfiltered_page"
+                )
+            )
+            else None
+        )
         owner_walk = (
             ctx.service.list_all_strategy_summary_pages(
                 state=norm_state,
                 exclude_state=norm_exclude_state,
                 persona_id=persona_id,
             )
-            if (ctx.service and hide_retired_personas)
+            if (ctx.service and hide_retired_personas and bounded_hide is None)
             else None
         )
         owner_page = (
@@ -97,10 +120,19 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 page_token=page_token,
                 page_size=page_size,
             )
-            if (ctx.service and owner_walk is None)
+            if (ctx.service and bounded_hide is None and owner_walk is None)
             else None
         )
-        if owner_walk is not None:
+        if bounded_hide is not None:
+            page_summaries = list(bounded_hide["page_summaries"])
+            next_page_token = bounded_hide["next_page_token"]
+            total = int(bounded_hide["total"])
+            hidden_retired_persona_count = int(
+                bounded_hide["hidden_retired_persona_count"]
+            )
+            state_counts = bounded_hide["state_counts"]
+            precomputed_operational_counts = bounded_hide["operational_counts"]
+        elif owner_walk is not None:
             candidates = list(owner_walk["items"])
             for summary in candidates:
                 strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
@@ -299,7 +331,9 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         meta["state_counts"] = state_counts
         surfaces = dict(meta.get("surfaces") or {})
         surfaces["persona_states"] = persona_lookup.surface()
-        if candidates is not None and not operational_counts_failed:
+        if precomputed_operational_counts is not None and not operational_counts_failed:
+            meta["operational_counts"] = precomputed_operational_counts
+        elif candidates is not None and not operational_counts_failed:
             meta["operational_counts"] = operational_counts(
                 persona_lookup.operational_status(summary_persona_ids(summary))
                 for summary in candidates

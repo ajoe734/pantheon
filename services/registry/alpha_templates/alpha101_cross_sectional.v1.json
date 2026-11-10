@@ -1,0 +1,911 @@
+{
+ "library": "alpha101",
+ "templates": [
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "const": -1.0
+     },
+     {
+      "args": [
+       {
+        "args": [
+         {
+          "args": [
+           {
+            "args": [
+             {
+              "ref": "volume"
+             }
+            ],
+            "op": "log"
+           },
+           {
+            "const_param": "k2"
+           }
+          ],
+          "op": "delta"
+         }
+        ],
+        "op": "cs_rank"
+       },
+       {
+        "args": [
+         {
+          "args": [
+           {
+            "args": [
+             {
+              "ref": "close"
+             },
+             {
+              "ref": "open"
+             }
+            ],
+            "op": "sub"
+           },
+           {
+            "ref": "open"
+           }
+          ],
+          "op": "div"
+         }
+        ],
+        "op": "cs_rank"
+       },
+       {
+        "const_param": "d6"
+       }
+      ],
+      "op": "ts_corr"
+     }
+    ],
+    "op": "mul"
+   },
+   "family": "volume",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "open",
+     "name": "open"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "close",
+     "name": "close"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "volume",
+     "name": "volume"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#2",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#2"
+   },
+   "parameters": {
+    "d6": 6,
+    "k2": 2
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#2"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "const": -1.0
+     },
+     {
+      "args": [
+       {
+        "args": [
+         {
+          "ref": "open"
+         }
+        ],
+        "op": "cs_rank"
+       },
+       {
+        "args": [
+         {
+          "ref": "volume"
+         }
+        ],
+        "op": "cs_rank"
+       },
+       {
+        "const_param": "d10"
+       }
+      ],
+      "op": "ts_corr"
+     }
+    ],
+    "op": "mul"
+   },
+   "family": "volume",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "open",
+     "name": "open"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "volume",
+     "name": "volume"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#3",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#3"
+   },
+   "parameters": {
+    "d10": 10
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#3"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "const": -1.0
+     },
+     {
+      "args": [
+       {
+        "args": [
+         {
+          "ref": "low"
+         }
+        ],
+        "op": "cs_rank"
+       },
+       {
+        "const_param": "d9"
+       }
+      ],
+      "op": "ts_rank"
+     }
+    ],
+    "op": "mul"
+   },
+   "family": "reversal",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "low",
+     "name": "low"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#4",
+   "origin": {
+    "library": "alpha101",
+    "notes": "Ts_Rank is the normalised percentile (rank of the last value among earlier values in the window, in [0,1]).",
+    "ref": "#4"
+   },
+   "parameters": {
+    "d9": 9
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#4"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "const": -1.0
+     },
+     {
+      "args": [
+       {
+        "args": [
+         {
+          "args": [
+           {
+            "ref": "close"
+           }
+          ],
+          "op": "cs_rank"
+         },
+         {
+          "args": [
+           {
+            "ref": "volume"
+           }
+          ],
+          "op": "cs_rank"
+         },
+         {
+          "const_param": "d5"
+         }
+        ],
+        "op": "ts_cov"
+       }
+      ],
+      "op": "cs_rank"
+     }
+    ],
+    "op": "mul"
+   },
+   "family": "volume",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "close",
+     "name": "close"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "volume",
+     "name": "volume"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#13",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#13"
+   },
+   "parameters": {
+    "d5": 5
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#13"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "args": [
+       {
+        "const": -1.0
+       },
+       {
+        "args": [
+         {
+          "args": [
+           {
+            "args": [
+             {
+              "ref": "close"
+             },
+             {
+              "const_param": "k1"
+             }
+            ],
+            "op": "pct_change"
+           },
+           {
+            "const_param": "k3"
+           }
+          ],
+          "op": "delta"
+         }
+        ],
+        "op": "cs_rank"
+       }
+      ],
+      "op": "mul"
+     },
+     {
+      "args": [
+       {
+        "ref": "open"
+       },
+       {
+        "ref": "volume"
+       },
+       {
+        "const_param": "d10"
+       }
+      ],
+      "op": "ts_corr"
+     }
+    ],
+    "op": "mul"
+   },
+   "family": "volume",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "open",
+     "name": "open"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "close",
+     "name": "close"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "volume",
+     "name": "volume"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#14",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#14"
+   },
+   "parameters": {
+    "d10": 10,
+    "k1": 1,
+    "k3": 3
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#14"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "args": [
+       {
+        "args": [
+         {
+          "args": [
+           {
+            "args": [
+             {
+              "ref": "volume"
+             },
+             {
+              "const_param": "d_adv"
+             }
+            ],
+            "op": "ts_mean"
+           },
+           {
+            "ref": "low"
+           },
+           {
+            "const_param": "d5"
+           }
+          ],
+          "op": "ts_corr"
+         },
+         {
+          "args": [
+           {
+            "args": [
+             {
+              "ref": "high"
+             },
+             {
+              "ref": "low"
+             }
+            ],
+            "op": "add"
+           },
+           {
+            "const": 2.0
+           }
+          ],
+          "op": "div"
+         }
+        ],
+        "op": "add"
+       },
+       {
+        "ref": "close"
+       }
+      ],
+      "op": "sub"
+     }
+    ],
+    "op": "cs_scale"
+   },
+   "family": "volume",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "high",
+     "name": "high"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "low",
+     "name": "low"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "close",
+     "name": "close"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "volume",
+     "name": "volume"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#28",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#28"
+   },
+   "parameters": {
+    "d5": 5,
+    "d_adv": 20
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#28"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "args": [
+       {
+        "args": [
+         {
+          "args": [
+           {
+            "args": [
+             {
+              "ref": "close"
+             },
+             {
+              "const_param": "d7"
+             }
+            ],
+            "op": "ts_sum"
+           },
+           {
+            "const": 7.0
+           }
+          ],
+          "op": "div"
+         },
+         {
+          "ref": "close"
+         }
+        ],
+        "op": "sub"
+       }
+      ],
+      "op": "cs_scale"
+     },
+     {
+      "args": [
+       {
+        "const": 20.0
+       },
+       {
+        "args": [
+         {
+          "args": [
+           {
+            "ref": "vwap"
+           },
+           {
+            "args": [
+             {
+              "ref": "close"
+             },
+             {
+              "const_param": "k5"
+             }
+            ],
+            "op": "lag"
+           },
+           {
+            "const_param": "d230"
+           }
+          ],
+          "op": "ts_corr"
+         }
+        ],
+        "op": "cs_scale"
+       }
+      ],
+      "op": "mul"
+     }
+    ],
+    "op": "add"
+   },
+   "family": "reversal",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "close",
+     "name": "close"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "vwap",
+     "name": "vwap"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#32",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#32"
+   },
+   "parameters": {
+    "d230": 230,
+    "d7": 7,
+    "k5": 5
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#32"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "args": [
+       {
+        "const": -1.0
+       },
+       {
+        "args": [
+         {
+          "const": 1.0
+         },
+         {
+          "args": [
+           {
+            "ref": "open"
+           },
+           {
+            "ref": "close"
+           }
+          ],
+          "op": "div"
+         }
+        ],
+        "op": "sub"
+       }
+      ],
+      "op": "mul"
+     }
+    ],
+    "op": "cs_rank"
+   },
+   "family": "kbar",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "open",
+     "name": "open"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "close",
+     "name": "close"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#33",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#33"
+   },
+   "parameters": {},
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#33"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "args": [
+       {
+        "const": -1.0
+       },
+       {
+        "args": [
+         {
+          "args": [
+           {
+            "ref": "high"
+           },
+           {
+            "const_param": "d10"
+           }
+          ],
+          "op": "ts_std"
+         }
+        ],
+        "op": "cs_rank"
+       }
+      ],
+      "op": "mul"
+     },
+     {
+      "args": [
+       {
+        "ref": "high"
+       },
+       {
+        "ref": "volume"
+       },
+       {
+        "const_param": "d10"
+       }
+      ],
+      "op": "ts_corr"
+     }
+    ],
+    "op": "mul"
+   },
+   "family": "volume",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "high",
+     "name": "high"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "volume",
+     "name": "volume"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#40",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#40"
+   },
+   "parameters": {
+    "d10": 10
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#40"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "const": -1.0
+     },
+     {
+      "args": [
+       {
+        "ref": "high"
+       },
+       {
+        "args": [
+         {
+          "ref": "volume"
+         }
+        ],
+        "op": "cs_rank"
+       },
+       {
+        "const_param": "d5"
+       }
+      ],
+      "op": "ts_corr"
+     }
+    ],
+    "op": "mul"
+   },
+   "family": "volume",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "high",
+     "name": "high"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "volume",
+     "name": "volume"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#44",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#44"
+   },
+   "parameters": {
+    "d5": 5
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#44"
+  },
+  {
+   "attribution": "Formula from Z. Kakushadze, '101 Formulaic Alphas', Wilmott 2016(84), arXiv:1601.00991, Appendix A. Implemented from the published formula; the paper itself is not redistributed.",
+   "evaluation_ref": null,
+   "expression": {
+    "args": [
+     {
+      "const": -1.0
+     },
+     {
+      "args": [
+       {
+        "args": [
+         {
+          "args": [
+           {
+            "args": [
+             {
+              "ref": "close"
+             },
+             {
+              "args": [
+               {
+                "ref": "low"
+               },
+               {
+                "const_param": "d12"
+               }
+              ],
+              "op": "ts_min"
+             }
+            ],
+            "op": "sub"
+           },
+           {
+            "args": [
+             {
+              "args": [
+               {
+                "ref": "high"
+               },
+               {
+                "const_param": "d12"
+               }
+              ],
+              "op": "ts_max"
+             },
+             {
+              "args": [
+               {
+                "ref": "low"
+               },
+               {
+                "const_param": "d12"
+               }
+              ],
+              "op": "ts_min"
+             }
+            ],
+            "op": "sub"
+           }
+          ],
+          "op": "div"
+         }
+        ],
+        "op": "cs_rank"
+       },
+       {
+        "args": [
+         {
+          "ref": "volume"
+         }
+        ],
+        "op": "cs_rank"
+       },
+       {
+        "const_param": "d6"
+       }
+      ],
+      "op": "ts_corr"
+     }
+    ],
+    "op": "mul"
+   },
+   "family": "volume",
+   "inputs": [
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "high",
+     "name": "high"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "low",
+     "name": "low"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "close",
+     "name": "close"
+    },
+    {
+     "availability_lag_days": 0,
+     "dataset": "tw_price_volume",
+     "field": "volume",
+     "name": "volume"
+    }
+   ],
+   "licence": "arXiv-1601.00991 formulas (paper text not redistributed); independent implementation",
+   "name": "Alpha#55",
+   "origin": {
+    "library": "alpha101",
+    "ref": "#55"
+   },
+   "parameters": {
+    "d12": 12,
+    "d6": 6
+   },
+   "schema_version": "alpha_template.v1",
+   "scope": "cross_sectional",
+   "status": "draft",
+   "template_id": "alpha101:#55"
+  }
+ ]
+}

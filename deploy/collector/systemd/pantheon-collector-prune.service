@@ -1,0 +1,12 @@
+[Unit]
+Description=Pantheon Collector 90-Day Raw Bundle Pruner
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/pantheon-collector
+ExecStart=/usr/bin/docker compose run --rm collector-worker --policy-file /app/fetch-policy.json --root-dir /data prune --max-age-days 90
+User=root
+Group=root
+NoNewPrivileges=true

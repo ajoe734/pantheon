@@ -56,6 +56,8 @@ class PreparedVectorbtDataset:
     data_frequency: str
     num_instruments: int
     total_bars: int
+    dates_by_instrument: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    features_by_instrument: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def dataset_summary(self) -> dict[str, Any]:
         return {
@@ -131,7 +133,7 @@ class GovernedVectorbtInputAdapter:
 
         # Collect normalized ISO dates plus OHLCV tuples so sorting does not depend on input order.
         instrument_pairs: dict[
-            str, list[tuple[str, tuple[float, float, float, float, float]]]
+            str, list[tuple[str, tuple[float, float, float, float, float], dict[str, Any]]]
         ] = {}
         for rec in records:
             if not isinstance(rec, Mapping):
@@ -146,8 +148,18 @@ class GovernedVectorbtInputAdapter:
                         f"record for {instrument} missing numeric field '{f}'"
                     )
                 bar.append(float(v))
+            extra_rec_fields: dict[str, Any] = {}
+            for k, v in rec.items():
+                if k not in {"instrument", "date", *REQUIRED_OHLCV_FIELDS} and isinstance(
+                    v, (int, float)
+                ) and not isinstance(v, bool):
+                    extra_rec_fields[str(k)] = float(v)
+            if isinstance(rec.get("features"), Mapping):
+                for fk, fv in rec["features"].items():
+                    if isinstance(fv, (int, float)) and not isinstance(fv, bool):
+                        extra_rec_fields[str(fk)] = float(fv)
             instrument_pairs.setdefault(instrument, []).append(
-                (date_val, (bar[0], bar[1], bar[2], bar[3], bar[4]))
+                (date_val, (bar[0], bar[1], bar[2], bar[3], bar[4]), extra_rec_fields)
             )
 
         instruments = tuple(sorted(instrument_pairs.keys()))
@@ -156,18 +168,45 @@ class GovernedVectorbtInputAdapter:
                 f"dataset must have at least {MIN_INSTRUMENTS} instruments; got {len(instruments)}"
             )
 
+        raw_dataset_features = dataset.get("features_by_instrument") or dataset.get("features")
         bars_per_instrument: dict[str, int] = {}
         ohlcv_by_instrument: dict[str, tuple[tuple[float, float, float, float, float], ...]] = {}
+        dates_by_instrument: dict[str, tuple[str, ...]] = {}
+        features_by_instrument: dict[str, dict[str, Any]] = {}
         for inst in instruments:
             # Dates are normalized to YYYY-MM-DD, so lexical order matches chronological order.
             sorted_pairs = sorted(instrument_pairs[inst], key=lambda p: p[0])
+            dates = [p[0] for p in sorted_pairs]
             bars = [p[1] for p in sorted_pairs]
+            extras = [p[2] for p in sorted_pairs]
             if len(bars) < MIN_BARS:
                 raise VectorbtWorkflowError(
                     f"instrument {inst} has {len(bars)} bars; minimum is {MIN_BARS}"
                 )
             bars_per_instrument[inst] = len(bars)
             ohlcv_by_instrument[inst] = tuple(bars)
+            dates_by_instrument[inst] = tuple(dates)
+
+            inst_features: dict[str, Any] = {
+                "open": [b[0] for b in bars],
+                "high": [b[1] for b in bars],
+                "low": [b[2] for b in bars],
+                "close": [b[3] for b in bars],
+                "volume": [b[4] for b in bars],
+            }
+            extra_keys = {k for ex in extras for k in ex.keys()}
+            for ek in sorted(extra_keys):
+                if all(ek in ex for ex in extras):
+                    inst_features[ek] = [ex[ek] for ex in extras]
+            if isinstance(raw_dataset_features, Mapping):
+                if inst in raw_dataset_features and isinstance(raw_dataset_features[inst], Mapping):
+                    for fk, fv in raw_dataset_features[inst].items():
+                        inst_features[str(fk)] = fv
+                else:
+                    for fk, fv in raw_dataset_features.items():
+                        if fk not in instruments:
+                            inst_features[str(fk)] = fv
+            features_by_instrument[inst] = inst_features
 
         total_bars = sum(bars_per_instrument.values())
         return PreparedVectorbtDataset(
@@ -181,6 +220,8 @@ class GovernedVectorbtInputAdapter:
             data_frequency=data_frequency,
             num_instruments=len(instruments),
             total_bars=total_bars,
+            dates_by_instrument=dates_by_instrument,
+            features_by_instrument=features_by_instrument,
         )
 
     def _normalize_refs(self, dataset: Mapping[str, Any]) -> list[str]:
@@ -510,22 +551,70 @@ class VectorbtBackend:
         )
 
 
-def _artifact_order_sizes(
-    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
-) -> dict[str, list[float]]:
-    """Signed per-bar order sizes from the Registry interpreter, artifact symbols only."""
+def _bar_features_for_index(
+    dataset: PreparedVectorbtDataset,
+    instrument: str,
+    index: int,
+) -> tuple[dict[str, Any], str | None]:
+    """Build the point-in-time feature snapshot and decision_time for bar ``index``."""
+    bars_slice = dataset.ohlcv_by_instrument[instrument][: index + 1]
+    total_len = len(dataset.ohlcv_by_instrument[instrument])
+    bar_features: dict[str, Any] = {
+        "open": [b[0] for b in bars_slice],
+        "high": [b[1] for b in bars_slice],
+        "low": [b[2] for b in bars_slice],
+        "close": [b[3] for b in bars_slice],
+        "volume": [b[4] for b in bars_slice],
+    }
+    inst_features = dataset.features_by_instrument.get(instrument) or {}
+    for fk, fv in inst_features.items():
+        if fk in {"open", "high", "low", "close", "volume"}:
+            continue
+        if (
+            isinstance(fv, Sequence)
+            and not isinstance(fv, (str, bytes))
+            and len(fv) == total_len
+            and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in fv)
+        ):
+            bar_features[fk] = list(fv[: index + 1])
+        else:
+            bar_features[fk] = fv
 
+    dates = dataset.dates_by_instrument.get(instrument)
+    decision_time = dates[index] if dates and index < len(dates) else None
+    return bar_features, decision_time
+
+
+def _artifact_action_sequence(
+    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
+) -> dict[str, list[str | None]]:
+    """Per-bar evaluated actions (BUY/SELL/HOLD or None on warmup bars) from the Registry interpreter."""
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
+    from services.registry.factor_rule import required_history_bars
     from services.registry.strategy_artifact import (
         StrategyArtifactValidationError,
         evaluate_strategy_action,
+        validate_strategy_artifact,
     )
+
+    try:
+        validate_strategy_artifact(artifact)
+    except StrategyArtifactValidationError as exc:
+        raise VectorbtWorkflowError(f"strategy artifact validation failed: {exc}") from exc
 
     parameters = artifact["parameters"]
     if parameters.get("quantity_type") != "SHARES":
         raise VectorbtWorkflowError("canonical backtests support quantity_type SHARES only")
-    quantity = float(parameters["order_quantity"])
-    lookback = int(parameters[artifact["strategy_logic"]["lookback_parameter"]])
+
+    logic = artifact["strategy_logic"]
+    kind = logic["kind"]
+    if kind == "close_to_close_momentum":
+        start_index = int(parameters[logic["lookback_parameter"]]) - 1
+    elif kind == "factor_rule_v1":
+        start_index = max(0, required_history_bars(logic, parameters) - 1)
+    else:
+        raise VectorbtWorkflowError(f"unsupported strategy_logic kind {kind!r}")
+
     wanted = {normalize_taiwan_symbol(symbol) for symbol in parameters["symbols"]}
     selected: dict[str, str] = {}
     for instrument in dataset.instruments:
@@ -535,29 +624,60 @@ def _artifact_order_sizes(
             continue
         if key in wanted:
             selected[instrument] = instrument
-    covered = set()
-    for instrument in selected:
-        covered.add(normalize_taiwan_symbol(instrument))
+    covered = {normalize_taiwan_symbol(inst) for inst in selected}
     if covered != wanted:
         raise VectorbtWorkflowError(
             "dataset does not cover the strategy artifact symbols: "
             + ", ".join(sorted(f"{s}:{v}" for s, v in wanted - covered))
         )
-    sizes: dict[str, list[float]] = {}
+
+    actions_by_inst: dict[str, list[str | None]] = {}
     for instrument in selected:
         closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
-        orders = [float("nan")] * len(closes)
-        for index in range(lookback - 1, len(closes)):
+        actions: list[str | None] = [None] * len(closes)
+        evaluated_count = 0
+        for index in range(start_index, len(closes)):
+            bar_features, decision_time = _bar_features_for_index(dataset, instrument, index)
             try:
-                action = evaluate_strategy_action(artifact, closes[: index + 1])
+                action = evaluate_strategy_action(
+                    artifact,
+                    closes[: index + 1],
+                    features=bar_features,
+                    decision_time=decision_time,
+                )
             except StrategyArtifactValidationError as exc:
+                msg = str(exc)
+                if kind == "factor_rule_v1" and (
+                    "requires sufficient" in msg or "no visible observations" in msg
+                ):
+                    continue
                 raise VectorbtWorkflowError(f"strategy artifact evaluation failed: {exc}") from exc
+            if action not in {"BUY", "SELL", "HOLD"}:
+                raise VectorbtWorkflowError(f"unsupported strategy action {action!r}")
+            actions[index] = action
+            evaluated_count += 1
+        if evaluated_count == 0:
+            raise VectorbtWorkflowError(
+                f"strategy artifact evaluation produced 0 valid bars for {instrument}"
+            )
+        actions_by_inst[instrument] = actions
+    return actions_by_inst
+
+
+def _artifact_order_sizes(
+    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
+) -> dict[str, list[float]]:
+    """Signed per-bar order sizes from the Registry interpreter, artifact symbols only."""
+    actions_by_inst = _artifact_action_sequence(dataset, artifact)
+    quantity = float(artifact["parameters"]["order_quantity"])
+    sizes: dict[str, list[float]] = {}
+    for instrument, actions in actions_by_inst.items():
+        orders = [float("nan")] * len(actions)
+        for index, action in enumerate(actions):
             if action == "BUY":
                 orders[index] = quantity
             elif action == "SELL":
                 orders[index] = -quantity
-            else:
-                raise VectorbtWorkflowError(f"unsupported strategy action {action!r}")
         sizes[instrument] = orders
     return sizes
 
@@ -590,13 +710,22 @@ def _artifact_view_strength(
     if artifact is None:
         return None, None
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
+    from services.registry.factor_rule import required_history_bars
     from services.registry.strategy_artifact import (
         StrategyArtifactValidationError,
         evaluate_strategy_view,
     )
 
     parameters = artifact["parameters"]
-    lookback = int(parameters[artifact["strategy_logic"]["lookback_parameter"]])
+    logic = artifact["strategy_logic"]
+    kind = logic["kind"]
+    if kind == "close_to_close_momentum":
+        start_index = int(parameters[logic["lookback_parameter"]]) - 1
+    elif kind == "factor_rule_v1":
+        start_index = max(0, required_history_bars(logic, parameters) - 1)
+    else:
+        raise VectorbtWorkflowError(f"unsupported strategy_logic kind {kind!r}")
+
     wanted = {normalize_taiwan_symbol(symbol) for symbol in parameters["symbols"]}
     selected: list[str] = []
     for instrument in dataset.instruments:
@@ -611,10 +740,21 @@ def _artifact_view_strength(
     for instrument in selected:
         closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
         strengths: list[float | None] = [None] * len(closes)
-        for index in range(lookback - 1, len(closes)):
+        for index in range(start_index, len(closes)):
+            bar_features, decision_time = _bar_features_for_index(dataset, instrument, index)
             try:
-                view = evaluate_strategy_view(artifact, closes[: index + 1])
+                view = evaluate_strategy_view(
+                    artifact,
+                    closes[: index + 1],
+                    features=bar_features,
+                    decision_time=decision_time,
+                )
             except StrategyArtifactValidationError as exc:
+                msg = str(exc)
+                if kind == "factor_rule_v1" and (
+                    "requires sufficient" in msg or "no visible observations" in msg
+                ):
+                    continue
                 raise VectorbtWorkflowError(
                     f"strategy artifact view evaluation failed: {exc}"
                 ) from exc

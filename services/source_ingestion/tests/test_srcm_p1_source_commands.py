@@ -782,7 +782,8 @@ class TestSourceManagementHTTPAPI:
         )
         assert resp.status_code == 401
 
-    def test_authorized_command_execution_over_http(self, test_client):
+    def test_authorized_command_execution_over_http(self, test_client, monkeypatch):
+        monkeypatch.setenv("SOURCE_MANAGEMENT_COMMANDS_ENABLED", "1")
         from services.source_ingestion.controller_auth import load_controller_token
         import services.source_ingestion.main as main_mod
         CONTROLLER_TOKEN_PATH = main_mod.runtime.CONTROLLER_TOKEN_PATH
@@ -818,3 +819,54 @@ class TestSourceManagementHTTPAPI:
         resp_rcp = test_client.get(f"/api/source-ingest/management/commands/{receipt['receipt_id']}")
         assert resp_rcp.status_code == 200
         assert resp_rcp.json()["receipt"]["receipt_id"] == receipt["receipt_id"]
+
+
+class TestSourceCommandsKillSwitch:
+    """SOURCE_MANAGEMENT_COMMANDS_ENABLED fails closed unless exactly '1'."""
+
+    def _headers(self):
+        from services.source_ingestion.controller_auth import load_controller_token
+        import services.source_ingestion.main as main_mod
+        token = load_controller_token(token_path=main_mod.runtime.CONTROLLER_TOKEN_PATH, create=True)
+        return {"Authorization": f"Bearer {token}"}
+
+    def _body(self, command_type, idx=0):
+        params = {"definition_id": "tw-twse-tpex-official-market"} if command_type == "create" else {}
+        return {
+            "idempotency_key": f"kill-{command_type}-{idx}",
+            "command_type": command_type,
+            "source_instance_id": "ds-killswitch",
+            "expected_revision": None if command_type == "create" else 1,
+            "actor": {"actor_type": "operator", "actor_id": "alice", "roles": ["operator"]},
+            "reason": "kill switch test",
+            "parameters": params,
+        }
+
+    @pytest.mark.parametrize("flag", [None, "0", "", "true", "yes", "2", " 1"])
+    def test_every_command_type_rejected_unless_exactly_one(self, test_client, monkeypatch, flag):
+        import services.source_ingestion.main as main_mod
+        from services.source_ingestion.source_management_models import CommandType
+        if flag is None:
+            monkeypatch.delenv("SOURCE_MANAGEMENT_COMMANDS_ENABLED", raising=False)
+        else:
+            monkeypatch.setenv("SOURCE_MANAGEMENT_COMMANDS_ENABLED", flag)
+        store = main_mod.runtime.source_management_store
+        for ct in CommandType:
+            resp = test_client.post("/api/source-ingest/management/commands", headers=self._headers(), json=self._body(ct.value))
+            assert resp.status_code == 503, (ct.value, resp.text)
+            detail = resp.json()["detail"]
+            assert detail["code"] == "source_commands_disabled"
+            assert "SOURCE_MANAGEMENT_COMMANDS_ENABLED" in detail["message"]
+        assert store.list_instances() == []
+        assert store.get_desired_state("ds-killswitch") is None
+
+    def test_unauthorized_still_401_when_disabled(self, test_client, monkeypatch):
+        monkeypatch.delenv("SOURCE_MANAGEMENT_COMMANDS_ENABLED", raising=False)
+        resp = test_client.post("/api/source-ingest/management/commands", json=self._body("create"))
+        assert resp.status_code == 401
+
+    def test_enabled_runs_commands_as_before(self, test_client, monkeypatch):
+        monkeypatch.setenv("SOURCE_MANAGEMENT_COMMANDS_ENABLED", "1")
+        resp = test_client.post("/api/source-ingest/management/commands", headers=self._headers(), json=self._body("create"))
+        assert resp.status_code == 202
+        assert resp.json()["receipt"]["status"] == "succeeded"

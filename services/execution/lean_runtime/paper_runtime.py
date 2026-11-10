@@ -2024,6 +2024,49 @@ class PaperExecutionAlgorithm:
         log.info("[%s] TW paper fill %s %s %.0f @ %.4f (order=%s)",
                  signal_id, side, resolved_inst_id, fill_qty, fill_price, order_id)
 
+    def _advance_episode_state(
+        self, episode_key: str, prev_qty: float, new_qty: float
+    ) -> None:
+        """Single episode state machine shared by equity and futures fills.
+
+        ``episode_key`` is the holding symbol for equities and the
+        ``instrument_id`` for stock futures.
+        """
+        cand_ep = str(self._current_signal_metadata.get("trade_episode_id") or "").strip() or None
+        self._reversal_info = None
+
+        if abs(prev_qty) > 1e-12 and episode_key not in self._active_episodes:
+            is_rev = (prev_qty > 0 and new_qty < 0) or (prev_qty < 0 and new_qty > 0)
+            new_ep_id = (cand_ep or str(uuid.uuid4())) if is_rev else None
+            if is_rev:
+                self._active_episodes[episode_key] = new_ep_id
+                self._reversal_info = {
+                    "old_episode_id": None,
+                    "new_episode_id": new_ep_id,
+                    "close_qty": -prev_qty,
+                    "open_qty": new_qty,
+                }
+            self._last_fill_episode_id = new_ep_id
+        elif abs(new_qty) <= 1e-12:
+            self._last_fill_episode_id = self._active_episodes.pop(episode_key, None)
+        elif abs(prev_qty) <= 1e-12:
+            ep_id = cand_ep or str(uuid.uuid4())
+            self._active_episodes[episode_key] = ep_id
+            self._last_fill_episode_id = ep_id
+        elif (prev_qty > 0 and new_qty > 0) or (prev_qty < 0 and new_qty < 0):
+            self._last_fill_episode_id = self._active_episodes.get(episode_key)
+        else:
+            old_ep_id = self._active_episodes.pop(episode_key, None)
+            new_ep_id = cand_ep if cand_ep and cand_ep != old_ep_id else str(uuid.uuid4())
+            self._active_episodes[episode_key] = new_ep_id
+            self._last_fill_episode_id = new_ep_id
+            self._reversal_info = {
+                "old_episode_id": old_ep_id,
+                "new_episode_id": new_ep_id,
+                "close_qty": -prev_qty,
+                "open_qty": new_qty,
+            }
+
     def _commit_futures_fill(
         self,
         *,
@@ -2141,6 +2184,7 @@ class PaperExecutionAlgorithm:
             }
         )
         self._instrument_positions[key] = pos_record
+        self._advance_episode_state(instrument_id, q_prev, q_next)
         self._cash = float(self._cash) + realized_delta - cost_delta
         self._realized_pnl += realized_delta
         self._total_costs += cost_delta
@@ -2319,6 +2363,7 @@ class PaperExecutionAlgorithm:
                         pos["realized_pnl"] = float(pos.get("realized_pnl", 0.0)) + realized_delta
                         pos["costs"] = float(pos.get("costs", 0.0)) + cost_delta
                         pos["status"] = "closed"
+                        self._active_episodes.pop(str(pos["instrument_id"]), None)
                         self._cash = float(self._cash) + realized_delta - cost_delta
                         self._realized_pnl += realized_delta
                         self._total_costs += cost_delta
@@ -2474,6 +2519,7 @@ class PaperExecutionAlgorithm:
             pos["realized_pnl"] = float(pos.get("realized_pnl", 0.0)) + realized_delta
             pos["costs"] = float(pos.get("costs", 0.0)) + cost_delta
             pos["status"] = "closed"
+            self._active_episodes.pop(str(pos["instrument_id"]), None)
 
             self._cash = float(self._cash) + realized_delta - cost_delta
             self._realized_pnl += realized_delta
@@ -3443,40 +3489,7 @@ class PaperExecutionAlgorithm:
         try:
             prev_qty = float(holding.Quantity) + sum(float(v) for v in alias_quantities.values())
             new_qty = float(next_quantity)
-            cand_ep = str(self._current_signal_metadata.get("trade_episode_id") or "").strip() or None
-            self._reversal_info = None
-
-            if abs(prev_qty) > 1e-12 and holding_symbol not in self._active_episodes:
-                is_rev = (prev_qty > 0 and new_qty < 0) or (prev_qty < 0 and new_qty > 0)
-                new_ep_id = (cand_ep or str(uuid.uuid4())) if is_rev else None
-                if is_rev:
-                    self._active_episodes[holding_symbol] = new_ep_id
-                    self._reversal_info = {
-                        "old_episode_id": None,
-                        "new_episode_id": new_ep_id,
-                        "close_qty": -prev_qty,
-                        "open_qty": new_qty,
-                    }
-                self._last_fill_episode_id = new_ep_id
-            elif abs(new_qty) <= 1e-12:
-                self._last_fill_episode_id = self._active_episodes.pop(holding_symbol, None)
-            elif abs(prev_qty) <= 1e-12:
-                ep_id = cand_ep or str(uuid.uuid4())
-                self._active_episodes[holding_symbol] = ep_id
-                self._last_fill_episode_id = ep_id
-            elif (prev_qty > 0 and new_qty > 0) or (prev_qty < 0 and new_qty < 0):
-                self._last_fill_episode_id = self._active_episodes.get(holding_symbol)
-            else:
-                old_ep_id = self._active_episodes.pop(holding_symbol, None)
-                new_ep_id = cand_ep if cand_ep and cand_ep != old_ep_id else str(uuid.uuid4())
-                self._active_episodes[holding_symbol] = new_ep_id
-                self._last_fill_episode_id = new_ep_id
-                self._reversal_info = {
-                    "old_episode_id": old_ep_id,
-                    "new_episode_id": new_ep_id,
-                    "close_qty": -prev_qty,
-                    "open_qty": new_qty,
-                }
+            self._advance_episode_state(holding_symbol, prev_qty, new_qty)
 
             eff_price = float(
                 execution_price if execution_price is not None else security.Price
@@ -3886,7 +3899,11 @@ class PaperExecutionAlgorithm:
                     if not isinstance(ep_id, str) or not ep_id.strip():
                         raise ValueError("paper performance ledger open_episodes contains an empty episode id")
                     normalized_symbol = symbol.strip()
-                    if normalized_symbol in restored:
+                    open_instrument_ids = {
+                        inst for (_b, _u, inst), rec in restored_instrument_positions.items()
+                        if abs(float(rec.get("quantity", 0.0))) > 1e-12
+                    }
+                    if normalized_symbol in restored or normalized_symbol in open_instrument_ids:
                         restored_episodes[normalized_symbol] = ep_id.strip()
 
             self._initial_cash = initial_cash
@@ -3962,7 +3979,15 @@ class PaperExecutionAlgorithm:
             "open_episodes": {
                 symbol: str(ep_id)
                 for symbol, ep_id in sorted(self._active_episodes.items())
-                if symbol in self.Portfolio and abs(float(self.Portfolio[symbol].Quantity)) > 1e-12
+                if (
+                    symbol in self.Portfolio
+                    and abs(float(self.Portfolio[symbol].Quantity)) > 1e-12
+                )
+                or symbol in {
+                    inst
+                    for (_b, _u, inst), rec in self._instrument_positions.items()
+                    if abs(float(rec.get("quantity", 0.0))) > 1e-12
+                }
             },
             "execution_prices": {
                 symbol: float(security.Price)

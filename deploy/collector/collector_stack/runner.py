@@ -1,0 +1,296 @@
+"""Orchestration runner connecting config, auto-pause state, spiders/pollers, and bundle writer."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
+
+from .bundle import BundleWriter, CollectedItem, WrittenBundle, utc_iso
+from .config import CollectorConfig, CollectorConfigError, SourceFetchPolicy
+from .fetchers import FetchAccessBlockedError, FetchTransport, LiveScraplingTransport
+from .pollers import (
+    ArxivPaperPoller,
+    CbcMacroPoller,
+    DbnomicsMacroPoller,
+    DoclingLibraryPoller,
+    GdeltDocPoller,
+    GeminiVideoNotesPoller,
+    NdcIndicatorsPoller,
+    OpenAlexPaperPoller,
+    RssHubNewsPoller,
+    RssHubPaperPoller,
+    TwseOpenApiPoller,
+    YouTubeDataApiPoller,
+)
+from .privacy import AuthorHasher
+from .spiders import (
+    CmoneyForumSpider,
+    DgbasMacroSpider,
+    InstagramPopularTagSpider,
+    PttMirrorSpider,
+    PttStockSpider,
+    ThreadsWebSpider,
+)
+from .state import CollectorStateStore, SourceRuntimeState
+
+
+class SourceDisabledError(CollectorConfigError):
+    """Raised when attempting to run a source that is disabled in fetch-policy.json."""
+
+
+class SourcePausedError(RuntimeError):
+    """Raised when attempting to run a source that was auto-paused after consecutive blocks."""
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    source_id: str
+    run_id: str
+    status: str
+    bundle: WrittenBundle
+    state: SourceRuntimeState
+
+
+class CollectorRunner:
+    """Executes one collector source run with policy enforcement, auto-pause, and bundle output."""
+
+    def __init__(
+        self,
+        config: CollectorConfig,
+        *,
+        root_dir: Path | str,
+        state_file: Path | str | None = None,
+        library_dir: Path | str | None = None,
+        hasher: AuthorHasher,
+        transport: FetchTransport | None = None,
+    ) -> None:
+        self.config = config
+        self.root_dir = Path(root_dir)
+        self.library_dir = Path(library_dir) if library_dir else (self.root_dir / "library" / "books")
+        self.state_store = CollectorStateStore(
+            state_file or (self.root_dir / "state" / "collector-state.json"),
+            auto_pause_threshold=config.auto_pause_consecutive_blocks,
+        )
+        self.bundle_writer = BundleWriter(
+            self.root_dir, collector_version=config.collector_version
+        )
+        self.hasher = hasher
+        self.transport = transport or LiveScraplingTransport()
+
+    def build_collector(self, policy: SourceFetchPolicy) -> Any:
+        sid = policy.source_id
+        ua = self.config.contact_user_agent
+        if sid == "collector-tw-threads":
+            return ThreadsWebSpider(
+                policy, transport=self.transport, hasher=self.hasher, contact_user_agent=ua
+            )
+        if sid == "collector-tw-instagram-popular":
+            return InstagramPopularTagSpider(
+                policy, transport=self.transport, hasher=self.hasher, contact_user_agent=ua
+            )
+        if sid == "collector-tw-cmoney-forum":
+            return CmoneyForumSpider(
+                policy, transport=self.transport, hasher=self.hasher, contact_user_agent=ua
+            )
+        if sid == "collector-tw-ptt-stock":
+            return PttStockSpider(
+                policy, transport=self.transport, hasher=self.hasher, contact_user_agent=ua
+            )
+        if sid == "collector-tw-ptt-mirrors":
+            return PttMirrorSpider(
+                policy, transport=self.transport, hasher=self.hasher, contact_user_agent=ua
+            )
+        if sid == "collector-tw-macro-dgbas":
+            return DgbasMacroSpider(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-tw-macro-cbc":
+            return CbcMacroPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-tw-macro-ndc":
+            return NdcIndicatorsPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-tw-twse-openapi":
+            return TwseOpenApiPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-gdelt":
+            return GdeltDocPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-macro-dbnomics":
+            return DbnomicsMacroPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-paper-arxiv":
+            return ArxivPaperPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-paper-openalex":
+            return OpenAlexPaperPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-paper-nber-rss":
+            return RssHubPaperPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-news-rss":
+            return RssHubNewsPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-youtube-finance":
+            return YouTubeDataApiPoller(
+                policy,
+                transport=self.transport,
+                hasher=self.hasher,
+                state_store=self.state_store,
+                contact_user_agent=ua,
+            )
+        if sid == "collector-youtube-gemini-notes":
+            return GeminiVideoNotesPoller(
+                policy,
+                transport=self.transport,
+                state_store=self.state_store,
+                contact_user_agent=ua,
+            )
+        if sid == "collector-library-books":
+            return DoclingLibraryPoller(policy, library_dir=self.library_dir)
+        if sid == "collector-papers":
+            return _CompositePaperCollector(
+                config=self.config,
+                transport=self.transport,
+                contact_user_agent=ua,
+            )
+        raise CollectorConfigError(f"no spider or poller registered for source_id: {sid!r}")
+
+    def run_source(
+        self,
+        source_id: str,
+        *,
+        run_id: str,
+        started_at: datetime | str | None = None,
+        finished_at: datetime | str | None = None,
+        allow_disabled: bool = False,
+        collect_kwargs: Mapping[str, Any] | None = None,
+    ) -> RunOutcome:
+        policy = self.config.get_source(source_id)
+        if not policy.enabled and not allow_disabled:
+            raise SourceDisabledError(
+                f"source {source_id!r} is disabled by default in fetch-policy.json"
+            )
+
+        current_state = self.state_store.get_source_state(
+            source_id, current_policy_hash=policy.policy_hash
+        )
+        if current_state.paused:
+            raise SourcePausedError(
+                f"source {source_id!r} is auto-paused ({current_state.paused_reason}); "
+                "it resumes only when its fetch policy configuration changes"
+            )
+
+        started_iso = started_at if isinstance(started_at, str) else utc_iso(started_at)
+        finished_iso = finished_at if isinstance(finished_at, str) else utc_iso(finished_at)
+
+        collector = self.build_collector(policy)
+        kwargs = dict(collect_kwargs or {})
+        kwargs.setdefault("fetched_at", finished_iso)
+
+        try:
+            items: Sequence[CollectedItem] = collector.collect(**kwargs)
+        except FetchAccessBlockedError as blocked:
+            updated_state = self.state_store.record_run_outcome(
+                source_id=source_id,
+                run_id=run_id,
+                finished_at=finished_iso,
+                policy_hash=policy.policy_hash,
+                block_reason=blocked.block_reason,
+            )
+            bundle_status = "paused" if updated_state.paused else "partial"
+            paused_reason = updated_state.paused_reason if updated_state.paused else blocked.block_reason
+            written = self.bundle_writer.write_bundle(
+                policy=policy,
+                run_id=run_id,
+                items=(),
+                status=bundle_status,
+                paused_reason=paused_reason,
+                started_at=started_iso,
+                finished_at=finished_iso,
+            )
+            self.bundle_writer.update_host_status(
+                source_id=source_id,
+                status=bundle_status,
+                last_run_at=finished_iso,
+                last_run_id=run_id,
+                paused_reason=paused_reason,
+                cadence_seconds=policy.cadence_seconds,
+                consecutive_blocks=updated_state.consecutive_blocks,
+            )
+            return RunOutcome(
+                source_id=source_id,
+                run_id=run_id,
+                status=bundle_status,
+                bundle=written,
+                state=updated_state,
+            )
+
+        updated_state = self.state_store.record_run_outcome(
+            source_id=source_id,
+            run_id=run_id,
+            finished_at=finished_iso,
+            policy_hash=policy.policy_hash,
+            block_reason=None,
+        )
+        written = self.bundle_writer.write_bundle(
+            policy=policy,
+            run_id=run_id,
+            items=items,
+            status="complete",
+            paused_reason=None,
+            started_at=started_iso,
+            finished_at=finished_iso,
+        )
+        return RunOutcome(
+            source_id=source_id,
+            run_id=run_id,
+            status="complete",
+            bundle=written,
+            state=updated_state,
+        )
+
+
+class _CompositePaperCollector:
+    """Runs arXiv, OpenAlex, and NBER RSSHub pollers under the composite collector-papers source_id."""
+
+    def __init__(
+        self,
+        *,
+        config: CollectorConfig,
+        transport: FetchTransport,
+        contact_user_agent: str,
+    ) -> None:
+        self.arxiv = ArxivPaperPoller(
+            config.get_source("collector-paper-arxiv"),
+            transport=transport,
+            contact_user_agent=contact_user_agent,
+        )
+        self.openalex = OpenAlexPaperPoller(
+            config.get_source("collector-paper-openalex"),
+            transport=transport,
+            contact_user_agent=contact_user_agent,
+        )
+        self.nber = RssHubPaperPoller(
+            config.get_source("collector-paper-nber-rss"),
+            transport=transport,
+            contact_user_agent=contact_user_agent,
+        )
+
+    def collect(self, *, fetched_at: datetime | str | None = None) -> list[CollectedItem]:
+        results: list[CollectedItem] = []
+        results.extend(self.arxiv.collect(fetched_at=fetched_at))
+        results.extend(self.openalex.collect(fetched_at=fetched_at))
+        results.extend(self.nber.collect(fetched_at=fetched_at))
+        return results

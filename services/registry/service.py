@@ -67,6 +67,11 @@ from .strategy_artifact import (
     validate_strategy_artifact,
 )
 from .paper_strategy_spec import validate_strategy_spec
+from .alpha_template import (
+    AlphaTemplateValidationError,
+    build_alpha_template_registry_payload,
+    ensure_builtin_alpha_templates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +79,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def registry_lifespan(_: FastAPI):
     """Fail service startup if a checked-in built-in cannot be registered."""
-    ensure_builtin_strategy_artifacts(RegistryService(get_store()))
+    _seed_service = RegistryService(get_store())
+    ensure_builtin_strategy_artifacts(_seed_service)
+    ensure_builtin_alpha_templates(_seed_service)
     yield
 
 
@@ -1105,6 +1112,10 @@ def _resolve_entry_or_draft_payload(
     if payload.artifact_type == ArtifactType.ALLOCATION_POLICY:
         raise RegistryError(
             "allocation_policy creation requires POST /api/registry/allocation-policy-artifacts."
+        )
+    if payload.artifact_type == ArtifactType.ALPHA_TEMPLATE:
+        raise RegistryError(
+            "alpha_template creation requires POST /api/registry/alpha-templates."
         )
     if payload.artifact_type == ArtifactType.STRATEGY_SPEC:
         # Both HTTP representations enter the same canonical content admission.
@@ -2297,6 +2308,98 @@ def advance_allocation_policy_artifact_state(
         raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# -- AlphaTemplate (alpha_template.v1) --------------------------------------
+
+class AlphaTemplateRegisterRequest(BaseModel):
+    """Request body for POST /api/registry/alpha-templates."""
+    alpha_template: dict[str, Any]
+    version: str = "1.0.0"
+    registry_id: Optional[str] = None
+
+
+def _ensure_alpha_template_view(view: RegistryEntryView, registry_id: str) -> RegistryEntryView:
+    if view.entry.artifact_type != ArtifactType.ALPHA_TEMPLATE:
+        raise RegistryNotFoundError(f"AlphaTemplate registry entry not found: {registry_id}")
+    return view
+
+
+@app.post("/api/registry/alpha-templates", response_model=RegistryEntryView)
+def register_alpha_template(
+    body: AlphaTemplateRegisterRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Validate and register an ``alpha_template.v1`` record (candidate state, tenant-owned)."""
+    ctx = _authenticate_registry_write(authorization)
+    try:
+        default_id, create_payload = build_alpha_template_registry_payload(
+            body.alpha_template, version=body.version
+        )
+    except (AlphaTemplateValidationError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    registry_id = body.registry_id or default_id
+    registry_service = get_registry_service()
+    try:
+        view, created = registry_service.register_if_absent(
+            create_payload, registry_id, actor=_actor_context(ctx),
+        )
+        if created:
+            return view
+        _authorize_read(ctx, view)
+        existing = view.entry
+        if (
+            existing.registry_id != registry_id
+            or existing.artifact_type != ArtifactType.ALPHA_TEMPLATE
+            or existing.checksum != create_payload.checksum
+        ):
+            raise RegistryConflictError(
+                f"AlphaTemplate {create_payload.strategy_id!r} version {create_payload.version!r} "
+                "is already registered with different content."
+            )
+        return view
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except (RegistryError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/registry/alpha-templates", response_model=list[RegistryEntryView])
+def list_alpha_templates(
+    family: Optional[str] = None,
+    scope: Optional[str] = None,
+    status: Optional[str] = None,
+    library: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """List AlphaTemplate entries visible to the caller (built-in library is public)."""
+    ctx = _authenticate_registry_read(authorization)
+    out = []
+    for view in get_registry_service().list_all_entries():
+        if view.entry.artifact_type != ArtifactType.ALPHA_TEMPLATE or not _can_read(ctx, view):
+            continue
+        tpl = (view.entry.metadata or {}).get("alpha_template", {})
+        if family is not None and tpl.get("family") != family:
+            continue
+        if scope is not None and tpl.get("scope") != scope:
+            continue
+        if status is not None and tpl.get("status") != status:
+            continue
+        if library is not None and (tpl.get("origin") or {}).get("library") != library:
+            continue
+        out.append(view)
+    return out
+
+
+@app.get("/api/registry/alpha-templates/{registry_id}", response_model=RegistryEntryView)
+def get_alpha_template_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+    """Read one AlphaTemplate registry entry (tenant-scoped; built-ins public)."""
+    ctx = _authenticate_registry_read(authorization)
+    try:
+        view = _ensure_alpha_template_view(get_registry_service().get(registry_id), registry_id)
+    except RegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return _authorize_read(ctx, view)
 
 
 # -- Health ---------------------------------------------------------------

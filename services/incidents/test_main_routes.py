@@ -1538,3 +1538,30 @@ def test_operator_payload_and_outbox_sweep_resolve_stale_agent_findings_only(mon
     assert runtime_resp.json()["status"] == "open"
     assert runtime_resp.json()["is_open"] is True
 
+
+
+def test_infrastructure_open_keeps_producer_created_at_before_resolve():
+    payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-open-time-001",
+        source_event_id="infra-event-open-time-open",
+    )
+    payload["created_at"] = "2026-11-10T01:07:00Z"
+    created = client.post("/api/incidents/consume-infrastructure-health", json=payload)
+    assert created.status_code == 201, created.text
+    assert created.json()["created_at"] == "2026-11-10T01:07:00Z"
+
+    resolved = client.post(
+        "/api/incidents/infra-bff-open-time-001/status",
+        json={
+            "status": "resolved",
+            "resolved_at": "2026-11-10T01:09:41Z",
+            "source_event_id": "infra-event-open-time-ok",
+            "telemetry_event_ids": ["infra-event-open-time-ok"],
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    body = resolved.json()
+    assert body["created_at"] == "2026-11-10T01:07:00Z"
+    assert body["created_at"] < body["resolved_at"]
+    stored = client.get("/api/incidents/infra-bff-open-time-001").json()
+    assert stored["created_at"] == "2026-11-10T01:07:00Z"

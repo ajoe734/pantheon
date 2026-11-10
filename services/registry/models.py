@@ -51,6 +51,7 @@ class ArtifactType(str, Enum):
     CRITIQUE_RESULT = "critique_result"
     OPTIMIZER_RESULT = "optimizer_result"
     ALLOCATION_POLICY = "allocation_policy"
+    ALPHA_TEMPLATE = "alpha_template"
 
 
 class StorageBackend(str, Enum):

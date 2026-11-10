@@ -1,0 +1,204 @@
+{
+ "task_id": "SD-STRATEGY-DISCOVERY-SOURCES-20261110",
+ "kind": "design_document_evidence",
+ "read_date": "2026-11-10",
+ "document": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_STRATEGY_DISCOVERY_SOURCES_2026-11-10.md",
+ "hosted_behavior_claimed": false,
+ "scope_statement": "design only; no source/test/workflow/config/infrastructure change; no host created; no implementation task created; hosted dev was read with a read-only Postgres session and read-only file reads",
+ "repo_base": "origin/dev 8173ab1801d160d68af8a02d22ce31f454b3e2ed",
+ "hosted_readonly_counts": {
+  "source_evidence_market": 644,
+  "source_evidence_internal_note": 3,
+  "strategy_spec_drafts": 3217,
+  "research_runs": 22,
+  "real_backtest_runs": 1,
+  "evolution_decisions": 653,
+  "evolution_decisions_proposed": 649,
+  "target_evaluations": 444,
+  "target_evaluations_met": 0
+ },
+ "official_sources_read": [
+  {
+   "url": "https://developers.facebook.com/documentation/threads/keyword-search"
+  },
+  {
+   "url": "https://developers.facebook.com/documentation/threads/overview"
+  },
+  {
+   "url": "https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-facebook-login/hashtag-search"
+  },
+  {
+   "url": "https://www.facebook.com/legal/automated_data_collection_terms"
+  },
+  {
+   "url": "https://www.threads.com/robots.txt"
+  },
+  {
+   "url": "https://www.fbm.com/technology/publications/major-decision-affects-law-of-scraping-and-online-data-collection-meta-platforms-v-bright-data/"
+  },
+  {
+   "url": "https://instaloader.github.io/troubleshooting.html"
+  },
+  {
+   "url": "https://www.cmoney.tw/member/tos.aspx"
+  },
+  {
+   "url": "https://www.cmoney.tw/robots.txt"
+  },
+  {
+   "url": "https://www.ptt.cc/robots.txt"
+  },
+  {
+   "url": "https://www.pttweb.cc/"
+  },
+  {
+   "url": "https://disp.cc/tos"
+  },
+  {
+   "url": "https://www.youtube.com/t/terms"
+  },
+  {
+   "url": "https://developers.google.com/youtube/v3/determine_quota_cost"
+  },
+  {
+   "url": "https://developers.google.com/youtube/v3/docs/captions/download"
+  },
+  {
+   "url": "https://aistudio.google.com/docs/video-understanding"
+  },
+  {
+   "url": "https://www.twse.com.tw/zh/page/terms/use.html"
+  },
+  {
+   "url": "https://openapi.twse.com.tw/v1/swagger.json"
+  },
+  {
+   "url": "https://www.twse.com.tw/zh/terms/aiuse.html"
+  },
+  {
+   "url": "https://www.tpex.org.tw/zh-tw/gtsm_disclaimer.html"
+  },
+  {
+   "url": "https://data.gov.tw/dataset/11856"
+  },
+  {
+   "url": "https://data.gov.tw/dataset/6099"
+  },
+  {
+   "url": "https://data.gov.tw/license"
+  },
+  {
+   "url": "https://cpx.cbc.gov.tw/Data/ExportToAPIInfo"
+  },
+  {
+   "url": "https://www.stat.gov.tw/cp.aspx?n=3164"
+  },
+  {
+   "url": "https://finmind.github.io/llms.txt"
+  },
+  {
+   "url": "https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/"
+  },
+  {
+   "url": "https://www.gdeltproject.org/about.html"
+  },
+  {
+   "url": "https://info.arxiv.org/help/api/tou.html"
+  },
+  {
+   "url": "https://info.arxiv.org/help/bulk_data.html"
+  },
+  {
+   "url": "https://help.openalex.org/access/pricing/"
+  },
+  {
+   "url": "https://docs.db.nomics.world/legal-terms/"
+  },
+  {
+   "url": "https://www.digitalocean.com/pricing/droplets"
+  },
+  {
+   "url": "https://www.digitalocean.com/legal/acceptable-use-policy"
+  },
+  {
+   "url": "https://www.hetzner.com/cloud/"
+  },
+  {
+   "url": "https://www.hetzner.com/legal/cloud-server/"
+  },
+  {
+   "url": "https://github.com/D4Vinci/Scrapling"
+  },
+  {
+   "url": "https://github.com/DIYgod/RSSHub"
+  },
+  {
+   "url": "https://github.com/microsoft/RD-Agent"
+  },
+  {
+   "url": "https://github.com/unclecode/crawl4ai"
+  }
+ ],
+ "logged_out_observation": {
+  "method": "headless Chromium, no login, one page load per URL, GCP dev host datacenter address",
+  "date": "2026-11-10",
+  "results": [
+   {
+    "name": "threads_search",
+    "url": "https://www.threads.com/search?q=%E5%8F%B0%E8%82%A1&serp_type=default",
+    "http_status": 200,
+    "final_url": "https://www.threads.com/search?q=%E5%8F%B0%E8%82%A1&serp_type=default",
+    "post_links": 11,
+    "time_tags": 7
+   },
+   {
+    "name": "threads_profile",
+    "url": "https://www.threads.com/@zuck",
+    "http_status": 200,
+    "final_url": "https://www.threads.com/@zuck",
+    "post_links": 31,
+    "time_tags": 28
+   },
+   {
+    "name": "ig_tag",
+    "url": "https://www.instagram.com/explore/tags/%E5%8F%B0%E8%82%A1/",
+    "http_status": 200,
+    "final_url": "https://www.instagram.com/popular/%E5%8F%B0%E8%82%A1/?utm_source=explore_tag",
+    "post_links": 12,
+    "time_tags": 0
+   },
+   {
+    "name": "ig_keyword",
+    "url": "https://www.instagram.com/explore/search/keyword/?q=%E5%8F%B0%E8%82%A1",
+    "http_status": 429,
+    "final_url": "https://www.instagram.com/accounts/login/?next=https%3A%2F%2Fwww.instagram.com%2Fexplore%2Fsearch%2Fkeyword%2F%3Fq%3D%25E5%258F%25B0%25E8%2582%25A1%26__coig_login%3D1",
+    "post_links": 0,
+    "time_tags": 0
+   },
+   {
+    "name": "ig_profile",
+    "url": "https://www.instagram.com/instagram/",
+    "http_status": 429,
+    "final_url": "https://www.instagram.com/accounts/login/?next=https%3A%2F%2Fwww.instagram.com%2Finstagram%2F&is_from_rle",
+    "post_links": 0,
+    "time_tags": 0
+   }
+  ]
+ },
+ "sources_not_readable": [
+  "Instagram and Threads terms pages: empty shell (Help Center only)",
+  "www.ptt.cc home: HTTP 403 to automated read; no terms page found",
+  "www.taifex.com.tw terms: empty page",
+  "Vultr: HTTP 403",
+  "Linode and Tokyo regions: not verified",
+  "DGBAS API: none found",
+  "T86 on data.gov.tw: not found",
+  "SSRN API: none found",
+  "Dcard terms: not read"
+ ],
+ "repository_commands": [
+  "git fetch origin dev; git worktree add from origin/dev",
+  "grep -n / sed -n on the files cited in sections 2, 7, 8, 9, 10, 11 and 12 of the document",
+  "git show of earlier design documents listed in section 3"
+ ]
+}
