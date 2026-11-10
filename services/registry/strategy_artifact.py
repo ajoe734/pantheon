@@ -21,6 +21,12 @@ from typing import Any, Mapping, Sequence
 
 from jsonschema import Draft7Validator, FormatChecker
 
+from .factor_rule import (
+    FactorRuleValidationError,
+    evaluate_factor_rule_action,
+    evaluate_factor_rule_view,
+    validate_factor_rule_logic,
+)
 from .models import (
     ArtifactState,
     ArtifactType,
@@ -361,6 +367,17 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
                         f"mutation_surface.controls must not declare forbidden control {ctrl_key!r}"
                     )
 
+    raw_logic = artifact.get("strategy_logic")
+    if isinstance(raw_logic, Mapping) and raw_logic.get("kind") == "factor_rule_v1":
+        try:
+            validate_factor_rule_logic(
+                raw_logic,
+                raw_params if isinstance(raw_params, Mapping) else {},
+                raw_surface if isinstance(raw_surface, Mapping) else None,
+            )
+        except FactorRuleValidationError as exc:
+            raise StrategyArtifactValidationError(str(exc)) from exc
+
     if schema_errors:
         detail = "; ".join(
             f"{_json_path(error)}: {error.message}" for error in schema_errors
@@ -510,8 +527,22 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         if in_expression_parameters:
             _validate_control_value(control, expression_params[key])
 
+    strategy_logic_kind = (
+        artifact["strategy_logic"].get("kind")
+        if isinstance(artifact.get("strategy_logic"), Mapping)
+        else None
+    )
     if expression_policy is not None:
-        for req_key, req_spec in REQUIRED_EXPRESSION_POLICY_CONTROLS.items():
+        required_expr_controls = (
+            {
+                k: v
+                for k, v in REQUIRED_EXPRESSION_POLICY_CONTROLS.items()
+                if k in _EXPRESSION_POLICY_MUTABLE_PARAM_KEYS or k in parameters
+            }
+            if strategy_logic_kind == "factor_rule_v1"
+            else REQUIRED_EXPRESSION_POLICY_CONTROLS
+        )
+        for req_key, req_spec in required_expr_controls.items():
             if req_key not in control_by_key:
                 raise StrategyArtifactValidationError(
                     f"expression_policy requires mutation_surface.controls to declare {req_key!r}"
@@ -534,11 +565,12 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
                     f"control {req_key!r} must declare allowed_range "
                     f"{req_spec['allowed_range']} and step {req_spec['step']}"
                 )
-        for view_key in ("strength_scale_k", "strength_floor_momentum"):
-            if view_key not in parameters:
-                raise StrategyArtifactValidationError(
-                    f"expression_policy requires {view_key!r} in parameters"
-                )
+        if strategy_logic_kind != "factor_rule_v1":
+            for view_key in ("strength_scale_k", "strength_floor_momentum"):
+                if view_key not in parameters:
+                    raise StrategyArtifactValidationError(
+                        f"expression_policy requires {view_key!r} in parameters"
+                    )
 
     mutable_keys = set(control_by_key)
     mutable_param_keys = {key for key in control_by_key if key in parameters}
@@ -607,25 +639,35 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         )
 
     strategy_logic = artifact["strategy_logic"]
-    lookback_key = strategy_logic["lookback_parameter"]
-    threshold_key = strategy_logic["threshold_parameter"]
-    if lookback_key not in parameters or threshold_key not in parameters:
-        raise StrategyArtifactValidationError(
-            "strategy_logic parameter references must exist in parameters"
-        )
-    if not _is_integer(parameters[lookback_key]) or parameters[lookback_key] < 2:
-        raise StrategyArtifactValidationError(
-            f"lookback parameter {lookback_key!r} must be an integer >= 2"
-        )
-    if not _is_number(parameters[threshold_key]):
-        raise StrategyArtifactValidationError(
-            f"threshold parameter {threshold_key!r} must be numeric"
-        )
+    if strategy_logic["kind"] == "close_to_close_momentum":
+        lookback_key = strategy_logic["lookback_parameter"]
+        threshold_key = strategy_logic["threshold_parameter"]
+        if lookback_key not in parameters or threshold_key not in parameters:
+            raise StrategyArtifactValidationError(
+                "strategy_logic parameter references must exist in parameters"
+            )
+        if not _is_integer(parameters[lookback_key]) or parameters[lookback_key] < 2:
+            raise StrategyArtifactValidationError(
+                f"lookback parameter {lookback_key!r} must be an integer >= 2"
+            )
+        if not _is_number(parameters[threshold_key]):
+            raise StrategyArtifactValidationError(
+                f"threshold parameter {threshold_key!r} must be numeric"
+            )
 
-    zero_action = parameters.get("zero_momentum_action")
-    if zero_action is not None and zero_action != strategy_logic["non_positive_action"]:
+        zero_action = parameters.get("zero_momentum_action")
+        if zero_action is not None and zero_action != strategy_logic["non_positive_action"]:
+            raise StrategyArtifactValidationError(
+                "zero_momentum_action must match strategy_logic.non_positive_action"
+            )
+    elif strategy_logic["kind"] == "factor_rule_v1":
+        try:
+            validate_factor_rule_logic(strategy_logic, parameters, mutation_surface)
+        except FactorRuleValidationError as exc:
+            raise StrategyArtifactValidationError(str(exc)) from exc
+    else:
         raise StrategyArtifactValidationError(
-            "zero_momentum_action must match strategy_logic.non_positive_action"
+            f"unsupported strategy_logic kind: {strategy_logic.get('kind')!r}"
         )
 
     binding_intent = artifact.get("binding_intent") or {}
@@ -1080,18 +1122,38 @@ def build_market_transition_registry_payload(
 
 def evaluate_strategy_action(
     strategy_artifact: Mapping[str, Any],
-    closes: Sequence[float],
+    closes: Sequence[float] | None,
+    *,
+    features: Mapping[str, Any] | None = None,
+    decision_time: Any = None,
+    holding_bars: int | None = None,
+    current_direction: str | None = None,
 ) -> str:
-    """Interpret the v1 close-to-close momentum rule deterministically."""
+    """Interpret a StrategyArtifact rule (close_to_close_momentum or factor_rule_v1) deterministically."""
     validate_strategy_artifact(strategy_artifact)
-    if isinstance(closes, (str, bytes)):
+    if closes is not None and isinstance(closes, (str, bytes)):
         raise StrategyArtifactValidationError("closes must be a numeric sequence")
 
     logic = strategy_artifact["strategy_logic"]
+    if logic["kind"] == "factor_rule_v1":
+        try:
+            return evaluate_factor_rule_action(
+                strategy_artifact,
+                closes,
+                features=features,
+                decision_time=decision_time,
+                holding_bars=holding_bars,
+                current_direction=current_direction,
+            )
+        except FactorRuleValidationError as exc:
+            raise StrategyArtifactValidationError(str(exc)) from exc
+
     if logic["kind"] != "close_to_close_momentum":
         raise StrategyArtifactValidationError(
             f"unsupported strategy_logic kind: {logic['kind']!r}"
         )
+    if closes is None:
+        raise StrategyArtifactValidationError("closes must be a numeric sequence")
     parameters = strategy_artifact["parameters"]
     lookback = parameters[logic["lookback_parameter"]]
     threshold = parameters[logic["threshold_parameter"]]
@@ -1119,27 +1181,38 @@ def evaluate_strategy_action(
 
 def evaluate_strategy_view(
     strategy_artifact: Mapping[str, Any],
-    closes: Sequence[float],
+    closes: Sequence[float] | None,
+    *,
+    features: Mapping[str, Any] | None = None,
+    decision_time: Any = None,
+    holding_bars: int | None = None,
+    current_direction: str | None = None,
 ) -> dict[str, Any]:
-    """Interpret the v1 close-to-close momentum view with optional strength.
-
-    Returns ``{"action": BUY|SELL|HOLD, "direction": LONG|SHORT|FLAT,
-    "momentum": float, "strength": float in [0, 1] or None}`` where ``action``
-    and ``direction`` match ``evaluate_strategy_action`` and the paper signal
-    producer, and ``strength`` is ``min(1, abs(momentum) / (strength_scale_k *
-    max(momentum_threshold, strength_floor_momentum)))`` computed with
-    ``Decimal`` when ``expression_policy`` is present, or ``None`` when the
-    artifact has no ``expression_policy`` section.
-    """
+    """Interpret a StrategyArtifact view with optional strength for backtest and paper."""
     validate_strategy_artifact(strategy_artifact)
-    if isinstance(closes, (str, bytes)):
+    if closes is not None and isinstance(closes, (str, bytes)):
         raise StrategyArtifactValidationError("closes must be a numeric sequence")
 
     logic = strategy_artifact["strategy_logic"]
+    if logic["kind"] == "factor_rule_v1":
+        try:
+            return evaluate_factor_rule_view(
+                strategy_artifact,
+                closes,
+                features=features,
+                decision_time=decision_time,
+                holding_bars=holding_bars,
+                current_direction=current_direction,
+            )
+        except FactorRuleValidationError as exc:
+            raise StrategyArtifactValidationError(str(exc)) from exc
+
     if logic["kind"] != "close_to_close_momentum":
         raise StrategyArtifactValidationError(
             f"unsupported strategy_logic kind: {logic['kind']!r}"
         )
+    if closes is None:
+        raise StrategyArtifactValidationError("closes must be a numeric sequence")
     parameters = strategy_artifact["parameters"]
     lookback = parameters[logic["lookback_parameter"]]
     threshold = parameters[logic["threshold_parameter"]]
