@@ -202,6 +202,9 @@ services:
       # starts the bounded refresh profile with an exact reviewed host list.
       PANTHEON_EXTERNAL_EGRESS: ${PANTHEON_EXTERNAL_EGRESS:-deny}
       PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}
+      # Collector bundle adapter (single collector host; token value comes from the deployment secret store).
+      PANTHEON_COLLECTOR_HOST: ${PANTHEON_COLLECTOR_HOST:-}
+      PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
       # Product-level default is transactional Postgres; JSONL remains an explicit local rollback mode.
       SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}

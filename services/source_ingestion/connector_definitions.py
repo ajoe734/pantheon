@@ -23,6 +23,11 @@ from .provider_adapters import (
     PROVIDER_ADAPTER_ALIASES,
     is_provider_adapter_allowed,
 )
+from .connectors.collector_bundle import (
+    COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+    COLLECTOR_BUNDLE_TOKEN_ENV,
+    collector_host,
+)
 from .source_management_models import (
     DefinitionState,
     DesiredLifecycleState,
@@ -310,6 +315,95 @@ def calculate_source_allowed_actions(
         "canRetire": can_retire,
         "blockedReasons": blocked_reasons,
     }
+
+
+# ==============================================================================
+# Collector bundle sources (SD-STRATEGY-DISCOVERY §7.1): one definition per source,
+# one adapter token. TPEx flows stay on the TPEx OpenAPI (dev plan §2), so there is
+# no collector-tw-tpex-flows.
+# ==============================================================================
+
+COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
+    {"id": "collector-tw-threads", "provider": "Threads (web, collector host)", "type": "social", "class": "social",
+     "dataset": "collector_social_posts", "platform": "threads", "trust": 0.25, "cadence": 21600},
+    {"id": "collector-tw-instagram-popular", "provider": "Instagram popular tags (web, collector host)", "type": "social",
+     "class": "social", "dataset": "collector_social_posts", "platform": "instagram", "trust": 0.2, "cadence": 86400},
+    {"id": "collector-tw-cmoney-forum", "provider": "CMoney forum (web, collector host)", "type": "social", "class": "social",
+     "dataset": "collector_social_posts", "platform": "cmoney", "trust": 0.3, "cadence": 21600},
+    {"id": "collector-tw-ptt-stock", "provider": "PTT Stock (web, collector host)", "type": "social", "class": "social",
+     "dataset": "collector_social_posts", "platform": "ptt", "trust": 0.3, "cadence": 21600},
+    {"id": "collector-youtube-finance", "provider": "YouTube Data API (collector host)", "type": "social", "class": "social",
+     "dataset": "collector_social_posts", "platform": "youtube", "trust": 0.4, "cadence": 86400},
+    {"id": "collector-news-rss", "provider": "RSSHub news feeds (collector host)", "type": "news", "class": "news",
+     "dataset": "collector_news_articles", "publisher": "rss", "cadence": 3600},
+    {"id": "collector-gdelt", "provider": "GDELT DOC 2.0 (collector host)", "type": "news", "class": "news",
+     "dataset": "collector_news_articles", "publisher": "gdelt", "attribution": True, "cadence": 3600},
+    {"id": "collector-tw-macro-cbc", "provider": "Central Bank statistics (collector host)", "type": "macro", "class": "macro",
+     "dataset": "collector_macro_series", "cadence": 86400},
+    {"id": "collector-tw-macro-ndc", "provider": "NDC business indicators via data.gov.tw (collector host)", "type": "macro",
+     "class": "macro", "dataset": "collector_macro_series", "attribution": True, "cadence": 2678400},
+    {"id": "collector-tw-macro-dgbas", "provider": "DGBAS statistics via data.gov.tw (collector host)", "type": "macro",
+     "class": "macro", "dataset": "collector_macro_series", "attribution": True, "cadence": 2678400},
+    {"id": "collector-library-books", "provider": "Operator book library (collector host)", "type": "paper", "class": ("news", "book"),
+     "dataset": "collector_book_sections", "cadence": 2678400},
+)
+
+
+def _collector_definition(
+    definition_id: str,
+    *,
+    provider: str,
+    source_type: str,
+    source_class: str | Sequence[str],
+    datasets: Sequence[str],
+    collector_source_id: str,
+    source_kinds: Sequence[str] = ("data_source",),
+    platform: str | None = None,
+    publisher: str | None = None,
+    trust_score: float = 0.3,
+    attribution_required: bool = False,
+    cadence_seconds: int = 86400,
+    extra_config: Mapping[str, Any] | None = None,
+) -> ConnectorDefinition:
+    host = collector_host()
+    return ConnectorDefinition(
+        definition_id=definition_id,
+        adapter_token=COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+        adapter_version="1.0.0",
+        provider=provider,
+        source_kinds=tuple(source_kinds),
+        source_types=(source_type,),
+        source_classes=(source_class,) if isinstance(source_class, str) else tuple(source_class),
+        datasets=tuple(datasets),
+        auth_modes=("bearer_token",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("time_watermark",),
+        config_schema={
+            "type": "object",
+            "properties": {"max_records": {"type": "integer", "minimum": 1}, **dict(extra_config or {})},
+        },
+        secret_fields=(),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 500, "max_bytes": 33554432, "timeout_seconds": 30, "max_rate_per_second": 1.0},
+        allowed_host_patterns=(host,),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref=f"evidence://connector-definition/{definition_id}",
+        metadata={
+            "collector": {
+                "source_id": collector_source_id,
+                "source_type": source_type,
+                "platform": platform,
+                "publisher": publisher,
+                "trust_score": trust_score,
+                "attribution_required": attribution_required,
+                "cadence_seconds": cadence_seconds,
+                "dataset": datasets[0],
+                "token_env": COLLECTOR_BUNDLE_TOKEN_ENV,
+                "license_scope": "collector_public_web",
+                "redistribution_allowed": False,
+            }
+        },
+    )
 
 
 # ==============================================================================
@@ -802,31 +896,20 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/tw-shioaji-broker-readback",
     ),
-    ConnectorDefinition(
-        definition_id="strategy-seed-paper-corpus",
-        adapter_token="StrategySeedPaperCorpusAdapter.records_from_metadata",
-        adapter_version="1.0.0",
-        provider="ArXiv/OpenAlex/SSRN",
+    # Re-pointed (SOURCE-COLLECTOR-BUNDLE-CONNECTOR): the former
+    # StrategySeedPaperCorpusAdapter token had no implementing class; papers now
+    # arrive through the single collector bundle adapter.
+    _collector_definition(
+        "strategy-seed-paper-corpus",
+        provider="ArXiv/OpenAlex/SSRN via collector",
         source_kinds=("strategy_seed_source",),
-        source_types=("paper",),
-        source_classes=("paper",),
+        source_type="paper",
+        # The data-source registry has no paper class (papers belong to the seed registry), so the
+        # first class is the registry bucket used when an instance is created; records stay `paper`.
+        source_class=("news", "paper"),
         datasets=("strategy_seed_metadata",),
-        auth_modes=("none",),
-        fetch_modes=("custom_crawler",),
-        cursor_modes=("time_watermark",),
-        config_schema={
-            "type": "object",
-            "properties": {
-                "topic_filter": {"type": "string"},
-                "max_records": {"type": "integer", "minimum": 1},
-            },
-        },
-        secret_fields=(),
-        required_pit_fields=("event_time", "available_time", "ingest_time"),
-        default_limits={"max_records": 100, "max_bytes": 2097152, "timeout_seconds": 20, "max_rate_per_second": 2.0},
-        allowed_host_patterns=("arxiv.org", "api.openalex.org", "papers.ssrn.com"),
-        definition_state=DefinitionState.SUPPORTED,
-        test_manifest_ref="evidence://connector-definition/strategy-seed-paper-corpus",
+        collector_source_id="collector-papers",
+        extra_config={"topic_filter": {"type": "string"}},
     ),
     ConnectorDefinition(
         definition_id="strategy-seed-allowlisted-repo",
@@ -975,6 +1058,23 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
     ),
 )
 
+_CANONICAL_DEFINITIONS = _CANONICAL_DEFINITIONS + tuple(
+    _collector_definition(
+        spec["id"],
+        provider=spec["provider"],
+        source_type=spec["type"],
+        source_class=spec["class"],
+        datasets=(spec["dataset"],),
+        platform=spec.get("platform"),
+        publisher=spec.get("publisher"),
+        trust_score=spec.get("trust", 0.3),
+        attribution_required=spec.get("attribution", False),
+        cadence_seconds=spec["cadence"],
+        collector_source_id=spec["id"],
+    )
+    for spec in COLLECTOR_SOURCE_SPECS
+)
+
 DEPLOYED_CONNECTOR_DEFINITIONS: tuple[ConnectorDefinition, ...] = _CANONICAL_DEFINITIONS
 
 _DEFINITION_ID_ALIASES: dict[str, str] = {
@@ -992,8 +1092,12 @@ _DEFINITIONS_BY_ID: dict[str, ConnectorDefinition] = {
     defn.definition_id: defn for defn in _CANONICAL_DEFINITIONS
 }
 
+# The collector bundle token is shared by one definition per source, so it is
+# deliberately not resolvable by adapter token alone.
 _DEFINITIONS_BY_ADAPTER: dict[str, ConnectorDefinition] = {
-    defn.adapter_token: defn for defn in _CANONICAL_DEFINITIONS
+    defn.adapter_token: defn
+    for defn in _CANONICAL_DEFINITIONS
+    if defn.adapter_token != COLLECTOR_BUNDLE_ADAPTER_TOKEN
 }
 
 # Verify at import time that no definition duplicates exist

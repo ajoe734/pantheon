@@ -95,14 +95,23 @@ def validate_external_source_record(
     record: SourceRecord,
     *,
     connector: SourceConnector | None = None,
+    force: bool = False,
 ) -> SourceRecord:
-    """Return an external SourceRecord with required ACL/license/PIT fields preserved."""
+    """Return an external SourceRecord with required ACL/license/PIT fields preserved.
 
-    if not is_external_research_source_type(record.source_type):
+    ``force`` applies the same contract to source types outside
+    ``EXTERNAL_RESEARCH_SOURCE_TYPES`` (collector paper/macro records).
+    """
+
+    if not force and not is_external_research_source_type(record.source_type):
         return record
 
     if connector is not None:
-        validate_external_source_connector(connector)
+        if is_external_research_source_type(connector.source_type):
+            validate_external_source_connector(connector)
+        else:
+            _require_entitlement(dict(connector.metadata), context=f"connector {connector.connector_id}")
+            _assert_allowed_use_safe(connector.license_policy.allowed_use, context=f"connector {connector.connector_id}")
 
     source_type = record.source_type.value
     connector_metadata = dict(connector.metadata) if connector else {}

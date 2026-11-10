@@ -1,0 +1,27 @@
+{
+  "task_id": "SOURCE-COLLECTOR-BUNDLE-CONNECTOR-20261110",
+  "owner": "Claude",
+  "date": "2026-11-10",
+  "design": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_STRATEGY_DISCOVERY_SOURCES_2026-11-10.md §7.1,§7.2,§7.4,§7.5; DEV_PLAN §2 (plan wins)",
+  "acceptance": {
+    "1": "CollectorBundleAdapter.records_from_bundle added to ALLOWED_PROVIDER_ADAPTERS; 11 collector definitions + strategy-seed-paper-corpus each have a ConnectorDefinition; create command keeps them configured_disabled (test_every_collector_definition_is_created_disabled). collector-tw-tpex-flows intentionally absent (plan §2).",
+    "2": "verify_bundle checks source_id, run_id, schema_version, raw sha256, size, bundle_sha256, items.jsonl/manifest id parity; the pull raises before any record or raw copy (test_mismatch_rejected_with_no_partial_write, test_good_bundle_followed_by_bad_bundle_writes_nothing)",
+    "3": "social/news/macro/paper items pass validate_external_source_record (new force=True for non-news/social types); social carries author_id_hash, platform, post_id, platform_policy_ref (manifest terms_ref), trust_score",
+    "4": "redistribution_allowed=false on every record and connector; attribution_required sources (data.gov.tw NDC/DGBAS, GDELT) reject bundles without manifest.attribution and carry attribution_text. LicensePolicy.policy_ref only accepts whitespace-free refs, so the text lives in record metadata, policy_ref is collector-terms://<source>",
+    "5": "strategy-seed-paper-corpus now uses the bundle adapter token (collector source id collector-papers)",
+    "6": "canary EGRESS_POLICY_ADMITTED compares definition hosts (and instance hosts) with the process allowlist for collector definitions; mismatch or deny mode fails the canary, later stages are skipped",
+    "7": "observed_from_collector_status + SourceCommandEngine.record_collector_observation; paused/failing host entry, newest bundle older than 2x cadence, or cursor lag > 7 days => degraded; adapter.pull also returns the projection"
+  },
+  "tests": {
+    "new": "services/source_ingestion/tests/test_collector_bundle_connector.py (22 passed)",
+    "regression": "test_srcm_p1_source_commands, test_provider_management_coverage, test_external_source_connectors, test_connector_framework, test_compose_activation, test_src001_source_record_contract, test_srcm_p1_contracts, test_registry_split, test_active_universe, bff management data-sources tests, persona data sources: all passed"
+  },
+  "decisions_and_open_points": [
+    "Bundle format follows design §6.5; schema_version 'collector_bundle.v1', index.json {bundles:[{source_id,date,run_id,finished_at}]}, status.json {sources:{<id>:{status,last_run_at,paused_reason}}}, bundle_sha256 = sha256 of sorted item content_sha256 joined by newline. COLLECTOR-STACK (A1) must emit exactly this or adjust the constants in connectors/collector_bundle.py.",
+    "Collector host comes from PANTHEON_COLLECTOR_HOST; unset it falls back to collector.pantheon-collector.invalid so the egress canary fails closed. Definition fingerprints therefore depend on that env at process start.",
+    "Registry has no paper/book class (papers belong to the seed registry, test_registry_split), so paper corpus and books use source_classes (news, paper|book); the first is the registry bucket, records stay source_type paper.",
+    "One rejected bundle fails the whole pull and blocks the cursor until fixed (fail-closed, visible as failing health).",
+    "docker-compose.yml only passes PANTHEON_COLLECTOR_HOST/PANTHEON_COLLECTOR_BUNDLE_TOKEN through; the allowlist steady state and refresh guard belong to DEV-EGRESS-COLLECTOR-HOST-GATE (A3).",
+    "Not done here: scheduler wiring that calls record_collector_observation after each pull, and numeric-series datasets for macro (B1)."
+  ]
+}
