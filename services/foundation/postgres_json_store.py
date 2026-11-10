@@ -378,10 +378,32 @@ class PostgresJsonOwnerStore:
 
         The comparison runs inside Postgres, so only the single matching row
         crosses the wire.  A missing stored field compares as JSON null (as
-        ``dict.get`` did).  Legacy rows whose jsonb is a JSON *string* of an
-        object are not comparable in SQL; they are few and fetched separately.
+        ``dict.get`` did).
         """
         self._ensure_unique_lookup_index(conn, fields)
+        # Legacy rows whose jsonb is a JSON *string* of an object cannot be
+        # compared in SQL.  They are rare (a partial index makes this probe
+        # free when there are none); when one matches, ordering against
+        # object rows needs the full oldest-first pass the code used before.
+        legacy = conn.execute(
+            f"SELECT payload FROM {self.table} WHERE jsonb_typeof(payload) = 'string'"
+        ).fetchall()
+        for lrow in legacy:
+            decoded = self._decode_payload(lrow[0] if isinstance(lrow, tuple) else lrow.get("payload"))
+            if decoded is not None and all(
+                decoded.get(f) == payload.get(f) for f in fields
+            ):
+                cursor = conn.execute(
+                    f"SELECT payload FROM {self.table} ORDER BY updated_at ASC, record_id ASC"
+                )
+                for row in cursor.fetchall():
+                    existing = self._decode_payload(
+                        row[0] if isinstance(row, tuple) else row.get("payload")
+                    )
+                    if existing is not None and all(
+                        existing.get(f) == payload.get(f) for f in fields
+                    ):
+                        return existing
         clauses = []
         params: list[Any] = []
         for field in fields:
@@ -391,29 +413,15 @@ class PostgresJsonOwnerStore:
             params.append(field)
             params.append(self._python_equal_json_candidates(payload.get(field)))
         cursor = conn.execute(
-            f"SELECT payload, updated_at, record_id FROM {self.table} "
+            f"SELECT payload FROM {self.table} "
             f"WHERE jsonb_typeof(payload) = 'object' AND {' AND '.join(clauses)} "
             "ORDER BY updated_at ASC, record_id ASC LIMIT 1",
             tuple(params),
         )
         row = self._fetch_one(cursor)
-        found: Optional[tuple[Any, str, Optional[Dict[str, Any]]]] = None
-        if row is not None:
-            found = (row[1], row[2], self._decode_payload(row[0]))
-        legacy = conn.execute(
-            f"SELECT payload, updated_at, record_id FROM {self.table} "
-            "WHERE jsonb_typeof(payload) = 'string'"
-        ).fetchall()
-        for lrow in legacy:
-            decoded = self._decode_payload(lrow[0])
-            if decoded is None or not all(
-                decoded.get(f) == payload.get(f) for f in fields
-            ):
-                continue
-            key = (lrow[1], lrow[2])
-            if found is None or key < (found[0], found[1]):
-                found = (lrow[1], lrow[2], decoded)
-        return found[2] if found is not None else None
+        if row is None:
+            return None
+        return self._decode_payload(row[0] if isinstance(row, tuple) else row.get("payload"))
 
     def insert_if_absent(
         self,
