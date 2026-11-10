@@ -1,0 +1,25 @@
+{
+  "task_id": "BFF-ALERTS-WIRING-20261110",
+  "title": "Alerts route unwraps an app factory lambda by inspecting its closure",
+  "hosted_verification": "NOT RUN. No hosted, VM or SSH verification was performed; that belongs to MGMT-AI-RESIDUALS-ACCEPTANCE-20261109. Only source-level functional evidence is recorded here.",
+  "changes": [
+    "services/control-plane/bff/core/app_factory.py: the build_operator_alerts_payload lambda is now `lambda s, **kwargs: _dep(\"_build_operator_alerts_payload\")(s, **kwargs)`, so completed_sections reaches the real builder. _dep late binding is kept.",
+    "services/control-plane/bff/incidents/router.py: removed _resolve_alerts_composer and every read of __code__, __closure__ and co_freevars. GET /bff/alerts uses _build_alerts_payload (the injected builder, else IncidentService's)."
+  ],
+  "not_changed": [
+    "_build_operator_alerts_payload logic and the partial-composition payload (owned by BFF-ALERTS-PARTIAL-20261109)",
+    "incidents/service.py builders",
+    "No existing test assertion was edited"
+  ],
+  "tests": {
+    "existing_production_composition_test": "tests/test_main_composition_seam_extraction_005.py::test_live_alert_builder_partial_and_fallback_on_bff_alerts_and_full_on_other_consumers drives GET /bff/alerts through bff_main.app (app_factory wiring) on governance timeout and asserts the three completed contributors (runtime, kill-switch, incident) with source=bff_composed, status=degraded, reason=read_timeout. It needed no change.",
+    "commands": [
+      {"cmd": "PYTHONPATH=$PWD <venv>/python3 -m pytest services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py -q", "result": "42 passed, 1 failed: test_zero_duplicate_definitions_ast_readback ('_resolve_final_idempotency_key' not defined as def in management_service.py). It inspects management_service.py, a file this task does not touch; it is not caused by this change and was not fixed here."},
+      {"cmd": "same env, pytest services/control-plane/bff/test_mgmt_load_005_read_concurrency.py services/control-plane/bff/tests/test_bff_main_composition.py -q", "result": "76 passed"}
+    ],
+    "wiring_removed_check": {
+      "cmd": "restore the old lambda `lambda s: _dep(\"_build_operator_alerts_payload\")(s)` in app_factory.py (router change kept), run pytest ... -k partial_and_fallback",
+      "result": "1 failed: AssertionError: assert [] == ['alert-runtime-runtime-042', ...] (completed contributors dropped). The removal was reverted and is not committed; with the fix restored the same test passes (1 passed)."
+    }
+  }
+}

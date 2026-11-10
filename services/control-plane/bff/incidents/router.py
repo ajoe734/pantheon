@@ -422,24 +422,6 @@ def create_incident_router(
         surface_degradation_reason=_degradation_reason,
     )
 
-    def _resolve_alerts_composer() -> Callable[..., Dict[str, Any]]:
-        if build_operator_alerts_payload is not None:
-            code = getattr(build_operator_alerts_payload, "__code__", None)
-            closure = getattr(build_operator_alerts_payload, "__closure__", None)
-            if (
-                getattr(build_operator_alerts_payload, "__name__", "") == "<lambda>"
-                and code is not None
-                and getattr(code, "co_freevars", ()) == ("_dep",)
-                and closure
-            ):
-                dep_fn = closure[0].cell_contents
-                if callable(dep_fn):
-                    resolved = dep_fn("_build_operator_alerts_payload")
-                    if callable(resolved):
-                        return resolved
-            return build_operator_alerts_payload
-        return _service.build_operator_alerts_payload
-
     _build_alerts_payload = build_operator_alerts_payload or _service.build_operator_alerts_payload
     _list_audit = list_governance_audit_events or _service.list_audit_events
     _get_bff_inc = get_bff_incident or _service.get_bff_incident
@@ -875,7 +857,7 @@ def create_incident_router(
         identity = _extract_ident(authorization)
         _require_read(identity)
         snapshot_at = _utc_now()
-        alerts_composer = _resolve_alerts_composer()
+        alerts_composer = _build_alerts_payload
         completed_sections: Dict[str, Any] = {}
         composer_kwargs: Dict[str, Any] = {}
         params = inspect.signature(alerts_composer).parameters
