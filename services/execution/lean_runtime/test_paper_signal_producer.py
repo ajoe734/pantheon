@@ -3201,3 +3201,79 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
             )
             self.assertIsNotNone(payload)
             jsonschema.validate(payload, schema)
+
+
+class TestFactorRulePaperSignalProducer(unittest.TestCase):
+    """STRATEGY-ARTIFACT-FACTOR-RULE-KIND-20261110 paper producer tests."""
+
+    def test_paper_producer_passes_feature_map_and_accepts_both_kinds(self) -> None:
+        import copy
+        from services.execution.lean_runtime.paper_signal_producer import (
+            CurrentArtifactStrategy,
+            SignalDecisionUnavailable,
+        )
+        from services.execution.lean_runtime.test_current_artifact_signal import _binding
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        factor_art = _sample_factor_rule_artifact()
+        binding = _binding(
+            factor_art,
+            binding_id="rb-factor-rule-001",
+            include_market_input=False,
+        )
+        binding["symbol"] = "2330.TW"
+        binding["market_input"] = {
+            "symbol": "2330.TW",
+            "closes": [500.0, 505.0, 510.0, 515.0],
+            "features": {
+                "rev_yoy": [
+                    {"event_time": "2026-01-31", "available_time": "2026-02-10T09:00:00Z", "value": 10.0},
+                    {"event_time": "2026-02-28", "available_time": "2026-03-10T09:00:00Z", "value": 12.0},
+                    {"event_time": "2026-03-31", "available_time": "2026-04-10T09:00:00Z", "value": 11.0},
+                    {"event_time": "2026-04-30", "available_time": "2026-05-10T09:00:00Z", "value": 19.0},
+                    # Future observation after event_time must be invisible:
+                    {"event_time": "2026-05-31", "available_time": "2026-06-10T09:00:00Z", "value": -200.0},
+                ]
+            },
+            "source_ref": "source-ingest://normalized/tw-price/2330",
+            "observed_at": "2026-05-15T06:00:00Z",
+            "event_time": "2026-05-15T05:30:00Z",
+        }
+
+        strategy = CurrentArtifactStrategy(expression_layer=False)
+        decision = strategy(binding, "2026-05-15T06:05:00Z")
+        self.assertEqual(decision["action"], "BUY")
+        self.assertEqual(decision["direction"], "LONG")
+        self.assertEqual(decision["symbol"], "2330.TW")
+        self.assertIn("rev_yoy", decision["metadata"]["market_input_feature_keys"])
+
+        # Also accepts factor_rule:evaluate_factor_rule_action in interpreter allowlist
+        factor_art_alt = copy.deepcopy(factor_art)
+        factor_art_alt["artifact_id"] = "strat-tw-rev-yoy-factor-v1-alt"
+        factor_art_alt["algorithm_ref"]["logic_interpreter"] = (
+            "services.registry.factor_rule:evaluate_factor_rule_action"
+        )
+        alt_binding = _binding(
+            factor_art_alt,
+            binding_id="rb-factor-rule-002",
+            include_market_input=False,
+        )
+        alt_binding["symbol"] = "2330.TW"
+        alt_binding["market_input"] = copy.deepcopy(binding["market_input"])
+        alt_decision = strategy(alt_binding, "2026-05-15T06:05:00Z")
+        self.assertEqual(alt_decision["action"], "BUY")
+
+        # Unknown interpreter is still rejected
+        bad_art = copy.deepcopy(factor_art)
+        bad_art["artifact_id"] = "strat-tw-rev-yoy-factor-v1-bad"
+        bad_art["algorithm_ref"]["logic_interpreter"] = "services.unknown:run"
+        bad_binding = _binding(
+            bad_art,
+            binding_id="rb-factor-rule-bad",
+            include_market_input=False,
+        )
+        bad_binding["market_input"] = copy.deepcopy(binding["market_input"])
+        with self.assertRaises(SignalDecisionUnavailable) as ctx:
+            strategy(bad_binding, "2026-05-15T06:05:00Z")
+        self.assertEqual(ctx.exception.code, "artifact_interpreter_unsupported")
+
