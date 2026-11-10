@@ -2822,7 +2822,8 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
         "#!/usr/bin/env bash\n"
         'echo "$*" >> "$DOCKER_LOG"\n'
         'case "$*" in\n'
-        '  *" config --format json"*) echo \'{"services":{"source-ingest":{"image":"pantheon-source-ingest"}}}\' ;;\n'
+        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"pantheon-source-ingest"}}}\' ;;\n'
+        '  *" config --format json"*) echo \'{"services":{}}\' ;;\n'
         '  "image inspect --format {{.Id}} pantheon-source-ingest") echo "$TAG_ID" ;;\n'
         '  *" up "*) echo "$TAG_ID" > "$STATE" ;;\n'
         '  *" ps -q source-ingest"*) echo cid1 ;;\n'
