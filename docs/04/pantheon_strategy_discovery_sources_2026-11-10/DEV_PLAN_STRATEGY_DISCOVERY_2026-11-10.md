@@ -31,16 +31,13 @@ Scope of this change: this plan, a decision notice at the top of the design, and
   - 和其他因子是否重複。
 - 結果放在 Alpha 工廠頁。好的因子包成規則，走真回測閘門，再交給 persona 挑選。
 
-**更正設計文件兩處：**
+**更正設計文件兩處與 2026-11-10 抓取改道決定：**
 - 櫃買三大法人本來就走櫃買 OpenAPI，不需要 data.gov.tw。
-- 證交所網站端點只有兩種用途：三大法人 T86，以及個股歷史回補（STOCK_DAY 和櫃買 tradingStock）；每日行情本來就走 OpenAPI。
-- 歷史回補停掉之後，回測只能用已經存下的歷史加上往後累積。第 2 波會實際量出有多少歷史。不夠的話：
-  - 證交所同意，就恢復回補；
-  - 不同意，就買 FinMind 商用方案。
+- 證交所網站端點只有兩種用途：三大法人 T86，以及個股歷史回補（改用全市場單日頁：證交所 `MI_INDEX?type=ALLBUT0999` 與櫃買 `dailyQuotes`）；每日行情、融資融券、借券、當沖與休市日曆（`https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule`）皆走 OpenAPI。
+- **2026-11-10 操作者決定更新（不寄信聯繫證交所／櫃買或 CMoney）：** 證交所 T86、證交所與櫃買每日歷史行情回補，以及 CMoney 股市爆料同學會公開看板，統一改由獨立的 collector 主機以單一連線（`max_connections=1`）、證交所／櫃買每次請求至少間隔 5 秒（`min_interval_seconds=5.0`）、全市場單日頁（2 年約 488 個交易日／端點）抓取並打包為簽章 bundle，Pantheon 本體不再向 `www.twse.com.tw` 或櫃買非 OpenAPI 網站端點發送任何請求，也不寄發證交所／櫃買同意信或 CMoney 授權信。
 
 **要你親自做的（§5）：**
 - 開 DigitalOcean 帳號和新加坡主機；
-- 寄兩封信（證交所／櫃買中心、CMoney，草稿在對話裡）；
 - 提供書檔；
 - 社群資料放量之前請律師看個資。
 
@@ -55,12 +52,15 @@ Verbatim:
 > 好，按照你的建議來做。
 > 另外有這麼多人做量化交易，應該是要有alpha策略因子庫這種東西才對啊
 
+Updated operator decision on 2026-11-10 (`TW-OFFICIAL-WEBSITE-VIA-COLLECTOR-20261110`, superseding `TW-OFFICIAL-WEBSITE-ENDPOINT-COMPLIANCE-20261110`):
+fetch the TWSE T86 daily institutional flow, TWSE and TPEx daily price history (using per-date all-stock pages on the collector host with one connection and at most one request every five seconds), and the CMoney forum through the collector host as signed bundles without contacting the exchanges (TWSE/TPEx) or CMoney.
+
 | # | Decided | Value used by the tasks |
 | --- | --- | --- |
-| O-1 | (a) ask TWSE/TPEx for consent **and** (c) stop automated website downloads now; (b) FinMind Sponsor Pro only if consent is refused and history is insufficient | §2; task A4 |
+| O-1 | Fetch TWSE T86 daily and TWSE/TPEx daily price history through the collector host (`max_connections=1`, `min_interval_seconds=5.0`, per-date all-stock pages) and read them in Pantheon from collector bundles without contacting the exchanges; Pantheon makes no request to TWSE/TPEx website endpoints other than OpenAPI paths | §2; task A4 (`TW-OFFICIAL-WEBSITE-VIA-COLLECTOR-20261110`, superseding `TW-OFFICIAL-WEBSITE-ENDPOINT-COMPLIANCE-20261110`) |
 | O-2 | Threads/Instagram from the web on the collector host (recorded earlier) | A1 |
 | O-3 | Instagram: logged-out popular-tag pages only; no login, no proxies, no stealth | A1 |
-| O-4 | CMoney: licence request sent; until answered, low-rate public stock pages, internal analysis only | A1 (source created disabled; enabled by the operator command after the letter is sent) |
+| O-4 | CMoney forum (`collector-tw-cmoney-forum`): fetched through the collector host from public stock pages at low rate (`12 rpm`) for internal analysis only, without contacting CMoney | A1 / A4 (`collector-tw-cmoney-forum` enabled on collector host without sending a licence letter) |
 | O-5 | DigitalOcean, Singapore, 2 vCPU / 4 GB, operator's own account and payment method, not linked to GCP billing | H1 |
 | O-6 | counsel review before community sources exceed test volume | W1 acceptance keeps community sources at test volume |
 | O-7 | model budget: at most **400 extraction calls per day** through the deny-all extraction agent (≤ 8 000 input tokens each, the existing client limit); stop with `budget_exhausted`; operator may change the number | B2 |
@@ -75,20 +75,15 @@ Verbatim:
 * **TPEx institutional flows already come from the TPEx OpenAPI** (`tpex_3insti_daily_trading`,
   `services/source_ingestion/connectors/taiwan_official.py:251`). The design's
   `collector-tw-tpex-flows` (data.gov.tw 11856) is dropped.
-* **Daily prices already come from the OpenAPIs** (`STOCK_DAY_ALL` `:221`,
-  `tpex_mainboard_daily_close_quotes` `:231`). The website endpoints are used for:
-  * TWSE institutional flows T86 (`:241`);
-  * per-symbol **price history backfill**: TWSE `STOCK_DAY` (`:354`) and TPEx `tradingStock` (`:363`)
-    through `fetch_price_history_payload` (`:981`), called from
-    `services/source_ingestion/provider_adapters.py:417`;
-  * a holiday-calendar citation to `www.twse.com.tw` (`:126`); an OpenAPI calendar source exists
-    (`:160`).
-* Consequence of O-1(c): with website backfill stopped, backtests use the history already stored
-  plus what accumulates daily. Task B1 measures stored depth per symbol and dataset. If it is short
-  of the 2-year minimum of the design (§10.3) and TWSE has not consented, the operator is asked for
-  O-1(b).
-* `SD_…` §7.3: the refresh guard's TWSE host set loses `www.twse.com.tw` once A4 lands; the TPEx
-  OpenAPI is served from `www.tpex.org.tw/openapi`, so that host stays.
+* **Daily prices, margin, securities lending, day trading, and holiday schedule come from the OpenAPIs** (`STOCK_DAY_ALL`,
+  `tpex_mainboard_daily_close_quotes`, `MI_MARGN`, `tpex_mainboard_margin_balance`, `SBL/TWT96U`,
+  `tpex_margin_sbl`, `TWTB4U`, `tpex_securities`, and `holidaySchedule/holidaySchedule`). The exchange website endpoints are fetched only by the collector host (`max_connections=1`, `min_interval_seconds=5.0`) and delivered as signed collector bundles:
+  * TWSE institutional flows T86 (`https://www.twse.com.tw/rwd/zh/fund/T86?date={YYYYMMDD}&selectType=ALLBUT0999&response=json` → bundle `collector-tw-twse-t86`);
+  * per-date all-stock **price history backfill**: TWSE `MI_INDEX` (`https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={YYYYMMDD}&type=ALLBUT0999&response=json` → bundle `collector-tw-twse-price-history`, 488 requests for 2 years) and TPEx `dailyQuotes` (`https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date={YYYY/MM/DD}&id=&response=json` → bundle `collector-tw-tpex-price-history`, 488 requests for 2 years);
+  * holiday calendar is sourced from the TWSE OpenAPI endpoint (`https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule`).
+* Consequence of O-1 and O-4 (2026-11-10 update): the collector host fetches TWSE T86, TWSE/TPEx per-date all-stock price history, and CMoney forum public pages without contacting the exchanges or CMoney. Pantheon makes no direct requests to `www.twse.com.tw` or non-OpenAPI `www.tpex.org.tw` paths, while running paper personas continue refreshing daily OpenAPI snapshots without a gap.
+* `SD_…` §7.3: the bounded refresh guard's TWSE host set removes `www.twse.com.tw` (`openapi.twse.com.tw,www.tpex.org.tw`); the TPEx
+  OpenAPI is served from `www.tpex.org.tw/openapi/v1`, so `www.tpex.org.tw` stays with a path guard enforcing `/openapi/v1/` only.
 
 ---
 
@@ -170,7 +165,7 @@ store are authoritative.
 | H2 | `EVOLUTION-LEGACY-PROPOSALS-CANCEL` | Human/Ops → Claude | P | O-10 through the existing cancel route, dry-run list first |
 | A1 | `COLLECTOR-STACK` | Antigravity → Claude | P | design §6 as `deploy/collector/` |
 | A2 | `SOURCE-COLLECTOR-BUNDLE-CONNECTOR` | Claude → Antigravity | P | design §7.1, §7.2, §7.4, §7.5, canary egress comparison |
-| A4 | `TW-OFFICIAL-WEBSITE-ENDPOINT-COMPLIANCE` | Antigravity2 → Claude | P | §2: website endpoints off by default behind a consent flag; holiday from OpenAPI; refresh host set |
+| A4 | `TW-OFFICIAL-WEBSITE-VIA-COLLECTOR` (superseding `TW-OFFICIAL-WEBSITE-ENDPOINT-COMPLIANCE`) | Antigravity2 → Claude | A1, A2 | §2: fetch TWSE T86 and TWSE/TPEx daily price history (per-date all-stock pages, 1 connection, ≤1 req / 5 s) and CMoney forum via collector host without contacting the exchanges or CMoney; holiday from OpenAPI; remove `www.twse.com.tw` from official refresh host set |
 | A3 | `DEV-EGRESS-COLLECTOR-HOST-GATE` | Antigravity2 → Claude | A2, A4 | design §7.3 |
 | W1 | `DISCOVERY-W1-HOSTED-ACCEPTANCE` | Human/Ops → Claude | H1, A3 | design §13 wave 1 |
 | B3 | `STRATEGY-ARTIFACT-FACTOR-RULE-KIND` | Antigravity2 → Claude | P | design §9.1–§9.3 + §3.4 grammar, per-symbol |
@@ -189,14 +184,15 @@ store are authoritative.
 | D2 | `SD-VIEW-UNIVERSE-CROSS-SECTIONAL` | Claude → Antigravity | B5 | design for trade-time universe; unlocks cross-sectional templates |
 | W4 | `DISCOVERY-W4-HOSTED-ACCEPTANCE` | Human/Ops → Claude | W3, D1 | evolution without operator action inside the envelope |
 
-Not opened: RD-Agent sandbox (design §8.6, optional); O-1(b) FinMind purchase (only if needed).
+Not opened: RD-Agent sandbox (design §8.6, optional); O-1(b) FinMind purchase (superseded by collector-host per-date all-stock history backfill).
 
 ## 5. Operator actions
 
 1. Create a DigitalOcean account with the operator's own payment method; create one Singapore
    droplet (2 vCPU / 4 GB); give the coordinator SSH access for installation (H1).
-2. Send the TWSE/TPEx consent request and the CMoney licence request (drafts provided in the
-   conversation of 2026-11-10; not stored here).
+2. *(Superseded 2026-11-10: per operator decision of 2026-11-10, TWSE/TPEx website datasets and the
+   CMoney forum are fetched through the collector host without contacting the exchanges or CMoney; no
+   consent or licence letters are sent.)*
 3. Place owned/licensed book files in the collector library when it exists.
 4. Before community sources exceed test volume: counsel review of design §6.4.
 5. YouTube Data API and Gemini keys from a Google account and project outside the Pantheon GCP

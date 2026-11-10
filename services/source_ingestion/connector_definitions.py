@@ -344,6 +344,12 @@ COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
      "class": "macro", "dataset": "collector_macro_series", "attribution": True, "cadence": 2678400},
     {"id": "collector-tw-macro-dgbas", "provider": "DGBAS statistics via data.gov.tw (collector host)", "type": "macro",
      "class": "macro", "dataset": "collector_macro_series", "attribution": True, "cadence": 2678400},
+    {"id": "collector-tw-twse-t86", "provider": "TWSE T86 institutional flows (web, collector host)", "type": "market",
+     "class": "taiwan_chip", "dataset": "tw_institutional_flow", "attribution": True, "cadence": 86400},
+    {"id": "collector-tw-twse-price-history", "provider": "TWSE daily price history MI_INDEX (web, collector host)", "type": "market",
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
+    {"id": "collector-tw-tpex-price-history", "provider": "TPEx daily price history dailyQuotes (web, collector host)", "type": "market",
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
     {"id": "collector-library-books", "provider": "Operator book library (collector host)", "type": "paper", "class": ("news", "book"),
      "dataset": "collector_book_sections", "cadence": 2678400},
 )
@@ -435,7 +441,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         secret_fields=(),
         required_pit_fields=("event_time", "available_time", "ingest_time"),
         default_limits={"max_records": 100, "max_bytes": 10485760, "timeout_seconds": 15, "max_rate_per_second": 5.0},
-        allowed_host_patterns=("openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"),
+        allowed_host_patterns=("openapi.twse.com.tw", "www.tpex.org.tw"),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/tw-twse-tpex-official-market",
         metadata={
