@@ -568,6 +568,21 @@ def _post_json(url: str, body: Dict[str, Any], timeout: float) -> tuple[bool, in
         return False, -1
 
 
+def _is_legacy_open_body(existing_json: str, new_json: str) -> bool:
+    """True when ``existing_json`` equals ``new_json`` minus ``created_at``."""
+
+    try:
+        old = json.loads(existing_json)
+        new = json.loads(new_json)
+    except ValueError:
+        return False
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return False
+    if "created_at" in old or "created_at" not in new:
+        return False
+    return {k: v for k, v in new.items() if k != "created_at"} == old
+
+
 class DownstreamProbeResult:
     """Outcome of one interval or error-rate observation."""
 
@@ -1443,6 +1458,13 @@ class _DurableHealthStore:
                 (delivery_id,),
             ).fetchone()
             if existing is not None:
+                if channel == "incident_open" and _is_legacy_open_body(
+                    str(existing["body_json"]), body_json
+                ):
+                    # Row queued by the previous version without created_at:
+                    # keep it as stored instead of raising a conflict.
+                    connection.rollback()
+                    return dict(existing)
                 if (
                     str(existing["event_id"]) != event_id
                     or str(existing["channel"]) != channel
@@ -2785,6 +2807,9 @@ class DownstreamHealthMonitor:
             "title": f"BFF downstream degradation: {result.target_name}",
             "status": "open",
             "severity": "high",
+            # Source telemetry event time (hashed into the stable event id),
+            # so a late delivery never becomes the incident's created_at.
+            "created_at": result.window_started_at,
             "component": {
                 "service_name": result.target_name,
                 "component_kind": target.component_kind,
