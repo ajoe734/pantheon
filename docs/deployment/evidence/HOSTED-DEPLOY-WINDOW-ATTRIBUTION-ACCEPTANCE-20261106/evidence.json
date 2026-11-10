@@ -305,5 +305,26 @@
         }
       ]
     }
+  },
+  "post_acceptance_findings": {
+    "compose_tags_left_on_candidate_after_restore": {
+      "found_in": "https://github.com/ajoe734/pantheon/actions/runs/42573778376",
+      "observed": "after drill 42546069567 restored all 57 services the compose :latest names still pointed at the drill candidate; at 2026-11-09T06:36Z the pre-mutation Taiwan refresh recreated source-ingest from candidate image sha256:4942208f10e2 instead of baseline sha256:9bee6b39707d and exited 75; source-ingest stayed on that image until Root 42579393176 redeployed",
+      "fixed_by": {
+        "task": "DEV-COMPENSATION-COMPOSE-TAGS-20261109",
+        "pr": 7092,
+        "merge_commit": "b15806471184097b4600f87440511d8eefaf3a5e"
+      },
+      "verified_on_hosted": {
+        "run": "https://github.com/ajoe734/pantheon/actions/runs/42674934567",
+        "compensation": "2026-11-09T18:54:56Z to 2026-11-09T19:04:01Z",
+        "controller_sha": "b02a468eaa824eee9dd834b2c9552307ae6ecf57",
+        "readback": "57 services restored to b7153eefd with image_readback_verified true; this readback now fails on any compose image name that resolves to a non-restored image"
+      }
+    },
+    "frontend_gate_rollback_seen": {
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/42663987948",
+      "result": "Frontend admission or switch failed; exact hosted baseline was restored (2026-11-09T18:13Z to 18:18Z)"
+    }
   }
 }
