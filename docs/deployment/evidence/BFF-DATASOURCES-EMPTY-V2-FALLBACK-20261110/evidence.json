@@ -1,0 +1,127 @@
+{
+  "schema_version": "pantheon.functional_verification_evidence.v1",
+  "task_id": "BFF-DATASOURCES-EMPTY-V2-FALLBACK-20261110",
+  "title": "Data sources page shows zero sources while seven connectors run",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "verified_at": "2026-11-10T12:26:00Z",
+  "verification_scope": "functional_only_no_vm_or_ssh",
+  "root_cause": {
+    "file": "services/control-plane/bff/console_gap/datasources.py",
+    "function": "bff_management_data_sources",
+    "defect": "Previously checked `if v2_sources is not None and (len(v2_sources) > 0 or client_error is None):`. Because `v2_sources` is non-None whenever `client_error is None`, an empty v2 store (`v2_sources == []`) entered the v2 branch and returned HTTP 200 with `meta.status=\"ok\"`, `meta.source=\"service_client\"`, `page_info.total=0`, and `data.items=[]`, causing the Management data sources page to display 0 authoritative sources instead of falling back to the `source-ingest` connector registry as an explicit degraded legacy projection.",
+    "fix": "Changed the v2 return condition to `if v2_sources is not None and len(v2_sources) > 0:` and tracked `v2_store_empty = v2_sources is not None and len(v2_sources) == 0 and client_error is None`. When `v2_store_empty` is True and the legacy `source-ingest` registry returns connectors (`source not in (\"missing\", \"unavailable\")` and `len(items) > 0`), `GET /bff/management/data-sources` now returns those connectors with `meta.status=\"degraded\"`, `meta.source=\"legacy_projection\"`, `data.status=\"degraded\"`, `data.source=\"legacy_projection\"`, and an explicit empty-store reason in `meta.degradation.reason`, `meta.reason`, `meta.surfaces.data_sources.reason`, `data.reason`, and `data.summary.reason`. Legacy projection rows are sanitized via `_sanitize_legacy_projection_row` so they never carry `allowed_actions`/`allowedActions` or inferred persona fleet status fields."
+  },
+  "real_seven_connector_shape_verified": {
+    "connector_count": 7,
+    "entry_schema_version": "source_connector_registry_entry.v1",
+    "required_entry_keys": [
+      "connector_id",
+      "crawler_policy",
+      "fetch_policy",
+      "freshness",
+      "health_metrics",
+      "metadata",
+      "policy",
+      "provider",
+      "schedule",
+      "schema_version",
+      "source_type",
+      "state",
+      "status",
+      "supported_modes"
+    ],
+    "connectors": [
+      {
+        "connector_id": "tw-twse-tpex-official-market",
+        "provider": "TWSE/TPEx",
+        "status": "enabled"
+      },
+      {
+        "connector_id": "tw-taifex-futures-options-chip",
+        "provider": "TAIFEX",
+        "status": "disabled"
+      },
+      {
+        "connector_id": "dev-paper-us-equity-simulation",
+        "provider": "Explicit controlled simulation",
+        "status": "disabled"
+      },
+      {
+        "connector_id": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+        "provider": "Explicit controlled simulation",
+        "status": "enabled"
+      },
+      {
+        "connector_id": "hosted-all12-h12-01a11-20261023-9aeb-conn",
+        "provider": "L12 deployed E2E controlled source",
+        "status": "enabled"
+      },
+      {
+        "connector_id": "hosted-all12-h12-01a11-20261026-d834-conn",
+        "provider": "L12 deployed E2E controlled source",
+        "status": "enabled"
+      },
+      {
+        "connector_id": "hosted-all12-h12-claude-20261027-4923-conn",
+        "provider": "L12 deployed E2E controlled source",
+        "status": "enabled"
+      }
+    ]
+  },
+  "acceptance_criteria_verification": [
+    {
+      "criterion": 1,
+      "description": "When the source management client is configured and returns zero instances without an error GET /bff/management/data-sources returns the source-ingest registry connectors as the explicit degraded legacy projection with meta status degraded and source legacy_projection and a reason naming the empty store and a test proves it with the real seven connector shape",
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/test_management_data_sources_v2.py::test_empty_v2_store_falls_back_to_seven_connector_degraded_legacy_projection",
+        "services/control-plane/bff/tests/test_bff_management_data_sources_contract.py::test_bff_management_data_sources_empty_v2_store_returns_degraded_legacy_projection"
+      ]
+    },
+    {
+      "criterion": 2,
+      "description": "When the store returns instances the response stays field for field identical to today and a test proves it",
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/test_management_data_sources_v2.py::test_populated_v2_store_response_stays_field_for_field_identical",
+        "services/control-plane/bff/test_management_data_sources_v2.py::test_get_data_sources_list_v2_and_redaction"
+      ]
+    },
+    {
+      "criterion": 3,
+      "description": "Client errors and an unconfigured client and an unavailable or empty legacy registry keep today's status and error and a test covers each",
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/test_management_data_sources_v2.py::test_client_errors_unconfigured_client_and_unavailable_or_empty_legacy_registry_keep_status",
+        "services/control-plane/bff/test_management_data_sources_v2.py::test_service_unconfigured_returns_503",
+        "services/control-plane/bff/tests/test_bff_management_data_sources_contract.py::test_bff_management_data_sources_returns_canonical_envelope",
+        "services/control-plane/bff/tests/test_bff_management_data_sources_contract.py::test_bff_management_data_sources_degraded_when_source_missing",
+        "services/control-plane/bff/tests/test_bff_management_data_sources_contract.py::test_bff_management_data_sources_degraded_when_source_unavailable"
+      ]
+    },
+    {
+      "criterion": 4,
+      "description": "Legacy projection rows carry no allowed actions and no inferred persona fleet status so no command can be offered for them",
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/test_management_data_sources_v2.py::test_legacy_projection_strips_allowed_actions_and_inferred_persona_fleet_status",
+        "services/control-plane/bff/test_management_data_sources_v2.py::test_empty_v2_store_falls_back_to_seven_connector_degraded_legacy_projection",
+        "services/control-plane/bff/tests/test_bff_management_data_sources_contract.py::test_bff_management_data_sources_empty_v2_store_returns_degraded_legacy_projection"
+      ]
+    },
+    {
+      "criterion": 5,
+      "description": "No existing test is weakened or deleted to pass and any changed assertion is justified in evidence",
+      "status": "passed",
+      "existing_tests_modified_or_weakened": 0,
+      "changed_assertions_justification": "No existing test assertions were changed, weakened, or deleted; only new tests covering the empty-v2 fallback contract were added."
+    }
+  ],
+  "test_execution": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_management_data_sources_v2.py services/control-plane/bff/tests/test_bff_management_data_sources_contract.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "passed": 73,
+    "failed": 0,
+    "exit_code": 0
+  }
+}
