@@ -46,12 +46,18 @@ from services.source_ingestion.configured import (
     JsonlConfiguredConnectorStore,
     JsonlConnectorScheduleStore,
 )
+from services.source_ingestion.connectors.collector_bundle import (
+    COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+    observed_from_collector_status,
+)
 from services.source_ingestion.connector_definitions import (
     DEPLOYED_CONNECTOR_DEFINITIONS,
     get_connector_definition,
 )
+from services.external_egress import allowed_hosts as process_allowed_hosts, resolve_mode as process_egress_mode
 from services.source_ingestion.connectors import (
     AuthType,
+    LicensePolicy,
     ConnectorMode,
     ConnectorStatus,
     SourceConnector,
@@ -145,6 +151,33 @@ class AdapterNotSupportedError(SourceManagementContractError):
             "reason": reason,
             "recorded_at": _utc_now(),
         }
+
+
+def _egress_policy_mismatch(definition: Any, instance_hosts: Sequence[str]) -> str | None:
+    """Compare the definition's hosts with the process egress allowlist (collector sources).
+
+    Collector sources must match the process allowlist exactly: egress mode ``allowlist``
+    and the host set equal to the definition's hosts (and the instance's hosts). Other
+    definitions keep their per-run bounded-refresh posture and are not compared here.
+    """
+    if definition.adapter_token != COLLECTOR_BUNDLE_ADAPTER_TOKEN:
+        return None
+    try:
+        mode = process_egress_mode()
+        process_hosts = set(process_allowed_hosts())
+    except ValueError as exc:
+        return f"egress_policy_invalid: {exc}"
+    if mode != "allowlist":
+        return f"egress_policy_mismatch: process egress mode is {mode!r}, expected 'allowlist'"
+    definition_hosts = {h.strip().lower() for h in definition.allowed_host_patterns}
+    if definition_hosts != process_hosts:
+        return (
+            "egress_policy_mismatch: definition hosts "
+            f"{sorted(definition_hosts)} differ from process allowlist {sorted(process_hosts)}"
+        )
+    if {h.strip().lower() for h in instance_hosts} != definition_hosts:
+        return f"egress_policy_mismatch: instance hosts {sorted(instance_hosts)} differ from definition hosts"
+    return None
 
 
 class SourceCommandEngine:
@@ -323,7 +356,11 @@ class SourceCommandEngine:
             source_class=effective_source_class,
             datasets=datasets,
             markets=list(params.get("markets") or ["TW"]),
-            license_scope=str(params.get("license_scope") or "official_reference"),
+            license_scope=str(
+                params.get("license_scope")
+                or (definition.metadata.get("collector") or {}).get("license_scope")
+                or "official_reference"
+            ),
             allowed_use=list(params.get("allowed_use") or ["research_data", "backtest_data", "monitoring"]),
             retention_policy_ref=str(params.get("retention_policy_ref") or f"source-retention://{definition.provider.lower()}"),
             deletion_policy_ref=str(params.get("deletion_policy_ref") or f"source-deletion://{definition.provider.lower()}"),
@@ -536,13 +573,17 @@ class SourceCommandEngine:
 
         # 3. egress_policy_admitted
         t3 = _utc_now()
+        egress_error = _egress_policy_mismatch(definition, desired.allowed_hosts)
         stages.append(CanaryStage(
             stage_name=CanaryStageName.EGRESS_POLICY_ADMITTED,
-            status=CanaryStageStatus.PASSED,
+            status=CanaryStageStatus.FAILED if egress_error else CanaryStageStatus.PASSED,
             started_at=t2,
             completed_at=t3,
-            details={"allowed_hosts": list(desired.allowed_hosts)},
+            details={"allowed_hosts": list(desired.allowed_hosts), "definition_hosts": list(definition.allowed_host_patterns)},
+            error=egress_error,
         ))
+        if egress_error:
+            return self._finish_failed_canary(command, instance, desired, definition, canary_id, start_time, stages, t3)
 
         # 4. provider_read
         t4 = _utc_now()
@@ -687,6 +728,135 @@ class SourceCommandEngine:
         )
         self.store.update_receipt(receipt)
         return receipt
+
+    def _finish_failed_canary(
+        self,
+        command: SourceManagementCommand,
+        instance: Any,
+        desired: SourceDesiredState,
+        definition: Any,
+        canary_id: str,
+        start_time: str,
+        stages: list[CanaryStage],
+        t_prev: str,
+    ) -> SourceManagementReceipt:
+        """Record a canary that failed at an early gate; later stages are skipped, never passed."""
+        for name in (
+            CanaryStageName.PROVIDER_READ,
+            CanaryStageName.SOURCE_NORMALIZED,
+            CanaryStageName.EVIDENCE_PERSISTED,
+            CanaryStageName.SEARCH_REFRESHED,
+            CanaryStageName.GOVERNED_SEARCH_READBACK,
+            CanaryStageName.COMPLETED,
+        ):
+            stages.append(CanaryStage(stage_name=name, status=CanaryStageStatus.SKIPPED, started_at=t_prev, completed_at=t_prev))
+        canary_res = SourceCanaryResult(
+            canary_id=canary_id,
+            source_instance_id=instance.data_source_id,
+            definition_id=desired.definition_id,
+            definition_deployment_sha=desired.definition_deployment_sha,
+            limits=dict(desired.limits),
+            allowed_hosts=list(desired.allowed_hosts),
+            status=CanaryStatus.FAILED,
+            stages=stages,
+            license_scope=instance.license_scope,
+            entitlement_tags=list(instance.entitlement_tags),
+            started_at=start_time,
+            completed_at=_utc_now(),
+            row_count=0,
+            rejected_count=0,
+            ingest_run_id=f"ingest-canary-{uuid.uuid4().hex[:8]}",
+        )
+        self.store.save_canary_result(canary_res)
+        latest_obs = self.store.get_latest_observed_snapshot(instance.data_source_id)
+        obs = SourceObservedState(
+            source_instance_id=instance.data_source_id,
+            desired_revision=desired.revision,
+            observed_revision=(latest_obs.observed_revision + 1) if latest_obs else 1,
+            reconciliation_status=ReconciliationStatus.CONVERGED,
+            effective_lifecycle=instance.lifecycle_state,
+            definition={"definition_id": desired.definition_id, "deployment_sha": desired.definition_deployment_sha, "state": "supported"},
+            credential_state=CredentialState.READY if desired.connector_config.get("secret_ref_id") else CredentialState.NOT_REQUIRED,
+            validation_state=ValidationState.PASSED,
+            canary_state=CanaryState.FAILED,
+            health_state=HealthState.DEGRADED,
+            reasons=tuple(s.error for s in stages if s.error),
+            observed_at=_utc_now(),
+        )
+        self.store.save_observed_snapshot(obs)
+        receipt = SourceManagementReceipt(
+            receipt_id=f"srcrcp-{uuid.uuid4().hex[:12]}",
+            command_id=command.command_id,
+            idempotency_key_hash=command.idempotency_key_hash,
+            source_instance_id=instance.data_source_id,
+            command_type=CommandType.CANARY,
+            status=ReceiptStatus.FAILED,
+            before_revision=instance.revision,
+            after_revision=instance.revision,
+            effect_refs=[f"source-canary-result://{canary_id}"],
+            readback={
+                "canary_id": canary_id,
+                "status": CanaryStatus.FAILED.value,
+                "stage_count": len(stages),
+                "canary_state": CanaryState.FAILED.value,
+            },
+            failure={"code": "EGRESS_POLICY_MISMATCH", "message": next((s.error for s in stages if s.error), "")},
+            actor_id=str(command.actor.get("actor_id")),
+            trace_id=command.trace_id,
+            service_deployment_sha=self.deployment_sha,
+            created_at=_utc_now(),
+            completed_at=_utc_now(),
+        )
+        self.store.update_receipt(receipt)
+        return receipt
+
+    def record_collector_observation(
+        self,
+        source_instance_id: str,
+        *,
+        status_doc: Mapping[str, Any] | None,
+        cursor: str | None,
+        now: datetime | None = None,
+    ) -> SourceObservedState:
+        """Reflect the collector host's status.json and our cursor in the observed state.
+
+        A cursor lag over seven days, a paused/failing host entry, or a newest bundle older
+        than twice the cadence marks the source ``degraded``.
+        """
+        instance = self._require_instance(source_instance_id)
+        desired = self.store.get_desired_state(instance.data_source_id)
+        if desired is None:
+            raise SourceManagementStoreError(f"Desired state missing for {instance.data_source_id}")
+        definition = get_connector_definition(desired.definition_id)
+        collector = (definition.metadata.get("collector") if definition else None) or {}
+        if not collector:
+            raise SourceManagementContractError(f"{desired.definition_id} is not a collector bundle definition")
+        projected = observed_from_collector_status(
+            status_doc,
+            source_id=str(collector["source_id"]),
+            cursor=cursor,
+            cadence_seconds=int(collector.get("cadence_seconds") or 0) or None,
+            now=now,
+        )
+        latest = self.store.get_latest_observed_snapshot(instance.data_source_id)
+        obs = SourceObservedState(
+            source_instance_id=instance.data_source_id,
+            desired_revision=desired.revision,
+            observed_revision=(latest.observed_revision + 1) if latest else 1,
+            reconciliation_status=ReconciliationStatus.CONVERGED,
+            effective_lifecycle=instance.lifecycle_state,
+            definition={"definition_id": desired.definition_id, "deployment_sha": desired.definition_deployment_sha, "state": "supported"},
+            credential_state=latest.credential_state if latest else CredentialState.READY,
+            validation_state=latest.validation_state if latest else ValidationState.PENDING,
+            canary_state=latest.canary_state if latest else CanaryState.NOT_RUN,
+            health_state=HealthState(projected["health_state"]),
+            freshness=projected["freshness"],
+            last_run=projected["last_run"],
+            reasons=tuple(projected["reasons"]),
+            observed_at=_utc_now(),
+        )
+        self.store.save_observed_snapshot(obs)
+        return obs
 
     def _handle_enable(self, command: SourceManagementCommand) -> SourceManagementReceipt:
         instance = self._require_instance(command.source_instance_id)
@@ -1356,11 +1526,23 @@ class SourceCommandEngine:
             else [f"{derived_source_type}-research"]
         )
 
+        collector_cfg = dict((defn.metadata.get("collector") if defn else None) or {})
+        license_policy = None
+        if collector_cfg:
+            license_policy = LicensePolicy(
+                license_scope=instance.license_scope,
+                allowed_use=("research", "search_index", "experiment"),
+                attribution_required=bool(collector_cfg.get("attribution_required")),
+                redistribution_allowed=False,
+                policy_ref=f"collector-terms://{collector_cfg['source_id']}",
+            )
+
         connector = SourceConnector(
             connector_id=instance.connector_id,
             source_type=source_type_val,
             provider=instance.provider,
             license_scope=instance.license_scope,
+            license_policy=license_policy,
             auth_type=AuthType.NONE.value if not secret_ref else AuthType.API_KEY.value,
             secret_ref_id=secret_ref,
             supported_modes=[ConnectorMode.BATCH.value],
@@ -1381,6 +1563,12 @@ class SourceCommandEngine:
             **public_config,
             "max_records": max_records,
         }
+        if collector_cfg:
+            # Definition-owned values win over operator config: one definition, one source.
+            for key in ("source_id", "source_type", "platform", "publisher", "trust_score",
+                        "attribution_required", "cadence_seconds", "dataset", "license_scope"):
+                if collector_cfg.get(key) is not None:
+                    adapter_config[key] = collector_cfg[key]
         if secret_ref:
             adapter_config["secret_ref_id"] = secret_ref
 
