@@ -11,6 +11,7 @@ import pytest
 from collector_stack.cli import main as cli_main
 from collector_stack.config import (
     DEFAULT_POLICY_PATH,
+    EXCHANGE_WEBSITE_SOURCE_IDS,
     CollectorConfigError,
     load_collector_config,
     validate_collector_config,
@@ -36,8 +37,15 @@ def test_default_policy_loads_and_cli_validates(capsys: pytest.CaptureFixture[st
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "valid"
-    assert "collector-tw-cmoney-forum" in out["disabled_sources"]
+    assert "collector-tw-cmoney-forum" not in out["disabled_sources"]
     assert "collector-tw-ptt-mirrors" in out["disabled_sources"]
+    for sid in EXCHANGE_WEBSITE_SOURCE_IDS:
+        src = config.get_source(sid)
+        assert src.enabled is True
+        assert src.max_connections == 1
+        assert src.min_interval_seconds >= 5.0
+        assert src.raw_config["backfill_page_granularity"] == "per_date_all_stocks"
+        assert src.raw_config["two_year_backfill_requests"] == 488
 
 
 @pytest.mark.parametrize(
@@ -125,13 +133,13 @@ def test_instagram_only_permits_logged_out_popular_tag_pages(
             spider.collect(url=forbidden_url)
 
 
-def test_cmoney_and_ptt_mirrors_are_present_and_disabled_by_default(
+def test_cmoney_enabled_and_ptt_mirrors_disabled_by_default(
     tmp_path: Path, test_hasher: AuthorHasher
 ) -> None:
     config = load_collector_config(DEFAULT_POLICY_PATH, env={})
     cmoney = config.get_source("collector-tw-cmoney-forum")
     ptt_mirrors = config.get_source("collector-tw-ptt-mirrors")
-    assert cmoney.enabled is False
+    assert cmoney.enabled is True
     assert ptt_mirrors.enabled is False
 
     runner = CollectorRunner(
@@ -140,9 +148,34 @@ def test_cmoney_and_ptt_mirrors_are_present_and_disabled_by_default(
         hasher=test_hasher,
         transport=FixtureTransport(),
     )
-    for disabled_id in ("collector-tw-cmoney-forum", "collector-tw-ptt-mirrors"):
-        with pytest.raises(SourceDisabledError, match="disabled by default"):
-            runner.run_source(disabled_id, run_id="run-disabled-check")
+    with pytest.raises(SourceDisabledError, match="disabled by default"):
+        runner.run_source("collector-tw-ptt-mirrors", run_id="run-disabled-check")
+
+
+@pytest.mark.parametrize(
+    ("source_id", "field_name", "bad_value", "expected_match"),
+    [
+        ("collector-tw-twse-t86", "max_connections", 2, "max_connections=1"),
+        ("collector-tw-twse-t86", "min_interval_seconds", 4.9, "min_interval_seconds must be >= 5.0"),
+        ("collector-tw-twse-price-history", "max_connections", 3, "max_connections=1"),
+        ("collector-tw-twse-price-history", "min_interval_seconds", 1.0, "min_interval_seconds must be >= 5.0"),
+        ("collector-tw-tpex-price-history", "max_connections", 2, "max_connections=1"),
+        ("collector-tw-tpex-price-history", "min_interval_seconds", 2.0, "min_interval_seconds must be >= 5.0"),
+        (
+            "collector-tw-twse-price-history",
+            "backfill_page_granularity",
+            "per_symbol_monthly",
+            "per_date_all_stocks",
+        ),
+    ],
+)
+def test_exchange_website_sources_enforce_single_connection_and_five_second_rate_limit(
+    source_id: str, field_name: str, bad_value: object, expected_match: str
+) -> None:
+    raw = _raw_policy()
+    raw["sources"][source_id][field_name] = bad_value
+    with pytest.raises(CollectorConfigError, match=expected_match):
+        validate_collector_config(raw, env={})
 
 
 def test_dropped_tpex_flows_and_disabled_by_build_sources_are_refused() -> None:

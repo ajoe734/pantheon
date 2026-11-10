@@ -32,6 +32,9 @@ from .spiders import (
     PttMirrorSpider,
     PttStockSpider,
     ThreadsWebSpider,
+    TpexDailyPriceHistorySpider,
+    TwseDailyPriceHistorySpider,
+    TwseT86DailySpider,
 )
 from .state import CollectorStateStore, SourceRuntimeState
 
@@ -116,6 +119,18 @@ class CollectorRunner:
             )
         if sid == "collector-tw-twse-openapi":
             return TwseOpenApiPoller(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-tw-twse-t86":
+            return TwseT86DailySpider(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-tw-twse-price-history":
+            return TwseDailyPriceHistorySpider(
+                policy, transport=self.transport, contact_user_agent=ua
+            )
+        if sid == "collector-tw-tpex-price-history":
+            return TpexDailyPriceHistorySpider(
                 policy, transport=self.transport, contact_user_agent=ua
             )
         if sid == "collector-gdelt":
