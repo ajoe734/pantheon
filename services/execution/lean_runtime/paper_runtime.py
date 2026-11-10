@@ -1164,9 +1164,12 @@ class PaperExecutionAlgorithm:
                     "decision_id": decision_id,
                 }
 
+        # ``trade_date`` is the D-1 settlement session on a signal carrying open
+        # futures; the entry gate needs the decision day, which stays in
+        # ``as_of_trading_day``.
         trade_date_raw = (
-            self._current_signal_metadata.get("trade_date")
-            or self._current_signal_metadata.get("as_of_trading_day")
+            self._current_signal_metadata.get("as_of_trading_day")
+            or self._current_signal_metadata.get("trade_date")
             or self._current_signal_metadata.get("as_of_date")
             or self._current_signal_metadata.get("signal_date")
         )
@@ -2378,14 +2381,28 @@ class PaperExecutionAlgorithm:
         final_settlement_source: Any = None,
         *,
         holidays: Iterable[Any] | None = None,
+        partition_horizon: Any = None,
     ) -> list[dict[str, Any]]:
-        """Cash-settle open futures contracts whose ``last_trading_day <= trade_date``."""
+        """Cash-settle open futures contracts whose ``last_trading_day <= trade_date``.
+
+        ``trade_date`` is the session being processed. ``partition_horizon`` is
+        the newest dataset partition date that may be read (the decision day):
+        the final settlement of session S lands in a later partition, so a
+        horizon capped at S would never see it.
+        """
         parsed_day = self._parse_strict_iso_date(trade_date)
         if parsed_day is None:
             raise ValueError(
                 f"SettleExpiringFutures requires a strict YYYY-MM-DD trade_date (got {trade_date!r})"
             )
         hol = tuple(holidays) if holidays is not None else self._active_holidays()
+        horizon_day = (
+            self._parse_strict_iso_date(partition_horizon)
+            if partition_horizon is not None
+            else None
+        )
+        if horizon_day is not None and horizon_day < parsed_day:
+            horizon_day = parsed_day
         outcomes: list[dict[str, Any]] = []
         state_mutated = False
         for (b_id, _norm_u, inst_id), pos in list(self._instrument_positions.items()):
@@ -2409,7 +2426,7 @@ class PaperExecutionAlgorithm:
                 month,
                 final_settlement_source,
                 settlement_day=ltd,
-                as_of_trading_day=parsed_day,
+                as_of_trading_day=horizon_day or parsed_day,
             )
             if lookup is None:
                 pos["status"] = "settlement_pending"
@@ -5317,7 +5334,11 @@ class PaperRuntimeService:
                     else self._final_settlement_source
                 )
                 if self._algo._has_open_or_pending_stock_futures():
-                    self._algo.SettleExpiringFutures(session_date, final_source)
+                    self._algo.SettleExpiringFutures(
+                        session_date,
+                        final_source,
+                        partition_horizon=meta.get("as_of_trading_day"),
+                    )
 
                 open_active = self._algo._open_active_stock_future_contracts()
                 if not open_active:
@@ -5390,6 +5411,9 @@ class PaperRuntimeService:
                         "marked_contracts": {},
                     }
                     self._algo._persist_state()
+                elif self._algo._last_futures_mark_session_date == session_date:
+                    # One mark and one maintenance margin check per session.
+                    continue
                 else:
                     self._algo.MarkFuturesSession(session_date, validated_prices)
             finally:
