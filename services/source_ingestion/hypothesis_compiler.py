@@ -169,6 +169,13 @@ class CompilerStore:
             ).fetchall()
         return [{"dataset": d, "count": n} for d, n in rows]
 
+    def get_draft(self, fingerprint: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT artifact,support_count FROM rule_drafts WHERE fingerprint=?", (fingerprint,)
+            ).fetchone()
+        return {"artifact": json.loads(row[0]), "support_count": int(row[1])} if row else None
+
     def drafts(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
@@ -209,7 +216,12 @@ def validate_proposal(proposal: Any) -> tuple[str, str, str, Optional[dict[str, 
     if not isinstance(logic, Mapping) or not isinstance(params, Mapping) or not isinstance(surface, Mapping):
         return NOT_EXPRESSIBLE, "missing_logic_parameters_or_mutation_surface", "", None
     # Governed catalogue only: an unknown dataset/field is never accepted.
-    for item in logic.get("inputs") or ():
+    inputs = logic.get("inputs")
+    if inputs is None:
+        inputs = ()
+    if isinstance(inputs, (str, bytes)) or not isinstance(inputs, (list, tuple)):
+        return NOT_EXPRESSIBLE, "invalid_inputs_not_sequence", "", None
+    for item in inputs:
         if not isinstance(item, Mapping):
             return NOT_EXPRESSIBLE, "invalid_input_entry", "", None
         ds, fld = item.get("dataset"), item.get("field")
@@ -249,6 +261,9 @@ class HypothesisCompiler:
             return CompileOutcome(SKIPPED, "not_testable")
         if testability.startswith("needs_data:"):
             ds = testability.split(":", 1)[1]
+            if not _DATASET_RE.match(ds):
+                self._store.record_outcome(key, NOT_EXPRESSIBLE, "needs_data_invalid_dataset_name")
+                return CompileOutcome(NOT_EXPRESSIBLE, "needs_data_invalid_dataset_name")
             self._store.count_needs_data(ds, key)
             self._store.record_outcome(key, NEEDS_DATA, "card_declared", ds)
             return CompileOutcome(NEEDS_DATA, "card_declared", dataset=ds)
@@ -256,7 +271,13 @@ class HypothesisCompiler:
             return CompileOutcome(SKIPPED, "unknown_testability")
         prior = self._store.get_outcome(key)
         if prior is not None:
-            return CompileOutcome(prior["status"], prior["reason"], prior["dataset"], prior["fingerprint"], extra={"cached": True})
+            draft = self._store.get_draft(prior["fingerprint"]) if prior["fingerprint"] else None
+            return CompileOutcome(
+                prior["status"], prior["reason"], prior["dataset"], prior["fingerprint"],
+                support_count=draft["support_count"] if draft else 0,
+                artifact=draft["artifact"] if draft else None,
+                extra={"cached": True},
+            )
         try:
             proposal = self._proposer(card, catalogue_summary())
         except Exception as exc:

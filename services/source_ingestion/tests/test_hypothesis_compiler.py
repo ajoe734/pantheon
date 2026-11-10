@@ -99,3 +99,67 @@ def test_model_declared_refusals_and_proposer_failure():
     assert out.status == NEEDS_DATA and out.dataset == "tw_tdcc"
     bad = HypothesisCompiler(lambda *_: (_ for _ in ()).throw(RuntimeError("x")), CompilerStore())
     assert bad.compile(_card()).status == "skipped"
+
+
+def test_non_sequence_inputs_is_not_expressible():
+    for bad in (5, {"a": 1}, "abc"):
+        p = _proposal()
+        p["strategy_logic"]["inputs"] = bad
+        out = _compiler(p).compile(_card())
+        assert out.status == NOT_EXPRESSIBLE, bad
+
+
+def test_card_declared_needs_data_invalid_dataset_refused():
+    comp = _compiler(_proposal())
+    out = comp.compile(_card(testability="needs_data:bad name; drop"))
+    assert out.status == NOT_EXPRESSIBLE
+    assert comp.store.needs_data_report() == []
+
+
+# --- DistillationWorker wiring -------------------------------------------------
+import json  # noqa: E402
+
+from services.source_ingestion.distillation_worker import DistillationJobQueue, DistillationWorker  # noqa: E402
+from services.source_ingestion.hypothesis_card import ExtractionLedger, HypothesisExtractor  # noqa: E402
+from services.source_ingestion.semantic_extraction_client import SemanticExtractionClient  # noqa: E402
+from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore  # noqa: E402
+from services.source_ingestion.tests.test_hypothesis_extraction import (  # noqa: E402
+    _Transport, _card as _ext_card, _run, _source,
+)
+
+
+def _wired(tmp_path, proposal, testability="testable"):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    t = _Transport({"is_abstained": False, "abstention_reason": None,
+                    "hypothesis_card": _ext_card(testability=testability)})
+    queue = DistillationJobQueue(tmp_path / "q.jsonl")
+    store = StrategySpecSeedStore(tmp_path / "s.jsonl")
+    ex = HypothesisExtractor(SemanticExtractionClient(transport_fn=t), ExtractionLedger(tmp_path / "l.sqlite"))
+    comp = _compiler(proposal)
+    return DistillationWorker(queue, store, hypothesis_extractor=ex, hypothesis_compiler=comp), store, comp
+
+
+def test_worker_compiles_card_into_seed_metadata(tmp_path):
+    w, store, comp = _wired(tmp_path, _proposal())
+    res = _run(w, _source())
+    assert res.created == 1
+    assert "factor_rule_v1" in json.dumps(store.list_all()[0].to_dict())
+    assert comp.store.drafts()[0]["support_count"] == 1
+
+
+def test_worker_skips_not_expressible_and_needs_data(tmp_path):
+    w, store, _ = _wired(tmp_path / "a", _proposal(op="exec_python"))
+    res = _run(w, _source())
+    assert res.created == 0 and res.skipped == 1 and store.list_all() == []
+    w2, store2, comp2 = _wired(tmp_path / "b", _proposal(), testability="needs_data:monthly_revenue")
+    res2 = _run(w2, _source())
+    assert res2.created == 0 and res2.skipped == 1 and store2.list_all() == []
+    assert comp2.store.needs_data_report() == [{"dataset": "monthly_revenue", "count": 1}]
+
+
+def test_worker_duplicate_fingerprint_increments_support_without_new_draft(tmp_path):
+    w, store, comp = _wired(tmp_path, _proposal())
+    _run(w, _source("src-1"))
+    comp.compile(_card(7))  # distinct card, same rule structure
+    assert comp.store.drafts()[0]["support_count"] == 2
+    assert len(store.list_all()) == 1
