@@ -80,6 +80,10 @@ class ThreadsWebSpider:
                 post_text = post_text.replace(f"@{raw_handle}", "").replace(raw_handle, "").strip()
 
             hashed_author = self.hasher.hash_author("threads", raw_handle)
+            if raw_handle and f"@{raw_handle}" in post_url:
+                post_url = post_url.replace(f"@{raw_handle}/", "")
+            elif raw_handle and raw_handle in post_url:
+                post_url = f"https://www.threads.com/t/{post_id}"
             article_html = f'<article class="thread-post" data-post-id="{post_id}">{article.inner_html}</article>'
             scrubbed_raw = scrub_raw_html_or_json(
                 article_html.encode("utf-8"),
@@ -498,6 +502,7 @@ class DgbasMacroSpider:
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
         items: list[CollectedItem] = []
+        seen_item_ids: set[str] = set()
 
         for url in urls:
             response = self.fetcher.fetch(url)
@@ -505,6 +510,10 @@ class DgbasMacroSpider:
             for row in rows:
                 series_id = row.attrs.get("data-series-id") or "DGBAS_SERIES"
                 period = row.attrs.get("data-period") or "2026-10"
+                item_id = f"dgbas-{series_id.lower()}-{period}"
+                if item_id in seen_item_ids:
+                    continue
+                seen_item_ids.add(item_id)
                 published_at = row.attrs.get("data-release-date") or fetched_iso
                 value = float(row.attrs.get("data-value") or 0.0)
                 yoy = float(row.attrs.get("data-yoy") or 0.0)
@@ -514,7 +523,7 @@ class DgbasMacroSpider:
                 row_html = f'<tr class="dgbas-obs" data-series-id="{series_id}" data-period="{period}">{row.inner_html}</tr>'
                 items.append(
                     CollectedItem(
-                        item_id=f"dgbas-{series_id.lower()}-{period}",
+                        item_id=item_id,
                         url=url,
                         fetched_at=fetched_iso,
                         published_at=published_at,

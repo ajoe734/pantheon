@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2611.01234v1</id>
+    <published>2026-11-09T18:00:00Z</published>
+    <title>Cross-Sectional Revenue Acceleration and Institutional Order Flow in Taiwan Equities</title>
+    <summary>We show that monthly revenue YoY z-scores combined with 20-day institutional net buying predict out-of-sample excess returns after transaction costs.</summary>
+    <author><name>Chia-Hao Lin</name></author>
+    <author><name>Mei-Ling Chen</name></author>
+    <category term="q-fin.PM" />
+    <category term="stat.ML" />
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2611.99999v1</id>
+    <published>2026-11-09T18:00:00Z</published>
+    <title>Unrelated String Theory Paper</title>
+    <summary>Should be filtered out because category is hep-th.</summary>
+    <author><name>Physics Author</name></author>
+    <category term="hep-th" />
+  </entry>
+</feed>
