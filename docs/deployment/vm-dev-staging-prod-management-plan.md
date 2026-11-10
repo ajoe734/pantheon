@@ -221,7 +221,7 @@ cleanup_policy=automatic
 | 主要用途 | 快速整合 | 正式發布演練 | 使用者服務 |
 | Git 來源 | exact protected `dev` tips | 已通過 Dev 的 release manifest | 已通過 Staging 的相同 manifest |
 | 外部 provider | 關閉 | 關閉或 sandbox | 逐項明確批准 |
-| 真實 writes | 預設關閉 | 預設關閉 | 依 production policy |
+| 真實 writes | 持久 `operator-live` 開啟（操作者 2026-11-10 確認）；`read-only`、standby/bootstrap 關閉 | 預設關閉 | 依 production policy |
 | 資料 | Dev 專用 | sanitized snapshot | 正式資料 |
 | Secrets | `dev` scope | `staging` scope | `production` scope |
 | 人工批准 | 不需要 | 建立不需要；失敗不得晉級 | 切換前需要 |
@@ -341,7 +341,7 @@ Dev 不因每個普通 push 自動重部署。當兩個 repository 的 protected
 - Hosted BFF 回報 exact backend commit。
 - Hosted FE manifest 回報 exact frontend commit 與配對 backend commit。
 - `VITE_BFF_MODE=live`、`VITE_BFF_FALLBACK=strict`。
-- Real writes 與 dev stub writes 維持 false，除非有具期限的明確操作授權。
+- 持久 hosted dev 的 `operator-live` profile 以 `VITE_BFF_REAL_WRITES=true` 建置（操作者 2026-11-10 確認，並由 `scripts/auto_deploy_dev_pair.py` 強制）；`read-only` profile、standby/bootstrap、staging baseline 與 production 維持 false。每次寫入仍受 strict BFF authentication 與 role/tenant 檢查約束；`VITE_BFF_ALLOW_DEV_STUB_WRITES` 與 `VITE_BFF_EMBEDDED_BEARER_TOKEN` 在所有 profile 皆為 false。
 - Browser smoke、auth readiness、CORS 與關鍵 read path 通過。
 - Dev 部署失敗後沒有留下半套 candidate pair。
 
