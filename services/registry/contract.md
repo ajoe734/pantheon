@@ -353,6 +353,15 @@ rejects that kind with 400, including keyed requests and otherwise valid payload
 The typed validator supplies artifact content, provenance and derived fields;
 generic reads and lawful transitions remain available for those validated entries.
 
+`alpha_template` (`alpha_template.v1`, `docs/contracts/alpha_template.v1.schema.json`)
+creation is exclusive to `POST /api/registry/alpha-templates`; reads are
+`GET /api/registry/alpha-templates[/{registry_id}]` (filters: family, scope, status,
+library). The checked-in seed library (`services/registry/alpha_templates/`: Qlib
+Alpha158 x158 under MIT, Alpha101 time-series x13 and cross-sectional x11 from the
+published formulas) is registered idempotently as built-in entries at startup.
+Cross-sectional templates are stored with `scope=cross_sectional` and refused by the
+per-symbol evaluator.
+
 ### Lineage read
 
 `GET /api/registry/lineage?root_id=&depth=3&limit=200` is the single registry-owned lineage read

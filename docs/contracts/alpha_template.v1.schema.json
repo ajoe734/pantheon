@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon.local/contracts/alpha_template.v1.schema.json",
+  "title": "AlphaTemplate v1",
+  "description": "Reusable factor expression stored in the registry as artifact_type=alpha_template (dev plan 3.3). `expression` is the `signal` sub-tree of factor_rule_v1 (services/registry/factor_rule.py); templates may use literal {\"const\": x} constants, and cross_sectional templates may use cs_rank/cs_scale/industry_neutralize, which the per-symbol evaluator refuses.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "template_id", "name", "family", "expression", "inputs",
+    "parameters", "scope", "origin", "licence", "attribution", "status", "evaluation_ref"
+  ],
+  "properties": {
+    "schema_version": {"const": "alpha_template.v1"},
+    "template_id": {"type": "string", "pattern": "^[a-z0-9_]+:[A-Za-z0-9_#.-]+$", "description": "e.g. qlib_alpha158:KMID or alpha101:#12"},
+    "name": {"type": "string", "minLength": 1},
+    "family": {
+      "type": "string",
+      "enum": ["kbar", "momentum", "reversal", "volatility", "volume", "fundamental", "flow", "macro", "attention"]
+    },
+    "expression": {"type": "object"},
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "dataset", "field", "availability_lag_days"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$"},
+          "dataset": {"type": "string", "minLength": 1},
+          "field": {"type": "string", "minLength": 1},
+          "availability_lag_days": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Values for every {const_param} in the expression (windows, lags, quantiles, scale factors).",
+      "propertyNames": {"pattern": "^[A-Za-z][A-Za-z0-9_]*$"},
+      "additionalProperties": {"type": "number"}
+    },
+    "scope": {"enum": ["time_series", "cross_sectional"]},
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["library", "ref"],
+      "properties": {
+        "library": {"type": "string", "minLength": 1},
+        "ref": {"type": "string", "minLength": 1},
+        "notes": {"type": "string"}
+      }
+    },
+    "licence": {"type": "string", "minLength": 1, "description": "SPDX identifier or licence text"},
+    "attribution": {"type": "string", "minLength": 1},
+    "status": {"enum": ["draft", "evaluated", "active", "retired"]},
+    "evaluation_ref": {"type": ["string", "null"], "description": "Latest evaluation run (B5), null until evaluated"}
+  }
+}
