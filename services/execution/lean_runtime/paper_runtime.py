@@ -52,6 +52,9 @@ from services.execution.lean_runtime.performance_telemetry import (
     SourceIngestMarkProvider,
     value_portfolio,
 )
+from services.execution.lean_runtime.futures_session_inputs import (
+    DatasetFuturesMarkProvider,
+)
 from services.execution.lean_runtime.bootstrap_contract import ALLOWED_ENGINE_BRIDGE_REMOTES, ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
 from services.execution.lean_runtime.instrument_candidates import (
     governed_twse_holidays,
@@ -3047,6 +3050,22 @@ class PaperExecutionAlgorithm:
                 symbols.add(inst_id)
         return sorted(symbols)
 
+    def open_stock_future_position_records(self) -> list[dict[str, Any]]:
+        records: dict[str, dict[str, Any]] = {}
+        for (_b_id, norm_u, inst_id), pos in self._instrument_positions.items():
+            qty = abs(float(pos.get("quantity", 0.0)))
+            if pos.get("kind") != "stock_future" or qty <= 1e-12:
+                continue
+            records[inst_id] = {
+                "instrument_id": inst_id,
+                "kind": "stock_future",
+                "contract": pos.get("contract"),
+                "contract_month": pos.get("contract_month"),
+                "underlying": pos.get("normalised_underlying") or norm_u,
+                "units": qty,
+            }
+        return [records[key] for key in sorted(records)]
+
     def apply_market_marks(self, marks: Mapping[str, MarketMark]) -> None:
         for symbol, mark in marks.items():
             self.SetSecurityMark(
@@ -4974,6 +4993,7 @@ class PaperRuntimeService:
         runtime_manager_client: RuntimeManagerClient | None = None,
         telemetry_emitter: RuntimeTelemetryEmitter | None = None,
         mark_provider: SourceIngestMarkProvider | None = None,
+        futures_mark_provider: DatasetFuturesMarkProvider | None = None,
         runtime_context: PantheonRuntimeContext | None = None,
         poll_interval_seconds: float | None = None,
         max_batch_size: int | None = None,
@@ -5085,6 +5105,13 @@ class PaperRuntimeService:
             1,
         )
         self._mark_provider = mark_provider or SourceIngestMarkProvider()
+        # One clock for the futures mark session and the freshness check.
+        self._valuation_now: Callable[[], datetime] = lambda: datetime.now(
+            timezone.utc
+        )
+        self._futures_mark_provider = futures_mark_provider or (
+            DatasetFuturesMarkProvider(now=lambda: self._valuation_now())
+        )
         self._drawdown_tracker = RollingDrawdownTracker(
             window_days=int(os.getenv("PANTHEON_PERFORMANCE_WINDOW_DAYS", "20"))
         )
@@ -6143,14 +6170,33 @@ class PaperRuntimeService:
             self._flush_pending_performance_pair()
             return
 
-        symbols = self._algo.mark_symbols()
+        all_symbols = self._algo.mark_symbols()
+        # A stock future has no source-ingest snapshot; its mark is the
+        # dataset D-1 daily settlement, the value MarkFuturesSession applies.
+        symbols = [s for s in all_symbols if not s.startswith("ssf:")]
+        futures_symbols = [s for s in all_symbols if s.startswith("ssf:")]
         provider_diagnostic: dict[str, Any]
         provider_marks: dict[str, MarketMark] = {}
         if symbols:
             provider_marks, provider_diagnostic = self._mark_provider.resolve(symbols)
-            self._algo.apply_market_marks(provider_marks)
         else:
             provider_diagnostic = self._mark_provider.snapshot(requested_symbols=[])
+        if futures_symbols:
+            wanted = set(futures_symbols)
+            futures_marks, futures_diagnostic = self._futures_mark_provider.resolve(
+                [
+                    rec
+                    for rec in self._algo.open_stock_future_position_records()
+                    if rec["instrument_id"] in wanted
+                ]
+            )
+            provider_marks = {**provider_marks, **futures_marks}
+            provider_diagnostic = {
+                **provider_diagnostic,
+                "futures_settlement": futures_diagnostic,
+            }
+        if provider_marks:
+            self._algo.apply_market_marks(provider_marks)
 
         ledger = self._algo.performance_ledger()
         if (
@@ -6193,6 +6239,7 @@ class PaperRuntimeService:
                 os.getenv("PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"),
                 172800.0,
             ),
+            now=self._valuation_now(),
         )
         self._performance_telemetry = {
             "status": valuation.status,

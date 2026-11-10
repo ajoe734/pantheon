@@ -1468,6 +1468,44 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         self.assertEqual(missing_entry.status, "invalid_ledger")
         self.assertEqual(missing_entry.diagnostic["code"], "futures_position_missing_entry_price")
 
+    def test_futures_daily_settlement_mark_ages_by_trading_session_not_seconds(self):
+        def value(mark_as_of: str, now: datetime):
+            return value_portfolio(
+                initial_cash=100_000.0,
+                cash=100_000.0,
+                positions=[
+                    {
+                        "symbol": "ssf:SRF:202611",
+                        "kind": "stock_future",
+                        "quantity": 2.0,
+                        "multiplier": 1000.0,
+                        "average_entry_price": 97.1,
+                    }
+                ],
+                marks={
+                    "ssf:SRF:202611": MarketMark(
+                        "ssf:SRF:202611",
+                        98.0,
+                        mark_as_of,
+                        "dataset:normalized/taifex_ssf_contracts/price_date=2026-11-13",
+                        lineage={"mark_kind": "futures_daily_settlement"},
+                    )
+                },
+                fill_count=1,
+                last_fill_at="2026-11-12T01:00:00Z",
+                now=now,
+            )
+
+        # Monday 2026-11-16 09:00 Taipei: Friday's session is the D-1 session.
+        monday = datetime(2026, 11, 16, 1, 0, tzinfo=timezone.utc)
+        fresh = value("2026-11-13T05:30:00Z", monday)
+        self.assertEqual(fresh.status, "valued")
+        self.assertAlmostEqual(fresh.sample.pnl, 2 * 1000.0 * (98.0 - 97.1), places=6)
+        # Thursday's settlement on Monday means a session was missed: stale.
+        stale = value("2026-11-12T05:30:00Z", monday)
+        self.assertEqual(stale.status, "marks_unavailable")
+        self.assertEqual(stale.diagnostic["code"], "stale_or_future_market_marks")
+
 
 if __name__ == "__main__":
     unittest.main()

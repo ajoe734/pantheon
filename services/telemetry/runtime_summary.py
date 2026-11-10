@@ -538,7 +538,9 @@ def _rebuild_positions(
                 and mark_as_of is not None
             ):
                 symbol_stale = not is_portfolio_mark_fresh(
-                    symbol=symbol,
+                    # A stock future's mark is keyed and aged by its contract
+                    # instrument id, not by the underlying cash symbol.
+                    symbol=position_key if position_key.startswith("ssf:") else symbol,
                     mark_as_of=mark_as_of,
                     now_dt=latest_event_at,
                     max_mark_age_seconds=172800.0,

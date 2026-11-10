@@ -15,11 +15,19 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from datetime import datetime, timezone
+from typing import Callable
+
+from services.execution.lean_runtime.performance_telemetry import (
+    FUTURES_SETTLEMENT_MARK_KIND,
+    MarketMark,
+    expected_futures_settlement_session,
+)
 from services.execution.lean_runtime.instrument_candidates import (
     CONTRACT_CODE,
     CONTRACT_MONTH,
@@ -134,8 +142,15 @@ def read_session_settlement_prices_for_open_futures(
     trade_date: str | date,
     *,
     normalized_root: str | Path | None = None,
+    partition_horizon: str | date | None = None,
 ) -> dict[str, Any]:
     """Read daily settlement prices for open futures contracts on ``trade_date``.
+
+    ``partition_horizon`` is the newest partition date that may be read; it
+    defaults to ``trade_date``. A valuation after the session passes the
+    current day because the ingest run that publishes the D-1 settlement lands
+    in the current day's partition while its rows carry the session
+    ``price_date``.
 
     Prices must come from the dataset snapshot whose ``price_date`` equals
     ``trade_date``. When a contract's price is missing, unreadable, tombstoned,
@@ -187,10 +202,11 @@ def read_session_settlement_prices_for_open_futures(
             "futures_mark_unavailable_reason": "dataset_unreadable",
         }
 
-    session_partition = dataset_dir / f"date={session_iso}"
+    horizon_day = _as_date(partition_horizon) if partition_horizon is not None else session_day
+    session_partition = dataset_dir / f"date={horizon_day.isoformat()}"
     rows = read_normalized_ssf_rows(
         root_path,
-        as_of_trading_day=session_day,
+        as_of_trading_day=horizon_day,
     )
     if rows is None:
         for inst_id in contracts:
@@ -384,3 +400,59 @@ def final_settlement_source_from_env(
         else (os.getenv(SSF_NORMALIZED_ROOT_ENV, "").strip() or None)
     )
     return DatasetFinalSettlementSource(normalized_root=effective_root)
+
+
+class DatasetFuturesMarkProvider:
+    """Mark open stock futures from the dataset's D-1 daily settlement.
+
+    The price is read through ``read_session_settlement_prices_for_open_futures``,
+    the same seam the signal producer uses to feed ``MarkFuturesSession``, so
+    valuation and the margin check share one value per contract and session.
+    A contract with no fresh, non-tombstone row yields no mark and a per-contract
+    reason; the fill price or an older session's price is never substituted.
+    """
+
+    def __init__(
+        self,
+        normalized_root: str | Path | None = None,
+        *,
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._normalized_root = normalized_root
+        self._now = now or (lambda: datetime.now(timezone.utc))
+
+    def resolve(
+        self, positions: Sequence[Mapping[str, Any]]
+    ) -> tuple[dict[str, MarketMark], dict[str, Any]]:
+        now = self._now()
+        session_day = expected_futures_settlement_session(now)
+        info = read_session_settlement_prices_for_open_futures(
+            positions,
+            session_day,
+            normalized_root=self._normalized_root,
+            partition_horizon=now.astimezone(timezone(timedelta(hours=8))).date(),
+        )
+        session_iso = info["trade_date"]
+        marks: dict[str, MarketMark] = {}
+        for inst_id, price in info["session_settlement_prices"].items():
+            marks[inst_id] = MarketMark(
+                symbol=inst_id,
+                price=float(price),
+                # RFC 3339 instant of the session's 13:30 Asia/Taipei close, so
+                # the telemetry projection accepts it; the date is the session.
+                as_of=f"{session_iso}T05:30:00Z",
+                source_ref=(
+                    f"dataset:{NORMALIZED_DATASET_PATH}/price_date={session_iso}"
+                    f"#{inst_id}"
+                ),
+                lineage={"mark_kind": FUTURES_SETTLEMENT_MARK_KIND},
+            )
+        diagnostic = {
+            "source": "taifex_ssf_contracts_daily_settlement",
+            "session": session_iso,
+            "open_contracts": list(info["open_futures_contracts"]),
+            "resolved_symbols": sorted(marks),
+            "reasons": dict(info["session_settlement_price_reasons"]),
+            "unavailable_reason": info["futures_mark_unavailable_reason"],
+        }
+        return marks, diagnostic

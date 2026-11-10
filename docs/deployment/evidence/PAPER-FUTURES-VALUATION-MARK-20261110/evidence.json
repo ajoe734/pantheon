@@ -1,0 +1,27 @@
+{
+  "task_id": "PAPER-FUTURES-VALUATION-MARK-20261110",
+  "hosted_behaviour_exercised": false,
+  "statement": "Functional evidence only. No hosted environment, VM, BFF, deploy workflow, broker or model provider was touched. Hosted verification belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "change": {
+    "futures_session_inputs.py": "DatasetFuturesMarkProvider marks open ssf: contracts from the dataset D-1 daily settlement through read_session_settlement_prices_for_open_futures (the seam feeding MarkFuturesSession); partition_horizon lets the read include the current day's partition, which holds rows whose price_date is the D-1 session.",
+    "performance_telemetry.py": "Futures daily-settlement marks (lineage mark_kind=futures_daily_settlement) age by trading session via previous_trading_day (weekends and governed TWSE holidays), not elapsed seconds. Other marks, including the existing ssf test mark, keep the generic rule.",
+    "paper_runtime.py": "_maybe_emit_performance_snapshots splits ssf: symbols from cash symbols; cash path unchanged; one injectable clock (_valuation_now) feeds both the provider and value_portfolio; diagnostic mark_source.futures_settlement carries per-contract reasons.",
+    "runtime_summary.py": "Position row freshness for a stock future is judged by its instrument id instead of the underlying cash symbol, so the futures mark is projected as mark_price/mark_as_of/mark_source_ref."
+  },
+  "commands": [
+    {"cmd": "pytest services/execution/lean_runtime", "result": "566 passed, 13 skipped, 63 subtests passed"},
+    {"cmd": "pytest services/reconciliation-drift/test_reconciliation_drift_http_service.py", "result": "25 passed"},
+    {"cmd": "pytest services/telemetry/test_runtime_summary_projection.py", "result": "11 failed/errored both before and after this change (identical set: TestRetirementEventDeliveryThroughRealAuth and TestRuntimeSummaryViewerAccess, local environment auth); all other tests pass including the 2 new futures tests"}
+  ],
+  "acceptance": {
+    "1": "test_open_stock_future_is_valued_at_dataset_daily_settlement_via_production_path and test_summary_projection_and_drift_see_futures_valuation: runtime built by runtime_bootstrap.build_paper_runtime_service, SRF 202611 x2 opened at 97.1 by the producer, dataset root set as docker-compose sets it, 2026-11-10 partition holding price_date 2026-11-09 rows, source-ingest never read for an ssf symbol; pnl_snapshot and drawdown_snapshot emitted, pnl equals the -19.884 fee and tax since unrealized is 2*1000*(97.1-97.1); projection has pnl, drawdown and no _valuation_failure.",
+    "2": "Same test calls read_session_settlement_prices_for_open_futures and MarkFuturesSession with the same row; position mark_price equals the valuation mark_ref price.",
+    "3": "test_futures_mark_unavailable_for_missing_stale_and_tombstone_rows (production construction path): marks_unavailable, code missing_market_marks, per-contract reasons settlement_price_missing, settlement_price_stale, contract_tombstoned, no pnl or drawdown event; test_futures_mark_is_calendar_aware_across_a_weekend_and_not_aged_by_seconds and test_futures_daily_settlement_mark_ages_by_trading_session_not_seconds cover the calendar rule.",
+    "4": "test_summary_projection_and_drift_see_futures_valuation plus the two test_futures_daily_settlement_mark_* projection tests assert mark_price, mark_as_of, mark_source_ref on the projected row.",
+    "5": "Same projection test feeds the summary to reconciliation-drift _resolve_scheduled_metrics and _drift_checks: drawdown observed, status not degraded. No drift code changed.",
+    "6": "Cash-only test (test_runtime_without_open_futures_never_consults_the_futures_provider) and the existing performance telemetry, runtime and drift tests pass unchanged."
+  },
+  "findings_not_changed": [
+    "paper_signal_producer passes the decision day as trade_date to the settlement seam, which requires price_date == trade_date; on the hosted layout (2026-11-10 partition holding price_date 2026-11-09 rows) session_settlement_prices would report settlement_price_stale, so MarkFuturesSession may not mark from the producer path there. Left unchanged as out of scope; the valuation path no longer depends on it."
+  ]
+}

@@ -179,6 +179,34 @@ class MarketMark:
         return payload
 
 
+_TAIPEI_TZ = timezone(timedelta(hours=8))
+FUTURES_SETTLEMENT_MARK_KIND = "futures_daily_settlement"
+
+
+def expected_futures_settlement_session(reference_time: datetime) -> date:
+    """The D-1 session whose daily settlement marks an open futures contract.
+
+    Calendar aware: weekends and governed TWSE holidays are skipped, so a
+    Monday valuation expects the preceding Friday session rather than aging
+    the Friday settlement out by elapsed seconds.
+    """
+    from services.execution.lean_runtime.instrument_candidates import (
+        previous_trading_day,
+    )
+
+    taipei_day = reference_time.astimezone(_TAIPEI_TZ).date()
+    return previous_trading_day(taipei_day)
+
+
+def is_futures_settlement_mark_fresh(
+    *, mark_as_of: datetime, reference_time: datetime
+) -> bool:
+    """A futures settlement mark is fresh only for the latest completed session."""
+    return mark_as_of.astimezone(timezone.utc).date() == (
+        expected_futures_settlement_session(reference_time)
+    )
+
+
 def is_portfolio_mark_fresh(
     *,
     symbol: str,
@@ -192,6 +220,15 @@ def is_portfolio_mark_fresh(
 ) -> bool:
     now_utc = now_dt.astimezone(timezone.utc)
     mark_utc = mark_as_of.astimezone(timezone.utc)
+    if (
+        str(symbol or "").startswith("ssf:")
+        and isinstance(lineage, Mapping)
+        and lineage.get("mark_kind") == FUTURES_SETTLEMENT_MARK_KIND
+    ):
+        # A dataset daily-settlement mark ages by trading sessions, not seconds.
+        return is_futures_settlement_mark_fresh(
+            mark_as_of=mark_utc, reference_time=now_utc
+        )
     if is_taiwan_symbol(symbol):
         refresh_receipt_dt: datetime | None = None
         if observed_at is not None:
