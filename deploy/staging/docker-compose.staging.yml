@@ -45,6 +45,7 @@ x-core-env: &core_env
 x-product-owner: &product_owner
   pull_policy: never
   restart: unless-stopped
+  stop_grace_period: 2s
   profiles: ["core"]
   env_file:
     - ${STAGING_SECRETS_ENV_FILE:?staging secrets env file required}
@@ -110,6 +111,8 @@ services:
     image: ${PANTHEON_RUNTIME_MANAGER_IMAGE:?immutable runtime-manager digest required}
     pull_policy: never
     restart: unless-stopped
+    stop_signal: SIGINT
+    stop_grace_period: 2s
     profiles: ["core"]
     <<: *secrets
     environment:
@@ -127,6 +130,7 @@ services:
     image: ${PANTHEON_GOVERNANCE_IMAGE:?immutable governance digest required}
     pull_policy: never
     restart: unless-stopped
+    stop_grace_period: 2s
     profiles: ["core"]
     <<: *secrets
     environment:
@@ -151,6 +155,7 @@ services:
     image: ${PANTHEON_DEPLOYMENT_IMAGE:?immutable deployment digest required}
     pull_policy: never
     restart: unless-stopped
+    stop_grace_period: 2s
     profiles: ["core"]
     <<: *secrets
     environment:
@@ -176,6 +181,8 @@ services:
     image: ${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE:?immutable lifecycle-projector digest required}
     pull_policy: never
     restart: unless-stopped
+    stop_signal: SIGINT
+    stop_grace_period: 2s
     profiles: ["core", "singleton"]
     # Existing loop-run-projector-scheduler telemetry image; command selects the lifecycle projector.
     command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
@@ -197,6 +204,7 @@ services:
     image: ${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}
     pull_policy: never
     restart: unless-stopped
+    stop_grace_period: 2s
     profiles: ["core"]
     <<: *secrets
     environment:
@@ -316,6 +324,7 @@ services:
   lineage-read:
     image: ${PANTHEON_LINEAGE_READ_IMAGE:?immutable lineage-read digest required}
     <<: *product_owner
+    stop_signal: SIGINT
     environment:
       <<: *product_env
       PORT: "8094"
@@ -324,7 +333,7 @@ services:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/lineage-read:/data/lineage
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -352,7 +361,7 @@ services:
       - runtime-manager
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8087/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -360,6 +369,7 @@ services:
   telemetry:
     image: ${PANTHEON_TELEMETRY_IMAGE:?immutable telemetry digest required}
     <<: *product_owner
+    stop_signal: SIGINT
     environment:
       <<: *product_env
       PORT: "8083"
@@ -379,7 +389,7 @@ services:
       - runtime-manager
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -405,7 +415,7 @@ services:
       - telemetry
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -429,7 +439,7 @@ services:
       - incidents
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -460,7 +470,7 @@ services:
       - governance
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -490,7 +500,7 @@ services:
       - incidents
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8102/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -520,7 +530,7 @@ services:
       - registry
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -569,7 +579,7 @@ services:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/source-ingest:/data/source-ingest
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8097/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -604,7 +614,7 @@ services:
       - governance
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -627,7 +637,7 @@ services:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/policy-learning:/data/policy-learning
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -650,7 +660,7 @@ services:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/research-orchestrator:/data/research-orchestrator
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8101/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -658,6 +668,7 @@ services:
   agora-interaction-worker:
     image: ${PANTHEON_AGORA_INTERACTION_WORKER_IMAGE:?immutable agora-interaction-worker digest required}
     <<: *product_owner
+    stop_signal: SIGINT
     command: ["python", "scripts/run_agora_interaction_worker.py"]
     environment:
       <<: *product_env
@@ -706,7 +717,7 @@ services:
   paper-fleet-reconciler:
     image: ${PANTHEON_PAPER_FLEET_RECONCILER_IMAGE:?immutable paper-fleet-reconciler digest required}
     <<: *product_owner
-    stop_grace_period: 30s
+    stop_grace_period: 5s
     stop_signal: SIGINT
     command: ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
     environment:
@@ -736,15 +747,16 @@ services:
       - signal-store
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/readyz', timeout=5).read()"]
-      interval: 15s
+      interval: 5s
       timeout: 5s
       retries: 6
-      start_period: 10s
+      start_period: 5s
 
   paper-signal-producer:
     image: ${PANTHEON_PAPER_SIGNAL_PRODUCER_IMAGE:?immutable paper-signal-producer digest required}
     <<: *product_owner
-    stop_grace_period: 30s
+    stop_grace_period: 5s
+    stop_signal: SIGINT
     command: ["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]
     environment:
       <<: *product_env
@@ -763,10 +775,10 @@ services:
       - signal-store
     healthcheck:
       test: ["CMD", "python", "-m", "services.execution.lean_runtime.paper_signal_producer", "healthcheck"]
-      interval: 30s
+      interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 5s
 
   # Existing memory / capital / OpenClaw gateway adapter owners consumed by the BFF persona,
   # capital-read and OpenClaw ops routes. Same immutable images and native Postgres stores; the
@@ -786,7 +798,7 @@ services:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/memory:/data/memory
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8086/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -816,7 +828,7 @@ services:
       - runtime-manager
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/readyz', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 30s
@@ -841,7 +853,7 @@ services:
       - runtime-manager
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8104/livez', timeout=5).read()"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 10
       start_period: 15s

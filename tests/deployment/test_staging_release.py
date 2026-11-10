@@ -1206,6 +1206,21 @@ if args[:3] == ["compute", "disks", "create"]:
     }
     state["disks"] = [d for d in state["disks"] if d["name"] != name] + [obj]
     save_state()
+    if parse_flag("--source-snapshot") and os.environ.get("VM_RUNTIME_STATE_FILE"):
+        vm_sf = Path(os.environ["VM_RUNTIME_STATE_FILE"])
+        if vm_sf.exists():
+            vm_st = json.loads(vm_sf.read_text(encoding="utf-8"))
+            loop_rows = (
+                vm_st.get("databases", {})
+                .get("pantheon_staging", {})
+                .get("tables", {})
+                .get("public.loop_controller_records")
+            )
+            if isinstance(loop_rows, list):
+                vm_st["databases"]["pantheon_staging"]["tables"]["public.loop_controller_records"] = [
+                    r for r in loop_rows if r.get("controller_id") != "runtime-paper-fleet-reconciler"
+                ]
+            vm_sf.write_text(json.dumps(vm_st, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(obj))
     raise SystemExit(0)
 
@@ -1296,6 +1311,12 @@ if args[:3] == ["compute", "instances", "delete"]:
     if os.environ.get("GCLOUD_SIMULATE_LINGERING_DELETE") != "true":
         state["instances"] = [i for i in state["instances"] if i["name"] != name]
         save_state()
+        if os.environ.get("VM_RUNTIME_STATE_FILE"):
+            vm_sf = Path(os.environ["VM_RUNTIME_STATE_FILE"])
+            if vm_sf.exists():
+                vm_st = json.loads(vm_sf.read_text(encoding="utf-8"))
+                vm_st["containers"] = {}
+                vm_sf.write_text(json.dumps(vm_st, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps({"deleted": name}))
     raise SystemExit(0)
 
@@ -5586,6 +5607,75 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
                 self.assertEqual(bff_reg._entries.dsn, owner_reg._entries.dsn)
                 self.assertEqual(bff_reg._entries.table_name, owner_reg._entries.table_name)
                 self.assertEqual(bff_reg._receipts.table_name, owner_reg._receipts.table_name)
+
+    def test_stage_rollback_rto_fast_stop_healthcheck_and_cid_reuse(self) -> None:
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))
+        services = compose["services"]
+
+        python_pid1_sigint_services = (
+            "runtime-manager",
+            "lifecycle-projector",
+            "lineage-read",
+            "telemetry",
+            "agora-interaction-worker",
+            "paper-fleet-reconciler",
+            "paper-signal-producer",
+        )
+        for svc_name in python_pid1_sigint_services:
+            self.assertEqual(
+                services[svc_name].get("stop_signal"),
+                "SIGINT",
+                f"{svc_name} must use stop_signal: SIGINT so Python PID 1 exits immediately without waiting for SIGTERM timeout",
+            )
+
+        for key in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS:
+            svc_name = key.replace("_", "-")
+            expected_grace = "5s" if svc_name in ("paper-fleet-reconciler", "paper-signal-producer") else "2s"
+            self.assertEqual(
+                services[svc_name].get("stop_grace_period"),
+                expected_grace,
+                f"{svc_name} must bound stop_grace_period to {expected_grace}",
+            )
+
+        fast_healthcheck_owners = (
+            "lineage-read",
+            "registry",
+            "telemetry",
+            "incidents",
+            "postmortems",
+            "evolution",
+            "reconciliation-drift-svc",
+            "persona",
+            "source-ingest",
+            "training-session-svc",
+            "policy-learning-svc",
+            "research-orchestrator-svc",
+            "paper-fleet-reconciler",
+            "paper-signal-producer",
+            "memory",
+            "capital",
+            "openclaw-gateway-adapter",
+        )
+        for svc_name in fast_healthcheck_owners:
+            hc = services[svc_name].get("healthcheck")
+            self.assertIsInstance(hc, dict, f"{svc_name} missing healthcheck")
+            self.assertEqual(hc.get("interval"), "5s", f"{svc_name} healthcheck interval must be 5s")
+        for paper_svc in ("paper-fleet-reconciler", "paper-signal-producer"):
+            self.assertEqual(services[paper_svc]["healthcheck"].get("start_period"), "5s", paper_svc)
+        for core_hc_svc in ("governance", "deployment"):
+            self.assertEqual(services[core_hc_svc]["healthcheck"].get("interval"), "10s", core_hc_svc)
+            self.assertEqual(services[core_hc_svc]["healthcheck"].get("start_period"), "15s", core_hc_svc)
+
+        collector_src = (REPO_ROOT / "deploy" / "staging" / "pantheon-staging-collect-gates").read_text(encoding="utf-8")
+        self.assertIn("last_verified_cids: dict[str, str] = {}", collector_src)
+        self.assertIn("known_cids: dict[str, str] = {}", collector_src)
+        self.assertIn("svc_cid = last_verified_cids.get(compose_svc, \"\")", collector_src)
+        wait_block = collector_src.split("def _wait_product_owners(", 1)[1].split("unserved = _wait_product_owners()", 1)[0]
+        self.assertIn("cid = known_cids.get(svc, \"\")", wait_block)
+        self.assertIn("if not cid:", wait_block)
+        self.assertIn("if running != \"true\":", wait_block)
+        self.assertIn("known_cids.pop(svc, None)", wait_block)
+        self.assertIn("last_verified_cids.update(known_cids)", wait_block)
 
 
 if __name__ == "__main__":
