@@ -2336,8 +2336,14 @@ def _project_persona_dto(
     all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
     all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
     evaluate_provisioning: bool = False,
+    thin_source_health: bool = False,
 ) -> Dict[str, Any]:
-    """Project canonical persona data into execute-plans Persona DTO."""
+    """Project canonical persona data into execute-plans Persona DTO.
+
+    ``thin_source_health=True`` is for list rows: it resolves source health via
+    the thin overlay (scalar status only) and skips re-copying the overlay
+    result, which is already a fresh independent copy.
+    """
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
     if persona_id and evaluate_provisioning:
         _evaluate_persona_provisioning_status(
@@ -2444,11 +2450,18 @@ def _project_persona_dto(
         if isinstance(raw.get("required_data_sources"), list)
         else []
     )
+    overlay_owned_keys: Set[str] = set()
     if isinstance(metadata.get("data_source_status"), dict) or isinstance(metadata.get("data_sources"), list) or required_data_sources:
         data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
             metadata.get("data_source_status") if isinstance(metadata.get("data_source_status"), dict) else {},
             metadata.get("data_sources") if isinstance(metadata.get("data_sources"), list) else [],
             required_data_sources=required_data_sources,
+            thin=thin_source_health,
+        )
+        overlay_owned_keys = (
+            {"data_source_status", "data_sources", "source_health_bindings"}
+            if thin_source_health
+            else set()
         )
         metadata["data_source_status"] = data_source_status
         metadata["data_sources"] = data_sources
@@ -2465,7 +2478,8 @@ def _project_persona_dto(
     ):
         value = metadata.get(source_key)
         if value is not None:
-            dto[dto_key] = json.loads(json.dumps(value))
+            # Overlay outputs are fresh copies already (thin list path only).
+            dto[dto_key] = value if source_key in overlay_owned_keys else json.loads(json.dumps(value))
     if required_data_sources:
         dto["requiredDataSources"] = json.loads(json.dumps(required_data_sources))
     performance = metadata.get("performance") if isinstance(metadata.get("performance"), dict) else {}
@@ -4419,6 +4433,7 @@ def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Di
             overlay=None,
             routed_strategies=int(routed_counts.get(persona_id, 0)),
             evaluate_provisioning=False,
+            thin_source_health=True,
         )
         _strip_persona_list_source_health_detail(dto)
         items.append(dto)

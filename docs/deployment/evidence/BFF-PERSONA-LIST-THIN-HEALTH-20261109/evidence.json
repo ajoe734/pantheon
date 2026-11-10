@@ -1,0 +1,23 @@
+{
+  "task_id": "BFF-PERSONA-LIST-THIN-HEALTH-20261109",
+  "base_commit": "e88fcf0a9",
+  "change": "bff persona list projection now calls _project_persona_dto(thin_source_health=True) -> overlay_source_health_truth(thin=True); overlay outputs (already fresh copies) are not re-copied via json round trip on the list path only. Detail path unchanged.",
+  "measurement": {
+    "method": "time.process_time, best of 3, 160 personas, each with ~132KB health + ~103KB receipt blobs in connector truth; same machine, same process; before = rich DTO + _strip_persona_list_source_health_detail (previous code path), after = _project_persona_list_records",
+    "before_cpu_s": 4.647,
+    "after_cpu_s": 0.0226,
+    "reduction_pct": 99.5,
+    "before_bytes": 127744310,
+    "after_bytes": 386870
+  },
+  "acceptance": {
+    "1_thin_no_rich": "test_list_projection_never_builds_rich_source_health (rich bindings builder patched to raise; _source_truth_projection always thin=True)",
+    "2_field_identical": "test_thin_rows_match_previous_projection_field_for_field compares old vs new on same records with real overlay; all scalar status fields identical. Documented difference: list rows no longer carry rich-only blobs that thin mode never builds: dataSourceStatus.connector_health/connectorHealth and per-dataSources connector_schedule/connector_freshness/source_health/usage_aggregate_30d/recommendation (+camelCase). Previously only sourceHealthBindings and required_source_health were stripped, so these blobs were still shipped in list rows (hence 127 MB before in the synthetic worst case). No in-repo consumer reads them from the list; this is a deliberate shape change flagged for reviewer.",
+    "3_cpu": "see measurement (>=70% required)",
+    "4_no_mutation": "test_list_projection_does_not_mutate_records_or_shared_cache",
+    "5_detail_unchanged": "detail path code untouched (thin_source_health defaults False); test_detail_dto_keeps_full_rich_source_health",
+    "6_tests": "No existing test weakened or deleted; only additions to test_bff_persona_list_compact_rows.py. 12 failures in test_persona_router.py are pre-existing at base (identical failing set before and after change)."
+  },
+  "second_directory_read": "Not changed. _get_persona_directory_snapshot still does the market-defaults read for the list (it feeds catalog_default_total); CPU not profiled separately, out of scope for the 70% target.",
+  "hosted_verification": "deferred to operator acceptance task; no VM access used"
+}
