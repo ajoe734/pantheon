@@ -57,7 +57,7 @@
   ],
   "ci_remediation_2026_11_11": {
     "problem": "Registry and source_ingestion suites raised VectorbtWorkflowError because the vectorbt backend is not installed there.",
-    "fix": "Those suites use recorded real-vectorbt backtest outputs from services/registry/promotion/fixtures/recorded_backtest_tw_2330.json (sha256 0dc3496aa93fe472e6694af88a913974ef546f60f6fa9a549a39ad0893770897); the real vectorbt run stays in the research suite.",
+    "fix": "Those suites use recorded real-vectorbt backtest outputs from services/research/replication/fixtures/recorded_backtest_tw_2330.json (sha256 0dc3496aa93fe472e6694af88a913974ef546f60f6fa9a549a39ad0893770897); the real vectorbt run stays in the research suite.",
     "verification": "python3 -m unittest services.registry.promotion.test_gate -> 8 tests OK"
   }
 }
