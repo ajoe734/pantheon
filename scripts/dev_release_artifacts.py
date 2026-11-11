@@ -86,8 +86,16 @@ CONTROL_ENV_FORMAT = _env_format(CONTROL_ENV_KEYS)
 # (allowed hosts); record only those two nonsecret names.
 API_ENV_KEYS = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS")
 API_ENV_FORMAT = _env_format(API_ENV_KEYS)
+# The paper signal producer's capital reader needs the capital URL, the expression
+# layer switch and the path of the already mounted reader credential file. Only those
+# nonsecret references are recorded; the credential value (and its env twin) never is.
+PAPER_SERVICE = "paper-signal-producer"
+PAPER_ENV_KEYS = ("PANTHEON_PAPER_EXPRESSION_LAYER", "PANTHEON_CAPITAL_API_URL",
+                  "DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE")
+PAPER_ENV_FORMAT = _env_format(PAPER_ENV_KEYS)
 CONTROL_POSTURE = {CONTROL_SERVICE: (CONTROL_ENV_KEYS, CONTROL_ENV_FORMAT),
-                   API_SERVICE: (API_ENV_KEYS, API_ENV_FORMAT)}
+                   API_SERVICE: (API_ENV_KEYS, API_ENV_FORMAT),
+                   PAPER_SERVICE: (PAPER_ENV_KEYS, PAPER_ENV_FORMAT)}
 RESTART_FORMAT = "{{json .HostConfig.RestartPolicy.Name}}"
 RESTART_POLICIES = ("no", "always", "unless-stopped", "on-failure")
 
