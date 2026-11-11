@@ -1830,6 +1830,62 @@ else:
     projected_freshness = {"status": str(freshness.get("status") or "fresh")}
 
 
+def finmind_bare_symbol(value):
+    text = str(value).strip().upper()
+    for suffix in (".TWSE", ".TPEX", ".TWO", ".TW"):
+        if text.endswith(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def finmind_coverage(records, expected, *, accept):
+    """Union refresh_coverage across every accepted batch record against the current symbols."""
+    covered = set()
+    partial_missing = set()
+    seen = False
+    for record in records:
+        if not isinstance(record, dict) or not accept(record):
+            continue
+        meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        cov = meta.get("refresh_coverage")
+        if not isinstance(cov, dict):
+            continue
+        seen = True
+        covered.update(finmind_bare_symbol(item) for item in (cov.get("covered_symbols") or []))
+        partial_missing.update(finmind_bare_symbol(item) for item in (cov.get("missing_symbols") or []))
+    wanted = [finmind_bare_symbol(item) for item in expected]
+    missing = [item for item in dict.fromkeys(wanted) if item not in covered]
+    return seen, missing, sorted(covered), sorted(partial_missing)
+
+
+if connector_id == "tw-finmind-broker-daily-report":
+    run_ids = {
+        str(item["ingest_run_id"])
+        for item in candidates
+        if item.get("ingest_run_id")
+    }
+    expected_symbols = [item for item in priority_csv.split(",") if item.strip()]
+    if not expected_symbols:
+        raise SystemExit("FinMind coverage check requires the resolved active symbols")
+    records_url = os.environ.get("SOURCE_INGEST_API_URL", "http://127.0.0.1:18097").rstrip("/") + "/api/source-ingest/source-records"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(records_url, headers={"Accept": "application/json"}), timeout=30) as response:
+            all_records = json.loads(response.read().decode("utf-8")).get("source_records") or []
+    except Exception as exc:
+        raise SystemExit(f"FinMind coverage readback failed: {exc}") from exc
+    seen, missing_syms, covered_syms, _ = finmind_coverage(
+        all_records,
+        expected_symbols,
+        accept=lambda rec: rec.get("connector_id") == connector_id
+        and str((rec.get("provenance") or {}).get("source_ingest_run_id") or "") in run_ids,
+    )
+    if not seen or missing_syms:
+        raise SystemExit(
+            "FinMind bounded refresh status=partial: "
+            f"covered={covered_syms} missing={missing_syms}; not accepted as fresh"
+        )
+
+
 def canonical_taiwan_symbol(value):
     symbol, suffix = value.upper().rsplit(".", 1)
     if suffix in {"TW", "TWSE"}:
@@ -1999,6 +2055,34 @@ def emit(status, **kw):
     sys.exit(print(json.dumps({"status": status, "taipei_date": d_str, **kw}, sort_keys=True)))
 
 from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
+
+def finmind_bare_symbol(value):
+    text = str(value).strip().upper()
+    for suffix in (".TWSE", ".TPEX", ".TWO", ".TW"):
+        if text.endswith(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def finmind_coverage(records, expected, *, accept):
+    """Union refresh_coverage across every accepted batch record against the current symbols."""
+    covered = set()
+    partial_missing = set()
+    seen = False
+    for record in records:
+        if not isinstance(record, dict) or not accept(record):
+            continue
+        meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        cov = meta.get("refresh_coverage")
+        if not isinstance(cov, dict):
+            continue
+        seen = True
+        covered.update(finmind_bare_symbol(item) for item in (cov.get("covered_symbols") or []))
+        partial_missing.update(finmind_bare_symbol(item) for item in (cov.get("missing_symbols") or []))
+    wanted = [finmind_bare_symbol(item) for item in expected]
+    missing = [item for item in dict.fromkeys(wanted) if item not in covered]
+    return seen, missing, sorted(covered), sorted(partial_missing)
+
 
 raw_connector = os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", "").strip()
 raw_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET", "").strip()
@@ -2170,6 +2254,35 @@ if connector_id in CHIP_CONNECTORS:
             obs_dt = None
     if record_session_date is None or record_session_date < session_date or obs_dt is None or obs_dt < session_close:
         emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
+    if connector_id == "tw-finmind-broker-daily-report":
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(f"{api_url}/api/source-ingest/source-records", headers={"Accept": "application/json"}),
+                timeout=30,
+            ) as rec_resp:
+                all_records = json.loads(rec_resp.read().decode("utf-8")).get("source_records") or []
+        except Exception:
+            all_records = []
+
+        def current_session_batch(rec):
+            rec_meta = rec.get("metadata") if isinstance(rec.get("metadata"), dict) else {}
+            rec_cov = rec_meta.get("refresh_coverage") if isinstance(rec_meta.get("refresh_coverage"), dict) else {}
+            return (
+                rec.get("connector_id") == connector_id
+                and str(rec_cov.get("trade_date") or rec_meta.get("trade_date") or "")[:10] == str(session_date)
+            )
+
+        _seen, missing_syms, covered_syms, _pm = finmind_coverage(all_records, symbols, accept=current_session_batch)
+        if not _seen or missing_syms:
+            emit(
+                "proceed",
+                reason="coverage_incomplete",
+                connector_id=connector_id,
+                dataset=bounded_dataset,
+                session_date=str(session_date),
+                covered_symbols=covered_syms,
+                missing_symbols=missing_syms,
+            )
     emit(
         "noop",
         reason="already_fresh",
@@ -2526,6 +2639,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from dataclasses import replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -2563,7 +2677,18 @@ members = [
     }
     for sym in raw_symbols
 ]
-fanout = build_active_universe_job_fanout(members=members, run_date=run_date)
+# provider_owned_adapter caps fetch.max_records at 1000 (configured.py); FinMind emits at most
+# max_rank buy + max_rank sell rows per symbol, so bound each job to 25 symbols and let the
+# fanout produce as many batches as the universe needs instead of relaxing the generic guard.
+FINMIND_MAX_SYMBOLS_PER_JOB = 25
+FINMIND_FETCH_MAX_RECORDS_CAP = 1000
+fanout_rules = [
+    dataclass_replace(rule, max_symbols_per_run=FINMIND_MAX_SYMBOLS_PER_JOB)
+    if is_finmind and rule.connector_id == connector_id and rule.dataset == dataset
+    else rule
+    for rule in DEFAULT_SOURCE_UPDATE_RULES
+]
+fanout = build_active_universe_job_fanout(members=members, rules=fanout_rules, run_date=run_date)
 selected_job = next(
     (
         job
@@ -2580,7 +2705,7 @@ if not selected_job:
     )
 
 selected_rule = next(
-    (r for r in DEFAULT_SOURCE_UPDATE_RULES if r.connector_id == connector_id and r.dataset == dataset),
+    (r for r in fanout_rules if r.connector_id == connector_id and r.dataset == dataset),
     None,
 )
 if selected_rule is None:
@@ -2619,14 +2744,27 @@ conn_dict = adapter.connector().to_dict()
 conn_dict.pop("schema_version", None)
 fetch_cfg = adapter.fetch_config()
 if is_finmind:
-    # The adapter's own request is empty; bind the resolved symbols so the run is bounded.
-    # max_records is sized to the full top-N buy+sell budget for every symbol so the
-    # generic fetch.max_records slice cannot truncate persisted sides.
+    # The adapter's own request is empty; bind the first bounded batch here. Every scheduled
+    # batch job carries its own symbols in job_parameters, which override request.symbols, so
+    # all batches are processed. max_records is the per-job top-N buy+sell budget and must stay
+    # within the generic provider_owned_adapter guard.
     rows_per_symbol = int(adapter.max_rank) * 2
+    per_job_budget = rows_per_symbol * FINMIND_MAX_SYMBOLS_PER_JOB
+    if per_job_budget > FINMIND_FETCH_MAX_RECORDS_CAP:
+        raise SystemExit(
+            f"FinMind per-job row budget {per_job_budget} exceeds provider_owned_adapter cap {FINMIND_FETCH_MAX_RECORDS_CAP}"
+        )
+    finmind_batches = [
+        [str(sym).strip() for sym in (job.get("symbols") or []) if str(sym).strip()]
+        for job in (fanout.get("jobs") or [])
+        if isinstance(job, dict) and job.get("connector_id") == connector_id and job.get("dataset") == dataset
+    ]
+    if any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
+        raise SystemExit("FinMind fanout produced a batch exceeding the fetch.max_records guard")
     fetch_cfg = {
         **fetch_cfg,
-        "request": {"dataset": dataset, "symbols": list(contracts)},
-        "max_records": rows_per_symbol * len(contracts),
+        "request": {"dataset": dataset, "symbols": list(finmind_batches[0])},
+        "max_records": per_job_budget,
     }
     conn_dict["secret_ref_id"] = "env://FINMIND_API_TOKEN"
 else:
@@ -2704,7 +2842,7 @@ schedule_resp = request_json(
         "enqueue": True,
     },
 )
-enqueued_items = schedule_resp.get("enqueued_items") or []
+enqueued_items = schedule_resp.get("enqueued_items") or schedule_resp.get("enqueued") or []
 if enqueued_items:
     matched_item = next(
         (
@@ -2735,7 +2873,7 @@ if enqueued_items:
             )
         }
         uncovered = [sym for sym in contracts if sym not in enqueued_symbols]
-        if enqueued_symbols and uncovered:
+        if uncovered:
             raise SystemExit(
                 f"Active-universe schedule did not cover full FinMind universe; missing={uncovered}"
             )

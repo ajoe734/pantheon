@@ -14,7 +14,7 @@
   "blocking": "non-blocking (continue-on-error), runs before TWSE step; TWSE tw_price_daily truth untouched"
  },
  "tests": {
-  "passed": "test_dev_tw_market_refresh.py 63 passed (two batches); test_deploy_nonprod_vm.py finmind/collector/bounded 20 passed; bash -n ok"
+  "passed": "see review_round_3_fixes; test_deploy_nonprod_vm.py finmind/collector/bounded/preflight and test_dev_tw_market_refresh.py re-run after round 3"
  },
  "not_verified": [
   "live dev run with a real token and receipt/readback (requires deploy)",
@@ -40,5 +40,10 @@
   "p1_all_batches": "prepare step unions symbols from every fanout batch and verifies enqueued coverage when job_parameters expose symbols",
   "p2_coverage": "per-symbol coverage: records carry refresh_coverage {status, requested, covered, missing}; any missing symbol is explicitly partial; all-missing raises",
   "tests": "finmind/broker/collector/bounded 58 passed; test_dev_tw_market_refresh.py 63 passed; bash -n and git diff --check ok"
+ },
+ "review_round_3_fixes": {
+  "p1_max_records_guard": "prepare step bounds the FinMind rule to 25 symbols per job (25*40=1000 = provider_owned_adapter cap), fetch.max_records=1000, every fanout batch is scheduled via job_parameters.symbols; generic guards untouched; schedule coverage check is now strict and reads the 'enqueued' response key",
+  "p2_coverage_acceptance": "verify_bounded_source_refresh_readback unions refresh_coverage across all current-run FinMind records against resolved active symbols and rejects status=partial; check_taiwan_refresh_preflight returns proceed/coverage_incomplete (listing missing symbols) instead of noop/already_fresh unless the current session's batches cover every symbol",
+  "tests": "behavioral: real PREPARE_DATASET_PY for 25/26/51 symbols through the real config validator; real preflight with partial vs split-batch coverage; real verifier partial rejected / union accepted"
  }
 }
