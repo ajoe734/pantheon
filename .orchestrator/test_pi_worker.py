@@ -186,9 +186,9 @@ class PiWorkerTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_account_id(config, "PiAstra"), "lupinchen")
         self.assertEqual(config["providers"]["pi_astra"]["pi"]["agent_dir"], "~/.pi/agent")
         self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"]["lupinchen"], 1)
-        # Codex and Codex2 retain their existing account and capacity.
+        # Codex and Codex2 keep their account; the operator raised its cap to 7 on 2026-11-11.
         self.assertEqual(supervisor.agent_account_id(config, "Codex2"), "codex1")
-        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"]["codex1"], 4)
+        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"]["codex1"], 7)
         self.assertNotIn("codex2", config["ready_dispatcher"]["max_concurrent_per_account"])
 
 
