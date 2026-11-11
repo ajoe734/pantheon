@@ -1294,10 +1294,9 @@ def _measure_pit_history(
         global_map: dict[str, Any] = {}
         if isinstance(raw_features, Mapping):
             for k, v in raw_features.items():
-                if isinstance(v, Mapping):
-                    code = _norm_key(k)
-                    if code is not None:
-                        inst_maps[code] = v
+                code = _norm_key(k) if isinstance(v, Mapping) else None
+                if code is not None and (code in dates_by_symbol or code in wanted_codes):
+                    inst_maps[code] = v
                 else:
                     global_map[str(k)] = v
 

@@ -885,6 +885,22 @@ class TestReplicationGateRealBacktestProtocol(unittest.TestCase):
         days, _bars, _d = _measure_pit_history(long_ok, artifact)
         self.assertGreaterEqual(days, 730)
 
+    def test_pit_history_global_nested_equals_per_instrument_layout(self) -> None:
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+        from adapter.vectorbt_adapter import build_governed_tw_replication_dataset
+
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        base = build_governed_tw_replication_dataset(trading_days=756)
+        series = [float(i % 4) for i in range(756)]
+        global_layout = dict(base, features_by_instrument={"tw_monthly_revenue": {"yoy": series}})
+        inst_layout = dict(base, features_by_instrument={"2330.TWSE": {"tw_monthly_revenue": {"yoy": series}}})
+        g = _measure_pit_history(global_layout, artifact)
+        i = _measure_pit_history(inst_layout, artifact)
+        self.assertEqual(g[:2], i[:2])
+        self.assertGreater(g[1], 0)
+
     def test_pit_history_uses_effective_availability_for_late_publication(self) -> None:
         from datetime import date, timedelta
         from adapter.vectorbt_adapter import _measure_pit_history
