@@ -397,3 +397,71 @@ def test_capped_macro_expansion_delivers_every_derived_field_across_pulls(tmp_pa
     assert {f for f, _ in seen} == fields
     assert len(seen) == 6
     assert raw_returned
+
+
+def test_unequal_public_cap_macro_emission_neither_loses_nor_duplicates_across_restarts(tmp_path, monkeypatch):
+    """Adapter default cap (500) is larger than the public fetch cap (2): the public path must
+    forward the fetch cap, so unreturned derived rows stay pending and emitted ones never repeat."""
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    files, entry, _ = make_bundle(source_id="collector-tw-macro-ndc", run_id="mac2")
+    base = "bundles/collector-tw-macro-ndc/2026-11-10/mac2"
+    rows = [json.loads(x) for x in files[f"{base}/items.jsonl"].decode().splitlines()]
+    for row, period in zip(rows, ("2026-09-30", "2026-08-31")):
+        row.update({"series_id": "NDC:6099:MONITORING_SCORE", "period_end": period, "value": 28.0,
+                    "metrics": {"leading_index": 101.0, "coincident_index": 99.0}})
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {"source_id": "collector-tw-macro-ndc", "source_type": "macro", "dataset": "tw_macro_series",
+              "platform": "ndc"}  # adapter max_records stays at its default (500)
+    assert CollectorBundleAdapter(connector_id="conn-mac2", **config).max_records > 2
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 2}
+    emitted: list[tuple[str, str]] = []
+    raw_returned = False
+    for _ in range(12):  # a fresh adapter per tick models a process restart
+        adapter = CollectorBundleAdapter(connector_id="conn-mac2", **config)
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+        assert len(records) <= 2
+        for r in records:
+            if r.content_ref.startswith("collector-feature://"):
+                nr = r.metadata["normalized_row"]
+                emitted.append((nr["field"], nr["event_time"]))
+            else:
+                raw_returned = True
+        if raw_returned:
+            break
+    assert len(emitted) == len(set(emitted)), "already-emitted observation was duplicated"
+    assert {f for f, _ in emitted} == {"monitoring_score", "leading_index", "coincident_index"}
+    assert len(set(emitted)) == 6
+    assert raw_returned
+
+
+def test_unequal_public_cap_community_does_not_lose_unreturned_rows(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    files, entry = _multi_symbol_bundle(tmp_path)
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setattr(
+        CollectorBundleAdapter, "_instrument_authority",
+        lambda self: {"1101": ("1101.TWSE",), "2317": ("2317.TWSE",), "2330": ("2330.TWSE",)},
+    )
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {"source_id": "collector-tw-cmoney-forum", "source_type": "social", "dataset": "tw_community_daily",
+              "platform": "cmoney", "host": HOST}
+    kw = {k: v for k, v in config.items() if k != "host"}
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 2}
+    seen: set[str] = set()
+    raw_returned = False
+    for _ in range(8):
+        adapter = CollectorBundleAdapter(connector_id="conn-cap2", **kw)
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+        assert len(records) <= 2
+        seen |= {r.metadata["symbol"] for r in records if r.content_ref.startswith("collector-feature://")}
+        raw_returned = raw_returned or any(not r.content_ref.startswith("collector-feature://") for r in records)
+        if raw_returned:
+            break
+    assert seen == {"1101.TWSE", "2317.TWSE", "2330.TWSE"}
+    assert raw_returned
