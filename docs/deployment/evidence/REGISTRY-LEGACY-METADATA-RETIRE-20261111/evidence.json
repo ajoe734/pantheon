@@ -29,13 +29,16 @@
   "source_changes": [
     "artifact_loader: removed promotion_state fallback; require artifact_state=approved and deployment_stage",
     "experiments adapter: removed redundant promotion_state from artifact handoff and promoted metadata",
-    "telemetry/event target.promotion_state unchanged"
+    "telemetry/event target.promotion_state unchanged",
+    "governance DeploymentPlanner.build_execution_projection: removed promotion_state alias and _legacy_promotion_state helper",
+    "artifact-loader/contract.md: updated to canonical-only"
   ],
   "verification": {
-    "services.execution.test_artifact_loader": "24 tests OK",
+    "services.execution.test_artifact_loader": "23 tests OK (corrected count per independent review)",
     "services/registry/experiments test_adapter": "16 tests OK",
     "smoke_test_artifact_loader": "fails identically at unmodified HEAD (PromotionError paper -> live); pre-existing, not caused by this change"
   },
   "hosted_acceptance": "not performed; source outcome only",
-  "follow_up": "services/execution/artifact-loader/contract.md still describes the retired promotion_state fallback; it is outside this task's artifact contract and needs a Human/Ops contract revision or follow-up task."
+  "rollback_resolution": "RuntimeManager._rollback_once derives replacement from proven prior_binding fields plus request replacement_metadata (compensation ids); outbox_consumer_worker builds that payload without promotion_state. Source-supported; no legacy metadata needed.",
+  "canonical_coverage_note": "Runtime binding store primary file and its .bak (runtime_binding.py bindings.json.bak) are the persistent binding-metadata recovery copies; the 158 projections come from the runtime-manager list_all view over that store, so primary and .bak recovery both resolve to the same canonical fields. ArtifactLoader has no .bak path; it reads only openclaw/registry/<strategy>/<version>/metadata.json."
 }
