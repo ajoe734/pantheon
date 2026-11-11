@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 import unittest
@@ -124,6 +125,10 @@ class TestPromotionGate(unittest.TestCase):
         self.assertEqual(projection.metadata["rollback"]["target_version"], "0.9.0")
         self.assertEqual(projection.metadata["lineage"]["source_run_ids"], ["replication-run-001"])
 
+    @unittest.skipIf(
+        importlib.util.find_spec("vectorbt") is None,
+        "real TW backtest needs vectorbt; covered by the Research suite",
+    )
     def test_promotion_gate_receives_real_replication_and_sharpe_from_replication_gate(self):
         from services.research.replication.gate import (
             ReplicationGate,

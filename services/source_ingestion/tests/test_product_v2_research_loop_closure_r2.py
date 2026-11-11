@@ -280,6 +280,16 @@ def test_source_record_distillation_to_alpha_replication_loop(
     from services.research.replication.gate import ReplicationGate
     monkeypatch.setattr(ReplicationGate, "evaluate_candidate", lambda self, task: FakeGateResponse(passed=True))
 
+    import importlib.util
+
+    if importlib.util.find_spec("vectorbt") is None:
+        # The real TW backtest needs the research-only vectorbt dependency set,
+        # which the source-ingestion suite does not install; real backtest
+        # admission is covered by the Research suite.
+        monkeypatch.setattr(
+            reval_worker, "_resolve_backtest_evaluation", lambda **kwargs: None
+        )
+
     tick_result = reval_worker.run_once(tenant_id="tenant-prod-v2")
 
     assert tick_result.get("errors") == [], f"tick_result errors: {tick_result.get('errors')}"
