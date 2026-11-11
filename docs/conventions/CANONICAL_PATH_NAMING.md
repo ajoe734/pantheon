@@ -107,25 +107,32 @@ path notification wrappers and must remain mounted:
   (`tools_integrations/router.py`), and governance review creation/stage-approval
   retirement guards (`governance/router.py`).
 
-### 3.4 Retained 410 Notification Wrappers With Active Contract or Consumer Dependencies
+### 3.4 Notification-Only 410 Wrappers Removed by `BFF-OLD-NOTIFICATION-RETIRE-20261111`
 
-1. **MCP alternate URL family (`services/control-plane/bff/tools_integrations/router.py`):**
-   - `GET /bff/mcp/servers` (replacement: `/bff/mcp-servers`)
-   - `GET /bff/mcp/servers/{server_id}` (replacement: `/bff/mcp-servers/{server_id}`)
-   - `POST /bff/mcp/tools/{tool_id}/actions/{action_id}` (replacement: `/bff/mcp-tools/{tool_id}/{action_id}`)
-   - **Why retained:** Still referenced as canonical `covered_by` targets in
-     `scripts/bff_route_manifest_backend.py` and `execute_plans_bff_routes.json`
-     (`tools-mcp-skills` family), coexist with live `POST /bff/mcp/servers` and
-     `GET /bff/mcp/servers/{server_id}/tools`, and are covered by active
-     capability/contract suites (`test_bff_b2_003_capabilities.py`,
-     `test_tools_integrations_router.py`, `test_bff_path_dedupe.py`).
-2. **Nested resource action notification wrappers (`replacement="/bff/v1/commands"`):**
-   - `POST /bff/strategies/{strategy_id}/actions/{action_id}` (`strategies/routes/detail.py`)
-   - `POST /bff/personas/{persona_id}/actions/{action_id}` (`personas/routes/lifecycle.py` — note that lifecycle actions `AdvanceLifecycle`, `Promote`, `PromoteCandidate`, and `Demote` on this route are live command admissions, while non-lifecycle actions return 410)
-   - `POST /bff/deployments/{deployment_id}/actions/{action_id}` (`deployment/router.py`)
-   - `POST /bff/runtimes/{runtime_id}/actions/{action_id}` (`runtime/router.py`)
-   - `POST /bff/tools/{tool_id}/actions/{action_id}` and `POST /bff/skills/{skill_id}/actions/{action_id}` (`tools_integrations/router.py`)
-   - **Why retained:** Still referenced in `services/control-plane/bff/action_catalog.py`,
-     `execute_plans_bff_routes.json`, `execute-plans` probe/adapter scripts
-     (`scripts/probe-persona-onboarding-endpoints.mjs`,
-     `src/lib/bff-v1/mocks/adapters.ts`), and BFF router contract tests.
+Basis: expired sunset semantics and the maintained-client audit
+(`/tmp/pantheon-compat-residual-20261111/fe-retired-route-consumers.json`).
+The audit found no current UI caller; remaining literal matches in
+`execute-plans` are mocks, tests and the onboarding probe (the StartRuntime
+probe is made explicitly unsupported by the FE task). These are not independent
+product consumers. dev Caddy has no access-log directive, so no claim of zero
+observed traffic is made.
+
+| Family | Disposition |
+| --- | --- |
+| `GET /api/v1/deployment-plans` | **Removed** (now 405). `POST /api/v1/deployment-plans` and `GET /api/v1/deployment-plans/{plan_id}` kept. |
+| `POST /bff/deployments/{id}/actions/{action_id}`, `POST /bff/runtimes/{id}/actions/{action_id}`, `POST /bff/strategies/{id}/actions/{action_id}` | **Removed**. Action catalog `endpoint` now `/bff/v1/commands`. |
+| `POST /bff/tools/{id}/actions/{action_id}`, `POST /bff/skills/{id}/actions/{action_id}` | **Removed**. |
+| `GET /bff/mcp/servers`, `GET /bff/mcp/servers/{server_id}`, `POST /bff/mcp/tools/{tool_id}/actions/{action_id}` | **Removed**. Canonical reads: `/bff/mcp-servers*`, `/bff/mcp-tools*`. |
+
+Kept (live semantics): `POST /bff/personas/{id}/actions/{action_id}` (live
+`AdvanceLifecycle`/`Promote`/`PromoteCandidate`/`Demote` admission; other
+actions still 410 via `personas.service._deprecated_bff_path_response`, its sole
+remaining owner), `POST /bff/mcp/servers`,
+`POST /bff/mcp/servers/{server_id}/actions/{action_id}`,
+`GET /bff/mcp/servers/{server_id}/tools`, and all `ACTION_RETIRED` guards in §3.3.
+
+Deleted: `tools_integrations.service.deprecated_bff_path_response`, its
+`PATH_DEDUPE_*` constants, and the `deprecated_bff_path_response` injection in
+`app_factory`, deployment, runtime and strategies routers. The
+`execute_plans_bff_routes.json` rows are `superseded_with_reason`; manifest
+aliases/overrides and the route-diff baseline were regenerated.

@@ -25,7 +25,6 @@ def test_strategies_router_decomposition_routes():
         ("/bff/strategies/{strategy_id}/lineage", frozenset({"GET"})),
         ("/bff/strategies/{strategy_id}/audit", frozenset({"GET"})),
         ("/bff/strategies/{strategy_id}/ooda", frozenset({"GET"})),
-        ("/bff/strategies/{strategy_id}/actions/{action_id}", frozenset({"POST"})),
         ("/bff/strategies/{strategy_id}/dry-run", frozenset({"POST"})),
         ("/bff/management/strategy-seeds", frozenset({"GET"})),
         ("/bff/management/strategy-seeds/{seed_id}", frozenset({"GET"})),

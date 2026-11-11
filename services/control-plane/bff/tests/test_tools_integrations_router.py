@@ -319,8 +319,8 @@ def test_zero_reverse_imports():
 
 
 def test_route_inventory_count():
-    """Verify that the domain router registers exactly 35 routes/decorators."""
-    assert len(router.routes) == 35
+    """Verify that the domain router registers exactly 30 routes/decorators."""
+    assert len(router.routes) == 30
 
 
 # --------------------------------------------------------------------------- #
@@ -583,14 +583,13 @@ def test_tools_crud_and_deprecated_actions(client: TestClient):
     assert p_resp.status_code == 200
     assert p_resp.json()["description"] == "Updated description"
 
-    # Deprecated tool action route (should return 410)
+    # Notification-only tool action route was removed
     act_resp = client.post(
         f"/bff/tools/{tool_id}/actions/restart",
         json={},
         headers=OPERATOR_HEADERS,
     )
-    assert act_resp.status_code == 410
-    assert act_resp.headers.get("X-Deprecated") == "true"
+    assert act_resp.status_code in {404, 405}
 
 
 def test_mcp_servers_and_skills_crud(client: TestClient):
@@ -610,9 +609,9 @@ def test_mcp_servers_and_skills_crud(client: TestClient):
     )
     assert tools_resp.status_code == 200
 
-    # Deprecated /bff/mcp/servers route
+    # Notification-only GET /bff/mcp/servers route was removed
     dep_resp = client.get("/bff/mcp/servers", headers=OPERATOR_HEADERS)
-    assert dep_resp.status_code == 410
+    assert dep_resp.status_code == 405
 
     # Skills: List
     sk_list = client.get("/bff/skills", headers=OPERATOR_HEADERS)

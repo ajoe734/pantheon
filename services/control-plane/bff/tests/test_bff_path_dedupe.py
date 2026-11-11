@@ -19,22 +19,12 @@ from fastapi.testclient import TestClient
 # composer's route set is byte-identical to main.py's. This file therefore
 # builds its own app via `compose_bff_app()` instead of importing main.py.
 #
-# `mount_bff_routers`'s `_dep` helper (`core/app_factory.py`) resolves
-# `_deprecated_bff_path_response` from an explicit keyword argument before
-# ever falling back to a loaded `main` module or the inert stub in
-# `_resolve_default_dependency`. The real, already-extracted production owner
-# of that response (`personas.service._deprecated_bff_path_response`) is
-# passed directly here instead, so this file needs no main.py reference at
-# all -- dynamic or static.
 from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
 from services.control_plane.bff.core.app_factory import compose_bff_app
-from services.control_plane.bff.personas.service import (
-    _deprecated_bff_path_response,
-)
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-path-dedupe:operator,admin"}
 
-_APP = compose_bff_app(dependency_resolver=resolve_with_stand_ins, _deprecated_bff_path_response=_deprecated_bff_path_response)
+_APP = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
 
 
 def _client() -> TestClient:
@@ -95,23 +85,15 @@ def _route_count(method: str, normalized_path: str) -> int:
 def test_deprecated_alternate_url_families_return_410_with_headers() -> None:
     client = _client()
 
-    get_cases = [
-        ("/bff/mcp/servers", "/bff/mcp-servers"),
-        ("/bff/mcp/servers/server-1", "/bff/mcp-servers/{server_id}"),
-    ]
-    for path, replacement in get_cases:
-        _assert_deprecated(client.get(path, headers=OPERATOR_HEADERS), replacement)
-
-    write_cases = [
-        (
-            "post",
-            "/bff/mcp/tools/tool-1/actions/enable",
-            "/bff/mcp-tools/{tool_id}/{action_id}",
-        ),
-    ]
-    for method, path, replacement in write_cases:
+    # The notification-only /bff/mcp/servers GET and /bff/mcp/tools action
+    # routes were removed in BFF-OLD-NOTIFICATION-RETIRE-20261111.
+    for method, path in (
+        ("get", "/bff/mcp/servers"),
+        ("get", "/bff/mcp/servers/server-1"),
+        ("post", "/bff/mcp/tools/tool-1/actions/enable"),
+    ):
         response = getattr(client, method)(path, headers=OPERATOR_HEADERS)
-        _assert_deprecated(response, replacement)
+        assert response.status_code in {404, 405}, (path, response.text)
 
     # The four immediate /bff/ranking/formulas* deprecation notification
     # wrappers were removed in BFF-FINAL-COMPAT-20261107 after execute-plans
@@ -137,21 +119,24 @@ def test_deprecated_alternate_url_families_return_410_with_headers() -> None:
     assert error["details"]["replacement"]
 
 
-def test_deprecated_nested_action_families_return_410_with_headers() -> None:
+def test_notification_only_nested_action_families_are_removed() -> None:
     client = _client()
 
-    cases = [
-        ("/bff/strategies/strategy-1/actions/promote", "/bff/v1/commands"),
-        # Persona promote is a live lifecycle entry point (ade4fd088); the
-        # still-deprecated nested persona family is archive.
-        ("/bff/personas/persona-1/actions/archive", "/bff/v1/commands"),
-        ("/bff/deployments/deployment-1/actions/promote", "/bff/v1/commands"),
-        ("/bff/runtimes/runtime-1/actions/pause", "/bff/v1/commands"),
-        ("/bff/skills/skill-1/actions/disable", "/bff/v1/commands"),
-        ("/bff/tools/tool-1/actions/disable", "/bff/v1/commands"),
-    ]
-    for path, replacement in cases:
-        _assert_deprecated(client.post(path, headers=OPERATOR_HEADERS), replacement)
+    for path in (
+        "/bff/strategies/strategy-1/actions/promote",
+        "/bff/deployments/deployment-1/actions/promote",
+        "/bff/runtimes/runtime-1/actions/pause",
+        "/bff/skills/skill-1/actions/disable",
+        "/bff/tools/tool-1/actions/disable",
+    ):
+        response = client.post(path, headers=OPERATOR_HEADERS)
+        assert response.status_code in {404, 405}, (path, response.text)
+
+    # Persona lifecycle aliases are live; other persona actions stay deprecated.
+    _assert_deprecated(
+        client.post("/bff/personas/persona-1/actions/archive", headers=OPERATOR_HEADERS),
+        "/bff/v1/commands",
+    )
 
 
 def test_path_parameter_dedupe_keeps_only_snake_case_canonical_templates() -> None:
@@ -168,7 +153,6 @@ def test_path_parameter_dedupe_keeps_only_snake_case_canonical_templates() -> No
         "/bff/runtimes/{runtime_id}",
         "/bff/skills/{skill_id}",
         "/bff/tools/{tool_id}",
-        "/bff/strategies/{strategy_id}/actions/{action_id}",
         "/bff/mcp-servers/{server_id}/import-tools",
     }
     assert canonical_templates <= routes

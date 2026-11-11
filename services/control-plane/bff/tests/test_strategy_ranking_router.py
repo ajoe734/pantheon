@@ -523,7 +523,6 @@ def test_project_strategy_dto_rejects_overlay() -> None:
         list_governance_audit_events=None,
         ooda_packet_list_payload=None,
         require_ooda_packet_routes_enabled=None,
-        deprecated_bff_path_response=None,
         bff_me_tenant_payload=None,
         list_persona_records=None,
         list_strategy_summaries=None,

@@ -25,7 +25,6 @@ from services.control_plane.bff.personas.service import (
     utc_now,
 )
 from services.control_plane.bff.ports import ReadSurfacePorts
-from services.control_plane.bff.tools_integrations.service import deprecated_bff_path_response
 
 
 AUTH = {"Authorization": "Bearer operator_001"}
@@ -192,7 +191,6 @@ def _make_client(store: ReadSurfacePorts) -> TestClient:
         sse_buffers={},
         sse_subscribers={},
         gov_bff_action_command=lambda *a, **kw: {},
-        deprecated_bff_path_response=deprecated_bff_path_response,
         sem_command_response=lambda *a, **kw: {},
         stream_generic_events=lambda *a, **kw: iter(()),
         surface_degradation_reason=lambda surf, **kw: _surface_degradation_reason(
@@ -220,13 +218,7 @@ def test_prod_catalog_read_does_not_mask_cutoff_with_local_snapshot(monkeypatch)
     client = _make_client(store)
     list_response = client.get("/api/v1/deployment-plans", headers=AUTH)
 
-    assert list_response.status_code == 410
-    assert list_response.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
-    list_payload = list_response.json()
-    list_details = list_payload["detail"]["error"]["details"]
-    assert list_details["route"] == "/api/v1/deployment-plans"
-    assert list_details["replacement"] == "/bff/deployments"
-    assert list_payload["meta"]["deprecation"]["replacement"] == "/bff/deployments"
+    assert list_response.status_code == 405
     assert store.list_deployment_plans_calls == 0
 
     detail_response = client.get("/api/v1/deployment-plans/plan-F-042", headers=AUTH)
@@ -243,11 +235,5 @@ def test_dev_catalog_snapshot_fallback_is_explicitly_degraded(monkeypatch) -> No
     client = _make_client(store)
     response = client.get("/api/v1/deployment-plans", headers=AUTH)
 
-    assert response.status_code == 410
-    assert response.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
-    payload = response.json()
-    details = payload["detail"]["error"]["details"]
-    assert details["route"] == "/api/v1/deployment-plans"
-    assert details["replacement"] == "/bff/deployments"
-    assert payload["meta"]["deprecation"]["replacement"] == "/bff/deployments"
+    assert response.status_code == 405
     assert store.list_deployment_plans_calls == 0

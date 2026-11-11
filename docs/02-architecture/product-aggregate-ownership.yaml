@@ -850,30 +850,8 @@ mutation_routes:
   readback_projection: management_runtime_projection
   legacy_path: null
   legacy_removal_wave: null
-- route: POST /bff/runtimes/{param}/actions/{param}
-  command: bff_runtime_action
-  router: runtime
-  application_owner: runtime_application
-  store_owner: runtime_manager_store
-  table_or_stream: runtime_bindings
-  outbox_subject: runtime.binding.v1
-  idempotency_scope: runtime_id
-  readback_projection: management_runtime_projection
-  legacy_path: null
-  legacy_removal_wave: null
 - route: POST /api/v1/deployment-plans
   command: retired_deployment_plan_create
-  router: deployment
-  application_owner: deployment_application
-  store_owner: deployment_store
-  table_or_stream: deployment_plans
-  outbox_subject: deployment.lifecycle.v1
-  idempotency_scope: deployment_id
-  readback_projection: management_deployment_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/deployments/{param}/actions/{param}
-  command: bff_deployment_action
   router: deployment
   application_owner: deployment_application
   store_owner: deployment_store
@@ -1061,17 +1039,6 @@ mutation_routes:
   legacy_removal_wave: null
 - route: POST /bff/strategies/{param}/specs
   command: bff_create_strategy_spec
-  router: strategies
-  application_owner: strategy_application
-  store_owner: strategy_store
-  table_or_stream: strategies
-  outbox_subject: strategy.lifecycle.v1
-  idempotency_scope: strategy_id
-  readback_projection: management_strategy_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/strategies/{param}/actions/{param}
-  command: bff_strategy_action
   router: strategies
   application_owner: strategy_application
   store_owner: strategy_store
@@ -1752,17 +1719,6 @@ mutation_routes:
   readback_projection: management_integration_projection
   legacy_path: null
   legacy_removal_wave: null
-- route: POST /bff/tools/{param}/actions/{param}
-  command: bff_tool_action
-  router: integrations
-  application_owner: integration_application
-  store_owner: integration_store
-  table_or_stream: integration_tools
-  outbox_subject: integration.event.v1
-  idempotency_scope: tool_id
-  readback_projection: management_integration_projection
-  legacy_path: null
-  legacy_removal_wave: null
 - route: POST /bff/mcp/servers
   command: bff_create_mcp_server
   router: integrations
@@ -1785,17 +1741,6 @@ mutation_routes:
   readback_projection: management_integration_projection
   legacy_path: null
   legacy_removal_wave: null
-- route: POST /bff/mcp/tools/{param}/actions/{param}
-  command: bff_mcp_tool_action_compat
-  router: integrations
-  application_owner: integration_application
-  store_owner: integration_store
-  table_or_stream: integration_tools
-  outbox_subject: integration.event.v1
-  idempotency_scope: tool_id
-  readback_projection: management_integration_projection
-  legacy_path: null
-  legacy_removal_wave: null
 - route: POST /bff/skills
   command: bff_create_skill
   router: integrations
@@ -1809,17 +1754,6 @@ mutation_routes:
   legacy_removal_wave: null
 - route: PATCH /bff/skills/{param}
   command: bff_patch_skill
-  router: integrations
-  application_owner: integration_application
-  store_owner: integration_store
-  table_or_stream: integration_tools
-  outbox_subject: integration.event.v1
-  idempotency_scope: tool_id
-  readback_projection: management_integration_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/skills/{param}/actions/{param}
-  command: bff_skill_action
   router: integrations
   application_owner: integration_application
   store_owner: integration_store
