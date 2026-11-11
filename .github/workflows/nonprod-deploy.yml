@@ -707,6 +707,8 @@ jobs:
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         env:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -1111,6 +1113,8 @@ jobs:
           DEV_FE_PUBLIC_HOST: ${{ vars.DEV_FE_PUBLIC_HOST || 'app.dev.mvl-cap.tw' }}
           DEV_FE_STATIC_ROOT: ${{ vars.DEV_FE_STATIC_ROOT || '/var/www/pantheon-dev-fe' }}
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -1389,6 +1393,8 @@ jobs:
           # Must be provisioned as repo/environment secrets by a human; deploy_nonprod_vm.sh
           # refuses to deploy dev with DEV_BFF_AUTH_MODE=strict if these are empty.
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -1544,6 +1550,8 @@ jobs:
         continue-on-error: true
         env:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
           ENV: ""
@@ -1632,6 +1640,8 @@ jobs:
         continue-on-error: true
         env:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
           ENV: ""
@@ -2237,6 +2247,8 @@ jobs:
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -2989,6 +3001,8 @@ jobs:
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
@@ -3106,6 +3120,8 @@ jobs:
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -3217,6 +3233,8 @@ jobs:
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -3389,6 +3407,8 @@ jobs:
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
