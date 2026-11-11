@@ -1,16 +1,27 @@
 {
   "task_id": "ALPHA-TEMPLATE-EVALUATION-20261110",
   "title": "Evaluate every alpha template on Taiwan data",
-  "owner": "Antigravity2",
-  "reviewer": "Claude",
+  "owner": "Claude",
+  "reviewer": "Codex",
   "schema_version": "alpha_template_evaluation.v1",
   "evaluation_engine": {
     "module": "services/research/alpha_templates/evaluator.py",
     "metrics_backend": "pandas==3.0.6",
     "dataset": "TWSE_Normalized",
-    "symbols": ["2308", "2317", "2330", "2454", "2881"],
-    "horizons_days": [1, 5, 20],
-    "redundancy_correlation_threshold": 0.9
+    "symbols": [
+      "2308",
+      "2317",
+      "2330",
+      "2454",
+      "2881"
+    ],
+    "horizons_days": [
+      1,
+      5,
+      20
+    ],
+    "redundancy_correlation_threshold": 0.9,
+    "dataset_source": "governed normalized Taiwan bars loaded from PANTHEON_TAIWAN_EVAL_DATA_DIR (<symbol>.json); fails closed (TaiwanEvaluationDataError) when unset/missing/empty/partial/unreadable; no synthetic fallback"
   },
   "library_coverage": {
     "total_seed_templates": 182,
@@ -21,8 +32,16 @@
   },
   "sample_evaluations": {
     "qlib_alpha158:KMID": {
-      "pooled_ic": {"1d": 0.854252, "5d": 0.569902, "20d": 0.301043},
-      "per_symbol_ic_2330": {"1d": 0.868922, "5d": 0.591995, "20d": 0.282224},
+      "pooled_ic": {
+        "1d": 0.854252,
+        "5d": 0.569902,
+        "20d": 0.301043
+      },
+      "per_symbol_ic_2330": {
+        "1d": 0.868922,
+        "5d": 0.591995,
+        "20d": 0.282224
+      },
       "hit_rate": 0.836709,
       "turnover": 0.078326,
       "decay": {
@@ -35,8 +54,16 @@
       }
     },
     "qlib_alpha158:ROC5": {
-      "pooled_ic": {"1d": -0.602123, "5d": -0.169314, "20d": -0.129627},
-      "per_symbol_ic_2330": {"1d": -0.619593, "5d": -0.178726, "20d": -0.092708},
+      "pooled_ic": {
+        "1d": -0.602123,
+        "5d": -0.169314,
+        "20d": -0.129627
+      },
+      "per_symbol_ic_2330": {
+        "1d": -0.619593,
+        "5d": -0.178726,
+        "20d": -0.092708
+      },
       "hit_rate": 0.335065,
       "turnover": 0.07375,
       "decay": {
@@ -49,8 +76,16 @@
       }
     },
     "alpha101:#101": {
-      "pooled_ic": {"1d": 0.758749, "5d": 0.503934, "20d": 0.254604},
-      "per_symbol_ic_2330": {"1d": 0.776845, "5d": 0.524256, "20d": 0.240008},
+      "pooled_ic": {
+        "1d": 0.758749,
+        "5d": 0.503934,
+        "20d": 0.254604
+      },
+      "per_symbol_ic_2330": {
+        "1d": 0.776845,
+        "5d": 0.524256,
+        "20d": 0.240008
+      },
       "hit_rate": 0.83038,
       "turnover": 0.081517,
       "duplicate_of_when_kmid2_active": "qlib_alpha158:KMID2",
@@ -71,5 +106,253 @@
     "ac4_research_run_stored_and_linked_from_evaluation_ref": "verified by test_research_run_stored_and_linked_from_template_evaluation_ref and test_research_orchestrator_http_endpoints_for_alpha_template_evaluation"
   },
   "verification_command": "./.venv-pantheon/bin/python3 -m pytest services/registry/test_alpha_template.py services/research/tests/test_alpha_template_evaluation.py -v",
-  "verification_result": "20 passed in 37.26s"
+  "verification_result": "30 passed (services/registry/test_alpha_template.py + services/research/tests/test_alpha_template_evaluation.py)",
+  "delivery": {
+    "note": "Implementation is already on dev; this branch carries only this evidence update and no other change.",
+    "prs": [
+      {
+        "pr": 7147,
+        "merge_commit": "e5c9df6629f7fc36f765a9d727484d1b7e832cd1",
+        "scope": "evaluator (services/research/alpha_templates), research main.py endpoints, registry alpha_template.py + tests, requirements, evidence",
+        "acceptance_items": {
+          "ac1": [
+            "test_every_alpha_template_reports_1d_5d_20d_ic_per_symbol_and_pooled_plus_hit_rate_turnover_decay"
+          ],
+          "ac2": [
+            "test_point_in_time_no_look_ahead_proof",
+            "test_point_in_time_decision_time_filtering_and_record_evaluation"
+          ],
+          "ac3": [
+            "test_redundancy_correlation_above_0_9_marks_duplicate_of_active_template"
+          ],
+          "ac4": [
+            "test_research_run_stored_and_linked_from_template_evaluation_ref",
+            "test_research_orchestrator_http_endpoints_for_alpha_template_evaluation"
+          ]
+        }
+      },
+      {
+        "pr": 7157,
+        "merge_commit": "ed4334f5ab61c0f36549309f9eeca3f014b66194",
+        "scope": "integration-unblock exact-head merge conflict resolution; adds only an INTEGRATION-UNBLOCK evidence.json (no code change)",
+        "acceptance_items": {
+          "ac1-ac4": [
+            "no new behavior; keeps the #7147 implementation and its tests above intact on dev"
+          ]
+        }
+      }
+    ]
+  },
+  "sample_evaluations_provenance": {
+    "source_kind": "synthetic_fixture",
+    "governed": false,
+    "note": "sample_evaluations were produced from the deterministic sin/cos/hash fixture (build_taiwan_point_in_time_universe) and are NOT governed Taiwan results. They illustrate output shape only. A governed run records data_provenance (per-symbol path, sha256, bar_count, time range) and snapshot_id on the research run, task, artifact and API response; the governed run must be executed against a real snapshot and its run_id/snapshot_id attached before acceptance."
+  },
+  "fail_closed_regression_tests": [
+    "test_missing_or_unusable_governed_data_fails_closed[unset|missing_dir|empty_dir|partial|bad_json|too_few_bars]",
+    "test_loader_never_falls_back_to_synthetic",
+    "test_run_refuses_synthetic_fixture_universe",
+    "test_run_refuses_synthetic_file_and_unprovenanced_caller_data",
+    "test_http_endpoint_fails_closed_without_governed_data"
+  ],
+  "real_snapshot_run": {
+    "run_id": "rrun-alpha-eval-real-20261111",
+    "task_id": "rtask-alpha-eval-real-20261111",
+    "data_snapshot_id": "sha256:96d2b3fa63ff0bfe01dc7bd87ac198c18ca0a23eb46e9470720c63b90fa3a56a",
+    "data_snapshot_id_definition": "sha256 over sorted \"<relative_path>:<file_sha256>\" lines of the 1916 jsonl files under normalized/tw_price_daily (compute_snapshot_id)",
+    "run_level_snapshot_id": "sha256:08f0da337cdc48352054750f008cba099132c1c571d597b63bcec4692b7bc592",
+    "run_level_snapshot_id_definition": "sha256 of per-symbol provenance (summarize_universe_provenance), recorded on the research run/task/artifact",
+    "snapshot_location": "/home/chloe_ong_dev_cctech_support_com/pantheon-collector-real-fixtures-20261110/hosted_tw_price_daily_snapshot_20261111 (read-only; NOT copied into the repository)",
+    "snapshot_origin": "read-only tar of /data/source-ingest/market_data_store/normalized/tw_price_daily in pantheon-source-ingest-1 at 2026-11-11",
+    "loader": "load_tw_price_daily_snapshot (services/research/alpha_templates/evaluator.py); PANTHEON_TAIWAN_EVAL_DATA_DIR file loader (<symbol>.json, >=85 bars) was not used because the hosted layout is date-partitioned jsonl",
+    "symbols_evaluated": {
+      "0050": {
+        "bars": 47,
+        "first_event_time": "2026-08-31T06:30:00Z",
+        "last_event_time": "2026-11-10T06:30:00Z"
+      },
+      "2317": {
+        "bars": 60,
+        "first_event_time": "2026-08-12T06:30:00Z",
+        "last_event_time": "2026-11-10T06:30:00Z"
+      },
+      "2330": {
+        "bars": 60,
+        "first_event_time": "2026-08-12T06:30:00Z",
+        "last_event_time": "2026-11-10T06:30:00Z"
+      }
+    },
+    "snapshot_symbols_total": "104 symbols appear in the snapshot; 101 have at least one priced bar (3 only have all-null no-trade rows)",
+    "snapshot_symbols_excluded_under_40_bars": {
+      "00400A": 22,
+      "00401A": 16,
+      "00402A": 16,
+      "00403A": 16,
+      "00404A": 16,
+      "00405A": 16,
+      "00406A": 16,
+      "00407A": 16,
+      "00408A": 16,
+      "00409A": 16,
+      "00410A": 16,
+      "00412A": 12,
+      "00415A": 7,
+      "0051": 16,
+      "0052": 16,
+      "0053": 16,
+      "0055": 16,
+      "0056": 16,
+      "0057": 16,
+      "0061": 9,
+      "006203": 4,
+      "006204": 1,
+      "006205": 1,
+      "006206": 1,
+      "006207": 1,
+      "006208": 1,
+      "00631L": 1,
+      "00632R": 1,
+      "00633L": 1,
+      "00634R": 1,
+      "00635U": 1,
+      "00636": 1,
+      "00636K": 1,
+      "00637L": 1,
+      "00638R": 1,
+      "00639": 1,
+      "00640L": 1,
+      "00641R": 1,
+      "00642U": 1,
+      "00643": 1,
+      "00645": 1,
+      "00646": 1,
+      "00647L": 1,
+      "00648R": 1,
+      "00650L": 1,
+      "00651R": 1,
+      "00652": 1,
+      "00653L": 1,
+      "00654R": 1,
+      "00655L": 1,
+      "00656R": 1,
+      "00657": 1,
+      "00657K": 1,
+      "00660": 1,
+      "00661": 1,
+      "00662": 1,
+      "00663L": 1,
+      "00664R": 1,
+      "00665L": 1,
+      "00666R": 1,
+      "00668": 1,
+      "00668K": 1,
+      "00669R": 1,
+      "00670L": 1,
+      "00671R": 1,
+      "00673R": 1,
+      "00674R": 1,
+      "00675L": 1,
+      "00676R": 1,
+      "00678": 1,
+      "00680L": 1,
+      "00681R": 1,
+      "00682U": 1,
+      "00683L": 1,
+      "00684R": 1,
+      "00685L": 1,
+      "00686R": 1,
+      "00688L": 1,
+      "00689R": 1,
+      "00690": 1,
+      "00692": 1,
+      "00693U": 1,
+      "00700": 1,
+      "00701": 1,
+      "00702": 1,
+      "00703": 1,
+      "00706L": 1,
+      "00708L": 1,
+      "00709": 1,
+      "00710B": 1,
+      "00711B": 1,
+      "00712": 1,
+      "00713": 1,
+      "00714": 1,
+      "00715L": 1,
+      "00717": 1,
+      "00728": 1,
+      "00730": 1
+    },
+    "data_limitations": "Snapshot holds 104 symbols with at most 60 trading days (2330 and 2317 from 2026-08-12, 0050 from 2026-08-31, 47 days). Only those three symbols reach the 40-bar loader floor; the other 101 hold 1-22 days and are excluded, not padded. With <=60 bars, windows up to 60 days leave few or no valid factor values, and 20-day forward returns remove 20 more. Any IC / hit rate / decay with fewer than 20 valid (factor, forward-return) pairs is reported as null with insufficient=true, never estimated. The two-year backfill is separate and not required here.",
+    "data_cleaning": [
+      "identical re-ingests of a (symbol,date) collapsed (557 unique bars)",
+      "duplicates differing only in volume/value (earlier partial-day capture, 15 cases): keep largest volume; OHLC conflicts fail closed",
+      "date-only available_time (STOCK_DAY_ALL) pinned to 14:30+08:00, not midnight",
+      "all-null no-trade rows skipped (15, none in evaluated symbols)"
+    ],
+    "min_ic_observations": 20,
+    "templates_evaluated": 171,
+    "skipped_cross_sectional": 11,
+    "templates_with_all_horizons_sufficient": 139,
+    "templates_20d_only_insufficient": 2,
+    "templates_all_horizons_insufficient": 30,
+    "duplicates_detected": {},
+    "duplicate_note": "No template was active in the registry for this run, so no duplicate_of marks were produced here; the >0.9 duplicate logic is covered by tests.",
+    "metrics_file": "docs/deployment/evidence/ALPHA-TEMPLATE-EVALUATION-20261110/real_snapshot_template_metrics.jsonl",
+    "pooled_ic_note": "Pooled IC pools only 3 symbols over <=60 days with overlapping forward windows; observations are not independent, treat as exploratory.",
+    "new_tests": "services/research/tests/test_alpha_template_snapshot_loader.py (7; includes numeric-absence assertions at low and zero observation counts)",
+    "verification": "pytest snapshot_loader + test_alpha_template_evaluation + registry test_alpha_template: 41 passed",
+    "metrics_file_format": "JSON Lines, one compact line per template (template_id, run_id, snapshot_id, per-symbol and pooled IC at 1/5/20d, hit_rate, turnover, decay, observations, insufficient flags, duplicate_of)",
+    "metrics_file_sha256": "0878e793b246fbc40d2b0ed34f66a715a55ecd42cbebaff951fa4d77a5e3175a",
+    "metrics_file_lines": 171,
+    "metrics_summary": {
+      "templates_evaluated": 171,
+      "templates_with_any_insufficient_horizon": 32,
+      "templates_all_horizons_insufficient": 30,
+      "duplicate_templates": 0,
+      "top_templates_by_pooled_5d_ic": [
+        {
+          "template_id": "alpha101:#43",
+          "pooled_ic_5d": 0.350222
+        },
+        {
+          "template_id": "qlib_alpha158:CORR10",
+          "pooled_ic_5d": 0.345984
+        },
+        {
+          "template_id": "qlib_alpha158:SUMN30",
+          "pooled_ic_5d": 0.234135
+        },
+        {
+          "template_id": "qlib_alpha158:CNTN30",
+          "pooled_ic_5d": 0.234012
+        },
+        {
+          "template_id": "qlib_alpha158:IMAX30",
+          "pooled_ic_5d": 0.228902
+        },
+        {
+          "template_id": "alpha101:#46",
+          "pooled_ic_5d": 0.226856
+        },
+        {
+          "template_id": "qlib_alpha158:RSQR30",
+          "pooled_ic_5d": 0.222075
+        },
+        {
+          "template_id": "qlib_alpha158:SUMN5",
+          "pooled_ic_5d": 0.213372
+        },
+        {
+          "template_id": "qlib_alpha158:ROC5",
+          "pooled_ic_5d": 0.211988
+        },
+        {
+          "template_id": "qlib_alpha158:IMAX20",
+          "pooled_ic_5d": 0.207101
+        }
+      ]
+    },
+    "null_propagation": "Shared engine (compute_template_evaluation_metrics) emits null, never 0.0, for per-symbol IC/hit rate, pooled IC/hit rate, mean_symbol_ic, ic_1d/5d/20d aliases and every derived decay field (changes, ratio, slope, half-life) whenever the contributing observation count is < min_ic_observations (including zero). The metrics JSONL is exported from the persisted research run result (run_alpha_template_evaluation + ResearchOrchestratorStore), so run/task/artifact/API and this file agree; asserted per horizon at export. Decay is the engine decay object with null fields (no longer collapsed to a single null)."
+  }
 }
