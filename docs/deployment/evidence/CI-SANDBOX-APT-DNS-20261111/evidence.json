@@ -2,7 +2,7 @@
   "task_id": "CI-SANDBOX-APT-DNS-20261111",
   "owner": "Codex2",
   "reviewer": "Claude",
-  "status": "fixture_clock_corrected_awaiting_exact_head_ci_and_independent_review",
+  "status": "fallback_metadata_budget_corrected_awaiting_exact_head_ci_and_independent_review",
   "failed_attempts": [
     {
       "run": "43032317523",
@@ -27,7 +27,7 @@
   ],
   "change": {
     "helper": "scripts/ci/provision_worker_sandbox.sh",
-    "bounds": "update 45s, install 60s per attempt, Acquire::Retries=1, 15s HTTP/HTTPS timeouts and 5s kill grace; at most 230s inside the unchanged 5-minute step",
+    "bounds": "Primary update 45s, fallback update 90s, install 60s per attempt; Acquire::Retries=1, 15s HTTP/HTTPS inactivity timeouts and 5s kill grace. Four apt attempts total 255s + 20s kill grace + 5s capability probe = 280s, leaving 20s overhead in the unchanged 5-minute step.",
     "fallback": "one HTTPS fallback to Launchpad-registered MIT SIPB mirrors.mit.edu/ubuntu for all three Ubuntu suites, signed-by ubuntu-archive-keyring; refused on non-Ubuntu. APT::Update::Error-Mode=any prevents partial metadata failures being accepted with stale lists.",
     "diagnostics": "Temporary DNS discriminator code removed from candidate. Existing 8f434dced diagnostic run is separate historical evidence, not a requirement to pass.",
     "exit_codes": {
@@ -46,7 +46,7 @@
   },
   "validation": {
     "local": "python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection; bash -n helper",
-    "local_result": "23 tests OK for candidate using checkout-scoped .venv-pantheon/bin/python3; bash -n helper OK; git diff --check OK. Previous 8f434dced diagnostic head had 24 tests before replacing its two diagnostic-only cases with one strict metadata/attempt-bound case.",
+    "local_result": "26 tests OK using checkout-scoped .venv-pantheon/bin/python3 (0.936s, exit 0); bash -n helper OK; git diff --check OK. Includes the existing 23 tests and three focused metadata-budget regression tests. Fixture-only validation does not prove runner provisioning.",
     "local_note": "fixture tests only; development-host DNS is not proof of GitHub runner DNS",
     "previous_failed_candidate": "exact head 3e3982afb Branch CI run 43043688209: Python packaging provision success; Service suites (postgres/runtime/misc/heavy) success; Runtime mirror guard and Commit trailers success; Smoke acceptance FAILURE in 'Provision real worker sandbox' - primary azure mirror apt update exit 124, fallback archive/security.ubuntu.com exit 124 ('Temporary failure resolving security.ubuntu.com'), helper fail-closed exit 10 (primary=10 fallback=10). Runner DNS to Ubuntu hosts was down for the whole ~90s window; the bounded fallback did not help in that case. No hosted pass claimed.",
     "hosted": {
@@ -101,6 +101,29 @@
       "lean_batch_result": "exit 0; 588 passed, 13 skipped, 1 warning, 70 subtests passed in 182.68s. No skip/xfail or assertion changes were introduced.",
       "focused": "timeout 90s .venv-pantheon/bin/python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection: exit 0; 23 tests OK. bash -n scripts/ci/provision_worker_sandbox.sh and git diff --check: exit 0. Checkout-scoped Python distribution check-only: exit 0.",
       "delivery": "Freeze final source/evidence head on existing PR7183 after this correction. Later terminal CI/review/merge outcomes belong in canonical delivery/review/final reporting, without evidence-only commits that invalidate useful CI or exact-head approval. Historical 7bb provisioning SUCCESS and whole-Smoke FAILURE above remain unchanged; final-head CI and real negative boundary results are not yet claimed."
+    },
+    "metadata_timeout_history": {
+      "head": "51b7c95a857c1f25baf69fdfc1ec95ac03ad6329",
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/43056202118",
+      "smoke_job": "https://github.com/ajoe734/pantheon/actions/runs/43056202118/job/130650741034",
+      "raw_job_log_sha256": "f35fbdea1c0daa501b2dae095bf797c01589c896ef7caf161b4f0e3b8c4b4c5c",
+      "result": "Provisioning FAILURE, helper exit 10; downstream tests and boundaries did not run.",
+      "primary": "45s update timeout, exit 124 at 2026-11-11T16:28:11Z.",
+      "fallback": "HTTPS noble/noble-updates/noble-security InRelease fetched at 16:28:11-12Z; main Packages 1.4MB and universe Packages 15.0MB fetched; universe Translation-en 5.98MB progressing at 16:28:50Z; 45s full metadata timeout at 16:28:56Z, exit 124.",
+      "diagnosis": "Reachable registered signed mirror with progressing fresh metadata transfer. The metadata budget was insufficient; this was not evidence of DNS or signature failure.",
+      "approval": "Any prior approval of this historical head does not cover the new metadata-budget code."
+    },
+    "metadata_budget_resolution": {
+      "anchor_commit": "9b685e5c9e261d5d3fc355a0a4dada65dba39d8b",
+      "change": "Only fallback apt update receives a fixed 90s timeout. Primary update, installs, retry count, per-connection timeouts, suite/signature/TLS checks and five-minute workflow bound are unchanged. No new configuration, mirror, resolver, endpoint or framework.",
+      "local_command": "timeout 90s .venv-pantheon/bin/python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection",
+      "regressions": [
+        "Real GNU timeout wraps the temporary apt fixture. A fallback transfer delayed 0.3s completes despite a 0.1s primary metadata budget.",
+        "Both install attempts exercise actual default timeout arguments 45/60/90/60 and their aggregate five-minute margin.",
+        "Metadata timeout status 124 remains fail-closed exit 10, preserving original diagnostics and preventing installs/profile loading."
+      ],
+      "unchanged_fixture_verification": "The prior complete lean batch (588 passed, 13 skipped, 70 subtests) above is historical validation of the unchanged five-line fixture correction; not rerun locally without new regression evidence.",
+      "delivery": "Freeze this code/evidence on existing PR7183. Actual final-head complete GitHub CI, real sandbox negative boundaries, fresh Claude independent approval and supervisor integration remain required. Record terminal outcomes in canonical delivery/review/final reporting without moving the reviewed head for evidence-only bookkeeping. No repair merge, completed delivery or hosted deployment is claimed here."
     }
   },
   "recovery": {
