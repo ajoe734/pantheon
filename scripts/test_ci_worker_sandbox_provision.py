@@ -38,6 +38,9 @@ exit {primary_install}
             _exe(d / "dpkg-query", "echo bubblewrap 1.0\n")
             _exe(d / "parser", f'echo "$*" >> {log}\n')
             _exe(d / "bwrap", f'[ "$1" = --version ] && {{ echo bwrap 0; exit 0; }}\nexit {probe}\n')
+            _exe(d / "getent", "exit 2\n")
+            (d / "hosts").write_text("127.0.0.1 localhost\n")
+            (d / "resolv.conf").write_text("nameserver 10.0.0.1\n")
             (d / "profile").write_text("profile")
             (d / "os-release").write_text(f"ID={os_id}\nVERSION_CODENAME=noble\n")
             env = dict(os.environ,
@@ -46,6 +49,8 @@ exit {primary_install}
                        SANDBOX_APPARMOR_PARSER=str(d / "parser"),
                        SANDBOX_BWRAP=str(d / "bwrap"), SANDBOX_PROFILE=str(d / "profile"),
                        SANDBOX_OS_RELEASE=str(d / "os-release"),
+                       SANDBOX_GETENT=str(d / "getent"), SANDBOX_HOSTS=str(d / "hosts"),
+                       SANDBOX_RESOLV=str(d / "resolv.conf"),
                        SANDBOX_UPDATE_TIMEOUT="5", SANDBOX_INSTALL_TIMEOUT="5")
             r = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True)
             return r, log.read_text() if log.exists() else ""
@@ -69,6 +74,19 @@ exit {primary_install}
         r, _ = self.run_script(primary_update=100, fb_update=100)
         self.assertEqual(r.returncode, 10)
         self.assertIn("Temporary failure resolving", r.stderr)
+
+    def test_persistent_failure_emits_counts_only_dns_diagnostics(self):
+        r, _ = self.run_script(primary_update=100, fb_update=100)
+        self.assertEqual(r.returncode, 10)
+        self.assertIn("diag getent-dns host=archive.ubuntu.com exit=2 answer_lines=0", r.stdout)
+        self.assertIn("diag getent-dns-tcp host=github.com", r.stdout)
+        self.assertIn("diag hosts-file-entries host=security.ubuntu.com count=0", r.stdout)
+        self.assertIn("diag resolv-conf readable=yes nameserver_count=1", r.stdout)
+        self.assertNotIn("10.0.0.1", r.stdout + r.stderr)
+
+    def test_success_emits_no_dns_diagnostics(self):
+        r, _ = self.run_script()
+        self.assertNotIn("diag getent", r.stdout)
 
     def test_install_failure_is_exit_11(self):
         r, _ = self.run_script(primary_install=100, fb_install=100)

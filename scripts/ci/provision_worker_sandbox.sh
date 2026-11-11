@@ -18,6 +18,10 @@ APPARMOR_PARSER="${SANDBOX_APPARMOR_PARSER:-apparmor_parser}"
 BWRAP="${SANDBOX_BWRAP:-/usr/bin/bwrap}"
 UPDATE_TIMEOUT="${SANDBOX_UPDATE_TIMEOUT:-45}"
 INSTALL_TIMEOUT="${SANDBOX_INSTALL_TIMEOUT:-60}"
+GETENT="${SANDBOX_GETENT:-getent}"
+HOSTS_FILE="${SANDBOX_HOSTS:-/etc/hosts}"
+RESOLV_FILE="${SANDBOX_RESOLV:-/etc/resolv.conf}"
+DIAG_HOSTS=(archive.ubuntu.com security.ubuntu.com github.com)
 KEYRING="${SANDBOX_KEYRING:-/usr/share/keyrings/ubuntu-archive-keyring.gpg}"
 
 # Bounded apt options; package signature verification stays fully enabled.
@@ -66,11 +70,33 @@ try_fallback() {
   return 0
 }
 
+# Failure-only, bounded DNS discriminators (exits/counts only; no config content,
+# no new resolver, no change to apt verification). Never affects the exit code.
+dns_diag() {
+  local h rc n
+  echo "::group::dns diagnostics (counts only)"
+  for h in "${DIAG_HOSTS[@]}"; do
+    n="$(timeout 5s "$GETENT" -s dns hosts "$h" 2>/dev/null | wc -l)"; rc=$?  # pipefail carries getent/timeout status
+    echo "diag getent-dns host=$h exit=$rc answer_lines=$n"
+    n="$(RES_OPTIONS='use-vc attempts=1 timeout=3' timeout 8s "$GETENT" -s dns hosts "$h" 2>/dev/null | wc -l)"; rc=$?  # pipefail carries getent/timeout status
+    echo "diag getent-dns-tcp host=$h exit=$rc answer_lines=$n"
+    n="$(grep -c -F -w "$h" "$HOSTS_FILE" 2>/dev/null)"
+    echo "diag hosts-file-entries host=$h count=${n:-0}"
+  done
+  if [ -r "$RESOLV_FILE" ]; then
+    echo "diag resolv-conf readable=yes nameserver_count=$(grep -c '^nameserver' "$RESOLV_FILE" 2>/dev/null)"
+  else
+    echo "diag resolv-conf readable=no"
+  fi
+  echo "::endgroup::"
+}
+
 try_primary; prc=$?
 if [ "$prc" -ne 0 ]; then
   try_fallback; frc=$?
   if [ "$frc" -ne 0 ]; then
     echo "::error::package provisioning failed: primary=$prc fallback=$frc"
+    dns_diag
     # Metadata failures stay distinguishable from install failures.
     [ "$frc" -eq 13 ] && exit "$prc"
     exit "$frc"
