@@ -539,7 +539,7 @@ class SemanticExtractionClient:
                 "prompt": prompt,
                 "extraction_schema": schema,
                 "model": request.model_id or self._default_model,
-                "agent_id": "main",
+                "agent_id": "structured-extraction",
                 "mode": "user",
                 "operator_id": request.operator_id or "system",
                 "trace_id": request.trace_id or f"trace-extract-{uuid.uuid4().hex[:8]}",
@@ -560,7 +560,7 @@ class SemanticExtractionClient:
                     prompt,
                     extraction_schema=schema,
                     model=request.model_id or self._default_model,
-                    agent_id="main",
+                    agent_id="structured-extraction",
                     mode="user",
                     operator_id=request.operator_id or "system",
                     trace_id=request.trace_id or f"trace-extract-{uuid.uuid4().hex[:8]}",
@@ -591,7 +591,7 @@ class SemanticExtractionClient:
                 "prompt": prompt,
                 "extraction_schema": schema,
                 "mode": "user",
-                "agent_id": "main",
+                "agent_id": "structured-extraction",
             }
             headers = {
                 "Content-Type": "application/json",
@@ -600,6 +600,8 @@ class SemanticExtractionClient:
             }
             if self._service_token:
                 headers["Authorization"] = f"Bearer {self._service_token}"
+                # The openclaw adapter authenticates via this header.
+                headers["X-Pantheon-Service-Token"] = self._service_token
 
             try:
                 status, body_bytes, _ = _perform_http_request(

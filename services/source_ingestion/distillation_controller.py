@@ -46,6 +46,7 @@ from services.source_ingestion.distillation_worker import (
     source_version_digest,
     source_version_digest_matches,
 )
+from services.source_ingestion.hypothesis_compiler import compiler_from_env
 from services.source_ingestion.pg_store import read_source_records_for_tenant
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 
@@ -500,6 +501,11 @@ def run_controller_tick(
                 retry_base_seconds=config.retry_base_seconds,
                 max_attempts=config.max_attempts,
                 registry_sync=_make_registry_sync(config),
+                # None unless PANTHEON_L2_EXTRACTION_ENABLED; compilation only
+                # ever runs on cards the (gated) extractor produced.
+                hypothesis_compiler=compiler_from_env(
+                    store_path=Path(config.seed_store_path).with_name("hypothesis_compiler.sqlite"),
+                ),
             )
             # Re-drive dead letters from transient Registry outages, but only
             # once the Registry answers again (404 on a probe id is an answer).
