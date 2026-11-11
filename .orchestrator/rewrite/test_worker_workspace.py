@@ -1377,6 +1377,47 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self.assertEqual(request.metadata["workspace_branch"], target_branch)
         self.assertEqual(state["worker_worktrees"]["leases"][self.task_id]["branch"], target_branch)
 
+    def test_prepare_worker_workspace_recreates_branch_when_registered_directory_vanished(self) -> None:
+        config = {
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "activity_log": str(self.root / "ai-activity-log.jsonl"),
+            },
+            "worker_worktrees": {"path": str(self.root / "worktrees")},
+            "coordination": {"repositories": {"pantheon": {"local_path": str(self.repo), "default_branch": "dev"}}},
+        }
+        config["worker_worktrees"] = {"root": str(self.root / "worktrees")}
+        (self.root / "ai-status.json").write_text("{}", encoding="utf-8")
+        # Simulate /tmp being cleared by a reboot: Git still registers the
+        # worktree, but its directory is gone.
+        shutil.rmtree(self.worktree)
+        porcelain = self._git(self.repo, "worktree", "list", "--porcelain")
+        self.assertIn("prunable", porcelain)
+        state = {"worker_worktrees": {"leases": {}}}
+        request = worker_workspace.DeliveryRequest(
+            agent_id="Antigravity",
+            provider="test",
+            delivery_mode="auto",
+            message="launch",
+            task_id=self.task_id,
+            metadata={},
+        )
+        ok, error = worker_workspace.prepare_worker_workspace(
+            config, state, request, queue_event_id="evt-1", target_agent="Antigravity",
+        )
+        self.assertTrue(ok, error)
+        new_path = Path(request.metadata["workspace_path"])
+        self.assertTrue(new_path.is_dir())
+        self.assertNotEqual(new_path.resolve(), self.worktree.resolve())
+        self.assertTrue(new_path.resolve().is_relative_to(self.root.resolve()))
+        self.assertEqual(request.metadata["workspace_branch"], self.source_branch)
+        # The committed task branch is preserved and checked out again.
+        self.assertEqual(self._git(self.repo, "rev-parse", self.source_branch), self.source_head)
+        self.assertEqual(self._git(new_path, "rev-parse", "HEAD"), self.source_head)
+        self.assertNotIn(
+            "prunable", self._git(self.repo, "worktree", "list", "--porcelain")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

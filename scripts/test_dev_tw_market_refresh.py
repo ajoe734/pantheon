@@ -676,7 +676,7 @@ def test_refresh_entrypoint_restores_egress_deny_and_preserves_env(tmp_path: Pat
         and "source-ingest" in e.get("services", [])
         and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "allowlist"
     )
-    assert bounded_up["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+    assert bounded_up["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.tpex.org.tw"
 
     restore_up = next(
         e for e in events
@@ -2161,7 +2161,7 @@ def test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_conne
 
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
-    assert twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+    assert twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.tpex.org.tw"
 
     assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
     assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"

@@ -1,12 +1,42 @@
 {
-  "series": {
-    "docs": [
-      {
-        "series_code": "FED/H15/RIFSPFF_N.D",
-        "unit": "percent",
-        "period": ["2026-11-08", "2026-11-09"],
-        "value": [4.58, 4.58]
-      }
+ "series": {
+  "docs": [
+   {
+    "@frequency": "daily",
+    "dataset_code": "H15",
+    "dataset_name": "Selected Interest Rates",
+    "dimensions": {
+     "FREQ": "8",
+     "INSTRUMENT": "FF",
+     "MATURITY": "O"
+    },
+    "indexed_at": "2026-11-11T01:29:53.816Z",
+    "observations_attributes": [
+     [
+      "NOTES",
+      "A"
+     ]
+    ],
+    "period": [
+     "2026-11-07",
+     "2026-11-08",
+     "2026-11-09"
+    ],
+    "period_start_day": [
+     "2026-11-07",
+     "2026-11-08",
+     "2026-11-09"
+    ],
+    "provider_code": "FED",
+    "series_code": "RIFSPFF_N.D",
+    "series_name": "Daily \u2013 Federal funds \u2013 Overnight",
+    "value": [
+     3.88,
+     "NA",
+     3.87
     ]
-  }
+   }
+  ],
+  "num_found": 1
+ }
 }
