@@ -1081,13 +1081,18 @@ def _execute_cancel_mutation(
         raise ValueError("CancelMutation requires a note.")
 
     actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
-    if actor_role not in _CANCEL_ACTOR_ROLES and not params.get("actor_role"):
+    claimed_role = str(params.get("actor_role") or "").strip()
+    admission_derived = bool(params.get("request_hash")) and claimed_role in {
+        "admin", "approver", "reviewer", "operator"
+    }
+    if actor_role not in _CANCEL_ACTOR_ROLES and (not claimed_role or admission_derived):
         # Preference order may pick a role the owner does not allow to cancel
         # (e.g. admin/approver); re-resolve onto a held cancel-capable role.
         for candidate in _CANCEL_ACTOR_ROLES:
             try:
                 actor_id, actor_role = _actor_context(
-                    {**params, "actor_role": candidate}, auth_token=auth_token, mfa_token=mfa_token
+                    {**{k: v for k, v in params.items() if k != "request_hash"},
+                     "actor_role": candidate}, auth_token=auth_token, mfa_token=mfa_token
                 )
                 break
             except (HTTPException, ActionUnavailableError):
