@@ -12,6 +12,7 @@ import os
 from typing import Any, Callable, Mapping
 
 from services.evolution.auto_consumer import AutoConsumer, ConsumerReport, JsonlEvidenceSink
+from services.evolution.governed_execution_approval import GovernedExecutionApproval
 from services.evolution.governed_persona_lifecycle import GovernedPersonaLifecycle, Transport, urllib_transport
 
 class HttpDecisionPort:
@@ -42,6 +43,11 @@ class HttpDecisionPort:
             raise RuntimeError("decision reads need a configured tenant (token-mode evolution requires X-Tenant-Id)")
         rows = self._call("GET", f"/api/evolution/proposals?decision_state={state}", None, self._tenant)
         return rows if isinstance(rows, list) else list((rows or {}).get("decisions", []))
+
+    def request_execution_approval(self, decision_id: str, tenant_id: str):
+        """Owner files the Governance ``evolution_execute`` request (existing route)."""
+        return self._call("POST", f"/api/evolution/proposals/{decision_id}/execution-approval-request",
+                          {"tenant_id": tenant_id}, tenant_id)
 
     def propose(self, body: Mapping[str, Any]):
         return self._call("POST", "/api/evolution/proposals", body, body.get("tenant_id"))
@@ -187,8 +193,14 @@ def build_consumer(env: Mapping[str, str] | None = None, transport: Transport | 
         registry_token=lambda: e.get("AUTO_CONSUMER_REGISTRY_TOKEN"),
         persona_token=lambda: e.get("AUTO_CONSUMER_PERSONA_TOKEN"), transport=transport,
     )
+    decisions = HttpDecisionPort(api, lambda: e.get("EVOLUTION_AUTH_TOKEN") or None, transport, tenant)
+    execution_approvals = GovernedExecutionApproval(
+        governance_url=need("AUTO_CONSUMER_GOVERNANCE_URL"), gate_token=token("AUTO_CONSUMER_GATE_TOKEN"),
+        gate_id=need("AUTO_CONSUMER_GATE_ID"), file_request=decisions.request_execution_approval,
+        transport=transport,
+    )
     consumer = AutoConsumer(
-        decisions=HttpDecisionPort(api, lambda: e.get("EVOLUTION_AUTH_TOKEN") or None, transport, tenant),
+        decisions=decisions, execution_approvals=execution_approvals,
         scope=scope,
         evidence=JsonlEvidenceSink(e.get("AUTO_CONSUMER_EVIDENCE_PATH", "auto_consumer_evidence.jsonl")),
         personas=personas,

@@ -78,6 +78,11 @@ class PersonaLifecyclePort(Protocol):
     def advance(self, persona_id: str, tenant_id: str, target_state: str, governance_decision_id: str) -> str: ...
 
 
+class ExecutionApprovalPort(Protocol):
+    def ensure_approved(self, decision: Mapping[str, Any]) -> str:
+        """Real, decided Governance ``evolution_execute`` approval id for exactly ``decision``."""
+
+
 class EvidenceSink(Protocol):
     def record(self, entry: Mapping[str, Any]) -> None: ...
 
@@ -134,6 +139,22 @@ def auto_approval_id(decision_id: str) -> str:
     return f"auto-gate-{decision_id}"
 
 
+def expected_binding_id(decision: Mapping[str, Any]) -> str:
+    """The governance approval id this decision must carry once the gate has acted.
+
+    A retire is carried out by the persona lifecycle's own governed steps and keeps
+    the gate's evidence id.  Research work (retrain / mutate / revalidate) is run by
+    the dispatch worker, which only accepts the real, deterministic Governance
+    ``evolution_execute`` request bound to the immutable proposal content.
+    """
+    from services.evolution.dispatch_outbox import execution_approval_id, immutable_decision_fingerprint
+
+    decision_id = _text(decision.get("decision_id"))
+    if _text(decision.get("action_type")).lower() == "retire":
+        return auto_approval_id(decision_id)
+    return execution_approval_id(decision_id, immutable_decision_fingerprint(decision))
+
+
 RESUMABLE_STATES = ("proposed", "reviewed", "approved")
 
 
@@ -143,7 +164,7 @@ def evaluate_gate(
     """Decide whether the automated gate may act on ``decision`` in ``state``.
 
     A ``reviewed`` / ``approved`` decision is only resumed when it still carries
-    the automated gate's own governance binding (``auto-gate-<decision_id>``);
+    the automated gate's own governance binding (see ``expected_binding_id``);
     anything else belongs to the operator.
     """
     decision_id = _text(decision.get("decision_id"))
@@ -161,7 +182,7 @@ def evaluate_gate(
         return refuse("not_" + state)
     if state != "proposed" and not check(
         "carries_auto_gate_binding",
-        _text(decision.get("approval_decision_id")) == auto_approval_id(decision_id),
+        _text(decision.get("approval_decision_id")) == expected_binding_id(decision),
         decision.get("approval_decision_id"),
     ):
         return refuse("not_bound_to_auto_gate")
@@ -231,12 +252,14 @@ class AutoConsumer:
         scope: DiscoveryScopePort,
         evidence: EvidenceSink,
         personas: PersonaLifecyclePort | None = None,
+        execution_approvals: ExecutionApprovalPort | None = None,
         clock: Callable[[], str] = _now,
     ) -> None:
         self.decisions = decisions
         self.scope = scope
         self.evidence = evidence
         self.personas = personas
+        self.execution_approvals = execution_approvals
         self.clock = clock
 
     def tick(self) -> ConsumerReport:
@@ -271,8 +294,19 @@ class AutoConsumer:
     def _step(self, decision: Mapping[str, Any], verdict: GateVerdict, state: str, report: ConsumerReport) -> None:
         decision_id = _text(decision.get("decision_id"))
         tenant = _text(decision.get("tenant_id"))
-        approval_id = auto_approval_id(decision_id)
-        evidence = {**verdict.evidence(), "decision_digest": decision_digest(decision), "at": self.clock()}
+        action = _text(decision.get("action_type")).lower()
+        if action == "retire":
+            approval_id = auto_approval_id(decision_id)
+        else:
+            if self.execution_approvals is None:
+                raise RuntimeError("no governance execution-approval port configured for research actions")
+            # Real Governance authority first: nothing moves in Evolution without it, so a
+            # failure here leaves the decision exactly where it was and a later tick resumes.
+            approval_id = self.execution_approvals.ensure_approved(decision)
+            if approval_id != expected_binding_id(decision):
+                raise RuntimeError(f"governance returned unexpected approval id {approval_id!r}")
+        evidence = {**verdict.evidence(), "decision_digest": decision_digest(decision),
+                    "approval_decision_id": approval_id, "at": self.clock()}
         note = json.dumps(evidence, sort_keys=True, default=str)
         common = {"actor_role": AUTOMATED_GATE_ROLE, "actor_id": AUTOMATED_GATE_ACTOR_ID, "tenant_id": tenant, "note": note}
         if state == "proposed":

@@ -83,10 +83,25 @@ class Personas:
         return target
 
 
-def _consumer(items, scope=None, personas=None):
+class ExecApprovals:
+    """Stands in for the Governance port: returns the deterministic real-request id, or fails."""
+
+    def __init__(self):
+        self.calls, self.fail = [], False
+
+    def ensure_approved(self, decision):
+        if self.fail:
+            raise RuntimeError("governance down")
+        self.calls.append(decision["decision_id"])
+        return ac.expected_binding_id(decision)
+
+
+def _consumer(items, scope=None, personas=None, approvals="default"):
     sink = ac.ListEvidenceSink()
-    return ac.AutoConsumer(decisions=Decisions(items), scope=scope or Scope(), evidence=sink,
-                           personas=personas), sink
+    port = ExecApprovals() if approvals == "default" else approvals
+    consumer = ac.AutoConsumer(decisions=Decisions(items), scope=scope or Scope(), evidence=sink,
+                               personas=personas, execution_approvals=port)
+    return consumer, sink
 
 
 # ------------------------------------------------------------------ gate (clause 1)
@@ -274,7 +289,9 @@ def test_review_success_then_approve_failure_is_resumed_next_tick():
     second = consumer.tick()
     assert second.approved == ["evo-auto-1"] and consumer.decisions.items[0]["decision_state"] == "approved"
     assert [c[0] for c in consumer.decisions.calls] == ["review", "approve"]  # not reviewed twice
-    assert consumer.decisions.calls[1][2]["approval_decision_id"] == "auto-gate-evo-auto-1"
+    bound = consumer.decisions.calls[1][2]["approval_decision_id"]
+    assert bound == ac.expected_binding_id(consumer.decisions.items[0]) and bound.startswith("apv-evoexec-evo-auto-1-")
+    assert bound == consumer.decisions.calls[0][2]["approval_decision_id"]  # same real id both steps
 
 
 def test_approve_success_then_persona_outage_is_retired_next_tick_with_original_binding():
@@ -304,3 +321,32 @@ def test_reviewed_or_approved_decisions_without_the_auto_binding_stay_with_the_o
     consumer, _ = _consumer([_decision(decision_state="reviewed", approval_decision_id="human-1")])
     report = consumer.tick()
     assert not report.approved and not consumer.decisions.calls
+
+
+def test_research_binding_is_the_real_governance_execute_approval_not_a_synthetic_id():
+    consumer, sink = _consumer([_decision()])
+    consumer.tick()
+    review = consumer.decisions.calls[0][2]
+    assert review["approval_decision_id"].startswith("apv-evoexec-evo-auto-1-")
+    assert not review["approval_decision_id"].startswith("auto-gate-")
+    assert sink.entries[0]["approval_decision_id"] == review["approval_decision_id"]
+
+
+def test_governance_failure_leaves_research_decision_proposed_and_is_retried():
+    consumer, _ = _consumer([_decision()])
+    consumer.execution_approvals.fail = True
+    first = consumer.tick()
+    assert first.errors and consumer.decisions.items[0]["decision_state"] == "proposed" and not consumer.decisions.calls
+    consumer.execution_approvals.fail = False
+    assert consumer.tick().approved == ["evo-auto-1"]
+
+
+def test_missing_execution_approval_port_never_approves_research_work():
+    consumer, _ = _consumer([_decision()], approvals=None)
+    report = consumer.tick()
+    assert report.errors and not report.approved and not consumer.decisions.calls
+
+
+def test_reviewed_research_decision_with_synthetic_binding_stays_with_the_operator():
+    consumer, _ = _consumer([_decision(decision_state="reviewed", approval_decision_id="auto-gate-evo-auto-1")])
+    assert not consumer.tick().approved and not consumer.decisions.calls

@@ -47,7 +47,12 @@
       "real_auth_plus_oos": "23 passed (test_retrain_executor_real_auth.py + test_retrain_oos_gate.py), exit 0",
       "alpha_replication": "93 passed; services/governance/test_governance_api.py errors at fixture setup (needs GOV_APPROVAL_TEST_DSN Postgres; file untouched by this task) - NOT counted as passed"
     },
-    "persona_mismatch_fix": "Reviewer P1 fix: DiscoveryBindingScope.resolve fails closed on explicit artifact/decision persona mismatch (no fallback to other persona's discovery binding); regression test_explicit_persona_mismatch_fails_closed; auto_consumer_runtime/auto_consumer/governed_persona_lifecycle suites 38 passed."
+    "persona_mismatch_fix": "Reviewer P1 fix: DiscoveryBindingScope.resolve fails closed on explicit artifact/decision persona mismatch (no fallback to other persona's discovery binding); regression test_explicit_persona_mismatch_fails_closed; auto_consumer_runtime/auto_consumer/governed_persona_lifecycle suites 38 passed.",
+    "governance_execution_approval_fix": {
+      "fix": "Reviewer P1: retrain/mutate/revalidate no longer bind synthetic auto-gate-<id>. AutoConsumer calls GovernedExecutionApproval.ensure_approved BEFORE the Evolution review: the Evolution owner files the deterministic evolution_execute request via the existing execution-approval-request route (propose-only principal), the automated_gate principal reviews+decides it in Governance with its own bearer token (vote expiry = request expiry), and the real id apv-evoexec-<decision>-<digest16> is bound on review/approve. Governance failure leaves the decision proposed; resume re-ensures idempotently (binding is the deterministic id, so it persists across processes). retire keeps its governed persona path. No new grant/issuer.",
+      "regression": "services/evolution/test_auto_consumer_dispatch.py: real Evolution API + production build_consumer ports + real dispatch_worker.run_poll/require_execution_approval; stateful Governance (principal from token, distinct decider, version) with NO injected approval snapshots; covers retrain/mutate/revalidate dispatch, Governance outage then fresh-consumer resume, retryable downstream retries re-reading approval, and synthetic auto-gate binding never dispatching.",
+      "result": "109 passed (test_auto_consumer_dispatch, test_auto_consumer, runtime, governed_persona_lifecycle, test_dispatch_worker), git diff --check exit 0"
+    }
   },
   "not_done_here": [
     "GovernedPersonaLifecycle is tested against a faithful fake of Governance+persona owner, not a live Governance PG store (approval commands require PostgreSQL).",
