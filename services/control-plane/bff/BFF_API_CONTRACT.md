@@ -1102,7 +1102,7 @@ Read-only; no new route. These fields extend the existing `GET /bff/management/p
 
 ## Retire a provisioned paper Persona case (BFF-PERSONA-CASE-RETIRE-COMMAND-20261108)
 
-`POST /bff/v1/commands` with `command: "PersonaAction"`, `action: "RetirePaperPersonaCase"` (verb aliases `retire`, `retire_case`) and `target: {"type": "Persona", "id": "<persona_id>"}`. No new HTTP route is added; `POST /bff/personas/{persona_id}/actions/{action_id}` returns `410 ACTION_RETIRED` for `retire` (only AdvanceLifecycle, Promote, PromoteCandidate and Demote are live on that route).
+`POST /bff/v1/commands` with `command: "PersonaAction"`, `action: "RetirePaperPersonaCase"` (verb aliases `retire`, `retire_case`) and `target: {"type": "Persona", "id": "<persona_id>"}`. No new HTTP route is added; `POST /bff/personas/{persona_id}/actions/{action_id}` returns `404 RESOURCE_NOT_FOUND` for `retire` and any other unsupported action name (only AdvanceLifecycle, Promote, PromoteCandidate and Demote are live on that route).
 
 Admission is the existing command admission: operator role, `Idempotency-Key` header, non-empty `audit_context.reason`, and an `X-Confirm-Token` issued for `RetirePaperPersonaCase` on that Persona (the catalog entry has `requires_confirm_token`). The tenant is taken from the authenticated claims only.
 

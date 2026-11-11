@@ -488,11 +488,12 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         if action_id.lower().replace("_", "").replace("-", "") not in {
             "advancelifecycle", "promote", "promotecandidate", "demote",
         }:
-            raise HTTPException(410, detail={"error": {
-                "code": ErrorCode.ACTION_RETIRED.value,
-                "message": "Persona action has no executing owner; use /bff/v1/commands with a supported owner action",
-                "details": {"replacement": "/bff/v1/commands"},
-            }})
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Persona action not found",
+                f"Persona action {action_id} is not available on this route",
+            )
         _reject_body_idempotency_key(payload)
         admission = getattr(request.app.state, "command_adapter_service", None)
         if admission is None:
