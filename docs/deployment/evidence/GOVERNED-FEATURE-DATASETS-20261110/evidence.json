@@ -91,8 +91,46 @@
         "schema_version": "feature_history_depth.v1",
         "storage_root": "<fixture>"
       },
-      "note": "No hosted market_data_store was reachable from this worker worktree, so no real per-dataset/per-symbol depth is reported here. The block below is a fixture demonstration of the report shape only and is not product data.",
-      "status": "tooling_done_real_measurement_pending",
+      "hosted_measurement": {
+        "absent_on_hosted": [
+          "fundamentals",
+          "flows",
+          "macro",
+          "community"
+        ],
+        "absent_reason": "these datasets arrive once collector egress is live",
+        "conclusion": "No symbol meets the two-year minimum history. Best case is 60 trading days (~3 months).",
+        "internal_note": {
+          "note": "no entity or event time",
+          "row_count": 3
+        },
+        "market": {
+          "distinct_dates": 16,
+          "range": "2026-09-12..2026-10-09",
+          "row_count": 2830
+        },
+        "measured_by": "coordinator, read-only, 2026-11-11, standalone script of measure_stored_history_depth run in pantheon-source-ingest-1 against /data/source-ingest/market_data_store (SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT not set there)",
+        "source_file": "hosted_history_depth_20261111.json (symbols and dates only)",
+        "taifex_ssf_contracts": {
+          "note": "no event time on any row",
+          "row_count": 177
+        },
+        "tw_price_daily": {
+          "0050.TWSE_distinct_days": 47,
+          "max_distinct_trading_days": 60,
+          "max_range": "2026-08-12..2026-11-10",
+          "median_distinct_days": 1,
+          "row_count": 5400,
+          "symbol_count": 104,
+          "symbols_at_max": [
+            "2330.TWSE",
+            "2317.TWSE"
+          ],
+          "symbols_with_two_years": 0
+        }
+      },
+      "note": "Real hosted measurement by coordinator supersedes the fixture demonstration, which remains shape-only. Acceptance 4 accepted on this evidence per coordinator.",
+      "status": "measured_on_hosted_minimum_not_met",
       "tool": "python3 -m services.source_ingestion.market_data_storage <market_data_store root>"
     },
     "5_release_calendar": {
