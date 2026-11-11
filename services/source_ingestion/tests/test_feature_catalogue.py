@@ -273,7 +273,7 @@ dataset_to_catalogue = {
 def test_collector_adapter_derives_storable_macro_and_community_records(tmp_path) -> None:
     from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
 
-    macro = CollectorBundleAdapter(connector_id="m", source_id="m", source_type="macro", dataset="tw_macro_series")
+    macro = CollectorBundleAdapter(connector_id="m", source_id="m", source_type="macro", dataset="tw_macro_series", raw_root=str(tmp_path))
     out, rejected = macro.governed_feature_records(
         [_macro_record("cbc_policy_rate", 2.0, "2026-09-17T00:00:00Z", "2026-09-17T08:00:00Z")]
     )

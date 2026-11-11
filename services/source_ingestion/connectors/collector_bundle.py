@@ -704,6 +704,18 @@ class CollectorBundleAdapter:
             records = records[:consumed]
         return records, next_cursor, raw_plan
 
+    def _macro_emitted_path(self) -> Path:
+        return self._raw_root() / "state" / _slug(self.connector_id) / "macro_emitted.jsonl"
+
+    @staticmethod
+    def _read_markers(path: Path) -> list[tuple[str, str, str]]:
+        if not path.is_file():
+            return []
+        return [
+            (d["symbol"], d["day"], d["step"])
+            for d in (json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip())
+        ]
+
     def _community_ledger_path(self) -> Path:
         return self._raw_root() / "state" / _slug(self.connector_id) / "community_ledger.jsonl"
 
@@ -728,7 +740,8 @@ class CollectorBundleAdapter:
             for provider_id, dataset, field_name, source, period_kind in self.macro_series_map:
                 extra.setdefault(provider_id, []).append((dataset, field_name, source, period_kind))
             rows, rejected = macro_feature_rows(records, extra_series_map=extra)
-            return _FeaturePlan(tuple(rows), tuple(rejected), (), frozenset())
+            known = frozenset(self._read_markers(self._macro_emitted_path()))
+            return _FeaturePlan(tuple(rows), tuple(rejected), (), known)
         if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
             path = self._community_ledger_path()
             ledger = dict(load_community_ledger(path))
@@ -779,6 +792,20 @@ class CollectorBundleAdapter:
                     new_markers.append(marker)
             if new_markers:
                 emitted_path = path.with_name("community_emitted.jsonl")
+                emitted_path.parent.mkdir(parents=True, exist_ok=True)
+                with emitted_path.open("a", encoding="utf-8") as handle:
+                    for m in new_markers:
+                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
+        elif self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
+            known = set(plan.known_markers)
+            new_markers = []
+            for r in rows:
+                marker = (r["symbol"], r["event_time"], r["available_time"])
+                if marker not in known:
+                    known.add(marker)
+                    new_markers.append(marker)
+            if new_markers:
+                emitted_path = self._macro_emitted_path()
                 emitted_path.parent.mkdir(parents=True, exist_ok=True)
                 with emitted_path.open("a", encoding="utf-8") as handle:
                     for m in new_markers:

@@ -361,3 +361,39 @@ def test_capped_community_expansion_flushes_across_empty_cursor_pulls(tmp_path, 
     assert seen == {"1101.TWSE", "2317.TWSE", "2330.TWSE"}
     assert raw_returned
     assert adapter.pull(cursor=None, max_records=2).next_cursor is not None
+
+
+def test_capped_macro_expansion_delivers_every_derived_field_across_pulls(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    files, entry, _ = make_bundle(source_id="collector-tw-macro-ndc", run_id="mac1")
+    base = "bundles/collector-tw-macro-ndc/2026-11-10/mac1"
+    rows = [json.loads(x) for x in files[f"{base}/items.jsonl"].decode().splitlines()]
+    for row, period in zip(rows, ("2026-09-30", "2026-08-31")):
+        row.update({"series_id": "NDC:6099:MONITORING_SCORE", "period_end": period, "value": 28.0,
+                    "metrics": {"leading_index": 101.0, "coincident_index": 99.0}})
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {"source_id": "collector-tw-macro-ndc", "source_type": "macro", "dataset": "tw_macro_series",
+              "platform": "ndc", "max_records": 2}
+    adapter = CollectorBundleAdapter(connector_id="conn-mac", **config)
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 2}
+    seen: set[tuple[str, str]] = set()
+    raw_returned = False
+    for _ in range(12):
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+        assert len(records) <= 2
+        for r in records:
+            if r.content_ref.startswith("collector-feature://"):
+                nr = r.metadata["normalized_row"]
+                seen.add((nr["field"], nr["event_time"]))
+            else:
+                raw_returned = True
+        if raw_returned:
+            break
+    fields = {"monitoring_score", "leading_index", "coincident_index"}
+    assert {f for f, _ in seen} == fields
+    assert len(seen) == 6
+    assert raw_returned
