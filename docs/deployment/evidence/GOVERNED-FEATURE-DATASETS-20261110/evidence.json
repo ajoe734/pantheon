@@ -101,6 +101,74 @@
         ],
         "absent_reason": "these datasets arrive once collector egress is live",
         "conclusion": "No symbol meets the two-year minimum history. Best case is 60 trading days (~3 months).",
+        "governed_coverage_file": {
+          "daily_bar_symbol_count": 104,
+          "daily_bar_symbol_depth_source": "hosted_history_depth_20261111.json datasets.tw_price_daily.per_entity",
+          "derived_from": "hosted_history_depth_20261111.json (verbatim hosted measurement, measured 2026-11-11)",
+          "format": "jsonl_one_line_per_dataset",
+          "line_count": 7,
+          "path": "hosted_governed_dataset_coverage_20261111.jsonl",
+          "schema_version": "feature_history_depth_governed_coverage.v1",
+          "sha256": "93610fd45a760677d3d44a75accc46b68325863564f95bf49f09a8f3bccaa336"
+        },
+        "governed_coverage_summary": {
+          "tw_community_daily": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_financial_statement": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_institutional_flow": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_macro_series": {
+            "daily_bar_symbols_without_history": null,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 0,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_margin_short_balance": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_monthly_revenue": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_valuation_bwibbu": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          }
+        },
         "internal_note": {
           "note": "no entity or event time",
           "row_count": 3
@@ -111,7 +179,7 @@
           "row_count": 2830
         },
         "measured_by": "coordinator, read-only, 2026-11-11, standalone script of measure_stored_history_depth run in pantheon-source-ingest-1 against /data/source-ingest/market_data_store (SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT not set there)",
-        "source_file": "hosted_history_depth_20261111.json (verbatim hosted per-dataset/per-daily-bar-symbol measurement, committed) and hosted_governed_dataset_coverage_20261111.json (explicit zero coverage for every governed dataset absent from the hosted store)",
+        "source_file": "hosted_history_depth_20261111.json (verbatim hosted per-dataset/per-daily-bar-symbol measurement, committed) and hosted_governed_dataset_coverage_20261111.jsonl (JSON Lines, one compact line per governed dataset, full per-symbol map with explicit zeros)",
         "taifex_ssf_contracts": {
           "note": "no event time on any row",
           "row_count": 177
