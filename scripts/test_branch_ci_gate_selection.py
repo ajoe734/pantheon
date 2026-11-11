@@ -196,6 +196,12 @@ class BranchCiGateSelectionTests(unittest.TestCase):
             3,
         )
 
+    def test_sandbox_provisioning_uses_bounded_helper(self) -> None:
+        step = {s.get("name"): s for s in self.smoke_steps if s.get("name")}[
+            "Provision real worker sandbox"
+        ]
+        self.assertEqual(step.get("run", "").strip(), "bash scripts/ci/provision_worker_sandbox.sh")
+
     def test_all_three_named_steps_present(self) -> None:
         self.assertEqual(set(self.conditions), set(STEP_NAMES))
 

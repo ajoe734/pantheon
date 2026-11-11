@@ -1,0 +1,22 @@
+{
+  "task_id": "CI-SANDBOX-APT-DNS-20261111",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "status": "source_validated_pending_hosted_ci",
+  "failed_attempts": [
+    {"run": "43032317523", "attempt": 1, "job": "130567301359", "url": "https://github.com/ajoe734/pantheon/actions/runs/43032317523/attempts/1", "pr": 7176, "source_head": "78813d453acde3db137b2521ddb5fd06a965d705", "failure": "Temporary failure resolving 'azure.archive.ubuntu.com' via mirror+file:/etc/apt/apt-mirrors.txt; step timed out after 5 minutes"},
+    {"run": "43032317523", "attempt": 2, "job": "130582344330", "url": "https://github.com/ajoe734/pantheon/actions/runs/43032317523/attempts/2", "pr": 7176, "source_head": "78813d453acde3db137b2521ddb5fd06a965d705", "failure": "same DNS failure on failed-only rerun of unchanged head"}
+  ],
+  "change": {
+    "helper": "scripts/ci/provision_worker_sandbox.sh",
+    "bounds": "update 45s, install 60s per attempt, Acquire::Retries=1, 15s http timeouts; worst case ~210s inside the unchanged 5-minute step",
+    "fallback": "official archive.ubuntu.com / security.ubuntu.com for the runner's Ubuntu codename, signed-by ubuntu-archive-keyring; refused on non-Ubuntu",
+    "exit_codes": {"10": "metadata", "11": "install", "12": "profile/capability probe", "13": "unsupported distro (primary code returned)"},
+    "unchanged": ["runner ubuntu-24.04", "unchanged upstream bwrap-userns-restrict profile", "real /usr/bin/bwrap probe", "package signature verification", "Verify real worker sandbox boundaries step"]
+  },
+  "validation": {
+    "local": "python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection; bash -n helper",
+    "local_note": "fixture tests only; development-host DNS is not proof of GitHub runner DNS",
+    "hosted": "pending: actual GitHub Branch CI provisioning and Smoke result on repair head required"
+  }
+}
