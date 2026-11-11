@@ -1086,6 +1086,23 @@ def planner_decision(
     )
 
 
+class SupervisorRuntimeStampTests(unittest.TestCase):
+    def test_stamp_records_the_pid_namespace_of_recorded_worker_pids(self) -> None:
+        state: dict[str, Any] = {}
+        with mock.patch.object(
+            supervisor, "current_pid_namespace", return_value="pid:[4026531836]"
+        ):
+            supervisor.stamp_supervisor_runtime_state(
+                config_fixture(),
+                state,
+                heartbeat_at="2026-11-11T02:00:00Z",
+                lifecycle="running",
+            )
+
+        self.assertEqual(state["supervisor"]["pid"], os.getpid())
+        self.assertEqual(state["supervisor"]["pid_namespace"], "pid:[4026531836]")
+
+
 class ReviewOnlyAgentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()
