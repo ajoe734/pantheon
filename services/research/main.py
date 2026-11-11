@@ -24,6 +24,13 @@ logger = logging.getLogger("research-orchestrator")
 from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthError, TenantBoundaryError, authenticate_tenant
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.registry.alpha_template import (
+    ALPHA_TEMPLATE_METADATA_KEY,
+    AlphaTemplateValidationError,
+    alpha_template_registry_id,
+    ensure_builtin_alpha_templates,
+)
+from services.registry.models import ArtifactType
 from services.registry.split_api import RegistryService
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
@@ -3751,3 +3758,104 @@ def get_research_note(note_id: str) -> Dict[str, Any]:
     if not result:
         raise HTTPException(status_code=404, detail=f"Research note '{note_id}' not found")
     return result
+
+
+class EvaluateAlphaTemplatesBody(BaseModel):
+    template_ids: Optional[List[str]] = None
+    market_data: Optional[Dict[str, Any]] = None
+    run_id: Optional[str] = None
+    task_id: Optional[str] = None
+    strict_stepwise: bool = False
+    redundancy_threshold: float = 0.9
+
+
+@app.post("/api/research-orchestrator/alpha-templates/evaluate", status_code=201)
+@app.post("/api/research/alpha-templates/evaluate", status_code=201)
+def evaluate_alpha_templates_endpoint(
+    body: Optional[EvaluateAlphaTemplatesBody] = Body(default=None),
+) -> Dict[str, Any]:
+    # Lazy import: the evaluator needs numpy/pandas, which are not installed in
+    # every environment that imports this module (e.g. evolution/policy-learning
+    # test suites); only the evaluate endpoint requires them.
+    from services.research.alpha_templates import run_alpha_template_evaluation
+
+    req = body or EvaluateAlphaTemplatesBody()
+    registry_service = RegistryService(get_registry_store())
+    try:
+        return run_alpha_template_evaluation(
+            research_store=get_store(),
+            registry_service=registry_service,
+            template_ids=req.template_ids,
+            universe=req.market_data,
+            run_id=req.run_id,
+            task_id=req.task_id,
+            strict_stepwise=req.strict_stepwise,
+            redundancy_threshold=req.redundancy_threshold,
+        )
+    except (AlphaTemplateValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/research-orchestrator/alpha-templates/evaluations")
+@app.get("/api/research/alpha-templates/evaluations")
+def list_alpha_template_evaluations_endpoint(
+    family: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    registry_service = RegistryService(get_registry_store())
+    ensure_builtin_alpha_templates(registry_service)
+    entries = [
+        v
+        for v in registry_service.list_all_entries()
+        if v.entry.artifact_type == ArtifactType.ALPHA_TEMPLATE
+    ]
+    items: List[Dict[str, Any]] = []
+    for view in entries:
+        meta = view.entry.metadata or {}
+        tmpl = meta.get(ALPHA_TEMPLATE_METADATA_KEY)
+        if not isinstance(tmpl, dict):
+            continue
+        if family and tmpl.get("family") != family:
+            continue
+        if status and tmpl.get("status") != status:
+            continue
+        eval_meta = meta.get("alpha_template_evaluation")
+        items.append(
+            {
+                "registry_id": view.entry.registry_id,
+                "template_id": tmpl.get("template_id"),
+                "name": tmpl.get("name"),
+                "family": tmpl.get("family"),
+                "scope": tmpl.get("scope"),
+                "status": tmpl.get("status"),
+                "evaluation_ref": tmpl.get("evaluation_ref"),
+                "duplicate_of": tmpl.get("duplicate_of"),
+                "evaluation": eval_meta,
+            }
+        )
+    return {"count": len(items), "items": items}
+
+
+@app.get("/api/research-orchestrator/alpha-templates/evaluations/{template_id:path}")
+@app.get("/api/research/alpha-templates/evaluations/{template_id:path}")
+def get_alpha_template_evaluation_endpoint(template_id: str) -> Dict[str, Any]:
+    registry_service = RegistryService(get_registry_store())
+    ensure_builtin_alpha_templates(registry_service)
+    reg_id = alpha_template_registry_id(template_id)
+    entry = registry_service.store.get(reg_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"AlphaTemplate '{template_id}' not found")
+    meta = entry.metadata or {}
+    tmpl = meta.get(ALPHA_TEMPLATE_METADATA_KEY) or {}
+    eval_ref = tmpl.get("evaluation_ref")
+    run_record = get_store().get_run(str(eval_ref)) if eval_ref else None
+    return {
+        "registry_id": entry.registry_id,
+        "template_id": tmpl.get("template_id"),
+        "status": tmpl.get("status"),
+        "evaluation_ref": eval_ref,
+        "duplicate_of": tmpl.get("duplicate_of"),
+        "template": tmpl,
+        "evaluation": meta.get("alpha_template_evaluation"),
+        "research_run": run_record,
+    }

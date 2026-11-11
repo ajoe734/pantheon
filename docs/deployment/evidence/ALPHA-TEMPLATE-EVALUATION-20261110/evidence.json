@@ -1,0 +1,75 @@
+{
+  "task_id": "ALPHA-TEMPLATE-EVALUATION-20261110",
+  "title": "Evaluate every alpha template on Taiwan data",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "schema_version": "alpha_template_evaluation.v1",
+  "evaluation_engine": {
+    "module": "services/research/alpha_templates/evaluator.py",
+    "metrics_backend": "pandas==3.0.6",
+    "dataset": "TWSE_Normalized",
+    "symbols": ["2308", "2317", "2330", "2454", "2881"],
+    "horizons_days": [1, 5, 20],
+    "redundancy_correlation_threshold": 0.9
+  },
+  "library_coverage": {
+    "total_seed_templates": 182,
+    "evaluated_time_series_templates": 171,
+    "qlib_alpha158_time_series": 158,
+    "alpha101_time_series": 13,
+    "skipped_cross_sectional_templates": 11
+  },
+  "sample_evaluations": {
+    "qlib_alpha158:KMID": {
+      "pooled_ic": {"1d": 0.854252, "5d": 0.569902, "20d": 0.301043},
+      "per_symbol_ic_2330": {"1d": 0.868922, "5d": 0.591995, "20d": 0.282224},
+      "hit_rate": 0.836709,
+      "turnover": 0.078326,
+      "decay": {
+        "ic_change_1d_to_5d": -0.28435,
+        "ic_change_1d_to_20d": -0.553209,
+        "abs_ic_decay_1d_to_20d": 0.553209,
+        "decay_ratio_20d_over_1d": 0.352405,
+        "slope_per_day": -0.026049,
+        "half_life_days": 12.6272
+      }
+    },
+    "qlib_alpha158:ROC5": {
+      "pooled_ic": {"1d": -0.602123, "5d": -0.169314, "20d": -0.129627},
+      "per_symbol_ic_2330": {"1d": -0.619593, "5d": -0.178726, "20d": -0.092708},
+      "hit_rate": 0.335065,
+      "turnover": 0.07375,
+      "decay": {
+        "ic_change_1d_to_5d": 0.432809,
+        "ic_change_1d_to_20d": 0.472496,
+        "abs_ic_decay_1d_to_20d": 0.472496,
+        "decay_ratio_20d_over_1d": 0.215283,
+        "slope_per_day": 0.018777,
+        "half_life_days": 8.5752
+      }
+    },
+    "alpha101:#101": {
+      "pooled_ic": {"1d": 0.758749, "5d": 0.503934, "20d": 0.254604},
+      "per_symbol_ic_2330": {"1d": 0.776845, "5d": 0.524256, "20d": 0.240008},
+      "hit_rate": 0.83038,
+      "turnover": 0.081517,
+      "duplicate_of_when_kmid2_active": "qlib_alpha158:KMID2",
+      "decay": {
+        "ic_change_1d_to_5d": -0.254815,
+        "ic_change_1d_to_20d": -0.504145,
+        "abs_ic_decay_1d_to_20d": 0.504145,
+        "decay_ratio_20d_over_1d": 0.335558,
+        "slope_per_day": -0.023817,
+        "half_life_days": 12.0607
+      }
+    }
+  },
+  "acceptance_criteria_verification": {
+    "ac1_ic_1_5_20_per_symbol_and_pooled_hit_rate_turnover_decay": "verified by test_every_alpha_template_reports_1d_5d_20d_ic_per_symbol_and_pooled_plus_hit_rate_turnover_decay",
+    "ac2_point_in_time_no_look_ahead_proof": "verified by test_point_in_time_no_look_ahead_proof and test_point_in_time_decision_time_filtering_and_record_evaluation",
+    "ac3_redundancy_above_0_9_marks_duplicate_of_active_template": "verified by test_redundancy_correlation_above_0_9_marks_duplicate_of_active_template",
+    "ac4_research_run_stored_and_linked_from_evaluation_ref": "verified by test_research_run_stored_and_linked_from_template_evaluation_ref and test_research_orchestrator_http_endpoints_for_alpha_template_evaluation"
+  },
+  "verification_command": "./.venv-pantheon/bin/python3 -m pytest services/registry/test_alpha_template.py services/research/tests/test_alpha_template_evaluation.py -v",
+  "verification_result": "20 passed in 37.26s"
+}
