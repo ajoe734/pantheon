@@ -11,10 +11,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date as _date_cls, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlencode
 
@@ -47,6 +50,17 @@ BROKER_BRANCH_DETAIL_SCHEMA_HASH = "tw_broker_branch_detail.v1"
 # Taiwan daily OHLCV truth is TWSE/TPEx official; FinMind price rows are a
 # research reference only and must never land in normalized/tw_price_daily.
 FINMIND_PRICE_REFERENCE_DATASET = "finmind_tw_price_reference"
+
+# SD_INTRADAY_MINUTE_BARS §3: KBar is a post-close (~15:50 Asia/Taipei) 1-minute
+# feed written ONLY to tw_price_1m, never to tw_price_daily (official truth).
+FINMIND_KBAR_DATASET = "TaiwanStockKBar"
+FINMIND_KBAR_NORMALIZED_DATASET = "tw_price_1m"
+FINMIND_KBAR_SCHEMA_HASH = "tw_price_1m.v1"
+FINMIND_KBAR_DOCUMENTED_PUBLICATION_LOCAL = "15:50"
+FINMIND_KBAR_HOURLY_SELF_LIMIT = 4500  # 6,000/h SponsorYear minus 25 % headroom
+TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+KBAR_SESSION_OPEN = (9, 0)
+KBAR_SESSION_LAST_BAR_START = (13, 30)  # inclusive; may be the closing-auction bar
 
 FINMIND_TAIWAN_DATASETS: tuple[dict[str, Any], ...] = (
     {
@@ -103,6 +117,13 @@ FINMIND_TAIWAN_DATASETS: tuple[dict[str, Any], ...] = (
         "normalized_dataset": "tw_broker_top",
         "minimum_tier": "sponsor",
         "history_start": FINMIND_BROKER_REPORT_HISTORY_START,
+        "cadence": "daily_after_close",
+    },
+    {
+        "dataset": FINMIND_KBAR_DATASET,
+        "normalized_dataset": FINMIND_KBAR_NORMALIZED_DATASET,
+        "minimum_tier": "sponsor",
+        "history_start": None,  # real availability is probed (evidence), not assumed
         "cadence": "daily_after_close",
     },
 )
@@ -804,6 +825,103 @@ def _extract_quota_meta(headers: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# KBar hourly self-limit (shared token: broker + daily jobs keep 25 % headroom)
+# ---------------------------------------------------------------------------
+
+
+class KBarHourlyBudget:
+    """Fixed-window per-hour request budget (default 4,500) with 402 stop.
+
+    ``acquire`` returns True when a request may be sent. After ``mark_quota_exhausted``
+    (HTTP 402) or when the hour's budget is spent, it returns False until the next
+    clock hour; callers stop the run and resume then. Nothing falls back to another
+    source and nothing retries a 402 within the same hour.
+    """
+
+    def __init__(self, limit: int = FINMIND_KBAR_HOURLY_SELF_LIMIT, *, clock: Any = None) -> None:
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+        self.limit = int(limit)
+        self._clock = clock or time.time
+        self._lock = threading.Lock()
+        self._window = self._current_window()
+        self._used = 0
+        self._blocked_window: int | None = None
+
+    def _current_window(self) -> int:
+        return int(self._clock() // 3600)
+
+    def _roll(self) -> None:
+        now = self._current_window()
+        if now != self._window:
+            self._window, self._used = now, 0
+        if self._blocked_window is not None and self._blocked_window != self._window:
+            self._blocked_window = None
+
+    def acquire(self) -> bool:
+        with self._lock:
+            self._roll()
+            if self._blocked_window == self._window or self._used >= self.limit:
+                return False
+            self._used += 1
+            return True
+
+    def mark_quota_exhausted(self) -> None:
+        with self._lock:
+            self._roll()
+            self._blocked_window = self._window
+
+    def seconds_until_next_window(self) -> int:
+        with self._lock:
+            self._roll()
+            return int((self._window + 1) * 3600 - self._clock()) + 1
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            self._roll()
+            return {
+                "limit_per_hour": self.limit,
+                "used_this_hour": self._used,
+                "blocked_by_402": self._blocked_window == self._window,
+                "window_start_epoch": self._window * 3600,
+            }
+
+
+@dataclass(frozen=True)
+class KBarFetchResult:
+    status: str  # "ok" | "budget_exhausted" | "quota_402"
+    payload: Mapping[str, Any] | None = None
+    quota_meta: Mapping[str, Any] = field(default_factory=dict)
+    budget: Mapping[str, Any] = field(default_factory=dict)
+    resume_after_seconds: int = 0
+
+
+def fetch_kbar(
+    fetcher: "FinMindLiveFetcher",
+    symbol: str,
+    date: str,
+    *,
+    budget: KBarHourlyBudget,
+) -> KBarFetchResult:
+    """Budgeted single symbol-day KBar fetch.
+
+    402 -> ``quota_402`` (stop, resume next hour, no retry). Credential errors
+    propagate (``FinMindCredentialError``) so the task reports blocked; no
+    placeholder data is ever produced.
+    """
+    if not budget.acquire():
+        return KBarFetchResult("budget_exhausted", budget=budget.snapshot(),
+                               resume_after_seconds=budget.seconds_until_next_window())
+    try:
+        payload, quota_meta = fetcher.fetch_kbar(symbol, date)
+    except FinMindQuotaError:
+        budget.mark_quota_exhausted()
+        return KBarFetchResult("quota_402", budget=budget.snapshot(),
+                               resume_after_seconds=budget.seconds_until_next_window())
+    return KBarFetchResult("ok", payload=payload, quota_meta=quota_meta, budget=budget.snapshot())
+
+
+# ---------------------------------------------------------------------------
 # FinMind live HTTP fetcher
 # ---------------------------------------------------------------------------
 
@@ -892,6 +1010,26 @@ class FinMindLiveFetcher:
             params["end_date"] = end_date
         url = _finmind_url(FINMIND_DATA_ENDPOINT, params)
         return self._get(url, token=token)
+
+    def fetch_kbar(
+        self,
+        symbol: str,
+        date: str,
+        *,
+        end_date: str | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Fetch FinMind ``TaiwanStockKBar`` for one ``(stock_id, date)``.
+
+        ``end_date`` is only passed by the bounded range probe; production
+        requests are always one symbol-day. Returns ``(payload, quota_meta)``
+        and adds ``fetched_at`` (UTC) to ``quota_meta`` taken right after the
+        response arrived. Same credential/402 handling as ``fetch_dataset``.
+        """
+        payload, quota_meta = self.fetch_dataset(
+            FINMIND_KBAR_DATASET, symbol=symbol, start_date=date, end_date=end_date or None
+        )
+        quota_meta["fetched_at"] = _utc_now()
+        return payload, quota_meta
 
     def fetch_broker_report(
         self,
@@ -1049,6 +1187,383 @@ class FinMindLiveFetcher:
             quota_meta["api_status"] = app_code
 
         return dict(payload), quota_meta
+
+
+# ---------------------------------------------------------------------------
+# KBar (1-minute) adapter -> tw_price_1m
+# ---------------------------------------------------------------------------
+
+
+def _parse_utc(value: str | datetime | None) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        raise ValueError(f"timestamp must be timezone-aware: {value!r}")
+    return dt.astimezone(timezone.utc)
+
+
+def _iso_utc(dt: datetime | None) -> str | None:
+    return None if dt is None else dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def compute_bar_availability_ts(
+    bar_end: datetime,
+    fetched_at: datetime | None,
+    reconciled_at: datetime | None,
+) -> datetime | None:
+    """``max(bar_end, fetched_at, reconciled_at)``; None until reconciled.
+
+    After-close data is never stamped ``bar_end``: it is obtainable only once it
+    was really fetched AND reconciled. Without ``reconciled_at`` the bar is
+    ``pending_reconciliation`` and invisible to loaders (SD §3, §6.3, §8).
+    """
+    if fetched_at is None or reconciled_at is None:
+        return None
+    return max(bar_end.astimezone(timezone.utc), fetched_at, reconciled_at)
+
+
+@dataclass(frozen=True)
+class KBarNormalization:
+    records: tuple[SourceRecord, ...]
+    raw_row_count: int
+    kept_bars: int
+    dropped_outside_session: int
+    dropped_malformed: int
+    conflicting_duplicates: tuple[str, ...]  # bar_start ISO values -> caller quarantines the day
+    identical_duplicates: int
+    rejected_non_trading_day: bool
+
+
+@dataclass(frozen=True)
+class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
+    """FinMind ``TaiwanStockKBar`` 1-minute bars normalized for ``tw_price_1m``.
+
+    Post-close feed. Keeps raw rows and a source hash; never writes
+    ``tw_price_daily``; ``bar_availability_ts`` is derived from real fetch and
+    reconciliation times only.
+    """
+
+    connector_id: str = "tw-finmind-kbar-1m"
+    secret_ref_id: str = "env://FINMIND_API_TOKEN"
+    entitlement_tier: str = "sponsor"
+    source_metadata: SourceMetadata | Mapping[str, Any] | None = None
+    connector_metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def connector(self) -> SourceConnector:
+        return SourceConnector(
+            connector_id=self.connector_id,
+            source_type="market",
+            provider="FinMind",
+            license_scope="vendor_research",
+            auth_type=AuthType.API_KEY,
+            secret_ref_id=self.secret_ref_id,
+            supported_modes=(ConnectorMode.BATCH,),
+            auth_policy=AuthPolicy(
+                auth_type=AuthType.API_KEY,
+                secret_ref={"secret_ref_id": self.secret_ref_id},
+                auth_scope=("finmind:read", "source_ingest:read"),
+            ),
+            license_policy=LicensePolicy(
+                license_scope="vendor_research",
+                allowed_use=("research", "backtest", "audit_evidence"),
+                attribution_required=True,
+                redistribution_allowed=False,
+                policy_ref="source-ingest://license/finmind-vendor-research",
+            ),
+            rate_limit_policy=RateLimitPolicy(
+                requests_per_minute=75,  # 4,500 / hour self-limit
+                burst=5,
+                retry_after_seconds=3600,
+                concurrency=1,
+                policy_ref=f"source-ingest://policy/finmind-{self.entitlement_tier}-kbar-4500ph",
+            ),
+            source_metadata=self.source_metadata
+            or SourceMetadata(
+                display_name="FinMind Taiwan 1-minute KBar",
+                homepage_url="https://finmindtrade.com/",
+                docs_url="https://finmind.github.io/tutor/TaiwanMarket/Technical/#taiwanstockkbar-sponsor",
+                owner="FinMind",
+                tags=("taiwan", "finmind", "research_grade", "intraday", "post_close"),
+            ),
+            metadata={
+                "source_class": "research_grade",
+                "does_not_replace_official_reference_truth": True,
+                "daily_truth_dataset": "tw_price_daily",
+                "normalized_dataset": FINMIND_KBAR_NORMALIZED_DATASET,
+                "feed_kind": "post_close_historical",
+                "documented_publication_local": FINMIND_KBAR_DOCUMENTED_PUBLICATION_LOCAL,
+                "hourly_self_limit": FINMIND_KBAR_HOURLY_SELF_LIMIT,
+                "schema_hash": FINMIND_KBAR_SCHEMA_HASH,
+                **dict(self.connector_metadata),
+            },
+        )
+
+    def fetch_config(self) -> Mapping[str, Any]:
+        return {
+            "mode": "provider_owned_adapter",
+            "next_watermark": None,
+            "adapter": "FinMindTaiwanKBarAdapter.records_from_kbar_payload",
+            "adapter_config": {"secret_ref_id": self.secret_ref_id},
+            "request": {},
+            "base_url": FINMIND_BASE_URL,
+            "endpoint": FINMIND_DATA_ENDPOINT,
+            "secret_ref_id": self.secret_ref_id,
+            "datasets": [d for d in FINMIND_TAIWAN_DATASETS if d["dataset"] == FINMIND_KBAR_DATASET],
+            "hourly_self_limit": FINMIND_KBAR_HOURLY_SELF_LIMIT,
+        }
+
+    def records_from_kbar_payload(
+        self,
+        payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        symbol: str,
+        session_date: str,
+        fetched_at: str | datetime,
+        reconciled_at: str | datetime | None = None,
+        provider_published_at: str | datetime | None = None,
+        quota_meta: Mapping[str, Any] | None = None,
+        is_trading_day: Any = None,
+        trace_id: str = "",
+    ) -> tuple[SourceRecord, ...]:
+        return self.normalize_kbar_payload(
+            payload,
+            symbol=symbol,
+            session_date=session_date,
+            fetched_at=fetched_at,
+            reconciled_at=reconciled_at,
+            provider_published_at=provider_published_at,
+            quota_meta=quota_meta,
+            is_trading_day=is_trading_day,
+            trace_id=trace_id,
+        ).records
+
+    def normalize_kbar_payload(
+        self,
+        payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        symbol: str,
+        session_date: str,
+        fetched_at: str | datetime,
+        reconciled_at: str | datetime | None = None,
+        provider_published_at: str | datetime | None = None,
+        quota_meta: Mapping[str, Any] | None = None,
+        is_trading_day: Any = None,
+        trace_id: str = "",
+    ) -> KBarNormalization:
+        """Normalize one symbol-day. ``fetched_at`` must be the real fetch time.
+
+        ``provider_published_at`` is only recorded when the provider (or an
+        observation probe) supplied it; it is never invented. ``reconciled_at``
+        is None until K3 reconciles the day, which keeps ``bar_availability_ts``
+        None (pending_reconciliation).
+        """
+        symbol = _text(symbol).upper()
+        fetched = _parse_utc(fetched_at)
+        if fetched is None:
+            raise ValueError("fetched_at is required (real fetch time)")
+        reconciled = _parse_utc(reconciled_at)
+        published = _parse_utc(provider_published_at)
+        day = _date_cls.fromisoformat(session_date)
+        rows = _rows_from_payload(payload)
+
+        if is_trading_day is not None and not is_trading_day(day):
+            return KBarNormalization((), len(rows), 0, 0, 0, (), 0, True)
+
+        open_t = KBAR_SESSION_OPEN
+        last_t = KBAR_SESSION_LAST_BAR_START
+        outside = malformed = identical = 0
+        by_start: dict[str, tuple[dict[str, Any], Mapping[str, Any]]] = {}
+        conflicts: list[str] = []
+        quota = {k: v for k, v in dict(quota_meta or {}).items() if k != "request_url"}
+        request_id = _stable_hash({"dataset": FINMIND_KBAR_DATASET, "symbol": symbol, "date": session_date})
+        raw_hash_total = _stable_hash({"rows": [dict(r) for r in rows]})
+
+        for row in rows:
+            row_symbol = _text(_first(row, "stock_id", "data_id", "symbol")).upper()
+            if row_symbol and row_symbol != symbol:
+                malformed += 1
+                continue
+            if _text(row.get("date")) and _text(row.get("date"))[:10] != session_date:
+                malformed += 1
+                continue
+            minute = _text(row.get("minute"))
+            try:
+                hh, mm = int(minute[0:2]), int(minute[3:5])
+                start_local = datetime(day.year, day.month, day.day, hh, mm, tzinfo=TAIPEI_TZ)
+            except (ValueError, IndexError):
+                malformed += 1
+                continue
+            if (hh, mm) < open_t or (hh, mm) > last_t:
+                outside += 1
+                continue
+            prices = [_number(row.get(k)) for k in ("open", "high", "low", "close")]
+            volume = _number(row.get("volume"))
+            if any(p is None for p in prices) or volume is None:
+                malformed += 1
+                continue
+            start_iso = start_local.isoformat()
+            normalized = {
+                "symbol": symbol,
+                "session_date": session_date,
+                "bar_start": start_iso,
+                "bar_end": (start_local + timedelta(minutes=1)).isoformat(),
+                "open": prices[0], "high": prices[1], "low": prices[2], "close": prices[3],
+                "volume": volume,
+            }
+            if start_iso in by_start:
+                prev = by_start[start_iso][0]
+                if all(prev[k] == normalized[k] for k in ("open", "high", "low", "close", "volume")):
+                    identical += 1
+                else:
+                    conflicts.append(start_iso)
+                continue
+            by_start[start_iso] = (normalized, row)
+
+        records: list[SourceRecord] = []
+        for start_iso in sorted(by_start):
+            normalized, raw = by_start[start_iso]
+            bar_end = datetime.fromisoformat(normalized["bar_end"])
+            availability = compute_bar_availability_ts(bar_end, fetched, reconciled)
+            row_hash = _stable_hash({"dataset": FINMIND_KBAR_DATASET, "row": dict(raw)})
+            normalized = {
+                **normalized,
+                "provider_published_at": _iso_utc(published),
+                "fetched_at": _iso_utc(fetched),
+                "reconciled_at": _iso_utc(reconciled),
+                "bar_availability_ts": _iso_utc(availability),
+            }
+            records.append(
+                SourceRecord(
+                    source_id=f"finmind:{FINMIND_KBAR_DATASET}:{symbol}:{start_iso}:{row_hash}",
+                    connector_id=self.connector_id,
+                    source_type="market",
+                    title=f"FinMind {FINMIND_KBAR_DATASET} {symbol} {start_iso}",
+                    content_ref=f"finmind://data/{FINMIND_KBAR_DATASET}/{symbol}/{start_iso}/{row_hash}",
+                    metadata={
+                        "source_class": "research_grade",
+                        "provider": "FinMind",
+                        "source": "finmind",
+                        "dataset": FINMIND_KBAR_NORMALIZED_DATASET,
+                        "source_dataset": FINMIND_KBAR_DATASET,
+                        "normalized_target": FINMIND_KBAR_NORMALIZED_DATASET,
+                        "symbol": symbol,
+                        "as_of_date": session_date,
+                        "event_time": normalized["bar_end"],
+                        # PIT: obtainable only when really fetched AND reconciled.
+                        "available_time": normalized["bar_availability_ts"],
+                        "availability_status": "available" if availability else "pending_reconciliation",
+                        "request_id": request_id,
+                        "source_hash": row_hash,
+                        "response_content_hash": raw_hash_total,
+                        "raw_row": dict(raw),
+                        "normalized_row": normalized,
+                        "quota_meta": quota,
+                        "redistribution_allowed": False,
+                        "body": json.dumps(normalized, ensure_ascii=False, sort_keys=True),
+                        "access_scope": ["research"],
+                        "license_scope": "vendor_research",
+                        "entitlement_tier": self.entitlement_tier,
+                        "schema_hash": FINMIND_KBAR_SCHEMA_HASH,
+                    },
+                    trace_id=trace_id,
+                )
+            )
+        return KBarNormalization(
+            records=tuple(records),
+            raw_row_count=len(rows),
+            kept_bars=len(records),
+            dropped_outside_session=outside,
+            dropped_malformed=malformed,
+            conflicting_duplicates=tuple(conflicts),
+            identical_duplicates=identical,
+            rejected_non_trading_day=False,
+        )
+
+
+# --- bounded real-source probes (pure analysis; the HTTP calls are made by the caller) ---
+
+
+def classify_range_probe(
+    single_day_rows: Sequence[Mapping[str, Any]],
+    range_rows: Sequence[Mapping[str, Any]] | None,
+    *,
+    start_date: str,
+    end_date: str,
+    range_error: str | None = None,
+) -> dict[str, Any]:
+    """Decide whether KBar accepts ``start_date..end_date`` from one probe request."""
+    if range_error is not None:
+        return {"range_supported": False, "reason": f"range_request_failed: {range_error}"}
+    dates = sorted({_text(r.get("date"))[:10] for r in (range_rows or []) if _text(r.get("date"))})
+    multi = len(dates) > 1 and start_date <= dates[0] and dates[-1] <= end_date
+    return {
+        "range_supported": multi,
+        "distinct_dates_returned": dates,
+        "single_day_row_count": len(single_day_rows),
+        "range_row_count": len(range_rows or []),
+        "reason": "multiple_dates_returned" if multi else "range_returned_at_most_one_date",
+    }
+
+
+def measure_volume_unit(
+    kbar_rows: Sequence[Mapping[str, Any]],
+    official_daily_volume_shares: float,
+    *,
+    tolerance: float = 0.02,
+) -> dict[str, Any]:
+    """Compare summed KBar volume with official daily volume; infer the unit factor.
+
+    ``unit_factor`` = kbar_sum * factor ≈ official shares; 1 = shares, 1000 = lots.
+    Returns ``unit_factor=None`` (undetermined) when no candidate is within tolerance.
+    """
+    total = sum(v for v in (_number(r.get("volume")) for r in kbar_rows) if v is not None)
+    result: dict[str, Any] = {"kbar_volume_sum": total, "official_volume_shares": official_daily_volume_shares}
+    if total <= 0 or official_daily_volume_shares <= 0:
+        return {**result, "unit_factor": None, "relative_error": None, "reason": "no_volume"}
+    best: tuple[float, int] | None = None
+    for factor in (1, 1000):
+        err = abs(total * factor - official_daily_volume_shares) / official_daily_volume_shares
+        if best is None or err < best[0]:
+            best = (err, factor)
+    assert best is not None
+    if best[0] <= tolerance:
+        return {**result, "unit_factor": best[1], "relative_error": best[0], "reason": "within_tolerance"}
+    return {**result, "unit_factor": None, "relative_error": best[0], "reason": "outside_tolerance"}
+
+
+def observe_publication_time(observations: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Summarise real polling observations of when a session's KBar first appeared.
+
+    Each observation: ``{"session_date", "polled_at"(UTC), "row_count"}``. The first
+    poll with rows per session bounds publication from above; the last empty poll
+    bounds it from below. Local (Asia/Taipei) times are reported.
+    """
+    by_date: dict[str, list[tuple[datetime, int]]] = {}
+    for obs in observations:
+        polled = _parse_utc(obs["polled_at"])
+        if polled is None:
+            continue
+        by_date.setdefault(str(obs["session_date"]), []).append((polled, int(obs.get("row_count") or 0)))
+    out: dict[str, Any] = {}
+    for session, polls in sorted(by_date.items()):
+        polls.sort()
+        first_with_rows = next((p for p, n in polls if n > 0), None)
+        empties_before = [p for p, n in polls if n == 0 and (first_with_rows is None or p < first_with_rows)]
+        last_empty = max(empties_before) if empties_before else None
+        out[session] = {
+            "first_seen_with_rows_local": first_with_rows.astimezone(TAIPEI_TZ).isoformat() if first_with_rows else None,
+            "last_empty_poll_local": last_empty.astimezone(TAIPEI_TZ).isoformat() if last_empty else None,
+            "published_between_local": [
+                last_empty.astimezone(TAIPEI_TZ).strftime("%H:%M") if last_empty else None,
+                first_with_rows.astimezone(TAIPEI_TZ).strftime("%H:%M") if first_with_rows else None,
+            ],
+            "polls": len(polls),
+        }
+    return {"sessions": out, "documented_publication_local": FINMIND_KBAR_DOCUMENTED_PUBLICATION_LOCAL}
 
 
 # ---------------------------------------------------------------------------

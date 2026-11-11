@@ -24,6 +24,7 @@ from .connectors.finmind_taiwan import (
     FinMindFetchError,
     FinMindLiveFetcher,
     FinMindTaiwanBrokerBulkBackfillAdapter,
+    FinMindTaiwanKBarAdapter,
     FinMindTaiwanBrokerDailyReportAdapter,
     FinMindTaiwanDatasetAdapter,
 )
@@ -318,6 +319,23 @@ def _finmind_broker(
     return tuple(
         replace(record, metadata={**dict(record.metadata), "refresh_coverage": coverage})
         for record in records
+    )
+
+
+def _finmind_kbar(
+    adapter: FinMindTaiwanKBarAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    return adapter.records_from_kbar_payload(
+        _require(request.get("payload"), "payload"),
+        symbol=str(_require(request.get("symbol"), "symbol")),
+        session_date=str(_require(request.get("date") or request.get("run_date"), "date")),
+        fetched_at=_require(request.get("fetched_at"), "fetched_at"),
+        reconciled_at=request.get("reconciled_at"),
+        provider_published_at=request.get("provider_published_at"),
+        quota_meta=request.get("quota_meta"),
+        trace_id=trace_id,
     )
 
 
@@ -1066,6 +1084,7 @@ PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
     "FinMindTaiwanDatasetAdapter": "FinMindTaiwanDatasetAdapter.records_from_data_payload",
     "FinMindTaiwanBrokerDailyReportAdapter": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
     "FinMindTaiwanBrokerBulkBackfillAdapter": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
+    "FinMindTaiwanKBarAdapter": "FinMindTaiwanKBarAdapter.records_from_kbar_payload",
     "YahooTaiwanBrokerTopAdapter": "YahooTaiwanBrokerTopAdapter.records_from_html",
     "YahooTaiwanRssAdapter": "YahooTaiwanRssAdapter.records_from_rss",
     "AnueTaiwanRssAdapter": "AnueTaiwanRssAdapter.records_from_rss",
@@ -1117,6 +1136,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         token="FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
         adapter_cls=FinMindTaiwanBrokerBulkBackfillAdapter,
         handler=_finmind_storage,
+        config_keys=("secret_ref_id",),
+    ),
+    "FinMindTaiwanKBarAdapter.records_from_kbar_payload": ProviderAdapterSpec(
+        token="FinMindTaiwanKBarAdapter.records_from_kbar_payload",
+        adapter_cls=FinMindTaiwanKBarAdapter,
+        handler=_finmind_kbar,
         config_keys=("secret_ref_id",),
     ),
     "YahooTaiwanBrokerTopAdapter.records_from_html": ProviderAdapterSpec(
