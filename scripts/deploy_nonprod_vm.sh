@@ -2233,10 +2233,19 @@ elif action == "restore":
         "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
         "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
     })
-# "compose up --no-build" starts whatever image the Compose name resolves to.
-# Never recreate source-ingest on any image other than the recorded running one
-# (a stale tag once started a rejected candidate here): stop before recreating.
+# "compose up --no-build" starts whatever image the Compose name resolves to, and
+# a stale plain tag left by an earlier failed deploy once pointed at a rejected
+# candidate. Pin source-ingest to the recorded running image ID with a Compose
+# override so neither the bounded refresh nor its restore depends on any tag, and
+# stop before recreating unless the pinned image exists locally under that exact ID.
 if expected_img:
+    import atexit, shutil, tempfile
+    pin_dir = tempfile.mkdtemp(prefix="source-ingest-pin-")
+    atexit.register(shutil.rmtree, pin_dir, ignore_errors=True)
+    pin_file = os.path.join(pin_dir, "source-ingest-pin.json")
+    with open(pin_file, "w", encoding="utf-8") as f:
+        json.dump({"services": {"source-ingest": {"image": expected_img, "pull_policy": "never"}}}, f)
+    cmd += ["-f", pin_file]
     try:
         model = json.loads(subprocess.check_output(cmd + ["config", "--format", "json", "source-ingest"], env=env, text=True))
         ref = (model["services"]["source-ingest"].get("image") or "pantheon-source-ingest")
