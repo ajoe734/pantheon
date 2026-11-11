@@ -129,6 +129,7 @@ def _seed_default_feature_catalogue() -> None:
         ("tw_macro_cbc", "policy_rate", 1, "CBC policy discount rate"),
         ("tw_macro_cbc", "m1b_yoy", 25, "CBC M1B money supply YoY"),
         ("tw_macro_cbc", "m2_yoy", 25, "CBC M2 money supply YoY"),
+        ("tw_macro_cbc", "usd_twd", 1, "CBC NT$ per US$ exchange rate (BP01D01 column 01)"),
         ("tw_macro_ndc", "monitoring_score", 28, "NDC business cycle monitoring score"),
         ("tw_macro_ndc", "leading_index", 28, "NDC composite leading index"),
         ("tw_macro_ndc", "coincident_index", 28, "NDC composite coincident index"),

@@ -32,9 +32,9 @@ import shutil
 import tempfile
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from services.external_egress import open_external_url
 
@@ -357,6 +357,13 @@ class CollectorBundleAdapter:
     raw_root: str | None = None
     max_records: int = 500
     transport: BundleTransport | None = None
+    # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
+    # in addition to the symbols that have stored daily bars under the storage roots.
+    known_instruments: tuple[str, ...] = ()
+    # Extra provider-series mappings: (provider_series_id, dataset, field, source, period_kind).
+    macro_series_map: tuple[tuple[str, str, str, str, str], ...] = ()
+    # Injectable clock for ingest-time stamping (tests, replays); defaults to UTC now.
+    clock: Callable[[], datetime] | None = None
 
     def __post_init__(self) -> None:
         if self.source_type not in COLLECTOR_SOURCE_TYPES:
@@ -444,7 +451,6 @@ class CollectorBundleAdapter:
         *,
         cursor: str | None = None,
         trace_id: str = "",
-        prior_daily_counts: Mapping[str, Mapping[str, int]] | None = None,
     ) -> CollectorPullResult:
         transport = self._transport()
         index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
@@ -497,13 +503,7 @@ class CollectorBundleAdapter:
         )
         # Governed macro / community sources also emit normalized point-in-time feature
         # records (listed first so a record cap never drops them in favour of raw items).
-        if prior_daily_counts is None and (
-            self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social"
-        ):
-            prior_daily_counts = stored_community_daily_counts(self._raw_root())
-        feature_records, feature_rejected = self.governed_feature_records(
-            records, prior_daily_counts=prior_daily_counts, trace_id=trace_id
-        )
+        feature_records, feature_rejected = self.governed_feature_records(records, trace_id=trace_id)
         return CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
@@ -657,22 +657,75 @@ class CollectorBundleAdapter:
         )
         return validate_external_source_record(record, connector=self.connector(), force=True)
 
+    def _instrument_authority(self) -> dict[str, tuple[str, ...]]:
+        authority = {k: set(v) for k, v in stored_instrument_authority(self._raw_root()).items()}
+        explicit = os.environ.get("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT")
+        if explicit:
+            for k, v in stored_instrument_authority(explicit).items():
+                authority.setdefault(k, set()).update(v)
+        for symbol in self.known_instruments:
+            canonical = str(symbol).strip().upper()
+            if "." in canonical:
+                authority.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+        return {k: tuple(sorted(v)) for k, v in authority.items()}
+
+    def _community_ledger_path(self) -> Path:
+        return self._raw_root() / "state" / _slug(self.connector_id) / "community_ledger.jsonl"
+
     def governed_feature_records(
         self,
         records: Sequence[SourceRecord],
         *,
-        prior_daily_counts: Mapping[str, Mapping[str, int]] | None = None,
         trace_id: str = "",
     ) -> tuple[tuple[SourceRecord, ...], tuple[dict[str, str], ...]]:
         """Derive storable governed feature records (macro series or community daily).
 
-        Returns ``(records, rejected)``; datasets other than the two governed bundle
-        feature datasets yield nothing.
+        Community rows are rebuilt from a persisted per-post ledger (de-duplicated, so
+        replays and multiple pulls in one Taipei day aggregate the whole day). Returns
+        ``(records, rejected)``; other datasets yield nothing.
         """
         if self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
-            rows, rejected = macro_feature_rows(records)
+            extra = {}
+            for provider_id, dataset, field_name, source, period_kind in self.macro_series_map:
+                extra.setdefault(provider_id, []).append((dataset, field_name, source, period_kind))
+            rows, rejected = macro_feature_rows(records, extra_series_map=extra)
         elif self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
-            rows, rejected = community_daily_feature_rows(records, prior_daily_counts=prior_daily_counts), ()
+            path = self._community_ledger_path()
+            ledger = load_community_ledger(path)
+            now = _feature_iso(self.clock() if self.clock else datetime.now(timezone.utc))
+            entries, rejected_list = community_ledger_entries(
+                records, authority=self._instrument_authority(), seen_at=now
+            )
+            fresh = [e for e in entries if e["key"] not in ledger]
+            if fresh:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as handle:
+                    for entry in {e["key"]: e for e in fresh}.values():
+                        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+            ledger = load_community_ledger(path)
+            emitted_path = path.with_name("community_emitted.jsonl")
+            done = []
+            if emitted_path.is_file():
+                done = [
+                    (d["symbol"], d["day"], d["step"])
+                    for d in (json.loads(x) for x in emitted_path.read_text(encoding="utf-8").splitlines() if x.strip())
+                ]
+            rows = community_daily_rows_from_ledger(
+                ledger, {(e["symbol"], e["day"]) for e in entries}, now=_feature_time(now), emitted=done
+            )
+            known = set(done)
+            new_markers = []
+            for r in rows:
+                marker = (r["symbol"], r["event_time"], r["available_time"])
+                if marker not in known:
+                    known.add(marker)
+                    new_markers.append(marker)
+            if new_markers:
+                emitted_path.parent.mkdir(parents=True, exist_ok=True)
+                with emitted_path.open("a", encoding="utf-8") as handle:
+                    for m in new_markers:
+                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
+            rejected = rejected_list
         else:
             return (), ()
         return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), tuple(rejected)
@@ -743,107 +796,186 @@ def _feature_iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _month_end(year: int, month: int) -> date:
+    nxt = date(year + (month == 12), month % 12 + 1, 1)
+    return nxt - timedelta(days=1)
+
+
+def normalize_macro_period(raw: Any, period_kind: str) -> date:
+    """Normalize a provider period (``YYYY-MM-DD``, ``YYYY-MM``, ``YYYYMM``, ``YYYY-Qn``) to its event date.
+
+    ``day`` keeps the date; ``month`` and ``quarter`` use the period end so the declared
+    availability lag counts from when the period closed (never from its first day).
+    """
+    import re
+
+    text = str(raw or "").strip()
+    if not text:
+        raise SourceEvidenceError("macro period is empty")
+    quarter = re.fullmatch(r"(\d{4})-?Q([1-4])", text, re.IGNORECASE)
+    if quarter:
+        year, q = int(quarter.group(1)), int(quarter.group(2))
+        return _month_end(year, q * 3)
+    if re.fullmatch(r"\d{6}", text):
+        text = f"{text[:4]}-{text[4:]}"
+    month_only = re.fullmatch(r"(\d{4})-(\d{2})", text)
+    if month_only:
+        return _month_end(int(month_only.group(1)), int(month_only.group(2)))
+    day = _feature_time(text).astimezone(_TAIPEI_TZ).date() if "T" in text else date.fromisoformat(text[:10])
+    if period_kind == "month":
+        return _month_end(day.year, day.month)
+    if period_kind == "quarter":
+        return _month_end(day.year, (day.month - 1) // 3 * 3 + 3)
+    return day
+
+
+def _macro_source_value(meta: Mapping[str, Any], source: str) -> Any:
+    if source == "value":
+        return meta.get("value")
+    if source.startswith("metrics."):
+        metrics = meta.get("metrics") if isinstance(meta.get("metrics"), Mapping) else {}
+        return metrics.get(source.split(".", 1)[1])
+    return None
+
+
 def macro_feature_rows(
     records: Sequence[SourceRecord],
+    *,
+    extra_series_map: Mapping[str, Sequence[Any]] | None = None,
 ) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, str], ...]]:
     """Normalize macro bundle records (CBC / NDC / DGBAS) into governed series rows.
 
-    ``series_id`` must be a catalogued macro series (``<agency>_<field>``); unknown
-    series, non-numeric values, or availability earlier than the period are rejected,
-    never imputed. Returns ``(rows, rejected)``.
+    Provider series ids (``CBC:BP01D01:01``, ``NDC:6099:MONITORING_SCORE``, ...) are mapped
+    through ``PROVIDER_SERIES_MAP`` (plus ``extra_series_map``); one record can expand into
+    several catalogue fields (NDC score + leading + coincident). Catalogue-native ids
+    (``<agency>_<field>``) are also accepted. Unmapped series, non-numeric values, or
+    availability earlier than the period are rejected, never imputed.
     """
-    from ..feature_catalogue import MACRO_SERIES_MAP, lag_days_for
+    from ..feature_catalogue import MACRO_SERIES_MAP, PROVIDER_SERIES_MAP, ProviderSeriesMapping, lag_days_for
 
+    provider_map: dict[str, tuple[Any, ...]] = {k: tuple(v) for k, v in PROVIDER_SERIES_MAP.items()}
+    for key, mappings in (extra_series_map or {}).items():
+        provider_map[str(key)] = tuple(
+            m if isinstance(m, ProviderSeriesMapping) else ProviderSeriesMapping(*m) for m in mappings
+        )
     rows: list[dict[str, Any]] = []
     rejected: list[dict[str, str]] = []
     for record in records:
         meta = record.metadata
         series_id = str(meta.get("series_id") or "").strip()
-        target = MACRO_SERIES_MAP.get(series_id)
-        if target is None:
+        mappings = provider_map.get(series_id)
+        if mappings is None and series_id in MACRO_SERIES_MAP:
+            dataset, field_name = MACRO_SERIES_MAP[series_id]
+            mappings = (ProviderSeriesMapping(dataset, field_name, "value", "day"),)
+        if mappings is None:
             rejected.append({"source_id": record.source_id, "reason": f"series_id {series_id!r} is not catalogued"})
             continue
-        value = meta.get("value")
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
-            rejected.append({"source_id": record.source_id, "reason": "value is not numeric"})
-            continue
+        metrics = meta.get("metrics") if isinstance(meta.get("metrics"), Mapping) else {}
         try:
-            period = _feature_time(meta.get("period_end") or meta.get("event_time"))
             available = _feature_time(meta.get("available_time"))
             ingest = _feature_time(meta.get("ingest_time"))
         except (ValueError, SourceEvidenceError) as exc:
             rejected.append({"source_id": record.source_id, "reason": f"invalid time: {exc}"})
             continue
-        if available < period:
-            rejected.append({"source_id": record.source_id, "reason": "available_time precedes period"})
-            continue
-        dataset, field_name = target
-        rows.append(
-            {
-                "dataset": TW_MACRO_SERIES_DATASET,
-                "catalogue_dataset": dataset,
-                "field": field_name,
-                "series_id": series_id,
-                "symbol": series_id,
-                "event_time": period.date().isoformat(),
-                "date": period.date().isoformat(),
-                "available_time": _feature_iso(available),
-                "ingest_time": _feature_iso(ingest),
-                "availability_lag_days": lag_days_for(dataset, field_name),
-                "value": float(value),
-                "unit": str(meta.get("unit") or ""),
-                "source_id": record.source_id,
-                "connector_id": record.connector_id,
-            }
-        )
+        for mapping in mappings:
+            value = _macro_source_value(meta, mapping.source)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+                rejected.append({"source_id": record.source_id, "reason": f"{mapping.field}: value is not numeric"})
+                continue
+            try:
+                period_raw = meta.get("period_end") or metrics.get("period") or meta.get("event_time")
+                period_day = normalize_macro_period(period_raw, mapping.period_kind)
+            except (ValueError, SourceEvidenceError) as exc:
+                rejected.append({"source_id": record.source_id, "reason": f"invalid time: {exc}"})
+                continue
+            if available.date() < period_day:
+                rejected.append({"source_id": record.source_id, "reason": "available_time precedes period"})
+                continue
+            rows.append(
+                {
+                    "dataset": TW_MACRO_SERIES_DATASET,
+                    "catalogue_dataset": mapping.dataset,
+                    "field": mapping.field,
+                    "series_id": f"{mapping.dataset.removeprefix('tw_macro_')}_{mapping.field}",
+                    "provider_series_id": series_id,
+                    "symbol": f"{mapping.dataset.removeprefix('tw_macro_')}_{mapping.field}",
+                    "event_time": period_day.isoformat(),
+                    "date": period_day.isoformat(),
+                    "available_time": _feature_iso(available),
+                    "ingest_time": _feature_iso(ingest),
+                    "availability_lag_days": lag_days_for(mapping.dataset, mapping.field),
+                    "value": float(value),
+                    "unit": str(meta.get("unit") or ""),
+                    "source_id": record.source_id,
+                    "connector_id": record.connector_id,
+                }
+            )
     return tuple(rows), tuple(rejected)
 
 
-def stored_community_daily_counts(root: str | Path) -> dict[str, dict[str, int]]:
-    """Read persisted per-symbol daily post counts from stored ``tw_community_daily`` rows.
+# -- community daily features -------------------------------------------------
 
-    Incremental (cursor-advancing) pulls only see new posts, so the rolling window for
-    ``attention_zscore`` is rebuilt from the normalized rows already in the store.
+SOCIAL_SYMBOL_AUTHORITY_DATASET = "tw_price_daily"
+
+
+def stored_instrument_authority(*roots: str | Path) -> dict[str, tuple[str, ...]]:
+    """Governed instrument identities: venue-qualified symbols that have stored daily bars.
+
+    Returns ``{ticker: (canonical, ...)}`` (e.g. ``{"2330": ("2330.TWSE",)}``) read from the
+    normalized ``tw_price_daily`` rows under each root.
     """
-    base = Path(root) / "normalized" / _slug(TW_COMMUNITY_DAILY_DATASET)
-    counts: dict[str, dict[str, int]] = {}
-    if not base.is_dir():
-        return counts
-    for path in sorted(base.glob("date=*/*.jsonl*")):
-        opener = gzip.open if path.suffix == ".gz" else Path.open
-        try:
-            with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[operator]
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    meta = (json.loads(line) or {}).get("metadata") or {}
-                    row = meta.get("normalized_row") or {}
-                    symbol, day, volume = row.get("symbol"), row.get("event_time"), row.get("post_volume")
-                    if symbol and day and isinstance(volume, (int, float)):
-                        counts.setdefault(str(symbol), {})[str(day)[:10]] = int(volume)
-        except (OSError, ValueError):
+    found: dict[str, set[str]] = {}
+    for root in roots:
+        base = Path(root) / "normalized" / _slug(SOCIAL_SYMBOL_AUTHORITY_DATASET)
+        if not base.is_dir():
             continue
-    return counts
+        for path in sorted(base.glob("date=*/*.jsonl*")):
+            opener = gzip.open if path.suffix == ".gz" else Path.open
+            try:
+                with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[operator]
+                    for line in handle:
+                        if not line.strip():
+                            continue
+                        meta = (json.loads(line) or {}).get("metadata") or {}
+                        nrow = meta.get("normalized_row") or {}
+                        canonical = str(meta.get("symbol_canonical") or nrow.get("symbol_canonical") or "").upper()
+                        if "." in canonical:
+                            found.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+            except (OSError, ValueError):
+                continue
+    return {ticker: tuple(sorted(c)) for ticker, c in found.items()}
 
 
-def community_daily_feature_rows(
+def resolve_social_symbol(raw: Any, authority: Mapping[str, Sequence[str]]) -> str:
+    """Resolve a collector symbol to its venue-qualified canonical symbol.
+
+    Explicit suffixes (``2330.TW`` / ``.TWO``) are canonicalized. A bare ticker must match
+    exactly one governed instrument; unknown or ambiguous tickers raise (never guessed).
+    """
+    from .taiwan_official import canonical_taiwan_equity_symbol
+
+    text = str(raw or "").strip().upper()
+    if not text:
+        raise SourceEvidenceError("social symbol is empty")
+    if "." in text:
+        return canonical_taiwan_equity_symbol(text)
+    candidates = tuple(authority.get(text) or ())
+    if not candidates:
+        raise SourceEvidenceError(f"symbol {text!r} has no governed instrument (no stored daily bars)")
+    if len(candidates) > 1:
+        raise SourceEvidenceError(f"symbol {text!r} is ambiguous across venues: {', '.join(candidates)}")
+    return candidates[0]
+
+
+def community_ledger_entries(
     records: Sequence[SourceRecord],
     *,
-    prior_daily_counts: Mapping[str, Mapping[str, int]] | None = None,
-) -> tuple[dict[str, Any], ...]:
-    """Aggregate community posts into daily per-symbol features (design §8.5).
-
-    Days are Asia/Taipei days. ``post_volume`` is the post count; ``attention_zscore``
-    compares it with the preceding up to 20 days (needs at least 5 days of history,
-    else it is omitted); ``bull_bear_ratio`` is ``(bull + 1) / (bear + 1)`` over posts
-    with an explicit stance label (omitted when no post is labelled). A day's row is
-    available only after that day closes and after its latest contributing post was
-    fetched, so a decision inside the day never sees its own aggregate.
-    """
-    from statistics import mean, pstdev
-
-    buckets: dict[tuple[str, str], dict[str, Any]] = {}
+    authority: Mapping[str, Sequence[str]],
+    seen_at: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Per-(post, canonical symbol) ledger entries from social records; unresolvable symbols are rejected."""
+    entries: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
     for record in records:
         meta = record.metadata
         symbols = meta.get("symbols") or ([meta["symbol"]] if meta.get("symbol") else [])
@@ -852,57 +984,149 @@ def community_daily_feature_rows(
         try:
             event = _feature_time(meta.get("event_time"))
             available = _feature_time(meta.get("available_time"))
-        except (ValueError, SourceEvidenceError):
+        except (ValueError, SourceEvidenceError) as exc:
+            rejected.append({"source_id": record.source_id, "reason": f"invalid time: {exc}"})
             continue
-        day = event.astimezone(_TAIPEI_TZ).date()
+        post_key = str(meta.get("post_id") or record.source_id)
         metrics = meta.get("metrics") if isinstance(meta.get("metrics"), Mapping) else {}
         stance = str(metrics.get("sentiment") or metrics.get("stance") or meta.get("sentiment") or "").strip().lower()
-        for symbol in {str(s).strip().upper() for s in symbols if str(s).strip()}:
-            bucket = buckets.setdefault(
-                (symbol, day.isoformat()),
-                {"posts": 0, "bull": 0, "bear": 0, "available": available},
+        stance = "bull" if stance in _BULLISH_LABELS else "bear" if stance in _BEARISH_LABELS else ""
+        canonical_symbols: set[str] = set()
+        for raw in symbols:
+            if not str(raw).strip():
+                continue
+            try:
+                canonical_symbols.add(resolve_social_symbol(raw, authority))
+            except SourceEvidenceError as exc:
+                rejected.append({"source_id": record.source_id, "reason": str(exc)})
+        for symbol in sorted(canonical_symbols):
+            entries.append(
+                {
+                    "key": f"{post_key}|{symbol}",
+                    "symbol": symbol,
+                    "day": event.astimezone(_TAIPEI_TZ).date().isoformat(),
+                    "stance": stance,
+                    "available": _feature_iso(available),
+                    "first_seen": seen_at,
+                }
             )
-            bucket["posts"] += 1
-            bucket["bull"] += stance in _BULLISH_LABELS
-            bucket["bear"] += stance in _BEARISH_LABELS
-            bucket["available"] = max(bucket["available"], available)
+    return entries, rejected
 
-    counts: dict[str, dict[str, int]] = {
-        sym: dict(days) for sym, days in (prior_daily_counts or {}).items()
-    }
-    for (symbol, day), bucket in buckets.items():
-        counts.setdefault(symbol, {})[day] = bucket["posts"]
 
-    now = _feature_iso(datetime.now(timezone.utc))
+def load_community_ledger(path: Path) -> dict[str, dict[str, Any]]:
+    ledger: dict[str, dict[str, Any]] = {}
+    if not path.is_file():
+        return ledger
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            entry = json.loads(line)
+            ledger.setdefault(str(entry["key"]), entry)  # first sight wins: replays never rewrite history
+    return ledger
+
+
+def _known_at(entry: Mapping[str, Any]) -> datetime:
+    return max(_feature_time(entry["available"]), _feature_time(entry["first_seen"]))
+
+
+def community_daily_rows_from_ledger(
+    ledger: Mapping[str, Mapping[str, Any]],
+    touched: Iterable[tuple[str, str]] | None = None,
+    *,
+    now: datetime | None = None,
+    emitted: Iterable[tuple[str, str, str]] | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Rebuild point-in-time daily rows for ``touched`` (symbol, Taipei day) pairs from the ledger.
+
+    Posts are de-duplicated by ledger key. A post is *known* at ``max(available, first_seen)``
+    (a late-arriving or backfilled post is not retroactively visible). A day has one row per
+    distinct knowledge step at or after the day close; later steps are new revisions and never
+    rewrite earlier ones. Each revision only uses posts known by its own ``available_time``,
+    including for the rolling history of earlier days. Revisions later than ``now`` (a day not
+    yet closed) are not emitted. ``touched`` pairs always re-emit their revisions
+    (deterministic, so replays are idempotent); other ledger pairs emit only revisions not in
+    ``emitted`` (days that closed since they were last seen).
+    """
+    from statistics import mean, pstdev
+
+    by_symbol: dict[str, list[Mapping[str, Any]]] = {}
+    for entry in ledger.values():
+        by_symbol.setdefault(str(entry["symbol"]), []).append(entry)
     rows: list[dict[str, Any]] = []
-    for (symbol, day), bucket in sorted(buckets.items()):
-        day_date = datetime.fromisoformat(day).date()
-        history = [
-            counts[symbol].get((day_date - timedelta(days=offset)).isoformat(), 0)
-            for offset in range(1, COMMUNITY_ZSCORE_WINDOW_DAYS + 1)
-            if (day_date - timedelta(days=offset)).isoformat() in counts[symbol]
-        ]
-        row: dict[str, Any] = {
-            "dataset": TW_COMMUNITY_DAILY_DATASET,
-            "symbol": symbol,
-            "symbol_canonical": symbol,
-            "event_time": day,
-            "date": day,
-            "available_time": _feature_iso(
-                max(bucket["available"], datetime.combine(day_date + timedelta(days=1), datetime.min.time(), tzinfo=_TAIPEI_TZ))
-            ),
-            "ingest_time": now,
-            "availability_lag_days": 0,
-            "post_volume": float(bucket["posts"]),
-        }
-        if len(history) >= COMMUNITY_ZSCORE_MIN_HISTORY_DAYS:
-            sd = pstdev(history)
-            if sd > 0:
-                row["attention_zscore"] = (bucket["posts"] - mean(history)) / sd
-        if bucket["bull"] + bucket["bear"] > 0:
-            row["bull_bear_ratio"] = (bucket["bull"] + 1) / (bucket["bear"] + 1)
-        rows.append(row)
+    touched_set = set(touched or ())
+    done = {tuple(x) for x in emitted or ()}
+    all_pairs = {(str(e["symbol"]), str(e["day"])) for e in ledger.values()}
+    pairs = all_pairs if touched is None else (all_pairs | touched_set if emitted is not None else touched_set)
+    for symbol, day in sorted(pairs):
+        day_date = date.fromisoformat(day)
+        close = datetime.combine(day_date + timedelta(days=1), datetime.min.time(), tzinfo=_TAIPEI_TZ)
+        day_entries = [e for e in by_symbol.get(symbol, []) if e["day"] == day]
+        steps = sorted({max(_known_at(e), close) for e in day_entries})
+        for step in steps:
+            if now is not None and step > now:
+                continue
+            if touched is not None and (symbol, day) not in touched_set and (symbol, day, _feature_iso(step)) in done:
+                continue
+            visible = [e for e in day_entries if _known_at(e) <= step]
+            bull = sum(e["stance"] == "bull" for e in visible)
+            bear = sum(e["stance"] == "bear" for e in visible)
+            history_counts: dict[str, int] = {}
+            for e in by_symbol.get(symbol, []):
+                if e["day"] != day and _known_at(e) <= step:
+                    history_counts[e["day"]] = history_counts.get(e["day"], 0) + 1
+            history = [
+                history_counts[(day_date - timedelta(days=offset)).isoformat()]
+                for offset in range(1, COMMUNITY_ZSCORE_WINDOW_DAYS + 1)
+                if (day_date - timedelta(days=offset)).isoformat() in history_counts
+            ]
+            row: dict[str, Any] = {
+                "dataset": TW_COMMUNITY_DAILY_DATASET,
+                "symbol": symbol,
+                "symbol_canonical": symbol,
+                "event_time": day,
+                "date": day,
+                "available_time": _feature_iso(step),
+                "ingest_time": max(str(e["first_seen"]) for e in visible),
+                "availability_lag_days": 0,
+                "post_volume": float(len(visible)),
+            }
+            if len(history) >= COMMUNITY_ZSCORE_MIN_HISTORY_DAYS:
+                sd = pstdev(history)
+                if sd > 0:
+                    row["attention_zscore"] = (len(visible) - mean(history)) / sd
+            if bull + bear > 0:
+                row["bull_bear_ratio"] = (bull + 1) / (bear + 1)
+            rows.append(row)
     return tuple(rows)
+
+
+def community_daily_feature_rows(
+    records: Sequence[SourceRecord],
+    *,
+    authority: Mapping[str, Sequence[str]],
+    ledger: Mapping[str, Mapping[str, Any]] | None = None,
+    seen_at: str | None = None,
+    rejected: list[dict[str, str]] | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Aggregate community posts into daily per-symbol features (design §8.5).
+
+    Days are Asia/Taipei days; symbols are venue-qualified through ``authority``. ``ledger``
+    holds previously seen posts (keyed, so replays do not double count); the rows returned
+    cover every (symbol, day) touched by ``records``. ``post_volume`` is the day's post
+    count, ``attention_zscore`` compares it with the preceding up to 20 observed days (needs
+    5, else omitted), ``bull_bear_ratio`` is ``(bull + 1) / (bear + 1)``. A day's row is
+    available only after that day closes and its latest contributing post was fetched.
+    """
+    merged: dict[str, dict[str, Any]] = {k: dict(v) for k, v in (ledger or {}).items()}
+    entries, rej = community_ledger_entries(
+        records, authority=authority, seen_at=seen_at or _feature_iso(datetime.now(timezone.utc))
+    )
+    if rejected is not None:
+        rejected.extend(rej)
+    touched: set[tuple[str, str]] = set()
+    for entry in entries:
+        merged.setdefault(entry["key"], entry)
+        touched.add((entry["symbol"], entry["day"]))
+    return community_daily_rows_from_ledger(merged, touched, now=_feature_time(seen_at) if seen_at else None)
 
 
 def feature_rows_to_records(

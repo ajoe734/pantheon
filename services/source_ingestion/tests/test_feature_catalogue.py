@@ -130,22 +130,28 @@ def test_macro_series_rows_and_rejections() -> None:
     assert fc.observations_from_row("tw_macro_ndc", rows[0]) == []
 
 
-def _post(i: int, day: str, symbols, stance: str | None = None) -> SourceRecord:
-    meta = {"symbols": symbols, "event_time": f"{day}T02:00:00Z", "available_time": f"{day}T03:00:00Z",
+def _post(i: int, day: str, symbols, stance: str | None = None, *, hour: int = 2) -> SourceRecord:
+    meta = {"symbols": symbols, "event_time": f"{day}T{hour:02d}:00:00Z", "available_time": f"{day}T{hour + 1:02d}:00:00Z",
             "metrics": {"sentiment": stance} if stance else {}}
-    return SourceRecord(source_id=f"p{i}", connector_id="c", source_type="social", title="t",
+    return SourceRecord(source_id=f"p{day}-{i}", connector_id="c", source_type="social", title="t",
                         content_ref="https://example.test/p", metadata=meta, trace_id="t")
 
 
 def test_community_daily_features_are_available_after_day_close() -> None:
-    prior = {"2330": {f"2026-10-{d:02d}": 2 + (d % 2) for d in range(20, 31)}}
+    auth = {"2330": ("2330.TWSE",), "2317": ("2317.TWSE",)}
+    prior = {
+        f"h{d}-{i}|2330.TWSE": {"key": f"h{d}-{i}|2330.TWSE", "symbol": "2330.TWSE", "day": f"2026-10-{d:02d}",
+                                "stance": "", "available": f"2026-10-{d:02d}T03:00:00Z", "first_seen": f"2026-10-{d:02d}T04:00:00Z"}
+        for d in range(20, 31) for i in range(2 + (d % 2))
+    }
     posts = [_post(i, "2026-11-10", ["2330"], "bullish" if i < 3 else "bearish") for i in range(6)]
     posts.append(_post(99, "2026-11-10", ["2317"]))
-    rows = {r["symbol"]: r for r in community_daily_feature_rows(posts, prior_daily_counts=prior)}
+    rows = {r["symbol"]: r for r in community_daily_feature_rows(posts, authority=auth, ledger=prior, seen_at="2026-11-10T17:00:00Z")}
+    rows = {k.split(".")[0]: v for k, v in rows.items()}
     r = rows["2330"]
     assert r["post_volume"] == 6.0 and r["bull_bear_ratio"] == 1.0
     assert r["attention_zscore"] > 3
-    assert r["available_time"] == "2026-11-10T16:00:00Z"  # next Taipei midnight, after the day closed
+    assert r["available_time"] == "2026-11-10T17:00:00Z"  # after the Taipei day closed (16:00Z) and when first seen
     assert "attention_zscore" not in rows["2317"] and "bull_bear_ratio" not in rows["2317"]
     obs = fc.observations_from_row("tw_community_attention", r)
     assert {o["field"] for o in obs} == {"post_volume", "attention_zscore", "bull_bear_ratio"}
@@ -263,7 +269,7 @@ dataset_to_catalogue = {
 }
 
 
-def test_collector_adapter_derives_storable_macro_and_community_records() -> None:
+def test_collector_adapter_derives_storable_macro_and_community_records(tmp_path) -> None:
     from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
 
     macro = CollectorBundleAdapter(connector_id="m", source_id="m", source_type="macro", dataset="tw_macro_series")
@@ -272,7 +278,8 @@ def test_collector_adapter_derives_storable_macro_and_community_records() -> Non
     )
     assert len(out) == 1 and not rejected
     assert out[0].metadata["dataset"] == "tw_macro_series" and out[0].metadata["normalized_row"]["series_id"] == "cbc_policy_rate"
-    social = CollectorBundleAdapter(connector_id="s", source_id="s", source_type="social", dataset="tw_community_daily")
+    social = CollectorBundleAdapter(connector_id="s", source_id="s", source_type="social", dataset="tw_community_daily",
+                                    raw_root=str(tmp_path), known_instruments=("2330.TWSE",))
     posts, _ = social.governed_feature_records([_post(1, "2026-11-10", ["2330"], "bullish")])
     assert posts and posts[0].metadata["dataset"] == "tw_community_daily"
 
@@ -401,30 +408,125 @@ def test_governed_fundamentals_are_creatable_through_management_and_stored(
 
 
 def test_incremental_community_pulls_use_persisted_history(tmp_path) -> None:
-    """Cursor-advancing daily pulls must see prior days' counts from the store."""
-    import json as _json
-
-    from services.source_ingestion.connectors.collector_bundle import (
-        CollectorBundleAdapter,
-        stored_community_daily_counts,
-    )
+    """Cursor-advancing daily pulls rebuild history from the persisted ledger."""
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
 
     adapter = CollectorBundleAdapter(
         connector_id="s", source_id="s", source_type="social", dataset="tw_community_daily",
-        raw_root=str(tmp_path),
+        raw_root=str(tmp_path), known_instruments=("2330.TWSE",),
     )
     zscore = None
     for n in range(1, 8):
         day = f"2026-11-{n:02d}"
-        posts = [_post(i, day, ["2330"]) for i in range(n)]
-        prior = stored_community_daily_counts(tmp_path)
-        out, _ = adapter.governed_feature_records(posts, prior_daily_counts=prior)
-        zscore = out[0].metadata["normalized_row"].get("attention_zscore")
+        out, rejected = adapter.governed_feature_records([_post(i, day, ["2330"]) for i in range(n)])
+        assert not rejected
+        zscore = out[-1].metadata["normalized_row"].get("attention_zscore")
         if n < 6:
             assert zscore is None
-        target = tmp_path / "normalized" / "tw_community_daily" / f"date={day}"
-        target.mkdir(parents=True)
-        (target / "run.jsonl").write_text(
-            "\n".join(_json.dumps(r.to_dict()) for r in out) + "\n", encoding="utf-8"
-        )
     assert zscore == pytest.approx(2.04939015319192)
+
+
+class _Clock:
+    def __init__(self, *stamps: str) -> None:
+        self.stamps = list(stamps)
+
+    def __call__(self):
+        return datetime.fromisoformat(self.stamps.pop(0).replace("Z", "+00:00"))
+
+
+def _community_adapter(tmp_path, *clock_stamps, **kw):
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+
+    return CollectorBundleAdapter(
+        connector_id="s", source_id="s", source_type="social", dataset="tw_community_daily",
+        raw_root=str(tmp_path), known_instruments=("2330.TWSE",),
+        clock=_Clock(*clock_stamps) if clock_stamps else None, **kw,
+    )
+
+
+def test_same_day_split_pulls_aggregate_the_whole_day(tmp_path) -> None:
+    """Backfilled pulls after the day closed: 2 bullish then 1 bearish -> daily volume 3, ratio 1.5."""
+    adapter = _community_adapter(tmp_path, "2026-11-11T01:00:00Z", "2026-11-11T02:00:00Z")
+    first, _ = adapter.governed_feature_records(
+        [_post(0, "2026-11-10", ["2330"], "bullish"), _post(1, "2026-11-10", ["2330"], "bullish")]
+    )
+    second, _ = adapter.governed_feature_records([_post(2, "2026-11-10", ["2330"], "bearish", hour=5)])
+    assert first[-1].metadata["normalized_row"]["post_volume"] == 2.0
+    row = second[-1].metadata["normalized_row"]
+    assert row["post_volume"] == 3.0 and row["bull_bear_ratio"] == pytest.approx(1.5)
+    assert row["symbol_canonical"] == "2330.TWSE" and row["available_time"] == "2026-11-11T02:00:00Z"
+    assert [r.metadata["normalized_row"]["post_volume"] for r in second] == [2.0, 3.0]  # earlier revision kept
+
+
+def test_pulls_inside_the_day_wait_for_close_then_revise_on_late_arrival_and_replay(tmp_path) -> None:
+    adapter = _community_adapter(tmp_path, "2026-11-10T09:00:00Z", "2026-11-10T10:00:00Z",
+                                 "2026-11-11T01:00:00Z", "2026-11-12T01:00:00Z")
+    first, _ = adapter.governed_feature_records(
+        [_post(0, "2026-11-10", ["2330"], "bullish"), _post(1, "2026-11-10", ["2330"], "bullish")]
+    )
+    second, _ = adapter.governed_feature_records([_post(2, "2026-11-10", ["2330"], "bearish", hour=5)])
+    assert first == () and second == ()  # the day has not closed: no provisional aggregate is published
+    late, _ = adapter.governed_feature_records([_post(3, "2026-11-10", ["2330"], "bullish", hour=6)])
+    assert [r.metadata["normalized_row"]["post_volume"] for r in late] == [3.0, 4.0]
+    assert late[0].metadata["normalized_row"]["available_time"] == "2026-11-10T16:00:00Z"
+    assert late[1].metadata["normalized_row"]["available_time"] == "2026-11-11T01:00:00Z"
+    assert late[0].metadata["normalized_row"]["bull_bear_ratio"] == pytest.approx(1.5)
+    # replay of the whole history: no double counting, identical (idempotent) revision rows
+    replay, _ = adapter.governed_feature_records(
+        [_post(i, "2026-11-10", ["2330"], st, hour=h)
+         for i, st, h in ((0, "bullish", 2), (1, "bullish", 2), (2, "bearish", 5), (3, "bullish", 6))]
+    )
+    assert [r.source_id for r in replay] == [r.source_id for r in late]
+    obs = [o for r in replay for o in fc.observations_from_row("tw_community_attention", r.metadata["normalized_row"])
+           if o["field"] == "post_volume"]
+
+    def vol(at):
+        return [o["value"] for o in fc.read_feature_series(obs, "tw_community_attention", "post_volume",
+                                                           decision_time=at, entity="2330.TWSE")]
+
+    assert vol("2026-11-10T15:59:00Z") == []  # a decision inside the day never sees its aggregate
+    assert vol("2026-11-10T20:00:00Z") == [3.0]
+    assert vol("2026-11-12T00:00:00Z")[-1] == 4.0
+
+
+def test_bare_social_symbols_resolve_venue_or_fail_explicitly(tmp_path) -> None:
+    adapter = _community_adapter(tmp_path)
+    out, rejected = adapter.governed_feature_records(
+        [_post(0, "2026-11-10", ["2330", "9999"], "bullish")]
+    )
+    assert [r.metadata["symbol_canonical"] for r in out] == ["2330.TWSE"]
+    assert any("9999" in r["reason"] and "no governed instrument" in r["reason"] for r in rejected)
+    ambiguous = _community_adapter(tmp_path / "amb")
+    object.__setattr__(ambiguous, "known_instruments", ("2330.TWSE", "2330.TPEX"))
+    out, rejected = ambiguous.governed_feature_records([_post(0, "2026-11-10", ["2330"])])
+    assert not out and "ambiguous" in rejected[0]["reason"]
+    explicit, _ = _community_adapter(tmp_path / "exp").governed_feature_records(
+        [_post(0, "2026-11-10", ["6488.TWO"])]
+    )
+    assert explicit[0].metadata["symbol_canonical"] == "6488.TPEX"
+
+
+def test_bare_collector_symbol_matches_stored_bar_identity_via_catalogue(tmp_path) -> None:
+    """Bare ``2330`` posts resolve through stored daily-bar identities (2330.TWSE) end to end."""
+    import json as _json
+
+    bars = tmp_path / "normalized" / "tw_price_daily" / "date=2026-11-10"
+    bars.mkdir(parents=True)
+    (bars / "run.jsonl").write_text(
+        _json.dumps({"metadata": {"symbol_canonical": "2330.TWSE", "normalized_row": {"event_time": "2026-11-10"}}}) + "\n",
+        encoding="utf-8",
+    )
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+
+    adapter = CollectorBundleAdapter(
+        connector_id="s", source_id="s", source_type="social", dataset="tw_community_daily",
+        raw_root=str(tmp_path), clock=_Clock("2026-11-11T01:00:00Z"),
+    )
+    out, rejected = adapter.governed_feature_records([_post(0, "2026-11-10", ["2330"], "bullish")])
+    assert not rejected
+    observations = [o for r in out for o in fc.observations_from_row("tw_community_attention", r.metadata["normalized_row"])]
+    seen = fc.read_feature_series(observations, "tw_community_attention", "post_volume",
+                                  decision_time="2026-11-12", entity="2330.TWSE")
+    assert [o["value"] for o in seen] == [1.0]
+    depth = measure_stored_history_depth(tmp_path)
+    assert "2330.TWSE" in depth["datasets"]["tw_price_daily"]["per_entity"]

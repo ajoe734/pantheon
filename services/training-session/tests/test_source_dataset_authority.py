@@ -1763,8 +1763,8 @@ def _collector_files(source_id: str, rows_extra: list[dict[str, Any]]) -> dict[s
         (
             "collector-tw-cmoney-forum",
             [
-                {"id": "a", "text": "t", "symbols": ["2330"], "metrics": {"sentiment": "bullish"}},
-                {"id": "b", "text": "t", "symbols": ["2330"], "metrics": {"sentiment": "bearish"}},
+                {"id": "a", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bullish"}},
+                {"id": "b", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bearish"}},
             ],
             "tw_community_daily",
             {"post_volume", "bull_bear_ratio"},
@@ -1845,17 +1845,55 @@ def test_collector_definition_pull_to_storage_to_training_authority(
     assert {o["field"] for o in storage["feature_observations"]} == expected_fields
 
 
+def _real_poller_files(source_id: str, tmp_path: Path) -> dict[str, bytes]:
+    """Run the real collector pollers on the committed fixtures and return the bundle tree."""
+    import io
+    import zipfile
+
+    repo = SERVICE_DIR.parents[1]
+    fixtures = repo / "deploy/collector/tests/fixtures"
+    sys.path.insert(0, str(repo / "deploy/collector"))
+    try:
+        from collector_stack.config import DEFAULT_POLICY_PATH, load_collector_config
+        from collector_stack.fetchers import FixtureTransport
+        from collector_stack.privacy import AuthorHasher
+        from collector_stack.runner import CollectorRunner
+    finally:
+        sys.path.remove(str(repo / "deploy/collector"))
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("manifest.csv", "name\n")
+        zf.writestr("景氣指標與燈號.csv", (fixtures / "ndc_6099.csv").read_bytes())
+    transport = FixtureTransport()
+    transport.register("https://cpx.cbc.gov.tw/API/DataAPI/Get", (fixtures / "cbc_bp01d01.json").read_bytes())
+    transport.register("https://data.gov.tw/api/v2/rest/dataset/6099", (fixtures / "ndc_dataset_6099.json").read_bytes())
+    transport.register("https://ws.ndc.gov.tw/Download.ashx", archive.getvalue())
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    salt = tmp_path / "salt"
+    salt.write_bytes(b"real-poller-test-salt-0123456789abcdef-0123456789")
+    root = tmp_path / "collector_root"
+    runner = CollectorRunner(load_collector_config(DEFAULT_POLICY_PATH, env={}), root_dir=root,
+                             hasher=AuthorHasher.from_file(salt), transport=transport)
+    assert runner.run_source(source_id, run_id="real1").status == "complete"
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+
 @pytest.mark.parametrize(
     ("source_id", "source_type", "raw_dataset", "derived", "rows", "fields"),
     [
         ("collector-tw-cmoney-forum", "social", "collector_social_posts", "tw_community_daily",
-         [{"id": "a", "text": "t", "symbols": ["2330"], "metrics": {"sentiment": "bullish"}},
-          {"id": "b", "text": "t", "symbols": ["2330"], "metrics": {"sentiment": "bearish"}}],
+         [{"id": "a", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bullish"}},
+          {"id": "b", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bearish"}}],
          {"post_volume", "bull_bear_ratio"}),
         ("collector-tw-macro-cbc", "macro", "collector_macro_series", "tw_macro_series",
          [{"id": "a", "series_id": "cbc_policy_rate", "value": 2.0, "unit": "percent",
            "period_end": "2026-09-17T00:00:00Z", "available_time": "2026-09-17T08:00:00Z"}],
          {"policy_rate"}),
+        ("collector-tw-macro-cbc", "macro", "collector_macro_series", "tw_macro_series",
+         lambda tmp: _real_poller_files("collector-tw-macro-cbc", tmp), {"usd_twd"}),
+        ("collector-tw-macro-ndc", "macro", "collector_macro_series", "tw_macro_series",
+         lambda tmp: _real_poller_files("collector-tw-macro-ndc", tmp),
+         {"monitoring_score", "leading_index", "coincident_index"}),
     ],
 )
 def test_unfiltered_collector_pull_materializes_through_source_authority(
@@ -1877,7 +1915,7 @@ def test_unfiltered_collector_pull_materializes_through_source_authority(
     finally:
         sys.path.remove(str(repo))
 
-    files = _collector_files(source_id, rows)
+    files = rows(tmp_path / "real") if callable(rows) else _collector_files(source_id, rows)
 
     class _Transport(BundleTransport):
         def read(self, relative_path: str, *, max_bytes: int) -> bytes:

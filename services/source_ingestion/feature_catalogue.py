@@ -162,6 +162,7 @@ _MACRO: tuple[tuple[str, str, int, str, str], ...] = (
     ("tw_macro_cbc", "policy_rate", 1, "percent", "CBC policy discount rate"),
     ("tw_macro_cbc", "m1b_yoy", 25, "percent", "CBC M1B money supply YoY"),
     ("tw_macro_cbc", "m2_yoy", 25, "percent", "CBC M2 money supply YoY"),
+    ("tw_macro_cbc", "usd_twd", 1, "TWD_per_USD", "CBC NT$ per US$ exchange rate (BP01D01 column 01)"),
     ("tw_macro_ndc", "monitoring_score", 28, "score", "NDC business cycle monitoring score"),
     ("tw_macro_ndc", "leading_index", 28, "index", "NDC composite leading index"),
     ("tw_macro_ndc", "coincident_index", 28, "index", "NDC composite coincident index"),
@@ -194,6 +195,35 @@ def macro_series_id(dataset: str, field: str) -> str:
 
 MACRO_SERIES_MAP: Mapping[str, tuple[str, str]] = {
     macro_series_id(d, f): (d, f) for d, f, *_ in _MACRO
+}
+
+
+@dataclass(frozen=True)
+class ProviderSeriesMapping:
+    """Maps one collector provider series (or metric of it) to a catalogued macro field.
+
+    ``source`` is ``"value"`` (the item value) or ``"metrics.<key>"``; ``period_kind`` says how
+    the provider period normalizes to the event date: ``day`` keeps it, ``month`` and
+    ``quarter`` use the period end.
+    """
+
+    dataset: str
+    field: str
+    source: str = "value"
+    period_kind: str = "day"
+
+
+# Real collector pollers' series identities (deploy/collector/collector_stack/pollers.py,
+# spiders.py). Only semantically verified series are mapped; everything else is rejected.
+PROVIDER_SERIES_MAP: Mapping[str, tuple[ProviderSeriesMapping, ...]] = {
+    "CBC:BP01D01:01": (ProviderSeriesMapping("tw_macro_cbc", "usd_twd", "value", "day"),),
+    "NDC:6099:MONITORING_SCORE": (
+        ProviderSeriesMapping("tw_macro_ndc", "monitoring_score", "value", "month"),
+        ProviderSeriesMapping("tw_macro_ndc", "leading_index", "metrics.leading_index", "month"),
+        ProviderSeriesMapping("tw_macro_ndc", "coincident_index", "metrics.coincident_index", "month"),
+    ),
+    "DGBAS_CPI_TOTAL": (ProviderSeriesMapping("tw_macro_dgbas", "cpi_yoy", "metrics.yoy_pct", "month"),),
+    "DGBAS_GDP_REAL_YOY": (ProviderSeriesMapping("tw_macro_dgbas", "gdp_yoy", "value", "quarter"),),
 }
 
 
