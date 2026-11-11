@@ -54,7 +54,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         hide_retired_personas: bool,
         page_token: Optional[str],
         page_size: int,
-    ) -> None:
+    ) -> Any:
         """Overlap the independent owner reads with the Persona directory read.
 
         The Persona directory, the registry summary page and the ranking
@@ -64,29 +64,34 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         the in-flight read (value or failure, under the request deadline). It
         is only done when a request cache exists; without one a prefetch would
         be a second, uncoordinated read.
+
+        The registry page port may be uncached, so the page read is not left to
+        the cache: its Future is returned and the handler consumes that single
+        result or failure (HTTPException included) instead of reading again.
         """
         service = ctx.service
-        if service is None or request_read_cache.get() is None:
-            return
+        if service is None:
+            return None
         from services.control_plane.bff.personas.service import _PERSONA_FLEET_READ_EXECUTOR
 
-        submit_owner_read(
-            _PERSONA_FLEET_READ_EXECUTOR,
-            service.get_latest_ranking_snapshot,
-            warm_key="strategy_list_ranking_snapshot",
-        )
-        if not hide_retired_personas:
+        if request_read_cache.get() is not None:
             submit_owner_read(
                 _PERSONA_FLEET_READ_EXECUTOR,
-                lambda: service.list_strategy_summaries_page(
-                    state=norm_state,
-                    exclude_state=norm_exclude_state,
-                    persona_id=persona_id,
-                    page_token=page_token,
-                    page_size=page_size,
-                ),
-                warm_key="strategy_list_owner_page",
+                service.get_latest_ranking_snapshot,
+                warm_key="strategy_list_ranking_snapshot",
             )
+        if hide_retired_personas:
+            return None
+        return submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            lambda: service.list_strategy_summaries_page(
+                state=norm_state,
+                exclude_state=norm_exclude_state,
+                persona_id=persona_id,
+                page_token=page_token,
+                page_size=page_size,
+            ),
+        )
 
     @router.get("/bff/strategies")
     def bff_list_strategies(
@@ -120,7 +125,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         state_counts: Optional[Dict[str, int]] = None
         # One Persona directory read for the whole request: every row's
         # personaStates, operationalStatus and the hide filter come from it.
-        _prefetch_independent_owner_reads(
+        page_future = _prefetch_independent_owner_reads(
             norm_state=norm_state,
             norm_exclude_state=norm_exclude_state,
             persona_id=persona_id,
@@ -167,17 +172,18 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             if (ctx.service and hide_retired_personas and bounded_hide is None)
             else None
         )
-        owner_page = (
-            ctx.service.list_strategy_summaries_page(
+        if not (ctx.service and bounded_hide is None and owner_walk is None):
+            owner_page = None
+        elif page_future is not None:
+            owner_page = page_future.result()
+        else:
+            owner_page = ctx.service.list_strategy_summaries_page(
                 state=norm_state,
                 exclude_state=norm_exclude_state,
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=page_size,
             )
-            if (ctx.service and bounded_hide is None and owner_walk is None)
-            else None
-        )
         if bounded_hide is not None:
             page_summaries = list(bounded_hide["page_summaries"])
             next_page_token = bounded_hide["next_page_token"]

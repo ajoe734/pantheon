@@ -911,3 +911,28 @@ def test_default_list_overlaps_persona_directory_and_registry_page_reads(
     assert len(world.directory_reads) == 1
     (r0, r1), (d0, d1) = spans["registry"], spans["directory"]
     assert max(r0, d0) < min(r1, d1), "registry page and persona directory reads did not overlap"
+
+
+def test_default_list_owner_page_failure_is_read_once_and_not_retried(
+    monkeypatch: pytest.MonkeyPatch, world: _World
+) -> None:
+    """An uncached page port must be read once: the prefetch and the handler
+    share that single result or failure, never a hidden second read."""
+    from fastapi import HTTPException
+
+    app, _ = _build_app(monkeypatch, world)
+    service_cls = strategies_service_mod.StrategiesService
+    real_page = service_cls.list_strategy_summaries_page
+    calls: List[int] = []
+
+    def _uncached_flaky_page(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            raise HTTPException(status_code=503, detail="strategy_store_unavailable")
+        return real_page(self, *args, **kwargs)
+
+    monkeypatch.setattr(service_cls, "list_strategy_summaries_page", _uncached_flaky_page)
+    with TestClient(app) as c:
+        resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+    assert resp.status_code == 503, resp.text
+    assert len(calls) == 1
