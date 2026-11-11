@@ -2,7 +2,7 @@
 
 HTTP ports over the evolution proposal API and the persona owner.  Everything
 fails closed: an unreadable owner, a tenant mismatch, a non-paper lifecycle or a
-persona that does not name the artifact as its discovery artifact yields no
+target without exactly one active paper discovery Capital binding yields no
 scope, so the decision stays with the operator.
 """
 
@@ -13,10 +13,6 @@ from typing import Any, Callable, Mapping
 
 from services.evolution.auto_consumer import AutoConsumer, ConsumerReport, JsonlEvidenceSink
 from services.evolution.governed_persona_lifecycle import GovernedPersonaLifecycle, Transport, urllib_transport
-
-DISCOVERY_ARTIFACT_KEY = "discovery_artifact_id"  # persona.metadata key naming its discovery artifact
-DISCOVERY_KIND_KEY = "discovery_strategy_kind"
-
 
 class HttpDecisionPort:
     def __init__(self, base_url: str, token: Callable[[], str | None], transport: Transport | None = None) -> None:
@@ -40,8 +36,11 @@ class HttpDecisionPort:
         return payload
 
     def list_by_state(self, state: str):
-        rows = self._call("GET", f"/api/evolution/proposals?state={state}", None)
+        rows = self._call("GET", f"/api/evolution/proposals?decision_state={state}", None)
         return rows if isinstance(rows, list) else list((rows or {}).get("decisions", []))
+
+    def propose(self, body: Mapping[str, Any]):
+        return self._call("POST", "/api/evolution/proposals", body, body.get("tenant_id"))
 
     def review(self, decision_id: str, body: Mapping[str, Any]):
         return self._call("POST", f"/api/evolution/proposals/{decision_id}/review", body, body.get("tenant_id"))
@@ -50,34 +49,101 @@ class HttpDecisionPort:
         return self._call("POST", f"/api/evolution/proposals/{decision_id}/approve", body, body.get("tenant_id"))
 
 
-class PersonaOwnerScope:
-    """Owner-verified discovery scope: tenant-owned persona in ``paper_owner`` naming the target artifact."""
+DISCOVERY_BINDING_PREFIX = "pcb-discovery-"  # services/research/discovery_allocator.py: durable Capital binding ids
 
-    def __init__(self, persona_url: str, token: Callable[[], str | None], transport: Transport | None = None) -> None:
-        self._url = persona_url.rstrip("/")
-        self._token = token
+
+class DiscoveryBindingScope:
+    """Owner-verified discovery scope resolved from the allocator's real records.
+
+    The discovery allocator provisions a persona by creating a Capital binding
+    ``pcb-discovery-*`` (paper only) whose ``metadata.strategy_spec_registry_id``
+    names the admitted StrategySpec.  A decision target is in scope when it is
+    that spec, or a Registry StrategyArtifact whose lineage names it, and exactly
+    one active/pending tenant-owned discovery binding exists for it.  The persona
+    is then read from the Persona owner (tenant, lifecycle).  No persona metadata
+    marker is needed or trusted; any gap fails closed (``None``) or raises.
+    """
+
+    def __init__(
+        self,
+        *,
+        capital_url: str,
+        registry_url: str,
+        persona_url: str,
+        capital_token: Callable[[], str | None],
+        registry_token: Callable[[], str | None],
+        persona_token: Callable[[], str | None],
+        transport: Transport | None = None,
+    ) -> None:
+        self._capital = capital_url.rstrip("/")
+        self._registry = registry_url.rstrip("/")
+        self._persona = persona_url.rstrip("/")
+        self._tokens = {"capital": capital_token, "registry": registry_token, "persona": persona_token}
         self._send = transport or urllib_transport()
+
+    def _get(self, owner: str, url: str, tenant: str, *, optional: bool = False) -> Any:
+        headers = {"Accept": "application/json", "Authorization": f"Bearer {self._tokens[owner]()}", "X-Tenant-Id": tenant}
+        status, payload = self._send("GET", url, headers, None)
+        if status == 404 and optional:
+            return None
+        if status >= 400:
+            raise RuntimeError(f"{owner} owner unavailable: {status}")
+        return payload
+
+    def discovery_bindings(self, tenant: str) -> list[Mapping[str, Any]]:
+        rows = self._get("capital", f"{self._capital}/api/bindings", tenant)
+        out = []
+        for b in rows if isinstance(rows, list) else []:
+            meta = b.get("metadata") or {}
+            if not str(b.get("binding_id") or "").startswith(DISCOVERY_BINDING_PREFIX):
+                continue
+            if str(b.get("tenant_id") or meta.get("tenant_id") or "") != tenant:
+                continue
+            if str(b.get("status") or "") not in {"pending", "active"}:
+                continue
+            out.append(b)
+        return out
+
+    def artifact_view(self, artifact_id: str, tenant: str) -> Mapping[str, Any] | None:
+        import urllib.parse
+
+        view = self._get("registry", f"{self._registry}/api/registry/strategy-artifacts/{urllib.parse.quote(artifact_id, safe='')}",
+                         tenant, optional=True)
+        return (view or {}).get("entry") if isinstance(view, dict) else None
 
     def resolve(self, decision: Mapping[str, Any]) -> Mapping[str, Any] | None:
         tenant = str(decision.get("tenant_id") or "")
-        artifact = str(decision.get("target_id") or "")
-        token = self._token()
-        status, rows = self._send("GET", f"{self._url}/api/personas", {"Authorization": f"Bearer {token}", "Accept": "application/json"}, None)
-        if status >= 400:
-            raise RuntimeError(f"persona owner unavailable: {status}")
-        matches = [
-            p for p in (rows if isinstance(rows, list) else [])
-            if p.get("tenant_id") == tenant and (p.get("metadata") or {}).get(DISCOVERY_ARTIFACT_KEY) == artifact
-        ]
+        target = str(decision.get("target_id") or "")
+        if not tenant or not target:
+            return None
+        entry = self.artifact_view(target, tenant)
+        kind, spec_ids = "", {target}
+        if entry is not None:
+            if str(entry.get("owner_tenant") or (entry.get("metadata") or {}).get("tenant_id") or tenant) != tenant:
+                return None
+            artifact = (entry.get("metadata") or {}).get("strategy_artifact") or {}
+            kind = str((artifact.get("strategy_logic") or {}).get("kind") or "")
+            source = (artifact.get("lineage") or {}).get("source_strategy_spec_id")
+            spec_ids = {str(source)} if source else set()
+            persona_hint = str((entry.get("metadata") or {}).get("persona_id") or "")
+        else:
+            persona_hint = ""
+        matches = [b for b in self.discovery_bindings(tenant)
+                   if str((b.get("metadata") or {}).get("strategy_spec_registry_id") or "") in spec_ids]
+        if persona_hint:
+            matches = [b for b in matches if str(b.get("persona_id")) == persona_hint] or matches
         if len(matches) != 1:
             return None
-        persona = matches[0]
+        persona_id = str(matches[0].get("persona_id") or "")
+        persona = self._get("persona", f"{self._persona}/api/personas/{persona_id}", tenant)
+        if not isinstance(persona, dict) or str(persona.get("tenant_id") or "") != tenant:
+            return None
         state = str(persona.get("lifecycle_state") or "")
         return {
-            "tenant_id": tenant, "persona_id": persona["persona_id"], "artifact_id": artifact,
+            "tenant_id": tenant, "persona_id": persona_id, "artifact_id": target,
+            "binding_id": matches[0].get("binding_id"),
             "stage": "paper" if state in ("paper_owner", "frozen") else state,
-            "strategy_kind": (persona.get("metadata") or {}).get(DISCOVERY_KIND_KEY, ""),
-            "persona_lifecycle_state": state,
+            "strategy_kind": kind, "persona_lifecycle_state": state,
         }
 
 
@@ -107,9 +173,15 @@ def build_consumer(env: Mapping[str, str] | None = None, transport: Transport | 
         evolution_decision_id=lambda: current_decision[0], transport=transport,
     )
     current_decision: list[str] = [""]
+    scope = DiscoveryBindingScope(
+        capital_url=need("AUTO_CONSUMER_CAPITAL_URL"), registry_url=need("AUTO_CONSUMER_REGISTRY_URL"),
+        persona_url=persona_url, capital_token=lambda: e.get("AUTO_CONSUMER_CAPITAL_TOKEN"),
+        registry_token=lambda: e.get("AUTO_CONSUMER_REGISTRY_TOKEN"),
+        persona_token=lambda: e.get("AUTO_CONSUMER_PERSONA_TOKEN"), transport=transport,
+    )
     consumer = AutoConsumer(
         decisions=HttpDecisionPort(api, lambda: e.get("EVOLUTION_AUTH_TOKEN") or None, transport),
-        scope=PersonaOwnerScope(persona_url, lambda: e.get("AUTO_CONSUMER_PERSONA_TOKEN"), transport),
+        scope=scope,
         evidence=JsonlEvidenceSink(e.get("AUTO_CONSUMER_EVIDENCE_PATH", "auto_consumer_evidence.jsonl")),
         personas=personas,
     )
@@ -123,7 +195,35 @@ def build_consumer(env: Mapping[str, str] | None = None, transport: Transport | 
     return consumer
 
 
+def build_decay_monitor(env: Mapping[str, str] | None = None, transport: Transport | None = None):
+    """Decay monitor over the same owners as the consumer plus the telemetry runtime summaries."""
+    from services.evolution.decay_monitor import DecayMonitor, WindowLedger
+    from services.evolution.threshold_sweep_worker import approved_baseline_value, default_fetch_summaries, load_baselines
+
+    e = env or os.environ
+    consumer = build_consumer(e, transport)
+    tenant = (e.get("EVOLUTION_SCHEDULER_TENANT_ID") or e.get("EVOLUTION_DEFAULT_TENANT_ID") or "pantheon-default").strip()
+    telemetry = e.get("EVOCHAIN_TELEMETRY_API_URL") or e.get("PANTHEON_TELEMETRY_URL", "http://telemetry:8083")
+    baselines = load_baselines()
+    return DecayMonitor(
+        tenant_id=tenant, scope=consumer.scope,
+        fetch_summaries=lambda: default_fetch_summaries(
+            telemetry, timeout=20.0, tenant_id=tenant, service_token=e.get("AUTO_CONSUMER_TELEMETRY_TOKEN")),
+        baseline=lambda artifact, key: approved_baseline_value(baselines, artifact, key),
+        ledger=WindowLedger(e.get("AUTO_CONSUMER_DECAY_LEDGER_PATH", "paper_decay_windows.jsonl")),
+        propose=consumer.decisions.propose, evidence=consumer.evidence,
+    ), consumer
+
+
 def run_consumer_tick(env: Mapping[str, str] | None = None, transport: Transport | None = None) -> dict[str, Any]:
-    report: ConsumerReport = build_consumer(env, transport).tick()
+    """One scheduler step: detect paper decay (proposes retires), then gate/approve/retire."""
+    monitor, consumer = build_decay_monitor(env, transport)
+    decay: dict[str, Any]
+    try:
+        d = monitor.tick()
+        decay = {"observed": d.observed, "proposed": d.proposed, "existing": d.existing, "errors": d.errors}
+    except Exception as exc:  # telemetry/capital outage must not stop the consumer tick; retried next tick
+        decay = {"errors": {"decay_monitor": f"{type(exc).__name__}: {exc}"}}
+    report: ConsumerReport = consumer.tick()
     return {"approved": report.approved, "retired": report.retired,
-            "left_for_operator": report.left_for_operator, "errors": report.errors}
+            "left_for_operator": report.left_for_operator, "errors": report.errors, "decay": decay}
