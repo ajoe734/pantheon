@@ -1,0 +1,113 @@
+{
+  "task_id": "REGISTRY-ENTRYPOINT-ALIAS-RETIRE-20261111",
+  "owner": "Codex",
+  "assigned_reviewer": "Codex2",
+  "delivery_scope": "Source retirement only; independent review and merge are recorded by canonical handoff/approval/integrator, not asserted here.",
+  "base_commit": "9ce4f3396f44b402290cd94578d20ba628b0ac48",
+  "dependency": {
+    "task_id": "REGISTRY-LEGACY-METADATA-RETIRE-20261111",
+    "canonical_status": "done",
+    "pr": 7173,
+    "merge_commit": "9ce4f3396f44b402290cd94578d20ba628b0ac48",
+    "ancestry_check": "git merge-base --is-ancestor 9ce4f3396f44b402290cd94578d20ba628b0ac48 HEAD; exit 0"
+  },
+  "caller_audit": {
+    "removed": [
+      "gate.py: re-export of canonical promotion classes only",
+      "cli.py: forwarding canonical main only"
+    ],
+    "maintained_root_caller": "README.md Python sample now imports services.registry.promotion.gate; module CLI documented.",
+    "local_callers": "test_gate.py previously inserted its service directory before bare gate import; smoke/direct CLI resolved adjacent service-local gate. These were not evidence of root alias use. Tests/smoke now import canonical package; direct CLI retains existing adjacent-gate fallback.",
+    "retained_business_consumer": "services/research/alpha_replication/revalidation_worker.py imports canonical PromotionGate/PromotionState, builds drafts with build_draft_entry_from_replication_request and validates candidate requirements; implementation unchanged.",
+    "retained_implementations": [
+      "services/registry/promotion/gate.py",
+      "services/registry/promotion/cli.py"
+    ],
+    "search_scope": "Tracked maintained Python, shell, TOML, YAML/Dockerfile invocation paths inspected for bare gate/cli imports and root CLI execution; other service-local cli names are distinct. Historical review/evidence records were left intact.",
+    "limit": "No claim that every historical or external caller is globally unused."
+  },
+  "packaging": {
+    "exports": [
+      "services",
+      "scripts",
+      "integrations"
+    ],
+    "policy": "Explicit packages.find allowlist, namespace discovery and dependency-free metadata unchanged; no console script or top-level cli/gate export exists.",
+    "guard": "Retired cli/gate names remain in telemetry UNEXPORTED_ROOT_MODULES. Static presence contract permits these two removed aliases only and explicitly checks all guarded names against package allowlist; installed-distribution negative export tests pass.",
+    "telemetry_source_changed": false
+  },
+  "documentation": {
+    "updated": [
+      "README.md",
+      "services/registry/promotion/README.md",
+      "services/registry/contract.md",
+      "services/registry/lineage/contract.md",
+      "services/registry/lineage/read_model_contract.md",
+      "services/registry/experiments/WANDB_ACTIVATION.md"
+    ],
+    "current_projection": "Promotion/experiment artifact producers emit artifact_state and deployment_stage without promotion_state. Loader requires approved state and an exact paper/canary/live stage.",
+    "retained_fields": "Gate/CLI lifecycle_state input, experiment adapter normalization and compat metadata, telemetry target.promotion_state event/query field, and optional archived schema fields remain distinct.",
+    "schema_alias": "Lineage contract now points to service-local promoted_artifact_metadata.schema.json; already-retired root schema is not described as present.",
+    "no_dual_write": "Removed false still-required artifact promotion_state migration-window instructions."
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --print-python",
+      "exit_status": 0,
+      "result": "Checkout-scoped .venv-pantheon provisioned; imports verified from foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/registry/promotion/test_gate.py services/registry/promotion/smoke_test_gate.py services/execution/test_artifact_loader.py services/registry/experiments/test_adapter.py services/research/alpha_replication/test_revalidation_worker.py",
+      "exit_status": 0,
+      "result": "94 passed, 4 subtests passed in 118.29s; existing deprecation warnings only."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/dev/test_provision_python_distribution.py",
+      "exit_status": 0,
+      "result": "20 passed, 8 subtests passed in 11.46s after final guard update."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_discovery_imports.py::TestInstalledDistributionIsCanonical",
+      "exit_status": 0,
+      "result": "3 passed in 1.19s; generic root exports remain absent."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m services.registry.promotion.smoke_test_gate",
+      "exit_status": 0,
+      "result": "candidate/paper/canary/live flow, forbidden skips and rollback rejection pass."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 services/registry/promotion/smoke_test_gate.py",
+      "exit_status": 0,
+      "result": "Direct local smoke passes with canonical import."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 services/execution/smoke_test_artifact_loader.py",
+      "exit_status": 0,
+      "result": "Canonical projection and in-memory Object Store loading pass."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m services.registry.promotion.cli --help",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 services/registry/promotion/cli.py --help",
+      "exit_status": 0
+    },
+    {
+      "command": "Foreign-cwd subprocess probe using absolute provisioned Python, no PYTHONPATH, TemporaryDirectory and build_candidate_entry fixture",
+      "exit_status": 0,
+      "result": "Canonical module help exit 0; draft->candidate exit 0 with JSON lifecycle_state=candidate; source fixture unchanged without --inplace; candidate->live rejected with exit 2 and Forbidden transition."
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0
+    }
+  ],
+  "boundaries": [
+    "No business mutation or deployment; tests use in-memory/temporary fixtures.",
+    "No data/schema migration, archive deletion, or active telemetry edits.",
+    "Real gate approvals, paper/canary/live transitions, candidate and rollback checks are unchanged.",
+    "Hosted acceptance is not performed or claimed; final report task owns hosted proof and actual merge ancestry."
+  ]
+}

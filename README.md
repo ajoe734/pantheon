@@ -21,7 +21,8 @@ The root `gate.py` and `cli.py` forwarding aliases have been retired. Import
 | :--- | :--- |
 | `candidate` | 1. 複現成功 (`replication_success`) <br> 2. 具備血緣資訊 (`lineage.source_run_id`) |
 | `paper` | 1. 風險審查通過 (`evaluation_summary.risk_review_passed`) <br> 2. 具備基本回測指標 (Sharpe Ratio) |
-| `live` | 1. 明確的核准人 (`approver`) <br> 2. 具備明確 rollback object (`metadata.rollback.target_registry_id`, `metadata.rollback.target_version`) |
+| `canary` | 1. 從 `paper` 進入 <br> 2. 風險審查與回測指標通過 <br> 3. 明確核准人與 rollback object |
+| `live` | 1. 必須從 `canary` 進入 <br> 2. 明確的核准人 (`approver`) <br> 3. 具備明確 rollback object (`metadata.rollback.target_registry_id`, `metadata.rollback.target_version`) |
 
 ## 使用範例 (Python)
 
@@ -38,7 +39,7 @@ entry = {
     "evaluation_summary": {"risk_review_passed": True, "sharpe_ratio": 1.5}
 }
 
-# 晉升至 LIVE (會因為缺 approver / metadata.rollback 而被攔截)
+# 直接從 paper 晉升至 LIVE 會被攔截；必須先通過 canary 與 rollback 檢查
 updated_entry = gate.promote(entry, PromotionState.LIVE, approver="human-trader-01")
 ```
 

@@ -209,6 +209,12 @@ class TestExportedNamesAgreeAcrossFiles(unittest.TestCase):
         # The three names that collide with widely used PyPI distributions are
         # the ones worth pinning explicitly.
         self.assertTrue({"cli", "gate", "workflows"} <= guarded)
+        for name in guarded:
+            with self.subTest(name=name):
+                self.assertFalse(
+                    any(fnmatch.fnmatch(name, pattern) for pattern in _include_patterns()),
+                    f"guarded generic name {name!r} must never match the package allowlist",
+                )
 
 
 class TestProvisioningFailsClosed(unittest.TestCase):
