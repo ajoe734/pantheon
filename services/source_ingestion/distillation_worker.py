@@ -54,6 +54,7 @@ from services.source_ingestion.hypothesis_compiler import (
     COMPILED,
     NEEDS_DATA,
     NOT_EXPRESSIBLE,
+    SKIPPED as SKIPPED_COMPILE,
     SUPPORT_ADDED,
     HypothesisCompiler,
 )
@@ -1928,6 +1929,16 @@ class DistillationWorker:
                 card = outcome.card
                 if self._hypothesis_compiler is not None:
                     compiled = self._hypothesis_compiler.compile(outcome.card)
+                    if compiled.status == SKIPPED_COMPILE and str(compiled.reason).startswith("proposer_failed"):
+                        # Transport/compiler failure is not a delivered outcome:
+                        # retry durably instead of materializing an uncompiled seed.
+                        failure_status = self._queue.mark_retry_or_dead_letter(
+                            job,
+                            error=f"hypothesis_compiler_failed: {compiled.reason}",
+                            base_delay_seconds=self._retry_base_seconds,
+                            now=now,
+                        )
+                        return "failed", failure_status.value
                     if compiled.status in {NOT_EXPRESSIBLE, NEEDS_DATA, SUPPORT_ADDED}:
                         # No new draft: refusal is recorded, or an existing
                         # draft's support_count was incremented instead.

@@ -127,3 +127,28 @@ def test_extraction_disabled_runs_neither_extraction_nor_compilation(tmp_path, m
     assert calls.extract == 0 and calls.compile == 0
     assert not (tmp_path / "hypothesis_compiler.sqlite").exists()
     assert not (tmp_path / "ledger.sqlite").exists()
+
+
+def test_compiler_transport_uses_restricted_structured_agent():
+    from services.source_ingestion.hypothesis_compiler import client_proposer
+    from services.source_ingestion.semantic_extraction_client import SemanticExtractionClient
+
+    seen = []
+
+    def transport(payload):
+        seen.append(payload)
+        return {"output": {"structured_data": {"outcome": "not_expressible", "reason": "x"}}}
+
+    proposer = client_proposer(SemanticExtractionClient(transport_fn=transport))
+    proposer({"claim": "c", "cited_spans": [{}]}, {})
+    assert seen and seen[0]["agent_id"] == "structured-extraction"
+
+
+def test_proposer_failure_is_retried_not_materialized():
+    from services.source_ingestion.hypothesis_compiler import CompilerStore, HypothesisCompiler
+
+    def boom(card, cat):
+        raise RuntimeError("422")
+
+    out = HypothesisCompiler(boom, CompilerStore(":memory:")).compile({"testability": "testable", "claim": "c"})
+    assert out.status == "skipped" and out.reason.startswith("proposer_failed")

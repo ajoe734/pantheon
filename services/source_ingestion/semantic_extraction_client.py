@@ -539,7 +539,7 @@ class SemanticExtractionClient:
                 "prompt": prompt,
                 "extraction_schema": schema,
                 "model": request.model_id or self._default_model,
-                "agent_id": "main",
+                "agent_id": "structured-extraction",
                 "mode": "user",
                 "operator_id": request.operator_id or "system",
                 "trace_id": request.trace_id or f"trace-extract-{uuid.uuid4().hex[:8]}",
@@ -560,7 +560,7 @@ class SemanticExtractionClient:
                     prompt,
                     extraction_schema=schema,
                     model=request.model_id or self._default_model,
-                    agent_id="main",
+                    agent_id="structured-extraction",
                     mode="user",
                     operator_id=request.operator_id or "system",
                     trace_id=request.trace_id or f"trace-extract-{uuid.uuid4().hex[:8]}",
@@ -591,7 +591,7 @@ class SemanticExtractionClient:
                 "prompt": prompt,
                 "extraction_schema": schema,
                 "mode": "user",
-                "agent_id": "main",
+                "agent_id": "structured-extraction",
             }
             headers = {
                 "Content-Type": "application/json",
