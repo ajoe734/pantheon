@@ -47,6 +47,7 @@ from common import (
     canonical_task_state_identity,
     config_path,
     cmdline_is_worker_runner,
+    current_pid_namespace,
     display_name_for,
     load_config,
     load_json,
@@ -1234,6 +1235,9 @@ def stamp_supervisor_runtime_state(
     previous_pid = supervisor_state.get("pid")
 
     supervisor_state["pid"] = current_pid
+    # Worker PIDs in this state belong to the supervisor's PID namespace;
+    # readers in another namespace must not judge them through their /proc.
+    supervisor_state["pid_namespace"] = current_pid_namespace()
     supervisor_state["last_heartbeat_at"] = heartbeat_at
     if not supervisor_state.get("started_at") or previous_pid != current_pid:
         supervisor_state["started_at"] = heartbeat_at

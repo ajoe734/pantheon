@@ -45,8 +45,8 @@ from services.research.store import ResearchOrchestratorStore
 
 
 @pytest.fixture(autouse=True)
-def _explicit_registry_backend(monkeypatch):
-    """The registry never defaults its backend; pin the in-memory double explicitly."""
+def _registry_memory_backend(monkeypatch):
+    """Explicit opt-in to the in-memory registry store (tests only)."""
     monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
 
 

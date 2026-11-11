@@ -1332,6 +1332,19 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
                 stage_id_val = str(ref["id"])
                 break
 
+    initial_artifact_refs: List[Dict[str, Any]] = []
+    if (
+        isinstance(body.parameters.get("experiment_run"), dict)
+        and isinstance(body.parameters["experiment_run"].get("artifact_refs"), list)
+    ):
+        for ref in body.parameters["experiment_run"]["artifact_refs"]:
+            if isinstance(ref, str) and ref.strip():
+                initial_artifact_refs.append(
+                    {"artifact_type": "backtest_run", "uri": ref.strip()}
+                )
+            elif isinstance(ref, dict):
+                initial_artifact_refs.append(dict(ref))
+
     run: Dict[str, Any] = {
         "id": run_id, "run_id": run_id, "task_id": task_id, "stage_id": stage_id_val,
         "attempt_number": 1, "parent_run_id": None, "root_run_id": run_id,
@@ -1341,7 +1354,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         "tenant_id": body.parameters.get("tenant_id") or getattr(body, "tenant_id", None) or task.get("tenant_id"),
         "user_id": body.parameters.get("user_id") or body.actor_id or getattr(body, "user_id", None) or task.get("user_id"),
         "created_at": timestamp, "updated_at": timestamp, "idempotency_key": body.idempotency_key,
-        "rejection": rejection, "events": events, "artifact_refs": [],
+        "rejection": rejection, "events": events, "artifact_refs": initial_artifact_refs,
         "proposal_refs": [], "registry_writebacks": [],
     }
     if gateway_ref is not None:
@@ -2228,6 +2241,87 @@ def _finish_run(
     _set_task_terminal(run["task_id"], status, timestamp)
     store.put_run(run)
     store.append_event(events[-1])
+    params = run.get("parameters")
+    if (
+        status == "completed"
+        and isinstance(params, dict)
+        and params.get("record_type") == "ExperimentRun"
+        and isinstance(params.get("experiment_run"), dict)
+    ):
+        exp_run = params["experiment_run"]
+        exp_meta = exp_run.get("metadata") if isinstance(exp_run.get("metadata"), dict) else {}
+        bt_summary = (
+            exp_meta.get("backtest_summary")
+            if isinstance(exp_meta.get("backtest_summary"), dict)
+            else {}
+        )
+        if bt_summary:
+            tx_costs = (
+                bt_summary.get("transaction_costs")
+                if isinstance(bt_summary.get("transaction_costs"), dict)
+                else {}
+            )
+            try:
+                outbox_store = get_outbox_store()
+                outbox_id = _next_id(
+                    "mout",
+                    timestamp,
+                    {r.outbox_id for r in outbox_store.list_records()},
+                )
+                outbox_record = ResearchMemoryOutboxRecord(
+                    outbox_id=outbox_id,
+                    run_id=str(exp_run.get("run_id") or run_id),
+                    task_id=str(exp_run.get("task_id") or run["task_id"]),
+                    artifact_id=str(bt_summary.get("backtest_run_id") or "") or None,
+                    source_event_type="research_finding_published",
+                    source_event_id=str(exp_run.get("run_id") or run_id),
+                    sponsor_persona_id="persona-tw-equity",
+                    summary=summary,
+                    headline=f"Replicated Taiwan strategy {exp_run.get('strategy_id') or ''}",
+                    confidence=1.0,
+                    evidence_refs=list(run.get("artifact_refs") or run.get("input_refs") or []),
+                    dataset_refs=[str(exp_run.get("dataset_version_id") or "")],
+                    license_scope="governed_tw_market",
+                    allowed_use=["research_memory", "replication_evidence"],
+                    supersedes=[],
+                    contradicts=[],
+                    expires_at=None,
+                    trace_id=str(exp_run.get("trace_id") or run_id),
+                    status="pending",
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    metadata={
+                        "event_type": "research_finding_published",
+                        "tenant_id": exp_run.get("tenant_id"),
+                        "strategy_spec_id": exp_run.get("strategy_spec_id"),
+                        "strategy_id": exp_run.get("strategy_id"),
+                        "family_id": bt_summary.get("family_id"),
+                        "trial_count": bt_summary.get("trial_count"),
+                        "transaction_costs": dict(tx_costs),
+                        "metrics": {
+                            "sharpe_ratio": bt_summary.get("out_of_sample_sharpe_ratio"),
+                            "in_sample_sharpe_ratio": bt_summary.get("in_sample_sharpe_ratio"),
+                            "out_of_sample_sharpe_ratio": bt_summary.get("out_of_sample_sharpe_ratio"),
+                            "deflated_sharpe_ratio": bt_summary.get("deflated_sharpe_ratio"),
+                            "deflated_sharpe_threshold": bt_summary.get("deflated_sharpe_threshold"),
+                            "trial_count": bt_summary.get("trial_count"),
+                            "max_drawdown": bt_summary.get("out_of_sample_max_drawdown"),
+                            "total_return": bt_summary.get("out_of_sample_total_return"),
+                            "round_trips": bt_summary.get("out_of_sample_round_trips"),
+                            "buy_and_hold_sharpe_ratio": bt_summary.get("buy_and_hold_sharpe_ratio"),
+                            "tw_0050_sharpe_ratio": bt_summary.get("tw_0050_sharpe_ratio"),
+                            "walk_forward_fold_sharpes": bt_summary.get("walk_forward_fold_sharpes"),
+                            "commission_rate": tx_costs.get("commission_rate"),
+                            "equity_transaction_tax_rate": tx_costs.get("equity_transaction_tax_rate"),
+                            "etf_transaction_tax_rate": tx_costs.get("etf_transaction_tax_rate"),
+                            "backtest_run_id": bt_summary.get("backtest_run_id"),
+                        },
+                        "artifact_refs": list(run.get("artifact_refs") or []),
+                    },
+                )
+                outbox_store.create_record(outbox_record)
+            except Exception:
+                pass
     return run
 
 
@@ -3774,7 +3868,9 @@ class EvaluateAlphaTemplatesBody(BaseModel):
 def evaluate_alpha_templates_endpoint(
     body: Optional[EvaluateAlphaTemplatesBody] = Body(default=None),
 ) -> Dict[str, Any]:
-    # Lazy: numpy/pandas are only needed by this route, not by every research import.
+    # Lazy import: the evaluator needs numpy/pandas, which are not installed in
+    # every environment that imports this module (e.g. evolution/policy-learning
+    # test suites); only the evaluate endpoint requires them.
     from services.research.alpha_templates import run_alpha_template_evaluation
 
     req = body or EvaluateAlphaTemplatesBody()

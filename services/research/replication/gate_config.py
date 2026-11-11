@@ -8,6 +8,7 @@ a research candidate is admitted to the registry.
 from typing import List, Dict, Any, Optional
 from .gate_schema import ReplicationCriteria
 import json
+import math
 
 
 class GateConfig:
@@ -19,10 +20,66 @@ class GateConfig:
     # Soft requirement: at least 80% of optional criteria should pass for strong admission
     ADMISSION_THRESHOLD_OPTIONAL = 0.80
 
-    def __init__(self):
+    # Multiple-testing and out-of-sample backtest admission parameters (§10.2)
+    DEFAULT_BASE_OOS_SHARPE_THRESHOLD = 0.50
+    DEFAULT_TRIAL_PENALTY_SCALE = 0.25
+    DEFAULT_MIN_OOS_ROUND_TRIPS = 20
+    DEFAULT_MANDATE_MAX_DRAWDOWN = 0.25
+    DEFAULT_MIN_PIT_HISTORY_DAYS = 730
+    DEFAULT_MIN_PIT_HISTORY_BARS = 480
+    DEFAULT_IN_SAMPLE_RATIO = 0.70
+    DEFAULT_OUT_OF_SAMPLE_RATIO = 0.30
+    DEFAULT_WALK_FORWARD_FOLDS = 3
+
+    def __init__(
+        self,
+        *,
+        base_oos_sharpe_threshold: float = DEFAULT_BASE_OOS_SHARPE_THRESHOLD,
+        trial_penalty_scale: float = DEFAULT_TRIAL_PENALTY_SCALE,
+        min_oos_round_trips: int = DEFAULT_MIN_OOS_ROUND_TRIPS,
+        default_mandate_max_drawdown: float = DEFAULT_MANDATE_MAX_DRAWDOWN,
+        min_pit_history_days: int = DEFAULT_MIN_PIT_HISTORY_DAYS,
+        min_pit_history_bars: int = DEFAULT_MIN_PIT_HISTORY_BARS,
+        in_sample_ratio: float = DEFAULT_IN_SAMPLE_RATIO,
+        out_of_sample_ratio: float = DEFAULT_OUT_OF_SAMPLE_RATIO,
+        walk_forward_folds: int = DEFAULT_WALK_FORWARD_FOLDS,
+    ):
         """Initialize gate with standard admission criteria."""
+        self.base_oos_sharpe_threshold = float(base_oos_sharpe_threshold)
+        self.trial_penalty_scale = float(trial_penalty_scale)
+        self.min_oos_round_trips = int(min_oos_round_trips)
+        self.default_mandate_max_drawdown = float(default_mandate_max_drawdown)
+        self.max_oos_drawdown = float(default_mandate_max_drawdown)
+        self.min_pit_history_days = int(min_pit_history_days)
+        self.min_pit_history_bars = int(min_pit_history_bars)
+        self.min_history_calendar_days = int(min_pit_history_days)
+        self.min_history_trading_days = int(min_pit_history_bars)
+        self.in_sample_ratio = float(in_sample_ratio)
+        self.out_of_sample_ratio = float(out_of_sample_ratio)
+        self.walk_forward_folds = int(walk_forward_folds)
         self.required_criteria = self._build_required_criteria()
         self.optional_criteria = self._build_optional_criteria()
+
+    def compute_deflated_sharpe_threshold(self, trial_count: int) -> Dict[str, Any]:
+        """Compute the trial-deflated Sharpe admission threshold and multiple-testing haircut.
+
+        Every evaluated variant for a hypothesis/template family increments ``trial_count``.
+        The required out-of-sample Sharpe threshold increases by ``penalty_scale * sqrt(2 * ln(N))``
+        (equivalently deflating the candidate's observed Sharpe by ``haircut``).
+        """
+        n = max(1, int(trial_count))
+        haircut = (
+            self.trial_penalty_scale * math.sqrt(2.0 * math.log(float(n)))
+            if n > 1
+            else 0.0
+        )
+        threshold = self.base_oos_sharpe_threshold + haircut
+        return {
+            "trial_count": n,
+            "base_sharpe_threshold": round(self.base_oos_sharpe_threshold, 6),
+            "sharpe_haircut": round(haircut, 6),
+            "deflated_sharpe_threshold": round(threshold, 6),
+        }
 
     def _build_required_criteria(self) -> List[ReplicationCriteria]:
         """Build list of required admission criteria (must all pass)."""
@@ -49,6 +106,16 @@ class GateConfig:
                 criterion_id="no_live_bypass",
                 name="No Live Bypass",
                 description="Candidate must not attempt to bypass registry promotion gates",
+                required=True,
+            ),
+            ReplicationCriteria(
+                criterion_id="real_backtest_validation",
+                name="Real Taiwan Backtest Validation",
+                description=(
+                    "Candidate must pass a real backtest on governed Taiwan market data "
+                    "(70% IS / 30% OOS / 3 walk-forward folds, statutory commission and tax "
+                    "on every fill, benchmark comparison, and trial-deflated Sharpe threshold)"
+                ),
                 required=True,
             ),
         ]
