@@ -165,7 +165,9 @@ def _env_true(value: Any) -> bool:
 
 
 def allocator_enabled(env: Mapping[str, str]) -> bool:
-    return _env_true(env.get("DISCOVERY_ALLOCATOR_ENABLED"))
+    # Default on (paper-only, capped at 5); set DISCOVERY_ALLOCATOR_ENABLED=false to disable.
+    raw = env.get("DISCOVERY_ALLOCATOR_ENABLED")
+    return True if raw is None or not str(raw).strip() else _env_true(raw)
 
 
 def run_scheduled_allocation(
