@@ -2813,7 +2813,13 @@ def _refresh_runtime_python() -> str:
     return body.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
 
 
-def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: str = "bounded"):
+def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: str = "bounded",
+                         local_ids: tuple[str, ...] | None = None, up_lands_on: str | None = None):
+    """Fake docker where the plain tag pantheon-source-ingest resolves to tag_id.
+
+    Compose config honours a pin override file (-f *pin.json); "up" starts whatever
+    image the effective config names (or up_lands_on to simulate a wrong container).
+    """
     fake = tmp_path / "bin"
     fake.mkdir()
     log = tmp_path / "docker.log"
@@ -2821,13 +2827,18 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
     docker.write_text(
         "#!/usr/bin/env bash\n"
         'echo "$*" >> "$DOCKER_LOG"\n'
+        'pin=""; for a in "$@"; do case "$a" in *pin.json) pin="$a";; esac; done\n'
+        'eff=pantheon-source-ingest\n'
+        '[ -n "$pin" ] && eff="$(python3 -c \'import json,sys;print(json.load(open(sys.argv[1]))["services"]["source-ingest"]["image"])\' "$pin")"\n'
         'case "$*" in\n'
-        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"pantheon-source-ingest"}}}\' ;;\n'
+        '  *" config --format json source-ingest"*) echo "{\\"services\\":{\\"source-ingest\\":{\\"image\\":\\"$eff\\"}}}" ;;\n'
         '  *" config --format json"*) echo \'{"services":{}}\' ;;\n'
         '  "image inspect --format {{.Id}} pantheon-source-ingest") echo "$TAG_ID" ;;\n'
-        '  *" up "*) echo "$TAG_ID" > "$STATE" ;;\n'
+        '  "image inspect --format {{.Id}} "*) i="${5}"; case " $LOCAL_IDS " in *" $i "*) echo "$i";; *) exit 1;; esac ;;\n'
+        '  *" up "*) echo "${UP_LANDS_ON:-$eff}" > "$STATE" ;;\n'
         '  *" ps -q source-ingest"*) echo cid1 ;;\n'
         '  "inspect --format {{.Image}} cid1") cat "$STATE" ;;\n'
+        '  "inspect --format {{json .Config.Env}} cid1") python3 -c \'import json,os;print(json.dumps(json.load(open(os.environ["ENV_FILE"]))+["PANTHEON_EXTERNAL_EGRESS=deny","PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=","SOURCE_INGEST_CONTROLLER_MODE=reconcile_only"]))\' ;;\n'
         '  *) : ;;\n'
         'esac\n'
     )
@@ -2835,35 +2846,51 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
     env_file = tmp_path / "env.json"
     state = tmp_path / "state"
     # The runtime builds the docker env from this file, so the fake's inputs go here.
-    env_file.write_text(json.dumps(["A=1", f"DOCKER_LOG={log}", f"TAG_ID={tag_id}", f"STATE={state}"]))
+    env_file.write_text(json.dumps([
+        "A=1", f"DOCKER_LOG={log}", f"TAG_ID={tag_id}", f"STATE={state}",
+        f"LOCAL_IDS={' '.join(local_ids if local_ids is not None else (running,))}",
+        f"UP_LANDS_ON={up_lands_on or ''}", f"ENV_FILE={env_file}"]))
     script = tmp_path / "refresh.py"
     script.write_text(_refresh_runtime_python())
     state.write_text(running + "\n")
     result = subprocess.run(
         ["python3", str(script), str(env_file), action, running, ""],
         capture_output=True, text=True,
-        env={"PATH": f"{fake}:{os.environ['PATH']}", "DOCKER_LOG": str(log), "TAG_ID": tag_id, "STATE": str(state)},
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "DOCKER_LOG": str(log), "TAG_ID": tag_id, "STATE": str(state),
+             "LOCAL_IDS": " ".join(local_ids if local_ids is not None else (running,)),
+             "UP_LANDS_ON": up_lands_on or "", "ENV_FILE": str(env_file)},
     )
     return result, log.read_text().splitlines() if log.exists() else [], state.read_text().strip()
 
 
 @pytest.mark.parametrize("action", ["bounded", "restore"])
-def test_source_refresh_stops_before_recreating_when_compose_tag_points_elsewhere(tmp_path, action):
+def test_source_refresh_ignores_stale_plain_tag_and_recreates_from_running_image_id(tmp_path, action):
+    # A failed earlier deploy left pantheon-source-ingest:latest on a candidate image.
     baseline, candidate = "sha256:" + "9" * 64, "sha256:" + "4" * 64
     result, calls, state = _run_refresh_runtime(tmp_path, tag_id=candidate, running=baseline, action=action)
-    assert result.returncode != 0
-    assert baseline in result.stderr and candidate in result.stderr and "not recreating" in result.stderr
-    assert not any(" up " in f" {call} " for call in calls)
-    assert state == baseline  # the running image was never replaced
+    assert result.returncode == 0, result.stderr
+    ups = [call for call in calls if " up " in f" {call} "]
+    assert len(ups) == 1 and "pin.json" in ups[0]
+    assert state == baseline
+    # The candidate tag was never consulted to decide what to start.
+    assert not any(call == "image inspect --format {{.Id}} pantheon-source-ingest" for call in calls)
 
 
 @pytest.mark.parametrize("action", ["bounded", "restore"])
-def test_source_refresh_recreates_when_compose_tag_matches_running_image(tmp_path, action):
+def test_source_refresh_stops_when_recorded_running_image_is_not_available(tmp_path, action):
     baseline = "sha256:" + "9" * 64
-    result, calls, state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action)
-    assert any(" up " in f" {call} " for call in calls)
+    result, calls, state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action, local_ids=())
+    assert result.returncode != 0 and "not recreating" in result.stderr
+    assert not any(" up " in f" {call} " for call in calls)
     assert state == baseline
-    assert "image ID" not in result.stderr
+
+
+@pytest.mark.parametrize("action", ["bounded", "restore"])
+def test_source_refresh_still_fails_when_started_container_image_differs(tmp_path, action):
+    baseline, other = "sha256:" + "9" * 64, "sha256:" + "4" * 64
+    result, _calls, _state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action, up_lands_on=other)
+    assert result.returncode != 0
+    assert baseline in result.stderr and other in result.stderr
 
 
 def test_bff_adoption_gate_requires_root_deploy_for_paper_capital_reader_services() -> None:
