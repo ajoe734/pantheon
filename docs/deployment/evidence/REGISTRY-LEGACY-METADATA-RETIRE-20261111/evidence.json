@@ -34,12 +34,13 @@
     "experiments adapter: removed redundant promotion_state from artifact handoff and promoted metadata",
     "telemetry/event target.promotion_state unchanged",
     "governance DeploymentPlanner.build_execution_projection: removed promotion_state alias and _legacy_promotion_state helper",
-    "artifact-loader/contract.md: updated to canonical-only"
+    "artifact-loader/contract.md: updated to canonical-only",
+    "smoke_test_artifact_loader: promote PAPER->CANARY->LIVE instead of forbidden paper->live"
   ],
   "verification": {
     "services.execution.test_artifact_loader": "23 tests OK",
     "services/registry/experiments test_adapter": "16 tests OK",
-    "smoke_test_artifact_loader": "fails identically at unmodified HEAD (PromotionError paper -> live); pre-existing, not caused by this change",
+    "smoke_test_artifact_loader": "python3 services/execution/smoke_test_artifact_loader.py exit 0; smoke now traverses PAPER->CANARY->LIVE via existing PromotionGate (same approver/rollback fixture, no gate checks relaxed)",
     "services/control-plane/governance test_deployment_plan": "35 tests OK",
     "callers": "current_artifact_signal and paper_signal_producer pytest: 130 passed plus 9 subtests"
   },
@@ -78,5 +79,10 @@
       "non_approved": 0,
       "path": "/data/runtime/runtime_bindings.json.bak"
     }
+  },
+  "missing_projection_binding": {
+    "source": "/tmp/pantheon-compat-residual-20261111/remote_binding_missing_projection-result.json",
+    "captured_at_utc": "2026-11-11T12:14:06.394625+00:00",
+    "explanation": "The 159th binding (159 bindings vs 158 metadata projections) is anonymized: status retired, deployment_mode paper, execution_mode paper, zero object-store keys, no strategy artifact. It has no metadata object, so no legacy-only consumer exists for it."
   }
 }
