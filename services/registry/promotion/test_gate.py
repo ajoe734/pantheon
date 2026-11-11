@@ -133,12 +133,12 @@ class TestPromotionGate(unittest.TestCase):
         )
         from services.research.replication.gate_schema import ReplicationRequest
         # Recorded output of run_replication_backtest_protocol (real vectorbt
-        # run, see services/research/tests/); the registry suite must not
+        # run, see services/research/replication/fixtures/); the registry suite must not
         # require the vectorbt backend.
         fixture = (
             Path(__file__).resolve().parents[2]
             / "research"
-            / "tests"
+            / "replication"
             / "fixtures"
             / "recorded_backtest_tw_2330.json"
         )
