@@ -44,6 +44,12 @@ from services.research.alpha_templates import (
 from services.research.store import ResearchOrchestratorStore
 
 
+@pytest.fixture(autouse=True)
+def _explicit_registry_backend(monkeypatch):
+    """The registry never defaults its backend; pin the in-memory double explicitly."""
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
+
+
 @pytest.fixture(scope="module")
 def taiwan_universe():
     return build_taiwan_point_in_time_universe(

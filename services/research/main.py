@@ -41,7 +41,6 @@ from services.registry.strategy_artifact import (
 from services.registry.storage import get_store as get_registry_store
 from services.research.alpha_replication.admission import ReplicationAdmissionStore
 from services.research.alpha_replication.queue import AlphaReplicationQueue
-from services.research.alpha_templates import run_alpha_template_evaluation
 from services.research.experiments import (
     ExperimentRegistryWritebackError,
     ExperimentRun,
@@ -3775,6 +3774,9 @@ class EvaluateAlphaTemplatesBody(BaseModel):
 def evaluate_alpha_templates_endpoint(
     body: Optional[EvaluateAlphaTemplatesBody] = Body(default=None),
 ) -> Dict[str, Any]:
+    # Lazy: numpy/pandas are only needed by this route, not by every research import.
+    from services.research.alpha_templates import run_alpha_template_evaluation
+
     req = body or EvaluateAlphaTemplatesBody()
     registry_service = RegistryService(get_registry_store())
     try:
