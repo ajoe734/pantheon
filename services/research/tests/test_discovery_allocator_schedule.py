@@ -418,3 +418,41 @@ def test_provision_rejection_after_durable_writes_never_exceeds_caps() -> None:
         assert len(durable) <= da.MAX_DISCOVERY_PERSONAS
         assert sum(b["paper_capital"] for b in durable) <= 50_000
     assert len(durable) == 5  # one durable write per run, capped at 5 slots
+
+
+def _rendered_compose_env(host_env: dict) -> dict:
+    """Render research-orchestrator-svc environment via docker compose config."""
+    import json
+    import os
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    env = {k: v for k, v in os.environ.items() if not k.startswith("DISCOVERY_ALLOCATOR_")}
+    env.update(host_env)
+    out = subprocess.run(
+        ["docker", "compose", "--profile", "research", "config", "--format", "json"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)["services"]["research-orchestrator-svc"]["environment"]
+
+
+def test_compose_rendered_flag_false_disables_and_default_enables() -> None:
+    import shutil
+    if shutil.which("docker") is None:
+        import pytest
+        pytest.skip("docker compose unavailable")
+    assert da.allocator_enabled(_rendered_compose_env({})) is True
+    container_env = _rendered_compose_env({"DISCOVERY_ALLOCATOR_ENABLED": "false"})
+    assert container_env["DISCOVERY_ALLOCATOR_ENABLED"] == "false"
+    module = _load_service_module()
+    calls: list = []
+    _wire(module, calls)
+    admitted = [{"strategy_spec_id": "s", "registry_id": "s", "status": "admitted"}]
+    with mock.patch.object(module.alpha_replication_admission_store, "list_admissions", return_value=admitted), \
+         mock.patch.dict("os.environ", {"DISCOVERY_ALLOCATOR_ENABLED": container_env["DISCOVERY_ALLOCATOR_ENABLED"]}):
+        with TestClient(module.app):
+            rec = _records(module)[0]
+    assert rec["enabled"] is False and rec["reason"] == "disabled"
+    assert rec["bound"] == [] and calls == []
