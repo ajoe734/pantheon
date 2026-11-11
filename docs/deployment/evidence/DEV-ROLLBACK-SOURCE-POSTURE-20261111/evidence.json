@@ -1,0 +1,17 @@
+{
+  "task_id": "DEV-ROLLBACK-SOURCE-POSTURE-20261111",
+  "root_cause": "Whole-stack capture recorded only PANTHEON_TENANT_ID and GIT_SHA per service. The restored source-ingest-scheduler therefore re-derived MODE/MAX_TICKS/FORCE/EXCLUSIVE/TRUTH_LEVEL and restart policy from the restoring caller's variables (docker-compose.yml ${VAR:-default}); a bounded refresh caller (reconcile_and_pull, MAX_TICKS=1, forced TWSE/TPEx connector) yielded an external pull and a one-tick exit that readback could never heal.",
+  "change": {
+    "scripts/dev_release_artifacts.py": "capture_stack records, for source-ingest-scheduler only, a 'control' object: five nonsecret SOURCE_INGEST_CONTROLLER_* env values (absent=null, empty='' preserved) plus the Docker restart policy. Restore pins them in the Compose override (null removes a caller-supplied key), recreates a recorded-image scheduler whose live posture differs instead of merely starting it, and readback fails closed (source-control-posture-mismatch) on any difference. validate_stack accepts 'control' only on that service, keeping older captures valid. No tokens or passwords are captured; entry points and schema version unchanged."
+  },
+  "not_changed": "No existing sealed artifact/receipt rewritten; old captures are not claimed to contain control posture and restore from them behaves as before. No egress/allowlist change, no www.twse bypass, no deployment or live writes.",
+  "acceptance": {
+    "1": "pinned() adds control env/restart for the scheduler; test_restore_preserves_source_scheduler_posture_against_a_bounded_caller",
+    "2": "same test: exited, bounded scheduler (caller leaks reconcile_and_pull/MAX_TICKS=1) is restored to reconcile_only/0/unforced; test_exited_scheduler_on_recorded_image_with_bounded_posture_is_recreated_not_started",
+    "3": "absent-vs-empty asserted; only the five named keys are filtered by the Docker formatter; test_control_posture_validation_rejects_tampering rejects extra keys",
+    "4": "restart policy recorded/restored; image-ID, lease and readback checks unchanged; test_readback_fails_closed_on_scheduler_posture_drift",
+    "5": "same capture_stack/restore_images entry points; test_older_capture_without_control_posture_stays_valid_and_unpinned"
+  },
+  "verification": "scripts/test_dev_release_artifacts.py, test_dev_release_artifact_driver.py, test_capture_dev_artifact_baseline.py: 586 passed, 1 skipped (exit 0)",
+  "not_claimed": "No hosted run executed. The currently sealed baseline lacks control posture, so it is not healed by this change; a future capture is required. Final COMPAT report stays blocked on the actual hosted pair."
+}

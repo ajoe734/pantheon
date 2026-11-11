@@ -60,10 +60,29 @@ STACK_FORMAT = (
     '"health_test":{{if .Config.Healthcheck}}{{json .Config.Healthcheck.Test}}{{else}}null{{end}},'
     '"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}}'
 )
-# Filtering happens in Docker's formatter: only these two nonsecret names leave it.
-STACK_ENV_FORMAT = ('{{range .Config.Env}}{{$v := split . "="}}{{if or ' + ' '.join(
-    '(eq (index $v 0) "' + key + '")' for key in STACK_ENV_KEYS
-) + '}}{{json .}}{{"\\n"}}{{end}}{{end}}')
+
+
+def _env_format(keys) -> str:
+    # Filtering happens in Docker's formatter: only the named nonsecret keys leave it.
+    return ('{{range .Config.Env}}{{$v := split . "="}}{{if or ' + ' '.join(
+        '(eq (index $v 0) "' + key + '")' for key in keys
+    ) + '}}{{json .}}{{"\\n"}}{{end}}{{end}}')
+
+
+STACK_ENV_FORMAT = _env_format(STACK_ENV_KEYS)
+# Source controller posture. The scheduler's steady posture (reconcile-only, unbounded,
+# no forced pull, restart unless-stopped) is otherwise re-derived from the restoring
+# caller's variables; a bounded refresh would then pull externally and exit after one
+# tick. Only these nonsecret names and the restart policy are recorded; no tokens.
+CONTROL_SERVICE = "source-ingest-scheduler"
+CONTROL_ENV_KEYS = (
+    "SOURCE_INGEST_CONTROLLER_MODE", "SOURCE_INGEST_CONTROLLER_MAX_TICKS",
+    "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS",
+    "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL",
+)
+CONTROL_ENV_FORMAT = _env_format(CONTROL_ENV_KEYS)
+RESTART_FORMAT = "{{json .HostConfig.RestartPolicy.Name}}"
+RESTART_POLICIES = ("no", "always", "unless-stopped", "on-failure")
 
 
 class ArtifactError(RuntimeError):
@@ -415,9 +434,9 @@ def _has_healthcheck(row: dict) -> bool:
     return isinstance(test, list) and bool(test) and test[0] != "NONE"
 
 
-def _stack_env(docker: Docker, container_id: str) -> dict:
-    found = dict.fromkeys(STACK_ENV_KEYS)
-    for line in docker.call("inspect", "--format", STACK_ENV_FORMAT, container_id).splitlines():
+def _stack_env(docker: Docker, container_id: str, keys=STACK_ENV_KEYS, fmt=STACK_ENV_FORMAT) -> dict:
+    found = dict.fromkeys(keys)
+    for line in docker.call("inspect", "--format", fmt, container_id).splitlines():
         if not line.strip():
             continue
         entry = _json(line)
@@ -426,6 +445,12 @@ def _stack_env(docker: Docker, container_id: str) -> dict:
             raise ArtifactError("unexpected container environment entry")
         found[name] = value
     return found
+
+
+def _stack_control(docker: Docker, container_id: str) -> dict:
+    """Source controller posture: nonsecret env (absent stays None, empty stays "") + restart policy."""
+    policy = _json(docker.call("inspect", "--format", RESTART_FORMAT, container_id)) or "no"
+    return {"env": _stack_env(docker, container_id, CONTROL_ENV_KEYS, CONTROL_ENV_FORMAT), "restart": policy}
 
 
 def _protect_tag(service: str, image_id: str) -> str:
@@ -460,6 +485,8 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
         services[service] = {"image_id": row["image_id"], "state": "running" if row["status"] == "running" else "completed",
                              "has_healthcheck": _has_healthcheck(row),
                              "env": _stack_env(docker, row["container_id"])}
+        if service == CONTROL_SERVICE and row["status"] == "running":
+            services[service]["control"] = _stack_control(docker, row["container_id"])
     if missing:
         raise StackImageMissing("recorded stack image is missing", missing)
     if not services or len(services) > STACK_MAX_SERVICES:
@@ -494,7 +521,19 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
         raise ArtifactError("invalid stack baseline services")
     for service, row in services.items():
         _match(service, SERVICE_NAME, "stack service name")
-        _keys(row, ("image_id", "state", "has_healthcheck", "env"), "stack service")
+        # "control" exists only on captures made after source posture was recorded.
+        _keys(row, ("image_id", "state", "has_healthcheck", "env") + (("control",) if "control" in row else ()),
+              "stack service")
+        if "control" in row:
+            control = row["control"]
+            if service != CONTROL_SERVICE or row.get("state") != "running":
+                raise ArtifactError("unexpected stack service control posture")
+            _keys(control, ("env", "restart"), "stack control posture")
+            _keys(control["env"], CONTROL_ENV_KEYS, "stack control environment")
+            if control["restart"] not in RESTART_POLICIES or any(
+                    item is not None and (not isinstance(item, str) or len(item) > 512 or "\0" in item)
+                    for item in control["env"].values()):
+                raise ArtifactError("invalid stack control posture")
         _match(row["image_id"], IMAGE, "stack image ID")
         if row["state"] not in ("running", "completed") or type(row["has_healthcheck"]) is not bool:
             raise ArtifactError("invalid stack service state")
@@ -615,6 +654,11 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
         check_lease()
         if _stack_env(docker, current[service][0]["container_id"]) != stack["services"][service]["env"]:
             drift[service] = "environment-mismatch"
+    for service, expected in sorted(stack["services"].items()):
+        if "control" in expected:
+            check_lease()
+            if _stack_control(docker, current[service][0]["container_id"]) != expected["control"]:
+                drift[service] = "source-control-posture-mismatch"
     if drift:
         raise _mixed(drift)
     check_lease()
@@ -681,7 +725,13 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
         # A recreated container must keep the tenant and GIT_SHA it ran with at
         # baseline; Compose defaults reset PANTHEON_TENANT_ID (source-ingest).
         env = {key: value for key, value in stack["services"][service]["env"].items() if value is not None}
-        return {"environment": env} if env else {}
+        row = stack["services"][service]
+        out = {"environment": env} if env else {}
+        if "control" in row:
+            # None -> null removes the key, so a caller variable cannot fill an absent baseline value.
+            out["environment"] = {**env, **row["control"]["env"]}
+            out["restart"] = row["control"]["restart"]
+        return out
 
     def compose_up(stage: str, services: dict[str, dict], tail: tuple[str, ...], names: list[str]) -> None:
         override = Path(stage) / "images.json"
@@ -724,7 +774,9 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
             for service in rest:
                 expected = stack["services"][service]
                 containers = current.get(service, [])
-                if len(containers) == 1 and containers[0]["image_id"] == expected["image_id"]:
+                if len(containers) == 1 and containers[0]["image_id"] == expected["image_id"] and \
+                        ("control" not in expected or
+                         _stack_control(docker, containers[0]["container_id"]) == expected["control"]):
                     if expected["state"] == "running" and containers[0]["status"] != "running":
                         check_lease()
                         docker.call("start", containers[0]["container_id"])

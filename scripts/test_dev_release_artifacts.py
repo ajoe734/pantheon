@@ -506,7 +506,17 @@ def test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite(tm
 
 STACK_SIZE = 57
 SEALED = artifacts.SERVICES
-OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 1)) + ("source-ingest",)
+SCHEDULER = artifacts.CONTROL_SERVICE
+OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 2)) + ("source-ingest", SCHEDULER)
+# Healthy steady scheduler posture; EXCLUSIVE is absent (not empty), FORCE is empty.
+STEADY_CONTROL = {"SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only", "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
+                  "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": "",
+                  "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "scheduled_tick"}
+# What a bounded refresh caller leaks into a Compose restore.
+BOUNDED_CALLER = {"SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull", "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "1",
+                  "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": "tw-twse-tpex-official-market",
+                  "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS": "tw-twse-tpex-official-market",
+                  "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "reconciled_live_proof"}
 ONE_SHOT = "minio-init"
 TENANT = "tenant-recorded-at-baseline"
 
@@ -546,6 +556,9 @@ class StackDocker:
             # seen on source-ingest (tenant reset by a default).
             self.compose_defaults[service] = {"PANTHEON_TENANT_ID": "compose-default", "GIT_SHA": "f" * 40}
             self.tags["pantheon-" + service] = image   # what a plain "compose up" would start
+            if service == SCHEDULER:
+                self.containers[service].update(control_env=dict(STEADY_CONTROL), restart="unless-stopped")
+                self.compose_defaults[service]["control"] = dict(BOUNDED_CALLER)
 
     def add_image(self, image):
         self.images[image] = {"id": image, "revision": SOURCE, "repo_digests": None}
@@ -586,6 +599,10 @@ class StackDocker:
                                    "health_test": row["health_test"], "health": row["health"]})
             if args[2] == artifacts.STACK_ENV_FORMAT:
                 return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row["env"].items())
+            if args[2] == artifacts.CONTROL_ENV_FORMAT:
+                return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row.get("control_env", {}).items())
+            if args[2] == artifacts.RESTART_FORMAT:
+                return json.dumps(row.get("restart", ""))
             if args[2] == artifacts.CONTAINER_FORMAT:
                 return json.dumps({"image_id": row["image_id"], "status": row["status"], "health": row["health"]})
         if args[:2] == ("image", "inspect"):
@@ -626,7 +643,15 @@ class StackDocker:
                     continue
                 row = self.containers[name]
                 env = dict(self.compose_defaults[name])
-                env.update(override[name].get("environment", {}))
+                control = env.pop("control", None)
+                requested = dict(override[name].get("environment", {}))
+                if control is not None:
+                    merged = {**control, **requested}
+                    row["control_env"] = {k: v for k, v in merged.items()
+                                          if k in artifacts.CONTROL_ENV_KEYS and v is not None}
+                    row["restart"] = override[name].get("restart", "no")
+                    requested = {k: v for k, v in requested.items() if k not in artifacts.CONTROL_ENV_KEYS}
+                env.update(requested)
                 row.update(image_id=override[name]["image"], env=env,
                            status="exited" if name == ONE_SHOT else "running",
                            health=None if name == ONE_SHOT else ("unhealthy" if name in self.unhealthy else "healthy"))
@@ -1016,3 +1041,64 @@ def test_malformed_compose_reference_still_fails_closed(stack_case, bad):
     with pytest.raises(artifacts.StackError) as caught:
         restore_stack(stack_case)
     assert "svc-01" in str(caught.value)
+
+
+def test_restore_preserves_source_scheduler_posture_against_a_bounded_caller(stack_case):
+    _, docker, _, _, stack, _, baseline = stack_case
+    recorded = stack["services"][SCHEDULER]["control"]
+    assert recorded["restart"] == "unless-stopped"
+    # Absent stays null, empty stays empty; nothing outside the named keys (no token) is recorded.
+    assert recorded["env"]["SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS"] is None
+    assert recorded["env"]["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == ""
+    assert "control" not in stack["services"]["source-ingest"]
+    docker.mutate_to_candidate()
+    docker.containers[SCHEDULER]["control_env"] = dict(BOUNDED_CALLER)
+    docker.containers[SCHEDULER].update(status="exited", exit_code=1, health=None, restart="no")
+    result, _ = restore_stack(stack_case)
+    scheduler = docker.containers[SCHEDULER]
+    assert scheduler["control_env"] == baseline[SCHEDULER]["control_env"] == STEADY_CONTROL
+    assert scheduler["restart"] == "unless-stopped" and scheduler["status"] == "running"
+    assert SCHEDULER in result["recreated_services"]
+
+
+def test_exited_scheduler_on_recorded_image_with_bounded_posture_is_recreated_not_started(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    docker.containers[SCHEDULER]["control_env"] = dict(BOUNDED_CALLER)
+    docker.containers[SCHEDULER].update(status="exited", exit_code=1, health=None)
+    result, _ = restore_stack(stack_case)
+    assert SCHEDULER in result["recreated_services"] and SCHEDULER not in result["started_services"]
+    assert docker.containers[SCHEDULER]["control_env"] == STEADY_CONTROL
+
+
+def test_matching_scheduler_posture_is_left_alone(stack_case):
+    result, _ = restore_stack(stack_case)
+    assert SCHEDULER not in result["recreated_services"]
+
+
+def test_readback_fails_closed_on_scheduler_posture_drift(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    docker.containers[SCHEDULER]["control_env"] = dict(BOUNDED_CALLER)
+    docker.stuck.add(SCHEDULER)
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        restore_stack(stack_case)
+    assert SCHEDULER in caught.value.services
+
+
+def test_older_capture_without_control_posture_stays_valid_and_unpinned(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    del stack["services"][SCHEDULER]["control"]
+    assert artifacts.validate_stack(stack) == stack
+    docker.mutate_to_candidate()
+    restore_stack(stack_case)
+    assert "restart" not in next(c for c in docker.up_calls if SCHEDULER in c["names"])["override"][SCHEDULER]
+
+
+def test_control_posture_validation_rejects_tampering(stack_case):
+    stack = stack_case[4]
+    for mutate in (lambda v: v["services"]["svc-01"].update(control={"env": {}, "restart": "no"}),
+                   lambda v: v["services"][SCHEDULER]["control"].update(restart="sometimes"),
+                   lambda v: v["services"][SCHEDULER]["control"]["env"].update(TOKEN="x")):
+        value = json.loads(json.dumps(stack))
+        mutate(value)
+        with pytest.raises(artifacts.ArtifactError):
+            artifacts.validate_stack(value)
