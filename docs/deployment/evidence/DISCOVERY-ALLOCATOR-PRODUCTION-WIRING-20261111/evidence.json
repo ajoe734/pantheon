@@ -2,22 +2,18 @@
   "task": "DISCOVERY-ALLOCATOR-PRODUCTION-WIRING-20261111",
   "commands": [
     {
-      "cmd": "pytest services/research/tests/test_discovery_allocator_schedule.py services/research/test_discovery_allocator.py",
-      "result": "11 passed"
-    },
-    {
-      "cmd": "pytest services/research/tests/test_research_orchestrator_http_service.py",
-      "result": "2 failed (derivatives_pricing_risk_provenance) - pre-existing on baseline, unrelated; rest pass"
+      "cmd": "pytest services/research/tests/test_discovery_allocator_schedule.py services/research/test_discovery_allocator.py scripts/test_issue_dev_paper_principals.py services/research/tests/test_research_orchestrator_http_service.py",
+      "result": "104 passed (exit 0)"
     }
   ],
   "acceptance": {
-    "1": "main.py startup handler start_discovery_allocator_schedule runs the allocator daily (DISCOVERY_ALLOCATOR_INTERVAL_SECONDS default 86400) behind DISCOVERY_ALLOCATOR_ENABLED; the setting defaults to enabled (paper-only, cap 5) and DISCOVERY_ALLOCATOR_ENABLED=false turns it off; compose files untouched (outside task artifact contract)",
+    "1": "main.py startup handler start_discovery_allocator_schedule runs the allocator daily (DISCOVERY_ALLOCATOR_INTERVAL_SECONDS default 86400) behind DISCOVERY_ALLOCATOR_ENABLED; the setting defaults to enabled (paper-only, cap 5) and DISCOVERY_ALLOCATOR_ENABLED=false turns it off; docker-compose.yml mounts the principal files and sets DISCOVERY_ALLOCATOR_TENANT_ID default tenant-dev",
     "2": "each run appends a record to <data_dir>/discovery_allocator_runs.jsonl: admitted_candidates_seen/refs, bound[], skipped[], reason",
     "3": "test_startup_schedule_runs_allocator_paper_only_cap_five: TestClient startup, 8 admitted x 8 personas, max_personas=99 -> exactly 5 bound, all paper",
     "4": "test_setting_off_records_disabled_and_allocates_nothing",
-    "5": "Production ports (discovery_allocator.make_production_ports) are built at main.py import: persona reader GET {DISCOVERY_ALLOCATOR_PERSONA_URL}/api/personas, active-binding reader (persona labels.discovery_allocator), persona_strategy_discovery scorer, BFF paper-capital provisioner (POST /bff/personas/{id}/provisioning/paper-capital); cap 5, paper only. Owner unreachable -> run records owner_unreachable:<service>:<detail>. Tests: test_default_boot_uses_production_ports_not_stubs, test_unreachable_owner_recorded_per_run."
+    "5": "Production ports (make_production_ports): persona reader (GET /api/personas, RESEARCH_PERSONA_SERVICE_TOKEN), registry resolver (GET /api/registry/strategy-specs/{id}; admission rows are normalized to the approved inline StrategySpec, tenant/state/checksum verified, otherwise skipped with a named reason), durable binding reader (GET Capital /api/bindings, binding_id prefix pcb-discovery-, pending/active, tenant-filtered; RESEARCH_CAPITAL_SERVICE_TOKEN), persona_strategy_discovery scorer, BFF paper-capital provisioner (body includes currency=USD, ids stable per tenant/persona/spec so reruns adopt the same pool/binding). A provision failure keeps earlier bindings and records provision_failed per item; OwnerUnreachable mid-run stops and records the reason with bound retained."
   },
-  "known_limitation": "RESEARCH_BFF_SERVICE_TOKEN is now issued and mounted (operator decision A). RESEARCH_PERSONA_SERVICE_TOKEN is still not issued/mounted and was outside the decision; until it is, runs record owner_unreachable (401/403) for persona reads. Active-binding readback relies on the labels.discovery_allocator label the provisioner writes.",
+  "known_limitation": "Two additional READ-ONLY principals (persona viewer, capital-reader) were added beyond operator decision A (BFF operator token); flagged for reviewer/operator. A live containerized production-port run against real persona/capital/BFF services was not executed here; production-port behavior is proven by the real BFF request model and real PersonaProvisioningCoordinator with a fake owner transport.",
   "principal_wiring": {
     "variable": "RESEARCH_BFF_SERVICE_TOKEN",
     "subject": "research-orchestrator",
@@ -26,6 +22,13 @@
     "delivered": "file mount via dev-paper-research-tokens (read-only), same as RESEARCH_REGISTRY_SERVICE_TOKEN",
     "decision": "operator option A 2026-11-11",
     "token_values_committed": false,
-    "tests": "scripts/test_issue_dev_paper_principals.py: 49 passed; 1 env-only failure (flask not installed in scratch venv, unrelated)"
+    "tests": "scripts/test_issue_dev_paper_principals.py passes in the 104-test batch"
+  },
+  "review_fixes": {
+    "admission_ref": "test_real_admission_shape_is_resolved_to_registry_spec_and_scored (real ReplicationAdmissionStore row, no registry_id fixture) and test_unapproved_foreign_or_changed_spec_is_skipped_with_reason",
+    "currency": "test_provision_body_satisfies_real_bff_contract_and_coordinator and test_allocator_body_is_accepted_by_real_coordinator_for_new_pool (real PersonaProvisioningCoordinator creates new pool)",
+    "durable_bindings": "test_active_bindings_come_from_capital_not_persona_labels",
+    "credentials_tenant": "RESEARCH_PERSONA_SERVICE_TOKEN (viewer) and RESEARCH_CAPITAL_SERVICE_TOKEN (capital-reader) issued read-only, tenant-dev, mounted; compose tenant default tenant-dev; test_compose_mounts_credentials_and_sets_dev_tenant, test_default_boot_uses_production_ports_and_compose_tenant_credentials",
+    "partial_failure": "test_partial_provision_failure_retains_earlier_bindings, test_owner_unreachable_mid_run_keeps_bound_and_records_reason"
   }
 }

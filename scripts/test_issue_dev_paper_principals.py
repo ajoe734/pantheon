@@ -392,7 +392,10 @@ def test_research_retrain_executor_principals_are_exact_and_mounted_read_only():
     registry_var = "RESEARCH_REGISTRY_SERVICE_TOKEN"
     training_var = "RESEARCH_TRAINING_SERVICE_TOKEN"
     bff_var = "RESEARCH_BFF_SERVICE_TOKEN"
-    assert CONSUMER_FILES["research-orchestrator-svc"] == (registry_var, training_var, bff_var)
+    assert CONSUMER_FILES["research-orchestrator-svc"] == (
+        registry_var, training_var, bff_var,
+        "RESEARCH_PERSONA_SERVICE_TOKEN", "RESEARCH_CAPITAL_SERVICE_TOKEN",
+    )
     values = issue_environment(configured(), now=NOW)
 
     registry = verify(values[registry_var])
@@ -415,6 +418,11 @@ def test_research_retrain_executor_principals_are_exact_and_mounted_read_only():
     assert bff["tenant_id"] == "tenant-dev" and bff["allowed_tenants"] == ["tenant-dev"]
     assert bff["exp"] - bff["iat"] <= TTL_SECONDS
     assert not {"admin", "approver", "decide", "persona.admin", "automated_gate"} & set(bff["roles"])
+    for var, role in (("RESEARCH_PERSONA_SERVICE_TOKEN", "viewer"), ("RESEARCH_CAPITAL_SERVICE_TOKEN", "capital-reader")):
+        c = verify(values[var])
+        assert c["roles"] == [role] and c["scope"] == "pantheon:dev-owner-read"
+        assert c["tenant_id"] == "tenant-dev" and c["sub"] == "research-orchestrator"
+        assert values[var + "_FILE"] == "/run/pantheon-principals/" + var
     assert values[bff_var + "_FILE"] == "/run/pantheon-principals/" + bff_var
     assert values[registry_var + "_FILE"] == "/run/pantheon-principals/" + registry_var
     assert values[training_var + "_FILE"] == "/run/pantheon-principals/" + training_var

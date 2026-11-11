@@ -2133,13 +2133,17 @@ def _discovery_owner_call(service: str, method: str, url: str, body: Optional[Di
     token_variable = {
         "persona": "RESEARCH_PERSONA_SERVICE_TOKEN",
         "provisioning": "RESEARCH_BFF_SERVICE_TOKEN",
+        "registry": "RESEARCH_REGISTRY_SERVICE_TOKEN",
+        "capital": "RESEARCH_CAPITAL_SERVICE_TOKEN",
     }[service]
     try:
         return _retrain_call(
             step=f"discovery_allocator_{service}", service=service, method=method, url=url,
             tenant_id=DISCOVERY_ALLOCATOR_TENANT, token_variable=token_variable, body=body,
         )
-    except (_RetrainFailure, _OwnerRejection) as exc:
+    except _OwnerRejection as exc:
+        raise _da.OwnerRejected(service, int(getattr(exc, "status", None) or getattr(exc, "code", 0) or 0), str(getattr(exc, "detail", exc))) from None
+    except _RetrainFailure as exc:
         raise _da.OwnerUnreachable(service, str(exc)) from None
 
 
@@ -2150,6 +2154,8 @@ def _build_discovery_allocator_ports() -> Dict[str, Any]:
         call=_discovery_owner_call,
         persona_url=os.getenv("DISCOVERY_ALLOCATOR_PERSONA_URL", "http://persona:8002"),
         provisioning_url=os.getenv("DISCOVERY_ALLOCATOR_BFF_URL", "http://operator-bff:8001"),
+        registry_url=os.getenv("REGISTRY_URL", "http://registry:8087"),
+        capital_url=os.getenv("DISCOVERY_ALLOCATOR_CAPITAL_URL", "http://capital:8092"),
         tenant_id=DISCOVERY_ALLOCATOR_TENANT,
         paper_capital_cap=float(os.getenv("DISCOVERY_ALLOCATOR_PAPER_CAPITAL_CAP", "50000")),
         per_persona_capital=float(os.getenv("DISCOVERY_ALLOCATOR_PER_PERSONA_CAPITAL", "10000")),
@@ -2173,6 +2179,7 @@ def run_discovery_allocator_once() -> Dict[str, Any]:
         ],
         list_personas=discovery_allocator_ports["list_personas"],
         list_active_bindings=discovery_allocator_ports["list_active_bindings"],
+        resolve_admitted=discovery_allocator_ports.get("resolve_admitted"),
         tenant_id=DISCOVERY_ALLOCATOR_TENANT,
         record_path=store.data_dir / "discovery_allocator_runs.jsonl",
     )
