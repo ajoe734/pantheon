@@ -2710,9 +2710,9 @@ def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_
 
     assert deploy_step["name"] == "Deploy dev VM stack under lease"
     assert (
-        market_idx
-        < deploy_idx
+        deploy_idx
         < candidate_upload_idx
+        < market_idx
         < taifex_idx
         < bounded_taifex_idx
         < taifex_upload_idx
@@ -2720,8 +2720,18 @@ def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_
         < retire_idx
         < comp_idx
     )
+    # The Taiwan refresh fails closed into the same compensation flow as other
+    # post-switch failures and keeps its own log in the run evidence.
+    assert market_step["name"] == "Refresh Taiwan market session under lease after candidate stack deploy"
     assert "continue-on-error" not in market_step
     assert "--non-blocking" not in market_step["run"]
+    assert "tw-market-refresh.json" in market_step["run"]
+    assert "if record[\"log\"]:\n    print(record[\"log\"])" in market_step["run"]
+    assert "steps.market_refresh.outcome == 'failure'" in retire_step["if"]
+    assert "steps.market_refresh.outcome == 'failure'" in comp_step["if"]
+    assert "always()" in by_id["market_refresh_upload"][1]["if"]
+    assert by_id["market_refresh_upload"][1]["with"]["path"] == "${{ steps.release_admission.outputs.evidence_dir }}/tw-market-refresh.json"
+    assert by_id["market_refresh"][0] < by_id["market_refresh_upload"][0] < taifex_idx
     assert taifex_step.get("continue-on-error") is True
     assert "--non-blocking" in taifex_step["run"]
     assert "taifex-market-refresh.json" in taifex_step["run"]
@@ -2814,7 +2824,8 @@ def _refresh_runtime_python() -> str:
 
 
 def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: str = "bounded",
-                         local_ids: tuple[str, ...] | None = None, up_lands_on: str | None = None):
+                         local_ids: tuple[str, ...] | None = None, up_lands_on: str | None = None,
+                         pre_has_mode: bool = False, post_extra: str = ""):
     """Fake docker where the plain tag pantheon-source-ingest resolves to tag_id.
 
     Compose config honours a pin override file (-f *pin.json); "up" starts whatever
@@ -2838,7 +2849,7 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
         '  *" up "*) echo "${UP_LANDS_ON:-$eff}" > "$STATE" ;;\n'
         '  *" ps -q source-ingest"*) echo cid1 ;;\n'
         '  "inspect --format {{.Image}} cid1") cat "$STATE" ;;\n'
-        '  "inspect --format {{json .Config.Env}} cid1") python3 -c \'import json,os;print(json.dumps(json.load(open(os.environ["ENV_FILE"]))+["PANTHEON_EXTERNAL_EGRESS=deny","PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=","SOURCE_INGEST_CONTROLLER_MODE=reconcile_only"]))\' ;;\n'
+        '  "inspect --format {{json .Config.Env}} cid1") python3 -c \'import json,os;pre=json.load(open(os.environ["ENV_FILE"]));ctl=("PANTHEON_EXTERNAL_EGRESS","PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS","SOURCE_INGEST_CONTROLLER_MODE");post=[x for x in pre if x.split("=",1)[0] not in ctl]+["PANTHEON_EXTERNAL_EGRESS=deny","PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="];post+=["SOURCE_INGEST_CONTROLLER_MODE=reconcile_only"] if any(x.startswith("SOURCE_INGEST_CONTROLLER_MODE=") for x in pre) else [];post+=[x for x in os.environ.get("POST_EXTRA","").split() if x];print(json.dumps(post))\' ;;\n'
         '  *) : ;;\n'
         'esac\n'
     )
@@ -2847,7 +2858,8 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
     state = tmp_path / "state"
     # The runtime builds the docker env from this file, so the fake's inputs go here.
     env_file.write_text(json.dumps([
-        "A=1", f"DOCKER_LOG={log}", f"TAG_ID={tag_id}", f"STATE={state}",
+        "A=1", *(["SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull"] if pre_has_mode else []),
+        f"DOCKER_LOG={log}", f"TAG_ID={tag_id}", f"STATE={state}",
         f"LOCAL_IDS={' '.join(local_ids if local_ids is not None else (running,))}",
         f"UP_LANDS_ON={up_lands_on or ''}", f"ENV_FILE={env_file}"]))
     script = tmp_path / "refresh.py"
@@ -2858,7 +2870,7 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
         capture_output=True, text=True,
         env={"PATH": f"{fake}:{os.environ['PATH']}", "DOCKER_LOG": str(log), "TAG_ID": tag_id, "STATE": str(state),
              "LOCAL_IDS": " ".join(local_ids if local_ids is not None else (running,)),
-             "UP_LANDS_ON": up_lands_on or "", "ENV_FILE": str(env_file)},
+             "UP_LANDS_ON": up_lands_on or "", "ENV_FILE": str(env_file), "POST_EXTRA": post_extra},
     )
     return result, log.read_text().splitlines() if log.exists() else [], state.read_text().strip()
 
@@ -2891,6 +2903,27 @@ def test_source_refresh_still_fails_when_started_container_image_differs(tmp_pat
     result, _calls, _state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action, up_lands_on=other)
     assert result.returncode != 0
     assert baseline in result.stderr and other in result.stderr
+
+
+def test_source_refresh_restore_env_mode_key_presence_and_wrong_env(tmp_path):
+    baseline = "sha256:" + "9" * 64
+    # MODE absent from the recorded env and absent after restore: accepted.
+    (tmp_path / "a").mkdir()
+    ok, _c, _s = _run_refresh_runtime(tmp_path / "a", tag_id=baseline, running=baseline, action="restore")
+    assert ok.returncode == 0, ok.stderr
+    # MODE present in the recorded env: restored env must carry reconcile_only.
+    (tmp_path / "b").mkdir()
+    present, _c, _s = _run_refresh_runtime(tmp_path / "b", tag_id=baseline, running=baseline, action="restore", pre_has_mode=True)
+    assert present.returncode == 0, present.stderr
+    # MODE added although it was not recorded: rejected.
+    (tmp_path / "c").mkdir()
+    added, _c, _s = _run_refresh_runtime(tmp_path / "c", tag_id=baseline, running=baseline, action="restore",
+                                         post_extra="SOURCE_INGEST_CONTROLLER_MODE=reconcile_only")
+    assert added.returncode != 0 and "added=['SOURCE_INGEST_CONTROLLER_MODE=reconcile_only']" in added.stderr
+    # Unrelated env drift is still rejected.
+    (tmp_path / "d").mkdir()
+    drift, _c, _s = _run_refresh_runtime(tmp_path / "d", tag_id=baseline, running=baseline, action="restore", post_extra="EVIL=1")
+    assert drift.returncode != 0 and "EVIL=1" in drift.stderr
 
 
 def test_bff_adoption_gate_requires_root_deploy_for_paper_capital_reader_services() -> None:
@@ -3086,3 +3119,12 @@ def test_collector_host_gate_rejects_non_single_hostname() -> None:
                           env={"PANTHEON_COLLECTOR_HOST": "collector.example,extra.example", "PATH": "/usr/bin:/bin"},
                           capture_output=True, text=True, check=False)
     assert proc.returncode == 1 and "exactly one valid hostname" in proc.stderr
+
+
+def test_bounded_refresh_failure_outcome_with_log_is_recorded_for_every_connector() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("execute_bounded_source_refresh_entrypoint() {")
+    body = script[start : script.index("\nrecover_bounded_source_refresh_dlq() {", start)] if "\nrecover_bounded_source_refresh_dlq() {" in script[start:] else script[start:]
+    # The failed outcome (carrying the captured redacted log) is no longer gated on TAIFEX/non-blocking,
+    # so a failed Taiwan refresh keeps its own logs in the requested output file.
+    assert body.count('write_bounded_refresh_outcome "failed" "${fail_reason}" || true') == 2

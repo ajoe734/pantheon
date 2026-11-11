@@ -2268,7 +2268,11 @@ if action == "restore":
     # restore-controlled keys replaced; image/other env invariants stay strict.
     controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
     intended = {x for x in pre_list if x.split("=", 1)[0] not in controlled}
-    intended |= {f"{k}={env[k]}" for k in controlled}
+    # SOURCE_INGEST_CONTROLLER_MODE is only passed to the scheduler service in
+    # docker-compose.yml, never the source-ingest container, so it is expected
+    # only when the recorded pre-environment carried it. Egress keys stay strict.
+    pre_keys = {x.split("=", 1)[0] for x in pre_list}
+    intended |= {f"{k}={env[k]}" for k in controlled if k != "SOURCE_INGEST_CONTROLLER_MODE" or k in pre_keys}
     if set(intended) != set(post_list):
         raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - intended)}, removed={sorted(intended - set(post_list))}")
 PY
@@ -2808,9 +2812,10 @@ OUTCOME_PY
     trap - EXIT INT TERM
     if (( rc != 0 )); then
       local fail_reason="${LAST_REMOTE_DEPLOY_ERROR:-bounded_refresh_preflight_failed}"
-      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
-        write_bounded_refresh_outcome "failed" "${fail_reason}" || true
-      fi
+      # Every connector records its failure outcome and captured log in the
+      # requested output file (a no-op without --output), so a failed Taiwan
+      # refresh keeps its own logs instead of an empty block.
+      write_bounded_refresh_outcome "failed" "${fail_reason}" || true
       rm -f "${steady_env:-}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
       if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
         info "non-blocking TAIFEX refresh failed before container mutation (rc=${rc}, reason=${fail_reason}); continuing without failing release"
@@ -2949,9 +2954,10 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     (( restore_rc == 0 )) || rc="${restore_rc}"
     if (( rc != 0 )); then
       local fail_reason="${LAST_REMOTE_DEPLOY_ERROR:-bounded_refresh_failed}"
-      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
-        write_bounded_refresh_outcome "failed" "${fail_reason}" || true
-      fi
+      # Every connector records its failure outcome and captured log in the
+      # requested output file (a no-op without --output), so a failed Taiwan
+      # refresh keeps its own logs instead of an empty block.
+      write_bounded_refresh_outcome "failed" "${fail_reason}" || true
     fi
     rm -f "${steady_env:-}"
     if (( rc != 0 )); then
