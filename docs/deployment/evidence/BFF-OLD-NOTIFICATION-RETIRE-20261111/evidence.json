@@ -33,8 +33,8 @@
     "lifecycle": "timeout 420 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_lifecycle_forward.py: 192 passed, exit 0, 139.74s",
     "dedupe": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_path_dedupe.py: 4 passed, exit 0, 7.48s (same test source as verified_source_head)",
     "exact_head_recheck": {
-      "binding": "Rerun lifecycle192 and the same prior contract217 selection below at the final committed PR head. Terminal results and full head SHA belong to the governed handoff; prior-head 409-pass review is not current-head validation.",
-      "command_prefix": "timeout 600 .venv-pantheon/bin/python3 -m pytest -q",
+      "binding": "Historical selection from the prior implementation, not a requirement to repeat unchanged broad suites. Per current task continuation, prior lifecycle192, contract217, writegap28 and dedupe4 are overlapping historical batches and must not be summed. Current workflow-only adoption is covered by focused integration below, new-head CI and fresh independent review.",
+      "command_prefix": "Historical command: timeout 600 .venv-pantheon/bin/python3 -m pytest -q",
       "contract217_files": [
         "services/control-plane/bff/tests/test_bff_path_dedupe.py",
         "services/control-plane/bff/tests/test_persona_case_retire_command.py",
@@ -62,9 +62,10 @@
     "baseline_limit": "The listed failures were compared against dev during earlier implementation; they are historical evidence, not a new-head whole-suite pass or a claim that these files were rerun in the final focused selection. Interrupted or timed-out review batches are excluded."
   },
   "fe_audit_recheck": {
-    "remote_dev": "7123ea41b6ed11e0e197d64ec308ae0b7eba0ae2",
-    "verification": "Read-only git ls-remote confirmed maintained remote dev still equals the audited commit. Repeated literal route and paths.*Action caller searches in src/scripts/e2e; callers of removed builders are test-only, MCP read clients use /bff/mcp-servers and /bff/mcp-tools.",
-    "limits": "Unused path builders, mock adapters and the separately owned onboarding probe are not independent supported UI consumers. Source search is not a traffic measurement."
+    "remote_dev": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
+    "verification": "Read-only git ls-remote plus depth-one fetch of exact maintained frontend dev into an external bare audit repository. Repeated literal retired URL and paths.*Action searches across src/scripts/e2e and inspected paths.ts: no supported UI caller; MCP read clients use /bff/mcp-servers and /bff/mcp-tools. Retired generic action builders are absent.",
+    "probe": "Existing onboarding probe marks StartRuntime unsupported and skips the request; POST /api/v1/deployment-plans is guard-only and never reported as creation.",
+    "limits": "Source inspection only, not traffic or hosted acceptance. Original audit remains historical."
   },
   "caddy_inventory": {
     "source": "/tmp/pantheon-compat-residual-20261111/remote_inventory-result.json",
@@ -81,5 +82,34 @@
     "observed_from": "2026-11-10T17:14:49Z",
     "observed_to": "2026-11-11T12:57:33Z",
     "limits": "bounded window only; not seven-day coverage or global zero"
+  },
+  "current_dev_adoption": {
+    "prior_head": "72a8ae0a8e3c8548717ff9e90f141d6e5f098e41",
+    "dev_base": "6547ff3493dc110b1537941f3ddf24c61495d0a0",
+    "adoption_commit": "2924c5a3b1c494ab15cd16869b048c514764a379",
+    "shared_ci_repair": {
+      "pr": 7183,
+      "head": "a162e1da12dd6b4fcde479fb22a8745f211768e4",
+      "merge": "6547ff3493dc110b1537941f3ddf24c61495d0a0",
+      "scope": "Inherited unchanged from current dev; not new product implementation."
+    },
+    "product_diff": "git diff --exit-code 72a8ae0a8 HEAD -- services/control-plane/bff scripts/bff_route_manifest_backend.py docs/conventions/CANONICAL_PATH_NAMING.md: exit 0 at adoption_commit. All original 42 retirement files preserved against current dev.",
+    "focused_route_batch": {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_path_dedupe.py services/control-plane/bff/test_bff_write_gap_2026_05_28.py::test_deployment_plan_create_routes_are_retired_without_side_effects services/control-plane/bff/test_bff_write_gap_2026_05_28.py::test_advance_lifecycle_unregistered_action_id_returns_404 services/control-plane/bff/tests/test_tools_integrations_router.py::test_mcp_server_import_tools_lifecycle services/control-plane/bff/tests/test_tools_integrations_router.py::test_mcp_tool_action_admission services/control-plane/bff/tests/test_tools_integrations_router.py::test_tools_crud_and_deprecated_actions services/control-plane/bff/tests/test_tools_integrations_router.py::test_mcp_servers_and_skills_crud services/control-plane/bff/tests/test_tools_integrations_router.py::test_capabilities_facades_and_channels",
+      "result": "12 passed, exit 0, 14.02s"
+    },
+    "focused_lifecycle_batch": {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_lifecycle_forward.py -k 'mounted_lifecycle_entries_use_one_real_owner or mounted_entries_share_real_confirmation_gate or mounted_lifecycle_requires_authenticated_caller'",
+      "result": "36 passed, 156 deselected, exit 0, 28.08s"
+    },
+    "checks": [
+      "python3 scripts/dev/provision_python_distribution.py --check-only: exit 0",
+      "timeout 90 .venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check: exit 0",
+      "timeout 90 .venv-pantheon/bin/python3 scripts/bff_route_diff.py --check: exit 0",
+      "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD: exit 0",
+      "git diff --check: exit 0",
+      "git merge-base --is-ancestor 6547ff3493dc110b1537941f3ddf24c61495d0a0 HEAD: exit 0"
+    ],
+    "delivery": "Same PR #7178. Final head is frozen by governed handoff after this evidence commit; only evidence changes follow adoption_commit. Required actual new-head CI and fresh Codex2 review remain mandatory. Old approval is scoped to its old head; prior APT-failed runs remain failures. No direct deployment or hosted acceptance claim."
   }
 }
