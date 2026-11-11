@@ -109,13 +109,13 @@ def test_bounded_source_refresh_profile_is_fail_closed() -> None:
     assert "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4" in gate
     assert "SOURCE_INGEST_MAX_RECORDS <= 500" in gate
     assert "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600" in gate
-    assert 'required = {"openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"}' in gate
+    assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in gate
     assert 'export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"' in gate
     assert 'export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"' in gate
     assert "from services.external_egress import allowed_hosts" in gate
 
-    assert 'SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market"' in deploy
-    assert 'SOURCE_REFRESH_ALLOWED_HOSTS:+${SOURCE_REFRESH_ALLOWED_HOSTS},}www.twse.com.tw' in deploy
+    assert 'SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"' in deploy
+    assert "www.twse.com.tw" not in deploy
 
     root_start = deploy.index("  root)\n")
     root_end = deploy.index("\n  bff)\n", root_start)
@@ -466,7 +466,7 @@ validate_source_refresh_profile
 
 def test_validate_source_refresh_profile_taifex_and_twse_exact_host_contract() -> None:
     gate = _validate_source_refresh_profile_function()
-    assert 'required = {"openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"}' in gate
+    assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in gate
     assert 'required = {"openapi.taifex.com.tw", "www.taifex.com.tw"}' in gate
     assert "if hosts != required:" in gate
 
@@ -480,10 +480,10 @@ def test_validate_source_refresh_profile_taifex_and_twse_exact_host_contract() -
         )
         assert res.returncode == 0, res.stderr
 
-    # Accept TWSE/TPEx with exact three hosts in either order
+    # Accept TWSE/TPEx with exact two hosts in either order
     for valid_twse in (
-        "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw",
-        "www.tpex.org.tw,www.twse.com.tw,openapi.twse.com.tw",
+        "openapi.twse.com.tw,www.tpex.org.tw",
+        "www.tpex.org.tw,openapi.twse.com.tw",
     ):
         res = _run_source_refresh_profile_gate(
             "tw-twse-tpex-official-market", valid_twse, "tw_price_daily"
@@ -498,7 +498,8 @@ def test_validate_source_refresh_profile_taifex_and_twse_exact_host_contract() -
         ("tw-taifex-futures-options-chip", "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw"),
         ("tw-taifex-futures-options-chip", "*.taifex.com.tw,www.taifex.com.tw"),
         ("tw-taifex-futures-options-chip", "*"),
-        ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.tpex.org.tw"),
+        ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"),
+        ("tw-twse-tpex-official-market", "openapi.twse.com.tw"),
         ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw"),
         ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw"),
         ("tw-twse-tpex-official-market", "*.twse.com.tw,www.tpex.org.tw"),
@@ -523,7 +524,7 @@ def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_t
 
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
-    assert twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+    assert twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.tpex.org.tw"
 
     assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
     assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
@@ -553,7 +554,7 @@ def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_t
     )
     assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
-    assert m_twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+    assert m_twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.tpex.org.tw"
     assert m_taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
     assert m_taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
     assert m_taifex_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
