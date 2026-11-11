@@ -280,6 +280,29 @@ def test_source_record_distillation_to_alpha_replication_loop(
     from services.research.replication.gate import ReplicationGate
     monkeypatch.setattr(ReplicationGate, "evaluate_candidate", lambda self, task: FakeGateResponse(passed=True))
 
+    # Recorded output of a real vectorbt backtest run; this suite does not
+    # install the vectorbt backend (the real run is covered in the research suite).
+    import copy
+    import json
+    from pathlib import Path
+
+    recorded_backtest = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "research"
+            / "tests"
+            / "fixtures"
+            / "recorded_backtest_tw_2330_2317.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    def _recorded_backtest(*, run_id, task, entry, raw_spec):
+        result = copy.deepcopy(recorded_backtest)
+        result["backtest_run_id"] = f"bt-{run_id}"
+        return result
+
+    monkeypatch.setattr(reval_worker, "_resolve_backtest_evaluation", _recorded_backtest)
+
     tick_result = reval_worker.run_once(tenant_id="tenant-prod-v2")
 
     assert tick_result.get("errors") == [], f"tick_result errors: {tick_result.get('errors')}"
