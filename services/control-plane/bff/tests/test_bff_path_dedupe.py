@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from typing import Iterable
+from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 
@@ -119,8 +120,10 @@ def test_deprecated_alternate_url_families_return_410_with_headers() -> None:
     assert error["details"]["replacement"]
 
 
-def test_notification_only_nested_action_families_are_removed() -> None:
+def test_notification_only_nested_action_families_are_removed(monkeypatch) -> None:
     client = _client()
+    admission = Mock(spec=["submit_command_admission"])
+    monkeypatch.setattr(_APP.state, "command_adapter_service", admission)
 
     for path in (
         "/bff/strategies/strategy-1/actions/promote",
@@ -138,7 +141,10 @@ def test_notification_only_nested_action_families_are_removed() -> None:
     error = resp.json()["error"]
     assert error["code"] == "RESOURCE_NOT_FOUND"
     assert "replacement" not in (error.get("details") or {})
-    assert "X-Deprecated" not in resp.headers
+    assert "deprecation" not in resp.json().get("meta", {})
+    for header in ("X-Deprecated", "X-Deprecated-At", "Deprecation", "Sunset", "X-Pantheon-Replacement-Route"):
+        assert header not in resp.headers
+    assert admission.mock_calls == []
 
 
 def test_path_parameter_dedupe_keeps_only_snake_case_canonical_templates() -> None:
