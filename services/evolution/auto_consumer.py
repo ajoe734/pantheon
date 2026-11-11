@@ -64,7 +64,8 @@ class DiscoveryScopePort(Protocol):
 
 
 class DecisionPort(Protocol):
-    def list_proposed(self) -> Sequence[Mapping[str, Any]]: ...
+    def list_by_state(self, state: str) -> Sequence[Mapping[str, Any]]:
+        """Decisions currently in ``state`` (``proposed`` / ``reviewed`` / ``approved``)."""
 
     def review(self, decision_id: str, body: Mapping[str, Any]) -> Mapping[str, Any]: ...
 
@@ -129,8 +130,22 @@ def decision_digest(decision: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def evaluate_gate(decision: Mapping[str, Any], scope_port: DiscoveryScopePort) -> GateVerdict:
-    """Decide whether the automated gate may review+approve ``decision``."""
+def auto_approval_id(decision_id: str) -> str:
+    return f"auto-gate-{decision_id}"
+
+
+RESUMABLE_STATES = ("proposed", "reviewed", "approved")
+
+
+def evaluate_gate(
+    decision: Mapping[str, Any], scope_port: DiscoveryScopePort, *, state: str = "proposed"
+) -> GateVerdict:
+    """Decide whether the automated gate may act on ``decision`` in ``state``.
+
+    A ``reviewed`` / ``approved`` decision is only resumed when it still carries
+    the automated gate's own governance binding (``auto-gate-<decision_id>``);
+    anything else belongs to the operator.
+    """
     decision_id = _text(decision.get("decision_id"))
     checks: list[dict[str, Any]] = []
 
@@ -142,8 +157,14 @@ def evaluate_gate(decision: Mapping[str, Any], scope_port: DiscoveryScopePort) -
         return GateVerdict(decision_id, False, reason, checks, scope)
 
     action = _text(decision.get("action_type")).lower()
-    if not check("state_is_proposed", _text(decision.get("decision_state")) == "proposed", decision.get("decision_state")):
-        return refuse("not_proposed")
+    if not check("state_matches_queue", _text(decision.get("decision_state")) == state, decision.get("decision_state")):
+        return refuse("not_" + state)
+    if state != "proposed" and not check(
+        "carries_auto_gate_binding",
+        _text(decision.get("approval_decision_id")) == auto_approval_id(decision_id),
+        decision.get("approval_decision_id"),
+    ):
+        return refuse("not_bound_to_auto_gate")
     if not check("action_in_auto_set", action in AUTO_ACTIONS, action):
         return refuse("action_requires_operator")
     if not check("risk_is_low", _text(decision.get("risk_level")).lower() == "low", decision.get("risk_level")):
@@ -219,34 +240,53 @@ class AutoConsumer:
         self.clock = clock
 
     def tick(self) -> ConsumerReport:
+        """Advance every decision one resumable step at a time.
+
+        ``proposed -> reviewed -> approved`` and the retire's persona steps are
+        each durable; a later tick resumes from whatever state a failure left
+        behind, using the original governance binding.
+        """
         report = ConsumerReport()
-        for decision in self.decisions.list_proposed():
-            decision_id = _text(decision.get("decision_id"))
-            verdict = evaluate_gate(decision, self.scope)
-            if not verdict.eligible:
-                report.left_for_operator[decision_id] = verdict.reason
-                continue
+        for state in RESUMABLE_STATES:
             try:
-                self._approve(decision, verdict, report)
-            except Exception as exc:  # one bad decision never stops the tick
-                report.errors[decision_id] = f"{type(exc).__name__}: {exc}"
+                queue = list(self.decisions.list_by_state(state))
+            except Exception as exc:  # decision owner outage: retry next tick
+                report.errors[f"list:{state}"] = f"{type(exc).__name__}: {exc}"
+                continue
+            for decision in queue:
+                decision_id = _text(decision.get("decision_id"))
+                verdict = evaluate_gate(decision, self.scope, state=state)
+                if not verdict.eligible:
+                    if state == "proposed" or verdict.reason not in {"not_bound_to_auto_gate"}:
+                        report.left_for_operator.setdefault(decision_id, verdict.reason)
+                    continue
+                if state == "approved" and _text(decision.get("action_type")).lower() != "retire":
+                    continue  # approved research work is dispatched by the dispatch worker
+                try:
+                    self._step(decision, verdict, state, report)
+                except Exception as exc:  # one bad decision never stops the tick
+                    report.errors[decision_id] = f"{type(exc).__name__}: {exc}"
         return report
 
-    def _approve(self, decision: Mapping[str, Any], verdict: GateVerdict, report: ConsumerReport) -> None:
+    def _step(self, decision: Mapping[str, Any], verdict: GateVerdict, state: str, report: ConsumerReport) -> None:
         decision_id = _text(decision.get("decision_id"))
         tenant = _text(decision.get("tenant_id"))
-        approval_id = f"auto-gate-{decision_id}"
+        approval_id = auto_approval_id(decision_id)
         evidence = {**verdict.evidence(), "decision_digest": decision_digest(decision), "at": self.clock()}
         note = json.dumps(evidence, sort_keys=True, default=str)
         common = {"actor_role": AUTOMATED_GATE_ROLE, "actor_id": AUTOMATED_GATE_ACTOR_ID, "tenant_id": tenant, "note": note}
-        # Record the evidence before the state moves: an approved decision always has its proof.
-        self.evidence.record({"event": "auto_gate_approved", **evidence})
-        self.decisions.review(decision_id, {**common, "approval_decision_id": approval_id})
-        self.decisions.approve(decision_id, {**common, "approval_decision_id": approval_id})
-        report.approved.append(decision_id)
-        if _text(decision.get("action_type")).lower() == "retire":
-            self.retire_persona(decision, verdict, approval_id)
-            report.retired.append(decision_id)
+        if state == "proposed":
+            # Record the evidence before the state moves: an approved decision always has its proof.
+            self.evidence.record({"event": "auto_gate_approved", **evidence})
+            self.decisions.review(decision_id, {**common, "approval_decision_id": approval_id})
+            state = "reviewed"
+        if state == "reviewed":
+            self.decisions.approve(decision_id, {**common, "approval_decision_id": approval_id})
+            report.approved.append(decision_id)
+            state = "approved"
+        if state == "approved" and _text(decision.get("action_type")).lower() == "retire":
+            if self.retire_persona(decision, verdict, approval_id):
+                report.retired.append(decision_id)
 
     def retire_persona(self, decision: Mapping[str, Any], verdict: GateVerdict, approval_id: str) -> list[str]:
         """Governed persona retire: ``paper_owner -> frozen -> retired`` (idempotent)."""
@@ -267,6 +307,8 @@ class AutoConsumer:
             steps.append("retired")
         if state != "retired":
             raise RuntimeError(f"persona {persona_id} ended {state!r}, expected 'retired'")
+        if not steps:
+            return steps  # already retired by an earlier tick: nothing new to record
         self.evidence.record(
             {
                 "event": "persona_retired",

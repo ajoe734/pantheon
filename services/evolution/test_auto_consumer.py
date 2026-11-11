@@ -49,15 +49,24 @@ class Decisions:
     def __init__(self, items):
         self.items, self.calls = items, []
 
-    def list_proposed(self):
-        return self.items
+    def list_by_state(self, state):
+        return [i for i in self.items if i.get("decision_state") == state]
+
+    fail_approve = False
+
+    def _item(self, did):
+        return next(i for i in self.items if i["decision_id"] == did)
 
     def review(self, did, body):
         self.calls.append(("review", did, body))
+        self._item(did).update(decision_state="reviewed", approval_decision_id=body["approval_decision_id"])
         return {}
 
     def approve(self, did, body):
+        if self.fail_approve:
+            raise RuntimeError("decision owner down")
         self.calls.append(("approve", did, body))
+        self._item(did).update(decision_state="approved")
         return {}
 
 
@@ -127,7 +136,6 @@ def test_live_persona_is_not_retired_automatically():
     ({"action_type": "retire", "risk_level": "high"}, "risk_requires_operator"),  # no marker -> high
     ({"action_type": "retire"}, "retire_outside_discovery_scope"),  # forged low risk, no marker
     ({"risk_level": "medium"}, "risk_requires_operator"),
-    ({"decision_state": "reviewed"}, "not_proposed"),
     ({"created_by_role": "operator"}, "proposer_not_controller"),
     ({"target_stage": "live"}, "stage_not_paper"),
 ])
@@ -222,8 +230,8 @@ def test_decayed_strategy_is_retired_end_to_end_through_the_real_evolution_servi
     assert plain_resp.status_code == 201 and plain_resp.json()["risk_level"] == "high"
 
     class Http:
-        def list_proposed(self):
-            rows = client.get("/api/evolution/proposals", params={"state": "proposed"}).json()
+        def list_by_state(self, state):
+            rows = client.get("/api/evolution/proposals", params={"state": state}).json()
             return [r for r in rows if r["decision_id"].startswith("evo-e2e")]
 
         def review(self, did, b):
@@ -253,3 +261,46 @@ def test_decayed_strategy_is_retired_end_to_end_through_the_real_evolution_servi
     roles = [s["actor_role"] for s in final["review_chain"]]
     assert roles == ["automated_gate", "automated_gate"]
     assert client.get("/api/evolution/proposals/evo-e2e-plain").json()["decision_state"] == "proposed"
+
+
+# ------------------------------------------------------------- resumable steps
+
+def test_review_success_then_approve_failure_is_resumed_next_tick():
+    consumer, sink = _consumer([_decision()])
+    consumer.decisions.fail_approve = True
+    first = consumer.tick()
+    assert first.errors and consumer.decisions.items[0]["decision_state"] == "reviewed"
+    consumer.decisions.fail_approve = False
+    second = consumer.tick()
+    assert second.approved == ["evo-auto-1"] and consumer.decisions.items[0]["decision_state"] == "approved"
+    assert [c[0] for c in consumer.decisions.calls] == ["review", "approve"]  # not reviewed twice
+    assert consumer.decisions.calls[1][2]["approval_decision_id"] == "auto-gate-evo-auto-1"
+
+
+def test_approve_success_then_persona_outage_is_retired_next_tick_with_original_binding():
+    class Flaky(Personas):
+        down = True
+
+        def get_state(self, pid, tenant):
+            if self.down:
+                raise ConnectionError("persona owner down")
+            return super().get_state(pid, tenant)
+
+    personas = Flaky()
+    consumer, sink = _consumer(
+        [_decision(action_type="retire", metadata={ac.DISCOVERY_AUTO_SCOPE_KEY: True})], personas=personas
+    )
+    first = consumer.tick()
+    assert first.errors and consumer.decisions.items[0]["decision_state"] == "approved" and not personas.log
+    personas.down = False
+    second = consumer.tick()
+    assert second.retired == ["evo-auto-1"] and personas.state == "retired"
+    assert {g for _, _, g in personas.log} == {"auto-gate-evo-auto-1"}
+    third = consumer.tick()  # nothing more to do, nothing re-recorded
+    assert not third.retired and len([e for e in sink.entries if e["event"] == "persona_retired"]) == 1
+
+
+def test_reviewed_or_approved_decisions_without_the_auto_binding_stay_with_the_operator():
+    consumer, _ = _consumer([_decision(decision_state="reviewed", approval_decision_id="human-1")])
+    report = consumer.tick()
+    assert not report.approved and not consumer.decisions.calls

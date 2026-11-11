@@ -1767,12 +1767,46 @@ def _retrain_finite(value: Any) -> Optional[float]:
     return number if number == number and number not in (float("inf"), float("-inf")) else None
 
 
-# Governed in-sample dataset loader for the retrain search.  Deployment wires
-# this (or the decision carries ``parameters["dataset"]``); with neither, the
-# search fails closed instead of falling back to a fixed toggle.
-_RETRAIN_DATASET_LOADER: Optional[Any] = None
+# Governed in-sample dataset for the retrain search: the same admitted
+# DatasetVersion authority Training evaluates against (canonical dataset +
+# threshold policy, validated by ``load_evaluation_authority``).  A decision may
+# also carry ``parameters["dataset"]``.  With neither, the search fails closed
+# instead of falling back to a fixed toggle.
 _RETRAIN_SEARCH_BUDGET_ENV = "RESEARCH_RETRAIN_SEARCH_BUDGET"
 _RETRAIN_TRIAL_COUNTER_ENV = "RESEARCH_REPLICATION_TRIAL_COUNTER_PATH"
+
+
+def _retrain_trial_counter_path() -> Path:
+    """Authoritative family counter: the file OOS admission's gate also uses."""
+    explicit = os.environ.get(_RETRAIN_TRIAL_COUNTER_ENV)
+    return Path(explicit) if explicit else Path(ALPHA_REPLICATION_DATA_DIR) / "family_trial_counts.json"
+
+
+def _default_retrain_dataset_loader(parent_artifact: Dict[str, Any], params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    dataset_path = os.environ.get("RESEARCH_RETRAIN_CANONICAL_DATASET_PATH") or os.environ.get("TRAINING_SESSION_CANONICAL_DATASET_PATH")
+    policy_path = os.environ.get("RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH") or os.environ.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH")
+    if not dataset_path or not policy_path:
+        return None
+    training_dir = str(Path(__file__).resolve().parent.parent / "training-session")
+    sys.path.insert(0, training_dir)
+    try:
+        import evaluation_authority as _authority  # type: ignore
+
+        pinned = os.environ.get("RESEARCH_RETRAIN_TRUSTED_NOW")
+        trusted_now = datetime.fromisoformat(pinned.replace("Z", "+00:00")) if pinned else datetime.now(timezone.utc)
+        snapshot = _authority.load_evaluation_authority(
+            dataset_path, policy_path, trusted_now=trusted_now,
+            strategy_id=str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id")),
+        )
+        return dict(snapshot.vectorbt_dataset)
+    except Exception:  # governance rejection / unreadable authority: fail closed
+        return None
+    finally:
+        if training_dir in sys.path:
+            sys.path.remove(training_dir)
+
+
+_RETRAIN_DATASET_LOADER: Optional[Any] = _default_retrain_dataset_loader
 
 
 def _retrain_search_update(
@@ -1786,7 +1820,6 @@ def _retrain_search_update(
     parameter update, or finishes the run ``no_candidate``.
     """
     from services.research.alpha_replication import evolution_search as search
-    from services.research.replication.gate import FamilyTrialCounterStore
 
     dataset = params.get("dataset") if isinstance(params.get("dataset"), dict) else None
     if dataset is None and callable(_RETRAIN_DATASET_LOADER):
@@ -1794,7 +1827,6 @@ def _retrain_search_update(
     if not isinstance(dataset, dict):
         raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
     budget = int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
-    counter_path = os.environ.get(_RETRAIN_TRIAL_COUNTER_ENV)
     family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
     from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
 
@@ -1808,7 +1840,7 @@ def _retrain_search_update(
             decision_id=str(params.get("decision_id") or run_id),
             family_id=family_id,
             budget=budget,
-            trial_counter=FamilyTrialCounterStore(Path(counter_path) if counter_path else None),
+            trial_counter=search.shared_family_trial_counter(_retrain_trial_counter_path()),
         )
     except search.EvolutionSearchError as exc:
         raise _RetrainFinished("no_candidate", f"search_unavailable: {exc}") from None
