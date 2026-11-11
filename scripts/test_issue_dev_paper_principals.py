@@ -52,7 +52,11 @@ def test_fixed_product_profiles_are_tenant_scoped_short_lived_and_separate():
         assert claims["allowed_tenants"] == ["tenant-dev"]
         assert claims["exp"] - claims["iat"] == TTL_SECONDS
         assert claims["scope"] == scope
-        assert not {"admin", "risk_owner", "operator", "approval_reader", "automated_gate", "runtime", "capital"}.intersection(claims["roles"])
+        # RESEARCH_BFF_SERVICE_TOKEN is the operator-approved (2026-11-11) operator-role principal.
+        blocked = {"admin", "risk_owner", "operator", "approval_reader", "automated_gate", "runtime", "capital"}
+        if variable == "RESEARCH_BFF_SERVICE_TOKEN":
+            blocked.discard("operator")
+        assert not blocked.intersection(claims["roles"])
         ids.add(claims["jti"])
     assert len(ids) == len(READERS) + len(WRITERS)
     writer = verify(values["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"])
@@ -103,7 +107,7 @@ def test_readers_do_not_have_product_write_roles(variable):
     assert rejected.value.status_code == 403
 
 
-@pytest.mark.parametrize("variable", WRITERS)
+@pytest.mark.parametrize("variable", [v for v in WRITERS if v != "RESEARCH_BFF_SERVICE_TOKEN"])
 def test_writers_do_not_have_admin_operator_or_approval_roles(variable):
     token = issue_environment(configured())[variable]
     env = {
@@ -387,7 +391,8 @@ def test_research_retrain_executor_principals_are_exact_and_mounted_read_only():
     root = Path(__file__).resolve().parents[1]
     registry_var = "RESEARCH_REGISTRY_SERVICE_TOKEN"
     training_var = "RESEARCH_TRAINING_SERVICE_TOKEN"
-    assert CONSUMER_FILES["research-orchestrator-svc"] == (registry_var, training_var)
+    bff_var = "RESEARCH_BFF_SERVICE_TOKEN"
+    assert CONSUMER_FILES["research-orchestrator-svc"] == (registry_var, training_var, bff_var)
     values = issue_environment(configured(), now=NOW)
 
     registry = verify(values[registry_var])
@@ -404,13 +409,20 @@ def test_research_retrain_executor_principals_are_exact_and_mounted_read_only():
         assert claims["exp"] - claims["iat"] <= TTL_SECONDS
         forbidden = {"decide", "persona.admin", "approver", "approval_proposer", "approval_reader", "operator", "admin"}
         assert not forbidden & set(claims["roles"])
+    bff = verify(values[bff_var])
+    assert bff["sub"] == bff["service"] == "research-orchestrator"
+    assert bff["roles"] == ["operator"] and bff["scope"] == "pantheon:dev-owner-write"
+    assert bff["tenant_id"] == "tenant-dev" and bff["allowed_tenants"] == ["tenant-dev"]
+    assert bff["exp"] - bff["iat"] <= TTL_SECONDS
+    assert not {"admin", "approver", "decide", "persona.admin", "automated_gate"} & set(bff["roles"])
+    assert values[bff_var + "_FILE"] == "/run/pantheon-principals/" + bff_var
     assert values[registry_var + "_FILE"] == "/run/pantheon-principals/" + registry_var
     assert values[training_var + "_FILE"] == "/run/pantheon-principals/" + training_var
 
     compose = yaml.safe_load((root / "docker-compose.yml").read_text())
     research = compose["services"]["research-orchestrator-svc"]
     assert "dev-paper-research-tokens:/run/pantheon-principals:ro" in research["volumes"]
-    for variable in (registry_var, training_var):
+    for variable in (registry_var, training_var, bff_var):
         assert research["environment"][variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
         assert variable not in research["environment"]  # no published fixture token
     assert "dev-paper-research-tokens:/issued/research-orchestrator-svc" in (

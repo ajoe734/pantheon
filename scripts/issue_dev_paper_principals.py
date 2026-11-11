@@ -65,6 +65,14 @@ WRITERS = {
         "registry-writer",
         "pantheon:dev-owner-write",
     ),
+    # Discovery allocator -> operator BFF paper provisioning (operator-approved
+    # option A, 2026-11-11). Operator role with owner-write scope; paper-only is
+    # enforced by the allocator and the BFF, not by this credential.
+    "RESEARCH_BFF_SERVICE_TOKEN": (
+        "research-orchestrator",
+        "operator",
+        "pantheon:dev-owner-write",
+    ),
     # Subject is the evaluator's owner/actor id; propose-only, no decide/revoke role.
     "PERSONA_EVALUATOR_GOVERNANCE_TOKEN": (
         "persona-evaluator-agent",
@@ -111,7 +119,11 @@ CONSUMER_FILES = {
         "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",
         "TRAINING_SESSION_WORKER_TOKEN",
     ),
-    "research-orchestrator-svc": ("RESEARCH_REGISTRY_SERVICE_TOKEN", "RESEARCH_TRAINING_SERVICE_TOKEN"),
+    "research-orchestrator-svc": (
+        "RESEARCH_REGISTRY_SERVICE_TOKEN",
+        "RESEARCH_TRAINING_SERVICE_TOKEN",
+        "RESEARCH_BFF_SERVICE_TOKEN",
+    ),
     "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),

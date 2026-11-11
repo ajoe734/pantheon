@@ -775,6 +775,7 @@ services:
       REGISTRY_URL: http://registry:8087
       RESEARCH_REGISTRY_SERVICE_TOKEN_FILE: ${RESEARCH_REGISTRY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_REGISTRY_SERVICE_TOKEN}
       RESEARCH_TRAINING_SERVICE_TOKEN_FILE: ${RESEARCH_TRAINING_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_TRAINING_SERVICE_TOKEN}
+      RESEARCH_BFF_SERVICE_TOKEN_FILE: ${RESEARCH_BFF_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_BFF_SERVICE_TOKEN}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
       - dev-paper-research-tokens:/run/pantheon-principals:ro

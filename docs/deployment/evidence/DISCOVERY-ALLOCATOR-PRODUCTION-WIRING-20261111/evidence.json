@@ -17,5 +17,15 @@
     "4": "test_setting_off_records_disabled_and_allocates_nothing",
     "5": "Production ports (discovery_allocator.make_production_ports) are built at main.py import: persona reader GET {DISCOVERY_ALLOCATOR_PERSONA_URL}/api/personas, active-binding reader (persona labels.discovery_allocator), persona_strategy_discovery scorer, BFF paper-capital provisioner (POST /bff/personas/{id}/provisioning/paper-capital); cap 5, paper only. Owner unreachable -> run records owner_unreachable:<service>:<detail>. Tests: test_default_boot_uses_production_ports_not_stubs, test_unreachable_owner_recorded_per_run."
   },
-  "known_limitation": "Needs RESEARCH_PERSONA_SERVICE_TOKEN and RESEARCH_BFF_SERVICE_TOKEN mounted (compose untouched, outside artifact contract); until then each run records owner_unreachable. Active-binding readback relies on the labels.discovery_allocator label that the provisioner writes; the BFF paper-capital endpoint requires an operator role, so the service principal must be granted it by its owner."
+  "known_limitation": "Needs RESEARCH_PERSONA_SERVICE_TOKEN and RESEARCH_BFF_SERVICE_TOKEN mounted (compose untouched, outside artifact contract); until then each run records owner_unreachable. Active-binding readback relies on the labels.discovery_allocator label that the provisioner writes; the BFF paper-capital endpoint requires an operator role, so the service principal must be granted it by its owner.",
+  "principal_wiring": {
+    "variable": "RESEARCH_BFF_SERVICE_TOKEN",
+    "subject": "research-orchestrator",
+    "role": "operator",
+    "scope": "pantheon:dev-owner-write",
+    "delivered": "file mount via dev-paper-research-tokens (read-only), same as RESEARCH_REGISTRY_SERVICE_TOKEN",
+    "decision": "operator option A 2026-11-11",
+    "token_values_committed": false,
+    "tests": "scripts/test_issue_dev_paper_principals.py: 49 passed; 1 env-only failure (flask not installed in scratch venv, unrelated)"
+  }
 }
