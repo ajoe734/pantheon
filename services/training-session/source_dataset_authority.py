@@ -1189,7 +1189,13 @@ def _feature_catalogue_document() -> Mapping[str, Any]:
     return catalogue_document()
 
 
+_OHLCV_BAR_DATASETS = frozenset({"tw_price_daily"})
+
+
 def _is_governed_feature_dataset(dataset_id: str) -> bool:
+    # OHLCV bar datasets stay on the bar path; they are catalogued but not feature wrappers.
+    if dataset_id in _OHLCV_BAR_DATASETS:
+        return False
     return any(
         spec.get("normalized_dataset") == dataset_id
         for spec in _feature_catalogue_document().get("datasets", ())
