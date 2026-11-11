@@ -1026,6 +1026,11 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 if event["event_type"] in ("pnl_snapshot", "drawdown_snapshot"):
                     # Fixed valuation instant, so the freshness check is clock free.
                     event["created_at"] = "2026-11-10T07:13:29Z"
+                else:
+                    # Risk/order/fill/position payloads use the runtime wall clock.
+                    # Transport them at the fixture's opening instant so they
+                    # precede valuation regardless of when this test runs.
+                    event["created_at"] = "2026-11-09T09:00:00Z"
                 projected = store.project_event(event)
                 summary = projected or summary
 
