@@ -20,7 +20,6 @@ from .connectors.alpha_db import ExternalAlphaDbAdapter
 from .connectors.base import SourceConnector, SourceEvidenceError, SourceRecord
 from .connectors.crypto_coingecko import CoinGeckoSpotMarketAdapter, _coin_ids_from_symbols
 from .connectors.finmind_taiwan import (
-    FinMindLiveFetcher,
     FinMindTaiwanBrokerBulkBackfillAdapter,
     FinMindTaiwanBrokerDailyReportAdapter,
     FinMindTaiwanDatasetAdapter,
@@ -236,25 +235,10 @@ def _finmind_broker(
     request: Mapping[str, Any],
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
-    trade_date = request.get("trade_date") or request.get("date") or request.get("run_date")
-    payload = request.get("payload")
-    if payload in (None, ""):
-        # Live daily path: fetch the report per bounded symbol. Missing credentials
-        # raise FinMindCredentialError before any request is made.
-        symbols = _string_list(request.get("symbols")) or ([_single_symbol(request)] if _single_symbol(request) else [])
-        if not symbols or not trade_date:
-            _require(None, "payload")
-        fetcher = FinMindLiveFetcher(secret_ref_id=adapter.secret_ref_id)
-        rows: list[Any] = []
-        for raw_symbol in symbols:
-            data_id = raw_symbol.upper().split(".", 1)[0]
-            fetched, _quota = fetcher.fetch_broker_report(data_id, str(trade_date))
-            rows.extend(fetched.get("data") or [] if isinstance(fetched, Mapping) else fetched)
-        payload = {"data": rows}
     return adapter.records_from_daily_report_payload(
-        payload,
+        _require(request.get("payload"), "payload"),
         symbol=_single_symbol(request),
-        trade_date=trade_date,
+        trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
         source_url=request.get("source_url"),
         available_time=request.get("available_time"),
         trace_id=trace_id,

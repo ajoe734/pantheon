@@ -502,31 +502,3 @@ def test_fetch_plan_symbols_are_uppercased() -> None:
 def test_fetch_plan_empty_tiers_produce_no_specs() -> None:
     plan = build_finmind_fetch_plan({}, "2026-06-08")
     assert plan == []
-
-
-def test_broker_daily_provider_adapter_fetches_live_report_per_symbol(monkeypatch):
-    from services.source_ingestion import provider_adapters as pa
-
-    calls = []
-
-    class Fetcher:
-        def __init__(self, secret_ref_id=""):
-            pass
-
-        def fetch_broker_report(self, symbol, date):
-            calls.append((symbol, date))
-            return {"data": [
-                {"stock_id": symbol, "date": date, "securities_trader": "A", "securities_trader_id": "1", "buy": 10, "sell": 0, "price": 5},
-                {"stock_id": symbol, "date": date, "securities_trader": "B", "securities_trader_id": "2", "buy": 0, "sell": 7, "price": 5},
-            ]}, {}
-
-    monkeypatch.setattr(pa, "FinMindLiveFetcher", Fetcher)
-    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
-
-    records = pa._finmind_broker(
-        FinMindTaiwanBrokerDailyReportAdapter(),
-        {"symbols": ["2330.TW", "2317.TW"], "run_date": "2026-11-10"},
-        "trace",
-    )
-    assert calls == [("2330", "2026-11-10"), ("2317", "2026-11-10")]
-    assert records

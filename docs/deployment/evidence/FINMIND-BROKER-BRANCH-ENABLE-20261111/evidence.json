@@ -1,6 +1,6 @@
 {
   "task_id": "FINMIND-BROKER-BRANCH-ENABLE-20261111",
-  "scope": "deploy wiring plus the minimal live-fetch hook in provider_adapters._finmind_broker; connector/backfill otherwise live in FINMIND-BROKER-CONNECTOR-BACKFILL-20261111",
+  "scope": "deploy wiring only; connector/backfill live in FINMIND-BROKER-CONNECTOR-BACKFILL-20261111",
   "secret_flow": "GitHub env dev secret FINMIND_API_TOKEN -> workflow step env -> deploy_nonprod_vm.sh remote prefix (both refresh-only and normal deploy) -> compose env; bounded runtime recreation overrides the recorded container value with the supplied token and restore rebuilds from the recorded pre-environment",
   "secret_handling": "never echoed; workflow logs presence by length only; empty value => step records reason=missing_credential, status=skipped, nothing else changes",
   "refresh": {
@@ -14,7 +14,7 @@
     "blocking": "non-blocking (continue-on-error), runs before TWSE step; TWSE tw_price_daily truth untouched"
   },
   "tests": {
-    "passed": "test_dev_tw_market_refresh.py 63 passed (two batches); test_deploy_nonprod_vm.py finmind/collector/bounded 20 passed; test_finmind_taiwan_connectors.py + new live-fetch test passed; bash -n ok"
+    "passed": "test_dev_tw_market_refresh.py 63 passed (two batches); test_deploy_nonprod_vm.py finmind/collector/bounded 20 passed; bash -n ok"
   },
   "not_verified": [
     "live dev run with a real token and receipt/readback (requires deploy)",
@@ -24,7 +24,8 @@
     "p1_token_normal_deploy": "token assignment now in the normal-deploy prefix branch (was refresh-only twice)",
     "p1_bounded_compose_env": "manage_source_ingest_refresh_runtime bounded action sets FINMIND_API_TOKEN from the supplied secret; restore returns the recorded value",
     "p1_dataset": "dataset is tw_broker_top everywhere (adapter and active-universe rule); guard admits only that",
-    "p1_enable": "prepare_bounded_source_refresh_dataset registers connector/fetch/schedule and desired state for the resolved active symbols; provider adapter fetches the live report per symbol when no payload is supplied",
+    "p1_enable": "prepare_bounded_source_refresh_dataset registers connector/fetch/schedule and desired state for the resolved active symbols",
     "missing_secret": "entrypoint writes status=skipped reason=missing_credential before any container mutation"
-  }
+  },
+  "open_gap": "provider_adapters._finmind_broker requires request.payload and never fetches live, so the daily refresh cannot yet produce a receipt; fix (per-symbol FinMindLiveFetcher fetch) is outside this task's artifact contract and needs services/source_ingestion/provider_adapters.py added to it"
 }
