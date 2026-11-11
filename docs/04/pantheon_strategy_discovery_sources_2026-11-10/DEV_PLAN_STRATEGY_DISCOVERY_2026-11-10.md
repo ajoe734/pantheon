@@ -184,6 +184,20 @@ store are authoritative.
 | D2 | `SD-VIEW-UNIVERSE-CROSS-SECTIONAL` | Claude → Antigravity | B5 | design for trade-time universe; unlocks cross-sectional templates |
 | W4 | `DISCOVERY-W4-HOSTED-ACCEPTANCE` | Human/Ops → Claude | W3, D1 | evolution without operator action inside the envelope |
 
+Intraday minute-bar track (design: `SD_INTRADAY_MINUTE_BARS_2026-11-11.md`; ids carry suffix `-20261111`; operator decision 2026-11-11: FinMind KBar 1-minute canonical, coarser bars by aggregation, no Shioaji, daily truth stays official `tw_price_daily`):
+
+| # | Task id | Depends on | Scope |
+| --- | --- | --- | --- |
+| K1 | `INTRADAY-KBAR-CONNECTOR` | `FINMIND-BROKER-BRANCH-ENABLE-20261111` | `TaiwanStockKBar` → `tw_price_1m` connector |
+| K2 | `INTRADAY-1M-STORE-BACKFILL` | K1 | partitioned store, 2-year backfill at ≤ 4,500 req/h, disk guard, retention |
+| K3 | `INTRADAY-DAILY-RECONCILE` | K2 | per symbol/day aggregate vs official OHLCV; quarantine, never fix |
+| K4 | `INTRADAY-FEATURE-AGGREGATION` | K3 | 5/15/30/60m governed datasets, frequency→dataset loader, allowed `bar_frequency` set |
+| K5 | `INTRADAY-BACKTEST-ENGINE` | K4 | bar-keyed backtest, next-bar-open fills, intraday IC horizons |
+| K6 | `INTRADAY-REPLICATION-GATE` | K5, C2 | session/trade-count thresholds |
+| K7 | `INTRADAY-PAPER-EXECUTION-GRADING` | K4, K5 | closed-bar admission, intraday grading, session window |
+| K8 | `INTRADAY-EVOLUTION-SEARCH` | K6, K7, D1 | frequency immutable; trial counting |
+| W5 | `INTRADAY-HOSTED-ACCEPTANCE` | K2, K3, K6, K7 | Human/Ops → Claude: hosted proof |
+
 Not opened: RD-Agent sandbox (design §8.6, optional); O-1(b) FinMind purchase (superseded by collector-host per-date all-stock history backfill).
 
 ## 5. Operator actions
