@@ -152,7 +152,8 @@ class GovernedPersonaLifecycle:
                 or str(meta.get("last_lifecycle_governance_decision_id") or "") != approval_id):
             return False
         record = self._existing(approval_id) or {}
-        subject = record.get("subject") or {}
+        # Governance GET serializes the exact-action binding under metadata.subject.
+        subject = (record.get("metadata") or {}).get("subject") or {}
         return (str(record.get("decision_state") or "") == "decided"
                 and str(record.get("decision") or record.get("outcome") or "approved") == "approved"
                 and str(record.get("target_id") or persona_id) == persona_id
