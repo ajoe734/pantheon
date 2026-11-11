@@ -600,6 +600,8 @@ class SemanticExtractionClient:
             }
             if self._service_token:
                 headers["Authorization"] = f"Bearer {self._service_token}"
+                # The openclaw adapter authenticates via this header.
+                headers["X-Pantheon-Service-Token"] = self._service_token
 
             try:
                 status, body_bytes, _ = _perform_http_request(
