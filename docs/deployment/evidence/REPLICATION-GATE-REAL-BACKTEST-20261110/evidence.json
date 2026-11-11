@@ -86,5 +86,13 @@
       "test_fully_dated_feature_sequences_accepted"
     ],
     "validation_note": "Local env lacks pytest/numpy/vectorbt; unittest run of test_adapter.py: new tests pass, 7 errors are all missing-dependency (numpy/vectorbt) and pre-existing environmental; CI is authoritative."
+  },
+  "review_fix_instrument_map_identity_20261111": {
+    "finding": "Global nested dataset.field feature mappings (e.g. tw_monthly_revenue) were misclassified as per-instrument maps in _measure_pit_history, falsely yielding insufficient_history.",
+    "fix": "Per-instrument maps are recognized only when the normalized key matches an actual dataset/required instrument; other mappings stay global.",
+    "tests": [
+      "test_pit_history_global_nested_equals_per_instrument_layout"
+    ],
+    "validation_note": "venv with pytest/pandas/numpy/jsonschema: pit_history/mixed/nested/dated adapter selection 11 passed, 46 deselected. Real-vectorbt full suite not run; no full-suite pass claimed."
   }
 }
