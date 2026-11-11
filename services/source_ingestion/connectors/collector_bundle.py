@@ -24,6 +24,7 @@ Fail-closed rules:
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
@@ -496,6 +497,10 @@ class CollectorBundleAdapter:
         )
         # Governed macro / community sources also emit normalized point-in-time feature
         # records (listed first so a record cap never drops them in favour of raw items).
+        if prior_daily_counts is None and (
+            self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social"
+        ):
+            prior_daily_counts = stored_community_daily_counts(self._raw_root())
         feature_records, feature_rejected = self.governed_feature_records(
             records, prior_daily_counts=prior_daily_counts, trace_id=trace_id
         )
@@ -792,6 +797,34 @@ def macro_feature_rows(
             }
         )
     return tuple(rows), tuple(rejected)
+
+
+def stored_community_daily_counts(root: str | Path) -> dict[str, dict[str, int]]:
+    """Read persisted per-symbol daily post counts from stored ``tw_community_daily`` rows.
+
+    Incremental (cursor-advancing) pulls only see new posts, so the rolling window for
+    ``attention_zscore`` is rebuilt from the normalized rows already in the store.
+    """
+    base = Path(root) / "normalized" / _slug(TW_COMMUNITY_DAILY_DATASET)
+    counts: dict[str, dict[str, int]] = {}
+    if not base.is_dir():
+        return counts
+    for path in sorted(base.glob("date=*/*.jsonl*")):
+        opener = gzip.open if path.suffix == ".gz" else Path.open
+        try:
+            with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[operator]
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    meta = (json.loads(line) or {}).get("metadata") or {}
+                    row = meta.get("normalized_row") or {}
+                    symbol, day, volume = row.get("symbol"), row.get("event_time"), row.get("post_volume")
+                    if symbol and day and isinstance(volume, (int, float)):
+                        counts.setdefault(str(symbol), {})[str(day)[:10]] = int(volume)
+        except (OSError, ValueError):
+            continue
+    return counts
 
 
 def community_daily_feature_rows(

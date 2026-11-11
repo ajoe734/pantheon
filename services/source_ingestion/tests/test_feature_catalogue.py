@@ -398,3 +398,33 @@ def test_governed_fundamentals_are_creatable_through_management_and_stored(
     assert {r["dataset"] for r in manifest.to_dict()["normalized_refs"]} == {dataset}
     depth = measure_stored_history_depth(tmp_path / "store")
     assert depth["datasets"][dataset]["row_count"] == len(records)
+
+
+def test_incremental_community_pulls_use_persisted_history(tmp_path) -> None:
+    """Cursor-advancing daily pulls must see prior days' counts from the store."""
+    import json as _json
+
+    from services.source_ingestion.connectors.collector_bundle import (
+        CollectorBundleAdapter,
+        stored_community_daily_counts,
+    )
+
+    adapter = CollectorBundleAdapter(
+        connector_id="s", source_id="s", source_type="social", dataset="tw_community_daily",
+        raw_root=str(tmp_path),
+    )
+    zscore = None
+    for n in range(1, 8):
+        day = f"2026-11-{n:02d}"
+        posts = [_post(i, day, ["2330"]) for i in range(n)]
+        prior = stored_community_daily_counts(tmp_path)
+        out, _ = adapter.governed_feature_records(posts, prior_daily_counts=prior)
+        zscore = out[0].metadata["normalized_row"].get("attention_zscore")
+        if n < 6:
+            assert zscore is None
+        target = tmp_path / "normalized" / "tw_community_daily" / f"date={day}"
+        target.mkdir(parents=True)
+        (target / "run.jsonl").write_text(
+            "\n".join(_json.dumps(r.to_dict()) for r in out) + "\n", encoding="utf-8"
+        )
+    assert zscore == pytest.approx(2.04939015319192)

@@ -1576,6 +1576,19 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                     str(row.get("date") or ""),
                 )
                 normalized_row["available_time"] = row_available_time
+            elif dataset in _GOVERNED_DAILY_FLOW_DATASETS and normalized_row.get("date"):
+                event_date = str(normalized_row["date"])[:10]
+                lag = _governed_daily_lag_days(dataset)
+                supplied = _text(row.get("available_time") or available_time)
+                if re.match(r"^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$", supplied):
+                    row_available_time = supplied
+                else:
+                    row_available_time = _fundamental_lag_available(event_date, lag)
+                normalized_row["event_time"] = event_date
+                normalized_row["available_time"] = row_available_time
+                normalized_row["ingest_time"] = _text(row.get("ingest_time")) or _utc_now()
+                normalized_row["availability_lag_days"] = lag
+                row = {**row, "ingest_time": normalized_row["ingest_time"], "availability_lag_days": lag}
             else:
                 row_available_time = row.get("available_time") or available_time or _utc_now()
             row_hash = _stable_hash(
@@ -3229,6 +3242,18 @@ def _fundamental_base(
         "api_endpoint": api_endpoint,
         "raw_row": dict(row),
     }
+
+
+_GOVERNED_DAILY_FLOW_DATASETS = {
+    "tw_margin_short_balance": "tw_margin_transactions",
+    "tw_institutional_flow": "tw_institutional_flows",
+}
+
+
+def _governed_daily_lag_days(dataset: str) -> int:
+    from ..feature_catalogue import get_dataset_spec
+
+    return get_dataset_spec(_GOVERNED_DAILY_FLOW_DATASETS[dataset]).availability_lag_days
 
 
 def _fundamental_lag_available(event_time: str, lag_days: int, *, hour: int = 18) -> str:

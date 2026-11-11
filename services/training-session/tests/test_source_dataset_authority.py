@@ -1641,6 +1641,52 @@ def test_storage_manifest_reads_governed_feature_datasets_not_ohlcv(tmp_path: Pa
     assert by_field["yoy"]["availability_lag_days"] == 10
 
 
+@pytest.mark.parametrize(
+    ("dataset", "rows", "field", "value"),
+    [
+        ("tw_margin_short_balance",
+         [{"Date": "1151110", "Code": "2330", "MarginPurchaseBalance": "100", "ShortSaleBalance": "10"}],
+         "margin_balance", 100.0),
+        ("tw_institutional_flow",
+         [{"Date": "1151110", "Code": "2330", "ForeignInvestorsIncludeMainlandAreaInvestors-Difference": "500"}],
+         "foreign_net_shares", 500.0),
+    ],
+)
+def test_daily_flow_pull_to_storage_to_training_carries_governed_times(
+    tmp_path: Path, dataset: str, rows: list[dict[str, str]], field: str, value: float
+) -> None:
+    from types import SimpleNamespace
+
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.connectors.base import SourceConnector, SourceType
+        from services.source_ingestion.connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+    finally:
+        sys.path.remove(str(repo))
+    authority = _load_authority_module()
+    adapter = TaiwanOfficialMarketDatasetAdapter(connector_id="tw-test")
+    connector = SourceConnector(
+        connector_id="tw-test", source_type=SourceType.MARKET, provider="p", license_scope="official_reference",
+        metadata={"feature_targets": ["tw_feature_rows"]},
+    )
+    records = adapter.records_from_payload(dataset, "TWSE", rows)
+    meta = records[0].metadata
+    assert len(meta["available_time"]) > 10 and meta["ingest_time"] and meta["availability_lag_days"] == 0
+    manifest = MarketDataStorageWriter(tmp_path).write_run(
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id="run-1")),
+        connector=connector,
+    ).to_dict()
+    storage = authority._validate_and_read_storage_manifest(
+        manifest, source_root=tmp_path, connector_id="tw-test",
+        normalized_targets={dataset}, run_id="run-1", expected_market="TW",
+        trusted_now=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    by_field = {o["field"]: o for o in storage["feature_observations"]}
+    assert by_field[field]["value"] == value and by_field[field]["entity"] == "2330.TWSE"
+
+
 def test_storage_manifest_keeps_tw_price_daily_on_ohlcv_path(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
