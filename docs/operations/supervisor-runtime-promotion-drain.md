@@ -111,3 +111,22 @@ that the accepted runtime SHA is served, each drained run has one continuation,
 and no generic lost-lease event was emitted for a verified planned termination.
 If first activation needs natural drain, or the live environment is unavailable,
 record that separately: passing tests or a merged PR is not live activation proof.
+
+## Retired FIFO fence upgrade removed (OPS-FIFO-UPGRADE-RETIRE-20261111)
+
+Ordinary promotion no longer converts legacy FIFO retired-path fences into
+directories (`_upgrade_retired_fifo_fences` and the `renameat2` FIFO exchange
+branch of `_create_retired_path_fence` are deleted; the `upgraded_fences`
+result key is gone). Reason: live read-only inventory (2026-11-11) shows the
+retired `.orchestrator/state.json` and `approval-queue.json` are absent and the
+retired journal `.lock` / `.head.json` paths are already directories; the only
+supervisor and worker entrypoints run from the current command-runtime SHA.
+No FIFO fence remains to convert, and ordinary promotion must not migrate
+canonical state or the task journal.
+
+Retained safety: directory fences (`0o700`), `_is_retired_path_fence` (a FIFO is
+still treated as a fence, so storage migration never moves it), fail-closed
+`_create_retired_path_fence` (a pre-existing FIFO or other entry is refused
+untouched), the current-writer drain checks, and storage rollback. Evidence:
+`docs/deployment/evidence/OPS-FIFO-UPGRADE-RETIRE-20261111/evidence.json`.
+No live promotion, watchdog restart, or old-data deletion was performed.

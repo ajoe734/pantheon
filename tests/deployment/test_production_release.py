@@ -121,7 +121,11 @@ PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-rea
 echo "$tool $*" >> "$BIN_LOG"
 case "$tool" in
   sudo)
-    if [[ "$1" == "-E" ]]; then shift; fi
+    if [[ "$1" == "-E" ]]; then shift; exec "$@"; fi
+    if [[ "${FAKE_SUDO_RESET_ENV:-}" == "true" ]]; then
+      # Real sudo resets the environment unless -E: keep only harness plumbing, drop exported release/image vars.
+      exec env -i PATH="$PATH" BIN_LOG="$BIN_LOG" FAKE_STATE="$FAKE_STATE" HOME="${HOME:-/}" "$@"
+    fi
     exec "$@"
     ;;
   mountpoint) [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
@@ -904,6 +908,13 @@ class BootstrapTests(OpsHarness):
             if line.startswith(("PANTHEON_POSTGRES_IMAGE=", "PANTHEON_NATS_IMAGE=")):
                 self.assertIn(line.split("=", 1)[1], pulled)
         self.assertTrue(any(i.startswith("postgres:") for i in pulled) and any(i.startswith("nats:") for i in pulled))
+        # Fresh defaults are the exact Stage111/112-qualified pair, never the stale alpine refs or mutable tags.
+        qpg = "postgres:16@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+        qnats = "nats:2.11@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00"
+        self.assertIn(f"PANTHEON_POSTGRES_IMAGE={qpg}", written.splitlines())
+        self.assertIn(f"PANTHEON_NATS_IMAGE={qnats}", written.splitlines())
+        self.assertIn(qpg, pulled); self.assertIn(qnats, pulled)
+        self.assertNotIn("6b202572e5a9", written); self.assertNotIn("d3eb053c882d", written)
         # Existing compose.env with operator-pinned refs and no shell variables: those exact refs are pulled.
         (self.state / "pulled_images").unlink()
         env_file.write_text(env_file.read_text() + f"PANTHEON_POSTGRES_IMAGE={pg}\nPANTHEON_NATS_IMAGE={nats}\n")
@@ -947,6 +958,13 @@ class BootstrapTests(OpsHarness):
         self.assertEqual(r_sudo.returncode, 0, r_sudo.stderr)
         self.assertIn("sudo ", self.log.read_text())
         self.assertTrue((self.state / "docker_logins").exists())
+
+    def test_bootstrap_sudo_env_reset_still_delivers_release_and_images_to_first_stateful_compose(self):
+        r = self._run(FAKE_OSLOGIN_NONROOT="true", FAKE_SUDO_RESET_ENV="true")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        seen = (self.state / "stateful_env").read_text()
+        self.assertIn("PANTHEON_RELEASE_ID=", seen)
+        self.assertRegex(seen, r"PANTHEON_[A-Z_]+_IMAGE=\S+@sha256:")
 
     def test_bootstrap_never_mounts_or_formats_and_rejects_bad_secrets(self):
         r = self._run(FAKE_MOUNTED="no")

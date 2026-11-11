@@ -1,0 +1,18 @@
+{
+  "task_id": "COLLECTOR-BUNDLE-SERVER-AUTH-20261111",
+  "root_cause": "Caddy sorts bare directives (handle before respond); file_server answered before the 401 respond. Repo Caddyfile had this ordering.",
+  "fix": "deploy/collector/Caddyfile: method gate, token gate and path handles wrapped in route { } to preserve literal order.",
+  "tests": {
+    "file": "deploy/collector/tests/test_bundle_server_auth.py",
+    "method": "real caddy:2.8-alpine container started from the repo Caddyfile with a test token; requests via docker exec wget",
+    "result": "full deploy/collector suite: 111 passed, 3 skipped",
+    "negative_control": "with the previous (pre-fix) Caddyfile, 3 auth tests fail (unauthenticated requests got 200), proving the test detects the ordering bug",
+    "cases": ["no token 401", "wrong token 401", "right token 200 for /status.json and /bundles/*", "other paths 404", "POST 405"]
+  },
+  "readme": "deploy/collector/README.md documents `docker compose up -d --force-recreate bundle-server` after Caddyfile edits (single-file bind mount keeps old inode).",
+  "live_host_replacement": {
+    "host": "165.232.172.111",
+    "status": "pending_operator",
+    "note": "This worker has no access to the collector host. Operator must: copy the delivered Caddyfile over the temporary route{} version (keep Caddyfile.repo backup until verified), run `docker compose up -d --force-recreate bundle-server`, then re-check 401/401/200/404/405 and record results here."
+  }
+}

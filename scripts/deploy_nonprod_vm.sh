@@ -119,6 +119,20 @@ SOURCE_REFRESH_SELECTED="false"
 case ",${DEV_COMPOSE_PROFILES}," in
   *,source-ingest-scheduler,*) SOURCE_REFRESH_SELECTED="true" ;;
 esac
+# PANTHEON_COLLECTOR_HOST must be exactly one valid hostname (no list, port, scheme).
+if [[ -n "${PANTHEON_COLLECTOR_HOST:-}" ]] \
+  && { [[ ${#PANTHEON_COLLECTOR_HOST} -gt 253 ]] \
+    || ! [[ "${PANTHEON_COLLECTOR_HOST}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]]; }; then
+  echo "[nonprod-deploy] ERROR: PANTHEON_COLLECTOR_HOST must be exactly one valid hostname" >&2
+  exit 1
+fi
+# Steady state (outside bounded refresh): deny falls through to an allowlist
+# of exactly PANTHEON_COLLECTOR_HOST when that named variable is configured.
+if [[ "${SOURCE_REFRESH_SELECTED}" != "true" && "${SOURCE_REFRESH_EGRESS_MODE}" == "deny" \
+  && -z "${SOURCE_REFRESH_ALLOWED_HOSTS}" && -n "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+  SOURCE_REFRESH_EGRESS_MODE="allowlist"
+  SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST}"
+fi
 if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_CONTROLLER_MODE="reconcile_and_pull"
   SOURCE_REFRESH_TRUTH_LEVEL="reconciled_live_proof"
@@ -412,6 +426,7 @@ Environment overrides:
   DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED
   PANTHEON_DEV_PAPER_EXPRESSION_LAYER DEV_PAPER_EXPRESSION_LAYER
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
+  PANTHEON_COLLECTOR_HOST PANTHEON_COLLECTOR_BUNDLE_TOKEN
   DEV_PAPER_PRINCIPALS_AUTHORIZED
   DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
   DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
@@ -913,6 +928,8 @@ ssh_bash() {
     command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")"
     command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")"
+    command_prefix+=" PANTHEON_COLLECTOR_HOST=$(shell_quote "${PANTHEON_COLLECTOR_HOST:-}")"
+    command_prefix+=" PANTHEON_COLLECTOR_BUNDLE_TOKEN=$(shell_quote "${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}")"
     command_prefix+=" bash -s"
   else
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
@@ -1021,6 +1038,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN=$(shell_quote "${PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN:-false}")"
   command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}")"
   command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
+  command_prefix+=" PANTHEON_COLLECTOR_HOST=$(shell_quote "${PANTHEON_COLLECTOR_HOST:-}")"
+  command_prefix+=" PANTHEON_COLLECTOR_BUNDLE_TOKEN=$(shell_quote "${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${SOURCE_REFRESH_ALLOWED_HOSTS}")"
   command_prefix+=" SOURCE_INGEST_CONTROLLER_MODE=$(shell_quote "${SOURCE_REFRESH_CONTROLLER_MODE}")"
@@ -1246,10 +1265,23 @@ validate_source_refresh_profile() {
   esac
 
   if [[ "$selected" != "true" ]]; then
-    [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
-      || error "external egress must remain deny when source-ingest-scheduler is not selected"
-    [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
-      || error "external host allowlist requires the bounded source-ingest-scheduler profile"
+    # Steady state (DEV-EGRESS-COLLECTOR-HOST-GATE-20261110): deny, or allowlist
+    # with exactly the single collector host from PANTHEON_COLLECTOR_HOST.
+    if [[ -n "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+      [[ ${#PANTHEON_COLLECTOR_HOST} -le 253 \
+        && "${PANTHEON_COLLECTOR_HOST}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]] \
+        || error "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname"
+    fi
+    if [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" ]]; then
+      [[ -n "${PANTHEON_COLLECTOR_HOST:-}" \
+        && "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" == "${PANTHEON_COLLECTOR_HOST}" ]] \
+        || error "steady source egress allowlist must be exactly PANTHEON_COLLECTOR_HOST"
+    else
+      [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
+        || error "external egress must remain deny when source-ingest-scheduler is not selected"
+      [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
+        || error "external host allowlist requires the bounded source-ingest-scheduler profile"
+    fi
     [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
       || error "default source-ingest owner must use reconcile_only mode"
     [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
@@ -1290,7 +1322,7 @@ validate_source_refresh_profile() {
     && (( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS >= 30 && SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600 )) \
     || error "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS must be between 30 and 3600"
 
-  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'PY'
+  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" "${PANTHEON_COLLECTOR_HOST:-}" <<'PY'
 import sys
 
 from services.external_egress import allowed_hosts
@@ -1320,6 +1352,12 @@ elif sys.argv[2] == "tw-taifex-futures-options-chip":
         )
     if dataset and dataset != "taifex_ssf_contracts":
         raise SystemExit(f"official TAIFEX refresh requires dataset taifex_ssf_contracts, got: {dataset}")
+elif sys.argv[2].startswith("collector-"):
+    collector = (sys.argv[4] if len(sys.argv) > 4 else "").strip().lower()
+    if not collector:
+        raise SystemExit("collector bundle refresh requires PANTHEON_COLLECTOR_HOST")
+    if hosts != {collector}:
+        raise SystemExit("collector bundle refresh requires exact host: " + collector)
 else:
     raise SystemExit(
         f"unsupported bounded source refresh connector: {sys.argv[2]}"
@@ -2165,7 +2203,7 @@ PREFLIGHT_PY
 manage_source_ingest_refresh_runtime() {
   local env_path="$1" action="$2" img_id="$3" arg="${4:-}"
   python3 - "${env_path}" "${action}" "${img_id}" "${arg}" <<'PY'
-import json, os, subprocess, sys
+import json, os, re, subprocess, sys
 path, action, expected_img, arg = sys.argv[1:5]
 with open(path, "r", encoding="utf-8") as f:
     pre_list = json.load(f)
@@ -2185,11 +2223,29 @@ if action == "bounded":
     if bounded_dataset:
         env["SOURCE_INGEST_BOUNDED_DATASET"] = bounded_dataset
 elif action == "restore":
-    env.update({"PANTHEON_EXTERNAL_EGRESS": "deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "", "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only"})
-# "compose up --no-build" starts whatever image the Compose name resolves to.
-# Never recreate source-ingest on any image other than the recorded running one
-# (a stale tag once started a rejected candidate here): stop before recreating.
+    # Restore the steady posture: allowlist with exactly the collector host
+    # (named deployment variable); deny only when no collector host is configured.
+    steady_host = (env.get("PANTHEON_COLLECTOR_HOST") or os.environ.get("PANTHEON_COLLECTOR_HOST") or "").strip().lower()
+    if steady_host and not (len(steady_host) <= 253 and re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*", steady_host)):
+        raise SystemExit("PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring")
+    env.update({
+        "PANTHEON_EXTERNAL_EGRESS": "allowlist" if steady_host else "deny",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
+        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+    })
+# "compose up --no-build" starts whatever image the Compose name resolves to, and
+# a stale plain tag left by an earlier failed deploy once pointed at a rejected
+# candidate. Pin source-ingest to the recorded running image ID with a Compose
+# override so neither the bounded refresh nor its restore depends on any tag, and
+# stop before recreating unless the pinned image exists locally under that exact ID.
 if expected_img:
+    import atexit, shutil, tempfile
+    pin_dir = tempfile.mkdtemp(prefix="source-ingest-pin-")
+    atexit.register(shutil.rmtree, pin_dir, ignore_errors=True)
+    pin_file = os.path.join(pin_dir, "source-ingest-pin.json")
+    with open(pin_file, "w", encoding="utf-8") as f:
+        json.dump({"services": {"source-ingest": {"image": expected_img, "pull_policy": "never"}}}, f)
+    cmd += ["-f", pin_file]
     try:
         model = json.loads(subprocess.check_output(cmd + ["config", "--format", "json", "source-ingest"], env=env, text=True))
         ref = (model["services"]["source-ingest"].get("image") or "pantheon-source-ingest")
@@ -2208,8 +2264,13 @@ if current_img != expected_img:
     raise SystemExit(f"source-ingest container image ID {current_img} != expected {expected_img}")
 if action == "restore":
     post_list = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .Config.Env}}", cid], text=True).strip())
-    if set(pre_list) != set(post_list):
-        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - set(pre_list))}, removed={sorted(set(pre_list) - set(post_list))}")
+    # Compare against the intended restored environment: pre env with only the
+    # restore-controlled keys replaced; image/other env invariants stay strict.
+    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
+    intended = {x for x in pre_list if x.split("=", 1)[0] not in controlled}
+    intended |= {f"{k}={env[k]}" for k in controlled}
+    if set(intended) != set(post_list):
+        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - intended)}, removed={sorted(intended - set(post_list))}")
 PY
 }
 
@@ -2870,12 +2931,12 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
         [[ -z "${sched_log}" ]] || printf '%s\n' "${sched_log}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
       fi
     fi
-    info "restoring external egress to deny and source controller to reconcile_only"
+    info "restoring steady collector-host egress posture and source controller to reconcile_only"
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
-      PANTHEON_EXTERNAL_EGRESS=deny PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="" \
+      PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST:-}" \
       SOURCE_INGEST_CONTROLLER_MODE=reconcile_only SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
       SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true

@@ -24,6 +24,13 @@ logger = logging.getLogger("research-orchestrator")
 from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthError, TenantBoundaryError, authenticate_tenant
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.registry.alpha_template import (
+    ALPHA_TEMPLATE_METADATA_KEY,
+    AlphaTemplateValidationError,
+    alpha_template_registry_id,
+    ensure_builtin_alpha_templates,
+)
+from services.registry.models import ArtifactType
 from services.registry.split_api import RegistryService
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
@@ -1325,6 +1332,19 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
                 stage_id_val = str(ref["id"])
                 break
 
+    initial_artifact_refs: List[Dict[str, Any]] = []
+    if (
+        isinstance(body.parameters.get("experiment_run"), dict)
+        and isinstance(body.parameters["experiment_run"].get("artifact_refs"), list)
+    ):
+        for ref in body.parameters["experiment_run"]["artifact_refs"]:
+            if isinstance(ref, str) and ref.strip():
+                initial_artifact_refs.append(
+                    {"artifact_type": "backtest_run", "uri": ref.strip()}
+                )
+            elif isinstance(ref, dict):
+                initial_artifact_refs.append(dict(ref))
+
     run: Dict[str, Any] = {
         "id": run_id, "run_id": run_id, "task_id": task_id, "stage_id": stage_id_val,
         "attempt_number": 1, "parent_run_id": None, "root_run_id": run_id,
@@ -1334,7 +1354,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         "tenant_id": body.parameters.get("tenant_id") or getattr(body, "tenant_id", None) or task.get("tenant_id"),
         "user_id": body.parameters.get("user_id") or body.actor_id or getattr(body, "user_id", None) or task.get("user_id"),
         "created_at": timestamp, "updated_at": timestamp, "idempotency_key": body.idempotency_key,
-        "rejection": rejection, "events": events, "artifact_refs": [],
+        "rejection": rejection, "events": events, "artifact_refs": initial_artifact_refs,
         "proposal_refs": [], "registry_writebacks": [],
     }
     if gateway_ref is not None:
@@ -2105,6 +2125,76 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
     threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
 
 
+# --- Discovery allocator: daily paper-only run inside this orchestrator ---
+DISCOVERY_ALLOCATOR_TENANT = os.getenv("DISCOVERY_ALLOCATOR_TENANT_ID", "default")
+def _discovery_owner_call(service: str, method: str, url: str, body: Optional[Dict[str, Any]]) -> Any:
+    from services.research import discovery_allocator as _da
+
+    token_variable = {
+        "persona": "RESEARCH_PERSONA_SERVICE_TOKEN",
+        "provisioning": "RESEARCH_BFF_SERVICE_TOKEN",
+        "registry": "RESEARCH_REGISTRY_SERVICE_TOKEN",
+        "capital": "RESEARCH_CAPITAL_SERVICE_TOKEN",
+    }[service]
+    try:
+        return _retrain_call(
+            step=f"discovery_allocator_{service}", service=service, method=method, url=url,
+            tenant_id=DISCOVERY_ALLOCATOR_TENANT, token_variable=token_variable, body=body,
+        )
+    except _OwnerRejection as exc:
+        raise _da.OwnerRejected(service, int(getattr(exc, "status", None) or getattr(exc, "code", 0) or 0), str(getattr(exc, "detail", exc))) from None
+    except _RetrainFailure as exc:
+        raise _da.OwnerUnreachable(service, str(exc)) from None
+
+
+def _build_discovery_allocator_ports() -> Dict[str, Any]:
+    from services.research import discovery_allocator as _da
+
+    return _da.make_production_ports(
+        call=_discovery_owner_call,
+        persona_url=os.getenv("DISCOVERY_ALLOCATOR_PERSONA_URL", "http://persona:8002"),
+        provisioning_url=os.getenv("DISCOVERY_ALLOCATOR_BFF_URL", "http://operator-bff:8001"),
+        registry_url=os.getenv("REGISTRY_URL", "http://registry:8087"),
+        capital_url=os.getenv("DISCOVERY_ALLOCATOR_CAPITAL_URL", "http://capital:8092"),
+        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
+        paper_capital_cap=float(os.getenv("DISCOVERY_ALLOCATOR_PAPER_CAPITAL_CAP", "50000")),
+        per_persona_capital=float(os.getenv("DISCOVERY_ALLOCATOR_PER_PERSONA_CAPITAL", "10000")),
+    )
+
+
+# Module-level so tests can inject; the default is the real production wiring
+# (persona service reader, active-binding reader, scorer, BFF provisioner).
+discovery_allocator_ports: Dict[str, Any] = _build_discovery_allocator_ports()
+
+
+def run_discovery_allocator_once() -> Dict[str, Any]:
+    from services.research import discovery_allocator as _da
+
+    return _da.run_scheduled_allocation(
+        enabled=_da.allocator_enabled(os.environ),
+        allocator_factory=discovery_allocator_ports["allocator_factory"],
+        list_admitted=lambda: [
+            e for e in alpha_replication_admission_store.list_admissions(DISCOVERY_ALLOCATOR_TENANT)
+            if e.get("status") == "admitted"
+        ],
+        list_personas=discovery_allocator_ports["list_personas"],
+        list_active_bindings=discovery_allocator_ports["list_active_bindings"],
+        resolve_admitted=discovery_allocator_ports.get("resolve_admitted"),
+        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
+        record_path=store.data_dir / "discovery_allocator_runs.jsonl",
+    )
+
+
+@app.on_event("startup")
+def start_discovery_allocator_schedule() -> None:
+    from services.research import discovery_allocator as _da
+
+    _da.start_daily_scheduler(
+        run_discovery_allocator_once,
+        interval_seconds=float(os.getenv("DISCOVERY_ALLOCATOR_INTERVAL_SECONDS", str(_da.DAILY_INTERVAL_SECONDS))),
+    )
+
+
 @app.on_event("startup")
 def resume_retrain_runs() -> None:
     """Resume in place every retrain run a restart left queued or running.
@@ -2221,6 +2311,87 @@ def _finish_run(
     _set_task_terminal(run["task_id"], status, timestamp)
     store.put_run(run)
     store.append_event(events[-1])
+    params = run.get("parameters")
+    if (
+        status == "completed"
+        and isinstance(params, dict)
+        and params.get("record_type") == "ExperimentRun"
+        and isinstance(params.get("experiment_run"), dict)
+    ):
+        exp_run = params["experiment_run"]
+        exp_meta = exp_run.get("metadata") if isinstance(exp_run.get("metadata"), dict) else {}
+        bt_summary = (
+            exp_meta.get("backtest_summary")
+            if isinstance(exp_meta.get("backtest_summary"), dict)
+            else {}
+        )
+        if bt_summary:
+            tx_costs = (
+                bt_summary.get("transaction_costs")
+                if isinstance(bt_summary.get("transaction_costs"), dict)
+                else {}
+            )
+            try:
+                outbox_store = get_outbox_store()
+                outbox_id = _next_id(
+                    "mout",
+                    timestamp,
+                    {r.outbox_id for r in outbox_store.list_records()},
+                )
+                outbox_record = ResearchMemoryOutboxRecord(
+                    outbox_id=outbox_id,
+                    run_id=str(exp_run.get("run_id") or run_id),
+                    task_id=str(exp_run.get("task_id") or run["task_id"]),
+                    artifact_id=str(bt_summary.get("backtest_run_id") or "") or None,
+                    source_event_type="research_finding_published",
+                    source_event_id=str(exp_run.get("run_id") or run_id),
+                    sponsor_persona_id="persona-tw-equity",
+                    summary=summary,
+                    headline=f"Replicated Taiwan strategy {exp_run.get('strategy_id') or ''}",
+                    confidence=1.0,
+                    evidence_refs=list(run.get("artifact_refs") or run.get("input_refs") or []),
+                    dataset_refs=[str(exp_run.get("dataset_version_id") or "")],
+                    license_scope="governed_tw_market",
+                    allowed_use=["research_memory", "replication_evidence"],
+                    supersedes=[],
+                    contradicts=[],
+                    expires_at=None,
+                    trace_id=str(exp_run.get("trace_id") or run_id),
+                    status="pending",
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    metadata={
+                        "event_type": "research_finding_published",
+                        "tenant_id": exp_run.get("tenant_id"),
+                        "strategy_spec_id": exp_run.get("strategy_spec_id"),
+                        "strategy_id": exp_run.get("strategy_id"),
+                        "family_id": bt_summary.get("family_id"),
+                        "trial_count": bt_summary.get("trial_count"),
+                        "transaction_costs": dict(tx_costs),
+                        "metrics": {
+                            "sharpe_ratio": bt_summary.get("out_of_sample_sharpe_ratio"),
+                            "in_sample_sharpe_ratio": bt_summary.get("in_sample_sharpe_ratio"),
+                            "out_of_sample_sharpe_ratio": bt_summary.get("out_of_sample_sharpe_ratio"),
+                            "deflated_sharpe_ratio": bt_summary.get("deflated_sharpe_ratio"),
+                            "deflated_sharpe_threshold": bt_summary.get("deflated_sharpe_threshold"),
+                            "trial_count": bt_summary.get("trial_count"),
+                            "max_drawdown": bt_summary.get("out_of_sample_max_drawdown"),
+                            "total_return": bt_summary.get("out_of_sample_total_return"),
+                            "round_trips": bt_summary.get("out_of_sample_round_trips"),
+                            "buy_and_hold_sharpe_ratio": bt_summary.get("buy_and_hold_sharpe_ratio"),
+                            "tw_0050_sharpe_ratio": bt_summary.get("tw_0050_sharpe_ratio"),
+                            "walk_forward_fold_sharpes": bt_summary.get("walk_forward_fold_sharpes"),
+                            "commission_rate": tx_costs.get("commission_rate"),
+                            "equity_transaction_tax_rate": tx_costs.get("equity_transaction_tax_rate"),
+                            "etf_transaction_tax_rate": tx_costs.get("etf_transaction_tax_rate"),
+                            "backtest_run_id": bt_summary.get("backtest_run_id"),
+                        },
+                        "artifact_refs": list(run.get("artifact_refs") or []),
+                    },
+                )
+                outbox_store.create_record(outbox_record)
+            except Exception:
+                pass
     return run
 
 
@@ -3751,3 +3922,104 @@ def get_research_note(note_id: str) -> Dict[str, Any]:
     if not result:
         raise HTTPException(status_code=404, detail=f"Research note '{note_id}' not found")
     return result
+
+
+class EvaluateAlphaTemplatesBody(BaseModel):
+    template_ids: Optional[List[str]] = None
+    market_data: Optional[Dict[str, Any]] = None
+    run_id: Optional[str] = None
+    task_id: Optional[str] = None
+    strict_stepwise: bool = False
+    redundancy_threshold: float = 0.9
+
+
+@app.post("/api/research-orchestrator/alpha-templates/evaluate", status_code=201)
+@app.post("/api/research/alpha-templates/evaluate", status_code=201)
+def evaluate_alpha_templates_endpoint(
+    body: Optional[EvaluateAlphaTemplatesBody] = Body(default=None),
+) -> Dict[str, Any]:
+    # Lazy import: the evaluator needs numpy/pandas, which are not installed in
+    # every environment that imports this module (e.g. evolution/policy-learning
+    # test suites); only the evaluate endpoint requires them.
+    from services.research.alpha_templates import run_alpha_template_evaluation
+
+    req = body or EvaluateAlphaTemplatesBody()
+    registry_service = RegistryService(get_registry_store())
+    try:
+        return run_alpha_template_evaluation(
+            research_store=get_store(),
+            registry_service=registry_service,
+            template_ids=req.template_ids,
+            universe=req.market_data,
+            run_id=req.run_id,
+            task_id=req.task_id,
+            strict_stepwise=req.strict_stepwise,
+            redundancy_threshold=req.redundancy_threshold,
+        )
+    except (AlphaTemplateValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/research-orchestrator/alpha-templates/evaluations")
+@app.get("/api/research/alpha-templates/evaluations")
+def list_alpha_template_evaluations_endpoint(
+    family: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    registry_service = RegistryService(get_registry_store())
+    ensure_builtin_alpha_templates(registry_service)
+    entries = [
+        v
+        for v in registry_service.list_all_entries()
+        if v.entry.artifact_type == ArtifactType.ALPHA_TEMPLATE
+    ]
+    items: List[Dict[str, Any]] = []
+    for view in entries:
+        meta = view.entry.metadata or {}
+        tmpl = meta.get(ALPHA_TEMPLATE_METADATA_KEY)
+        if not isinstance(tmpl, dict):
+            continue
+        if family and tmpl.get("family") != family:
+            continue
+        if status and tmpl.get("status") != status:
+            continue
+        eval_meta = meta.get("alpha_template_evaluation")
+        items.append(
+            {
+                "registry_id": view.entry.registry_id,
+                "template_id": tmpl.get("template_id"),
+                "name": tmpl.get("name"),
+                "family": tmpl.get("family"),
+                "scope": tmpl.get("scope"),
+                "status": tmpl.get("status"),
+                "evaluation_ref": tmpl.get("evaluation_ref"),
+                "duplicate_of": tmpl.get("duplicate_of"),
+                "evaluation": eval_meta,
+            }
+        )
+    return {"count": len(items), "items": items}
+
+
+@app.get("/api/research-orchestrator/alpha-templates/evaluations/{template_id:path}")
+@app.get("/api/research/alpha-templates/evaluations/{template_id:path}")
+def get_alpha_template_evaluation_endpoint(template_id: str) -> Dict[str, Any]:
+    registry_service = RegistryService(get_registry_store())
+    ensure_builtin_alpha_templates(registry_service)
+    reg_id = alpha_template_registry_id(template_id)
+    entry = registry_service.store.get(reg_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"AlphaTemplate '{template_id}' not found")
+    meta = entry.metadata or {}
+    tmpl = meta.get(ALPHA_TEMPLATE_METADATA_KEY) or {}
+    eval_ref = tmpl.get("evaluation_ref")
+    run_record = get_store().get_run(str(eval_ref)) if eval_ref else None
+    return {
+        "registry_id": entry.registry_id,
+        "template_id": tmpl.get("template_id"),
+        "status": tmpl.get("status"),
+        "evaluation_ref": eval_ref,
+        "duplicate_of": tmpl.get("duplicate_of"),
+        "template": tmpl,
+        "evaluation": meta.get("alpha_template_evaluation"),
+        "research_run": run_record,
+    }

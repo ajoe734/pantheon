@@ -1,0 +1,33 @@
+{
+  "task_id": "DEV-EGRESS-COLLECTOR-HOST-GATE-20261110",
+  "acceptance": {
+    "1_steady_allowlist_single_host": "docker-compose.yml source-ingest: allowlist + PANTHEON_COLLECTOR_HOST when set, else deny",
+    "2_restore_to_steady": "deploy_nonprod_vm.sh restore (python + fallback) returns to collector-host allowlist; deny only if host unset",
+    "3_refresh_guard": "collector-* connectors accepted only when hosts == {PANTHEON_COLLECTOR_HOST}",
+    "4_official_hosts_unchanged": "TWSE/TPEx and TAIFEX required host sets untouched",
+    "5_other_services_deny": "research-orchestrator-svc hardcoded deny; test_only_source_ingest_may_use_collector_host_steady_egress asserts"
+  },
+  "verification": "pytest scripts/test_deploy_nonprod_vm.py services/test_external_egress.py services/source_ingestion/test_compose_activation.py: 122 passed, 2 skipped; bash -n ok",
+  "workflow_env_wiring": {
+    "nonprod-deploy.yml": "PANTHEON_COLLECTOR_HOST (vars) + PANTHEON_COLLECTOR_BUNDLE_TOKEN (secrets) added to every DEV_BFF_JWT_SECRET env block and both bounded TAIFEX refresh steps",
+    "dev-tw-market-refresh.yml": "both bounded refresh steps",
+    "deploy_nonprod_vm.sh": "both forwarded in refresh-only and deploy command_prefix via shell_quote, never echoed",
+    "tests": "scripts/test_deploy_nonprod_vm.py::test_workflows_pass_collector_host_and_token_names, test_deploy_script_forwards_collector_env_without_echo (11 passed with egress tests; services/test_external_egress.py 27 passed)"
+  },
+  "landed_via": {
+    "pr": "#7164",
+    "merge_commit": "5dd7605b4",
+    "note": "Implementation reached dev via INTEGRATION-UNBLOCK-DEV-EGRESS-COLLECTOR-HOST-GATE-20261110-CI-RED-76AD3DA96B2F; PR #7158 redundant; this branch carries only this evidence update. Also updated services/source_ingestion/test_compose_activation.py."
+  },
+  "acceptance_test_map": {
+    "1,5": "services/test_external_egress.py::test_only_source_ingest_may_use_collector_host_steady_egress",
+    "2,4": "scripts/test_deploy_nonprod_vm.py (restore + bounded refresh host-set tests)",
+    "3": "services/test_external_egress.py / scripts/test_deploy_nonprod_vm.py refresh guard collector-* tests",
+    "compose": "services/source_ingestion/test_compose_activation.py"
+  },
+  "review_fixes": {
+    "P1_AC1": "deploy_nonprod_vm.sh normalizes unset/deny to allowlist+PANTHEON_COLLECTOR_HOST outside bounded refresh; nonprod-deploy.yml steady PANTHEON_EXTERNAL_EGRESS(_ALLOWED_HOSTS) select collector host when var set; bounded sets unchanged. Test: test_steady_deploy_defaults_to_collector_host_allowlist_even_with_explicit_deny",
+    "P2_AC2": "restore post-check compares against intended env (pre env with egress/controller-mode keys replaced). Test: test_restore_from_deny_or_allowlist_reaches_collector_allowlist (both transitions)",
+    "P2_single_host_invariant": "PANTHEON_COLLECTOR_HOST validated as exactly one valid hostname (RFC-style labels, <=253, no comma/port/scheme) at deploy init (before any Docker mutation), in the remote steady guard, and in restore (python). Test: scripts/test_deploy_nonprod_vm.py::test_collector_host_gate_rejects_non_single_hostname (executable regex matrix + early-guard exit 1 for comma list)"
+  }
+}

@@ -24,7 +24,9 @@ STEP_NAMES = (
 )
 
 WORKFLOW_CONTRACT_STEP_NAME = "Verify workflow contract"
-EXPECTED_CONTRACT_TEST_COMMAND = "python3 -m unittest scripts.test_branch_ci_gate_selection"
+EXPECTED_CONTRACT_TEST_COMMAND = (
+    "python3 -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision"
+)
 TENANT_FALLBACK_AUDIT_STEP_NAME = "BFF tenant fallback audit gate"
 EXPECTED_TENANT_FALLBACK_AUDIT_COMMAND = (
     "python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py"
@@ -195,6 +197,12 @@ class BranchCiGateSelectionTests(unittest.TestCase):
             step_by_name.get("Verify real worker sandbox boundaries", {}).get("timeout-minutes"),
             3,
         )
+
+    def test_sandbox_provisioning_uses_bounded_helper(self) -> None:
+        step = {s.get("name"): s for s in self.smoke_steps if s.get("name")}[
+            "Provision real worker sandbox"
+        ]
+        self.assertEqual(step.get("run", "").strip(), "bash scripts/ci/provision_worker_sandbox.sh")
 
     def test_all_three_named_steps_present(self) -> None:
         self.assertEqual(set(self.conditions), set(STEP_NAMES))

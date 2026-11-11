@@ -113,7 +113,7 @@ STIMULUS_SERVICES: dict[str, dict[str, Any]] = {
 }
 DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
 TW_OFFICIAL_CONNECTOR_ID = "tw-twse-tpex-official-market"
-TW_OFFICIAL_EGRESS_HOSTS = "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+TW_OFFICIAL_EGRESS_HOSTS = "openapi.twse.com.tw,www.tpex.org.tw"
 TW_OFFICIAL_PULL_SERVICE = "source-ingest-scheduler"
 TW_OFFICIAL_SNAPSHOT_SYMBOL = "2330.TW"
 TW_OFFICIAL_DEFAULT_HISTORY_SYMBOLS = "2330.TW,2317.TW"

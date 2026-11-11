@@ -1,0 +1,14 @@
+{
+  "task": "COMPAT-DOCS-CLOSEOUT-20261111",
+  "scope": "current-reference documentation residuals only; no code, alias, deployment, or historical evidence changed",
+  "signatures_checked": {
+    "load_snapshot": ".orchestrator/rewrite/task_state_store.py: load_snapshot(path, *, observational: bool = False)",
+    "wandb_env": "scripts/smoke_dormant_oss_matrix.py and services/registry/experiments use PANTHEON_ENABLE_WANDB_OFFLINE_STORE"
+  },
+  "changes": [
+    "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md: removed promise of PANTHEON_ENABLE_WANDB_DEFERRED_PREP alias",
+    "docs/02-architecture/supervisor-authority-v2.md: describe observational keyword; refresh_checkpoint removed",
+    "docs/operations/bff-test-migration-b14-loops-paper-v5-projection-ownership.md: example uses observational=True (not executed)"
+  ],
+  "validation": "grep confirms no remaining present-tense refresh_checkpoint=/WANDB_DEFERRED_PREP compatibility claims in the three docs; example not run against canonical state"
+}

@@ -3,7 +3,7 @@
 **Task:** EX-001 / EX-002-RB
 **Owner:** Codex
 **Reviewer:** Claude
-**Status:** EX-002-RB reviewed and approved — loader now reads canonical `artifact_state + deployment_stage` (with `promotion_state` fallback for legacy object store metadata); algorithm-level LEAN run coverage is still deferred
+**Status:** EX-002-RB reviewed and approved — loader now reads canonical `artifact_state + deployment_stage` (legacy `promotion_state` fallback retired by REGISTRY-LEGACY-METADATA-RETIRE-20261111); algorithm-level LEAN run coverage is still deferred
 
 ---
 
@@ -27,17 +27,13 @@ Migration note (EX-002-RB):
 - canonical deployment placement is `deployment_stage` (none/paper/canary/live/frozen)
 - the loader now requires `artifact_state=approved` whenever canonical execution metadata is present
 - the loader validates `deployment_stage` as the primary mode gate field
-- `promotion_state` is accepted as a backward-compat fallback only for pre-migration object store metadata
-- Closed retain decision (RUNTIME-COMPAT-CLEANUP-20261107): the small `promotion_state` reader stays, for
-  pre-migration object store metadata only. Producer/consumer inventory: maintained metadata producers
-  (`PromotionGate.build_execution_projection()`, the dev paper lifecycle probe, the lean smoke algorithm
-  metadata, and the current-artifact-signal test fixture) now emit only `artifact_state` + `deployment_stage`.
-  The remaining `promotion_state` literals in EP4/EP5 acceptance scripts, the TJ-E2E seed script and
-  `PaperRuntime` telemetry are event `target.promotion_state` fields consumed by training-session trace export
-  and imitation research, not loader object metadata; they are unchanged. The explicit legacy-reader and
-  precedence negative tests in `test_artifact_loader.py` are kept. Absence of legacy-only executable/rollback
-  objects in the object store was NOT proven (no read-only inventory available to source workers), so the
-  reader is retained and no persisted object is mutated or migrated by this delivery.
+- `promotion_state` is no longer read by the loader (REGISTRY-LEGACY-METADATA-RETIRE-20261111): `artifact_state=approved`
+  and `deployment_stage` are both required. The experiments adapter and `DeploymentPlanner.build_execution_projection()`
+  no longer emit `promotion_state`. Event `target.promotion_state` fields (telemetry, training-session trace export)
+  are a distinct business field and are unchanged. Evidence: `docs/deployment/evidence/REGISTRY-LEGACY-METADATA-RETIRE-20261111/evidence.json`.
+  Rollback: `RuntimeManager._rollback_once` builds the replacement deploy request from the proven prior binding and
+  the request `replacement_metadata` (compensation ids only), not by copying prior object metadata, so rollback needs
+  no legacy field. No persisted object is mutated or migrated.
 - the execution projection emitted by `PromotionGate.build_execution_projection()` now carries canonical fields
 - rollback execution semantics (`replace`, `pause_then_replace`, `liquidate_then_replace`) remain owned by
   `DeploymentPlan.rollback.action_type` and the Runtime Manager; the loader validates fallback metadata only
@@ -110,7 +106,7 @@ Before artifact body load proceeds, the loader must validate:
 
 1. metadata validates against the promoted-artifact metadata schema
 2. `artifact_state=approved` when canonical split metadata is present
-3. `deployment_stage` (or legacy `promotion_state`) is allowed for the current execution mode
+3. `deployment_stage` is allowed for the current execution mode
 4. `checksum` is present
 5. `strategy_id` and `version` are present
 6. for `live`, rollback metadata exists

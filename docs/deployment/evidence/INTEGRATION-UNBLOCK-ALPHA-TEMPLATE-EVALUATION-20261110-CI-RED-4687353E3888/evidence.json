@@ -1,0 +1,27 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-ALPHA-TEMPLATE-EVALUATION-20261110-CI-RED-4687353E3888",
+  "title": "Unblock integration for ALPHA-TEMPLATE-EVALUATION-20261110: ci-red",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "source_pr": 7144,
+  "repair_pr": 7147,
+  "supersedes": "PR #7144 (task/ALPHA-TEMPLATE-EVALUATION-20261110)",
+  "root_causes": [
+    {
+      "failing_check": "Research suite (PR #7144)",
+      "cause": "Two tests in services/research/tests/test_alpha_template_evaluation.py used the registry store without REGISTRY_STORE_BACKEND, which now raises instead of defaulting to memory.",
+      "fix": "autouse fixture sets REGISTRY_STORE_BACKEND=memory (tests only)."
+    },
+    {
+      "failing_check": "Service suites (misc)",
+      "cause": "services/research/main.py imported services.research.alpha_templates at module level, which imports numpy/pandas. The misc suite does not install numpy, so services/evolution and services/policy-learning tests importing services.research.main failed at collection with ModuleNotFoundError.",
+      "fix": "Import run_alpha_template_evaluation lazily inside evaluate_alpha_templates_endpoint."
+    }
+  ],
+  "verification": {
+    "command": "pytest services/registry/test_alpha_template.py services/research/tests/test_alpha_template_evaluation.py",
+    "result": "20 passed",
+    "no_numpy_collection": "evolution/policy-learning handoff test modules collect (12 tests) in a venv without numpy"
+  },
+  "ci": "PR #7147 head 98e5888df: all checks passed except the canonical review gate (no review-proof tag before review); head then merged with current dev."
+}

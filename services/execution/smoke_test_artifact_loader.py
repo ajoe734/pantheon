@@ -73,7 +73,10 @@ def run_smoke() -> None:
     entry = build_registry_entry()
     artifact_bytes = entry.pop("_artifact_bytes")
 
-    live_entry = gate.promote(entry, PromotionState.LIVE, approver="risk-committee")
+    canary_entry = gate.promote(entry, PromotionState.CANARY, approver="risk-committee")
+    live_entry = gate.promote(
+        canary_entry, PromotionState.LIVE, approver="risk-committee"
+    )
     projection = gate.build_execution_projection(live_entry)
 
     store = InMemoryObjectStore()
