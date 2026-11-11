@@ -791,7 +791,6 @@ class RegistryExperimentAdapter:
             "version": entry["version"],
             "artifact_state": entry["artifact_state"],
             "deployment_stage": entry["deployment_stage"],
-            "promotion_state": entry["artifact_state"],
             "checksum": entry["checksum"],
             "storage_ref": copy.deepcopy(entry["storage_ref"]),
             "execution_projection": {
@@ -819,7 +818,6 @@ class RegistryExperimentAdapter:
             "artifact_type": entry["artifact_type"],
             "artifact_state": artifact_state,
             "deployment_stage": deployment_stage,
-            "promotion_state": artifact_state,
             "checksum": entry["checksum"],
             "lineage": copy.deepcopy(entry["lineage"]),
             "created_at": utc_now(),
