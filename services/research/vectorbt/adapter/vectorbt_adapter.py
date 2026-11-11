@@ -702,9 +702,21 @@ def _is_undated_aligned_observation(obs: Any) -> bool:
 
 
 def _is_dated_observation(obs: Any) -> bool:
-    return isinstance(obs, Mapping) and any(
-        obs.get(k) is not None for k in ("event_time", "date", "as_of", "available_time")
-    )
+    """True for any timestamped observation the factor-rule interpreter accepts."""
+    if isinstance(obs, Mapping):
+        return any(
+            obs.get(k) is not None for k in ("event_time", "date", "as_of", "available_time")
+        )
+    # (timestamp, value) pair format
+    if isinstance(obs, (tuple, list)) and len(obs) == 2:
+        ts, val = obs
+        return (
+            ts is not None
+            and not isinstance(ts, (int, float))
+            and isinstance(val, (int, float))
+            and not isinstance(val, bool)
+        )
+    return False
 
 
 def _reject_mixed_dated_undated(value: Any, path: str) -> None:

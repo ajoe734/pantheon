@@ -72,6 +72,9 @@ class TestGovernedVectorbtInputAdapter(unittest.TestCase):
             {"rev_yoy": mixed},
             {"rev": {"yoy": mixed}},
             {"rev_yoy": [{"value": 0, "event_time": "2022-12-01"}, {"value": 1}]},
+            {"rev_yoy": [("2022-12-01", 0.0)] + [float(i % 4) for i in range(1, n)]},
+            {"rev_yoy": [["2022-12-01", 0.0]] + [float(i % 4) for i in range(1, n)]},
+            {"rev": {"yoy": [("2022-12-01", 0.0)] + [float(i % 4) for i in range(1, n)]}},
         ):
             bad = copy.deepcopy(MINIMAL_DATASET)
             bad["features_by_instrument"] = {"AAA": feats}
@@ -83,6 +86,11 @@ class TestGovernedVectorbtInputAdapter(unittest.TestCase):
         ok["features_by_instrument"] = {
             "AAA": {"rev_yoy": [{"value": 1, "event_time": "2022-12-01"}]}
         }
+        GovernedVectorbtInputAdapter().prepare(ok)
+
+    def test_fully_dated_pair_sequences_accepted(self) -> None:
+        ok = copy.deepcopy(MINIMAL_DATASET)
+        ok["features_by_instrument"] = {"AAA": {"rev_yoy": [("2022-12-01", 1.0), ["2023-01-01", 2.0]]}}
         GovernedVectorbtInputAdapter().prepare(ok)
 
     def test_bars_per_instrument_counted_correctly(self) -> None:
