@@ -2,7 +2,8 @@
   "task_id": "REGISTRY-LEGACY-METADATA-RETIRE-20261111",
   "captured_at_utc": [
     "2026-11-11T11:42Z",
-    "2026-11-11T11:51Z"
+    "2026-11-11T11:51:37Z",
+    "2026-11-11T11:56:56.142031Z"
   ],
   "host": "current dev deployment host (read-only; credentials not recorded)",
   "runtime_binding_metadata": {
@@ -19,11 +20,13 @@
     "local_fleet_metadata_paths": {
       "/tmp/pantheon_storage": "absent",
       "/data/runtime": "exists, 0 metadata files"
-    }
+    },
+    "inventory_captured_at_utc": "2026-11-11T11:51:37Z"
   },
   "limits": [
-    "Zero listed S3 rows and absent local directories are not proof that no archived legacy object exists anywhere.",
-    "Tenant/archive coverage beyond the 158 projections is not independently proven; no legacy-only consumer or object was found, so the fallback is retired rather than retained speculatively.",
+    "Arbitrary historical archives outside the measured primary/.bak snapshots and MinIO inventory are not globally proven absent.",
+    "Supported loader/recovery paths (ArtifactLoader exact canonical key; RuntimeManager rollback from prior binding) do not execute such archives.",
+    "Zero MinIO rows (one bucket, 11:51:37) is kept separate from the snapshot measurements.",
     "No data migration or archive deletion performed."
   ],
   "source_changes": [
@@ -34,11 +37,46 @@
     "artifact-loader/contract.md: updated to canonical-only"
   ],
   "verification": {
-    "services.execution.test_artifact_loader": "23 tests OK (corrected count per independent review)",
+    "services.execution.test_artifact_loader": "23 tests OK",
     "services/registry/experiments test_adapter": "16 tests OK",
-    "smoke_test_artifact_loader": "fails identically at unmodified HEAD (PromotionError paper -> live); pre-existing, not caused by this change"
+    "smoke_test_artifact_loader": "fails identically at unmodified HEAD (PromotionError paper -> live); pre-existing, not caused by this change",
+    "services/control-plane/governance test_deployment_plan": "35 tests OK",
+    "callers": "current_artifact_signal and paper_signal_producer pytest: 130 passed plus 9 subtests"
   },
   "hosted_acceptance": "not performed; source outcome only",
   "rollback_resolution": "RuntimeManager._rollback_once derives replacement from proven prior_binding fields plus request replacement_metadata (compensation ids); outbox_consumer_worker builds that payload without promotion_state. Source-supported; no legacy metadata needed.",
-  "canonical_coverage_note": "Runtime binding store primary file and its .bak (runtime_binding.py bindings.json.bak) are the persistent binding-metadata recovery copies; the 158 projections come from the runtime-manager list_all view over that store, so primary and .bak recovery both resolve to the same canonical fields. ArtifactLoader has no .bak path; it reads only openclaw/registry/<strategy>/<version>/metadata.json."
+  "canonical_coverage_note": "Primary and supported .bak were each measured directly (159 bindings; 158 canonical+legacy metadata; zero legacy-only, zero non-approved; one tenant). ArtifactLoader has no .bak path; it reads only the exact canonical openclaw/registry/<strategy>/<version>/metadata.json key.",
+  "persistent_snapshot_inventory": {
+    "source": "/tmp/pantheon-compat-residual-20261111/remote_binding_recovery_inventory-result.json (direct read of snapshot files, no service initialization)",
+    "captured_at_utc": "2026-11-11T11:56:56.142031+00:00",
+    "note": "Absent Counter keys mean zero. Primary and backup measured separately, not inferred from list_all.",
+    "primary": {
+      "binding_count": 159,
+      "status_counts": {
+        "retired": 152,
+        "failed": 3,
+        "paused": 4
+      },
+      "distinct_tenant_count": 1,
+      "metadata_objects": 158,
+      "canonical_with_legacy_metadata": 158,
+      "legacy_only": 0,
+      "non_approved": 0,
+      "path": "/data/runtime/runtime_bindings.json"
+    },
+    "supported_backup": {
+      "binding_count": 159,
+      "status_counts": {
+        "retired": 152,
+        "failed": 3,
+        "paused": 4
+      },
+      "distinct_tenant_count": 1,
+      "metadata_objects": 158,
+      "canonical_with_legacy_metadata": 158,
+      "legacy_only": 0,
+      "non_approved": 0,
+      "path": "/data/runtime/runtime_bindings.json.bak"
+    }
+  }
 }
