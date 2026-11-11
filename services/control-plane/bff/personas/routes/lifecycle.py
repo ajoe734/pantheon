@@ -19,7 +19,6 @@ from ..service import (
     _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY,
     _bff_me_tenant_payload,
-    _deprecated_bff_path_response,
     _ensure_persona_exists,
     _persona_strategy_match_action_response,
     _persona_strategy_matches_response,
@@ -489,10 +488,11 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         if action_id.lower().replace("_", "").replace("-", "") not in {
             "advancelifecycle", "promote", "promotecandidate", "demote",
         }:
-            return _deprecated_bff_path_response(
-                route="/bff/personas/{persona_id}/actions/{action_id}",
-                replacement="/bff/v1/commands",
-            )
+            raise HTTPException(410, detail={"error": {
+                "code": ErrorCode.ACTION_RETIRED.value,
+                "message": "Persona action has no executing owner; use /bff/v1/commands with a supported owner action",
+                "details": {"replacement": "/bff/v1/commands"},
+            }})
         _reject_body_idempotency_key(payload)
         admission = getattr(request.app.state, "command_adapter_service", None)
         if admission is None:

@@ -126,13 +126,20 @@ observed traffic is made.
 
 Kept (live semantics): `POST /bff/personas/{id}/actions/{action_id}` (live
 `AdvanceLifecycle`/`Promote`/`PromoteCandidate`/`Demote` admission; other
-actions still 410 via `personas.service._deprecated_bff_path_response`, its sole
-remaining owner), `POST /bff/mcp/servers`,
+actions return `410 ACTION_RETIRED` with the existing HTTPException error shape; the
+personas `_deprecated_bff_path_response` helper has been deleted), `POST /bff/mcp/servers`,
 `POST /bff/mcp/servers/{server_id}/actions/{action_id}`,
 `GET /bff/mcp/servers/{server_id}/tools`, and all `ACTION_RETIRED` guards in §3.3.
 
-Deleted: `tools_integrations.service.deprecated_bff_path_response`, its
+Deleted: `personas.service._deprecated_bff_path_response`, `tools_integrations.service.deprecated_bff_path_response`, its
 `PATH_DEDUPE_*` constants, and the `deprecated_bff_path_response` injection in
 `app_factory`, deployment, runtime and strategies routers. The
 `execute_plans_bff_routes.json` rows are `superseded_with_reason`; manifest
 aliases/overrides and the route-diff baseline were regenerated.
+
+Bounded BFF access window (`remote_bff_access_inventory-result.json`, captured
+2026-11-11T12:57:42Z from current container json-file logs): 7720 HTTP access
+entries, zero matching the retired notification routes, observed only
+2026-11-10T17:14:49Z to 2026-11-11T12:57:33Z. This is a bounded window, not
+proof of seven-day coverage or global zero traffic; removal rests on the FE
+caller audit and expired sunset semantics.

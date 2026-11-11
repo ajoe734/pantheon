@@ -3046,15 +3046,6 @@ symbol_dispositions:
   production_callers_before: 5
   production_callers_after: 5
   deletion_wave: wave-7
-- symbol: _deprecated_bff_path_response
-  locations:
-  - main.py
-  - personas/service.py
-  canonical_owner: personas/service.py
-  disposition: DELETE_DUPLICATE
-  production_callers_before: 11
-  production_callers_after: 11
-  deletion_wave: wave-7
 - symbol: _derive_runtime_state_last_updated_at
   locations:
   - main.py

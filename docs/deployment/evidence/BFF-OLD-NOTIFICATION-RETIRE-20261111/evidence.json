@@ -12,7 +12,7 @@
     "POST /bff/mcp/tools/{tool_id}/actions/{action_id}"
   ],
   "kept": {
-    "POST /bff/personas/{persona_id}/actions/{action_id}": "live AdvanceLifecycle/Promote/PromoteCandidate/Demote; other actions 410",
+    "POST /bff/personas/{persona_id}/actions/{action_id}": "live AdvanceLifecycle/Promote/PromoteCandidate/Demote; other actions 410 ACTION_RETIRED (HTTPException error shape)",
     "POST /bff/mcp/servers": "live create",
     "POST /bff/mcp/servers/{server_id}/actions/{action_id}": "live",
     "GET /bff/mcp/servers/{server_id}/tools": "live",
@@ -22,10 +22,11 @@
   "deleted_helpers": [
     "tools_integrations.service.deprecated_bff_path_response",
     "app_factory deprecated_bff_path_response injection and resolver branch",
-    "deployment/runtime/strategies router deprecated_bff_path_response parameters"
+    "deployment/runtime/strategies router deprecated_bff_path_response parameters",
+    "personas.service._deprecated_bff_path_response (and ownership-yaml entry)"
   ],
   "fe_caller_audit": "/tmp/pantheon-compat-residual-20261111/fe-retired-route-consumers.json: no current UI caller; matches only in mocks/tests/probe. Literal source search only.",
-  "traffic_claim": "none; dev Caddy has no access-log directive",
+  "traffic_claim": "bounded BFF container-log window: 7720 HTTP entries, zero target notification matches; no global-zero claim",
   "tests": {
     "passed": "route/capability/manifest/dedupe/deployment/runtime/tools/strategies/action-catalog suites",
     "preexisting_failures_on_dev_unchanged": [
@@ -34,5 +35,14 @@
       "test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos",
       "test_bff_strategy_persona_contract.py (3), tests/test_receipt_only_retirement.py (2), tests/test_bff_emergency_containment.py (2)"
     ]
+  },
+  "bff_access_window": {
+    "source": "remote_bff_access_inventory-result.json",
+    "captured_at_utc": "2026-11-11T12:57:42Z",
+    "matched_http_access_lines": 7720,
+    "retired_notification_matches": 0,
+    "observed_from": "2026-11-10T17:14:49Z",
+    "observed_to": "2026-11-11T12:57:33Z",
+    "limits": "bounded window only; not seven-day coverage or global zero"
   }
 }

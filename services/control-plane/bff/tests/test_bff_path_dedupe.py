@@ -133,10 +133,11 @@ def test_notification_only_nested_action_families_are_removed() -> None:
         assert response.status_code in {404, 405}, (path, response.text)
 
     # Persona lifecycle aliases are live; other persona actions stay deprecated.
-    _assert_deprecated(
-        client.post("/bff/personas/persona-1/actions/archive", headers=OPERATOR_HEADERS),
-        "/bff/v1/commands",
-    )
+    resp = client.post("/bff/personas/persona-1/actions/archive", headers=OPERATOR_HEADERS)
+    assert resp.status_code == 410
+    assert resp.json()["error"]["code"] == "ACTION_RETIRED"
+    assert resp.json()["error"]["details"]["replacement"] == "/bff/v1/commands"
+    assert "X-Deprecated" not in resp.headers
 
 
 def test_path_parameter_dedupe_keeps_only_snake_case_canonical_templates() -> None:
