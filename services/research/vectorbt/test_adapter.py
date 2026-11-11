@@ -971,6 +971,27 @@ class TestReplicationGateRealBacktestProtocol(unittest.TestCase):
         self.assertLess(days, 730)
         self.assertEqual(bars, 0)
 
+    def test_undated_mapping_observations_are_sliced_per_bar_no_future_leak(self) -> None:
+        from types import SimpleNamespace
+        from adapter.vectorbt_adapter import _bar_features_for_index
+
+        n = 756
+        start = date(2023, 1, 1)
+        bars = [(1.0, 1.0, 1.0, 1.0, 1.0)] * n
+        dates = [(start + timedelta(days=i)).isoformat() for i in range(n)]
+        obs = [{"value": 0.0} for _ in range(n)]
+        obs[-1] = {"value": 2.0}
+        dataset = SimpleNamespace(
+            ohlcv_by_instrument={"2330": bars},
+            dates_by_instrument={"2330": dates},
+            features_by_instrument={"2330": {"rev_yoy": obs}},
+        )
+        feats, _t = _bar_features_for_index(dataset, "2330", 0)
+        self.assertEqual(len(feats["rev_yoy"]), 1)
+        self.assertEqual(feats["rev_yoy"], [{"value": 0.0}])
+        feats_last, _t = _bar_features_for_index(dataset, "2330", n - 1)
+        self.assertEqual(len(feats_last["rev_yoy"]), n)
+
     def test_replication_backtest_protocol_insufficient_history_under_two_years(self) -> None:
         from adapter.vectorbt_adapter import (
             INSUFFICIENT_HISTORY_STATUS,

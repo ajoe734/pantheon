@@ -686,6 +686,19 @@ class VectorbtBackend:
         )
 
 
+def _is_undated_aligned_observation(obs: Any) -> bool:
+    """True for numeric scalars or mappings carrying no date stamp (index-aligned to bars)."""
+    if isinstance(obs, bool):
+        return False
+    if isinstance(obs, (int, float)):
+        return True
+    if isinstance(obs, Mapping):
+        return not any(
+            obs.get(k) is not None for k in ("event_time", "date", "as_of", "available_time")
+        )
+    return False
+
+
 def _bar_features_for_index(
     dataset: PreparedVectorbtDataset,
     instrument: str,
@@ -709,7 +722,7 @@ def _bar_features_for_index(
             isinstance(fv, Sequence)
             and not isinstance(fv, (str, bytes))
             and len(fv) == total_len
-            and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in fv)
+            and all(_is_undated_aligned_observation(x) for x in fv)
         ):
             bar_features[fk] = list(fv[: index + 1])
         else:
