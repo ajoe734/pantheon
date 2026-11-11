@@ -8,9 +8,9 @@
     "scripts/auto_deploy_dev_pair.py": "step renamed 'Refresh Taiwan market session under lease after candidate stack deploy' and removed from PRE_MUTATION_STEPS (post-switch failures are compensated and not auto-retried for the same pair)."
   },
   "baseline_regressions": {
-    "classification": "outdated test fixtures, not runtime faults",
+    "classification": "Outdated test fixtures only, EXCEPT restore_env_mismatch, which was a real hosted fault later fixed in the scheduler-only restore_env_followup below.",
     "stub_docker_compose_args": "The PIN-RUNNING-IMAGE change adds '-f <pin override>' to compose argv; the stub assumed exactly 5 prefix args, so 'compose config' returned nothing and the real guard correctly stopped ('compose image reference could not be resolved'). Stub now skips extra -f pairs.",
-    "restore_env_mismatch": "Restore intends SOURCE_INGEST_CONTROLLER_MODE=reconcile_only and PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=<collector host>; the stub never modelled Compose interpolating them into the recreated container. Stub now applies the exported controlled keys on the deny/restore 'up'. The mutate_env_on_restore wrong-env rejection control and the wrong-image rejection tests are unchanged and still pass.",
+    "restore_env_mismatch": "Initial fixture-level reading (superseded by restore_env_followup): stub did not model Compose interpolating controlled keys into the recreated container. The hosted run 43011035366 showed the real cause: SOURCE_INGEST_CONTROLLER_MODE is passed only to source-ingest-scheduler, not the source-ingest API container; restore now expects it only when the recorded pre-env had it. The wrong-env and wrong-image rejection controls are unchanged.",
     "diagnostics_assertion": "test_nonprod_workflow_exposes_only_fixed_bounded_source_refresh expected the old egress expressions; updated to the truthful collector-host allowlist/deny and collector host expressions already in the workflow."
   },
   "acceptance": {
@@ -24,7 +24,7 @@
     "scripts/test_deploy_nonprod_vm.py": "95 passed, 2 skipped before the added test; added test passes",
     "scripts/test_dev_environment_lease_deploy_contract.py": "market_refresh tests pass; 7 other failures are unrelated stale assertions (provider-gate summary string, retire action, restart admission, post-up paper_bootstrap condition text) in code this task does not touch"
   },
-  "scope_note": "Also edited scripts/auto_deploy_dev_pair.py, scripts/test_auto_deploy_dev_pair.py and scripts/test_dev_environment_lease_deploy_contract.py, outside the listed artifacts, because they hard-code the old step name/order and would otherwise fail.",
+  "scope_note": "Also edited scripts/auto_deploy_dev_pair.py, scripts/test_auto_deploy_dev_pair.py and scripts/test_dev_environment_lease_deploy_contract.py. These companion paths are outside the original contract but were admitted by the operator; they hard-code the old step name/order and would otherwise fail.",
   "not_claimed": "No hosted dev run was executed; no new source acceptance is claimed.",
   "restore_env_followup": "Hosted run 43011035366 failed restore with removed=[SOURCE_INGEST_CONTROLLER_MODE=reconcile_only]: docker-compose.yml passes that key only to source-ingest-scheduler, so the source-ingest container never carries it. manage_source_ingest_refresh_runtime restore now expects it only when the recorded pre-env had it; egress keys stay strict, allowlist not widened. Stub in test_dev_tw_market_refresh.py models this. Remaining local test errors are missing libpq/psycopg_binary only."
 }
