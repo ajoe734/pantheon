@@ -18,6 +18,7 @@
       ],
       "live_pull": "not executed from this worktree (no egress/storage run); verified with fixture payloads",
       "review_fix": "Rework 20261111: provider path fetches both statement endpoints; test_provider_entrypoint_fetches_and_joins_income_and_balance_statements uses no prewrapped payload",
+      "review_fix_rework_4": "resolve_point_in_time_inputs (shared by research/vectorbt and paper) now routes catalogued non-price features through a governed latest-visible-version-per-(entity,event_time) read with catalogue/row lag, so raw late revisions no longer reach rolling windows; public evaluator and CurrentArtifactStrategy regressions in services/source_ingestion/tests/test_feature_catalogue.py do not pre-call the helper.",
       "review_fix_rework_3": "tw-twse-tpex-official-market definition, config schema and financial catalog entry/template now declare tw_monthly_revenue, tw_financial_statement, tw_valuation_bwibbu; test_governed_fundamentals_are_creatable_through_management_and_stored drives SourceCommandEngine create -> provider fetch -> MarketDataStorageWriter -> measure_stored_history_depth for each.",
       "review_fix_rework_4": "_records_from_normalized_rows stamps tw_margin_short_balance and tw_institutional_flow rows with event_time, offset-aware available_time (catalogue lag, 18:00 Asia/Taipei), ingest_time, availability_lag_days; test_daily_flow_pull_to_storage_to_training_carries_governed_times covers pull->storage->authority for both.",
       "status": "implemented_unit_verified",
