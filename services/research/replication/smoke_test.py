@@ -19,6 +19,35 @@ if _RESEARCH_DIR not in sys.path:
 
 from replication.gate_schema import ReplicationRequest, CandidateAdmissionStatus
 from replication.gate import ReplicationGate, create_promotion_request
+from services.research.vectorbt.adapter.vectorbt_adapter import (
+    build_canonical_tw_strategy_artifact,
+    build_governed_tw_replication_dataset,
+    run_replication_backtest_protocol,
+)
+
+_CACHED_SMOKE_BACKTEST = None
+
+
+def _get_smoke_backtest() -> dict:
+    global _CACHED_SMOKE_BACKTEST
+    if _CACHED_SMOKE_BACKTEST is None:
+        _CACHED_SMOKE_BACKTEST = run_replication_backtest_protocol(
+            strategy_artifact=build_canonical_tw_strategy_artifact(),
+            dataset=build_governed_tw_replication_dataset(),
+            run_id="bt-smoke-001",
+        )
+    return dict(_CACHED_SMOKE_BACKTEST)
+
+
+def _bind_run(gate, request) -> None:
+    """Persist the handoff's backtest as a completed run and bind the candidate to it."""
+    evaluation = request.research_handoff["backtest_evaluation"]
+    gate.backtest_run_store.record(evaluation)
+    request.metadata = {
+        **(request.metadata or {}),
+        "strategy_artifact_checksum": evaluation["strategy_artifact"]["checksum"],
+        "dataset_version_id": evaluation["dataset_id"],
+    }
 
 
 def create_realistic_research_handoff() -> dict:
@@ -26,6 +55,7 @@ def create_realistic_research_handoff() -> dict:
     return {
         "task_id": "RS-002",
         "source_type": "academic_paper",
+        "backtest_evaluation": _get_smoke_backtest(),
         "source_metadata": {
             "api_endpoint": "https://api.openalex.org/works/W3052820607",
             "retrieved_at": "2026-04-06T10:00:00Z",
@@ -126,6 +156,7 @@ def test_realistic_admission_flow():
     )
 
     print(f"Evaluating candidate: {request.candidate_id}")
+    _bind_run(gate, request)
     response = gate.evaluate_candidate(request)
 
     print(f"  Admission Status: {response.admission_status.value}")
@@ -203,6 +234,7 @@ def test_low_confidence_rejection():
     )
 
     print(f"Evaluating low-confidence candidate: {request.candidate_id}")
+    _bind_run(gate, request)
     response = gate.evaluate_candidate(request)
 
     print(f"  Admission Status: {response.admission_status.value}")
@@ -231,6 +263,7 @@ def test_bypass_attempt_rejection():
     )
 
     print(f"Evaluating candidate with bypass attempt: {request.candidate_id}")
+    _bind_run(gate, request)
     response = gate.evaluate_candidate(request)
 
     print(f"  Admission Status: {response.admission_status.value}")
@@ -266,6 +299,7 @@ def test_missing_governance_rejection():
     )
 
     print(f"Evaluating candidate without governance: {request.candidate_id}")
+    _bind_run(gate, request)
     response = gate.evaluate_candidate(request)
 
     print(f"  Admission Status: {response.admission_status.value}")
@@ -297,6 +331,7 @@ def test_audit_trail():
             research_handoff=create_realistic_research_handoff(),
             proposed_strategy_spec=create_realistic_strategy_spec(),
         )
+        _bind_run(gate, request)
         gate.evaluate_candidate(request)
 
     audit_log = gate.get_audit_log()

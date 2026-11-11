@@ -1086,6 +1086,41 @@ def planner_decision(
     )
 
 
+class SupervisorRuntimeStampTests(unittest.TestCase):
+    def test_stamp_records_the_pid_namespace_of_recorded_worker_pids(self) -> None:
+        state: dict[str, Any] = {}
+        with mock.patch.object(
+            supervisor, "current_pid_namespace", return_value="pid:[4026531836]"
+        ):
+            supervisor.stamp_supervisor_runtime_state(
+                config_fixture(),
+                state,
+                heartbeat_at="2026-11-11T02:00:00Z",
+                lifecycle="running",
+            )
+
+        self.assertEqual(state["supervisor"]["pid"], os.getpid())
+        self.assertEqual(state["supervisor"]["pid_namespace"], "pid:[4026531836]")
+
+    def test_stamped_pid_namespace_survives_runtime_state_save_and_load(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"paths": {"state_file": str(Path(tmpdir) / "state.json")}}
+            state = runtime_state.default_state()
+            with mock.patch.object(
+                supervisor, "current_pid_namespace", return_value="pid:[4026531836]"
+            ):
+                supervisor.stamp_supervisor_runtime_state(
+                    config,
+                    state,
+                    heartbeat_at="2026-11-11T03:13:36Z",
+                    lifecycle="running",
+                )
+            supervisor.save_runtime_state(config, state)
+            reloaded = supervisor.load_runtime_state(config)
+
+        self.assertEqual(reloaded["supervisor"]["pid_namespace"], "pid:[4026531836]")
+
+
 class ReviewOnlyAgentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()

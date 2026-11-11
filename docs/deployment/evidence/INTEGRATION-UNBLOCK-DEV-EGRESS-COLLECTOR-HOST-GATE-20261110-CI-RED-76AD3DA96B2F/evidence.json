@@ -1,0 +1,8 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-DEV-EGRESS-COLLECTOR-HOST-GATE-20261110-CI-RED-76AD3DA96B2F",
+  "source_pr": 7158,
+  "root_cause": "PR #7158 changed source-ingest PANTHEON_EXTERNAL_EGRESS to allowlist when PANTHEON_COLLECTOR_HOST is set, but services/source_ingestion/test_compose_activation.py still asserted the old '${PANTHEON_EXTERNAL_EGRESS:-deny}' literal, so CI went red.",
+  "fix": "Merged the source branch and updated the compose-activation assertion to the new expression, plus explicit fail-closed checks: with PANTHEON_EXTERNAL_EGRESS and PANTHEON_COLLECTOR_HOST unset the value is empty and resolve_mode() returns deny.",
+  "verification": "pytest services/source_ingestion/test_compose_activation.py services/test_external_egress.py scripts/test_deploy_nonprod_vm.py: 118 passed, 2 skipped",
+  "note": "Source PR also showed a Smoke acceptance failure ('accepts at most 1 arg(s), received 2') not reproduced or addressed here."
+}

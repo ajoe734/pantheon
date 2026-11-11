@@ -6,6 +6,7 @@ Validates research candidates against admission criteria before
 allowing promotion to the registry.
 """
 
+import hashlib
 import uuid
 import json
 from pathlib import Path
@@ -23,6 +24,108 @@ from .gate_schema import (
     RegistryPromotionRequest,
 )
 from .gate_config import GateConfig, AdmissionRules
+from services.research.vectorbt.adapter.vectorbt_adapter import (
+    INSUFFICIENT_HISTORY_STATUS,
+    TAIWAN_BROKER_COMMISSION_RATE,
+    TAIWAN_COST_RATE_CITATIONS,
+    TAIWAN_EQUITY_TRANSACTION_TAX_RATE,
+    TAIWAN_ETF_TRANSACTION_TAX_RATE,
+    build_canonical_tw_strategy_artifact,
+    run_replication_backtest_protocol,
+)
+
+
+CONFLICT = object()
+
+
+class FamilyTrialCounterStore:
+    """Tracks multiple-testing trial counts per strategy family."""
+
+    def __init__(self, path: Optional[Path] = None):
+        self._path = Path(path) if path is not None else None
+        self._counts: Dict[str, int] = {}
+        if self._path is not None and self._path.exists():
+            try:
+                loaded = json.loads(self._path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    self._counts = {str(k): int(v) for k, v in loaded.items()}
+            except Exception:
+                self._counts = {}
+
+    def get(self, family_id: str) -> int:
+        return int(self._counts.get(family_id, 0))
+
+    def increment(self, family_id: str, preset_count: Optional[int] = None) -> int:
+        next_val = self.get(family_id) + 1
+        if preset_count is not None and int(preset_count) > next_val:
+            next_val = int(preset_count)
+        self._counts[family_id] = next_val
+        if self._path is not None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps(self._counts, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        return next_val
+
+
+class BacktestRunStore:
+    """Authoritative record of backtest runs the protocol actually executed.
+
+    Only ``record`` (called by the code that ran the protocol) can create an entry;
+    the gate accepts a caller-supplied evaluation only when it is byte-identical
+    (digest) to the persisted completed run and is bound to the expected artifact
+    checksum and governed dataset version.
+    """
+
+    def __init__(self, path: Optional[Path] = None):
+        self._path = Path(path) if path is not None else None
+        self._runs: Dict[str, Dict[str, Any]] = {}
+        if self._path is not None and self._path.exists():
+            try:
+                loaded = json.loads(self._path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    self._runs = {str(k): dict(v) for k, v in loaded.items() if isinstance(v, dict)}
+            except Exception:
+                self._runs = {}
+
+    @staticmethod
+    def evaluation_digest(evaluation: Dict[str, Any]) -> str:
+        payload = json.dumps(evaluation, sort_keys=True, default=str, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def record(self, evaluation: Dict[str, Any]) -> Optional[str]:
+        run_id = evaluation.get("backtest_run_id")
+        if not isinstance(run_id, str) or not run_id.strip():
+            return None
+        identity = evaluation.get("strategy_artifact")
+        identity = identity if isinstance(identity, dict) else {}
+        self._runs[run_id] = {
+            "backtest_run_id": run_id,
+            "status": evaluation.get("status"),
+            "artifact_checksum": identity.get("checksum"),
+            "dataset_id": evaluation.get("dataset_id"),
+            "source_dataset_refs": list(evaluation.get("source_dataset_refs") or []),
+            "artifact_ref": evaluation.get("artifact_ref"),
+            "evaluation_digest": self.evaluation_digest(evaluation),
+        }
+        if self._path is not None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps(self._runs, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+        return run_id
+
+    def get(self, run_id: str) -> Optional[Dict[str, Any]]:
+        if self._path is not None and self._path.exists():
+            try:
+                loaded = json.loads(self._path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict) and isinstance(loaded.get(run_id), dict):
+                    return dict(loaded[run_id])
+            except Exception:
+                pass
+        record = self._runs.get(run_id)
+        return dict(record) if record is not None else None
 
 
 class ReplicationGate:
@@ -34,13 +137,25 @@ class ReplicationGate:
     2. Lineage completeness
     3. Governance context
     4. No live bypass attempts
-    5. Optional: Confidence, replication notes, evaluation hypotheses
+    5. Real Taiwan backtest with 70/30 IS/OOS, 3 walk-forward folds, costs, benchmarks, and trial deflation
+    6. Optional: Confidence, replication notes, evaluation hypotheses, implementation readiness
     """
 
-    def __init__(self, config: Optional[GateConfig] = None):
+    def __init__(
+        self,
+        config: Optional[GateConfig] = None,
+        trial_counter_path: Optional[Path] = None,
+        backtest_run_store: Optional[BacktestRunStore] = None,
+    ):
         self.config = config or GateConfig()
+        self.backtest_run_store = backtest_run_store or BacktestRunStore()
         self.gate_run_logs: List[Dict[str, Any]] = []
         self._canonical_spec_validator = self._build_strategy_spec_validator()
+        self._trial_counter_store = FamilyTrialCounterStore(trial_counter_path)
+
+    def get_family_trial_count(self, family_id: str) -> int:
+        """Return the current number of evaluated trials for a strategy family."""
+        return self._trial_counter_store.get(family_id)
 
     def evaluate_candidate(self, request: ReplicationRequest) -> ReplicationResponse:
         """
@@ -77,22 +192,41 @@ class ReplicationGate:
             if any(r.criterion_id == c.criterion_id for c in self.config.get_optional_criteria())
         }
 
-        admitted, reasoning = AdmissionRules.evaluate_admission(
-            required_results, optional_results
+        backtest_result = next(
+            (r for r in results if r.criterion_id == "real_backtest_validation"),
+            None,
+        )
+        backtest_details = (
+            backtest_result.details
+            if backtest_result is not None and isinstance(backtest_result.details, dict)
+            else {}
+        )
+        is_insufficient_history = (
+            backtest_details.get("status") == INSUFFICIENT_HISTORY_STATUS
         )
 
-        # Determine replication status
-        replication_status = (
-            ReplicationStatus.PASSED
-            if admitted
-            else ReplicationStatus.FAILED
-        )
-
-        admission_status = (
-            CandidateAdmissionStatus.ADMITTED
-            if admitted
-            else CandidateAdmissionStatus.REJECTED
-        )
+        if is_insufficient_history:
+            admitted = False
+            reasoning = (
+                "Candidate inputs have less than two years of point-in-time history; "
+                "recorded as insufficient_history (neither failed nor admitted)."
+            )
+            replication_status = ReplicationStatus.INSUFFICIENT_HISTORY
+            admission_status = CandidateAdmissionStatus.INSUFFICIENT_HISTORY
+        else:
+            admitted, reasoning = AdmissionRules.evaluate_admission(
+                required_results, optional_results
+            )
+            replication_status = (
+                ReplicationStatus.PASSED
+                if admitted
+                else ReplicationStatus.FAILED
+            )
+            admission_status = (
+                CandidateAdmissionStatus.ADMITTED
+                if admitted
+                else CandidateAdmissionStatus.REJECTED
+            )
 
         # Build summary
         required_passed = sum(1 for r in required_results.values() if r)
@@ -118,6 +252,7 @@ class ReplicationGate:
                 "optional_pass_rate": (
                     optional_passed / optional_total if optional_total > 0 else 1.0
                 ),
+                "backtest_summary": backtest_details,
             },
         )
 
@@ -139,6 +274,8 @@ class ReplicationGate:
                 return self._check_governance_context(request)
             elif criterion.criterion_id == "no_live_bypass":
                 return self._check_no_live_bypass(request)
+            elif criterion.criterion_id == "real_backtest_validation":
+                return self._check_real_backtest_validation(request)
             elif criterion.criterion_id == "confidence_score":
                 return self._check_confidence_score(request)
             elif criterion.criterion_id == "replication_notes_present":
@@ -173,8 +310,23 @@ class ReplicationGate:
                 )
 
             if self._is_canonical_strategy_spec(spec):
+                spec_for_validation = {
+                    k: v
+                    for k, v in spec.items()
+                    if k
+                    not in {
+                        "backtest_evaluation",
+                        "backtest_dataset",
+                        "strategy_artifact",
+                        "mandate_max_drawdown",
+                        "family_id",
+                        "trial_count",
+                        "skip_backtest",
+                        "history_trading_days",
+                    }
+                }
                 errors = sorted(
-                    self._canonical_spec_validator.iter_errors(spec),
+                    self._canonical_spec_validator.iter_errors(spec_for_validation),
                     key=lambda item: list(item.path),
                 )
                 if errors:
@@ -270,44 +422,518 @@ class ReplicationGate:
         )
 
     def _check_governance_context(self, request: ReplicationRequest) -> ReplicationResult:
-        """Check if research includes governance compliance metadata."""
-        handoff = request.research_handoff
-        grok_notes = handoff.get("grok_processing_notes", {})
+        """Check if research includes verified governance compliance metadata."""
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
 
-        required_governance = [
-            "normalization_confidence",
-            "governance_compliance",
-            "downstream_readiness",
-        ]
-        missing = [f for f in required_governance if f not in grok_notes]
+        if "grok_processing_notes" in handoff:
+            grok_notes = handoff.get("grok_processing_notes")
+            if not isinstance(grok_notes, dict):
+                return ReplicationResult(
+                    criterion_id="governance_context",
+                    passed=False,
+                    evidence="grok_processing_notes must be a JSON object when provided",
+                )
+            required_governance = [
+                "normalization_confidence",
+                "governance_compliance",
+                "downstream_readiness",
+            ]
+            missing = [f for f in required_governance if f not in grok_notes]
 
-        if missing:
+            if missing:
+                return ReplicationResult(
+                    criterion_id="governance_context",
+                    passed=False,
+                    evidence=f"Missing governance metadata: {', '.join(missing)}",
+                    details={"missing_fields": missing},
+                )
+
+            compliance = grok_notes.get("governance_compliance", "")
+            if compliance != "verified":
+                return ReplicationResult(
+                    criterion_id="governance_context",
+                    passed=False,
+                    evidence=f"Governance compliance not verified: {compliance}",
+                    details={"compliance_status": compliance},
+                )
+
             return ReplicationResult(
                 criterion_id="governance_context",
-                passed=False,
-                evidence=f"Missing governance metadata: {', '.join(missing)}",
-                details={"missing_fields": missing},
+                passed=True,
+                evidence="Governance context verified and complete",
+                details={
+                    "compliance": compliance,
+                    "confidence": grok_notes.get("normalization_confidence"),
+                    "readiness": grok_notes.get("downstream_readiness"),
+                },
             )
 
-        # Check compliance value
-        compliance = grok_notes.get("governance_compliance", "")
-        if compliance != "verified":
+        # When grok_processing_notes is not self-attested by the worker, verify actual
+        # governance policy in the proposed strategy spec and source metadata.
+        source_metadata = handoff.get("source_metadata", {})
+        gov_context = (
+            source_metadata.get("governance_context")
+            if isinstance(source_metadata, dict)
+            else None
+        )
+        spec_gov = spec.get("governance", {})
+        policy_id = spec_gov.get("policy_id") if isinstance(spec_gov, dict) else None
+        approval_required = (
+            spec_gov.get("approval_required") if isinstance(spec_gov, dict) else None
+        )
+
+        if not gov_context:
             return ReplicationResult(
                 criterion_id="governance_context",
                 passed=False,
-                evidence=f"Governance compliance not verified: {compliance}",
-                details={"compliance_status": compliance},
+                evidence="Missing source_metadata.governance_context",
+                details={"missing_fields": ["source_metadata.governance_context"]},
+            )
+        if not policy_id or approval_required is not True:
+            return ReplicationResult(
+                criterion_id="governance_context",
+                passed=False,
+                evidence="StrategySpec governance section must specify policy_id and approval_required=True",
+                details={"policy_id": policy_id, "approval_required": approval_required},
             )
 
         return ReplicationResult(
             criterion_id="governance_context",
             passed=True,
-            evidence="Governance context verified and complete",
+            evidence="Governance context verified from StrategySpec policy and source lineage",
             details={
-                "compliance": compliance,
-                "confidence": grok_notes.get("normalization_confidence"),
-                "readiness": grok_notes.get("downstream_readiness"),
+                "policy_id": policy_id,
+                "approval_required": approval_required,
+                "governance_context": gov_context,
             },
+        )
+
+    def _resolve_family_id(self, request: ReplicationRequest) -> str:
+        """Resolve strategy family identifier for trial-count accounting."""
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+        normalized = (
+            handoff.get("normalized_findings", {})
+            if isinstance(handoff.get("normalized_findings"), dict)
+            else {}
+        )
+        strategy_artifact = (
+            spec.get("strategy_artifact")
+            if isinstance(spec.get("strategy_artifact"), dict)
+            else handoff.get("strategy_artifact")
+            if isinstance(handoff.get("strategy_artifact"), dict)
+            else {}
+        )
+
+        for candidate in (
+            handoff.get("family_id"),
+            spec.get("family_id"),
+            normalized.get("family_id"),
+            strategy_artifact.get("family_id"),
+            strategy_artifact.get("strategy_id"),
+            spec.get("strategy_id"),
+            spec.get("name"),
+            request.candidate_id,
+        ):
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return "default_family"
+
+    def _resolve_or_run_backtest(
+        self, request: ReplicationRequest
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve a provided real backtest evaluation or execute protocol if dataset is supplied."""
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+
+        for candidate in (
+            request.backtest_evaluation,
+            handoff.get("backtest_evaluation"),
+            spec.get("backtest_evaluation"),
+        ):
+            if isinstance(candidate, dict):
+                return candidate
+
+        dataset = handoff.get("backtest_dataset") or spec.get("backtest_dataset")
+        if isinstance(dataset, dict):
+            strategy_artifact = (
+                spec.get("strategy_artifact")
+                or handoff.get("strategy_artifact")
+                or build_canonical_tw_strategy_artifact(
+                    strategy_id=str(
+                        spec.get("strategy_id")
+                        or spec.get("name")
+                        or request.candidate_id
+                    )
+                )
+            )
+            mandate_dd = float(
+                spec.get("mandate_max_drawdown", self.config.max_oos_drawdown)
+            )
+            computed = run_replication_backtest_protocol(
+                strategy_artifact=strategy_artifact,
+                dataset=dataset,
+                mandate_max_drawdown=mandate_dd,
+                min_oos_round_trips=self.config.min_oos_round_trips,
+            )
+            if computed.get("status") in ("completed", INSUFFICIENT_HISTORY_STATUS):
+                self.backtest_run_store.record(computed)
+            request.backtest_evaluation = computed
+            return computed
+
+        return None
+
+    def _expected_binding(self, request: ReplicationRequest) -> tuple:
+        """Return (artifact_checksum, dataset_version_id) the candidate must be bound to."""
+        from services.registry.strategy_artifact import strategy_artifact_checksum
+
+        metadata = request.metadata if isinstance(request.metadata, dict) else {}
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+
+        checksums = set()
+        meta_checksum = metadata.get("strategy_artifact_checksum")
+        if isinstance(meta_checksum, str) and meta_checksum.strip():
+            checksums.add(meta_checksum.strip())
+        for artifact in (spec.get("strategy_artifact"), handoff.get("strategy_artifact")):
+            if isinstance(artifact, dict):
+                try:
+                    checksums.add(strategy_artifact_checksum(artifact))
+                except Exception:
+                    checksums.add("<uncomputable_artifact_checksum>")
+
+        dataset_ids = set()
+        meta_dataset = metadata.get("dataset_version_id")
+        if isinstance(meta_dataset, str) and meta_dataset.strip():
+            dataset_ids.add(meta_dataset.strip())
+        for dataset in (handoff.get("backtest_dataset"), spec.get("backtest_dataset")):
+            if isinstance(dataset, dict):
+                ds_id = dataset.get("dataset_id")
+                if isinstance(ds_id, str) and ds_id.strip():
+                    dataset_ids.add(ds_id.strip())
+                else:
+                    dataset_ids.add("<missing_dataset_id>")
+
+        def resolve(values: set) -> Any:
+            if not values:
+                return None
+            if len(values) > 1:
+                return CONFLICT
+            return next(iter(values))
+
+        return resolve(checksums), resolve(dataset_ids)
+
+    def _verify_authoritative_run(
+        self, request: ReplicationRequest, backtest_eval: Dict[str, Any]
+    ) -> Optional[ReplicationResult]:
+        """Refuse evaluations not backed by a persisted run bound to the candidate."""
+
+        def refuse(reason: str, **details: Any) -> ReplicationResult:
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=f"Backtest evaluation is not an authoritative bound run: {reason}",
+                details={"reason": reason, **details},
+            )
+
+        run_id = backtest_eval.get("backtest_run_id")
+        record = (
+            self.backtest_run_store.get(run_id)
+            if isinstance(run_id, str) and run_id.strip()
+            else None
+        )
+        if record is None:
+            return refuse("unknown_backtest_run", backtest_run_id=run_id)
+        if record.get("evaluation_digest") != BacktestRunStore.evaluation_digest(backtest_eval):
+            return refuse("evaluation_differs_from_persisted_run", backtest_run_id=run_id)
+        if record.get("status") not in ("completed", INSUFFICIENT_HISTORY_STATUS) or record.get(
+            "status"
+        ) != backtest_eval.get("status"):
+            return refuse("run_not_completed", backtest_run_id=run_id, status=record.get("status"))
+        expected_checksum, expected_dataset = self._expected_binding(request)
+        if expected_checksum is CONFLICT or expected_dataset is CONFLICT:
+            return refuse("candidate_binding_conflict")
+        if expected_checksum is None or expected_dataset is None:
+            return refuse("candidate_artifact_or_dataset_binding_missing")
+        if record.get("artifact_checksum") != expected_checksum:
+            return refuse("artifact_checksum_mismatch", expected=expected_checksum)
+        if record.get("dataset_id") != expected_dataset:
+            return refuse("dataset_version_mismatch", expected=expected_dataset)
+        if not record.get("source_dataset_refs"):
+            return refuse("missing_source_dataset_refs")
+        history = backtest_eval.get("history_check")
+        if not (
+            isinstance(history, dict)
+            and isinstance(history.get("calendar_days"), int)
+            and isinstance(history.get("trading_days"), int)
+            and isinstance(history.get("sufficient"), bool)
+        ):
+            return refuse("missing_point_in_time_history_proof")
+        return None
+
+    def _check_real_backtest_validation(
+        self, request: ReplicationRequest
+    ) -> ReplicationResult:
+        """
+        Verify that a real backtest run of the candidate artifact exists on governed
+        Taiwan market data with 70/30 IS/OOS split, 3 walk-forward folds, statutory
+        transaction costs, benchmarks, and multiple-testing trial-count deflation.
+        """
+        backtest_eval = self._resolve_or_run_backtest(request)
+        if not isinstance(backtest_eval, dict):
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence="No real backtest run exists for candidate artifact; admission refused",
+                details={"reason": "missing_backtest_run"},
+            )
+
+        unbound = self._verify_authoritative_run(request, backtest_eval)
+        if unbound is not None:
+            return unbound
+
+        history_check = backtest_eval["history_check"]
+        eval_status = str(backtest_eval.get("status", ""))
+        calendar_days = int(history_check.get("calendar_days", 0))
+        trading_days = int(history_check.get("trading_days", 0))
+        history_sufficient = bool(history_check["sufficient"])
+
+        if (
+            eval_status == INSUFFICIENT_HISTORY_STATUS
+            or not history_sufficient
+            or (
+                history_check
+                and (
+                    calendar_days < self.config.min_history_calendar_days
+                    or trading_days < self.config.min_history_trading_days
+                )
+            )
+        ):
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=(
+                    f"Candidate inputs have insufficient point-in-time history "
+                    f"({calendar_days} calendar days, {trading_days} trading days; "
+                    f"minimum {self.config.min_history_calendar_days} calendar days / 2 years): "
+                    f"recorded as {INSUFFICIENT_HISTORY_STATUS}"
+                ),
+                details={
+                    "status": INSUFFICIENT_HISTORY_STATUS,
+                    "backtest_run_id": backtest_eval.get("backtest_run_id"),
+                    "artifact_ref": backtest_eval.get("artifact_ref"),
+                    "history_check": history_check,
+                },
+            )
+
+        backtest_run_id = backtest_eval.get("backtest_run_id")
+        backend = backtest_eval.get("backend")
+        market = backtest_eval.get("market")
+        governed_data = bool(backtest_eval.get("governed_data"))
+
+        if not isinstance(backtest_run_id, str) or not backtest_run_id.strip():
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence="Backtest evaluation missing backtest_run_id",
+                details={"reason": "missing_backtest_run_id"},
+            )
+        if backend != "vectorbt_portfolio" or market != "TW" or not governed_data:
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=(
+                    f"Backtest must run on governed Taiwan market data via vectorbt_portfolio "
+                    f"(got backend={backend!r}, market={market!r}, governed_data={governed_data!r})"
+                ),
+                details={
+                    "backend": backend,
+                    "market": market,
+                    "governed_data": governed_data,
+                },
+            )
+
+        protocol = (
+            backtest_eval.get("protocol")
+            if isinstance(backtest_eval.get("protocol"), dict)
+            else {}
+        )
+        if (
+            abs(float(protocol.get("in_sample_ratio", 0.0)) - self.config.in_sample_ratio) > 1e-6
+            or abs(float(protocol.get("out_of_sample_ratio", 0.0)) - self.config.out_of_sample_ratio) > 1e-6
+            or int(protocol.get("walk_forward_folds", 0)) < self.config.walk_forward_folds
+        ):
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence="Backtest protocol does not match required 70/30 IS/OOS and 3 walk-forward folds",
+                details={"protocol": protocol},
+            )
+
+        in_sample = backtest_eval.get("in_sample")
+        out_of_sample = backtest_eval.get("out_of_sample")
+        walk_forward = backtest_eval.get("walk_forward")
+        benchmarks = backtest_eval.get("benchmarks")
+        tx_costs = backtest_eval.get("transaction_costs")
+
+        if not all(
+            isinstance(section, dict)
+            for section in (in_sample, out_of_sample, walk_forward, benchmarks, tx_costs)
+        ):
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence="Backtest evaluation missing in_sample, out_of_sample, walk_forward, benchmarks, or transaction_costs",
+                details={"backtest_run_id": backtest_run_id},
+            )
+
+        # Verify transaction cost rates and citations
+        commission_rate = float(tx_costs.get("commission_rate", 0.0))
+        equity_tax_rate = float(tx_costs.get("equity_transaction_tax_rate", 0.0))
+        etf_tax_rate = float(tx_costs.get("etf_transaction_tax_rate", 0.0))
+        applied_on_every_fill = bool(tx_costs.get("applied_on_every_fill"))
+        citations = tx_costs.get("citations")
+
+        if (
+            abs(commission_rate - TAIWAN_BROKER_COMMISSION_RATE) > 1e-9
+            or abs(equity_tax_rate - TAIWAN_EQUITY_TRANSACTION_TAX_RATE) > 1e-9
+            or abs(etf_tax_rate - TAIWAN_ETF_TRANSACTION_TAX_RATE) > 1e-9
+            or not applied_on_every_fill
+            or not isinstance(citations, dict)
+            or not citations
+        ):
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence="Taiwan commission and transaction tax must be applied on every fill with statutory rate citations",
+                details={"transaction_costs": tx_costs},
+            )
+
+        # Verify benchmarks exist (buy-and-hold same symbols + 0050)
+        bh_bench = benchmarks.get("buy_and_hold_same_symbols")
+        tw0050_bench = benchmarks.get("tw_0050")
+        if not isinstance(bh_bench, dict) or not isinstance(tw0050_bench, dict):
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence="Backtest must include both buy-and-hold same-symbol and 0050 benchmarks",
+                details={"benchmarks": list(benchmarks.keys())},
+            )
+
+        # Increment family trial counter and compute deflated Sharpe threshold
+        family_id = self._resolve_family_id(request)
+        preset_trials = backtest_eval.get("trial_count")
+        trial_count = self._trial_counter_store.increment(
+            family_id,
+            int(preset_trials) if isinstance(preset_trials, int) else None,
+        )
+        deflation = self.config.compute_deflated_sharpe_threshold(trial_count)
+        deflated_sharpe_threshold = float(deflation["deflated_sharpe_threshold"])
+        sharpe_haircut = float(deflation["sharpe_haircut"])
+
+        is_sharpe = float(in_sample.get("sharpe_ratio", 0.0))
+        oos_sharpe = float(out_of_sample.get("sharpe_ratio", 0.0))
+        oos_max_drawdown = abs(float(out_of_sample.get("max_drawdown", 1.0)))
+        oos_total_return = float(out_of_sample.get("total_return", 0.0))
+        oos_round_trips = int(out_of_sample.get("round_trips", 0))
+        deflated_sharpe_ratio = oos_sharpe - sharpe_haircut
+
+        bh_sharpe = float(bh_bench.get("sharpe_ratio", 0.0))
+        tw0050_sharpe = float(tw0050_bench.get("sharpe_ratio", 0.0))
+
+        wf_folds = walk_forward.get("folds", [])
+        if not isinstance(wf_folds, list) or len(wf_folds) < self.config.walk_forward_folds:
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=f"Walk-forward evaluation requires {self.config.walk_forward_folds} folds",
+                details={"walk_forward": walk_forward},
+            )
+        wf_fold_sharpes = [float(f.get("sharpe_ratio", 0.0)) for f in wf_folds]
+        wf_fold_returns = [float(f.get("total_return", 0.0)) for f in wf_folds]
+        positive_folds = [r for r in wf_fold_returns if r > 0.0]
+        total_positive_return = sum(positive_folds)
+        max_fold_profit_share = (
+            max(positive_folds) / total_positive_return
+            if total_positive_return > 0.0
+            else 1.0
+        )
+        walk_forward_consistent = (
+            all(s > 0.0 for s in wf_fold_sharpes)
+            and len(positive_folds) >= 2
+            and max_fold_profit_share < 1.0
+        )
+
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+        mandate_max_drawdown = float(
+            spec.get("mandate_max_drawdown", self.config.max_oos_drawdown)
+        )
+
+        checks = {
+            "oos_sharpe_positive_after_costs": oos_sharpe > 0.0,
+            "oos_sharpe_exceeds_deflated_threshold": oos_sharpe > deflated_sharpe_threshold,
+            "oos_sharpe_beats_buy_and_hold": oos_sharpe > bh_sharpe,
+            "oos_max_drawdown_within_mandate": oos_max_drawdown <= mandate_max_drawdown,
+            "oos_minimum_round_trips_met": oos_round_trips >= self.config.min_oos_round_trips,
+            "walk_forward_consistent_across_folds": walk_forward_consistent,
+        }
+        failed_checks = [name for name, ok in checks.items() if not ok]
+        passed = len(failed_checks) == 0
+
+        details = {
+            "status": "passed" if passed else "failed",
+            "backtest_run_id": backtest_run_id,
+            "artifact_ref": backtest_eval.get("artifact_ref")
+            or {
+                "artifact_type": "backtest_run",
+                "uri": f"backtest://{backtest_run_id}",
+                "run_id": backtest_run_id,
+            },
+            "family_id": family_id,
+            "trial_count": trial_count,
+            "base_sharpe_threshold": float(deflation["base_sharpe_threshold"]),
+            "sharpe_haircut": sharpe_haircut,
+            "deflated_sharpe_threshold": deflated_sharpe_threshold,
+            "deflated_sharpe_ratio": deflated_sharpe_ratio,
+            "in_sample_sharpe_ratio": is_sharpe,
+            "out_of_sample_sharpe_ratio": oos_sharpe,
+            "out_of_sample_max_drawdown": oos_max_drawdown,
+            "out_of_sample_total_return": oos_total_return,
+            "out_of_sample_round_trips": oos_round_trips,
+            "mandate_max_drawdown": mandate_max_drawdown,
+            "buy_and_hold_sharpe_ratio": bh_sharpe,
+            "tw_0050_sharpe_ratio": tw0050_sharpe,
+            "walk_forward_fold_sharpes": wf_fold_sharpes,
+            "walk_forward_fold_returns": wf_fold_returns,
+            "max_fold_profit_share": max_fold_profit_share,
+            "transaction_costs": tx_costs,
+            "history_check": history_check,
+            "checks": checks,
+            "failed_checks": failed_checks,
+        }
+
+        if not passed:
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=(
+                    f"Real backtest failed admission conditions ({', '.join(failed_checks)}): "
+                    f"IS Sharpe={is_sharpe:.3f}, OOS Sharpe={oos_sharpe:.3f}, "
+                    f"deflated threshold={deflated_sharpe_threshold:.3f} (trial {trial_count})"
+                ),
+                details=details,
+            )
+
+        return ReplicationResult(
+            criterion_id="real_backtest_validation",
+            passed=True,
+            evidence=(
+                f"Real Taiwan backtest passed: OOS Sharpe={oos_sharpe:.3f} > "
+                f"deflated threshold={deflated_sharpe_threshold:.3f} (trial {trial_count}), "
+                f"beat buy-and-hold ({bh_sharpe:.3f}), {oos_round_trips} OOS round trips"
+            ),
+            details=details,
         )
 
     def _check_no_live_bypass(self, request: ReplicationRequest) -> ReplicationResult:
@@ -344,13 +970,31 @@ class ReplicationGate:
 
     def _check_confidence_score(self, request: ReplicationRequest) -> ReplicationResult:
         """Check research confidence (optional criterion)."""
-        handoff = request.research_handoff
-        grok_notes = handoff.get("grok_processing_notes", {})
-        confidence = grok_notes.get("normalization_confidence", "low")
-
-        # Convert to numeric if possible
-        confidence_scores = {"high": 0.9, "medium": 0.7, "low": 0.5}
-        score = confidence_scores.get(confidence, 0.5)
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        if "grok_processing_notes" in handoff and isinstance(
+            handoff.get("grok_processing_notes"), dict
+        ):
+            grok_notes = handoff.get("grok_processing_notes", {})
+            confidence = grok_notes.get("normalization_confidence", "low")
+            confidence_scores = {"high": 0.9, "medium": 0.7, "low": 0.5}
+            score = confidence_scores.get(confidence, 0.5)
+        else:
+            backtest_eval = self._resolve_or_run_backtest(request)
+            oos = (
+                backtest_eval.get("out_of_sample", {})
+                if isinstance(backtest_eval, dict)
+                else {}
+            )
+            oos_sharpe = float(oos.get("sharpe_ratio", 0.0)) if isinstance(oos, dict) else 0.0
+            if oos_sharpe > self.config.base_oos_sharpe_threshold:
+                confidence = "high"
+                score = 0.9
+            elif oos_sharpe > 0.0:
+                confidence = "medium"
+                score = 0.7
+            else:
+                confidence = "low"
+                score = 0.5
 
         threshold = 0.7
         passed = score >= threshold
@@ -396,11 +1040,20 @@ class ReplicationGate:
 
     def _check_implementation_readiness(self, request: ReplicationRequest) -> ReplicationResult:
         """Check if research indicates implementation readiness (optional criterion)."""
-        handoff = request.research_handoff
-        grok_notes = handoff.get("grok_processing_notes", {})
-        readiness = grok_notes.get("downstream_readiness", "")
-
-        passed = readiness == "ready_for_replication"
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        if "grok_processing_notes" in handoff and isinstance(
+            handoff.get("grok_processing_notes"), dict
+        ):
+            grok_notes = handoff.get("grok_processing_notes", {})
+            readiness = grok_notes.get("downstream_readiness", "")
+            passed = readiness == "ready_for_replication"
+        else:
+            backtest_eval = self._resolve_or_run_backtest(request)
+            has_backtest_run = isinstance(backtest_eval, dict) and bool(
+                backtest_eval.get("backtest_run_id")
+            )
+            readiness = "ready_for_replication" if has_backtest_run else "missing_backtest_run"
+            passed = has_backtest_run
 
         return ReplicationResult(
             criterion_id="implementation_ready",
@@ -440,6 +1093,7 @@ def create_promotion_request(
     response: ReplicationResponse,
     strategy_spec: Dict[str, Any],
     storage_backend: str = "object_store",
+    fallback_backtest_summary: Optional[Dict[str, Any]] = None,
 ) -> Optional[RegistryPromotionRequest]:
     """
     Create a registry promotion request if candidate was admitted.
@@ -447,37 +1101,97 @@ def create_promotion_request(
     Returns:
         RegistryPromotionRequest if admitted, None otherwise
     """
-    if not response.passed:
+    if not getattr(response, "passed", False):
         return None
 
-    # Build registry entry
+    resp_meta = getattr(response, "metadata", None)
+    resp_results = getattr(response, "results", None) or []
+    backtest_summary = (
+        resp_meta.get("backtest_summary")
+        if isinstance(resp_meta, dict)
+        and isinstance(resp_meta.get("backtest_summary"), dict)
+        else {}
+    )
+    if not backtest_summary:
+        backtest_result = next(
+            (r for r in resp_results if getattr(r, "criterion_id", None) == "real_backtest_validation"),
+            None,
+        )
+        if backtest_result is not None and isinstance(getattr(backtest_result, "details", None), dict):
+            backtest_summary = backtest_result.details
+    if not backtest_summary and isinstance(fallback_backtest_summary, dict):
+        backtest_summary = fallback_backtest_summary
+
+    backtest_run_id = backtest_summary.get("backtest_run_id")
+    oos_sharpe = backtest_summary.get("out_of_sample_sharpe_ratio")
+    is_sharpe = backtest_summary.get("in_sample_sharpe_ratio")
+    deflated_sharpe = backtest_summary.get("deflated_sharpe_ratio")
+    deflated_threshold = backtest_summary.get("deflated_sharpe_threshold")
+    trial_count = backtest_summary.get("trial_count")
+
+    evaluation_summary = {
+        "sharpe_ratio": oos_sharpe,
+        "in_sample_sharpe_ratio": is_sharpe,
+        "out_of_sample_sharpe_ratio": oos_sharpe,
+        "deflated_sharpe_ratio": deflated_sharpe,
+        "deflated_sharpe_threshold": deflated_threshold,
+        "trial_count": trial_count,
+        "max_drawdown": backtest_summary.get("out_of_sample_max_drawdown"),
+        "total_return": backtest_summary.get("out_of_sample_total_return"),
+        "round_trips": backtest_summary.get("out_of_sample_round_trips"),
+        "buy_and_hold_sharpe_ratio": backtest_summary.get("buy_and_hold_sharpe_ratio"),
+        "tw_0050_sharpe_ratio": backtest_summary.get("tw_0050_sharpe_ratio"),
+        "walk_forward_fold_sharpes": backtest_summary.get("walk_forward_fold_sharpes"),
+        "backtest_run_id": backtest_run_id,
+    }
+
+    gate_run_id = str(getattr(response, "gate_run_id", None) or "gate-run-001")
+    candidate_id = str(getattr(response, "candidate_id", None) or "candidate-001")
+    admission_status_obj = getattr(response, "admission_status", CandidateAdmissionStatus.ADMITTED)
+    admission_status_val = (
+        admission_status_obj.value
+        if hasattr(admission_status_obj, "value")
+        else str(admission_status_obj)
+    )
+    resp_timestamp = str(
+        getattr(response, "timestamp", None) or (datetime.utcnow().isoformat() + "Z")
+    )
+
+    # Build registry entry with real replication_success and evaluation_summary
     registry_entry = {
         "artifact_type": "strategy_spec",
         "lifecycle_state": "candidate",
         "version": "1.0.0",
         "content": strategy_spec,
+        "replication_success": bool(getattr(response, "passed", False)),
+        "evaluation_summary": evaluation_summary,
     }
 
     # Build replication proof
     replication_proof = {
-        "gate_run_id": response.gate_run_id,
-        "replication_results": [r.to_dict() for r in response.results],
-        "admission_status": response.admission_status.value,
+        "gate_run_id": gate_run_id,
+        "replication_results": [r.to_dict() for r in resp_results if hasattr(r, "to_dict")],
+        "admission_status": admission_status_val,
+        "backtest_run_id": backtest_run_id,
+        "evaluation_summary": evaluation_summary,
+        "transaction_costs": backtest_summary.get("transaction_costs"),
     }
 
     # Build lineage
+    source_run_ids = [backtest_run_id] if backtest_run_id else []
     lineage = {
-        "source_gate_run": response.gate_run_id,
-        "source_candidate_id": response.candidate_id,
-        "replication_timestamp": response.timestamp,
+        "source_gate_run": gate_run_id,
+        "source_candidate_id": candidate_id,
+        "replication_timestamp": resp_timestamp,
+        "source_run_ids": source_run_ids,
     }
 
     # Determine storage path
-    storage_path = f"research/replication/{response.candidate_id}/strategy_spec_v1.0.0.json"
+    storage_path = f"research/replication/{candidate_id}/strategy_spec_v1.0.0.json"
 
     return RegistryPromotionRequest(
-        gate_run_id=response.gate_run_id,
-        candidate_id=response.candidate_id,
+        gate_run_id=gate_run_id,
+        candidate_id=candidate_id,
         registry_entry=registry_entry,
         replication_proof=replication_proof,
         lineage=lineage,

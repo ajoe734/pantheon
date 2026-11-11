@@ -1,0 +1,13 @@
+{
+ "success": true,
+ "result": {
+  "datasetId": 6099,
+  "title": "景氣指標及燈號",
+  "distribution": [
+   {
+    "resourceFormat": "ZIP",
+    "resourceDownloadUrl": "https://ws.ndc.gov.tw/Download.ashx?u=FIXTURE&n=FIXTURE&icon=.zip"
+   }
+  ]
+ }
+}
