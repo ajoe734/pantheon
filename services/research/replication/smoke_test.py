@@ -39,6 +39,17 @@ def _get_smoke_backtest() -> dict:
     return dict(_CACHED_SMOKE_BACKTEST)
 
 
+def _bind_run(gate, request) -> None:
+    """Persist the handoff's backtest as a completed run and bind the candidate to it."""
+    evaluation = request.research_handoff["backtest_evaluation"]
+    gate.backtest_run_store.record(evaluation)
+    request.metadata = {
+        **(request.metadata or {}),
+        "strategy_artifact_checksum": evaluation["strategy_artifact"]["checksum"],
+        "dataset_version_id": evaluation["dataset_id"],
+    }
+
+
 def create_realistic_research_handoff() -> dict:
     """Create a realistic research handoff from RS-002."""
     return {
@@ -145,6 +156,7 @@ def test_realistic_admission_flow():
     )
 
     print(f"Evaluating candidate: {request.candidate_id}")
+    _bind_run(gate, request)
     response = gate.evaluate_candidate(request)
 
     print(f"  Admission Status: {response.admission_status.value}")
@@ -222,6 +234,7 @@ def test_low_confidence_rejection():
     )
 
     print(f"Evaluating low-confidence candidate: {request.candidate_id}")
+    _bind_run(gate, request)
     response = gate.evaluate_candidate(request)
 
     print(f"  Admission Status: {response.admission_status.value}")
@@ -250,6 +263,7 @@ def test_bypass_attempt_rejection():
     )
 
     print(f"Evaluating candidate with bypass attempt: {request.candidate_id}")
+    _bind_run(gate, request)
     response = gate.evaluate_candidate(request)
 
     print(f"  Admission Status: {response.admission_status.value}")
@@ -285,6 +299,7 @@ def test_missing_governance_rejection():
     )
 
     print(f"Evaluating candidate without governance: {request.candidate_id}")
+    _bind_run(gate, request)
     response = gate.evaluate_candidate(request)
 
     print(f"  Admission Status: {response.admission_status.value}")
@@ -316,6 +331,7 @@ def test_audit_trail():
             research_handoff=create_realistic_research_handoff(),
             proposed_strategy_spec=create_realistic_strategy_spec(),
         )
+        _bind_run(gate, request)
         gate.evaluate_candidate(request)
 
     audit_log = gate.get_audit_log()

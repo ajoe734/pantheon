@@ -59,5 +59,14 @@
     "problem": "Registry and source_ingestion suites raised VectorbtWorkflowError because the vectorbt backend is not installed there.",
     "fix": "Those suites use recorded real-vectorbt backtest outputs from services/research/replication/fixtures/recorded_backtest_tw_2330.json (sha256 0dc3496aa93fe472e6694af88a913974ef546f60f6fa9a549a39ad0893770897); the real vectorbt run stays in the research suite.",
     "verification": "python3 -m unittest services.registry.promotion.test_gate -> 8 tests OK"
+  },
+  "reopen_fix_20261111": {
+    "worker": "revalidation_worker no longer generates artifact/dataset or reuses cached results; requires candidate strategy_artifact + backtest_dataset whose dataset_id equals the pinned dataset_version_id and artifact checksum/strategy_id binding, else fails closed; insufficient_history derived from actual PIT inputs only.",
+    "gate": "ReplicationGate verifies evaluation against a persisted BacktestRunStore record (digest, completed status, artifact checksum, dataset version, source refs) and requires a PIT history_check proof; unbound/forged/edited evaluations are rejected.",
+    "regression_tests": [
+      "test_gate: fabricated run id, edited evaluation, other artifact, other dataset, missing binding, missing history proof",
+      "test_revalidation_worker: absent inputs, wrong dataset, wrong checksum, no cache"
+    ],
+    "validation": "pytest alpha_replication + replication + registry/promotion + loop_closure_r2 with vectorbt 1.2.0: all passed; smoke_test 5/5"
   }
 }
