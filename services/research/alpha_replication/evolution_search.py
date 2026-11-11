@@ -34,47 +34,17 @@ ScoreFn = Callable[[Mapping[str, Any]], float]
 def shared_family_trial_counter(path: Any) -> Any:
     """Durable family counter shared with the §10 gate / OOS admission worker.
 
-    ``FamilyTrialCounterStore`` caches the file at construction; two writers
-    (the search and the admission gate) would silently overwrite one another.
-    This view re-reads the file under an exclusive lock before every read and
-    increment, so counts accumulate across decisions, processes and restarts.
+    ``FamilyTrialCounterStore`` itself locks, reloads and atomically replaces the
+    file, so the gate, the revalidation worker and this search all accumulate
+    into the same counts across decisions, processes and restarts.
     """
-    import fcntl
     from pathlib import Path
 
     from services.research.replication.gate import FamilyTrialCounterStore
 
-    class _SharedStore(FamilyTrialCounterStore):
-        def __init__(self, store_path: Any) -> None:
-            if store_path is None:
-                raise EvolutionSearchError("a durable family trial counter path is required")
-            super().__init__(Path(store_path))
-            self._lock_path = Path(str(store_path) + ".lock")
-
-        def _reload(self) -> None:
-            self._counts = {}
-            if self._path is not None and self._path.exists():
-                try:
-                    loaded = json.loads(self._path.read_text(encoding="utf-8"))
-                    self._counts = {str(k): int(v) for k, v in loaded.items()}
-                except Exception as exc:
-                    raise EvolutionSearchError(f"family trial counter unreadable: {exc}") from exc
-
-        def get(self, family_id: str) -> int:
-            self._reload()
-            return super().get(family_id)
-
-        def increment(self, family_id: str, preset_count: Any = None) -> int:
-            self._lock_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._lock_path.open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
-                try:
-                    self._reload()
-                    return super().increment(family_id, preset_count)
-                finally:
-                    fcntl.flock(lock, fcntl.LOCK_UN)
-
-    return _SharedStore(path)
+    if path is None:
+        raise EvolutionSearchError("a durable family trial counter path is required")
+    return FamilyTrialCounterStore(Path(path))
 
 
 class EvolutionSearchError(ValueError):
@@ -393,7 +363,7 @@ def judge_child_out_of_sample(
             detail = getattr(result, "details", {}) or {}
     return {
         "child_artifact_id": child["artifact_id"],
-        "parent_registry_ids": list(child["lineage"]["parent_registry_ids"]),
+        "parent_registry_ids": list((child.get("lineage") or {}).get("parent_registry_ids") or []),
         "passed": bool(response.passed),
         "window": "out_of_sample",
         "family_id": family_id,

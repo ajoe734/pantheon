@@ -195,3 +195,42 @@ def test_mutation_decision_judges_every_child_oos_registers_only_passers_and_acc
         register_child=lambda child, verdict: none_registered.append(child) or child,
     )
     assert out2["passed"] == [] and none_registered == []
+
+
+def test_gate_and_search_writers_interleave_without_losing_trials(tmp_path):
+    from services.research.alpha_replication.evolution_search import shared_family_trial_counter
+    from services.research.replication.gate import ReplicationGate
+
+    path = tmp_path / "family_trial_counts.json"
+    gate = ReplicationGate(trial_counter_path=path)  # constructed BEFORE the search
+    search = shared_family_trial_counter(path)
+    for _ in range(50):
+        search.increment("fam")
+    assert gate.get_family_trial_count("fam") == 50
+    assert gate._trial_counter_store.increment("fam") == 51
+    assert search.increment("fam") == 52
+    restarted = ReplicationGate(trial_counter_path=path)
+    assert restarted.get_family_trial_count("fam") == 52
+
+
+def test_trial_counter_concurrent_processes_do_not_lose_updates(tmp_path):
+    import multiprocessing
+
+    path = tmp_path / "counts.json"
+    ctx = multiprocessing.get_context("fork")
+    procs = [ctx.Process(target=_bump, args=(str(path), 25)) for _ in range(4)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join()
+    from services.research.replication.gate import FamilyTrialCounterStore
+
+    assert FamilyTrialCounterStore(path).get("fam") == 100
+
+
+def _bump(path, n):
+    from services.research.replication.gate import FamilyTrialCounterStore
+
+    store = FamilyTrialCounterStore(path)
+    for _ in range(n):
+        store.increment("fam")
