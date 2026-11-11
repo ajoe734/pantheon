@@ -1,8 +1,8 @@
 {
   "task_id": "BFF-DISCOVERY-READ-SURFACES-20261110",
-  "tests": "pytest services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py tests/test_bff_alpha_factory_contract.py test_management_data_sources_v2.py tests/test_bff_management_data_sources_contract.py test_datastrat_seed_review_bff.py test_evolution_center_contract.py tests/test_bff_b3_evolution_journal.py strategies evolution research -> all passed (147 + 27 + 8 new)",
+  "tests": "pytest services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py tests/test_bff_alpha_factory_contract.py test_management_data_sources_v2.py tests/test_bff_management_data_sources_contract.py test_datastrat_seed_review_bff.py test_evolution_center_contract.py tests/test_bff_b3_evolution_journal.py strategies evolution research -> 180 passed (includes 9 new)",
   "acceptance": {
-    "1": "Existing routes only (no new page routes): /bff/management/strategy-seeds (hypothesis_card with cited_spans -> source_record href, lineage.source_records), /bff/alpha-factory (data.templates with evaluation metrics from real research owner; card.metrics in_sample/out_of_sample + lineage), /bff/management/evolution-journal decision items and /bff/evolution-programs/{id}/candidates (discovery block), /bff/strategies/{id} (discovery block), /bff/management/data-sources (health incl. pause_reasons).",
+    "1": "Existing routes only (no new page routes): /bff/management/strategy-seeds (hypothesis_card with cited_spans -> source_record href, lineage.source_records), /bff/alpha-factory (data.templates with evaluation metrics from real research owner; card.metrics in_sample/out_of_sample + lineage), /bff/management/evolution-journal decision items and /bff/evolution-programs/{id}/candidates (discovery block), /bff/strategies/{id} (discovery block), /bff/management/data-sources (lineage_summary.health incl. pause_reasons, lineage_summary.attribution).",
     "2": "discovery_projection.attribution_block returns data.gov.tw attribution text on seed cards, alpha-factory cards, data-source rows, journal/candidate/strategy discovery blocks whenever a data.gov.tw marker is present; None otherwise.",
     "3": "Fixtures: real research app alpha-template evaluations response, real finalize_card() hypothesis_card.v1, real COLLECTOR_SOURCE_SPECS providers, replication-worker metric keys."
   },
@@ -13,7 +13,8 @@
   ],
   "contract_test_updates": [
     "test_bff_alpha_factory_contract: owner call count 1->2 (templates read) and metrics key now null pass-through",
-    "test_management_data_sources_v2: v2 item key set gains health, attribution"
+    "data-source v2 row key set unchanged: new fields nested in lineage_summary"
   ],
+  "untested": "evolution-programs/{id}/candidates enrichment (decision lookup by candidate_id) has no dedicated route test; the shared projection is covered via the journal decision item",
   "known_unrelated_failure": "test_architecture_boundaries.py::test_mutation_route_ownership_mapping_contract (mutation route inventory drift; no mutation routes touched)"
 }

@@ -311,11 +311,11 @@ def create_datasources_router(
                     "lineage_summary": {
                         "datasets": inst.get("datasets") or [],
                         "markets": inst.get("markets") or [],
+                        "health": discovery_projection.project_source_health(desired, observed),
+                        "attribution": discovery_projection.attribution_block(
+                            inst.get("provider"), defn.get("provider"), inst.get("datasets")
+                        ),
                     },
-                    "health": discovery_projection.project_source_health(desired, observed),
-                    "attribution": discovery_projection.attribution_block(
-                        inst.get("provider"), defn.get("provider"), inst.get("datasets")
-                    ),
                 }
                 composed_items.append(redact_sensitive_values(dto))
 

@@ -1151,12 +1151,7 @@ def test_populated_v2_store_response_stays_field_for_field_identical(
         "allowed_actions",
         "allowedActions",
         "lineage_summary",
-        # BFF-DISCOVERY-READ-SURFACES-20261110: health/pause reason + attribution
-        "health",
-        "attribution",
     }
-    assert item["attribution"] is None  # twse source: not data.gov.tw derived
-    assert item["health"]["health_state"] == "healthy"
     assert item["schema_version"] == "management_data_source.v2"
     assert item["source_instance_id"] == "src-twse-01"
     assert item["allowed_actions"] == item["allowedActions"]

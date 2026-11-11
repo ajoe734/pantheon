@@ -231,3 +231,28 @@ def test_evolution_journal_decision_carries_discovery_block() -> None:
     assert disc["lineage"]["source_records"][0]["source_record_id"] == SRC
     bare = evolution_journal_decision_item({"decision_id": "evd-2", "status": "pending"})["discovery"]
     assert bare["metrics"] is None and bare["lineage"] is None
+
+
+
+
+def test_data_source_v2_row_carries_health_and_attribution_in_lineage_summary() -> None:
+    """The v2 row key set is contract-pinned; the new fields live in lineage_summary."""
+    ds_spec = importlib.util.spec_from_file_location("_ds_v2", _HERE.parent / "test_management_data_sources_v2.py")
+    ds = importlib.util.module_from_spec(ds_spec)
+    sys.modules["_ds_v2"] = ds
+    ds_spec.loader.exec_module(ds)
+    fake = ds.FakeSourceManagementClient()
+    fake.seed_source(
+        "src-twse-01",
+        definition_id="srcdef-twse-stock-day-all",
+        lifecycle_state="configured_disabled",
+        revision=1,
+    )
+    client = ds._mounted_client({"client": fake})
+    resp = client.get("/bff/management/data-sources", headers=ds.OPERATOR_HEADERS)
+    assert resp.status_code == 200, resp.text
+    item = resp.json()["data"]["items"][0]
+    summary = item["lineage_summary"]
+    assert summary["health"]["health_state"] is not None
+    assert summary["health"]["paused"] is True  # configured_disabled
+    assert summary["attribution"] is None  # TWSE source is not data.gov.tw derived
