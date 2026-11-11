@@ -59,7 +59,10 @@ try_fallback() {
   local opts=(-o "Dir::Etc::sourcelist=$tmp" -o Dir::Etc::sourceparts=/dev/null)
   echo "::notice::falling back to registered Ubuntu mirror mirrors.mit.edu ($codename), signed-by $KEYRING"
   local rc=0
-  run_apt "$UPDATE_TIMEOUT" "${opts[@]}" update; rc=$?
+  # A fresh main/universe index transfer exceeded 45s while still progressing
+  # on the runner. Allow 90s here; all apt attempts + kill grace + probe stay
+  # within 280s of the unchanged five-minute workflow step.
+  run_apt 90 "${opts[@]}" update; rc=$?
   if [ "$rc" -ne 0 ]; then rm -f "$tmp"; echo "::error::fallback apt update failed (exit $rc)"; return 10; fi
   run_apt "$INSTALL_TIMEOUT" "${opts[@]}" \
     install --yes --no-install-recommends "${PACKAGES[@]}"; rc=$?
