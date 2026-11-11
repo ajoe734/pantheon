@@ -105,7 +105,8 @@ def _stack(tmp_path, monkeypatch, summaries):
     def transport(method, url, headers, body):
         if url.startswith("http://evo"):
             path = url[len("http://evo"):]
-            r = client.request(method, path, json=body, headers={"X-Tenant-Id": TENANT})
+            # No tenant injection here: token-mode Evolution rejects a request without X-Tenant-Id (400).
+            r = client.request(method, path, json=body, headers={k: v for k, v in headers.items() if k.lower() == "x-tenant-id"})
             return r.status_code, (r.json() if r.content else {})
         if url.startswith("http://tel"):
             return 200, {"summaries": summaries()}
@@ -176,3 +177,22 @@ def test_missing_approved_baseline_never_retires(tmp_path, monkeypatch):
         series[:] = [_summary(0.1, 0.9, f"2026-11-0{i}T00:00:00Z")]
         out = rt.run_consumer_tick(env, transport)
     assert out["decay"]["proposed"] == [] and persona["lifecycle_state"] == "paper_owner"
+
+
+def test_decision_reads_bind_the_configured_tenant_without_transport_help():
+    seen = []
+
+    def transport(method, url, headers, body):
+        seen.append((method, url, headers.get("X-Tenant-Id")))
+        return (200, []) if headers.get("X-Tenant-Id") else (400, {"detail": "X-Tenant-Id is required"})
+
+    port = rt.HttpDecisionPort("http://evo", lambda: "tok", transport, TENANT)
+    for state in ("proposed", "reviewed", "approved"):
+        assert port.list_by_state(state) == []
+    assert [t for _, _, t in seen] == [TENANT] * 3
+    try:
+        rt.HttpDecisionPort("http://evo", lambda: "tok", transport).list_by_state("proposed")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("an unbound tenant must fail closed")

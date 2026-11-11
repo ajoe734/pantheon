@@ -15,9 +15,11 @@ from services.evolution.auto_consumer import AutoConsumer, ConsumerReport, Jsonl
 from services.evolution.governed_persona_lifecycle import GovernedPersonaLifecycle, Transport, urllib_transport
 
 class HttpDecisionPort:
-    def __init__(self, base_url: str, token: Callable[[], str | None], transport: Transport | None = None) -> None:
+    def __init__(self, base_url: str, token: Callable[[], str | None], transport: Transport | None = None,
+                 tenant: str | None = None) -> None:
         self._base = base_url.rstrip("/")
         self._token = token
+        self._tenant = (tenant or "").strip() or None
         self._send = transport or urllib_transport()
 
     def _headers(self, tenant: str | None = None) -> dict[str, str]:
@@ -36,7 +38,9 @@ class HttpDecisionPort:
         return payload
 
     def list_by_state(self, state: str):
-        rows = self._call("GET", f"/api/evolution/proposals?decision_state={state}", None)
+        if not self._tenant:
+            raise RuntimeError("decision reads need a configured tenant (token-mode evolution requires X-Tenant-Id)")
+        rows = self._call("GET", f"/api/evolution/proposals?decision_state={state}", None, self._tenant)
         return rows if isinstance(rows, list) else list((rows or {}).get("decisions", []))
 
     def propose(self, body: Mapping[str, Any]):
@@ -164,6 +168,7 @@ def build_consumer(env: Mapping[str, str] | None = None, transport: Transport | 
         return lambda: need(name)
 
     api = e.get("EVOLUTION_API_URL", "http://127.0.0.1:8093")
+    tenant = (e.get("EVOLUTION_SCHEDULER_TENANT_ID") or e.get("EVOLUTION_DEFAULT_TENANT_ID") or "pantheon-default").strip()
     persona_url = need("AUTO_CONSUMER_PERSONA_URL")
     personas = GovernedPersonaLifecycle(
         governance_url=need("AUTO_CONSUMER_GOVERNANCE_URL"), persona_url=persona_url,
@@ -180,7 +185,7 @@ def build_consumer(env: Mapping[str, str] | None = None, transport: Transport | 
         persona_token=lambda: e.get("AUTO_CONSUMER_PERSONA_TOKEN"), transport=transport,
     )
     consumer = AutoConsumer(
-        decisions=HttpDecisionPort(api, lambda: e.get("EVOLUTION_AUTH_TOKEN") or None, transport),
+        decisions=HttpDecisionPort(api, lambda: e.get("EVOLUTION_AUTH_TOKEN") or None, transport, tenant),
         scope=scope,
         evidence=JsonlEvidenceSink(e.get("AUTO_CONSUMER_EVIDENCE_PATH", "auto_consumer_evidence.jsonl")),
         personas=personas,
