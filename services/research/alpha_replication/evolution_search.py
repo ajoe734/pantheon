@@ -357,3 +357,50 @@ def judge_child_out_of_sample(
         "failed_checks": list(detail.get("failed_checks") or []),
         "backtest_run_id": detail.get("backtest_run_id"),
     }
+
+
+def run_mutation_decision(
+    parent: Mapping[str, Any],
+    *,
+    decision_id: str,
+    gate: Any,
+    request_factory: Callable[[Mapping[str, Any]], Any],
+    family_id: str,
+    children: int = 1,
+    seed: int | None = None,
+    register_child: Callable[[Mapping[str, Any], Mapping[str, Any]], Any] | None = None,
+) -> dict[str, Any]:
+    """Approved ``mutate`` decision: structural children, each judged out-of-sample.
+
+    Every child is built with lineage to ``parent`` and judged by the §10 gate on
+    the untouched out-of-sample window (the gate adds to the family's trial
+    count). ``register_child(child, verdict)`` is called only for children that
+    passed; a failing child is reported, never registered.
+    """
+    rng = random.Random(stable_seed(decision_id, family_id) if seed is None else seed)
+    results: list[dict[str, Any]] = []
+    for index in range(max(1, children)):
+        try:
+            child, descriptor = build_child_artifact(
+                parent, decision_id=f"{decision_id}#{index}", kind="mutate", rng=rng,
+                source_run_ids=[decision_id],
+            )
+        except EvolutionSearchError as exc:
+            results.append({"index": index, "built": False, "error": str(exc)})
+            continue
+        verdict = judge_child_out_of_sample(
+            child, gate=gate, request_factory=request_factory, family_id=family_id
+        )
+        registered = None
+        if verdict["passed"] and register_child is not None:
+            registered = register_child(child, verdict)
+        results.append(
+            {"index": index, "built": True, "mutation": descriptor, "verdict": verdict,
+             "registered": registered is not None}
+        )
+    return {
+        "decision_id": decision_id,
+        "family_id": family_id,
+        "children": results,
+        "passed": [r["verdict"]["child_artifact_id"] for r in results if r.get("verdict", {}).get("passed")],
+    }

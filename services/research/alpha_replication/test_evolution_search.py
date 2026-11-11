@@ -169,3 +169,29 @@ def test_child_is_judged_out_of_sample_and_trials_accumulate():
     assert (v1["trial_count_before"], v1["trial_count_after"]) == (0, 1)
     assert (v2["trial_count_before"], v2["trial_count_after"]) == (1, 2)
     assert v1["parent_registry_ids"] == [parent["artifact_id"]]
+
+
+def test_mutation_decision_judges_every_child_oos_registers_only_passers_and_accumulates_trials():
+    parent = _factor_parent()
+    gate = FakeGate(True)
+    registered = []
+    out = es.run_mutation_decision(
+        parent, decision_id="evd-5", gate=gate, family_id="fam", children=3, seed=2,
+        request_factory=lambda c: {"family": "fam"},
+        register_child=lambda child, verdict: registered.append(child["artifact_id"]) or child,
+    )
+    built = [c for c in out["children"] if c["built"]]
+    assert built and gate.get_family_trial_count("fam") == len(built)
+    assert registered == out["passed"]
+    for c in built:
+        assert c["verdict"]["window"] == "out_of_sample"
+        assert c["verdict"]["parent_registry_ids"] == [parent["artifact_id"]]
+
+    failing = FakeGate(False)
+    none_registered = []
+    out2 = es.run_mutation_decision(
+        parent, decision_id="evd-6", gate=failing, family_id="fam2", children=2, seed=2,
+        request_factory=lambda c: {"family": "fam2"},
+        register_child=lambda child, verdict: none_registered.append(child) or child,
+    )
+    assert out2["passed"] == [] and none_registered == []
