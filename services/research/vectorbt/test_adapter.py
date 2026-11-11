@@ -716,3 +716,126 @@ class TestFactorRuleBacktestAndPaperParity(unittest.TestCase):
             else:
                 self.assertEqual(vbt_sizes[i], paper_sizes[i], f"bar {i} mismatch")
 
+
+class TestReplicationGateRealBacktestProtocol(unittest.TestCase):
+    """REPLICATION-GATE-REAL-BACKTEST-20261110 protocol, cost, benchmark, and history tests."""
+
+    def test_taiwan_commission_and_tax_applied_on_every_fill_and_cited(self) -> None:
+        from adapter.vectorbt_adapter import (
+            BacktestConfig,
+            TAIWAN_BROKER_COMMISSION_RATE,
+            TAIWAN_COST_RATE_CITATIONS,
+            TAIWAN_EQUITY_TRANSACTION_TAX_RATE,
+            TAIWAN_ETF_TRANSACTION_TAX_RATE,
+            build_canonical_tw_strategy_artifact,
+            build_governed_tw_replication_dataset,
+            run_replication_backtest_protocol,
+        )
+
+        self.assertEqual(TAIWAN_BROKER_COMMISSION_RATE, 0.001425)
+        self.assertEqual(TAIWAN_EQUITY_TRANSACTION_TAX_RATE, 0.003)
+        self.assertEqual(TAIWAN_ETF_TRANSACTION_TAX_RATE, 0.001)
+        self.assertIn("broker_commission", TAIWAN_COST_RATE_CITATIONS)
+        self.assertIn("securities_transaction_tax_equity", TAIWAN_COST_RATE_CITATIONS)
+        self.assertIn("securities_transaction_tax_etf", TAIWAN_COST_RATE_CITATIONS)
+
+        artifact = build_canonical_tw_strategy_artifact(
+            strategy_id="tw_cost_check",
+            symbols=["2330", "0050"],
+        )
+        dataset = build_governed_tw_replication_dataset(
+            symbols=["2330", "0050"],
+            trading_days=756,
+        )
+        evaluation = run_replication_backtest_protocol(
+            strategy_artifact=artifact,
+            dataset=dataset,
+            run_id="bt-cost-check-001",
+        )
+        self.assertEqual(evaluation["status"], "completed")
+        tx = evaluation["transaction_costs"]
+        self.assertEqual(tx["commission_rate"], 0.001425)
+        self.assertEqual(tx["equity_transaction_tax_rate"], 0.003)
+        self.assertEqual(tx["etf_transaction_tax_rate"], 0.001)
+        self.assertTrue(tx["applied_on_every_fill"])
+        self.assertGreater(tx["in_sample_commission_paid"], 0.0)
+        self.assertGreater(tx["in_sample_transaction_tax_paid"], 0.0)
+        self.assertGreater(tx["out_of_sample_commission_paid"], 0.0)
+        self.assertGreater(tx["out_of_sample_transaction_tax_paid"], 0.0)
+
+        # Verify zero-cost backtest produces strictly higher OOS return than statutory-cost backtest
+        zero_cost_eval = run_replication_backtest_protocol(
+            strategy_artifact=artifact,
+            dataset=dataset,
+            run_id="bt-zero-cost-001",
+            config=BacktestConfig(
+                strategy_artifact=dict(artifact),
+                commission_rate=0.0,
+                transaction_tax_rate=0.0,
+                etf_transaction_tax_rate=0.0,
+            ),
+        )
+        self.assertGreater(
+            zero_cost_eval["out_of_sample"]["total_return"],
+            evaluation["out_of_sample"]["total_return"],
+        )
+
+    def test_replication_backtest_protocol_70_30_split_3_walk_forward_and_benchmarks(self) -> None:
+        from adapter.vectorbt_adapter import (
+            build_canonical_tw_strategy_artifact,
+            build_governed_tw_replication_dataset,
+            run_replication_backtest_protocol,
+        )
+
+        artifact = build_canonical_tw_strategy_artifact(
+            strategy_id="tw_wf_check",
+            symbols=["2330", "2317"],
+        )
+        dataset = build_governed_tw_replication_dataset(
+            symbols=["2330", "2317"],
+            trading_days=756,
+        )
+        evaluation = run_replication_backtest_protocol(
+            strategy_artifact=artifact,
+            dataset=dataset,
+            run_id="bt-wf-check-001",
+        )
+        self.assertEqual(evaluation["status"], "completed")
+        self.assertAlmostEqual(evaluation["protocol"]["in_sample_ratio"], 0.70, places=2)
+        self.assertAlmostEqual(evaluation["protocol"]["out_of_sample_ratio"], 0.30, places=2)
+        self.assertEqual(len(evaluation["walk_forward_folds"]), 3)
+        positive_folds = [
+            fold for fold in evaluation["walk_forward_folds"] if fold["sharpe_ratio"] > 0.0
+        ]
+        self.assertGreaterEqual(len(positive_folds), 2)
+        self.assertIn("buy_and_hold_same_symbols", evaluation["benchmarks"])
+        self.assertIn("tw_0050", evaluation["benchmarks"])
+        self.assertIsNotNone(evaluation["benchmarks"]["buy_and_hold_same_symbols"]["sharpe_ratio"])
+        self.assertIsNotNone(evaluation["benchmarks"]["tw_0050"]["sharpe_ratio"])
+
+    def test_replication_backtest_protocol_insufficient_history_under_two_years(self) -> None:
+        from adapter.vectorbt_adapter import (
+            INSUFFICIENT_HISTORY_STATUS,
+            build_canonical_tw_strategy_artifact,
+            build_governed_tw_replication_dataset,
+            run_replication_backtest_protocol,
+        )
+
+        artifact = build_canonical_tw_strategy_artifact(
+            strategy_id="tw_short_history",
+            symbols=["2330"],
+        )
+        short_dataset = build_governed_tw_replication_dataset(
+            symbols=["2330"],
+            trading_days=252,
+        )
+        evaluation = run_replication_backtest_protocol(
+            strategy_artifact=artifact,
+            dataset=short_dataset,
+            run_id="bt-short-001",
+        )
+        self.assertEqual(evaluation["status"], INSUFFICIENT_HISTORY_STATUS)
+        self.assertFalse(evaluation["history_check"]["sufficient"])
+        self.assertLess(evaluation["pit_history_days"], 730)
+
+
