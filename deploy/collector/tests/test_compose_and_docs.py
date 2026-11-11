@@ -34,6 +34,8 @@ def test_compose_policy_caddy_systemd_and_readme_are_complete() -> None:
     assert "Bearer {$COLLECTOR_BUNDLE_TOKEN}" in caddy_text
     assert "/status.json" in caddy_text
     assert "/bundles/*" in caddy_text
+    assert "route {" in caddy_text
+    assert caddy_text.index("@missing_or_bad_token") < caddy_text.index("file_server {")
 
     readme_text = readme_path.read_text(encoding="utf-8")
     for required_section in (

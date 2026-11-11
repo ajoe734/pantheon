@@ -124,6 +124,9 @@ class BundleWriter:
         started_at: datetime | str | None = None,
         finished_at: datetime | str | None = None,
         run_date: str | None = None,
+        skipped_count: int = 0,
+        reason: str | None = None,
+        source_url: str | None = None,
     ) -> WrittenBundle:
         if status not in VALID_BUNDLE_STATUSES:
             raise ValueError(f"bundle status must be one of {sorted(VALID_BUNDLE_STATUSES)}, got {status!r}")
@@ -186,6 +189,10 @@ class BundleWriter:
         }
         if paused_reason:
             manifest["paused_reason"] = paused_reason
+        if reason:
+            manifest["reason"] = reason
+        if source_url:
+            manifest["source_url"] = source_url
 
         items_path = bundle_dir / "items.jsonl"
         items_path.write_text(
@@ -210,6 +217,8 @@ class BundleWriter:
             last_run_id=run_id,
             paused_reason=paused_reason,
             cadence_seconds=policy.cadence_seconds,
+            skipped_count=skipped_count,
+            reason=reason,
         )
 
         return WrittenBundle(
@@ -274,6 +283,8 @@ class BundleWriter:
         paused_reason: str | None = None,
         cadence_seconds: int = 86400,
         consecutive_blocks: int = 0,
+        skipped_count: int = 0,
+        reason: str | None = None,
     ) -> dict[str, Any]:
         status_path = self.root_dir / "status.json"
         sources_map: dict[str, Any] = {}
@@ -293,6 +304,8 @@ class BundleWriter:
             "paused_reason": paused_reason,
             "cadence_seconds": cadence_seconds,
             "consecutive_blocks": consecutive_blocks,
+            "skipped_items": skipped_count,
+            "reason": reason,
         }
         payload = {
             "updated_at": last_run_at,

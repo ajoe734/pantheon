@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import importlib.util
+import json
 import os
 import sys
 import unittest
+from pathlib import Path
 
 _PROMOTION_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PROMOTION_DIR not in sys.path:
@@ -125,27 +126,23 @@ class TestPromotionGate(unittest.TestCase):
         self.assertEqual(projection.metadata["rollback"]["target_version"], "0.9.0")
         self.assertEqual(projection.metadata["lineage"]["source_run_ids"], ["replication-run-001"])
 
-    @unittest.skipIf(
-        importlib.util.find_spec("vectorbt") is None,
-        "real TW backtest needs vectorbt; covered by the Research suite",
-    )
     def test_promotion_gate_receives_real_replication_and_sharpe_from_replication_gate(self):
         from services.research.replication.gate import (
             ReplicationGate,
             create_promotion_request,
         )
         from services.research.replication.gate_schema import ReplicationRequest
-        from services.research.vectorbt.adapter.vectorbt_adapter import (
-            build_canonical_tw_strategy_artifact,
-            build_governed_tw_replication_dataset,
-            run_replication_backtest_protocol,
+        # Recorded output of run_replication_backtest_protocol (real vectorbt
+        # run, see services/research/replication/fixtures/); the registry suite must not
+        # require the vectorbt backend.
+        fixture = (
+            Path(__file__).resolve().parents[2]
+            / "research"
+            / "replication"
+            / "fixtures"
+            / "recorded_backtest_tw_2330.json"
         )
-
-        bt_eval = run_replication_backtest_protocol(
-            dataset=build_governed_tw_replication_dataset(symbols=["2330"]),
-            strategy_artifact=build_canonical_tw_strategy_artifact(symbols=["2330"]),
-            run_id="bt-promo-gate-001",
-        )
+        bt_eval = json.loads(fixture.read_text(encoding="utf-8"))
         req = ReplicationRequest(
             candidate_id="cand-promo-001",
             source_task_id="RS-002",

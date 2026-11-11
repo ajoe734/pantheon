@@ -1014,7 +1014,7 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
-          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw
+          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: openapi.twse.com.tw,www.tpex.org.tw
           SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market
           SOURCE_INGEST_BOUNDED_DATASET: tw_price_daily
         shell: /bin/bash --noprofile --norc -euo pipefail {0}

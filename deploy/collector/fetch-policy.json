@@ -91,7 +91,8 @@
       "attribution_required": true,
       "attribution": "行政院主計總處政府資料開放授權條款（依政府資料開放授權條款 data.gov.tw 提供）",
       "logged_in": false,
-      "enabled": true
+      "enabled": false,
+      "disabled_reason": "www.stat.gov.tw answers 403 with a Cloudflare \"Just a moment\" challenge to non-browser clients (captured 2026-11-10); policy forbids challenge bypass. Re-enable only with a documented open-data endpoint (data.gov.tw)."
     },
     "collector-tw-twse-openapi": {
       "source_id": "collector-tw-twse-openapi",
@@ -207,7 +208,7 @@
       "cadence": "hourly",
       "cadence_seconds": 3600,
       "max_requests_per_run": 5,
-      "min_interval_seconds": 2.0,
+      "min_interval_seconds": 5.0,
       "fetcher": "api",
       "respect_robots": true,
       "robots_decision": "not_applicable_api",
@@ -215,7 +216,8 @@
       "attribution_required": true,
       "attribution": "The GDELT Project (https://www.gdeltproject.org/)",
       "logged_in": false,
-      "enabled": true
+      "enabled": true,
+      "rate_limit_note": "GDELT asks for at most one request every 5 seconds (429 observed at 2s on 2026-11-10)"
     },
     "collector-macro-dbnomics": {
       "source_id": "collector-macro-dbnomics",
@@ -226,8 +228,6 @@
       ],
       "series_ids": [
         "FED/H15/RIFSPFF_N.D",
-        "ECB/FM/M.U2.EUR.4F.KR.MRR_FR.LEV",
-        "BOJ/FM01/STRDCLUCON",
         "NBS/M_A010101/A01010101"
       ],
       "cadence": "daily",
@@ -241,7 +241,11 @@
       "attribution_required": true,
       "attribution": "DBnomics (https://db.nomics.world/) - inherits upstream provider terms",
       "logged_in": false,
-      "enabled": true
+      "enabled": true,
+      "dropped_series_ids": {
+        "ECB/FM/M.U2.EUR.4F.KR.MRR_FR.LEV": "DBnomics answers 404 (series not found) as of 2026-11-11",
+        "BOJ/FM01/STRDCLUCON": "DBnomics answers 404 (dataset BOJ/FM01 not found) as of 2026-11-11"
+      }
     },
     "collector-papers": {
       "source_id": "collector-papers",
@@ -481,7 +485,7 @@
       "section_ref": "5.3",
       "description": "Gemini API video understanding for public YouTube finance URLs (free tier cap <= 8h video/day)",
       "base_urls": [
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        "https://generativelanguage.googleapis.com/v1beta/models/"
       ],
       "daily_video_seconds_limit": 28800,
       "cadence": "daily",
@@ -495,7 +499,9 @@
       "attribution_required": false,
       "attribution": "",
       "logged_in": false,
-      "enabled": true
+      "enabled": true,
+      "model_env": "COLLECTOR_GEMINI_MODEL",
+      "default_model": "gemini-2.5-flash"
     },
     "collector-library-books": {
       "source_id": "collector-library-books",
@@ -527,7 +533,7 @@
         "http://rsshub:1200/"
       ],
       "routes": [
-        "/cna/realtime",
+        "/cna/aall",
         "/udn/news/breakingnews/2",
         "/ltn/news/business",
         "/chinatimes/realtimenews/260410",
