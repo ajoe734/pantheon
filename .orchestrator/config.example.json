@@ -158,12 +158,9 @@
       "Claude": [
         "Codex"
       ],
-      "Codex": [
-        "Claude"
-      ],
+      "Codex": [],
       "Copilot": [
-        "Codex",
-        "Claude"
+        "Codex"
       ]
     },
     "max_reassignments_per_cycle": 4

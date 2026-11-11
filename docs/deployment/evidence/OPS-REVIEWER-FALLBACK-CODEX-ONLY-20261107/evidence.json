@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-REVIEWER-FALLBACK-CODEX-ONLY-20261107",
+  "title": "Correct existing reviewer fallback configuration",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "change_class": "cleanup",
+  "net_prod_line_budget": 0,
+  "recorded_at": "2026-11-07T20:25:00Z",
+  "source_identities": {
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "initial_base_commit_sha": "6bf3a5156ff9cf6430289474a717987eadf9b14f",
+    "base_commit_sha": "9325fb31cfd73db096818e3625280ebd64b3dee1",
+    "task_branch": "task/OPS-REVIEWER-FALLBACK-CODEX-ONLY-20261107",
+    "plan_source_path": "/tmp/pantheon-goal-continue-20261105/reviewer-fallback-policy-20261107/PLAN.md",
+    "plan_committed_path": "docs/operations/reviewer-fallback-policy-20261107.md",
+    "plan_sha256": "bff78d17525473be12c182e61a7db43b562d4723062f946ab7613120ea9cb19c",
+    "plan_git_blob_sha": "6ee44291c8f41a9bcacfece723ea2e6d961bb730",
+    "config_json": {
+      "path": ".orchestrator/config.json",
+      "before_git_blob_sha": "df4f3e0ab7af68e937fa33357b291ebeb1561b3d",
+      "before_sha256": "c8fa0cd0a71a0c81da7ae89eb9abfa937f4f881fc87ba4122c34abfeee6b6835",
+      "after_git_blob_sha": "e2b6897740401e6d419fcbf62450158cf62148ff",
+      "after_sha256": "8ae0c4cd5cf2baaad1bc43c7ef0abb0ae4ef4978ceeb9a13eb420d89de4a29a4"
+    },
+    "config_example_json": {
+      "path": ".orchestrator/config.example.json",
+      "before_git_blob_sha": "42a9c42e86248c2a3e01124f7d411c10bcfa4d55",
+      "before_sha256": "075a592a5bcd9de5db55a671b108f98b504f550e8339d0a2575262d9fae57d6a",
+      "after_git_blob_sha": "7cbc9b918c302c48253657d12761b1ad2af40300",
+      "after_sha256": "6ecfb931b1706f5da53b03faba4e5bb6950595f9af28ef5034cf3a80d3834aa3"
+    },
+    "test_supervisor_py": {
+      "path": ".orchestrator/test_supervisor.py",
+      "before_git_blob_sha": "8250ce441c02710ed4d020380e2cda1826af25ac",
+      "before_sha256": "7445fa0fb2e36b7a6b3040d56c9fa8b7ad8957cdd3715b58a705d66c89a05c92",
+      "after_git_blob_sha": "870a44afc2c57c5c31e87dfd7957741072e8516c",
+      "after_sha256": "90476c16554ebb0b2b5b7dfd1fc92ea106dec9ca0365718e4ece100ac6fca1f2"
+    }
+  },
+  "contract_reconciliation": {
+    "event_id": "ai-status-event-ba5c76c4ed8ab12823430c148db1c6a45b83241da81f2a7e59bd24c6e16653fa",
+    "updated_by": "Human/Ops",
+    "updated_at": "2026-11-07T20:13:53Z",
+    "added_artifact": ".orchestrator/test_supervisor.py",
+    "reason": "Reconcile authorized task artifact scope after Codex review of PR #7045 (482b784914fe6be3d2b1e2942abd6872fe9159b4) so ShippedReviewerFallbackPolicyTests matches the Codex-only/identity-independent/fail-closed reviewer fallback policy in required Smoke acceptance."
+  },
+  "changes": {
+    "only_modified_config_field": "worker_reassignment.reviewer_fallbacks",
+    "updated_policy_test_class": ".orchestrator/test_supervisor.py::ShippedReviewerFallbackPolicyTests",
+    "preserved_invariants": [
+      "All map roots preserved in both .orchestrator/config.json and .orchestrator/config.example.json",
+      "All other config keys/values byte-for-byte and structurally unchanged (owner_fallbacks, review_only_agents, agents, providers, accounts, models, capacities, credentials, health, watchdog, ready_dispatcher, branch_workflow)",
+      "No supervisor/runtime code, new fields, role engine, second dispatcher, or compatibility layer added",
+      "Existing seven reconciled source task assignments, explicit Human/Ops review gates, and historical approvals untouched"
+    ],
+    "config_json_reviewer_fallbacks": {
+      "before": {
+        "Claude": ["Antigravity", "Antigravity2", "Codex", "Codex2"],
+        "Claude2": ["Antigravity", "Antigravity2"],
+        "Antigravity": ["Claude", "Claude2", "PiAstra", "Codex", "Codex2"],
+        "Antigravity2": ["Claude", "Claude2", "PiAstra", "Codex", "Codex2"],
+        "Codex": ["Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "Codex2": ["Claude", "Claude2", "Antigravity", "Antigravity2"],
+        "PiAstra": ["Claude", "Claude2", "Antigravity", "Antigravity2"]
+      },
+      "after": {
+        "Claude": ["Codex", "Codex2"],
+        "Claude2": ["Codex", "Codex2"],
+        "Antigravity": ["Codex", "Codex2"],
+        "Antigravity2": ["Codex", "Codex2"],
+        "Codex": ["Codex2"],
+        "Codex2": ["Codex"],
+        "PiAstra": ["Codex", "Codex2"]
+      }
+    },
+    "config_example_json_reviewer_fallbacks": {
+      "before": {
+        "Claude": ["Codex"],
+        "Codex": ["Claude"],
+        "Copilot": ["Codex", "Claude"]
+      },
+      "after": {
+        "Claude": ["Codex"],
+        "Codex": [],
+        "Copilot": ["Codex"]
+      }
+    }
+  },
+  "validations": {
+    "config_loader_and_schema": {
+      "status": "passed",
+      "details": [
+        "common.load_config('.orchestrator/config.json') and supervisor.validate_provider_accounts(main_cfg) passed",
+        "common.load_json('.orchestrator/config.example.json'), provision_live_supervisor_config.load_json_object('.orchestrator/config.example.json'), and supervisor.validate_provider_accounts(ex_cfg) passed",
+        "Structural diff check verified zero changes outside worker_reassignment.reviewer_fallbacks in both files"
+      ]
+    },
+    "shipped_reviewer_fallback_policy_tests": {
+      "pytest_command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -v .orchestrator/test_supervisor.py::ShippedReviewerFallbackPolicyTests",
+      "pytest_summary": "4 passed, 47 subtests passed in 2.49s",
+      "unittest_command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest -v test_supervisor.ShippedReviewerFallbackPolicyTests",
+      "unittest_summary": "Ran 4 tests in 0.034s - OK"
+    },
+    "existing_behavior_and_provisioning_tests": {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::ShippedReviewerFallbackPolicyTests .orchestrator/test_supervisor.py::ReviewOnlyAgentTests .orchestrator/test_supervisor.py::RuntimeConfigurationContractTests .orchestrator/test_supervisor.py::AccountHealthAndRecoveryContractTests .orchestrator/test_supervisor.py::LoadBalanceReassignmentTests .orchestrator/test_supervisor.py::CanonicalReassignmentGovernanceTests .orchestrator/test_supervisor.py::DurableWorkerRecoveryTests scripts/test_supervisor.py scripts/test_check_config_drift.py scripts/test_provision_live_supervisor_config.py scripts/test_explain_dispatch.py",
+      "exit_code": 0,
+      "summary": "224 passed, 83 subtests passed"
+    },
+    "bounded_actual_planner_probes": {
+      "status": "passed",
+      "main_config": {
+        "implementation_owners_both_reviewers_healthy": {
+          "Claude": ["Claude", "Codex"],
+          "Antigravity": ["Antigravity", "Codex"],
+          "Antigravity2": ["Antigravity2", "Codex"]
+        },
+        "implementation_owners_when_codex_excluded_or_unavailable": {
+          "Claude": ["Claude", "Codex2"],
+          "Antigravity": ["Antigravity", "Codex2"],
+          "Antigravity2": ["Antigravity2", "Codex2"]
+        },
+        "distinct_independent_designated_reviewers": {
+          "Codex_fallback_pair": ["Codex", "Codex2"],
+          "Codex2_fallback_pair": ["Codex2", "Codex"]
+        },
+        "unavailable_designated_reviewers_never_promote_implementation_lane": null
+      },
+      "example_config": {
+        "Claude_pair": ["Claude", "Codex"],
+        "Copilot_pair": ["Copilot", "Codex"],
+        "Codex_self_review_rejected_fails_closed": null,
+        "Claude_when_Codex_unavailable_fails_closed": null
+      }
+    },
+    "diff_budget": {
+      "production": {
+        "added": 8,
+        "deleted": 27,
+        "net": -19
+      },
+      "test": {
+        "added": 145,
+        "deleted": 61,
+        "net": 84
+      }
+    }
+  },
+  "runtime_adoption_and_live_status": {
+    "live_activation_status": "unverified",
+    "running_daemon_claimed_active": false,
+    "observed_admitted_command_runtime_sha": "dae97b1827b8f542ddcd20b3d2c4f70b5546747d",
+    "observed_live_config_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "observed_live_config_modified": false,
+    "normal_provisioning_and_promotion_path": [
+      "1. After this task PR merges into origin/dev, scripts/sync-dev-root.sh fetches origin/dev into DEV_ROOT and runs scripts/check_config_drift.py, which tracks worker_reassignment.reviewer_fallbacks in CRITICAL_FLAGS and flags CONFIG_DRIFT_REQUIRES_PROMOTION when live != repo.",
+      "2. scripts/sync-dev-root.sh materializes the immutable candidate command runtime under command-runtimes/<target_sha> via scripts/provision_live_supervisor_config.py --materialize-command-root and ensures its per-SHA Python environment.",
+      "3. scripts/sync-dev-root.sh invokes command-runtimes/<target_sha>/scripts/promote-supervisor-runtime.sh --promote (scripts/promote_supervisor_runtime.py:replace_v2_supervisor), which renders the candidate live config via provision_live_supervisor_config.build_live_config (deep-copying repo_config including worker_reassignment.reviewer_fallbacks without overlaying stale live policy), quiesces the incumbent supervisor, drains incumbent writers via qualify_and_drain_incumbent_writers, atomically writes live-supervisor-mainroot-config.json via write_json_atomic, launches the candidate supervisor, and verifies promotion health with automatic rollback on failure."
+    ]
+  }
+}
