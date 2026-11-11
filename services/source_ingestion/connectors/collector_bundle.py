@@ -175,6 +175,23 @@ def _cursor_key(finished_at: datetime, run_id: str) -> str:
     return f"{_iso(finished_at)}#{run_id}"
 
 
+_PARTIAL_CURSOR_MARK = "|items="
+
+
+def _split_cursor(cursor: str | None) -> tuple[str | None, int]:
+    """Split ``<key>|items=<n>`` (a bundle partially consumed under the output cap)."""
+    if not cursor or _PARTIAL_CURSOR_MARK not in cursor:
+        return cursor, 0
+    base, _, raw_n = cursor.rpartition(_PARTIAL_CURSOR_MARK)
+    try:
+        n = int(raw_n)
+    except ValueError as exc:
+        raise SourceEvidenceError(f"collector cursor has an invalid partial item offset: {cursor!r}") from exc
+    if n < 0 or not base:
+        raise SourceEvidenceError(f"collector cursor has an invalid partial item offset: {cursor!r}")
+    return base, n
+
+
 def _safe_raw_path(raw_path: str) -> str:
     p = PurePosixPath(str(raw_path))
     if p.is_absolute() or ".." in p.parts or not p.parts or p.parts[0] != "raw" or len(p.parts) != 2:
@@ -459,13 +476,14 @@ class CollectorBundleAdapter:
         if not isinstance(entries, list):
             raise SourceEvidenceError("collector bundle index.json must contain a bundles list")
 
+        base_cursor, partial_skip = _split_cursor(cursor)
         pending: list[tuple[datetime, str, Mapping[str, Any]]] = []
         for entry in entries:
             if not isinstance(entry, dict) or str(entry.get("source_id") or "") != self.source_id:
                 continue
             finished = _utc(entry.get("finished_at"), "index finished_at")
             key = _cursor_key(finished, str(entry.get("run_id") or ""))
-            if cursor is None or key > cursor:
+            if base_cursor is None or key > base_cursor or (partial_skip and key == base_cursor):
                 pending.append((finished, key, entry))
         pending.sort(key=lambda t: t[1])
 
@@ -477,7 +495,8 @@ class CollectorBundleAdapter:
             if bundle.status == "paused":
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
                 continue
-            for row in bundle.items:
+            skip = partial_skip if bundle.cursor == base_cursor else 0
+            for row in bundle.items[skip:]:
                 all_records.append(self._record(bundle, row, trace_id=trace_id))
 
         # The caller's output cap covers raw + derived feature records together. Shrink the
@@ -486,7 +505,9 @@ class CollectorBundleAdapter:
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         budget = total_cap
         while True:
-            records, next_cursor, raw_plan = self._select_raw(verified, all_records, cursor, budget)
+            records, next_cursor, raw_plan = self._select_raw(
+                verified, all_records, cursor, budget, skips={base_cursor: partial_skip} if partial_skip else {}
+            )
             plan = self._plan_governed_features(records)
             # Already-acknowledged replays are idempotent and droppable; only pending
             # rows must fit alongside the raw items.
@@ -502,7 +523,8 @@ class CollectorBundleAdapter:
             # pulls until the bundle's raw items fit.
             first = next((b for b in verified if b.status != "paused"), None)
             if first is not None:
-                candidate = [r for r in all_records[: len(first.items)]]
+                first_skip = partial_skip if first.cursor == base_cursor else 0
+                candidate = [r for r in all_records[: max(len(first.items) - first_skip, 0)]]
                 plan = self._plan_governed_features(candidate)
         feature_records, feature_rejected = self._commit_governed_features(
             plan, limit=max(total_cap - len(records), 0), trace_id=trace_id
@@ -682,26 +704,36 @@ class CollectorBundleAdapter:
         all_records: Sequence[SourceRecord],
         cursor: str | None,
         budget: int,
+        skips: Mapping[str, int] | None = None,
     ) -> tuple[list[SourceRecord], str | None, list[tuple[VerifiedBundle, Mapping[str, Any]]]]:
+        skips = skips or {}
         raw_plan = [(b, {}) for b in verified if b.status != "paused"]
         next_cursor = verified[-1].cursor if verified else cursor
         records = list(all_records[:budget])
-        # Truncation must not skip unconsumed bundles: only advance the cursor to the
-        # last bundle fully represented in `records`.
+        # Truncation must not skip unconsumed bundles: advance the cursor past whole
+        # bundles fully represented in `records`. A bundle larger than the remaining
+        # budget is consumed partially (``<key>|items=<n>``) so a bundle bigger than the
+        # public cap still makes bounded progress instead of starving every later pull.
         if len(records) < len(all_records):
             kept = len(records)
             next_cursor = cursor
             running = 0
+            consumed_bundles: list[VerifiedBundle] = []
             for bundle in verified:
-                n = 0 if bundle.status == "paused" else len(bundle.items)
+                n = 0 if bundle.status == "paused" else max(len(bundle.items) - skips.get(bundle.cursor, 0), 0)
                 if running + n > kept:
+                    take = kept - running
+                    if take > 0:
+                        next_cursor = f"{bundle.cursor}{_PARTIAL_CURSOR_MARK}{skips.get(bundle.cursor, 0) + take}"
+                        consumed_bundles.append(bundle)
+                        running += take
                     break
                 running += n
                 next_cursor = bundle.cursor
-            raw_plan = [(b, x) for b, x in raw_plan if b.cursor <= (next_cursor or "")]
-            # Only whole bundles are consumed; drop records of unconsumed bundles.
-            consumed = sum(len(b.items) for b, _ in raw_plan)
-            records = records[:consumed]
+                consumed_bundles.append(bundle)
+            keep_ids = {id(b) for b in consumed_bundles}
+            raw_plan = [(b, x) for b, x in raw_plan if id(b) in keep_ids]
+            records = records[:running]
         return records, next_cursor, raw_plan
 
     def _macro_emitted_path(self) -> Path:
