@@ -11,7 +11,7 @@
       "python3 scripts/check_service_lock_shared_deps.py",
       "python3 services/registry-core/decision-domain/validate_schemas.py",
       "python3 -m unittest discover -s services/data-plane/tests -p 'test_*.py'",
-      "python3 services/registry/promotion/smoke_test_gate.py",
+      "python3 -m services.registry.promotion.smoke_test_gate",
       "python3 services/control-plane/governance/smoke_test_deployment_saga.py",
       "python3 services/runtime_manager/smoke_test_runtime_binding.py",
       "python3 services/telemetry/smoke_test_ingest.py",
