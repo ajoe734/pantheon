@@ -32,5 +32,13 @@
   "change": "provider_adapters._finmind_broker: with no payload, fetches per resolved active symbol via FinMindLiveFetcher (existing token/egress/quota), bounded to 200 symbols; payload path unchanged",
   "fail_closed": "missing credential -> FinMindCredentialError before any network; upstream/HTTP/malformed/empty -> SourceEvidenceError; no compatibility fallback",
   "tests": "test_finmind_taiwan_connectors.py 31 passed (5 new); test_dev_tw_market_refresh.py 63 passed; test_deploy_nonprod_vm.py finmind/bounded/collector 23 passed"
+ },
+ "review_round_2_fixes": {
+  "p1_symbol_normalization": "_finmind_stock_code strips .TW/.TWSE/.TWO and dedupes before fetch_broker_report (data_id is the bare code); test with resolver-shaped input",
+  "p1_publication_timing": "dev-tw-market-refresh.yml adds crons 10:30 and 12:30 UTC (18:30/20:30 Taipei, after the 18:00 Taipei broker publication); late crons skip TWSE/TAIFEX steps so TWSE timing is unchanged; lease release accepts skipped",
+  "p1_max_records": "prepare step sets fetch.max_records = max_rank*2 * symbol count so no side is truncated; generic guards untouched",
+  "p1_all_batches": "prepare step unions symbols from every fanout batch and verifies enqueued coverage when job_parameters expose symbols",
+  "p2_coverage": "per-symbol coverage: records carry refresh_coverage {status, requested, covered, missing}; any missing symbol is explicitly partial; all-missing raises",
+  "tests": "finmind/broker/collector/bounded 58 passed; test_dev_tw_market_refresh.py 63 passed; bash -n and git diff --check ok"
  }
 }
