@@ -2975,3 +2975,87 @@ def test_deploy_script_forwards_collector_env_without_echo() -> None:
     for name in ("PANTHEON_COLLECTOR_HOST", "PANTHEON_COLLECTOR_BUNDLE_TOKEN"):
         assert text.count(f'command_prefix+=" {name}=$(shell_quote') == 2
     assert not re.search(r"(echo|info|printf)[^\n]*PANTHEON_COLLECTOR_BUNDLE_TOKEN", text)
+
+
+def test_steady_deploy_defaults_to_collector_host_allowlist_even_with_explicit_deny() -> None:
+    lines = DEPLOY_SCRIPT.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("SOURCE_REFRESH_EGRESS_MODE="))
+    end = next(i for i, l in enumerate(lines) if i > start and l.startswith("if [[ \"${SOURCE_REFRESH_SELECTED}\" == \"true\" ]]"))
+    block = "\n".join(lines[start:end])
+    script = "DEV_COMPOSE_PROFILES=${PROFILES:-}\n" + block + '\nprintf "%s|%s" "$SOURCE_REFRESH_EGRESS_MODE" "$SOURCE_REFRESH_ALLOWED_HOSTS"\n'
+
+    def run(**env):
+        full = {"PATH": os.environ["PATH"], **env}
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=full).stdout
+
+    assert run(PANTHEON_COLLECTOR_HOST="collector.example") == "allowlist|collector.example"
+    assert run(PANTHEON_COLLECTOR_HOST="collector.example", PANTHEON_EXTERNAL_EGRESS="deny") == "allowlist|collector.example"
+    assert run() == "deny|"
+    # Bounded refresh keeps its own explicit host set.
+    assert run(
+        PROFILES="source-ingest-scheduler", PANTHEON_COLLECTOR_HOST="collector.example",
+        PANTHEON_EXTERNAL_EGRESS="allowlist", PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.tpex.org.tw",
+    ) == "allowlist|openapi.twse.com.tw,www.tpex.org.tw"
+    wf = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text()
+    assert "vars.PANTHEON_COLLECTOR_HOST != ''" in wf
+    assert "|| vars.PANTHEON_COLLECTOR_HOST }}" in wf
+
+
+@pytest.mark.parametrize("initial", [["deny", ""], ["allowlist", "collector.example"]])
+def test_restore_from_deny_or_allowlist_reaches_collector_allowlist(tmp_path, initial):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    docker = fake / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"img"}}}\' ;;\n'
+        '  "image inspect --format {{.Id}} img") echo sha256:aa ;;\n'
+        '  *" up "*) python3 -c "import json,os;print(json.dumps([\'A=1\',\'PANTHEON_COLLECTOR_HOST=collector.example\',\'PANTHEON_EXTERNAL_EGRESS=\'+os.environ[\'PANTHEON_EXTERNAL_EGRESS\'],\'PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=\'+os.environ[\'PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS\'],\'SOURCE_INGEST_CONTROLLER_MODE=\'+os.environ[\'SOURCE_INGEST_CONTROLLER_MODE\'],\'STATE_ENV=\'+os.environ[\'STATE_ENV\']]))" > "$STATE_ENV" ;;\n'
+        '  *" ps -q source-ingest"*) echo cid1 ;;\n'
+        '  "inspect --format {{.Image}} cid1") echo sha256:aa ;;\n'
+        '  "inspect --format {{json .Config.Env}} cid1") cat "$STATE_ENV" ;;\n'
+        'esac\n'
+    )
+    docker.chmod(0o755)
+    env_file = tmp_path / "env.json"
+    env_file.write_text(json.dumps([
+        "A=1", "PANTHEON_COLLECTOR_HOST=collector.example",
+        f"PANTHEON_EXTERNAL_EGRESS={initial[0]}", f"PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS={initial[1]}",
+        "SOURCE_INGEST_CONTROLLER_MODE=reconcile_only", f"STATE_ENV={tmp_path / 'state'}",
+    ]))
+    script = tmp_path / "refresh.py"
+    script.write_text(_refresh_runtime_python())
+    result = subprocess.run(
+        ["python3", str(script), str(env_file), "restore", "sha256:aa", ""],
+        capture_output=True, text=True,
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "STATE_ENV": str(tmp_path / "state")},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "PANTHEON_EXTERNAL_EGRESS=allowlist" in (tmp_path / "state").read_text()
+
+
+def test_collector_host_gate_rejects_non_single_hostname() -> None:
+    """Comma lists / malformed values must be rejected before any Docker mutation."""
+    import subprocess
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent / "deploy_nonprod_vm.sh").read_text()
+    # Executable check of the guard regex used by the steady guard.
+    start = text.index('[[ ${#PANTHEON_COLLECTOR_HOST} -le 253')
+    rx = text[start:].split("=~ ", 1)[1].split(" ]]", 1)[0]
+    for host, ok in (("collector.example", True), ("a.b-c.example", True),
+                     ("collector.example,extra.example", False), ("collector.example:443", False),
+                     ("https://collector.example", False), ("-bad.example", False),
+                     ("bad host", False), ("a..b", False), ("x" * 64 + ".example", False)):
+        proc = subprocess.run(["bash", "-c", f'[[ "$1" =~ {rx} ]]', "_", host], check=False)
+        assert (proc.returncode == 0) is ok, host
+    assert "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring" in text
+    assert "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname" in text.split("# Steady state", 1)[0]
+    # Early guard really exits non-zero for a comma list.
+    head = text.split("# Steady state", 1)[0]
+    block = head[head.rindex("# PANTHEON_COLLECTOR_HOST must be exactly one"):]
+    proc = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block],
+                          env={"PANTHEON_COLLECTOR_HOST": "collector.example,extra.example", "PATH": "/usr/bin:/bin"},
+                          capture_output=True, text=True, check=False)
+    assert proc.returncode == 1 and "exactly one valid hostname" in proc.stderr

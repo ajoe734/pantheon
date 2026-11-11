@@ -119,6 +119,20 @@ SOURCE_REFRESH_SELECTED="false"
 case ",${DEV_COMPOSE_PROFILES}," in
   *,source-ingest-scheduler,*) SOURCE_REFRESH_SELECTED="true" ;;
 esac
+# PANTHEON_COLLECTOR_HOST must be exactly one valid hostname (no list, port, scheme).
+if [[ -n "${PANTHEON_COLLECTOR_HOST:-}" ]] \
+  && { [[ ${#PANTHEON_COLLECTOR_HOST} -gt 253 ]] \
+    || ! [[ "${PANTHEON_COLLECTOR_HOST}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]]; }; then
+  echo "[nonprod-deploy] ERROR: PANTHEON_COLLECTOR_HOST must be exactly one valid hostname" >&2
+  exit 1
+fi
+# Steady state (outside bounded refresh): deny falls through to an allowlist
+# of exactly PANTHEON_COLLECTOR_HOST when that named variable is configured.
+if [[ "${SOURCE_REFRESH_SELECTED}" != "true" && "${SOURCE_REFRESH_EGRESS_MODE}" == "deny" \
+  && -z "${SOURCE_REFRESH_ALLOWED_HOSTS}" && -n "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+  SOURCE_REFRESH_EGRESS_MODE="allowlist"
+  SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST}"
+fi
 if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_CONTROLLER_MODE="reconcile_and_pull"
   SOURCE_REFRESH_TRUTH_LEVEL="reconciled_live_proof"
@@ -1253,6 +1267,11 @@ validate_source_refresh_profile() {
   if [[ "$selected" != "true" ]]; then
     # Steady state (DEV-EGRESS-COLLECTOR-HOST-GATE-20261110): deny, or allowlist
     # with exactly the single collector host from PANTHEON_COLLECTOR_HOST.
+    if [[ -n "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+      [[ ${#PANTHEON_COLLECTOR_HOST} -le 253 \
+        && "${PANTHEON_COLLECTOR_HOST}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]] \
+        || error "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname"
+    fi
     if [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" ]]; then
       [[ -n "${PANTHEON_COLLECTOR_HOST:-}" \
         && "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" == "${PANTHEON_COLLECTOR_HOST}" ]] \
@@ -2184,7 +2203,7 @@ PREFLIGHT_PY
 manage_source_ingest_refresh_runtime() {
   local env_path="$1" action="$2" img_id="$3" arg="${4:-}"
   python3 - "${env_path}" "${action}" "${img_id}" "${arg}" <<'PY'
-import json, os, subprocess, sys
+import json, os, re, subprocess, sys
 path, action, expected_img, arg = sys.argv[1:5]
 with open(path, "r", encoding="utf-8") as f:
     pre_list = json.load(f)
@@ -2207,6 +2226,8 @@ elif action == "restore":
     # Restore the steady posture: allowlist with exactly the collector host
     # (named deployment variable); deny only when no collector host is configured.
     steady_host = (env.get("PANTHEON_COLLECTOR_HOST") or os.environ.get("PANTHEON_COLLECTOR_HOST") or "").strip().lower()
+    if steady_host and not (len(steady_host) <= 253 and re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*", steady_host)):
+        raise SystemExit("PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring")
     env.update({
         "PANTHEON_EXTERNAL_EGRESS": "allowlist" if steady_host else "deny",
         "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
@@ -2234,8 +2255,13 @@ if current_img != expected_img:
     raise SystemExit(f"source-ingest container image ID {current_img} != expected {expected_img}")
 if action == "restore":
     post_list = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .Config.Env}}", cid], text=True).strip())
-    if set(pre_list) != set(post_list):
-        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - set(pre_list))}, removed={sorted(set(pre_list) - set(post_list))}")
+    # Compare against the intended restored environment: pre env with only the
+    # restore-controlled keys replaced; image/other env invariants stay strict.
+    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
+    intended = {x for x in pre_list if x.split("=", 1)[0] not in controlled}
+    intended |= {f"{k}={env[k]}" for k in controlled}
+    if set(intended) != set(post_list):
+        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - intended)}, removed={sorted(intended - set(post_list))}")
 PY
 }
 
