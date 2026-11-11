@@ -661,7 +661,7 @@ def test_tw_official_pull_env_mirrors_bounded_refresh_entrypoint() -> None:
     assert env["KEEP"] == "1"
     assert env["PANTHEON_EXTERNAL_EGRESS"] == "allowlist"
     assert env["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == (
-        "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+        "openapi.twse.com.tw,www.tpex.org.tw"
     )
     assert env["SOURCE_INGEST_CONTROLLER_MODE"] == "reconcile_and_pull"
     assert env["SOURCE_INGEST_CONTROLLER_RESTART_POLICY"] == "no"

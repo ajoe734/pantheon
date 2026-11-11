@@ -1,0 +1,35 @@
+{
+  "task_id": "DEV-DEPLOY-TWSE-HOST-SET-ALIGN-20261110",
+  "official_connector_hosts": ["openapi.twse.com.tw", "www.tpex.org.tw"],
+  "changes": {
+    ".github/workflows/nonprod-deploy.yml": "market_refresh step PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS now exactly openapi.twse.com.tw,www.tpex.org.tw",
+    "scripts/run_isolated_l12_runtime_e2e.py": "official pull env mirrors the same two hosts",
+    "scripts/test_run_isolated_l12_runtime_e2e.py": "asserts the two hosts",
+    "scripts/test_dev_tw_market_refresh.py": "workflow/env host-set assertions updated to two hosts",
+    "scripts/test_deploy_nonprod_bootstrap_contract.py": "valid TWSE/TPEx host set updated to two hosts; three-host set kept as rejected case",
+    "scripts/test_source_ingest_deploy_diagnostics_contract.py": "host-set assertions updated to two hosts; three-host set now a rejected case"
+  },
+  "unchanged_per_acceptance_6": ["scripts/deploy_nonprod_vm.sh", "services/source_ingestion/connectors/taiwan_official.py host guard", "TAIFEX host guard", ".github/workflows/dev-tw-market-refresh.yml"],
+  "assertion_change_justifications": [
+    "Every changed host-set assertion moves from the removed three-host set to the two-host set that deploy_nonprod_vm.sh (required = {openapi.twse.com.tw, www.tpex.org.tw}) and the connector guard enforce; no assertion was deleted and the three-host set is now asserted as rejected.",
+    "test_bounded_source_refresh_profile_is_fail_closed: two stale deploy-script string pins were rewritten to match the unchanged script. 'SOURCE_REFRESH_ALLOWED_HOSTS:+...www.twse.com.tw' (no longer present in the script) became assert 'www.twse.com.tw' not in deploy; the connector id pin now matches the existing default-form 'SOURCE_REFRESH_CONNECTOR_ID=\"${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}\"'. Intent (default connector, no www.twse append) is preserved."
+  ],
+  "tests_after_fix": {
+    "command": "pytest scripts/test_dev_tw_market_refresh.py scripts/test_deploy_nonprod_bootstrap_contract.py scripts/test_run_isolated_l12_runtime_e2e.py scripts/test_deploy_nonprod_vm.py",
+    "result": "292 passed, 4 skipped in 373.11s",
+    "diagnostics_contract": "scripts/test_source_ingest_deploy_diagnostics_contract.py: 21 passed in 27.46s"
+  },
+  "tests_on_c132c3246_baseline": {
+    "note": "Observed on the anchored branch before the diagnostics-test fix (host-set assertions in the test files were the only differences from c132c3246 besides the anchor). Failing assertions on the old host set, in scripts/test_source_ingest_deploy_diagnostics_contract.py: test_bounded_source_refresh_profile_is_fail_closed, test_validate_source_refresh_profile_taifex_and_twse_exact_host_contract, test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse. A fourth failure (test_prepare_bounded_source_refresh_dataset_wires_ssf_through_scheduler_and_adapter) and three others (test_bounded_refresh_controller_writes_the_authoritative_readback_state, test_runtime_evolution_fixture_uses_selected_tenant_against_real_evolution_auth, test_paper_signal_producer_binding_recovery_and_health_lifecycle) were missing-package failures (jsonschema/fastapi) in a bare venv and pass once installed. A literal checkout of c132c3246 was not re-run; the task's list of 13 test names was not available in the worker context, so per-test baseline for those is not enumerated."
+  },
+  "repo_search": {
+    "command": "git grep -n www.twse.com.tw -- . ':!docs' ':!.orchestrator'",
+    "allowed_host_list_hits": [],
+    "non_allowlist_hits": [
+      "deploy/collector/** (collector fetch targets, not connector allowlist)",
+      "services/source_ingestion/connectors/taiwan_official.py (TWSE_LEGACY_BASE_URL and source_url metadata; guard rejects non-openapi twse hosts)",
+      "services/execution/market_snapshot_admission.py:43 (excluded non-connector reference)",
+      "scripts/test_*.py and services/**/tests (negative/rejected cases and fixtures)"
+    ]
+  }
+}
