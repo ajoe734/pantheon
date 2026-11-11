@@ -46,7 +46,8 @@
       "reviewer_set": "125 passed (test_auto_consumer, runtime, governed lifecycle, evolution_decision/controller, factor_rule, test_evolution_search, retrain_search_update, evolution_gate_executor)",
       "real_auth_plus_oos": "23 passed (test_retrain_executor_real_auth.py + test_retrain_oos_gate.py), exit 0",
       "alpha_replication": "93 passed; services/governance/test_governance_api.py errors at fixture setup (needs GOV_APPROVAL_TEST_DSN Postgres; file untouched by this task) - NOT counted as passed"
-    }
+    },
+    "persona_mismatch_fix": "Reviewer P1 fix: DiscoveryBindingScope.resolve fails closed on explicit artifact/decision persona mismatch (no fallback to other persona's discovery binding); regression test_explicit_persona_mismatch_fails_closed; auto_consumer_runtime/auto_consumer/governed_persona_lifecycle suites 38 passed."
   },
   "not_done_here": [
     "GovernedPersonaLifecycle is tested against a faithful fake of Governance+persona owner, not a live Governance PG store (approval commands require PostgreSQL).",
