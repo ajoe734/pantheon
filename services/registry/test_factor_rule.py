@@ -648,3 +648,70 @@ def test_price_only_factor_rule_does_not_require_decision_time() -> None:
             [100.0] * 4,
             features={"rev_yoy": [{"value": 1.0, "event_time": "2026-01-01", "available_time": "2026-01-02"}]},
         )
+
+
+# --- structural mutation operators (EVOLUTION-AUTO-CONSUMER-SEARCH) ---------
+
+def _mutate(operator: str | None, seed: int = 7, artifact: dict[str, Any] | None = None):
+    import random
+
+    from services.registry.factor_rule import mutate_factor_rule_structure
+
+    art = artifact or _sample_factor_rule_artifact()
+    return art, mutate_factor_rule_structure(
+        art["strategy_logic"],
+        art["parameters"],
+        art["mutation_surface"]["controls"],
+        rng=random.Random(seed),
+        operator=operator,
+    )
+
+
+@pytest.mark.parametrize("operator", ["change_window", "swap_operator", "add_filter", "change_exit"])
+def test_structural_mutation_produces_valid_artifact_and_leaves_parent_untouched(operator: str) -> None:
+    parent = _sample_factor_rule_artifact()
+    snapshot = copy.deepcopy(parent)
+    art, result = _mutate(operator, artifact=parent)
+    assert parent == snapshot
+    child = copy.deepcopy(parent)
+    child["strategy_logic"] = result["strategy_logic"]
+    child["parameters"] = result["parameters"]
+    child["mutation_surface"]["controls"] = result["controls"]
+    child["artifact_id"] = "strat-child"
+    child["version"] = "1.0.1"
+    child["lineage"]["parent_registry_ids"] = [parent["artifact_id"]]
+    validate_strategy_artifact(child)
+    assert result["mutation"]["operator"] == operator
+    assert (result["strategy_logic"], result["parameters"]) != (parent["strategy_logic"], parent["parameters"])
+
+
+def test_add_filter_uses_catalogue_feature_and_declared_controls_then_remove_restores() -> None:
+    parent, added = _mutate("add_filter")
+    desc = added["mutation"]
+    assert get_feature_definition(desc["dataset"], desc["field"]) is not None
+    keys = {c["parameter_key"] for c in added["controls"]}
+    assert set(desc["parameters"]) <= keys
+    lag = next(i for i in added["strategy_logic"]["inputs"] if i["name"] == desc["input"])
+    assert lag["availability_lag_days"] >= get_feature_definition(desc["dataset"], desc["field"]).min_availability_lag_days
+
+    import random
+
+    from services.registry.factor_rule import mutate_factor_rule_structure
+
+    removed = mutate_factor_rule_structure(
+        added["strategy_logic"], added["parameters"], added["controls"],
+        rng=random.Random(1), operator="remove_filter",
+    )
+    assert removed["strategy_logic"] == parent["strategy_logic"]
+    assert removed["parameters"] == parent["parameters"]
+
+
+def test_remove_filter_without_added_filter_is_refused() -> None:
+    from services.registry.factor_rule import FactorRuleMutationError
+
+    with pytest.raises(FactorRuleMutationError):
+        _mutate("remove_filter")
+
+
+def test_unseeded_choice_is_deterministic_for_a_seed() -> None:
+    assert _mutate(None, seed=3)[1] == _mutate(None, seed=3)[1]
