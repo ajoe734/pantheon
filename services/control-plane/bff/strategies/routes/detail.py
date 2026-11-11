@@ -319,22 +319,6 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
             )
         return {"data": packets, "items": packets, "meta": ctx.read_surface_meta("ooda_packets", "strategy_ooda", snapshot_at=ctx.utc_now())}
 
-    @router.post("/bff/strategies/{strategy_id}/actions/{action_id}", status_code=202)
-    def bff_strategy_action(
-        strategy_id: str,
-        action_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    ):
-        """BFF: strategy action — routes through command/precondition machinery."""
-        if ctx.deprecated_bff_path_response:
-            return ctx.deprecated_bff_path_response(
-                route="/bff/strategies/{strategy_id}/actions/{action_id}",
-                replacement="/bff/v1/commands",
-            )
-        return {"data": {"strategy_id": strategy_id, "action_id": action_id, "status": "deprecated"}}
-
     @router.post("/bff/strategies/{strategy_id}/dry-run", status_code=202)
     def bff_strategy_dry_run(
         strategy_id: str,

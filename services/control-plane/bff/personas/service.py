@@ -11791,47 +11791,6 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return public_item
 
 
-# --- _deprecated_bff_path_response ---
-def _deprecated_bff_path_response(*, route: str, replacement: str) -> JSONResponse:
-    message = f"{route} is deprecated; use {replacement}."
-    headers = {
-        "Deprecation": "true",
-        "Sunset": _PATH_DEDUPE_SUNSET_HTTP_DATE,
-        "Link": f'<{replacement}>; rel="successor-version"',
-        "Warning": f'299 - "{message}"',
-        "X-Deprecated": "true",
-        "X-Deprecated-At": _PATH_DEDUPE_DEPRECATED_SINCE,
-        "X-Pantheon-Deprecated-Route": route,
-        "X-Pantheon-Replacement-Route": replacement,
-    }
-    return JSONResponse(
-        status_code=410,
-        headers=headers,
-        content={
-            "detail": {
-                "error": {
-                    "code": ErrorCode.OPERATION_NOT_ALLOWED.value,
-                    "message": "Deprecated BFF route",
-                    "details": {
-                        "reason": "route_deprecated",
-                        "route": route,
-                        "replacement": replacement,
-                        "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
-                    },
-                }
-            },
-            "meta": {
-                "deprecated": True,
-                "deprecation": {
-                    "route": route,
-                    "replacement": replacement,
-                    "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
-                },
-            },
-        },
-    )
-
-
 # --- _request_dry_run_requested ---
 def _truthy_header(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}

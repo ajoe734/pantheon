@@ -273,7 +273,6 @@ class TestOperatorBFF(unittest.TestCase):
             sse_buffers=bff_main._sse_buffers,
             sse_subscribers=bff_main._sse_subscribers,
             gov_bff_action_command=bff_main._gov_bff_action_command,
-            deprecated_bff_path_response=persona_service._deprecated_bff_path_response,
             sem_command_response=persona_service._sem_command_response,
             stream_generic_events=bff_main.stream_generic_events,
             surface_degradation_reason=bff_main._surface_degradation_reason,

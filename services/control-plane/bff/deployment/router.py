@@ -13,8 +13,6 @@ Design unit:
   7. GET /bff/sse/deployment/events: SSE alias for artifact-channel deployment events
   8. GET /bff/deployments: BFF deployment-plan list (execute-plans compatibility surface)
   9. GET /bff/deployments/{deployment_id}: BFF deployment-plan detail
-  10. POST /bff/deployments/{deployment_id}/actions/{action_id}: BFF deployment action (deprecated
-      passthrough to /bff/v1/commands)
   11. POST /bff/deployments: Retired (410 ACTION_RETIRED); use the governed deployment owner path above
   12. PATCH /bff/deployments/{deployment_id}: SEM deployment patch command
 
@@ -66,7 +64,6 @@ def create_deployment_router(
     sse_buffers: Dict[str, Any],
     sse_subscribers: Dict[str, Any],
     gov_bff_action_command: Callable[..., Dict[str, Any]],
-    deprecated_bff_path_response: Callable[..., Any],
     sem_command_response: Callable[..., Any],
     stream_generic_events: Callable[..., Any],
     surface_degradation_reason: Callable[..., Optional[str]],
@@ -84,18 +81,6 @@ def create_deployment_router(
         snapshot_meta=snapshot_meta,
         surface_degradation_reason=surface_degradation_reason,
     )
-
-    @router.get("/api/v1/deployment-plans")
-    def list_deployment_plans(
-        status: Optional[str] = None,
-        capital_pool_id: Optional[str] = None,
-        authorization: Optional[str] = Header(default=None),
-    ):
-        """DP-01: Deployment plan list (retired; use /bff/deployments)."""
-        return deprecated_bff_path_response(
-            route="/api/v1/deployment-plans",
-            replacement="/bff/deployments",
-        )
 
     @router.post("/api/v1/deployment-plans", status_code=201)
     def create_deployment_plan_v1(
@@ -502,21 +487,6 @@ def create_deployment_router(
                 "staleness": meta_staleness(),
             },
         }
-
-    @router.post("/bff/deployments/{deployment_id}/actions/{action_id}", status_code=202)
-    def bff_deployment_action(
-        deployment_id: str,
-        action_id: str,
-        request: Request,
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        authorization: Optional[str] = Header(default=None),
-    ):
-        """BFF: submit an action against a deployment plan."""
-        return deprecated_bff_path_response(
-            route="/bff/deployments/{deployment_id}/actions/{action_id}",
-            replacement="/bff/v1/commands",
-        )
-
 
     @router.post("/bff/deployments", status_code=201)
     def sem_create_deployment_command(

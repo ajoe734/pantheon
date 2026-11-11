@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-11-08",
+    "snapshot_date": "2026-11-11",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 623,
+    "total_routes": 614,
     "status_values": [
       "implemented",
       "alias",
@@ -917,13 +917,6 @@
       "path": "/api/v1/consultations/{param}/transcript",
       "family": "api-v1",
       "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/deployment-plans",
-      "family": "api-v1",
-      "status": "superseded",
-      "covered_by": "GET /bff/deployments"
     },
     {
       "method": "GET",
@@ -2031,12 +2024,6 @@
     },
     {
       "method": "POST",
-      "path": "/bff/deployments/{param}/actions/{param}",
-      "family": "governance-runtime-risk-audit",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
       "path": "/bff/incidents",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
@@ -2092,12 +2079,6 @@
     {
       "method": "POST",
       "path": "/bff/runtimes",
-      "family": "governance-runtime-risk-audit",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/runtimes/{param}/actions/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -2303,8 +2284,7 @@
       "method": "GET",
       "path": "/bff/mcp-servers",
       "family": "mcp-final",
-      "status": "alias",
-      "covered_by": "GET /bff/mcp/servers"
+      "status": "implemented"
     },
     {
       "method": "GET",
@@ -2946,12 +2926,6 @@
     },
     {
       "method": "POST",
-      "path": "/bff/strategies/{param}/actions/{param}",
-      "family": "strategy-persona",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
       "path": "/bff/strategies/{param}/dry-run",
       "family": "strategy-persona",
       "status": "implemented"
@@ -2960,18 +2934,6 @@
       "method": "POST",
       "path": "/bff/strategies/{param}/specs",
       "family": "strategy-persona",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/mcp/servers",
-      "family": "tools-mcp-skills",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/mcp/servers/{param}",
-      "family": "tools-mcp-skills",
       "status": "implemented"
     },
     {
@@ -3030,19 +2992,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/mcp/tools/{param}/actions/{param}",
-      "family": "tools-mcp-skills",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
       "path": "/bff/skills",
-      "family": "tools-mcp-skills",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/skills/{param}/actions/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
@@ -3055,12 +3005,6 @@
     {
       "method": "POST",
       "path": "/bff/tools",
-      "family": "tools-mcp-skills",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/tools/{param}/actions/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },

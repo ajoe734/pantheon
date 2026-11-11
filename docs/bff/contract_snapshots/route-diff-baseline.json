@@ -1990,12 +1990,11 @@
         "status": "implemented"
       },
       {
-        "covered_by": "GET /bff/mcp/servers",
         "family": "mcp-final",
         "key": "GET /bff/mcp-servers",
         "method": "GET",
         "path": "/bff/mcp-servers",
-        "status": "alias"
+        "status": "implemented"
       },
       {
         "family": "mcp-final",
@@ -2111,12 +2110,11 @@
         "status": "implemented"
       },
       {
-        "covered_by": "GET /bff/ranking/formulas",
         "family": "capital-ranking-rebalance",
         "key": "GET /bff/ranking-formulas",
         "method": "GET",
         "path": "/bff/ranking-formulas",
-        "status": "alias"
+        "status": "implemented"
       },
       {
         "family": "capital-ranking-rebalance",
@@ -3296,6 +3294,13 @@
       },
       {
         "family": "strategy-persona",
+        "key": "POST /bff/personas/{param}/provisioning/advisory-admission",
+        "method": "POST",
+        "path": "/bff/personas/{param}/provisioning/advisory-admission",
+        "status": "implemented"
+      },
+      {
+        "family": "strategy-persona",
         "key": "POST /bff/personas/{param}/provisioning/paper-capital",
         "method": "POST",
         "path": "/bff/personas/{param}/provisioning/paper-capital",
@@ -3351,12 +3356,11 @@
         "status": "implemented"
       },
       {
-        "covered_by": "POST /bff/ranking/formulas",
         "family": "capital-ranking-rebalance",
         "key": "POST /bff/ranking-formulas",
         "method": "POST",
         "path": "/bff/ranking-formulas",
-        "status": "alias"
+        "status": "implemented"
       },
       {
         "family": "capital-ranking-rebalance",
@@ -3430,7 +3434,7 @@
   },
   "metadata": {
     "backend_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
-    "backend_snapshot_date": "2026-11-05",
+    "backend_snapshot_date": "2026-11-11",
     "frontend_manifest": "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
     "frontend_snapshot_date": "2026-06-28",
     "generator": "scripts/bff_route_diff.py",
@@ -3452,17 +3456,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 626,
-    "failure_count": 486,
+    "backend_routes": 614,
+    "failure_count": 487,
     "failures": {
-      "backend_missing_frontend": 485,
+      "backend_missing_frontend": 486,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 486,
+    "mode_failure_count": 487,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

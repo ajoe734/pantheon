@@ -340,11 +340,11 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 
 **Canonical source**: BINDING_AND_DEPLOYMENT_SEMANTICS.md
 
-`GET /api/v1/deployment-plans` is retired and returns `410` through `deprecated_bff_path_response` with `/bff/deployments` as the replacement (`GET /bff/deployments` is the active deployment-plan list surface). Deployment-plan creation through `POST /api/v1/deployment-plans` and `POST /bff/deployments` is retired and returns `410 ACTION_RETIRED`. The governed replacement is approval, then the deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans` endpoints. BFF does not create or validate deployment plans. All requests rejected through the existing retired-command mechanism likewise use the client-visible error code `ACTION_RETIRED` (HTTP 410), not `VALIDATION_FAILED`.
+`GET /api/v1/deployment-plans` has been removed (no route; the framework returns `405`); `GET /bff/deployments` is the active deployment-plan list surface. Deployment-plan creation through `POST /api/v1/deployment-plans` and `POST /bff/deployments` is retired and returns `410 ACTION_RETIRED`. The governed replacement is approval, then the deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans` endpoints. BFF does not create or validate deployment plans. All requests rejected through the existing retired-command mechanism likewise use the client-visible error code `ACTION_RETIRED` (HTTP 410), not `VALIDATION_FAILED`.
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
-| `/api/v1/deployment-plans` | GET | Retired (DP-01) | `410`; retired BFF path — use `GET /bff/deployments` | — |
+| `/api/v1/deployment-plans` | GET | Retired (DP-01) | Removed (`405`); use `GET /bff/deployments` | — |
 | `/api/v1/deployment-plans` | POST | Retired | `410 ACTION_RETIRED`; use approval then deployment owner validate/create | — |
 | `/api/v1/deployment-plans/{plan_id}` | GET | DP-02 | `{ data: DeploymentPlan + ApprovalDecision, meta }` | — |
 | `/api/v1/approval-decisions` | GET | DP-03 | `{ data: [ApprovalDecision], meta }` | `outcome`, `state` |
@@ -1102,7 +1102,7 @@ Read-only; no new route. These fields extend the existing `GET /bff/management/p
 
 ## Retire a provisioned paper Persona case (BFF-PERSONA-CASE-RETIRE-COMMAND-20261108)
 
-`POST /bff/v1/commands` with `command: "PersonaAction"`, `action: "RetirePaperPersonaCase"` (verb aliases `retire`, `retire_case`) and `target: {"type": "Persona", "id": "<persona_id>"}`. No new HTTP route is added; `POST /bff/personas/{persona_id}/actions/{action_id}` keeps returning the deprecation response for `retire`.
+`POST /bff/v1/commands` with `command: "PersonaAction"`, `action: "RetirePaperPersonaCase"` (verb aliases `retire`, `retire_case`) and `target: {"type": "Persona", "id": "<persona_id>"}`. No new HTTP route is added; `POST /bff/personas/{persona_id}/actions/{action_id}` returns `404 RESOURCE_NOT_FOUND` for `retire` and any other unsupported action name (only AdvanceLifecycle, Promote, PromoteCandidate and Demote are live on that route).
 
 Admission is the existing command admission: operator role, `Idempotency-Key` header, non-empty `audit_context.reason`, and an `X-Confirm-Token` issued for `RetirePaperPersonaCase` on that Persona (the catalog entry has `requires_confirm_token`). The tenant is taken from the authenticated claims only.
 

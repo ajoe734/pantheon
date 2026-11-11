@@ -108,8 +108,7 @@ def test_all_canonical_domain_routers_mounted() -> None:
 
     client = TestClient(bff_main.app)
     retired_list = client.get("/api/v1/deployment-plans")
-    assert retired_list.status_code == 410
-    assert retired_list.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
+    assert retired_list.status_code == 405
 
 
 def test_training_v3_router_is_mounted_on_the_composed_app() -> None:
