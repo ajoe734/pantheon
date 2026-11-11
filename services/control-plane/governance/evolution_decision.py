@@ -71,6 +71,8 @@ class EvolutionActionType(str, Enum):
     OBSERVE = "observe"
     REVALIDATE = "revalidate"
     RETRAIN = "retrain"
+    # Structural child of a factor_rule_v1 discovery artifact (design §12.2).
+    MUTATE = "mutate"
     REQUIRE_MORE_DATA = "require_more_data"
     FLAG_FOR_REVIEW = "flag_for_review"
     REDUCE_BUDGET = "reduce_budget"
@@ -226,6 +228,7 @@ LOW_RISK_ACTIONS = {
     EvolutionActionType.OBSERVE,
     EvolutionActionType.REVALIDATE,
     EvolutionActionType.RETRAIN,
+    EvolutionActionType.MUTATE,
     EvolutionActionType.REQUIRE_MORE_DATA,
     EvolutionActionType.FLAG_FOR_REVIEW,
 }
@@ -246,13 +249,50 @@ HIGH_RISK_ACTIONS = {
 }
 VALID_TARGET_STAGES = {"paper", "canary", "live", "frozen"}
 
+# Discovery-persona paper scope (design §12.2 / §11 envelope).  Retiring a
+# discovery strategy that only ever ran in paper moves no capital and no live
+# runtime, so it is LOW risk and the automated gate may own it.  The marker
+# lowers risk only for a paper-stage retire; the automated consumer still
+# re-verifies the target against the persona/registry owners before acting,
+# and everything outside the scope keeps its normal risk level and owners.
+DISCOVERY_AUTO_SCOPE_METADATA_KEY = "discovery_auto_scope"
+DISCOVERY_AUTO_RETIRE_TARGET_TYPES = {
+    EvolutionTargetType.PERSONA,
+    EvolutionTargetType.CANDIDATE_ARTIFACT,
+    EvolutionTargetType.STRATEGY_SPEC,
+}
+
+
+def is_discovery_paper_retire(
+    action_type: EvolutionActionType | str,
+    *,
+    target_type: EvolutionTargetType | str | None,
+    target_stage: str | None,
+    metadata: Mapping[str, Any] | None,
+) -> bool:
+    try:
+        action = EvolutionActionType(action_type)
+        target = EvolutionTargetType(target_type) if target_type is not None else None
+    except ValueError:
+        return False
+    return bool(
+        action == EvolutionActionType.RETIRE
+        and target in DISCOVERY_AUTO_RETIRE_TARGET_TYPES
+        and target_stage == "paper"
+        and isinstance(metadata, Mapping)
+        and metadata.get(DISCOVERY_AUTO_SCOPE_METADATA_KEY) is True
+    )
+
 
 def infer_risk_level(
     action_type: EvolutionActionType | str,
     *,
     target_stage: str | None = None,
+    discovery_paper_retire: bool = False,
 ) -> RiskLevel:
     action = EvolutionActionType(action_type)
+    if action == EvolutionActionType.RETIRE and discovery_paper_retire:
+        return RiskLevel.LOW
     if action in LOW_RISK_ACTIONS:
         return RiskLevel.LOW
     if action in MEDIUM_RISK_ACTIONS:
@@ -470,7 +510,16 @@ class EvolutionDecision:
             PROPOSER_ROLES,
             "created_by_role is not allowed to propose EvolutionDecision",
         )
-        resolved_risk = risk_level or infer_risk_level(action_type, target_stage=target_stage)
+        resolved_risk = risk_level or infer_risk_level(
+            action_type,
+            target_stage=target_stage,
+            discovery_paper_retire=is_discovery_paper_retire(
+                action_type,
+                target_type=target_type,
+                target_stage=target_stage,
+                metadata=metadata,
+            ),
+        )
         return cls(
             decision_id=decision_id,
             target_type=target_type,
@@ -787,7 +836,16 @@ class EvolutionDecision:
 
         if action is not None and risk is not None:
             try:
-                inferred = infer_risk_level(action, target_stage=self.target_stage)
+                inferred = infer_risk_level(
+                    action,
+                    target_stage=self.target_stage,
+                    discovery_paper_retire=is_discovery_paper_retire(
+                        action,
+                        target_type=self.target_type,
+                        target_stage=self.target_stage,
+                        metadata=self.metadata,
+                    ),
+                )
             except EvolutionDecisionError as exc:
                 errors.append(str(exc))
             else:
