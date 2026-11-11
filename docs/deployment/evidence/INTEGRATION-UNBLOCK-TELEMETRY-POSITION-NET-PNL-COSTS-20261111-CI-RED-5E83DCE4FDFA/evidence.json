@@ -10,6 +10,28 @@
     "canonical_review_gate": "Pantheon canonical review gate status was SUCCESS at last check; it was pending/transient when the integrator first saw ci-red."
   },
   "code_changes_required": false,
-  "remediation": "Re-run the failed Smoke acceptance job on PR #7177 once workflow run 43049016263 finishes (GitHub refuses job re-run while the run is in progress, HTTP 403). No change to the source branch is needed; this repair task did not push to it.",
-  "source_pr_mergeable": "MERGEABLE"
+  "remediation": "Re-ran failed Smoke acceptance on PR #7177 (head fe48b89fe8d57aeb64cc93ec796858f4f6bb8ecf).",
+  "source_pr_mergeable": "MERGEABLE",
+  "rerun_attempts": [
+    {
+      "run": 43049016263,
+      "attempt": 1,
+      "outcome": "failure",
+      "cause": "apt DNS resolution failure azure.archive.ubuntu.com; Provision real worker sandbox 5 min timeout"
+    },
+    {
+      "run": 43049016263,
+      "attempt": 2,
+      "outcome": "failure",
+      "cause": "same apt DNS failure (terminal, collected)"
+    },
+    {
+      "run": 43049016263,
+      "attempt": 3,
+      "outcome": "failure",
+      "cause": "same apt DNS failure (terminal, collected)"
+    }
+  ],
+  "status": "blocked_external",
+  "blocker": "GitHub-hosted runner DNS/apt mirror outage persists across 3 attempts; infra fix tracked by task CI-SANDBOX-APT-DNS-20261111. Source PR #7177 remains OPEN/BLOCKED; not yet unstranded. No product-code change required."
 }
