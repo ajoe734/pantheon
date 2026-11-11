@@ -4,6 +4,41 @@
     "evidence_sha256": "sha256:08029feda84a4c2a7f2c800bb0d4a3f8b807d1b055a757ef4491e299ea8ab8c9",
     "post_delete_readback_verified": true
   },
+  "actual_stage_evidence_20261111": {
+    "files": [
+      {
+        "canonical_manifest_sha256": "sha256:d4f07346d2bf5d17bb42caf370ba0d218cde72d794a66694e5703945d02c9e00",
+        "file_sha256": "d38744cd81211ede05db6cf8684ac28293e45bf8f1b388761e9c9fa0577724d6",
+        "path": "deploy/staging/releases/pantheon-20261108-111.staging-evidence.json",
+        "release_id": "pantheon-20261108-111",
+        "rollback_duration_seconds": 36.245,
+        "teardown": "4 owned resources deleted, post-delete readback verified",
+        "workflow_run_id": "42821143652"
+      },
+      {
+        "canonical_manifest_sha256": "sha256:c3b2c83a0e308e29075fb40505f1ac568ce31ffcc85acda5c9d875eb3325a5bc",
+        "file_sha256": "154bc59b120d0247729c0b95ce34a6b384a3470be0f9c5f6af3535ff1d6b340b",
+        "path": "deploy/staging/releases/pantheon-20261108-112.staging-evidence.json",
+        "release_id": "pantheon-20261108-112",
+        "rollback_duration_seconds": 101.076,
+        "teardown": "4 owned resources deleted, post-delete readback verified",
+        "workflow_run_id": "42823965318"
+      }
+    ],
+    "hosted_acceptance": "external_wait",
+    "limits": [
+      "Full browser JSON and screenshots were lost on reboot and are NOT reconstructed; these are stdout summaries, not restored browser artifacts.",
+      "Stage rollback timings (36.245s, 101.076s) are Stage only and must never be counted as Production timings.",
+      "Not Production evidence: no first healthy Prod baseline, no protected human Prod Environment approval, no Prod backup/restore RPO3600/RTO1800/fresh-boot, no two Prod deploy/rollback drills <120s, no 30-minute observation.",
+      "Production workflow has no runs; release flag absent; no cloud resource changed."
+    ],
+    "operator_posture": "Operator chose 2026-11-10T13:03:18Z 'Stage uses Prod settings for acceptance': read-only on 111/112, no draft save; Alpha bug separately owned, not a gate of this release. No Prod writes enabled.",
+    "provenance": "Original GitHub ZIPs recovered; extracted verification JSON SHA256 matches GitHub artifact. Capture root: ~/pantheon-acceptance-captures/ENV-PROD-CONTROL-IMPL-001/Root01a11-20261111-stage111112 (outside repo).",
+    "purpose": "Repository-relative staging_evidence_path inputs for the 111/112 manifests (byte-for-byte copies of the original GitHub run verification artifacts).",
+    "release_complete_claimed": false,
+    "ui_evidence_actual_stdout_only": "Original tool stdout shows three UI roles PASS (operator/viewer 200 incl. logout 200; other-tenant /bff/me 403), owner read probe PASS exit 0 for 111 (operator+viewer x 5 paths = 200). 112 owner probe reported PASS/exit 0 over the fixed two-role/five-path script, but its complete per-case stdout was truncated.",
+    "validation": "release_manifest load/compute + prod_preflight.check_staging_evidence passed for each unchanged manifest and its evidence file (run 2026-11-11, local, no cloud operation)."
+  },
   "additional_release_declarations_20261107": {
     "accepted_cohort": {
       "backend_commit": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c",
