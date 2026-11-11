@@ -132,11 +132,12 @@ def test_notification_only_nested_action_families_are_removed() -> None:
         response = client.post(path, headers=OPERATOR_HEADERS)
         assert response.status_code in {404, 405}, (path, response.text)
 
-    # Persona lifecycle aliases are live; other persona actions stay deprecated.
+    # Persona lifecycle aliases are live; other persona actions are unknown (404).
     resp = client.post("/bff/personas/persona-1/actions/archive", headers=OPERATOR_HEADERS)
-    assert resp.status_code == 410
-    assert resp.json()["error"]["code"] == "ACTION_RETIRED"
-    assert resp.json()["error"]["details"]["replacement"] == "/bff/v1/commands"
+    assert resp.status_code == 404, resp.text
+    error = resp.json()["error"]
+    assert error["code"] == "RESOURCE_NOT_FOUND"
+    assert "replacement" not in (error.get("details") or {})
     assert "X-Deprecated" not in resp.headers
 
 

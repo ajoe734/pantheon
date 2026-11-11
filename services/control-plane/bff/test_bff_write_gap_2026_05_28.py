@@ -1173,8 +1173,8 @@ def test_post_bff_confirm_by_token_valid_returns_202_and_publishes_audit() -> No
 # actual JWTs, real confirmation records, mounted entry points and owner readback.
 
 
-def test_advance_lifecycle_unregistered_action_id_still_returns_410() -> None:
-    """Other action_ids not yet registered still return 410 with replacement hint."""
+def test_advance_lifecycle_unregistered_action_id_returns_404() -> None:
+    """Unknown persona action ids return the 404 envelope with no replacement hint."""
     with _stub_auth():
         client = _client()
         response = client.post(
@@ -1185,14 +1185,12 @@ def test_advance_lifecycle_unregistered_action_id_still_returns_410() -> None:
                 "Idempotency-Key": _idempotency_key(),
             },
         )
-    assert response.status_code == 410, response.text
+    assert response.status_code == 404, response.text
     body = response.json()
-    detail = body.get("detail") or {}
+    detail = body.get("detail") or body
     error = detail.get("error") or {}
-    details = error.get("details") or {}
-    assert details.get("replacement"), (
-        f"410 response missing details.replacement: {body}"
-    )
+    assert error.get("code") == "RESOURCE_NOT_FOUND", body
+    assert "replacement" not in (error.get("details") or {}), body
 
 
 # ---------------------------------------------------------------------------
