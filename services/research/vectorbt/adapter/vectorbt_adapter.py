@@ -699,6 +699,20 @@ def _is_undated_aligned_observation(obs: Any) -> bool:
     return False
 
 
+def _slice_aligned_feature(value: Any, total_len: int, start: int, end: int) -> Any:
+    """Slice index-aligned undated series (recursing into nested dataset.field mappings)."""
+    if (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes))
+        and len(value) == total_len
+        and all(_is_undated_aligned_observation(x) for x in value)
+    ):
+        return list(value[start:end])
+    if isinstance(value, Mapping):
+        return {k: _slice_aligned_feature(v, total_len, start, end) for k, v in value.items()}
+    return value
+
+
 def _bar_features_for_index(
     dataset: PreparedVectorbtDataset,
     instrument: str,
@@ -718,15 +732,7 @@ def _bar_features_for_index(
     for fk, fv in inst_features.items():
         if fk in {"open", "high", "low", "close", "volume"}:
             continue
-        if (
-            isinstance(fv, Sequence)
-            and not isinstance(fv, (str, bytes))
-            and len(fv) == total_len
-            and all(_is_undated_aligned_observation(x) for x in fv)
-        ):
-            bar_features[fk] = list(fv[: index + 1])
-        else:
-            bar_features[fk] = fv
+        bar_features[fk] = _slice_aligned_feature(fv, total_len, 0, index + 1)
 
     dates = dataset.dates_by_instrument.get(instrument)
     decision_time = dates[index] if dates and index < len(dates) else None
@@ -1070,15 +1076,7 @@ def _slice_prepared_dataset(
         for fk, fv in raw_inst_features.items():
             if fk in {"open", "high", "low", "close", "volume"}:
                 continue
-            if (
-                isinstance(fv, Sequence)
-                and not isinstance(fv, (str, bytes))
-                and len(fv) == total_len
-                and all(_is_undated_aligned_observation(x) for x in fv)
-            ):
-                inst_features[fk] = list(fv[start_idx:end_idx])
-            else:
-                inst_features[fk] = fv
+            inst_features[fk] = _slice_aligned_feature(fv, total_len, start_idx, end_idx)
         features_by_inst[inst] = inst_features
 
     return PreparedVectorbtDataset(
