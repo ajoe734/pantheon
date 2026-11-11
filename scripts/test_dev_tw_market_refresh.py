@@ -49,6 +49,30 @@ def test_workflow_triggers():
     assert force_input.get("default") is False, f"force default must be false, got {force_input}"
 
 
+def test_finmind_refresh_skipped_before_broker_publication_crons():
+    data = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = data["jobs"]["refresh"]["steps"]
+    fm = next(s for s in steps if s.get("id") == "finmind_refresh")
+    cond = str(fm.get("if") or "")
+
+    def runs(schedule):
+        # Evaluate the simple `!=` / `&&` condition for a given schedule value.
+        expr = cond.replace("${{", "").replace("}}", "").strip()
+        parts = [p.strip() for p in expr.split("&&")]
+        for part in parts:
+            m = re.fullmatch(r"github\.event\.schedule != '([^']+)'", part)
+            assert m, f"unexpected condition term: {part}"
+            if schedule == m.group(1):
+                return False
+        return True
+
+    assert not runs("0 7 * * 1-5")
+    assert not runs("0 8 * * 1-5")
+    assert runs("30 10 * * 1-5")
+    assert runs("30 12 * * 1-5")
+    assert runs(None)  # workflow_dispatch
+
+
 def test_workflow_strict_absence_of_hardcoded_ips_and_fallbacks():
     content = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "34.81.52.222" not in content, "Workflow must not contain hardcoded IP 34.81.52.222"
@@ -2170,7 +2194,10 @@ def test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_conne
     twse_idx, twse_step = by_id["refresh"]
     taifex_idx, taifex_step = by_id["taifex_refresh"]
     assert taifex_idx < twse_idx, "TAIFEX contract refresh must run before TWSE market refresh"
-    assert twse_step.get("if") in (None, ""), "TWSE market refresh must never be prevented by a TAIFEX failure"
+    twse_if = twse_step.get("if") or ""
+    # Only the post-publication FinMind polling crons may skip TWSE; never a prior-step outcome.
+    assert "steps." not in twse_if and "failure()" not in twse_if, "TWSE market refresh must never be prevented by a TAIFEX failure"
+    assert not twse_if or "github.event.schedule" in twse_if
 
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
@@ -2188,7 +2215,7 @@ def test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_conne
     stop_step = next(s for s in steps if s.get("name") == "Stop heartbeat and release lease")
     assert stop_step["env"]["REFRESH_OUTCOME"] == "${{ steps.refresh.outcome }}"
     assert stop_step["env"]["TAIFEX_REFRESH_OUTCOME"] == "${{ steps.taifex_refresh.outcome }}"
-    assert '"${REFRESH_OUTCOME}" == "success" && "${TAIFEX_REFRESH_OUTCOME}" == "success"' in stop_step["run"]
+    assert '"${REFRESH_OUTCOME}" =~ ^(success|skipped)$ && "${TAIFEX_REFRESH_OUTCOME}" =~ ^(success|skipped)$' in stop_step["run"]
 
 
 def test_refresh_entrypoint_taifex_connector_runs_bounded_pull_and_restores_egress_deny(tmp_path: Path):
@@ -2713,3 +2740,82 @@ def test_refresh_entrypoint_taifex_non_blocking_failure_continues_and_records_re
         cwd=str(ROOT),
     )
     assert proc_twse.returncode != 0, "TWSE refresh failure must remain fail-closed"
+
+
+def test_workflow_finmind_broker_refresh_is_bounded_nonblocking_and_secret_safe():
+    data = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = data["jobs"]["refresh"]["steps"]
+    step = next(s for s in steps if s.get("id") == "finmind_refresh")
+    assert step.get("continue-on-error") is True
+    assert step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-finmind-broker-daily-report"
+    assert step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "api.finmindtrade.com,storage.googleapis.com"
+    assert step["env"]["FINMIND_API_TOKEN"] == "${{ secrets.FINMIND_API_TOKEN }}"
+    assert "--allowed-hosts api.finmindtrade.com,storage.googleapis.com" in step["run"]
+    assert "missing_credential" in step["run"]
+    assert "${#FINMIND_API_TOKEN}" in step["run"]
+    assert 'echo "${FINMIND_API_TOKEN}"' not in step["run"]
+    twse_idx = next(i for i, s in enumerate(steps) if s.get("id") == "refresh")
+    assert steps.index(step) < twse_idx
+
+
+def test_finmind_token_flows_through_compose_and_deploy_script():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert compose.count("FINMIND_API_TOKEN: ${FINMIND_API_TOKEN:-}") == 2
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    assert 'FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")' in script
+    deploy_wf = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    assert "FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}" in deploy_wf
+
+
+@pytest.mark.parametrize(
+    "bad_hosts",
+    ["api.finmindtrade.com", "storage.googleapis.com", "api.finmindtrade.com,storage.googleapis.com,openapi.twse.com.tw"],
+)
+def test_refresh_entrypoint_finmind_rejects_wrong_hosts(tmp_path: Path, bad_hosts: str):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, _s, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force",
+         "--connector-id", "tw-finmind-broker-daily-report", "--allowed-hosts", bad_hosts,
+         "--dataset", "tw_broker_top", "--output", str(output_file)],
+        env=test_env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert proc.returncode != 0
+    assert "unsupported bounded source refresh connector" not in proc.stderr + proc.stdout
+    events = [json.loads(l) for l in events_file.read_text().splitlines() if l] if events_file.exists() else []
+    assert not any(e.get("event") == "compose_up" and e.get("env", {}).get("PANTHEON_EXTERNAL_EGRESS") == "allowlist" for e in events)
+
+
+def test_finmind_token_reaches_both_remote_prefixes_and_bounded_compose_env():
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    refresh_part, normal_part = script.split('    command_prefix+=" bash -s"\n  else\n', 1)
+    assert 'FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")' in refresh_part
+    assert 'FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")' in normal_part.split("assert_", 1)[0][:6000]
+    # The supplied secret overrides a stale/empty recorded container value for the bounded window.
+    assert 'env["FINMIND_API_TOKEN"] = finmind_token' in script
+
+
+def test_finmind_dataset_is_tw_broker_top_everywhere():
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    wf = (ROOT / ".github/workflows/dev-tw-market-refresh.yml").read_text(encoding="utf-8")
+    assert "tw_broker_daily_report" not in script + wf
+    assert 'dataset != "tw_broker_top"' in script
+    assert "SOURCE_INGEST_BOUNDED_DATASET: tw_broker_top" in wf
+
+
+def test_finmind_prepare_and_missing_secret_paths_exist():
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    assert "FinMindTaiwanBrokerDailyReportAdapter(connector_id=connector_id)" in script
+    assert '=~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then\n    extra_bounded_env_args' in script
+    guard = script.index('== "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}"')
+    assert guard < script.index("resolve_bounded_source_refresh_active_symbols\n  preflight_output=")
+    assert '"skipped" "missing_credential"' in script[guard:guard + 600]

@@ -709,6 +709,7 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -1025,6 +1026,7 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -1305,6 +1307,7 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -1609,6 +1612,7 @@ jobs:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
           ENV: ""
@@ -1699,6 +1703,7 @@ jobs:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
           ENV: ""
@@ -2306,6 +2311,7 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -3060,6 +3066,7 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
@@ -3179,6 +3186,7 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -3292,6 +3300,7 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
@@ -3466,6 +3475,7 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}

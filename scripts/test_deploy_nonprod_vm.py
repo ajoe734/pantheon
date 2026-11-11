@@ -1927,6 +1927,7 @@ def _run_pinned_taiwan_preflight(
     connector_id: str | None = None,
     dataset: str | None = None,
     readback_connectors: list[dict[str, Any]] | None = None,
+    source_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the real preflight heredoc at a pinned clock against per-symbol stub snapshots."""
     import http.server
@@ -1970,6 +1971,13 @@ def _run_pinned_taiwan_preflight(
         "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
         "PANTHEON_REFRESH_PREFLIGHT_NOW": now_utc,
     }
+    import tempfile
+
+    records_file = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    records_file.write(json.dumps({"source_records": source_records or []}))
+    records_file.close()
+    if source_records is not None:
+        env["FINMIND_SOURCE_RECORDS_PATH"] = records_file.name
     env.pop("PANTHEON_DEV_PAPER_BASELINE_SYMBOL", None)
     env.pop("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", None)
     env.pop("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", None)
@@ -1991,6 +1999,7 @@ def _run_pinned_taiwan_preflight(
         )
     finally:
         server.shutdown()
+        Path(records_file.name).unlink(missing_ok=True)
     result = json.loads(proc.stdout)
     result["_requested"] = requested
     result["_requested_paths"] = requested_paths
@@ -2530,6 +2539,213 @@ def test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh() -> None:
     assert fresh_res["dataset"] == "taifex_ssf_contracts"
 
 
+def _finmind_batch_record(covered: list[str], missing: list[str], trade_date: str = "2026-11-06") -> dict[str, Any]:
+    return {
+        "connector_id": "tw-finmind-broker-daily-report",
+        "source_id": "finmind-broker-top:2330:x",
+        "metadata": {
+            "trade_date": trade_date,
+            "refresh_coverage": {
+                "status": "partial" if missing else "complete",
+                "trade_date": trade_date,
+                "requested_symbols": covered + missing,
+                "covered_symbols": covered,
+                "missing_symbols": missing,
+            },
+        },
+    }
+
+
+def test_finmind_preflight_partial_coverage_is_not_already_fresh_and_retries_missing() -> None:
+    fresh_twse = _stored_tw_snapshot("2026-11-06", "2026-11-06T07:10:00Z")
+    latest = {
+        "connector_id": "tw-finmind-broker-daily-report",
+        "freshness": {"last_success_at": "2026-11-06T07:20:00Z"},
+        "latest_source_record": {
+            "source_id": "finmind-broker-top:2330:x",
+            "status": "normalized",
+            "metadata": {"date": "2026-11-06", "trade_date": "2026-11-06", "dataset": "tw_broker_top"},
+            "provenance": {"dataset": "tw_broker_top"},
+        },
+    }
+    kwargs = dict(
+        snapshots={"2330.TW": fresh_twse, "2317.TW": fresh_twse},
+        symbols="2330.TW,2317.TW",
+        connector_id="tw-finmind-broker-daily-report",
+        dataset="tw_broker_top",
+        readback_connectors=[latest],
+    )
+    partial = _run_pinned_taiwan_preflight(
+        "2026-11-06T12:30:00Z", source_records=[_finmind_batch_record(["2330"], ["2317"])], **kwargs
+    )
+    assert (partial["status"], partial["reason"]) == ("proceed", "coverage_incomplete")
+    assert partial["missing_symbols"] == ["2317"]
+    split_batches = _run_pinned_taiwan_preflight(
+        "2026-11-06T12:30:00Z",
+        source_records=[_finmind_batch_record(["2330"], []), _finmind_batch_record(["2317"], [])],
+        **kwargs,
+    )
+    assert (split_batches["status"], split_batches["reason"]) == ("noop", "already_fresh")
+    stale_session = _run_pinned_taiwan_preflight(
+        "2026-11-06T12:30:00Z",
+        source_records=[_finmind_batch_record(["2330", "2317"], [], trade_date="2026-11-05")],
+        **kwargs,
+    )
+    assert stale_session["status"] == "proceed"
+
+
+def _run_finmind_verifier(covered_batches: list[tuple[list[str], list[str]]], tmp_path: Path, *, with_records: bool = True) -> subprocess.CompletedProcess[str]:
+    import http.server
+    import os
+    import threading
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    fn = script.split("verify_bounded_source_refresh_readback() {", 1)[1]
+    body = fn.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    connector = "tw-finmind-broker-daily-report"
+    receipts = [
+        {
+            "connector_id": connector, "status": "completed", "typed_failure": None,
+            "source_timestamp": "2026-11-06T07:00:00Z", "source_timestamp_status": "valid",
+            "finished_at": "2026-11-06T12:40:00Z", "ingest_run_id": "run-1",
+        }
+    ]
+    records = []
+    for cov, miss in covered_batches:
+        rec = _finmind_batch_record(cov, miss)
+        rec["provenance"] = {"source_ingest_run_id": "run-1", "dataset": "tw_broker_top"}
+        records.append(rec)
+    (tmp_path / "receipts.json").write_text(json.dumps({"receipts": receipts}))
+    (tmp_path / "readback.json").write_text(json.dumps({"connectors": [{
+        "connector_id": connector,
+        "freshness": {"latest_receipt": {"ingest_run_id": "run-1"}, "source_timestamp_status": "valid", "status": "fresh"},
+        "latest_source_record": {"source_id": "s1", "provenance": {"source_ingest_run_id": "run-1", "dataset": "tw_broker_top"},
+                                  "metadata": {"dataset": "tw_broker_top"}},
+    }]}))
+    (tmp_path / "agora.json").write_text("{}")
+
+    (tmp_path / "records.json").write_text(json.dumps({"source_records": records}))
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    env.pop("FINMIND_SOURCE_RECORDS_PATH", None)
+    if with_records:
+        env["FINMIND_SOURCE_RECORDS_PATH"] = str(tmp_path / "records.json")
+    return subprocess.run(
+        ["python3", "-c", f"import sys\nexec(compile({body!r}, 'verify', 'exec'))\n", connector,
+         "2026-11-06T12:00:00Z", str(tmp_path / "receipts.json"), str(tmp_path / "readback.json"),
+         str(tmp_path / "agora.json"), "2330.TW,2317.TW", "tw_broker_top"],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+    )
+
+
+def test_finmind_readback_rejects_partial_coverage_and_accepts_union_of_batches(tmp_path: Path) -> None:
+    partial = _run_finmind_verifier([(["2330"], ["2317"])], tmp_path)
+    assert partial.returncode != 0
+    assert "status=partial" in partial.stderr and "2317" in partial.stderr
+    complete = _run_finmind_verifier([(["2330"], []), (["2317"], [])], tmp_path)
+    assert complete.returncode == 0, complete.stderr
+    assert "bounded source refresh accepted" in complete.stdout
+
+
+def _prepare_finmind_dataset(symbol_count: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Run the real PREPARE_DATASET_PY against a stub API that applies the real config validator."""
+    import http.server
+    import os
+    import threading
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'PREPARE_DATASET_PY'\n", 1)[1].split("\nPREPARE_DATASET_PY", 1)[0]
+    posted: list[dict[str, Any]] = []
+    symbols = [str(1101 + i) + ".TW" for i in range(symbol_count)]
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _reply(self, payload: dict[str, Any], code: int = 200) -> None:
+            raw = json.dumps(payload).encode()
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self) -> None:
+            data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            posted.append({"path": self.path, **data})
+            if self.path.endswith("/active-universe/schedule"):
+                from services.source_ingestion.active_universe import build_active_universe_job_fanout
+
+                rules = [r for r in data["rules"]]
+                fanout = build_active_universe_job_fanout(data["members"], rules=rules, run_date=data["run_date"])
+                self._reply({**fanout, "enqueued": [{"connector_id": j["connector_id"], "job_parameters": j} for j in fanout["jobs"]]})
+                return
+            self._reply({})
+
+        do_PUT = do_POST
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", f"import sys\nexec(compile({body!r}, 'prepare', 'exec'))\n",
+             "tw-finmind-broker-daily-report", "tw_broker_top", ",".join(symbols)],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
+                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t"},
+            capture_output=True, text=True, check=False,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout), posted
+
+
+@pytest.mark.parametrize("symbol_count", [25, 26, 51])
+def test_finmind_prepare_bounds_batches_to_fetch_guard_without_truncation(symbol_count: int) -> None:
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore  # noqa: F401
+    import tempfile
+
+    _, posted = _prepare_finmind_dataset(symbol_count)
+    registration = next(item for item in posted if item["path"].endswith("/connectors"))
+    fetch = registration["fetch"]
+    assert 0 < fetch["max_records"] <= 1000
+    with tempfile.TemporaryDirectory() as tmp:
+        store = JsonlConfiguredConnectorStore(Path(tmp) / "connectors.jsonl")
+        store._validate_fetch_config(fetch)  # real validator: rejects > 1000
+    schedule = next(item for item in posted if item["path"].endswith("/active-universe/schedule"))
+    from services.source_ingestion.active_universe import build_active_universe_job_fanout
+
+    fanout = build_active_universe_job_fanout(schedule["members"], rules=schedule["rules"], run_date=schedule["run_date"])
+    jobs = fanout["jobs"]
+    assert len(jobs) == -(-symbol_count // 25)
+    assert all(len(job["symbols"]) * 40 <= fetch["max_records"] for job in jobs)
+    assert sorted(sym for job in jobs for sym in job["symbols"]) == sorted(m["symbol"] for m in schedule["members"])
+
+
+def test_finmind_prepared_connector_passes_real_reconciler_approval_gate(tmp_path: Path) -> None:
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+    from services.source_ingestion.connectors.base import SourceConnector
+    from services.source_ingestion.ingest_manager import IngestManager
+    from services.source_ingestion.persona_source_reconciler import SourceProvisioningReconciler
+
+    desired, posted = _prepare_finmind_dataset(3)
+    registration = next(item for item in posted if item["path"].endswith("/connectors"))
+    connector_payload = registration.get("connector") or {k: v for k, v in registration.items() if k not in {"path", "fetch"}}
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    store.upsert_config(SourceConnector.from_dict(connector_payload), registration["fetch"])
+    reconciler = SourceProvisioningReconciler(
+        manager=IngestManager(),
+        connector_store=store,
+        schedule_store=JsonlConnectorScheduleStore(tmp_path / "schedule.jsonl"),
+    )
+    assert "tw-finmind-broker-daily-report" not in reconciler.provider_factories
+    for persona in desired["personas"]:
+        result = reconciler.reconcile_persona(persona)
+        for action in result.actions:
+            if action.connector_id == "tw-finmind-broker-daily-report":
+                assert action.status != "conflict", action
+                assert "require_connector_approved" not in (getattr(action, "failed_policy_gates", None) or ())
+
+
 def test_nonprod_deploy_workflow_dev_paper_expression_layer_default_and_steps() -> None:
     deploy_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8"))
     expected_expr = "${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}"
@@ -3022,7 +3238,7 @@ def test_workflows_pass_collector_host_and_token_names() -> None:
     )
     refresh = _collector_env_steps("dev-tw-market-refresh.yml")
     bounded = [
-        (n, e) for n, e in refresh if n.startswith("Execute bounded")
+        (n, e) for n, e in refresh if n.startswith("Execute bounded") and "FinMind" not in n
     ]
     assert len(bounded) == 2
     for name, env in bounded:
@@ -3128,3 +3344,118 @@ def test_bounded_refresh_failure_outcome_with_log_is_recorded_for_every_connecto
     # The failed outcome (carrying the captured redacted log) is no longer gated on TAIFEX/non-blocking,
     # so a failed Taiwan refresh keeps its own logs in the requested output file.
     assert body.count('write_bounded_refresh_outcome "failed" "${fail_reason}" || true') == 2
+
+
+def test_deploy_script_forwards_finmind_token_without_echo() -> None:
+    text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
+    assert text.count('FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")') == 2
+    assert not re.search(r"(echo|info|printf)[^\n]*FINMIND_API_TOKEN", text)
+
+
+def test_finmind_bounded_refresh_covers_all_batches_and_sizes_max_records() -> None:
+    text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
+    assert 'for job in (fanout.get("jobs") or [])' in text
+    assert '"max_records": per_job_budget' in text
+    assert "did not cover full FinMind universe" in text
+
+
+def test_finmind_refresh_workflow_polls_after_18_taipei_publication() -> None:
+    wf = (_COLLECTOR_ENV_REPO / ".github/workflows/dev-tw-market-refresh.yml").read_text()
+    assert "'30 10 * * 1-5'" in wf and "'30 12 * * 1-5'" in wf
+    assert "'0 7 * * 1-5'" in wf and "'0 8 * * 1-5'" in wf
+
+
+def test_finmind_coverage_readback_fails_closed_without_authenticated_records(tmp_path: Path) -> None:
+    missing = _run_finmind_verifier([(["2330"], []), (["2317"], [])], tmp_path, with_records=False)
+    assert missing.returncode != 0
+    assert "FinMind coverage readback failed" in missing.stderr
+
+
+def test_finmind_coverage_readback_passes_the_real_strict_auth_boundary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The in-container fetcher must authenticate against the production _source_read_tenant guard."""
+    import http.server
+    import os
+    import threading
+
+    from fastapi import HTTPException
+
+    from services.source_ingestion.routers.ingest_operations import _source_read_tenant
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'FINMIND_RECORDS_PY' || return 1\n", 1)[1].split("\nFINMIND_RECORDS_PY", 1)[0]
+    auth_env = {
+        "PANTHEON_RUNTIME_JWT_SECRET": "s" * 40,
+        "PANTHEON_RUNTIME_JWT_ISSUER": "pantheon-dev",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": "bff-operators",
+        "PANTHEON_TENANT_ID": "tenant-dev",
+    }
+    for key, value in auth_env.items():
+        monkeypatch.setenv(key, value)
+    seen: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            try:
+                tenant = _source_read_tenant(self.headers.get("Authorization"), self.headers.get("X-Tenant-Id"))
+                raw, code = json.dumps({"source_records": [{"tenant": tenant}]}).encode(), 200
+            except HTTPException as exc:
+                raw, code = json.dumps({"detail": exc.detail}).encode(), exc.status_code
+            seen.append(str(code))
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        import urllib.error
+        import urllib.request
+
+        with pytest.raises(urllib.error.HTTPError) as unauth:
+            urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/api/source-ingest/source-records")
+        assert unauth.value.code == 401
+        proc = subprocess.run(
+            ["python3", "-c", f"exec(compile({body!r}, 'fetch', 'exec'))"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "PORT": str(server.server_port)},
+            capture_output=True, text=True, check=False,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {"source_records": [{"tenant": "tenant-dev"}]}
+    assert seen[-1] == "200"
+    assert "eyJ" not in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("symbols", "batches", "concurrency", "ticks"),
+    [(25, 1, 1, 1), (26, 2, 2, 1), (51, 3, 2, 2), (100, 4, 2, 2), (101, 5, 2, 3), (1200, 48, 2, 24)],
+)
+def test_finmind_bounded_refresh_sizes_controller_to_drain_every_batch(symbols: int, batches: int, concurrency: int, ticks: int) -> None:
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    start = script.index("  local bounded_max_ticks=1 bounded_concurrency=1")
+    end = script.index("  # A ten second interval keeps the one-shot lease")
+    snippet = script[start:end]
+    symbol_csv = ",".join(f"{1000 + i}.TW" for i in range(symbols))
+    proc = subprocess.run(
+        ["bash", "-c", "info(){ :; }; error(){ echo \"$*\" >&2; exit 9; }; cid=x; docker(){ echo 2; }\n"
+         f"SOURCE_INGEST_BOUNDED_CONNECTOR_ID=tw-finmind-broker-daily-report SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS={symbol_csv}\n"
+         f"f(){{\n{snippet}\necho $bounded_concurrency $bounded_max_ticks\n}}\nf"],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.split() == [str(concurrency), str(ticks)]
+    assert concurrency <= 2  # real source-ingest API cap (Compose default)
+    assert concurrency * ticks >= batches
+
+
+def test_source_ingest_compose_env_supplies_tenant_for_finmind_readback() -> None:
+    import yaml
+
+    env = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))["services"]["source-ingest"]["environment"]
+    assert env["PANTHEON_TENANT_ID"].startswith("${PANTHEON_TENANT_ID:-")

@@ -502,3 +502,103 @@ def test_fetch_plan_symbols_are_uppercased() -> None:
 def test_fetch_plan_empty_tiers_produce_no_specs() -> None:
     plan = build_finmind_fetch_plan({}, "2026-06-08")
     assert plan == []
+
+
+# ---------------------------------------------------------------------------
+# Daily refresh: no-payload scheduler request fetches live per active symbol
+# ---------------------------------------------------------------------------
+
+_BROKER_TOKEN_PATH = "services.source_ingestion.connectors.finmind_taiwan.open_external_url"
+
+
+def _broker_refresh(request: dict):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    adapter = FinMindTaiwanBrokerDailyReportAdapter()
+    return execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={**adapter.fetch_config(), "request": request},
+        trace_id="trace-refresh",
+    )
+
+
+def test_broker_refresh_without_payload_fetches_per_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FINMIND_API_TOKEN", "valid-token")
+    with patch(_BROKER_TOKEN_PATH, side_effect=lambda *a, **k: _mock_http_response(BROKER_DAILY_REPORT_PAYLOAD)) as opened:
+        records = _broker_refresh({"symbols": ["2330"], "run_date": "2026-06-08"})
+    assert opened.call_count == 1
+    assert records and records[0].metadata["dataset"] == "tw_broker_top"
+    assert records[0].metadata["redistribution_allowed"] is False
+    assert records[0].metadata["event_time"] and records[0].metadata["available_time"]
+    assert "valid-token" not in json.dumps([r.metadata for r in records], default=str)
+
+
+def test_broker_refresh_missing_credential_makes_no_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FINMIND_API_TOKEN", raising=False)
+    with patch(_BROKER_TOKEN_PATH) as opened:
+        with pytest.raises(FinMindCredentialError):
+            _broker_refresh({"symbols": ["2330"], "run_date": "2026-06-08"})
+    opened.assert_not_called()
+
+
+def test_broker_refresh_upstream_failure_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    monkeypatch.setenv("FINMIND_API_TOKEN", "valid-token")
+    err = urllib.error.HTTPError("https://api.finmindtrade.com/x", 500, "boom", http.client.HTTPMessage(), None)
+    with patch(_BROKER_TOKEN_PATH, side_effect=err):
+        with pytest.raises(SourceEvidenceError):
+            _broker_refresh({"symbols": ["2330"], "run_date": "2026-06-08"})
+
+
+def test_broker_refresh_malformed_or_empty_payload_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    monkeypatch.setenv("FINMIND_API_TOKEN", "valid-token")
+    with patch(_BROKER_TOKEN_PATH, return_value=_mock_http_response({"msg": "success", "status": 200, "data": []})):
+        with pytest.raises((SourceEvidenceError, FinMindFetchError, ValueError)):
+            _broker_refresh({"symbols": ["2330"], "run_date": "2026-06-08"})
+
+
+def test_broker_refresh_requires_symbols_and_bounds_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    monkeypatch.setenv("FINMIND_API_TOKEN", "valid-token")
+    with patch(_BROKER_TOKEN_PATH) as opened:
+        with pytest.raises(SourceEvidenceError):
+            _broker_refresh({"run_date": "2026-06-08"})
+        with pytest.raises(SourceEvidenceError):
+            _broker_refresh({"symbols": [str(1000 + i) for i in range(201)], "run_date": "2026-06-08"})
+    opened.assert_not_called()
+
+
+def test_broker_refresh_normalizes_resolver_suffixes_to_bare_codes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FINMIND_API_TOKEN", "valid-token")
+    seen: list[str] = []
+
+    def fake_fetch(self, symbol, date):
+        seen.append(symbol)
+        return BROKER_DAILY_REPORT_PAYLOAD, {"request_url": f"https://api.finmindtrade.com/x?data_id={symbol}"}
+
+    with patch.object(FinMindLiveFetcher, "fetch_broker_report", fake_fetch):
+        _broker_refresh({"symbols": ["2330.TW", "2330", "2317.TWSE", "6488.TWO"], "run_date": "2026-06-08"})
+    assert seen == ["2330", "2317", "6488"]
+
+
+def test_broker_refresh_marks_partial_coverage_per_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    monkeypatch.setenv("FINMIND_API_TOKEN", "valid-token")
+
+    def fake_fetch(self, symbol, date):
+        payload = BROKER_DAILY_REPORT_PAYLOAD if symbol == "2330" else {"msg": "success", "status": 200, "data": []}
+        return payload, {"request_url": "https://api.finmindtrade.com/x"}
+
+    with patch.object(FinMindLiveFetcher, "fetch_broker_report", fake_fetch):
+        records = _broker_refresh({"symbols": ["2330.TW", "2317.TW"], "run_date": "2026-06-08"})
+        coverage = records[0].metadata["refresh_coverage"]
+        assert coverage["status"] == "partial"
+        assert coverage["missing_symbols"] == ["2317"]
+        assert coverage["covered_symbols"] == ["2330"]
+        with pytest.raises(SourceEvidenceError):
+            _broker_refresh({"symbols": ["2317.TW"], "run_date": "2026-06-08"})
