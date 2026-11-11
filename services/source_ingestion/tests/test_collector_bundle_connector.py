@@ -501,29 +501,43 @@ def test_raw_only_bundle_larger_than_cap_makes_bounded_progress_across_bundles(t
     assert cursor == "2026-11-10T03:05:00Z#cap-b"
 
 
-def test_public_cap_below_bundle_size_macro_progresses_across_bundles_and_fresh_adapters(tmp_path, monkeypatch):
+def _public_sweep(config, fetch_extra, tmp_path, monkeypatch, files, rounds=40):
     from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
 
-    files, _ = _two_bundles("collector-tw-macro-ndc", macro=True)
     monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
     monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
-    config = {"source_id": "collector-tw-macro-ndc", "source_type": "macro", "dataset": "tw_macro_series",
-              "platform": "ndc"}
-    # Bundle A already consumed: the later two-item bundle B must still progress under cap 1.
-    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config,
-             "request": {"cursor": "2026-11-10T02:05:00Z#cap-a"}, "max_records": 1}
-    emitted, raw = [], 0
-    for _ in range(40):
-        adapter = CollectorBundleAdapter(connector_id="conn-capx", **config)
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {},
+             "max_records": 1, **fetch_extra}
+    derived, raw = [], set()
+    for _ in range(rounds):
+        adapter = CollectorBundleAdapter(connector_id="conn-capx", **config)  # fresh adapter every call
         records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
         assert len(records) <= 1
         for r in records:
             if r.content_ref.startswith("collector-feature://"):
                 nr = r.metadata["normalized_row"]
-                emitted.append((nr["field"], nr["event_time"]))
+                derived.append((nr["field"], nr["event_time"]))
             else:
-                raw += 1
-    assert raw >= 1, "raw evidence starved behind a bundle larger than the public cap"
-    assert len(emitted) == len(set(emitted)), "derived observation duplicated"
-    assert {f for f, _ in emitted} == {"monitoring_score", "leading_index", "coincident_index"}
-    assert len(emitted) == 3 and all(day.startswith("2026-07") for _, day in emitted[:1])
+                raw.add(r.metadata["raw_uri"])
+    return derived, raw
+
+
+def test_public_cap_below_bundle_size_macro_progresses_across_bundles_and_fresh_adapters(tmp_path, monkeypatch):
+    files, _ = _two_bundles("collector-tw-macro-ndc", macro=True)
+    config = {"source_id": "collector-tw-macro-ndc", "source_type": "macro", "dataset": "tw_macro_series",
+              "platform": "ndc"}
+    derived, raw = _public_sweep(config, {}, tmp_path, monkeypatch, files)
+    assert len(derived) == len(set(derived)), "derived observation duplicated"
+    assert len(set(derived)) == 12, "every item of every bundle must yield its derived rows"
+    assert {f for f, _ in derived} == {"monitoring_score", "leading_index", "coincident_index"}
+    assert len(raw) == 4, "raw evidence starved behind a bundle larger than the public cap"
+    manifests = list((tmp_path / "raw_store" / "raw").rglob("manifest.json"))
+    assert len(manifests) == 2
+
+
+def test_public_cap_raw_only_reaches_every_item_and_bundle_across_fresh_adapters(tmp_path, monkeypatch):
+    files, _ = _two_bundles("collector-x")
+    config = {"source_id": "collector-x", "source_type": "news", "publisher": "cna"}
+    _, raw = _public_sweep(config, {}, tmp_path, monkeypatch, files, rounds=12)
+    assert len(raw) == 4
+    assert len(list((tmp_path / "raw_store" / "raw").rglob("manifest.json"))) == 2

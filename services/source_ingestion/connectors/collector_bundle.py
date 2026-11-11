@@ -169,6 +169,7 @@ class CollectorPullResult:
     paused_reasons: tuple[str, ...] = ()
     observed: Mapping[str, Any] = field(default_factory=dict)
     feature_rejected: tuple[Mapping[str, str], ...] = ()
+    complete: bool = True  # False: the output cap left raw items / derived rows for a later pull
 
 
 def _cursor_key(finished_at: datetime, run_id: str) -> str:
@@ -533,6 +534,8 @@ class CollectorBundleAdapter:
         observed = observed_from_collector_status(
             self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self.cadence_seconds
         )
+        pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
+        complete = (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
         return CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
@@ -540,7 +543,38 @@ class CollectorBundleAdapter:
             paused_reasons=tuple(paused),
             observed=observed,
             feature_rejected=feature_rejected,
+            complete=complete,
         )
+
+    # -- durable resume cursor (capped public pulls) -------------------------------
+    def _resume_cursor_path(self) -> Path:
+        return self._raw_root() / "state" / _slug(self.connector_id) / "resume_cursor.json"
+
+    def load_resume_cursor(self) -> str | None:
+        path = self._resume_cursor_path()
+        if not path.is_file():
+            return None
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        value = doc.get("cursor") if isinstance(doc, dict) and doc.get("source_id") == self.source_id else None
+        return str(value) if value else None
+
+    def save_resume_cursor(self, result: CollectorPullResult) -> None:
+        """Persist partial progress so a capped pull resumes instead of re-returning the head.
+
+        Cleared once a pull reaches the end, so a finished sweep replays from scratch exactly
+        like an un-cursored pull (idempotent downstream).
+        """
+        path = self._resume_cursor_path()
+        if result.complete or not result.next_cursor:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps({"source_id": self.source_id, "cursor": result.next_cursor}), encoding="utf-8")
+        os.replace(tmp, path)
 
     # -- mapping ---------------------------------------------------------------
     def _record(self, bundle: VerifiedBundle, row: Mapping[str, Any], *, trace_id: str) -> SourceRecord:
