@@ -18,17 +18,19 @@
       ],
       "live_pull": "not executed from this worktree (no egress/storage run); verified with fixture payloads",
       "review_fix": "Rework 20261111: provider path fetches both statement endpoints; test_provider_entrypoint_fetches_and_joins_income_and_balance_statements uses no prewrapped payload",
+      "review_fix_rework_3": "tw-twse-tpex-official-market definition, config schema and financial catalog entry/template now declare tw_monthly_revenue, tw_financial_statement, tw_valuation_bwibbu; test_governed_fundamentals_are_creatable_through_management_and_stored drives SourceCommandEngine create -> provider fetch -> MarketDataStorageWriter -> measure_stored_history_depth for each.",
+      "review_fix_rework_4": "_records_from_normalized_rows stamps tw_margin_short_balance and tw_institutional_flow rows with event_time, offset-aware available_time (catalogue lag, 18:00 Asia/Taipei), ingest_time, availability_lag_days; test_daily_flow_pull_to_storage_to_training_carries_governed_times covers pull->storage->authority for both.",
       "status": "implemented_unit_verified",
-      "times": "event_time, available_time (declared-lag deadline at 18:00 Asia/Taipei), ingest_time, availability_lag_days on every row",
-      "review_fix_rework_3": "tw-twse-tpex-official-market definition, config schema and financial catalog entry/template now declare tw_monthly_revenue, tw_financial_statement, tw_valuation_bwibbu; test_governed_fundamentals_are_creatable_through_management_and_stored drives SourceCommandEngine create -> provider fetch -> MarketDataStorageWriter -> measure_stored_history_depth for each."
+      "times": "event_time, available_time (declared-lag deadline at 18:00 Asia/Taipei), ingest_time, availability_lag_days on every row"
     },
     "2_macro_and_community": {
       "community": "community_daily_feature_rows (post_volume, attention_zscore, bull_bear_ratio; available after Taipei day close)",
       "macro": "macro_feature_rows (CBC/NDC/DGBAS series via collector bundles, unknown series rejected)",
       "review_fix": "Rework 20261111: CollectorBundleAdapter.pull emits governed macro/community records (macro by source_type, community by social source_type) through provider_adapters._collector_bundle; test_collector_definition_pull_to_storage_to_training_authority covers real definition datasets pull -> storage -> authority; test_storage_manifest_keeps_tw_price_daily_on_ohlcv_path covers OHLCV",
+      "review_fix_rework_3": "Collector definitions now declare derived tw_community_daily/tw_macro_series with normalized_datasets/feature_targets/raw_only_datasets routing; original collector_* items are raw-only (no feature rows, never parsed as OHLCV). test_unfiltered_collector_pull_materializes_through_source_authority runs the unfiltered pull -> storage -> materialize_source_dataset_version for social and macro.",
+      "review_fix_rework_4": "CollectorBundleAdapter.pull loads prior daily counts from stored normalized tw_community_daily rows (stored_community_daily_counts) so incremental pulls compute attention_zscore; test_incremental_community_pulls_use_persisted_history reproduces seven daily pulls -> 2.04939015319192.",
       "status": "implemented_unit_verified",
-      "training_path": "services/training-session/source_dataset_authority.py::feature_observations_from_wrappers (tw_price_daily stays on the OHLCV path)",
-      "review_fix_rework_3": "Collector definitions now declare derived tw_community_daily/tw_macro_series with normalized_datasets/feature_targets/raw_only_datasets routing; original collector_* items are raw-only (no feature rows, never parsed as OHLCV). test_unfiltered_collector_pull_materializes_through_source_authority runs the unfiltered pull -> storage -> materialize_source_dataset_version for social and macro."
+      "training_path": "services/training-session/source_dataset_authority.py::feature_observations_from_wrappers (tw_price_daily stays on the OHLCV path)"
     },
     "3_feature_catalogue": {
       "catalogue": "services/source_ingestion/feature_catalogue.py",
@@ -38,9 +40,9 @@
       "evaluator": "factor_rule lag floors pinned to catalogue by test_factor_rule_catalogue_lags_match_source_ingestion_catalogue",
       "field_count": 38,
       "paper_producer": "paper_signal_producer rejects factor-rule inputs outside the catalogue (feature_not_in_catalogue)",
+      "review_fix_rework_3": "evaluate_factor_rule_view (shared by research/vectorbt and paper) now calls assert_governed_feature_inputs/observations; timestamp-free non-price features and uncatalogued datasets are rejected, price built-ins retained (tests in services/registry/test_factor_rule.py).",
       "schema": "docs/contracts/feature_catalogue.v1.schema.json",
-      "status": "implemented_unit_verified",
-      "review_fix_rework_3": "evaluate_factor_rule_view (shared by research/vectorbt and paper) now calls assert_governed_feature_inputs/observations; timestamp-free non-price features and uncatalogued datasets are rejected, price built-ins retained (tests in services/registry/test_factor_rule.py)."
+      "status": "implemented_unit_verified"
     },
     "4_history_depth": {
       "fixture_demonstration": {
