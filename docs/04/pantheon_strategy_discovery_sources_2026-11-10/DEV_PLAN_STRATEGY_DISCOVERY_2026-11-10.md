@@ -189,12 +189,12 @@ Intraday minute-bar track (design: `SD_INTRADAY_MINUTE_BARS_2026-11-11.md`; ids 
 | # | Task id | Depends on | Scope |
 | --- | --- | --- | --- |
 | K1 | `INTRADAY-KBAR-CONNECTOR` | `FINMIND-BROKER-BRANCH-ENABLE-20261111` | `TaiwanStockKBar` → `tw_price_1m` connector |
-| K2 | `INTRADAY-1M-STORE-BACKFILL` | K1 | partitioned store, 2-year backfill at ≤ 4,500 req/h, disk guard, retention |
+| K2 | `INTRADAY-1M-STORE-BACKFILL` | K1 | partitioned store, 2-year backfill at ≤ 4,500 req/h, disk guard, retention; `tw_price_1m` excluded from `persist_latest_market_snapshots` |
 | K3 | `INTRADAY-DAILY-RECONCILE` | K2 | per symbol/day aggregate vs official OHLCV; quarantine, never fix |
-| K4 | `INTRADAY-FEATURE-AGGREGATION` | K3 | 5/15/30/60m governed datasets, frequency→dataset loader, allowed `bar_frequency` set |
+| K4 | `INTRADAY-FEATURE-AGGREGATION` | K3 | 5/15/30/60m governed datasets, frequency→dataset loader, allowed `bar_frequency` set, frequency-isolated latest-snapshot store/route |
 | K5 | `INTRADAY-BACKTEST-ENGINE` | K4 | bar-keyed backtest, next-bar-open fills, intraday IC horizons |
 | K6 | `INTRADAY-REPLICATION-GATE` | K5, C2 | session/trade-count thresholds |
-| K7 | `INTRADAY-PAPER-EXECUTION-GRADING` | K4, K5 | closed-bar admission, intraday grading, session window |
+| K7 | `INTRADAY-PAPER-EXECUTION-GRADING` | K4, K5 | availability-gated admission (KBar is post-close ≈15:50: next-session paper; live intraday `unavailable` without an authorised feed), intraday grading |
 | K8 | `INTRADAY-EVOLUTION-SEARCH` | K6, K7, D1 | frequency immutable; trial counting |
 | W5 | `INTRADAY-HOSTED-ACCEPTANCE` | K2, K3, K6, K7 | Human/Ops → Claude: hosted proof |
 
