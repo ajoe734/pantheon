@@ -70,5 +70,12 @@
       "test_revalidation_worker: absent inputs, wrong dataset, wrong checksum, no cache"
     ],
     "validation": "pytest alpha_replication + replication + registry/promotion + loop_closure_r2 with vectorbt 1.2.0: all passed; smoke_test 5/5"
+  },
+  "review_fix_pit_coverage_20261111": {
+    "fix": "_measure_pit_history now measures non-null dated feature coverage per required instrument/input (series or per-record values); a feature present on only a few rows no longer inherits the full OHLCV span; missing per-instrument series is recorded as missing (missing_instruments) -> insufficient_history.",
+    "regression_tests": [
+      "test_adapter.test_pit_history_feature_coverage_is_non_null_and_per_instrument (sparse last-10-rows feature; 2330 long + 2317 empty)"
+    ],
+    "validation": "unittest -k pit_history: 2 OK (pytest stubbed; pytest/vectorbt not installed in this env). Full test_adapter: 48 run, 2 errors only from 'vectorbt backend unavailable', 6 skipped. No full-suite pass claimed."
   }
 }

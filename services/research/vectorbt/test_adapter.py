@@ -857,6 +857,51 @@ class TestReplicationGateRealBacktestProtocol(unittest.TestCase):
         days, _bars, _d = _measure_pit_history(long_ok, artifact)
         self.assertGreaterEqual(days, 730)
 
+    def test_pit_history_feature_coverage_is_non_null_and_per_instrument(self) -> None:
+        from datetime import date, timedelta
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        start = date(2023, 1, 2)
+
+        def price_rows(inst: str):
+            return [
+                {
+                    "instrument": inst,
+                    "date": (start + timedelta(days=i)).isoformat(),
+                    "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0,
+                }
+                for i in range(760)
+            ]
+
+        # Feature present on only the last 10 rows must not inherit the full OHLCV span.
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        rows = price_rows("2330.TWSE")
+        for rec in rows[-10:]:
+            rec["rev_yoy"] = 1.0
+        days, bars, details = _measure_pit_history({"records": rows}, artifact)
+        self.assertLess(days, 730)
+        self.assertLessEqual(details["features"]["rev_yoy"]["observations"], 10)
+        self.assertLessEqual(bars, 10)
+
+        # Missing series for one required instrument must surface as insufficient.
+        artifact2 = _sample_factor_rule_artifact()
+        artifact2["parameters"]["symbols"] = ["2330.TW", "2317.TW"]
+        rows2 = price_rows("2330.TWSE") + price_rows("2317.TWSE")
+        long_series = [
+            {"event_time": (start + timedelta(days=30 * i)).isoformat(), "value": 1.0}
+            for i in range(30)
+        ]
+        dataset = {
+            "records": rows2,
+            "features_by_instrument": {"2330.TWSE": {"rev_yoy": long_series}, "2317.TWSE": {}},
+        }
+        days, bars, details = _measure_pit_history(dataset, artifact2)
+        self.assertEqual(days, 0)
+        self.assertTrue(details["features"]["rev_yoy"].get("missing"))
+        self.assertIn("2317", details["features"]["rev_yoy"]["missing_instruments"])
+
     def test_replication_backtest_protocol_insufficient_history_under_two_years(self) -> None:
         from adapter.vectorbt_adapter import (
             INSUFFICIENT_HISTORY_STATUS,

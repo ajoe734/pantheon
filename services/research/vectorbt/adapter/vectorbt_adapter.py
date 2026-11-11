@@ -1186,34 +1186,78 @@ def _measure_pit_history(
         }
         price_fields = set(BUILT_IN_PRICE_VOLUME_FIELDS) | {"open", "high", "low", "close", "volume"}
         raw_features = dataset.get("features_by_instrument") or dataset.get("features") or {}
-        record_extras: set[str] = set()
-        for rec in records:
-            if isinstance(rec, Mapping):
-                record_extras |= {str(k) for k in rec.keys()}
-                if isinstance(rec.get("features"), Mapping):
-                    record_extras |= {str(k) for k in rec["features"].keys()}
 
-        def _obs_days(series: Any) -> tuple[int, int | None]:
-            """Return (observations, calendar_days or None when bar-aligned/untimestamped)."""
-            n = len(series)
-            stamps: list[str] = []
-            for obs in series:
-                if isinstance(obs, Mapping):
-                    ts = obs.get("event_time") or obs.get("date") or obs.get("as_of") or obs.get("available_time")
-                elif isinstance(obs, (list, tuple)) and len(obs) == 2:
-                    ts = obs[0]
-                else:
-                    ts = None
-                ts = str(ts or "").strip()[:10]
-                if len(ts) == 10:
-                    stamps.append(ts)
-            if not stamps:
-                return n, None
-            stamps.sort()
+        def _present(value: Any) -> bool:
+            if value is None:
+                return False
+            if isinstance(value, float) and math.isnan(value):
+                return False
+            return True
+
+        def _obs_stamp(obs: Any) -> tuple[bool, str]:
+            """Return (non-null, YYYY-MM-DD stamp or '')."""
+            if isinstance(obs, Mapping):
+                ts = obs.get("event_time") or obs.get("date") or obs.get("as_of") or obs.get("available_time")
+                ok = _present(obs["value"]) if "value" in obs else True
+            elif isinstance(obs, (list, tuple)) and len(obs) == 2:
+                ts, ok = obs[0], _present(obs[1])
+            else:
+                ts, ok = None, _present(obs)
+            ts = str(ts or "").strip()[:10]
+            return ok, ts if len(ts) == 10 else ""
+
+        def _span(stamps: list[str]) -> int:
+            if len(stamps) < 2:
+                return 0
+            stamps = sorted(stamps)
             try:
-                return n, (_date.fromisoformat(stamps[-1]) - _date.fromisoformat(stamps[0])).days
+                return (_date.fromisoformat(stamps[-1]) - _date.fromisoformat(stamps[0])).days
             except ValueError:
-                return n, 0
+                return 0
+
+        def _norm_key(key: Any) -> str | None:
+            try:
+                return normalize_taiwan_symbol(str(key))[0]
+            except (ValueError, TypeError, IndexError):
+                return None
+
+        wanted_codes = {w[0] for w in wanted}
+        inst_maps: dict[str, Mapping[str, Any]] = {}
+        global_map: dict[str, Any] = {}
+        if isinstance(raw_features, Mapping):
+            for k, v in raw_features.items():
+                if isinstance(v, Mapping):
+                    code = _norm_key(k)
+                    if code is not None:
+                        inst_maps[code] = v
+                else:
+                    global_map[str(k)] = v
+
+        def _measure_symbol(code: str, name: str, ds: str, fld: str) -> tuple[int, int | None, bool] | None:
+            """Non-null dated coverage of one input for one instrument; None when absent."""
+            series = None
+            if code in inst_maps:
+                series = _lookup_raw_feature(inst_maps[code], name=name, dataset=ds, field=fld)
+            if series is None and global_map:
+                series = _lookup_raw_feature(global_map, name=name, dataset=ds, field=fld)
+            if isinstance(series, Sequence) and not isinstance(series, (str, bytes)):
+                pairs = [_obs_stamp(o) for o in series]
+                good = [ts for ok, ts in pairs if ok]
+                if good:
+                    stamps = [ts for ts in good if ts]
+                    return len(good), (_span(stamps) if stamps else None), not stamps
+            # Fall back to non-null per-record values for this instrument.
+            stamps = []
+            for rec in records:
+                if not isinstance(rec, Mapping) or _norm_key(rec.get("instrument")) != code:
+                    continue
+                feats = rec.get("features") if isinstance(rec.get("features"), Mapping) else {}
+                if any(_present(rec.get(k)) or _present(feats.get(k)) for k in {name, fld}):
+                    stamps.append(str(rec.get("date") or "").strip()[:10])
+            if stamps:
+                dated = [t for t in stamps if len(t) == 10]
+                return len(stamps), (_span(dated) if dated else None), True
+            return None
 
         for ref in sorted(referenced - {"signal"}):
             item = declared.get(ref)
@@ -1227,49 +1271,42 @@ def _measure_pit_history(
             name, ds, fld = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
             if fld in price_fields:
                 continue
-            series_list: list[Any] = []
-            if isinstance(raw_features, Mapping):
-                scoped = False
-                for inst_key, inst_val in raw_features.items():
-                    if isinstance(inst_val, Mapping):
-                        scoped = True
-                        found = _lookup_raw_feature(inst_val, name=name, dataset=ds, field=fld)
-                        series_list.append(found)
-                if not scoped:
-                    series_list.append(_lookup_raw_feature(raw_features, name=name, dataset=ds, field=fld))
-                else:
-                    # features mapping may mix global series with per-instrument maps
-                    glob = _lookup_raw_feature(
-                        {k: v for k, v in raw_features.items() if not isinstance(v, Mapping)},
-                        name=name, dataset=ds, field=fld,
-                    )
-                    if glob is not None:
-                        series_list = [glob]
-            usable = [
-                sr for sr in series_list
-                if isinstance(sr, Sequence) and not isinstance(sr, (str, bytes)) and len(sr) > 0
-            ]
-            if not usable and (name in record_extras or fld in record_extras):
-                feature_spans[ref] = {"observations": min_bars, "calendar_days": min_calendar_days, "source": "records"}
-                continue
-            if not usable:
-                feature_spans[ref] = {"observations": 0, "calendar_days": 0, "missing": True}
+            per_inst: dict[str, Any] = {}
+            missing_codes: list[str] = []
+            worst_n: int | None = None
+            worst_days: int | None = None
+            bar_aligned = False
+            for code in sorted(wanted_codes):
+                res = _measure_symbol(code, name, ds, fld)
+                if res is None:
+                    missing_codes.append(code)
+                    per_inst[code] = {"observations": 0, "calendar_days": 0, "missing": True}
+                    continue
+                n, d, aligned = res
+                bar_aligned = bar_aligned or aligned
+                per_inst[code] = {"observations": n, "calendar_days": d}
+                worst_n = n if worst_n is None else min(worst_n, n)
+                if d is not None:
+                    worst_days = d if worst_days is None else min(worst_days, d)
+            if missing_codes or worst_n is None:
+                feature_spans[ref] = {
+                    "observations": 0,
+                    "calendar_days": 0,
+                    "missing": True,
+                    "missing_instruments": missing_codes,
+                    "per_instrument": per_inst,
+                }
                 min_calendar_days = 0
                 min_bars = 0
                 continue
-            worst_days: int | None = None
-            worst_n = min(len(sr) for sr in usable)
-            for sr in usable:
-                _n, d = _obs_days(sr)
-                if d is not None:
-                    worst_days = d if worst_days is None else min(worst_days, d)
             feature_spans[ref] = {
                 "observations": worst_n,
                 "calendar_days": worst_days if worst_days is not None else min_calendar_days,
+                "per_instrument": per_inst,
             }
             if worst_days is not None:
                 min_calendar_days = min(min_calendar_days, worst_days)
-            else:
+            if worst_days is None or bar_aligned:
                 min_bars = min(min_bars, worst_n)
 
     return (
