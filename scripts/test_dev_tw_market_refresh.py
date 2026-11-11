@@ -49,6 +49,30 @@ def test_workflow_triggers():
     assert force_input.get("default") is False, f"force default must be false, got {force_input}"
 
 
+def test_finmind_refresh_skipped_before_broker_publication_crons():
+    data = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = data["jobs"]["refresh"]["steps"]
+    fm = next(s for s in steps if s.get("id") == "finmind_refresh")
+    cond = str(fm.get("if") or "")
+
+    def runs(schedule):
+        # Evaluate the simple `!=` / `&&` condition for a given schedule value.
+        expr = cond.replace("${{", "").replace("}}", "").strip()
+        parts = [p.strip() for p in expr.split("&&")]
+        for part in parts:
+            m = re.fullmatch(r"github\.event\.schedule != '([^']+)'", part)
+            assert m, f"unexpected condition term: {part}"
+            if schedule == m.group(1):
+                return False
+        return True
+
+    assert not runs("0 7 * * 1-5")
+    assert not runs("0 8 * * 1-5")
+    assert runs("30 10 * * 1-5")
+    assert runs("30 12 * * 1-5")
+    assert runs(None)  # workflow_dispatch
+
+
 def test_workflow_strict_absence_of_hardcoded_ips_and_fallbacks():
     content = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "34.81.52.222" not in content, "Workflow must not contain hardcoded IP 34.81.52.222"

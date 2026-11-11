@@ -161,6 +161,8 @@ jobs:
           PY
 
       - name: Execute bounded FinMind broker branch refresh
+        # Broker data publishes 18:00 Taipei (10:00 UTC): never run on the 07:00/08:00 UTC crons.
+        if: ${{ github.event.schedule != '0 7 * * 1-5' && github.event.schedule != '0 8 * * 1-5' }}
         id: finmind_refresh
         continue-on-error: true
         env:

@@ -60,5 +60,9 @@
     "p1_connector_approval": "deploy_nonprod_vm.sh PREPARE_DATASET_PY connector metadata now carries (adapter file is outside the task contract) approval_status=approved / approval_authority=code_reviewed_finmind_sponsorpro_connector (TAIFEX precedent), so the deploy-registered connector passes require_connector_approved in the real SourceProvisioningReconciler; policy gate itself unchanged and other gates/missing-credential handling unaffected",
     "regression": "test_finmind_prepared_connector_passes_real_reconciler_approval_gate: real PREPARE_DATASET_PY output persisted in real JsonlConfiguredConnectorStore, reconciled with production reconciler; fails without the fix (conflict/policy_gate_failed), passes with it",
     "tests": "deploy_nonprod_vm finmind: 18 passed; test_finmind_taiwan_connectors + test_persona_source_reconciler: 86 passed"
+  },
+  "review_round_7_fixes": {
+    "p1_scheduled_before_publication": "FinMind step in dev-tw-market-refresh.yml now has if: schedule != 07:00/08:00 UTC crons, so no FinMind fetch/frontier/DLQ happens before the 18:00 Taipei publication; runs on 10:30/12:30 UTC crons and workflow_dispatch; TWSE/TAIFEX timing unchanged",
+    "regression": "scripts/test_dev_tw_market_refresh.py::test_finmind_refresh_skipped_before_broker_publication_crons"
   }
 }
