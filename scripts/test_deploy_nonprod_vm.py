@@ -2916,3 +2916,62 @@ def test_official_connector_bounded_refresh_host_set_excludes_www_twse_com_tw() 
         == "openapi.twse.com.tw,www.tpex.org.tw"
     )
 
+
+
+def test_collector_host_gate_steady_restore_and_refresh_guard() -> None:
+    """DEV-EGRESS-COLLECTOR-HOST-GATE-20261110: steady egress is exactly the collector host."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent / "deploy_nonprod_vm.sh").read_text()
+    assert "steady source egress allowlist must be exactly PANTHEON_COLLECTOR_HOST" in text
+    assert 'sys.argv[2].startswith("collector-")' in text
+    assert "if hosts != {collector}" in text
+    assert '"allowlist" if steady_host else "deny"' in text
+    assert 'PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}"' in text
+    # Official bounded refresh host sets are unchanged.
+    assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in text
+    assert 'required = {"openapi.taifex.com.tw", "www.taifex.com.tw"}' in text
+
+
+_COLLECTOR_ENV_REPO = Path(__file__).resolve().parents[1]
+
+
+def _collector_env_steps(workflow: str) -> list[tuple[str, dict[str, Any]]]:
+    doc = yaml.safe_load((_COLLECTOR_ENV_REPO / ".github/workflows" / workflow).read_text())
+    return [
+        (step.get("name", ""), step.get("env") or {})
+        for job in doc["jobs"].values()
+        for step in job.get("steps", [])
+    ]
+
+
+def test_workflows_pass_collector_host_and_token_names() -> None:
+    expected = {
+        "PANTHEON_COLLECTOR_HOST": "${{ vars.PANTHEON_COLLECTOR_HOST }}",
+        "PANTHEON_COLLECTOR_BUNDLE_TOKEN": "${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}",
+    }
+    deploy = _collector_env_steps("nonprod-deploy.yml")
+    assert any(
+        all(env.get(k) == v for k, v in expected.items()) for name, env in deploy
+        if name == "Deploy dev VM stack under lease"
+    )
+    assert any(
+        all(env.get(k) == v for k, v in expected.items())
+        for name, env in deploy
+        if name == "Enforce dev auth deployment floor"
+    )
+    refresh = _collector_env_steps("dev-tw-market-refresh.yml")
+    bounded = [
+        (n, e) for n, e in refresh if n.startswith("Execute bounded")
+    ]
+    assert len(bounded) == 2
+    for name, env in bounded:
+        for key, value in expected.items():
+            assert env.get(key) == value, (name, key)
+
+
+def test_deploy_script_forwards_collector_env_without_echo() -> None:
+    text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
+    for name in ("PANTHEON_COLLECTOR_HOST", "PANTHEON_COLLECTOR_BUNDLE_TOKEN"):
+        assert text.count(f'command_prefix+=" {name}=$(shell_quote') == 2
+    assert not re.search(r"(echo|info|printf)[^\n]*PANTHEON_COLLECTOR_BUNDLE_TOKEN", text)
