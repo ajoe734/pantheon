@@ -156,6 +156,38 @@ jobs:
           print(f"TAIFEX contract refresh outcome recorded: status={status} reason={reason}")
           PY
 
+      - name: Execute bounded FinMind broker branch refresh
+        id: finmind_refresh
+        continue-on-error: true
+        env:
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
+          TARGET_ENV: dev
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.ld }}/state.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.ld }}/heartbeat.pid
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-identity.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-failure.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.ld }}/heartbeat.log
+          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: api.finmindtrade.com,storage.googleapis.com
+          SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-finmind-broker-daily-report
+          SOURCE_INGEST_BOUNDED_DATASET: tw_broker_daily_report
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
+          REFRESH_OUTPUT_PATH: ${{ runner.temp }}/finmind-broker-refresh-outcome.json
+          FORCE_REFRESH: ${{ inputs.force || false }}
+        run: |
+          force_arg=()
+          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+          refresh_rc=0
+          if [[ -z "${FINMIND_API_TOKEN}" ]]; then
+            printf '%s\n' '{"connector_id":"tw-finmind-broker-daily-report","dataset":"tw_broker_daily_report","log":"","reason":"missing_credential","status":"skipped"}' > "${REFRESH_OUTPUT_PATH}"
+            echo "FinMind broker refresh skipped: missing_credential"
+            exit 0
+          fi
+          echo "FINMIND_API_TOKEN present (length ${#FINMIND_API_TOKEN})"
+          .lease-controller/scripts/run_with_dev_environment_lease.sh \
+            ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" --connector-id tw-finmind-broker-daily-report --allowed-hosts api.finmindtrade.com,storage.googleapis.com --dataset tw_broker_daily_report --output "${REFRESH_OUTPUT_PATH}" || refresh_rc=$?
+          echo "FinMind broker refresh rc=${refresh_rc}"
+
       - name: Execute bounded Taiwan market refresh
         id: refresh
         env:
@@ -188,6 +220,7 @@ jobs:
           path: |
             ${{ runner.temp }}/tw-refresh-outcome.json
             ${{ runner.temp }}/taifex-ssf-refresh-outcome.json
+            ${{ runner.temp }}/finmind-broker-refresh-outcome.json
 
       - name: Stop heartbeat and release lease
         if: ${{ always() && steps.lease.outcome == 'success' }}

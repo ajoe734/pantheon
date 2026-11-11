@@ -3022,7 +3022,7 @@ def test_workflows_pass_collector_host_and_token_names() -> None:
     )
     refresh = _collector_env_steps("dev-tw-market-refresh.yml")
     bounded = [
-        (n, e) for n, e in refresh if n.startswith("Execute bounded")
+        (n, e) for n, e in refresh if n.startswith("Execute bounded") and "FinMind" not in n
     ]
     assert len(bounded) == 2
     for name, env in bounded:
@@ -3128,3 +3128,9 @@ def test_bounded_refresh_failure_outcome_with_log_is_recorded_for_every_connecto
     # The failed outcome (carrying the captured redacted log) is no longer gated on TAIFEX/non-blocking,
     # so a failed Taiwan refresh keeps its own logs in the requested output file.
     assert body.count('write_bounded_refresh_outcome "failed" "${fail_reason}" || true') == 2
+
+
+def test_deploy_script_forwards_finmind_token_without_echo() -> None:
+    text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
+    assert text.count('FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")') == 2
+    assert not re.search(r"(echo|info|printf)[^\n]*FINMIND_API_TOKEN", text)

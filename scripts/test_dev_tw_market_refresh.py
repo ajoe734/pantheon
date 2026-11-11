@@ -2713,3 +2713,56 @@ def test_refresh_entrypoint_taifex_non_blocking_failure_continues_and_records_re
         cwd=str(ROOT),
     )
     assert proc_twse.returncode != 0, "TWSE refresh failure must remain fail-closed"
+
+
+def test_workflow_finmind_broker_refresh_is_bounded_nonblocking_and_secret_safe():
+    data = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = data["jobs"]["refresh"]["steps"]
+    step = next(s for s in steps if s.get("id") == "finmind_refresh")
+    assert step.get("continue-on-error") is True
+    assert step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-finmind-broker-daily-report"
+    assert step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "api.finmindtrade.com,storage.googleapis.com"
+    assert step["env"]["FINMIND_API_TOKEN"] == "${{ secrets.FINMIND_API_TOKEN }}"
+    assert "--allowed-hosts api.finmindtrade.com,storage.googleapis.com" in step["run"]
+    assert "missing_credential" in step["run"]
+    assert "${#FINMIND_API_TOKEN}" in step["run"]
+    assert 'echo "${FINMIND_API_TOKEN}"' not in step["run"]
+    twse_idx = next(i for i, s in enumerate(steps) if s.get("id") == "refresh")
+    assert steps.index(step) < twse_idx
+
+
+def test_finmind_token_flows_through_compose_and_deploy_script():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert compose.count("FINMIND_API_TOKEN: ${FINMIND_API_TOKEN:-}") == 2
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    assert 'FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")' in script
+    deploy_wf = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    assert "FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}" in deploy_wf
+
+
+@pytest.mark.parametrize(
+    "bad_hosts",
+    ["api.finmindtrade.com", "storage.googleapis.com", "api.finmindtrade.com,storage.googleapis.com,openapi.twse.com.tw"],
+)
+def test_refresh_entrypoint_finmind_rejects_wrong_hosts(tmp_path: Path, bad_hosts: str):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, _s, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force",
+         "--connector-id", "tw-finmind-broker-daily-report", "--allowed-hosts", bad_hosts,
+         "--dataset", "tw_broker_daily_report", "--output", str(output_file)],
+        env=test_env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert proc.returncode != 0
+    assert "unsupported bounded source refresh connector" not in proc.stderr + proc.stdout
+    events = [json.loads(l) for l in events_file.read_text().splitlines() if l] if events_file.exists() else []
+    assert not any(e.get("event") == "compose_up" and e.get("env", {}).get("PANTHEON_EXTERNAL_EGRESS") == "allowlist" for e in events)

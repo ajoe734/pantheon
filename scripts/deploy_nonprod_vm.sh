@@ -426,7 +426,7 @@ Environment overrides:
   DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED
   PANTHEON_DEV_PAPER_EXPRESSION_LAYER DEV_PAPER_EXPRESSION_LAYER
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
-  PANTHEON_COLLECTOR_HOST PANTHEON_COLLECTOR_BUNDLE_TOKEN
+  PANTHEON_COLLECTOR_HOST PANTHEON_COLLECTOR_BUNDLE_TOKEN FINMIND_API_TOKEN
   DEV_PAPER_PRINCIPALS_AUTHORIZED
   DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
   DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
@@ -930,6 +930,8 @@ ssh_bash() {
     command_prefix+=" SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_HOST=$(shell_quote "${PANTHEON_COLLECTOR_HOST:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_BUNDLE_TOKEN=$(shell_quote "${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}")"
+  command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
+    command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
     command_prefix+=" bash -s"
   else
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
@@ -1160,9 +1162,9 @@ with os.fdopen(fd, "wb") as stream:
         "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
         "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
       fi
-      if [[ "${remote_component}" == "refresh-only" && "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+      if [[ "${remote_component}" == "refresh-only" && "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
         if [[ -n "${REFRESH_OUTPUT_PATH:-}" && ! -s "${REFRESH_OUTPUT_PATH}" ]]; then
-          printf '%s\n' '{"connector_id":"tw-taifex-futures-options-chip","dataset":"taifex_ssf_contracts","log":"","reason":"transport_failed","status":"failed"}' > "${REFRESH_OUTPUT_PATH}"
+          printf '{"connector_id":"%s","dataset":"%s","log":"","reason":"transport_failed","status":"failed"}\n' "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" > "${REFRESH_OUTPUT_PATH}"
         fi
         transport_status=0
       fi
@@ -1352,6 +1354,14 @@ elif sys.argv[2] == "tw-taifex-futures-options-chip":
         )
     if dataset and dataset != "taifex_ssf_contracts":
         raise SystemExit(f"official TAIFEX refresh requires dataset taifex_ssf_contracts, got: {dataset}")
+elif sys.argv[2] == "tw-finmind-broker-daily-report":
+    required = {"api.finmindtrade.com", "storage.googleapis.com"}
+    if hosts != required:
+        raise SystemExit(
+            "FinMind broker refresh requires exact hosts: " + ",".join(sorted(required))
+        )
+    if dataset and dataset not in ("tw_broker_daily_report", "tw_broker_top", "tw_broker_branch_detail"):
+        raise SystemExit(f"FinMind broker refresh does not admit dataset: {dataset}")
 elif sys.argv[2].startswith("collector-"):
     collector = (sys.argv[4] if len(sys.argv) > 4 else "").strip().lower()
     if not collector:
@@ -1995,8 +2005,11 @@ raw_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET", "").strip()
 connector_id = raw_connector or (
     "tw-taifex-futures-options-chip" if raw_dataset == "taifex_ssf_contracts" else "tw-twse-tpex-official-market"
 )
+CHIP_CONNECTORS = {"tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report"}
 bounded_dataset = raw_dataset or (
-    "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip" else "tw_price_daily"
+    "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip"
+    else "tw_broker_daily_report" if connector_id == "tw-finmind-broker-daily-report"
+    else "tw_price_daily"
 )
 
 symbols = list(dict.fromkeys(s.strip().upper() for s in os.environ.get("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").split(",") if s.strip()))
@@ -2028,14 +2041,14 @@ for symbol in symbols:
     except Exception as exc:
         emit("error", reason="preflight_failed", detail=str(exc))
 
-if connector_id != "tw-taifex-futures-options-chip" and any(snap is None for _, snap in snaps):
+if connector_id not in CHIP_CONNECTORS and any(snap is None for _, snap in snaps):
     if force:
         emit("proceed")
     emit("proceed", reason="snapshot_missing", symbols=[sym for sym, snap in snaps if snap is None])
 
 holidays = {}
 calendars = {}
-if connector_id == "tw-taifex-futures-options-chip" and all(snap is None for _, snap in snaps):
+if connector_id in CHIP_CONNECTORS and all(snap is None for _, snap in snaps):
     from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
     cal = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=d_str, fetched_at=now_u.isoformat().replace("+00:00", "Z"))
     c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
@@ -2072,7 +2085,7 @@ for _ in range(20):
 session_date = cursor
 session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
 
-if connector_id == "tw-taifex-futures-options-chip":
+if connector_id in CHIP_CONNECTORS:
     if now_t.weekday() >= 5:
         emit("skipped", reason="weekend", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
     if d_str in holidays:
@@ -2116,7 +2129,7 @@ if connector_id == "tw-taifex-futures-options-chip":
     if (
         not latest_record
         or latest_record.get("status") not in (None, "", "normalized", "valid")
-        or not source_id.startswith(f"tw-taifex:{bounded_dataset}:")
+        or (connector_id == "tw-taifex-futures-options-chip" and not source_id.startswith(f"tw-taifex:{bounded_dataset}:"))
         or record_dataset != bounded_dataset
         or (bounded_dataset == "taifex_ssf_contracts" and schema_hash not in ("", "tw_taifex_ssf_contracts.v1"))
     ):
@@ -2763,6 +2776,9 @@ execute_bounded_source_refresh_entrypoint() {
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}" == "tw-taifex-futures-options-chip" ]]; then
     default_allowed_hosts="openapi.taifex.com.tw,www.taifex.com.tw"
     default_bounded_dataset="taifex_ssf_contracts"
+  elif [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
+    default_allowed_hosts="api.finmindtrade.com,storage.googleapis.com"
+    default_bounded_dataset="tw_broker_daily_report"
   fi
   # Resolve active Taiwan paper symbols first so the preflight checks the same symbols as the refresh.
   PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler" \
@@ -2817,7 +2833,7 @@ OUTCOME_PY
       # refresh keeps its own logs instead of an empty block.
       write_bounded_refresh_outcome "failed" "${fail_reason}" || true
       rm -f "${steady_env:-}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
-      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
         info "non-blocking TAIFEX refresh failed before container mutation (rc=${rc}, reason=${fail_reason}); continuing without failing release"
         exit 0
       fi
@@ -2843,7 +2859,7 @@ OUTCOME_PY
     error)
       local err_reason
       err_reason="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("detail") or d.get("reason") or "preflight_error")' "${preflight_output}")"
-      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
+      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
         write_bounded_refresh_outcome "failed" "${err_reason}" "${preflight_output}"
       else
         [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
@@ -2851,7 +2867,7 @@ OUTCOME_PY
       info "bounded source refresh preflight error: ${preflight_output}" >&2
       trap - EXIT INT TERM
       rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
-      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
         info "non-blocking TAIFEX refresh preflight error (${err_reason}); continuing without failing release"
         return 0
       fi
@@ -2962,7 +2978,7 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     rm -f "${steady_env:-}"
     if (( rc != 0 )); then
       rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
-      if (( restore_rc == 0 )) && [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+      if (( restore_rc == 0 )) && [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
         info "non-blocking TAIFEX refresh failed (rc=${rc}); continuing without failing release"
         [[ "${invoked_from_trap}" == "true" ]] && exit 0
         return 0
