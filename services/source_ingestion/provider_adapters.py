@@ -965,8 +965,18 @@ def _collector_bundle(
 ) -> tuple[SourceRecord, ...]:
     """Pull verified bundles newer than the cursor; any mismatch raises with no write."""
 
-    cursor = request.get("cursor") or request.get("watermark") or None
-    return adapter.pull(cursor=str(cursor) if cursor else None, trace_id=trace_id).records
+    explicit = request.get("cursor") or request.get("watermark") or None
+    # The public path discards CollectorPullResult.next_cursor, so partial progress under
+    # the output cap is persisted by the adapter itself and resumed by fresh adapters.
+    cursor = explicit or adapter.load_resume_cursor()
+    result = adapter.pull(
+        cursor=str(cursor) if cursor else None,
+        trace_id=trace_id,
+        max_records=request[EFFECTIVE_MAX_RECORDS_KEY],
+    )
+    if not explicit:
+        adapter.save_resume_cursor(result)
+    return result.records
 
 
 PROVIDER_ADAPTER_ALIASES: dict[str, str] = {

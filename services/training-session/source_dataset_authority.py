@@ -330,6 +330,10 @@ def materialize_source_dataset_version(
     canonical_bytes = b"".join(_canonical_json_bytes(record) + b"\n" for record in records)
     canonical_digest = hashlib.sha256(canonical_bytes).hexdigest()
     canonical_path = authority_root / f"canonical-ohlcv-{canonical_digest}.jsonl"
+    feature_observations = list(storage.get("feature_observations") or [])
+    feature_bytes = b"".join(_canonical_json_bytes(o) + b"\n" for o in feature_observations)
+    feature_digest = hashlib.sha256(feature_bytes).hexdigest()
+    feature_path = authority_root / f"canonical-features-{feature_digest}.jsonl"
 
     controller_binding_digest = stable_json_sha256(controller_binding)
     storage_binding = {
@@ -375,7 +379,10 @@ def materialize_source_dataset_version(
 
     payload_without_id: dict[str, Any] = {
         "market_scope": [storage["market"]],
-        "instrument_scope": sorted({str(record["instrument"]) for record in records}),
+        "instrument_scope": sorted(
+            {str(record["instrument"]) for record in records}
+            | {str(o["entity"]) for o in feature_observations if o["entity"]}
+        ),
         "raw_dataset_refs": [item["uri"] for item in storage["raw_refs"]],
         "normalized_dataset_refs": [item["uri"] for item in storage["normalized_refs"]],
         "feature_dataset_refs": [item["uri"] for item in storage["feature_refs"]],
@@ -389,9 +396,21 @@ def materialize_source_dataset_version(
                 "uri": canonical_path.resolve(strict=False).as_posix(),
                 "sha256": canonical_digest,
                 "row_count": len(records),
-            }
+            },
+            *(
+                [
+                    {
+                        "uri": feature_path.resolve(strict=False).as_posix(),
+                        "sha256": feature_digest,
+                        "row_count": len(feature_observations),
+                    }
+                ]
+                if feature_observations
+                else []
+            ),
         ],
         "records": records,
+        **({"feature_observations": feature_observations} if feature_observations else {}),
     }
     identity_digest = stable_json_sha256(payload_without_id)
     payload = {
@@ -421,8 +440,12 @@ def materialize_source_dataset_version(
         )
         if existing_version is not None:
             _atomic_materialize(canonical_path, canonical_bytes, authority_root)
+            if feature_observations:
+                _atomic_materialize(feature_path, feature_bytes, authority_root)
             return existing_version
         _atomic_materialize(canonical_path, canonical_bytes, authority_root)
+        if feature_observations:
+            _atomic_materialize(feature_path, feature_bytes, authority_root)
         _atomic_materialize(dataset_path, dataset_bytes, authority_root)
     finally:
         try:
@@ -952,6 +975,7 @@ def _validate_and_read_storage_manifest(
     checked_feature: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
     seen_records: set[tuple[str, str]] = set()
+    feature_observations: list[dict[str, Any]] = []
     market: str | None = None
     total_source_rows = 0
 
@@ -1006,7 +1030,23 @@ def _validate_and_read_storage_manifest(
                     ref.get("source_dataset"), f"{ref_label}.source_dataset"
                 )
             destination.append(checked)
-            if label == "normalized":
+            if label == "normalized" and _is_governed_feature_dataset(ref_dataset):
+                # Governed point-in-time feature datasets are never read as OHLCV bars.
+                feature_observations.extend(
+                    feature_observations_from_wrappers(
+                        rows,
+                        catalogue=_feature_catalogue_document(),
+                        connector_id=connector_id,
+                        dataset_id=ref_dataset,
+                        trusted_now=trusted_now,
+                    )
+                )
+            elif label == "normalized" and ref_dataset.startswith("collector_"):
+                # Original collector items (posts, macro/news items) are raw evidence only:
+                # the governed derived dataset carries the readable features, and they
+                # must never enter the OHLCV parser.
+                continue
+            elif label == "normalized":
                 for row_number, wrapper in enumerate(rows, start=1):
                     record, row_market = _ohlcv_from_wrapper(
                         wrapper,
@@ -1055,7 +1095,7 @@ def _validate_and_read_storage_manifest(
                             f"{ref_label} line {row_number} belongs to a different source dataset"
                         )
 
-    if not records:
+    if not records and not feature_observations:
         raise SourceDatasetAuthorityError("normalized source has no OHLCV records")
     if sum(item["row_count"] for item in checked_normalized) != _strict_int(
         summary.get("normalized_row_count"),
@@ -1073,6 +1113,10 @@ def _validate_and_read_storage_manifest(
         "normalized_refs": checked_normalized,
         "feature_refs": checked_feature,
         "records": sorted(records, key=lambda item: (item["date"], item["instrument"])),
+        "feature_observations": sorted(
+            feature_observations,
+            key=lambda o: (o["dataset"], o["field"], o["entity"], o["event_time"], o["available_time"]),
+        ),
         "market": expected_market,
     }
 
@@ -1142,6 +1186,118 @@ def _ohlcv_from_wrapper(
         raise SourceDatasetAuthorityError(f"{label} low is inconsistent with OHLC")
     market = _required_text(market_value, f"{value_label}.market") if market_value not in (None, "") else None
     return {"instrument": instrument, "date": date_text, **values}, market
+
+
+def _feature_catalogue_document() -> Mapping[str, Any]:
+    from services.source_ingestion.feature_catalogue import catalogue_document
+
+    return catalogue_document()
+
+
+_OHLCV_BAR_DATASETS = frozenset({"tw_price_daily"})
+
+
+def _is_governed_feature_dataset(dataset_id: str) -> bool:
+    # OHLCV bar datasets stay on the bar path; they are catalogued but not feature wrappers.
+    if dataset_id in _OHLCV_BAR_DATASETS:
+        return False
+    return any(
+        spec.get("normalized_dataset") == dataset_id
+        for spec in _feature_catalogue_document().get("datasets", ())
+    )
+
+
+def feature_observations_from_wrappers(
+    wrappers: Sequence[Mapping[str, Any]],
+    *,
+    catalogue: Mapping[str, Any],
+    connector_id: str,
+    dataset_id: str,
+    trusted_now: datetime,
+) -> list[dict[str, Any]]:
+    """Read normalized feature-dataset wrappers into catalogued point-in-time observations.
+
+    ``catalogue`` is a ``feature_catalogue.v1`` document; only catalogued fields are
+    read, using the catalogue's ``source_field`` and declared lag. Each row must carry
+    ``event_time``, an offset-aware ``available_time`` and ``ingest_time`` with
+    ``event_time <= available_time`` and ``event_time`` not in the future; rows that
+    fail are rejected rather than repaired.
+    """
+
+    if catalogue.get("schema_version") != "feature_catalogue.v1":
+        raise SourceDatasetAuthorityError("feature catalogue schema_version must be feature_catalogue.v1")
+    now = _trusted_utc(trusted_now)
+    specs = [
+        spec
+        for spec in _required_array(catalogue.get("datasets"), "catalogue.datasets")
+        if isinstance(spec, Mapping) and spec.get("normalized_dataset") == dataset_id
+    ]
+    if not specs:
+        raise SourceDatasetAuthorityError(f"dataset {dataset_id!r} is not in the governed feature catalogue")
+    observations: list[dict[str, Any]] = []
+    for index, wrapper in enumerate(wrappers):
+        label = f"feature wrapper[{index}]"
+        if wrapper.get("connector_id") != connector_id or wrapper.get("dataset") != dataset_id:
+            raise SourceDatasetAuthorityError(f"{label} identity mismatch")
+        metadata = _required_mapping(wrapper.get("metadata"), f"{label}.metadata")
+        row = _required_mapping(metadata.get("normalized_row"), f"{label}.metadata.normalized_row")
+        event_text = _required_text(row.get("event_time") or metadata.get("event_time"), f"{label}.event_time")
+        event = _parse_timestamp(event_text if len(event_text) > 10 else f"{event_text}T00:00:00Z", f"{label}.event_time")
+        available_text = _required_text(row.get("available_time") or metadata.get("available_time"), f"{label}.available_time")
+        if len(available_text) <= 10:
+            raise SourceDatasetAuthorityError(f"{label} available_time must be an offset-aware timestamp")
+        available = _parse_timestamp(available_text, f"{label}.available_time")
+        ingest_text = _required_text(row.get("ingest_time") or metadata.get("ingest_time"), f"{label}.ingest_time")
+        _parse_timestamp(ingest_text, f"{label}.ingest_time")
+        if available < event:
+            raise SourceDatasetAuthorityError(f"{label} available_time precedes event_time")
+        if event > now:
+            raise SourceDatasetAuthorityError(f"{label} event_time is in the future")
+        for spec in specs:
+            venue = spec.get("venue")
+            if venue and str(row.get("venue") or "").upper() != str(venue).upper():
+                continue
+            key_kind = spec.get("key_kind")
+            if key_kind == "series":
+                entity = _required_text(row.get("series_id"), f"{label}.series_id")
+            else:
+                entity = _required_text(
+                    metadata.get("symbol_canonical") or row.get("symbol_canonical") or row.get("symbol"),
+                    f"{label}.symbol",
+                )
+            for fld in _required_array(spec.get("fields"), f"catalogue.{spec.get('dataset')}.fields"):
+                if key_kind == "series":
+                    if row.get("field") != fld["field"]:
+                        continue
+                    raw_value = row.get("value")
+                else:
+                    raw_value = row.get(fld["source_field"])
+                    if raw_value is None and fld["source_field"] == "margin_change":
+                        cur, prev = row.get("margin_balance"), row.get("margin_previous_balance")
+                        raw_value = None if cur is None or prev is None else cur - prev
+                if raw_value is None:
+                    continue
+                observations.append(
+                    {
+                        "dataset": spec["dataset"],
+                        "field": fld["field"],
+                        "entity": entity,
+                        "event_time": event.date().isoformat(),
+                        "available_time": _iso(available),
+                        "ingest_time": ingest_text,
+                        "availability_lag_days": max(
+                            int(fld["availability_lag_days"]), int(row.get("availability_lag_days") or 0)
+                        ),
+                        "value": _finite_number(raw_value, f"{label}.{fld['field']}"),
+                    }
+                )
+    return observations
+
+
+def _required_array(value: Any, label: str) -> list[Any]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise SourceDatasetAuthorityError(f"{label} must be an array")
+    return list(value)
 
 
 def _storage_ref_array(value: Any, label: str) -> list[Mapping[str, Any]]:

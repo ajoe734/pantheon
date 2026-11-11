@@ -205,6 +205,33 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
                 ),
                 notes="Official chip summaries; detailed broker top N remains active/candidate only.",
             ),
+            _dataset(
+                "tw_monthly_revenue",
+                "financial_fundamental",
+                storage_tier="normalized/features",
+                update_profile="daily_scan_monthly_event_facts",
+                storage_targets=("normalized/tw_monthly_revenue",),
+                universe_tiers=("core_universe",),
+                notes="TWSE/TPEx OpenAPI monthly revenue with declared availability lag.",
+            ),
+            _dataset(
+                "tw_financial_statement",
+                "financial_fundamental",
+                storage_tier="normalized/features",
+                update_profile="daily_scan_quarterly_event_facts",
+                storage_targets=("normalized/tw_financial_statement",),
+                universe_tiers=("core_universe",),
+                notes="TWSE/TPEx OpenAPI income and balance statements with declared availability lag.",
+            ),
+            _dataset(
+                "tw_valuation_bwibbu",
+                "financial_fundamental",
+                storage_tier="normalized/features",
+                update_profile="daily_after_close",
+                storage_targets=("normalized/tw_valuation_bwibbu",),
+                universe_tiers=("core_universe",),
+                notes="TWSE BWIBBU_ALL daily P/E, P/B and dividend yield.",
+            ),
         ),
         metadata={
             "preferred_role": "official_taiwan_market_reference",
@@ -1065,7 +1092,13 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
         "fetch": {
             "mode": "provider_owned_adapter",
             "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
-            "datasets": ["tw_price_daily", "tw_exchange_chip_summary"],
+            "datasets": [
+                "tw_price_daily",
+                "tw_exchange_chip_summary",
+                "tw_monthly_revenue",
+                "tw_financial_statement",
+                "tw_valuation_bwibbu",
+            ],
         },
         "schedule": {
             "cadence": "daily_after_close",
