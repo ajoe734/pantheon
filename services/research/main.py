@@ -2125,6 +2125,76 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
     threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
 
 
+# --- Discovery allocator: daily paper-only run inside this orchestrator ---
+DISCOVERY_ALLOCATOR_TENANT = os.getenv("DISCOVERY_ALLOCATOR_TENANT_ID", "default")
+def _discovery_owner_call(service: str, method: str, url: str, body: Optional[Dict[str, Any]]) -> Any:
+    from services.research import discovery_allocator as _da
+
+    token_variable = {
+        "persona": "RESEARCH_PERSONA_SERVICE_TOKEN",
+        "provisioning": "RESEARCH_BFF_SERVICE_TOKEN",
+        "registry": "RESEARCH_REGISTRY_SERVICE_TOKEN",
+        "capital": "RESEARCH_CAPITAL_SERVICE_TOKEN",
+    }[service]
+    try:
+        return _retrain_call(
+            step=f"discovery_allocator_{service}", service=service, method=method, url=url,
+            tenant_id=DISCOVERY_ALLOCATOR_TENANT, token_variable=token_variable, body=body,
+        )
+    except _OwnerRejection as exc:
+        raise _da.OwnerRejected(service, int(getattr(exc, "status", None) or getattr(exc, "code", 0) or 0), str(getattr(exc, "detail", exc))) from None
+    except _RetrainFailure as exc:
+        raise _da.OwnerUnreachable(service, str(exc)) from None
+
+
+def _build_discovery_allocator_ports() -> Dict[str, Any]:
+    from services.research import discovery_allocator as _da
+
+    return _da.make_production_ports(
+        call=_discovery_owner_call,
+        persona_url=os.getenv("DISCOVERY_ALLOCATOR_PERSONA_URL", "http://persona:8002"),
+        provisioning_url=os.getenv("DISCOVERY_ALLOCATOR_BFF_URL", "http://operator-bff:8001"),
+        registry_url=os.getenv("REGISTRY_URL", "http://registry:8087"),
+        capital_url=os.getenv("DISCOVERY_ALLOCATOR_CAPITAL_URL", "http://capital:8092"),
+        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
+        paper_capital_cap=float(os.getenv("DISCOVERY_ALLOCATOR_PAPER_CAPITAL_CAP", "50000")),
+        per_persona_capital=float(os.getenv("DISCOVERY_ALLOCATOR_PER_PERSONA_CAPITAL", "10000")),
+    )
+
+
+# Module-level so tests can inject; the default is the real production wiring
+# (persona service reader, active-binding reader, scorer, BFF provisioner).
+discovery_allocator_ports: Dict[str, Any] = _build_discovery_allocator_ports()
+
+
+def run_discovery_allocator_once() -> Dict[str, Any]:
+    from services.research import discovery_allocator as _da
+
+    return _da.run_scheduled_allocation(
+        enabled=_da.allocator_enabled(os.environ),
+        allocator_factory=discovery_allocator_ports["allocator_factory"],
+        list_admitted=lambda: [
+            e for e in alpha_replication_admission_store.list_admissions(DISCOVERY_ALLOCATOR_TENANT)
+            if e.get("status") == "admitted"
+        ],
+        list_personas=discovery_allocator_ports["list_personas"],
+        list_active_bindings=discovery_allocator_ports["list_active_bindings"],
+        resolve_admitted=discovery_allocator_ports.get("resolve_admitted"),
+        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
+        record_path=store.data_dir / "discovery_allocator_runs.jsonl",
+    )
+
+
+@app.on_event("startup")
+def start_discovery_allocator_schedule() -> None:
+    from services.research import discovery_allocator as _da
+
+    _da.start_daily_scheduler(
+        run_discovery_allocator_once,
+        interval_seconds=float(os.getenv("DISCOVERY_ALLOCATOR_INTERVAL_SECONDS", str(_da.DAILY_INTERVAL_SECONDS))),
+    )
+
+
 @app.on_event("startup")
 def resume_retrain_runs() -> None:
     """Resume in place every retrain run a restart left queued or running.
