@@ -374,9 +374,15 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             else:
                 total = len(summaries)
                 page_summaries, next_page_token = ctx.page_slice(summaries, page_token, page_size)
-        ranking_snapshot, ranking_read_failed = (
-            ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
-        )
+        try:
+            ranking_snapshot, ranking_read_failed = (
+                ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
+            )
+        except TimeoutError:
+            # Joining the warmed ranking read ran out of request budget. Same
+            # truthful outcome as an owner read failure: telemetry missing,
+            # no retry and no second owner read.
+            ranking_snapshot, ranking_read_failed = None, True
         ranking_index = _build_ranking_strategy_index(
             ranking_snapshot if isinstance(ranking_snapshot, dict) else None
         )

@@ -989,3 +989,43 @@ def test_default_list_pool_contention_fails_truthfully_within_request_deadline(
     assert resp.status_code == 503, resp.text
     assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
     assert elapsed < 0.6
+
+
+def test_default_list_ranking_join_timeout_is_ranking_unavailable_not_500(
+    monkeypatch: pytest.MonkeyPatch, world: _World
+) -> None:
+    """A ranking read still in flight at the request deadline must keep the
+    prior behaviour: 200 with ranking telemetry unavailable, one owner read."""
+    import time
+
+    from services.control_plane.bff.core.owner_reads import (
+        management_read_deadline,
+        remaining_management_read_budget,
+    )
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    class _Deadline:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            tok = management_read_deadline.set(time.monotonic() + 0.3)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                management_read_deadline.reset(tok)
+
+    calls: List[int] = []
+
+    def _slow_ranking(self: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        time.sleep((remaining_management_read_budget(default=0.3) or 0.3) + 0.05)
+        raise TimeoutError("ranking owner deadline exceeded")
+
+    monkeypatch.setattr(ReadSurfacePorts, "get_latest_ranking_snapshot", _slow_ranking)
+    app, _ = _build_app(monkeypatch, world)
+    app.add_middleware(_Deadline)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    assert len(calls) == 1

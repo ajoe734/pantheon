@@ -23,7 +23,8 @@
   "identified_critical_path": "GET /bff/strategies awaited three independent owner reads serially on the request thread: Persona directory (read_persona_state_lookup), registry summary page (HTTP), latest ranking snapshot. Cause is from code reading of existing primitives; no hosted SQL/network timing was available to the source author.",
   "change": [
     "strategies/routes/collection.py: prefetch the registry summary page (non-hide path) and ranking snapshot with the existing submit_owner_read + existing fleet read executor. The page prefetch Future is consumed by the handler (single result or failure, HTTPException included; works for uncached page ports); the ranking prefetch only runs with a per-request read cache and is joined via that cache. Tenant/auth, deadline and result content are unchanged. No cross-request cache, no new pool.",
-    "strategies/routes/collection.py: page Future join bounded by remaining_management_read_budget and routed through service._invoke_read_owner; submission failure becomes a failed Future so it translates through the same envelope; Future cancelled on timeout, owner read never retried."
+    "strategies/routes/collection.py: page Future join bounded by remaining_management_read_budget and routed through service._invoke_read_owner; submission failure becomes a failed Future so it translates through the same envelope; Future cancelled on timeout, owner read never retried.",
+    "strategies/routes/collection.py: ranking prefetch join that exhausts the request budget (TimeoutError from cached_owner_call) is handled as ranking read failure (snapshot None, ranking_read_failed True), restoring the base 200 ranking-unavailable behavior instead of 500; no retry, one ranking read."
   ],
   "not_changed": [
     "Persona fleet read path (no profiled avoidable work identified)",
@@ -49,7 +50,8 @@
       "test_bff_strategy_persona_contract.py::test_bff_personas_actions_route_through_command_envelope",
       "tests/test_strategy_ranking_router.py::test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation"
     ],
-    "deadline_regression": "tests/test_strategy_operational_status.py::test_default_list_pool_contention_fails_truthfully_within_request_deadline (shared pool saturated 0.8s under 0.1s deadline: old review head 500 raw, fixed 503 DEPENDENCY_UNAVAILABLE under 0.6s, no retry)"
+    "deadline_regression": "tests/test_strategy_operational_status.py::test_default_list_pool_contention_fails_truthfully_within_request_deadline (shared pool saturated 0.8s under 0.1s deadline: old review head 500 raw, fixed 503 DEPENDENCY_UNAVAILABLE under 0.6s, no retry)",
+    "ranking_join_timeout": "tests/test_strategy_operational_status.py::test_default_list_ranking_join_timeout_is_ranking_unavailable_not_500 (fails without fix: 500; passes: 200, one ranking read). Reviewer repro /tmp/bff-residual-review-ranking.py: base 200/0.249s, head now 200/0.208s, 1 read."
   },
   "limitations": [
     "Source-only; the improvement is unproven on hosted data until the original hosted owner retests the final pair.",
