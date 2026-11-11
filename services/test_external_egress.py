@@ -360,3 +360,36 @@ def test_connector_fetch_helpers_are_denied_before_outbound_transport(monkeypatc
         us_public._request_text("https://stooq.com/q/d/l/?s=spy.us")
     with pytest.raises(ExternalEgressBlocked):
         configured._assert_robots_allowed("https://stooq.com/q/d/l/", ("https://stooq.com/",), 5.0)
+
+
+def _compose_services() -> dict:
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    return yaml.safe_load((root / "docker-compose.yml").read_text())["services"]
+
+
+def test_only_source_ingest_may_use_collector_host_steady_egress() -> None:
+    """DEV-EGRESS-COLLECTOR-HOST-GATE-20261110: every other service keeps deny."""
+
+    services = _compose_services()
+    steady = services["source-ingest"]["environment"]
+    assert steady["PANTHEON_EXTERNAL_EGRESS"] == "${PANTHEON_EXTERNAL_EGRESS:-${PANTHEON_COLLECTOR_HOST:+allowlist}}"
+    assert steady["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == (
+        "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-${PANTHEON_COLLECTOR_HOST:-}}"
+    )
+    for name, service in services.items():
+        if name == "source-ingest":
+            continue
+        env = service.get("environment") or {}
+        if isinstance(env, list):
+            env = dict(item.split("=", 1) for item in env if "=" in item)
+        if "PANTHEON_EXTERNAL_EGRESS" in env:
+            assert env["PANTHEON_EXTERNAL_EGRESS"] == "deny", name
+            assert not env.get("PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"), name
+
+
+def test_unset_collector_host_leaves_steady_mode_deny() -> None:
+    assert resolve_mode({"PANTHEON_EXTERNAL_EGRESS": ""}) == "deny"
