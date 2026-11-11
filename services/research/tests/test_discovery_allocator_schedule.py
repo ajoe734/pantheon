@@ -216,7 +216,9 @@ def test_partial_provision_failure_retains_earlier_bindings() -> None:
         list_personas=lambda: [{"persona_id": f"p{i}"} for i in range(3)],
         tenant_id="t",
     )
-    assert len(attempts) == 4 and len(rec["bound"]) == 3 and rec["reason"] is None
+    # Uncertain failure halts further allocation; earlier receipts are kept.
+    assert len(attempts) == 2 and len(rec["bound"]) == 1
+    assert rec["reason"] == "provision_failed_halted:RuntimeError"
     assert any(k["reason"].startswith("provision_failed:RuntimeError") for k in rec["skipped"])
 
 
@@ -384,3 +386,35 @@ def test_persona_eligibility_uses_real_owner_record_shape() -> None:
         capital_url="http://c", tenant_id="tenant-x", paper_capital_cap=1.0, per_persona_capital=1.0,
     )
     assert [p["persona_id"] for p in ports["list_personas"]()] == ["ok"]
+
+
+def test_provision_rejection_after_durable_writes_never_exceeds_caps() -> None:
+    """Provisioning 409 after durable pool/pending-binding writes: halt, and a
+    rerun reconciles from durable pending bindings so caps hold."""
+
+    durable: list[dict] = []  # simulated Capital owner bindings (pending)
+
+    def provision(req):
+        durable.append({"persona_id": req["persona_id"],
+                        "artifact_ref": req["strategy_artifact_ref"],
+                        "paper_capital": req["budget"]})
+        raise RuntimeError("provisioning rejected HTTP 409: activate failed")
+
+    def run():
+        alloc = da.DiscoveryAllocator(
+            scorer=lambda p, a: {"score": 90, "match_id": "m"}, provision=provision,
+            paper_capital_cap=50_000, per_persona_capital=10_000,
+        )
+        return da.run_scheduled_allocation(
+            enabled=True, allocator_factory=lambda: alloc,
+            list_admitted=lambda: [{"registry_id": f"s{i}"} for i in range(6)],
+            list_personas=lambda: [{"persona_id": f"p{i}"} for i in range(6)],
+            list_active_bindings=lambda: list(durable),
+            tenant_id="t",
+        )
+
+    for _ in range(8):
+        rec = run()
+        assert len(durable) <= da.MAX_DISCOVERY_PERSONAS
+        assert sum(b["paper_capital"] for b in durable) <= 50_000
+    assert len(durable) == 5  # one durable write per run, capped at 5 slots

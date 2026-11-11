@@ -148,8 +148,12 @@ class DiscoveryAllocator:
                 })
                 if isinstance(exc, OwnerUnreachable):
                     result.error = f"owner_unreachable:{exc.service}:{exc}"
-                    break
-                continue
+                else:
+                    # A rejection (e.g. 409 on activation) may follow durable
+                    # pool/pending-binding writes, so slots/capital are uncertain:
+                    # halt; the next run reconciles from Capital pending/active bindings.
+                    result.error = f"provision_failed_halted:{type(exc).__name__}"
+                break
             result.bindings.append(
                 Binding(ref, pid, score, match_id, self.per_persona_capital)
             )
