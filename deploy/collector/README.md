@@ -98,6 +98,11 @@ sudo docker compose run --rm collector-worker --policy-file /app/fetch-policy.js
 sudo docker compose up -d rsshub bundle-server
 ```
 
+> **Changing the Caddyfile:** `bundle-server` bind-mounts `Caddyfile` as a single file, which pins the old inode.
+> After any edit (including `git pull`), run `sudo docker compose up -d --force-recreate bundle-server`; a plain
+> `restart` or `caddy reload` keeps serving the old file. The token check must stay inside `route { }` because Caddy
+> otherwise orders `handle` (file_server) before `respond`, which once served files without a token.
+
 The data root is mounted whole at `/data` in the worker (`docker-compose.yml`) and read-only at `/srv/collector`
 in Caddy, so `status.json` and `bundles/` written by the worker are what the bundle server serves. Set
 `COLLECTOR_GEMINI_MODEL` in `.env` to a model your key can list (default `gemini-2.5-flash`). Source runs are
