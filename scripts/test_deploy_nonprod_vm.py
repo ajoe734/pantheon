@@ -2879,3 +2879,40 @@ def test_bff_adoption_gate_requires_root_deploy_for_paper_capital_reader_service
             m.split(":")[1:2] == ["/run/pantheon-principals"] and m.endswith(":ro")
             for m in compose[name]["volumes"]
         ), name
+
+
+def test_official_connector_bounded_refresh_host_set_excludes_www_twse_com_tw() -> None:
+    """Guard test: bounded refresh host set for tw-twse-tpex-official-market excludes www.twse.com.tw."""
+    from services.source_ingestion.connector_definitions import get_connector_definition
+
+    definition = get_connector_definition("tw-twse-tpex-official-market")
+    assert "www.twse.com.tw" not in definition.allowed_host_patterns
+    assert set(definition.allowed_host_patterns) == {"openapi.twse.com.tw", "www.tpex.org.tw"}
+
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in source
+    assert 'default_allowed_hosts="openapi.twse.com.tw,www.tpex.org.tw"' in source
+    assert "www.twse.com.tw" not in source
+
+    init_block = source.split("SOURCE_REFRESH_MAX_CONCURRENCY=", 1)[1].split("DEV_APP_DB_USER=", 1)[0]
+    script = (
+        "set -euo pipefail\n"
+        'SOURCE_REFRESH_SELECTED="true"\n'
+        'SOURCE_REFRESH_ALLOWED_HOSTS="openapi.twse.com.tw,www.tpex.org.tw"\n'
+        'SOURCE_INGEST_BOUNDED_CONNECTOR_ID="tw-twse-tpex-official-market"\n'
+        "SOURCE_REFRESH_MAX_CONCURRENCY=" + init_block + "\n"
+        'printf "connector=%s\\nhosts=%s\\n" "${SOURCE_REFRESH_CONNECTOR_ID}" "${SOURCE_REFRESH_ALLOWED_HOSTS}"\n'
+    )
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False, cwd=ROOT)
+    assert proc.returncode == 0, proc.stderr
+    assert "connector=tw-twse-tpex-official-market" in proc.stdout
+    assert "hosts=openapi.twse.com.tw,www.tpex.org.tw" in proc.stdout
+    assert "www.twse.com.tw" not in proc.stdout
+
+    refresh_wf = yaml.safe_load((ROOT / ".github/workflows/dev-tw-market-refresh.yml").read_text(encoding="utf-8"))
+    refresh_steps = {s.get("id"): s for s in refresh_wf["jobs"]["refresh"]["steps"] if s.get("id")}
+    assert (
+        refresh_steps["refresh"]["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"]
+        == "openapi.twse.com.tw,www.tpex.org.tw"
+    )
+

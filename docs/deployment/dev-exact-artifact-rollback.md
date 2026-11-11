@@ -309,6 +309,15 @@ restored image ID. The stack readback fails with
 different image. `pantheon-protect/*` tags and the three sealed archives are
 unchanged and nothing is pruned.
 
+Digest-pinned Compose references (`nats`, `postgres`, `redis` and `busybox`
+use `name:tag@sha256:...`) cannot be re-tagged and cannot drift to a candidate
+without a Compose change, which the restore already rejects through its Compose
+digest checks. They are therefore skipped when tagging, but they stay in the
+readback: the running container must use the recorded image and the pinned
+reference must resolve to that same image, else `compose-image-mismatch` names
+the service. Any reference that is neither a plain tag nor a
+`[name[:tag]]@sha256:<64 hex>` pin still fails closed with `StackError`.
+
 The bounded and restore source-ingest refresh in `deploy_nonprod_vm.sh` also
 resolves the Compose image name before `compose up` and stops, without
 recreating, if it differs from the image running when the refresh began.

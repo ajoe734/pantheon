@@ -1,0 +1,55 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-TW-OFFICIAL-WEBSITE-VIA-COLLECTOR-20261110-CI-RED-F5A9C8DD813C",
+  "title": "Unblock integration for TW-OFFICIAL-WEBSITE-VIA-COLLECTOR-20261110: ci-red",
+  "source_task": {
+    "task_id": "TW-OFFICIAL-WEBSITE-VIA-COLLECTOR-20261110",
+    "pr_number": 7143,
+    "head_sha": "d9076dc9fef22edb5d2c3b94ae7ab22974a4f239",
+    "failed_check": "Smoke acceptance",
+    "failed_run_id": 42850942567,
+    "failed_job_id": 129951749105,
+    "failed_step": "Run source ingestion tests"
+  },
+  "root_cause": {
+    "summary": "PR #7143 added _assert_twse_tpex_openapi_only_url inside services/source_ingestion/connectors/taiwan_official.py::_fetch_official to enforce the operator rule that Pantheon direct egress only contacts TWSE/TPEx OpenAPI endpoints (https://openapi.twse.com.tw/v1/* and https://www.tpex.org.tw/openapi/v1/*). However, two existing unit tests in services/source_ingestion/tests/test_bounded_reader.py (test_taiwan_official_connector_call_path_handles_short_chunk at line 127 and test_taiwan_official_connector_call_path_oversized_payload at line 146) passed synthetic urllib.request.Request('https://www.twse.com.tw/test') into _fetch_official, which triggered SourceEvidenceError ('Pantheon forbids direct requests to non-OpenAPI TWSE website endpoint: https://www.twse.com.tw/test') before reaching open_external_url and read_bounded_response.",
+    "failed_tests": [
+      "services/source_ingestion/tests/test_bounded_reader.py::test_taiwan_official_connector_call_path_handles_short_chunk",
+      "services/source_ingestion/tests/test_bounded_reader.py::test_taiwan_official_connector_call_path_oversized_payload"
+    ]
+  },
+  "resolution": {
+    "delivery_strategy": "Per AUTO_INTEGRATOR_UNBLOCK_DELIVERY_RULE, when the defect is in the source PR's own changes, start from origin/dev and restate the needed source task changes together with the fix from this repair task's own branch and PR without pushing to the source task branch.",
+    "code_fix": "Updated the two synthetic Request URLs in services/source_ingestion/tests/test_bounded_reader.py from 'https://www.twse.com.tw/test' to 'https://openapi.twse.com.tw/v1/exchangeReport/TWTB4U' so _fetch_official passes the OpenAPI-only URL guard and exercises bounded response reading and max_bytes enforcement.",
+    "restated_source_task_artifacts": [
+      ".github/workflows/dev-tw-market-refresh.yml",
+      "deploy/collector",
+      "docs/04/pantheon_strategy_discovery_sources_2026-11-10/DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10.md",
+      "docs/deployment/evidence/TW-OFFICIAL-WEBSITE-VIA-COLLECTOR-20261110/evidence.json",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_deploy_nonprod_vm.py",
+      "services/source_ingestion/connector_definitions.py",
+      "services/source_ingestion/connectors/collector_bundle.py",
+      "services/source_ingestion/connectors/taiwan_official.py",
+      "services/source_ingestion/financial_source_catalog.py",
+      "services/source_ingestion/provider_adapters.py",
+      "services/source_ingestion/tests/test_bounded_reader.py",
+      "services/source_ingestion/tests/test_collector_bundle_connector.py",
+      "services/source_ingestion/tests/test_financial_source_catalog.py",
+      "services/source_ingestion/tests/test_taiwan_official_connectors.py"
+    ]
+  },
+  "validation": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_bounded_reader.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_financial_source_catalog.py deploy/collector/tests scripts/test_deploy_nonprod_vm.py",
+      "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge --delivery-class auto",
+      "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD"
+    ],
+    "results": {
+      "focused_pytest": "243 passed, 3 skipped",
+      "bounded_reader_pytest": "25 passed",
+      "commit_trailers": "passed",
+      "diff_budget": "passed"
+    },
+    "status": "passed"
+  }
+}
