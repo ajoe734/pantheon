@@ -7,12 +7,14 @@
     "pit_contract": "normalized row carries provider_published_at (only if supplied, never invented), fetched_at, reconciled_at, bar_availability_ts = max(bar_end, fetched_at, reconciled_at), None (pending_reconciliation) until reconciled; raw row, request id, source hash and quota_meta (request_url stripped) are kept per record",
     "session_rules": "bars kept for 09:00..13:30 Asia/Taipei start; others dropped and counted; conflicting duplicate minute -> reported for day quarantine; non-trading day rejected via injected is_trading_day",
     "out_of_list_edit": "services/source_ingestion/provider_adapters.py: registered FinMindTaiwanKBarAdapter token + _finmind_kbar handler. Required because ConnectorDefinition rejects adapter tokens missing from the provider allowlist (module import fails otherwise). No behaviour change for other adapters.",
-    "production_path": "provider_adapters._finmind_kbar: when request has no caller payload it performs a real FinMindLiveFetcher.fetch_kbar via fetch_kbar() with the process-wide shared KBarHourlyBudget (4500/h); missing credential -> FinMindCredentialError with zero network; budget exhausted / 402 -> SourceEvidenceError (stop, no retry in window). fetched_at comes from the real response. Caller-supplied payload still accepted for replay."
+    "production_path": "provider_adapters._finmind_kbar: when request has no caller payload it performs a real FinMindLiveFetcher.fetch_kbar via fetch_kbar() with the process-wide shared KBarHourlyBudget (4500/h); missing credential -> FinMindCredentialError with zero network; budget exhausted / 402 -> SourceEvidenceError (stop, no retry in window). fetched_at comes from the real response. Caller-supplied payload still accepted for replay.",
+    "review_fixes_20261111": "records_from_kbar_payload now raises SourceEvidenceError on conflicting duplicate minutes (symbol-day fail closed, no first-wins record) and on non-trading day; provider_adapters._finmind_kbar passes a governed calendar gate (request is_trading_day callable, else closed_dates/holidays + Mon-Fri rule). Dispatch-path regression tests added (conflict, Sunday, closed-calendar callback)."
   },
   "tests": {
     "new": "test_finmind_kbar.py (19 incl. 2 provider-path tests exercising real fetch_kbar + shared budget + missing credential), test_finmind_kbar_availability.py; 85 passed with related regression suites",
     "regression": "test_finmind_taiwan_connectors, test_finmind_broker_backfill, test_provider_management_coverage, test_connector_framework, test_financial_source_catalog, test_registry_split passed with pyarrow/fastapi/jsonschema installed in a scratch venv",
-    "preexisting_failures": "5 failures in test_controller_worker.py (persona schedule / projector truth) fail identically on the untouched base branch in this venv; not caused by this change"
+    "preexisting_failures": "5 failures in test_controller_worker.py (persona schedule / projector truth) fail identically on the untouched base branch in this venv; not caused by this change",
+    "after_review_fix": "8 focused+related suites: 171 passed, 1 warning, exit 0 (scratch venv)"
   },
   "real_source_probes": {
     "status": "NOT_RUN",
@@ -32,7 +34,8 @@
       "tool": "observe_publication_time",
       "note": "documented ~15:50 Asia/Taipei is unconfirmed by real fetched_at observations"
     },
-    "quota_metadata": "captured per response via _extract_quota_meta into record quota_meta; no real response observed"
+    "quota_metadata": "captured per response via _extract_quota_meta into record quota_meta; no real response observed",
+    "blocker": "Re-checked at this dispatch: FINMIND_API_TOKEN still absent in worker env (credential_unavailable). Range, two-symbol volume-unit, publication-time and real quota probes remain NOT_RUN; Human/Ops publisher must run them via existing authorized path. Nothing fabricated."
   },
   "not_verified": [
     "any real FinMind KBar response (range, volume unit, publication time, closing-auction bar, odd-lot separation, 2-year history per symbol)",

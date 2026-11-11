@@ -178,3 +178,28 @@ def test_provider_path_missing_credential_no_network(monkeypatch):
     monkeypatch.delenv("FINMIND_API_TOKEN", raising=False)
     with pytest.raises(FinMindCredentialError):
         pa._finmind_kbar(FinMindTaiwanKBarAdapter(), {"symbol": "2330", "date": DAY}, "t")
+
+
+def test_dispatch_conflicting_duplicate_fails_closed():
+    from services.source_ingestion import provider_adapters as pa
+
+    payload = {"data": [_row("09:00:00", c=101.0), _row("09:00:00", c=102.0)]}
+    req = {"symbol": "2330", "date": DAY, "payload": payload, "fetched_at": "2026-11-10T08:00:00Z"}
+    with pytest.raises(pa.SourceEvidenceError, match="conflicting"):
+        pa._finmind_kbar(FinMindTaiwanKBarAdapter(), req, "t")
+
+
+def test_dispatch_rejects_non_trading_day_default_and_calendar():
+    from services.source_ingestion import provider_adapters as pa
+
+    sunday = "2026-11-08"
+    req = {"symbol": "2330", "date": sunday, "payload": {"data": [_row("09:00:00", d=sunday)]},
+           "fetched_at": "2026-11-08T08:00:00Z"}
+    with pytest.raises(pa.SourceEvidenceError, match="non-trading"):
+        pa._finmind_kbar(FinMindTaiwanKBarAdapter(), req, "t")
+    holiday = {"symbol": "2330", "date": DAY, "payload": {"data": [_row("09:00:00")]},
+               "fetched_at": "2026-11-10T08:00:00Z", "is_trading_day": lambda d: False}
+    with pytest.raises(pa.SourceEvidenceError, match="non-trading"):
+        pa._finmind_kbar(FinMindTaiwanKBarAdapter(), holiday, "t")
+    ok = {**holiday, "is_trading_day": lambda d: True}
+    assert len(pa._finmind_kbar(FinMindTaiwanKBarAdapter(), ok, "t")) == 1

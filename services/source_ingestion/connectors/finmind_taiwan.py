@@ -32,6 +32,7 @@ from .base import (
     SourceConnector,
     SourceConnectorProvider,
     SourceMetadata,
+    SourceEvidenceError,
     SourceRecord,
 )
 
@@ -1337,7 +1338,7 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
         is_trading_day: Any = None,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
-        return self.normalize_kbar_payload(
+        result = self.normalize_kbar_payload(
             payload,
             symbol=symbol,
             session_date=session_date,
@@ -1347,7 +1348,18 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
             quota_meta=quota_meta,
             is_trading_day=is_trading_day,
             trace_id=trace_id,
-        ).records
+        )
+        if result.rejected_non_trading_day:
+            raise SourceEvidenceError(
+                f"FinMind KBar {symbol} {session_date}: non-trading day; payload rejected"
+            )
+        if result.conflicting_duplicates:
+            # Fail closed: first-wins would silently drop a conflicting raw row.
+            raise SourceEvidenceError(
+                f"FinMind KBar {symbol} {session_date}: conflicting duplicate minute bars "
+                f"{list(result.conflicting_duplicates)}; symbol-day quarantined, no records emitted"
+            )
+        return result.records
 
     def normalize_kbar_payload(
         self,

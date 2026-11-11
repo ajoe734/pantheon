@@ -357,8 +357,18 @@ def _finmind_kbar(
         reconciled_at=request.get("reconciled_at"),
         provider_published_at=request.get("provider_published_at"),
         quota_meta=quota_meta,
+        is_trading_day=_kbar_trading_day_gate(request),
         trace_id=trace_id,
     )
+
+
+def _kbar_trading_day_gate(request: Mapping[str, Any]) -> Any:
+    """Governed calendar for KBar: caller callable, else holiday list + weekday rule."""
+    gate = request.get("is_trading_day")
+    if callable(gate):
+        return gate
+    closed = {str(d)[:10] for d in (request.get("closed_dates") or request.get("holidays") or ())}
+    return lambda day: day.weekday() < 5 and day.isoformat() not in closed
 
 
 def _finmind_storage(
