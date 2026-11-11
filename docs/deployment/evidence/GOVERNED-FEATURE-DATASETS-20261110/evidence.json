@@ -28,7 +28,8 @@
     "3_feature_catalogue": {
       "catalogue": "services/source_ingestion/feature_catalogue.py",
       "dataset_count": 11,
-      "document": "feature_catalogue.json",
+      "document": "generated on demand by services.source_ingestion.feature_catalogue.catalogue_document(); not committed (bulky)",
+      "document_sha256_of_removed_472_line_file": "408df3fcc9c3897b7c257bbc48b3e9c62676a8445762c23aaaa418c204e7c610",
       "evaluator": "factor_rule lag floors pinned to catalogue by test_factor_rule_catalogue_lags_match_source_ingestion_catalogue",
       "field_count": 38,
       "paper_producer": "paper_signal_producer rejects factor-rule inputs outside the catalogue (feature_not_in_catalogue)",
