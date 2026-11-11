@@ -1,0 +1,9 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-INTRADAY-MINUTE-BARS-SD-20261111-CI-RED-75A307B919AD",
+  "source_task": "INTRADAY-MINUTE-BARS-SD-20261111",
+  "source_pr": 7180,
+  "blocker": "ci-red: Smoke acceptance",
+  "root_cause": "Infrastructure flake, not a code defect. In job 130585680233 (run 43037262561) apt could not resolve azure.archive.ubuntu.com (Temporary failure resolving), so the 'Provision real worker sandbox' step hit its 5-minute timeout. All other required checks on the PR (service suites, stage-0 gate, commit trailers, import smoke plan) passed.",
+  "fix": "No source change needed. Re-run the failed Smoke acceptance job on PR #7180 once run 43037262561 finishes (Research suite still in progress at time of analysis; gh cannot rerun failed jobs on an in-progress run).",
+  "scripts/git/auto_integrator.py": "unchanged"
+}
