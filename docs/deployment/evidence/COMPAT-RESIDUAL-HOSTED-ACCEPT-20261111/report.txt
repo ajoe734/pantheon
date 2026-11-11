@@ -217,3 +217,6 @@ strategy-readonly-19JTI6保存12個原策略查詢與1個資料源查詢，13個
 
 目前交付邊界
 A07工具啟用、A13退役GET與保留mixed handlers、A16 supported metadata/canonical loader來源與真Registry讀取、A18正式入口都有具名適用證據；empty MinIO、不測mutation、有限tenant/traffic與舊rollback archive的限制仍在。原AC3/4完整gate適用驗收與safe-default／明示授權姿態尚無充分證據，不能由來源完成或有限GUI成功代替。PR#7193僅保留可續作證據，不凍結completed-delivery handoff、不標DONE；後續由原publisher/既有修復lane提供真正缺少的結果或已有明示授權引用，再由本task沿原review/CI/integrator流程完成。沒有要求重授既有權限，也沒有改canonical acceptance。
+
+23:08Z補充完成載入的導航驗證：檢視首批截圖後確認其只證明heading可見，因此另做有界唯讀batch，逐頁等實際intended GET200／response完成／loading marker消失才截圖，23:08:56Z process exit0。部署表161列、耗12.903s；排名明確EMPTY／Live data unavailable（1個placeholder列，不是1個persona）；MCP明確Live MCP registry is empty且actions disabled；績效歸因共30個table rows。四頁response與截圖hash、5個ERR_ABORTED（包含離頁的quarterly recommendations）、零pageerror／真正network failure／business writes及logout200→me401，都在render_complete_followup與原始receipt；前批heading-only證據未刪改。這解決載入截圖範圍，不把12.903s或empty/degraded狀態稱為性能／全功能PASS。
+本輪驗證收齊：python3 /tmp/compat-residual-validate.py終局exit0，十個canonical DONE／frozen blob／merge receipt／served ancestry、六個舊來源ancestry、原inventory內容與hash、全部raw receipt hashes及13條baseline完整diff重算均通過。前兩次因governed show task-lock busy exit75中止，未算通過；有限重試後的成功與失敗分開記錄。JSON、diff、trailers、two-file scope與每個evidence檔400新增行上限檢查通過；未重跑未變更產品的廣泛測試。
