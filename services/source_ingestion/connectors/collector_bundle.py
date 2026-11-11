@@ -167,6 +167,7 @@ class CollectorPullResult:
     bundle_count: int
     paused_reasons: tuple[str, ...] = ()
     observed: Mapping[str, Any] = field(default_factory=dict)
+    feature_rejected: tuple[Mapping[str, str], ...] = ()
 
 
 def _cursor_key(finished_at: datetime, run_id: str) -> str:
@@ -417,7 +418,13 @@ class CollectorBundleAdapter:
             return None
         return doc if isinstance(doc, dict) else None
 
-    def pull(self, *, cursor: str | None = None, trace_id: str = "") -> CollectorPullResult:
+    def pull(
+        self,
+        *,
+        cursor: str | None = None,
+        trace_id: str = "",
+        prior_daily_counts: Mapping[str, Mapping[str, int]] | None = None,
+    ) -> CollectorPullResult:
         transport = self._transport()
         index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
         entries = index.get("bundles") if isinstance(index, dict) else None
@@ -467,12 +474,18 @@ class CollectorBundleAdapter:
         observed = observed_from_collector_status(
             self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self.cadence_seconds
         )
+        # Governed macro / community sources also emit normalized point-in-time feature
+        # records (listed first so a record cap never drops them in favour of raw items).
+        feature_records, feature_rejected = self.governed_feature_records(
+            records, prior_daily_counts=prior_daily_counts, trace_id=trace_id
+        )
         return CollectorPullResult(
-            records=tuple(records),
+            records=(*feature_records, *records),
             next_cursor=next_cursor,
             bundle_count=len(verified),
             paused_reasons=tuple(paused),
             observed=observed,
+            feature_rejected=feature_rejected,
         )
 
     # -- mapping ---------------------------------------------------------------
@@ -633,7 +646,7 @@ class CollectorBundleAdapter:
         """
         if self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
             rows, rejected = macro_feature_rows(records)
-        elif self.dataset == TW_COMMUNITY_DAILY_DATASET:
+        elif self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
             rows, rejected = community_daily_feature_rows(records, prior_daily_counts=prior_daily_counts), ()
         else:
             return (), ()
