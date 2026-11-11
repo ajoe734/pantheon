@@ -129,6 +129,7 @@ def _seed_default_feature_catalogue() -> None:
         ("tw_macro_cbc", "policy_rate", 1, "CBC policy discount rate"),
         ("tw_macro_cbc", "m1b_yoy", 25, "CBC M1B money supply YoY"),
         ("tw_macro_cbc", "m2_yoy", 25, "CBC M2 money supply YoY"),
+        ("tw_macro_cbc", "usd_twd", 1, "CBC NT$ per US$ exchange rate (BP01D01 column 01)"),
         ("tw_macro_ndc", "monitoring_score", 28, "NDC business cycle monitoring score"),
         ("tw_macro_ndc", "leading_index", 28, "NDC composite leading index"),
         ("tw_macro_ndc", "coincident_index", 28, "NDC composite coincident index"),
@@ -138,6 +139,8 @@ def _seed_default_feature_catalogue() -> None:
         ("tw_community_attention", "post_volume", 0, "Aggregated community post volume"),
         ("tw_community_attention", "attention_zscore", 0, "Community attention volume z-score"),
         ("tw_community_attention", "bull_bear_ratio", 0, "Community bull-to-bear mention ratio"),
+        ("tw_community_attention", "unique_authors", 0, "Distinct hashed community authors"),
+        ("tw_community_attention", "engagement_weighted_sentiment", 0, "Engagement-weighted community sentiment"),
     )
     for dataset, field, lag_days, desc in seeded:
         register_feature_definition(
@@ -151,6 +154,75 @@ def _seed_default_feature_catalogue() -> None:
 
 
 _seed_default_feature_catalogue()
+
+
+def assert_governed_feature_inputs(strategy_logic: Mapping[str, Any]) -> None:
+    """Require every declared ``inputs[]`` entry to exist in the governed feature catalogue.
+
+    Price-volume built-ins resolve through the seeded price datasets. Anything else
+    must be catalogued so its availability lag is governed; the paper signal producer
+    calls this before evaluating so features can only enter through the catalogue.
+    """
+    if not isinstance(strategy_logic, Mapping) or strategy_logic.get("kind") != "factor_rule_v1":
+        return
+    for idx, item in enumerate(strategy_logic.get("inputs") or ()):
+        if not isinstance(item, Mapping):
+            continue
+        dataset, field = str(item.get("dataset") or ""), str(item.get("field") or "")
+        if get_feature_definition(dataset, field) is None:
+            raise FactorRuleValidationError(
+                f"inputs[{idx}] ({dataset}.{field}) is not in the governed feature catalogue"
+            )
+
+
+def assert_governed_feature_observations(
+    strategy_logic: Mapping[str, Any],
+    features: Mapping[str, Any] | None,
+    decision_time: Any,
+) -> None:
+    """Require catalogued, timestamped, already-available observations for non-price inputs.
+
+    Raw numbers or untimestamped series cannot carry an availability lag, so they are
+    rejected, as is an observation lacking ``event_time`` / ``available_time``.
+    Future-available observations are hidden by the evaluator, never read.
+    """
+    if not isinstance(strategy_logic, Mapping) or strategy_logic.get("kind") != "factor_rule_v1":
+        return
+    feature_map: Mapping[str, Any] = features if isinstance(features, Mapping) else {}
+    decision_checked = False
+    for item in strategy_logic.get("inputs") or ():
+        if not isinstance(item, Mapping):
+            continue
+        name, dataset, field = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
+        if dataset in PRICE_VOLUME_DATASETS:
+            continue
+        if not decision_checked:
+            # decision_time stays optional for timestamp-free built-in price inputs;
+            # any non-price (point-in-time) input requires a valid one.
+            _parse_timestamp_utc(decision_time, is_decision_time=True)
+            decision_checked = True
+        cat_def = get_feature_definition(dataset, field)
+        if cat_def is None:
+            raise FactorRuleValidationError(f"{dataset}.{field} is not in the governed feature catalogue")
+        series = _lookup_raw_feature(feature_map, name=name, dataset=dataset, field=field)
+        if not isinstance(series, (list, tuple)) or not series:
+            raise FactorRuleValidationError(
+                f"feature input '{name}' ({dataset}.{field}) requires catalogued timestamped observations"
+            )
+        for idx, obs in enumerate(series):
+            if (
+                not isinstance(obs, Mapping)
+                or not _is_number(obs.get("value"))
+                or not obs.get("event_time")
+                or not obs.get("available_time")
+            ):
+                raise FactorRuleValidationError(
+                    f"feature input '{name}[{idx}]' must carry value, event_time and available_time"
+                )
+            # Observations that are not yet available (or still inside the declared lag)
+            # stay invisible: the evaluator drops them, and it raises when none remain.
+            _parse_timestamp_utc(obs["available_time"], is_decision_time=False)
+            _parse_timestamp_utc(obs["event_time"], is_decision_time=False)
 
 
 # Design §9.2 (22 operators) + Plan §3.4 (14 time-series operators) = 36 operators.
@@ -937,6 +1009,49 @@ def _derive_vwap_series(
     return close_series
 
 
+def _latest_visible_versions(
+    raw_series: Any,
+    *,
+    availability_lag_days: int,
+    decision_time: str | datetime | date | None,
+) -> Any:
+    """Governed read for catalogued non-price features.
+
+    Keeps exactly the latest *visible* version per (entity, event_time) so a late
+    revision replaces, rather than adds, a daily observation and replayed rows collapse.
+    Catalogue lag and any row-level ``availability_lag_days`` are applied; ordering is
+    by event time. Series without timestamped mapping rows pass through unchanged.
+    """
+    if (
+        not isinstance(raw_series, Sequence)
+        or isinstance(raw_series, (str, bytes))
+        or decision_time is None
+        or not all(
+            isinstance(o, Mapping) and o.get("event_time") and o.get("available_time")
+            for o in raw_series
+        )
+    ):
+        return raw_series
+    decision_dt = _parse_timestamp_utc(decision_time, is_decision_time=True)
+    latest: dict[tuple[Any, datetime], tuple[tuple[datetime, str], Mapping[str, Any]]] = {}
+    for obs in raw_series:
+        event_dt = _parse_timestamp_utc(obs["event_time"])
+        avail_dt = _parse_timestamp_utc(obs["available_time"])
+        row_lag = obs.get("availability_lag_days")
+        lag = max(
+            int(availability_lag_days),
+            row_lag if isinstance(row_lag, int) and not isinstance(row_lag, bool) else 0,
+        )
+        if avail_dt > decision_dt or event_dt + timedelta(days=lag) > decision_dt:
+            continue
+        key = (obs.get("entity"), event_dt)
+        rank = (avail_dt, str(obs.get("ingest_time") or ""))
+        if key not in latest or rank >= latest[key][0]:
+            latest[key] = (rank, obs)
+    ordered = sorted(latest.items(), key=lambda kv: (kv[0][1], str(kv[0][0] or "")))
+    return [entry[1][1] for entry in ordered]
+
+
 def resolve_point_in_time_inputs(
     strategy_logic: Mapping[str, Any],
     closes: Sequence[float] | None,
@@ -1010,6 +1125,10 @@ def resolve_point_in_time_inputs(
                 f"missing required feature input '{name}' ({dataset}.{field})"
             )
 
+        if dataset not in PRICE_VOLUME_DATASETS:
+            raw_series = _latest_visible_versions(
+                raw_series, availability_lag_days=lag_days, decision_time=decision_time
+            )
         filtered = _filter_point_in_time_series(
             raw_series,
             input_name=name,
@@ -1447,6 +1566,11 @@ def evaluate_factor_rule_view(
         parameters,
         mutation_surface if isinstance(mutation_surface, Mapping) else None,
     )
+
+    # Shared evaluator (research/vectorbt + paper): features may only enter through
+    # the governed catalogue with timestamped point-in-time observations.
+    assert_governed_feature_inputs(validated_logic)
+    assert_governed_feature_observations(validated_logic, features, decision_time)
 
     env = resolve_point_in_time_inputs(
         validated_logic,

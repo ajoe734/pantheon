@@ -1,0 +1,37 @@
+{
+  "schema_version": "tw_macro_release_calendar.v1",
+  "year": 2026,
+  "timezone": "Asia/Taipei",
+  "maintenance": "Manually maintained once per year. Entries with status 'confirmed' carry an agency-announced date. Entries with status 'rule' state the agency's publication rule only; the exact date must be copied from the cited authoritative schedule before the entry is promoted to 'confirmed'. A rule entry is never used to infer an exact release date.",
+  "last_reviewed": "2026-11-11",
+  "sources": {
+    "cbc": {
+      "name": "Central Bank of the Republic of China (Taiwan) - board meeting schedule and statistics release calendar",
+      "url": "https://www.cbc.gov.tw/"
+    },
+    "ndc": {
+      "name": "National Development Council - Taiwan Indicators Search System and release notices",
+      "url": "https://index.ndc.gov.tw/"
+    },
+    "dgbas": {
+      "name": "DGBAS (Directorate-General of Budget, Accounting and Statistics) - advance release calendar",
+      "url": "https://www.stat.gov.tw/News_NoticeCalendar.aspx?n=3717&Dept=4527"
+    }
+  },
+  "entries": [
+    {"agency": "cbc", "feature": "tw_macro_cbc.policy_rate", "event": "Board of Directors and Supervisors meeting Q1 (policy rate decision)", "status": "confirmed", "release_date": "2026-03-19", "source": "cbc"},
+    {"agency": "cbc", "feature": "tw_macro_cbc.policy_rate", "event": "Board of Directors and Supervisors meeting Q2 (policy rate decision)", "status": "confirmed", "release_date": "2026-06-18", "source": "cbc"},
+    {"agency": "cbc", "feature": "tw_macro_cbc.policy_rate", "event": "Board of Directors and Supervisors meeting Q3 (policy rate decision)", "status": "confirmed", "release_date": "2026-09-17", "source": "cbc"},
+    {"agency": "cbc", "feature": "tw_macro_cbc.policy_rate", "event": "Board of Directors and Supervisors meeting Q4 (policy rate decision)", "status": "confirmed", "release_date": "2026-12-17", "source": "cbc"},
+    {"agency": "cbc", "feature": "tw_macro_cbc.m1b_yoy", "event": "Monetary aggregates M1B/M2 monthly release", "status": "rule", "rule": "Published monthly for the previous month; exact dates are on the CBC statistics release calendar.", "source": "cbc"},
+    {"agency": "cbc", "feature": "tw_macro_cbc.m2_yoy", "event": "Monetary aggregates M1B/M2 monthly release", "status": "rule", "rule": "Published monthly for the previous month; exact dates are on the CBC statistics release calendar.", "source": "cbc"},
+    {"agency": "ndc", "feature": "tw_macro_ndc.monitoring_score", "event": "Business indicators and monitoring signal for August 2026", "status": "confirmed", "release_date": "2026-09-29", "source": "ndc"},
+    {"agency": "ndc", "feature": "tw_macro_ndc.monitoring_score", "event": "Business indicators and monitoring signal for September 2026 (originally planned 2026-10-28, postponed by NDC notice)", "status": "confirmed", "release_date": "2026-10-29", "source": "ndc"},
+    {"agency": "ndc", "feature": "tw_macro_ndc.monitoring_score", "event": "Business indicators and monitoring signal, other months", "status": "rule", "rule": "Published around the 27th-29th of each month for the previous month; postponements are announced by NDC notice.", "source": "ndc"},
+    {"agency": "ndc", "feature": "tw_macro_ndc.leading_index", "event": "Composite leading index (released with the monitoring signal)", "status": "rule", "rule": "Same release as the business monitoring signal.", "source": "ndc"},
+    {"agency": "ndc", "feature": "tw_macro_ndc.coincident_index", "event": "Composite coincident index (released with the monitoring signal)", "status": "rule", "rule": "Same release as the business monitoring signal.", "source": "ndc"},
+    {"agency": "dgbas", "feature": "tw_macro_dgbas.cpi_yoy", "event": "Consumer price index monthly release", "status": "rule", "rule": "Published within about 5 working days after month end (adjusted around Lunar New Year, long holidays and disasters).", "source": "dgbas"},
+    {"agency": "dgbas", "feature": "tw_macro_dgbas.gdp_yoy", "event": "National income statistics and GDP forecast", "status": "rule", "rule": "Quarterly, in February, May, August and November; preliminary estimate at the end of the second month after the quarter.", "source": "dgbas"},
+    {"agency": "dgbas", "feature": "tw_macro_dgbas.export_orders_yoy", "event": "MOEA export orders monthly release", "status": "rule", "rule": "Published monthly for the previous month; exact dates are on the DGBAS/MOEA advance release calendars.", "source": "dgbas"}
+  ]
+}

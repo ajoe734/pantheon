@@ -21,7 +21,19 @@ def isolated_finmind_configuration(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("FINMIND_API_TOKEN", "local-test-token")
 
 
-def _persona(*, connector_candidates: list[str] | None = None, source_class: str = "live_pull") -> dict:
+# FinMind never supplies tw_price_daily (TWSE/TPEx official stays OHLCV truth);
+# FinMind-routed tests use a FinMind-only dataset instead.
+_FINMIND_ONLY_DATASET = "tw_day_trading"
+
+
+def _persona(
+    *,
+    connector_candidates: list[str] | None = None,
+    source_class: str = "live_pull",
+    dataset: str | None = None,
+) -> dict:
+    if dataset is None:
+        dataset = _FINMIND_ONLY_DATASET if connector_candidates is None else "tw_price_daily"
     return {
         "persona_id": "persona-alpha",
         "name": "Alpha Momentum",
@@ -30,7 +42,7 @@ def _persona(*, connector_candidates: list[str] | None = None, source_class: str
         "created_at": "2026-06-01T00:00:00Z",
         "required_data_sources": [
             {
-                "dataset": "tw_price_daily",
+                "dataset": dataset,
                 "market": "TW",
                 "cadence": "daily",
                 "source_class": source_class,
@@ -214,7 +226,9 @@ def test_missing_finmind_credential_respects_explicit_candidate_boundary(
     candidates = ["tw-finmind-datasets"]
     if fallback:
         candidates.append("tw-twse-tpex-official-market")
-    result = reconciler.reconcile_persona(_persona(connector_candidates=candidates))
+    result = reconciler.reconcile_persona(
+        _persona(connector_candidates=candidates, dataset="tw_institutional_flow")
+    )
     action = result.actions[0]
     assert action.connector_id == ("tw-twse-tpex-official-market" if fallback else None)
     assert action.status == ("mutated" if fallback else "unsupported")
@@ -241,7 +255,10 @@ def test_explicit_finmind_preference_with_configured_key_obeys_policy(
     tmp_path: Path, public_only: bool,
 ) -> None:
     reconciler, connector_store, _ = _reconciler(tmp_path)
-    persona = _persona(connector_candidates=["tw-finmind-datasets", "tw-twse-tpex-official-market"])
+    persona = _persona(
+        connector_candidates=["tw-finmind-datasets", "tw-twse-tpex-official-market"],
+        dataset="tw_institutional_flow",
+    )
     if public_only:
         persona["required_data_sources"][0]["policy_gates"].append("public-source-only")
     result = reconciler.reconcile_persona(persona)
@@ -249,8 +266,25 @@ def test_explicit_finmind_preference_with_configured_key_obeys_policy(
     assert result.actions[0].connector_id == expected
     assert result.summary["mutated"] == 1
     assert connector_store.get_config(expected).fetch["request"]["dataset"] == (
-        "tw_price_daily" if public_only else "TaiwanStockPrice"
+        "tw_institutional_flow" if public_only else "TaiwanStockInstitutionalInvestorsBuySell"
     )
+
+
+@pytest.mark.parametrize("public_only", [False, True])
+def test_keyed_finmind_preference_never_takes_tw_price_daily(tmp_path: Path, public_only: bool) -> None:
+    """Official TWSE/TPEx stays daily OHLCV truth; FinMind price is reference-only."""
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+    persona = _persona(connector_candidates=["tw-finmind-datasets", "tw-twse-tpex-official-market"])
+    if public_only:
+        persona["required_data_sources"][0]["policy_gates"].append("public-source-only")
+    result = reconciler.reconcile_persona(persona)
+    assert result.actions[0].connector_id == "tw-twse-tpex-official-market"
+    assert connector_store.get_config("tw-finmind-datasets") is None
+    assert schedule_store.get_schedule("tw-finmind-datasets") is None
+    # A sole FinMind candidate for tw_price_daily is unsupported, not routed.
+    sole = _persona(connector_candidates=["tw-finmind-datasets"])
+    assert reconciler.reconcile_persona(sole).summary["unsupported"] == 1
+    assert connector_store.get_config("tw-finmind-datasets") is None
 
 
 @pytest.mark.parametrize("http_status", [200, 401, 403])
@@ -289,7 +323,9 @@ def test_explicit_keyed_selection_does_not_claim_credentials_or_data_are_live(
         records = finmind.FinMindTaiwanDatasetAdapter().records_from_data_payload(
             config.fetch["request"]["dataset"], payload,
         )
-        assert records[0].metadata["normalized_row"]["close"] == 955.0
+        assert records[0].metadata["raw_row"]["close"] == 955.0
+        assert "normalized_row" not in records[0].metadata
+        assert records[0].metadata["redistribution_allowed"] is False
         assert records[0].metadata["provider"] == "FinMind"
     else:
         with pytest.raises(finmind.FinMindCredentialError, match=f"HTTP {http_status}"):
@@ -530,7 +566,7 @@ def test_persona_source_provisioning_api_smoke(persona_api) -> None:
     assert second.json()["summary"]["satisfied"] == 1
     readback = client.get("/api/source-ingest/controller/readback")
     assert readback.status_code == 200, readback.text
-    assert readback.json()["connectors"][0]["desired_state"]["dataset"] == "tw_price_daily"
+    assert readback.json()["connectors"][0]["desired_state"]["dataset"] == _FINMIND_ONLY_DATASET
 
 
 def test_two_reconcile_threads_converge_without_duplicate_connector_or_schedule(persona_api) -> None:
