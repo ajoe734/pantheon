@@ -68,6 +68,10 @@ SYNTHETIC_SOURCE_KIND = "synthetic_fixture"
 GOVERNED_FILE_SOURCE_KIND = "governed_normalized_file"
 CALLER_SUPPLIED_SOURCE_KIND = "caller_supplied"
 MIN_GOVERNED_BAR_COUNT = 85
+GOVERNED_SNAPSHOT_SOURCE_KIND = "governed_snapshot_tw_price_daily"
+# Minimum finite (factor, forward-return) pairs before an IC/hit-rate figure is reported
+# as a measurement; below this the metric is flagged insufficient, never estimated.
+MIN_IC_OBSERVATIONS = 20
 
 
 class TaiwanEvaluationDataError(ValueError):
@@ -453,6 +457,133 @@ def _load_governed_file_universe(
     return loaded
 
 
+def _snapshot_files(root: Path) -> list[Path]:
+    return sorted(p for p in root.rglob("*.jsonl") if p.is_file())
+
+
+def _snapshot_root(snapshot_dir: str | Path) -> Path:
+    root = Path(snapshot_dir)
+    if (root / "normalized" / "tw_price_daily").is_dir():
+        root = root / "normalized" / "tw_price_daily"
+    return root
+
+
+def compute_snapshot_id(root: Path) -> tuple[str, int]:
+    """Snapshot id = sha256 over the sorted ``relative_path:file_sha256`` list."""
+    files = _snapshot_files(root)
+    lines = [
+        f"{p.relative_to(root).as_posix()}:{hashlib.sha256(p.read_bytes()).hexdigest()}"
+        for p in files
+    ]
+    return "sha256:" + hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest(), len(files)
+
+
+def _read_snapshot_rows(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for path in _snapshot_files(root):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                meta = rec["metadata"]
+                body = json.loads(meta["body"]) if isinstance(meta["body"], str) else dict(meta["body"])
+                key = (str(body["symbol"]), str(body["date"]))
+                if all(body.get(f) is None for f in ("open", "high", "low", "close", "volume", "value")):
+                    continue  # no-trade day (all-null quote): not a bar, never filled
+                raw_avail = str(body.get("available_time") or meta["available_time"]).strip()
+                if len(raw_avail) <= 10:
+                    # Date-only availability (e.g. STOCK_DAY_ALL) would parse as midnight,
+                    # before the close existed; pin it to the regular 14:30 Taipei publish time.
+                    raw_avail = f"{raw_avail}T14:30:00+08:00"
+                avail = _parse_timestamp_utc(raw_avail)
+                bar = {
+                    "open": float(body["open"]), "high": float(body["high"]),
+                    "low": float(body["low"]), "close": float(body["close"]),
+                    "volume": float(body["volume"]), "value": float(body["value"]),
+                    "ts": avail.isoformat().replace("+00:00", "Z"),
+                }
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise TaiwanEvaluationDataError(f"unreadable snapshot record in {path}: {exc}") from exc
+            prev = rows.get(key)
+            if prev is not None:
+                if any(prev[f] != bar[f] for f in ("open", "high", "low", "close")):
+                    raise TaiwanEvaluationDataError(f"conflicting duplicate prices for {key} in {path}")
+                # Same OHLC but different volume/value: the earlier monthly capture was a partial
+                # day total. Cumulative daily volume is monotone, so the largest is the final one.
+                keep = bar if bar["volume"] >= prev["volume"] else prev
+                keep = dict(keep)
+                keep["ts"] = max(prev["ts"], bar["ts"])  # latest availability: never earlier than seen
+                bar = keep
+            rows[key] = bar
+    return rows
+
+
+def snapshot_coverage(snapshot_dir: str | Path) -> dict[str, int]:
+    """Distinct trading days per symbol in the snapshot (for insufficiency reporting)."""
+    counts: dict[str, int] = {}
+    for sym, _day in _read_snapshot_rows(_snapshot_root(snapshot_dir)):
+        counts[sym] = counts.get(sym, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def load_tw_price_daily_snapshot(
+    snapshot_dir: str | Path,
+    *,
+    symbols: Sequence[str] | None = None,
+    min_bars: int = 40,
+) -> dict[str, dict[str, Any]]:
+    """Load a read-only hosted ``normalized/tw_price_daily`` snapshot (date-partitioned jsonl).
+
+    Duplicate re-ingests of one (symbol, date) with identical OHLC are collapsed
+    (latest available_time wins); duplicates with differing OHLC fail closed, and
+    duplicates differing only in volume/value keep the largest (final) daily total. Symbols with fewer than ``min_bars`` bars are left out
+    (see ``snapshot_coverage``), never padded. ``event_time``/``available_time`` are
+    the record's ``available_time`` in UTC.
+    """
+    root = _snapshot_root(snapshot_dir)
+    if not root.is_dir():
+        raise TaiwanEvaluationDataError(f"governed snapshot directory missing: {root}")
+    snapshot_id, file_count = compute_snapshot_id(root)
+    if file_count == 0:
+        raise TaiwanEvaluationDataError(f"governed snapshot has no jsonl files: {root}")
+    by_symbol: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for (sym, day), bar in _read_snapshot_rows(root).items():
+        by_symbol.setdefault(sym, []).append((day, bar))
+    wanted = set(map(str, symbols)) if symbols is not None else None
+    universe: dict[str, dict[str, Any]] = {}
+    for sym in sorted(by_symbol):
+        if wanted is not None and sym not in wanted:
+            continue
+        series = sorted(by_symbol[sym], key=lambda item: item[0])
+        if len(series) < min_bars:
+            continue
+        bars = []
+        for _day, b in series:
+            vwap = b["value"] / b["volume"] if b["volume"] > 0 else b["close"]
+            bars.append({
+                "symbol": sym, "date": b["ts"], "event_time": b["ts"], "available_time": b["ts"],
+                "open": b["open"], "high": b["high"], "low": b["low"], "close": b["close"],
+                "volume": b["volume"], "vwap": vwap,
+            })
+        entry = _normalize_symbol_panel_entry(sym, bars)
+        entry["source_kind"] = GOVERNED_SNAPSHOT_SOURCE_KIND
+        entry["provenance"] = {
+            "source_kind": GOVERNED_SNAPSHOT_SOURCE_KIND,
+            "governed": True,
+            "snapshot_root": str(root),
+            "snapshot_id": snapshot_id,
+            "snapshot_file_count": file_count,
+            "bar_count": len(bars),
+            "first_event_time": bars[0]["event_time"],
+            "last_event_time": bars[-1]["event_time"],
+        }
+        universe[sym] = entry
+    if not universe:
+        raise TaiwanEvaluationDataError(f"no symbol in snapshot has >= {min_bars} bars: {root}")
+    return universe
+
+
 def load_taiwan_evaluation_universe(
     market_data: Mapping[str, Any] | None = None,
     *,
@@ -531,6 +662,19 @@ def summarize_universe_provenance(universe: Mapping[str, Mapping[str, Any]]) -> 
             )
         if kind == GOVERNED_FILE_SOURCE_KIND:
             per_symbol[sym] = _verify_governed_file_provenance(sym, entry, prov)
+            continue
+        if kind == GOVERNED_SNAPSHOT_SOURCE_KIND:
+            root = Path(str(prov.get("snapshot_root") or ""))
+            if (
+                prov.get("source_kind") != kind
+                or not root.is_dir()
+                or compute_snapshot_id(root)[0] != prov.get("snapshot_id")
+                or int(prov.get("bar_count") or -1) != len(entry.get("decision_times") or ())
+            ):
+                raise TaiwanEvaluationDataError(
+                    f"symbol {sym} governed snapshot provenance cannot be re-verified"
+                )
+            per_symbol[sym] = dict(prov)
             continue
         snapshot = str(prov.get("snapshot_id") or prov.get("sha256") or "").strip()
         source = str(prov.get("source") or prov.get("source_ref") or "").strip()
@@ -803,6 +947,7 @@ def compute_template_evaluation_metrics(
 
         sym_ic: dict[str, float] = {}
         sym_hit: dict[str, float] = {}
+        sym_obs: dict[str, int] = {}
         for h in horizons:
             h_key = f"{h}d"
             fwd_ret = _compute_forward_returns(closes, h)
@@ -810,6 +955,10 @@ def compute_template_evaluation_metrics(
             hit_val = _compute_hit_rate_pandas(factors, fwd_ret)
             sym_ic[h_key] = ic_val
             sym_hit[h_key] = hit_val
+            sym_obs[h_key] = sum(
+                1 for f_raw, r_val in zip(factors, fwd_ret)
+                if math.isfinite(f_raw) and math.isfinite(r_val)
+            )
             for f_raw, f_norm, r_val in zip(factors, f_norm_list, fwd_ret):
                 if math.isfinite(f_raw) and math.isfinite(r_val):
                     pooled_factors_by_h[h].append(
@@ -836,6 +985,10 @@ def compute_template_evaluation_metrics(
             "turnover_by_horizon": sym_turnover_by_h,
             "autocorrelation_1d": sym_ac1,
             "valid_bars": len(finite_f),
+            "observations_by_horizon": sym_obs,
+            "insufficient_by_horizon": {
+                k: v < MIN_IC_OBSERVATIONS for k, v in sym_obs.items()
+            },
         }
 
     pooled_ic: dict[str, float] = {}
@@ -888,8 +1041,14 @@ def compute_template_evaluation_metrics(
         "half_life_days": half_life_days,
     }
 
+    pooled_obs = {f"{h}d": len(pooled_returns_by_h[h]) for h in horizons}
     return {
         "horizons": list(horizons),
+        "observations_by_horizon": pooled_obs,
+        "insufficient_by_horizon": {
+            k: v < MIN_IC_OBSERVATIONS for k, v in pooled_obs.items()
+        },
+        "min_ic_observations": MIN_IC_OBSERVATIONS,
         "per_symbol_ic": per_symbol_ic,
         "per_symbol": per_symbol,
         "pooled_ic": pooled_ic,
