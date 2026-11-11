@@ -813,6 +813,50 @@ class TestReplicationGateRealBacktestProtocol(unittest.TestCase):
         self.assertIsNotNone(evaluation["benchmarks"]["buy_and_hold_same_symbols"]["sharpe_ratio"])
         self.assertIsNotNone(evaluation["benchmarks"]["tw_0050"]["sharpe_ratio"])
 
+    def test_pit_history_measures_factor_rule_feature_refs(self) -> None:
+        from datetime import date, timedelta
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        start = date(2023, 1, 2)
+        records = [
+            {
+                "instrument": "2330.TWSE",
+                "date": (start + timedelta(days=i)).isoformat(),
+                "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0,
+            }
+            for i in range(760)
+        ]
+
+        def obs(first: str, n: int):
+            d0 = date.fromisoformat(first)
+            return [
+                {"event_time": (d0 + timedelta(days=30 * i)).isoformat(), "value": 1.0}
+                for i in range(n)
+            ]
+
+        short = {
+            "records": records,
+            "features_by_instrument": {"2330.TWSE": {"rev_yoy": obs("2025-01-01", 6)}},
+        }
+        days, _bars, details = _measure_pit_history(short, artifact)
+        self.assertLess(days, 730)
+        self.assertIn("rev_yoy", details["features"])
+
+        missing = {"records": records}
+        days, bars, details = _measure_pit_history(missing, artifact)
+        self.assertEqual(days, 0)
+        self.assertTrue(details["features"]["rev_yoy"].get("missing"))
+
+        long_ok = {
+            "records": records,
+            "features_by_instrument": {"2330.TWSE": {"rev_yoy": obs("2023-01-02", 30)}},
+        }
+        days, _bars, _d = _measure_pit_history(long_ok, artifact)
+        self.assertGreaterEqual(days, 730)
+
     def test_replication_backtest_protocol_insufficient_history_under_two_years(self) -> None:
         from adapter.vectorbt_adapter import (
             INSUFFICIENT_HISTORY_STATUS,

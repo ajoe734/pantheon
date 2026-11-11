@@ -550,6 +550,19 @@ class TestReplicationGate(unittest.TestCase):
         request.metadata["dataset_version_id"] = "dataset:nonexistent-dataset-review-probe"
         self._assert_unbound_refused(request, "dataset_version_mismatch")
 
+    def test_supplied_artifact_conflicting_with_metadata_binding_is_refused(self):
+        request = self._create_valid_request()
+        artifact = build_canonical_tw_strategy_artifact(strategy_id="swapped-candidate")
+        request.proposed_strategy_spec["strategy_artifact"] = artifact
+        self._assert_unbound_refused(request, "candidate_binding_conflict")
+
+    def test_supplied_dataset_conflicting_with_metadata_binding_is_refused(self):
+        request = self._create_valid_request()
+        request.proposed_strategy_spec["backtest_dataset"] = {
+            "dataset_id": "dataset:other-version"
+        }
+        self._assert_unbound_refused(request, "candidate_binding_conflict")
+
     def test_request_without_artifact_or_dataset_binding_is_refused(self):
         request = self._create_valid_request()
         request.metadata = {}

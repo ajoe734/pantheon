@@ -1156,54 +1156,121 @@ def _measure_pit_history(
     if isinstance(explicit_years, (int, float)) and not isinstance(explicit_years, bool):
         min_calendar_days = min(min_calendar_days, int(round(float(explicit_years) * 365)))
 
-    # For factor_rule_v1, also check PIT span of referenced non-OHLCV feature inputs
+    # For factor_rule_v1, resolve the real ref graph (signal/entry/exit/strength/filters)
+    # to declared inputs and measure the PIT history of every required feature.
     feature_spans: dict[str, dict[str, Any]] = {}
     logic = strategy_artifact.get("strategy_logic") or {}
     if logic.get("kind") == "factor_rule_v1":
+        from services.registry.factor_rule import (
+            BUILT_IN_PRICE_VOLUME_FIELDS,
+            _lookup_raw_feature,
+            collect_expression_refs_and_params,
+        )
+
         referenced: set[str] = set()
-        if "signal" in logic:
-            referenced |= _collect_inputs(logic["signal"])
+        roots: list[Any] = [logic.get("signal"), logic.get("strength")]
         for flt in logic.get("filters") or []:
-            referenced |= _collect_inputs(flt)
-        exit_cfg = logic.get("exit") or {}
-        if "flat_when" in exit_cfg:
-            referenced |= _collect_inputs(exit_cfg["flat_when"])
-        non_ohlcv = referenced - {"open", "high", "low", "close", "volume"}
+            roots.append(flt)
+        for section in ("entry", "exit"):
+            cfg = logic.get(section)
+            if isinstance(cfg, Mapping):
+                roots.extend(cfg.values())
+        for root in roots:
+            if isinstance(root, Mapping):
+                refs, _ = collect_expression_refs_and_params(root)
+                referenced |= refs
+        declared = {
+            str(item.get("name")): item
+            for item in logic.get("inputs") or []
+            if isinstance(item, Mapping)
+        }
+        price_fields = set(BUILT_IN_PRICE_VOLUME_FIELDS) | {"open", "high", "low", "close", "volume"}
         raw_features = dataset.get("features_by_instrument") or dataset.get("features") or {}
-        for feat_name in sorted(non_ohlcv):
-            for inst_key, inst_val in (
-                raw_features.items() if isinstance(raw_features, Mapping) else []
-            ):
-                series = (
-                    inst_val.get(feat_name)
-                    if isinstance(inst_val, Mapping)
-                    else (inst_val if inst_key == feat_name else None)
-                )
-                if isinstance(series, Sequence) and not isinstance(series, (str, bytes)):
-                    if series and isinstance(series[0], Mapping):
-                        obs_dates: list[str] = []
-                        for obs in series:
-                            if isinstance(obs, Mapping):
-                                ts = str(
-                                    obs.get("event_time") or obs.get("available_at") or ""
-                                ).strip()[:10]
-                                if len(ts) == 10:
-                                    obs_dates.append(ts)
-                        if len(obs_dates) >= 2:
-                            obs_dates.sort()
-                            f_days = (
-                                _date.fromisoformat(obs_dates[-1])
-                                - _date.fromisoformat(obs_dates[0])
-                            ).days
-                        else:
-                            f_days = 0
-                        feature_spans[feat_name] = {
-                            "observations": len(series),
-                            "calendar_days": f_days,
-                        }
-                        min_calendar_days = min(min_calendar_days, f_days)
-                    elif len(series) < min_bars:
-                        min_bars = len(series)
+        record_extras: set[str] = set()
+        for rec in records:
+            if isinstance(rec, Mapping):
+                record_extras |= {str(k) for k in rec.keys()}
+                if isinstance(rec.get("features"), Mapping):
+                    record_extras |= {str(k) for k in rec["features"].keys()}
+
+        def _obs_days(series: Any) -> tuple[int, int | None]:
+            """Return (observations, calendar_days or None when bar-aligned/untimestamped)."""
+            n = len(series)
+            stamps: list[str] = []
+            for obs in series:
+                if isinstance(obs, Mapping):
+                    ts = obs.get("event_time") or obs.get("date") or obs.get("as_of") or obs.get("available_time")
+                elif isinstance(obs, (list, tuple)) and len(obs) == 2:
+                    ts = obs[0]
+                else:
+                    ts = None
+                ts = str(ts or "").strip()[:10]
+                if len(ts) == 10:
+                    stamps.append(ts)
+            if not stamps:
+                return n, None
+            stamps.sort()
+            try:
+                return n, (_date.fromisoformat(stamps[-1]) - _date.fromisoformat(stamps[0])).days
+            except ValueError:
+                return n, 0
+
+        for ref in sorted(referenced - {"signal"}):
+            item = declared.get(ref)
+            if item is None:
+                if ref in price_fields:
+                    continue
+                feature_spans[ref] = {"observations": 0, "calendar_days": 0, "missing": True}
+                min_calendar_days = 0
+                min_bars = 0
+                continue
+            name, ds, fld = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
+            if fld in price_fields:
+                continue
+            series_list: list[Any] = []
+            if isinstance(raw_features, Mapping):
+                scoped = False
+                for inst_key, inst_val in raw_features.items():
+                    if isinstance(inst_val, Mapping):
+                        scoped = True
+                        found = _lookup_raw_feature(inst_val, name=name, dataset=ds, field=fld)
+                        series_list.append(found)
+                if not scoped:
+                    series_list.append(_lookup_raw_feature(raw_features, name=name, dataset=ds, field=fld))
+                else:
+                    # features mapping may mix global series with per-instrument maps
+                    glob = _lookup_raw_feature(
+                        {k: v for k, v in raw_features.items() if not isinstance(v, Mapping)},
+                        name=name, dataset=ds, field=fld,
+                    )
+                    if glob is not None:
+                        series_list = [glob]
+            usable = [
+                sr for sr in series_list
+                if isinstance(sr, Sequence) and not isinstance(sr, (str, bytes)) and len(sr) > 0
+            ]
+            if not usable and (name in record_extras or fld in record_extras):
+                feature_spans[ref] = {"observations": min_bars, "calendar_days": min_calendar_days, "source": "records"}
+                continue
+            if not usable:
+                feature_spans[ref] = {"observations": 0, "calendar_days": 0, "missing": True}
+                min_calendar_days = 0
+                min_bars = 0
+                continue
+            worst_days: int | None = None
+            worst_n = min(len(sr) for sr in usable)
+            for sr in usable:
+                _n, d = _obs_days(sr)
+                if d is not None:
+                    worst_days = d if worst_days is None else min(worst_days, d)
+            feature_spans[ref] = {
+                "observations": worst_n,
+                "calendar_days": worst_days if worst_days is not None else min_calendar_days,
+            }
+            if worst_days is not None:
+                min_calendar_days = min(min_calendar_days, worst_days)
+            else:
+                min_bars = min(min_bars, worst_n)
 
     return (
         int(min_calendar_days),

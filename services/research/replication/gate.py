@@ -35,6 +35,9 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
 )
 
 
+CONFLICT = object()
+
+
 class FamilyTrialCounterStore:
     """Tracks multiple-testing trial counts per strategy family."""
 
@@ -588,23 +591,38 @@ class ReplicationGate:
         metadata = request.metadata if isinstance(request.metadata, dict) else {}
         handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
         spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
-        checksum = metadata.get("strategy_artifact_checksum")
-        if not (isinstance(checksum, str) and checksum.strip()):
-            artifact = spec.get("strategy_artifact") or handoff.get("strategy_artifact")
-            checksum = None
+
+        checksums = set()
+        meta_checksum = metadata.get("strategy_artifact_checksum")
+        if isinstance(meta_checksum, str) and meta_checksum.strip():
+            checksums.add(meta_checksum.strip())
+        for artifact in (spec.get("strategy_artifact"), handoff.get("strategy_artifact")):
             if isinstance(artifact, dict):
                 try:
-                    checksum = strategy_artifact_checksum(artifact)
+                    checksums.add(strategy_artifact_checksum(artifact))
                 except Exception:
-                    checksum = None
-        dataset_id = metadata.get("dataset_version_id")
-        if not (isinstance(dataset_id, str) and dataset_id.strip()):
-            dataset = handoff.get("backtest_dataset") or spec.get("backtest_dataset")
-            dataset_id = dataset.get("dataset_id") if isinstance(dataset, dict) else None
-        return (
-            checksum if isinstance(checksum, str) and checksum.strip() else None,
-            dataset_id if isinstance(dataset_id, str) and dataset_id.strip() else None,
-        )
+                    checksums.add("<uncomputable_artifact_checksum>")
+
+        dataset_ids = set()
+        meta_dataset = metadata.get("dataset_version_id")
+        if isinstance(meta_dataset, str) and meta_dataset.strip():
+            dataset_ids.add(meta_dataset.strip())
+        for dataset in (handoff.get("backtest_dataset"), spec.get("backtest_dataset")):
+            if isinstance(dataset, dict):
+                ds_id = dataset.get("dataset_id")
+                if isinstance(ds_id, str) and ds_id.strip():
+                    dataset_ids.add(ds_id.strip())
+                else:
+                    dataset_ids.add("<missing_dataset_id>")
+
+        def resolve(values: set) -> Any:
+            if not values:
+                return None
+            if len(values) > 1:
+                return CONFLICT
+            return next(iter(values))
+
+        return resolve(checksums), resolve(dataset_ids)
 
     def _verify_authoritative_run(
         self, request: ReplicationRequest, backtest_eval: Dict[str, Any]
@@ -634,6 +652,8 @@ class ReplicationGate:
         ) != backtest_eval.get("status"):
             return refuse("run_not_completed", backtest_run_id=run_id, status=record.get("status"))
         expected_checksum, expected_dataset = self._expected_binding(request)
+        if expected_checksum is CONFLICT or expected_dataset is CONFLICT:
+            return refuse("candidate_binding_conflict")
         if expected_checksum is None or expected_dataset is None:
             return refuse("candidate_artifact_or_dataset_binding_missing")
         if record.get("artifact_checksum") != expected_checksum:
