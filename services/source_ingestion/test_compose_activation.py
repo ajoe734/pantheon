@@ -55,7 +55,18 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert "PANTHEON_S3_ENDPOINT" not in source_ingest_env
     assert "PANTHEON_ARTIFACT_BUCKET" not in source_ingest_env
     assert source_ingest_env["SOURCE_INGEST_EVIDENCE_BACKEND"] == "${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}"
-    assert source_ingest_env["PANTHEON_EXTERNAL_EGRESS"] == "${PANTHEON_EXTERNAL_EGRESS:-deny}"
+    # Steady state: allowlist only when PANTHEON_COLLECTOR_HOST is set; with both
+    # PANTHEON_EXTERNAL_EGRESS and PANTHEON_COLLECTOR_HOST unset the expression
+    # expands to empty, which resolve_mode() treats as fail-closed deny.
+    egress_expr = source_ingest_env["PANTHEON_EXTERNAL_EGRESS"]
+    assert egress_expr == "${PANTHEON_EXTERNAL_EGRESS:-${PANTHEON_COLLECTOR_HOST:+allowlist}}"
+    assert source_ingest_env["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == (
+        "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-${PANTHEON_COLLECTOR_HOST:-}}"
+    )
+    from services.external_egress import resolve_mode
+
+    assert resolve_mode({"PANTHEON_EXTERNAL_EGRESS": ""}) == "deny"
+    assert resolve_mode({}) == "deny"
     assert "source-ingest-data:/data/source-ingest" in source_ingest["volumes"]
     assert "${SOURCE_INGEST_PORT:-18097}:8097" in source_ingest["ports"]
     healthcheck = " ".join(source_ingest["healthcheck"]["test"])
