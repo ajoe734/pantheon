@@ -390,10 +390,30 @@ class CollectorBundleAdapter:
                 "access_scope": ["research"],
                 "allowed_use": ["research", "search_index", "experiment"],
                 "allowed_host_patterns": [self.host or collector_host()],
+                **self._feature_routing(),
                 "redistribution_allowed": False,
                 "governance": {"direct_execution_allowed": False, "canonical_sink": "SourceRecord/EvidenceBundle"},
             },
         )
+
+    def _feature_routing(self) -> dict[str, Any]:
+        """Derived governed feature dataset routing; raw items stay a raw-only dataset."""
+        derived = (
+            TW_MACRO_SERIES_DATASET
+            if self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro"
+            else TW_COMMUNITY_DAILY_DATASET
+            if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social"
+            else None
+        )
+        if derived is None:
+            return {}
+        original = [self.dataset] if self.dataset != derived else []
+        return {
+            "normalized_datasets": [derived, *original],
+            "feature_targets": [derived],
+            "raw_only_datasets": original,
+            "storage_targets": [f"normalized/{derived}", f"features/{derived}"],
+        }
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {

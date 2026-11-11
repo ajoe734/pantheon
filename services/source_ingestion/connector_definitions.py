@@ -355,6 +355,27 @@ COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
 )
 
 
+# Raw collector datasets that also emit governed normalized point-in-time feature
+# datasets (design §8.5). The raw items stay raw-only; the derived dataset is what the
+# training dataset path reads.
+COLLECTOR_DERIVED_FEATURE_DATASETS: dict[str, str] = {
+    "collector_social_posts": "tw_community_daily",
+    "collector_macro_series": "tw_macro_series",
+}
+
+
+def _collector_feature_routing(raw_dataset: str) -> dict[str, Any]:
+    derived = COLLECTOR_DERIVED_FEATURE_DATASETS.get(raw_dataset)
+    if not derived:
+        return {}
+    return {
+        "normalized_datasets": (derived, raw_dataset),
+        "feature_targets": (derived,),
+        "raw_only_datasets": (raw_dataset,),
+        "storage_targets": (f"normalized/{derived}", f"features/{derived}"),
+    }
+
+
 def _collector_definition(
     definition_id: str,
     *,
@@ -380,7 +401,9 @@ def _collector_definition(
         source_kinds=tuple(source_kinds),
         source_types=(source_type,),
         source_classes=(source_class,) if isinstance(source_class, str) else tuple(source_class),
-        datasets=tuple(datasets),
+        datasets=tuple(datasets) + tuple(
+            d for d in (COLLECTOR_DERIVED_FEATURE_DATASETS.get(datasets[0]),) if d and d not in datasets
+        ),
         auth_modes=("bearer_token",),
         fetch_modes=("provider_owned_adapter",),
         cursor_modes=("time_watermark",),
@@ -395,6 +418,7 @@ def _collector_definition(
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref=f"evidence://connector-definition/{definition_id}",
         metadata={
+            **_collector_feature_routing(datasets[0]),
             "collector": {
                 "source_id": collector_source_id,
                 "source_type": source_type,

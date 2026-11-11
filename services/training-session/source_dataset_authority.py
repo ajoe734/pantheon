@@ -1041,6 +1041,11 @@ def _validate_and_read_storage_manifest(
                         trusted_now=trusted_now,
                     )
                 )
+            elif label == "normalized" and ref_dataset.startswith("collector_"):
+                # Original collector items (posts, macro/news items) are raw evidence only:
+                # the governed derived dataset carries the readable features, and they
+                # must never enter the OHLCV parser.
+                continue
             elif label == "normalized":
                 for row_number, wrapper in enumerate(rows, start=1):
                     record, row_market = _ohlcv_from_wrapper(

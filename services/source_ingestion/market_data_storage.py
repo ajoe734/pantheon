@@ -249,7 +249,8 @@ class MarketDataStorageWriter:
                     "schema_hash": _schema_hash(dataset_records, connector),
                 }
             )
-            for feature_dataset in _feature_targets(dataset_records, connector):
+            raw_only = {str(v) for v in (connector.metadata or {}).get("raw_only_datasets") or ()}
+            for feature_dataset in () if dataset in raw_only else _feature_targets(dataset_records, connector):
                 feature_path = (
                     self.root
                     / "features"

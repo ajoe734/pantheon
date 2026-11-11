@@ -1772,23 +1772,117 @@ def test_collector_definition_pull_to_storage_to_training_authority(
         fetch={"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 50},
         trace_id="t",
     )
-    governed = [r for r in records if r.metadata.get("dataset") == dataset]
-    assert governed, "production provider path must emit normalized governed feature records"
-
-    from services.source_ingestion.connectors.base import SourceConnector, SourceType
-    connector = SourceConnector(
-        connector_id="coll-1", source_type=SourceType.MARKET, provider="p", license_scope="collector_public_web",
-        metadata={"feature_targets": ["tw_feature_rows"]},
+    assert any(r.metadata.get("dataset") == dataset for r in records), (
+        "production provider path must emit normalized governed feature records"
     )
+    # The managed definition (not a test-built connector) declares the routing, and the
+    # full unfiltered pull (derived + original items) is what gets stored and read.
+    from services.source_ingestion.connector_definitions import get_connector_definition
+
+    definition = get_connector_definition(source_id)
+    assert dataset in definition.datasets
+    assert dataset in definition.metadata["normalized_datasets"]
+    connector = adapter.connector()
+    assert dataset in connector.metadata["normalized_datasets"]
     manifest = MarketDataStorageWriter(tmp_path / "store").write_run(
-        result=SimpleNamespace(records=list(governed), run=SimpleNamespace(ingest_run_id="run-1")),
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id="run-1")),
         connector=connector,
     ).to_dict()
+    assert {r["dataset"] for r in manifest["normalized_refs"]} == {dataset, spec["dataset"]}
     authority = _load_authority_module()
     storage = authority._validate_and_read_storage_manifest(
         manifest, source_root=tmp_path / "store", connector_id="coll-1",
-        normalized_targets={dataset}, run_id="run-1", expected_market="TW",
+        normalized_targets=set(connector.metadata["normalized_datasets"]), run_id="run-1", expected_market="TW",
         trusted_now=datetime.now(timezone.utc) + timedelta(days=1),
     )
     assert storage["records"] == []
     assert {o["field"] for o in storage["feature_observations"]} == expected_fields
+
+
+@pytest.mark.parametrize(
+    ("source_id", "source_type", "raw_dataset", "derived", "rows", "fields"),
+    [
+        ("collector-tw-cmoney-forum", "social", "collector_social_posts", "tw_community_daily",
+         [{"id": "a", "text": "t", "symbols": ["2330"], "metrics": {"sentiment": "bullish"}},
+          {"id": "b", "text": "t", "symbols": ["2330"], "metrics": {"sentiment": "bearish"}}],
+         {"post_volume", "bull_bear_ratio"}),
+        ("collector-tw-macro-cbc", "macro", "collector_macro_series", "tw_macro_series",
+         [{"id": "a", "series_id": "cbc_policy_rate", "value": 2.0, "unit": "percent",
+           "period_end": "2026-09-17T00:00:00Z", "available_time": "2026-09-17T08:00:00Z"}],
+         {"policy_rate"}),
+    ],
+)
+def test_unfiltered_collector_pull_materializes_through_source_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_id: str, source_type: str,
+    raw_dataset: str, derived: str, rows: list[dict[str, Any]], fields: set[str],
+) -> None:
+    """Managed pull (derived + original items) -> storage -> materialize_source_dataset_version."""
+    from types import SimpleNamespace
+
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.connector_definitions import collector_host
+        from services.source_ingestion.connectors.collector_bundle import (
+            COLLECTOR_BUNDLE_ADAPTER_TOKEN, BundleTransport, CollectorBundleAdapter,
+        )
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+        from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+    finally:
+        sys.path.remove(str(repo))
+
+    files = _collector_files(source_id, rows)
+
+    class _Transport(BundleTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            return files[relative_path]
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: _Transport())
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {"source_id": source_id, "source_type": source_type, "dataset": raw_dataset, "max_records": 50}
+    adapter = CollectorBundleAdapter(connector_id=CONNECTOR_ID, **config)
+    records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": {**config, "host": collector_host()},
+               "request": {}, "max_records": 50},
+        trace_id="t",
+    )
+    assert {r.metadata.get("dataset") for r in records} == {derived, raw_dataset}
+
+    case = _make_tw_case(tmp_path)
+    storage_root = tmp_path / "collector_storage"
+    case.source_root = storage_root
+    manifest = MarketDataStorageWriter(storage_root).write_run(
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id=RUN_ID)),
+        connector=adapter.connector(),
+    ).to_dict()
+    manifest["created_at"] = case.responses[f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"]["run"]["finished_at"]
+    total = manifest["summary"]["normalized_row_count"]
+    readback = case.responses[READBACK_URL]
+    entry = readback["connectors"][0]
+    entry["connector"]["metadata"] = dict(adapter.connector().metadata)
+    entry["desired_state"] = {**DESIRED_STATE, "market": "TW", "dataset": derived}
+    entry["desired_state_sha256"] = _desired_digest(entry["desired_state"])
+    entry["latest_source_record"]["provenance"]["dataset"] = derived
+    entry["source_health"]["metadata"]["storage_refs"] = manifest
+    entry["source_health"]["raw_count"] = total
+    entry["source_health"]["normalized_count"] = total
+    entry["source_health"]["row_count_last_run"] = total
+    readback["source_record_count"] = total
+    run = case.responses[f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"]["run"]
+    run["raw_count"] = total
+    run["normalized_count"] = total
+    case.responses[CATALOG_URL]["config_templates"][0]["fetch"] = {"dataset": derived}
+    case.responses[CATALOG_URL]["entries"][0]["datasets"] = [
+        {"dataset_id": ds, "dataset_class": "social", "storage_targets": [f"normalized/{ds}"]}
+        for ds in (derived, raw_dataset)
+    ]
+    later = NOW + timedelta(days=200)
+    readback["captured_at"] = (later - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    result = AUTHORITY.materialize_source_dataset_version(
+        http_get=case.get, source_api_url=BASE_URL, connector_id=CONNECTOR_ID, dataset_id=DATASET_ID,
+        source_volume_root=case.source_root, output_root=case.output_root,
+        trusted_now=later,
+    )
+    assert {o["field"] for o in result.payload["feature_observations"]} >= fields
+    assert result.payload["records"] == []
