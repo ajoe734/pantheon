@@ -2,12 +2,36 @@
   "task_id": "TELEMETRY-POSITION-NET-PNL-COSTS-20261111",
   "kind": "source_only",
   "deployed": false,
-  "change": "services/telemetry/runtime_summary.py now carries per-instrument recognized fee+tax (cumulative, once per ledger_fill_count / settlement event_id); position rows expose gross_realized_pnl, costs, and net realized_pnl = gross - costs; unrealized_pnl stays gross mark-to-market. Unknown future cost inputs yield costs_status=unknown and no net components.",
-  "real_shape": {"instrument": "ssf:SRF:202611", "qty": 2, "avg": 97.1, "multiplier": 1000, "fee": 16.0, "tax": 3.884, "ledger_cash": 99980.116, "initial_cash": 100000.0, "margin_reserved": 17400.0, "expected_realized": -19.884, "expected_unrealized": 0.0},
-  "tests": {
-    "services/telemetry/test_runtime_summary_projection.py + test_paper_runtime_ingest_contract.py": "125 passed",
-    "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py": "71 passed, 1 failed (test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar_projection: wall-clock stale_or_future_market_marks, fails identically on unmodified HEAD, paper_runtime path untouched)"
+  "change": "services/telemetry/runtime_summary.py now carries per-instrument recognized fee+tax (cumulative, once per ledger_fill_count / settlement event_id); position rows expose gross_realized_pnl, costs, and net realized_pnl = gross - costs; unrealized_pnl stays gross mark-to-market. Unknown future cost inputs yield costs_status=unknown and no net components. Pre-change persisted futures cost entries (no costs/costs_known) are NOT assumed zero: they stay costs_status=unknown until startup backfill_open_position_costs reconstructs them from retained owner paper_fill events (exact tenant/runtime/binding, complete ledger_fill_count history); incomplete history keeps them unknown. Cash-share fills with explicit null fee/tax are unknown; only an absent key is the legacy zero-cost shape.",
+  "real_shape": {
+    "instrument": "ssf:SRF:202611",
+    "qty": 2,
+    "avg": 97.1,
+    "multiplier": 1000,
+    "fee": 16.0,
+    "tax": 3.884,
+    "ledger_cash": 99980.116,
+    "initial_cash": 100000.0,
+    "margin_reserved": 17400.0,
+    "expected_realized": -19.884,
+    "expected_unrealized": 0.0
   },
-  "existing_assertions_updated": ["test_stock_future_fill_scales_cost_and_realized_by_multiplier", "test_future_flip_realizes_only_closed_contracts_times_multiplier"],
-  "unchanged": ["old fills/ledger", "no episode/fill-history fabrication", "unrealized-percent semantics", "BFF service"]
+  "tests": {
+    "services/telemetry/test_runtime_summary_projection.py + test_paper_runtime_ingest_contract.py + test_bff_pm12_portfolio_book_contract.py": "199 passed, 1 failed (pre-existing test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar_projection stale_or_future_market_marks; identical on frozen base)",
+    "new regressions": [
+      "file-backed legacy upgrade repaired from retained fills (+duplicate event, +restart no double count)",
+      "legacy upgrade without history stays unknown",
+      "cash fill explicit null fee unknown"
+    ]
+  },
+  "existing_assertions_updated": [
+    "test_stock_future_fill_scales_cost_and_realized_by_multiplier",
+    "test_future_flip_realizes_only_closed_contracts_times_multiplier"
+  ],
+  "unchanged": [
+    "old fills/ledger",
+    "no episode/fill-history fabrication",
+    "unrealized-percent semantics",
+    "BFF service"
+  ]
 }

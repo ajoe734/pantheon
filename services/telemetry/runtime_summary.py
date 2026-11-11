@@ -344,15 +344,49 @@ def _fill_recognized_cost(metadata: Any, *, kind: Any = None) -> Optional[float]
     meta = metadata if isinstance(metadata, dict) else {}
     parts: list[float] = []
     for key in ("fee", "tax"):
-        if key not in meta or meta[key] is None:
+        if key not in meta:
             if kind == "stock_future":
                 return None
             continue
+        if meta[key] is None:
+            return None
         value = _finite_number(meta[key])
         if value is None or value < 0.0:
             return None
         parts.append(value)
     return float(sum(parts))
+
+
+def _entry_costs_known(entry: Optional[dict[str, Any]], kind: Any = None) -> bool:
+    """Whether a per-instrument cost entry carries trustworthy recognized costs.
+
+    An entry persisted before cost tracking has neither ``costs`` nor
+    ``costs_known``. For a cash share that is the documented zero-cost shape;
+    for a stock future the recorded cost is simply absent, so it stays unknown
+    until startup backfill reconstructs it from retained owner fills.
+    """
+    if not isinstance(entry, dict):
+        return True
+    if "costs_known" in entry:
+        return entry["costs_known"] is not False
+    if "costs" in entry:
+        return True
+    return kind != "stock_future"
+
+
+def _has_legacy_future_cost_entry(current: dict[str, Any]) -> bool:
+    costs = current.get("_cost_by_symbol")
+    if not isinstance(costs, dict):
+        return False
+    instruments = current.get("_instrument_by_key")
+    instruments = instruments if isinstance(instruments, dict) else {}
+    for key, entry in costs.items():
+        descriptor = instruments.get(key)
+        kind = descriptor.get("kind") if isinstance(descriptor, dict) else None
+        if isinstance(entry, dict) and not _entry_costs_known(entry, kind):
+            if "costs_known" not in entry:
+                return True
+    return False
 
 
 def _fold_symbol_cost(
@@ -361,6 +395,7 @@ def _fold_symbol_cost(
     fill_price: float,
     multiplier: float = 1.0,
     cost: Optional[float] = 0.0,
+    kind: Any = None,
 ) -> dict[str, Any]:
     """Fold one fill and its recognized cost into the per-instrument entry.
 
@@ -368,7 +403,7 @@ def _fold_symbol_cost(
     ``costs_known`` turns False permanently once any fill's cost is unknown.
     """
     folded = _fold_symbol_cost_gross(entry, fill_qty, fill_price, multiplier)
-    prior_known = (entry or {}).get("costs_known", True) is not False
+    prior_known = _entry_costs_known(entry, kind)
     prior_costs = float((entry or {}).get("costs") or 0.0)
     if prior_known and cost is not None and math.isfinite(float(cost)):
         folded["costs"] = prior_costs + float(cost)
@@ -589,7 +624,7 @@ def _rebuild_positions(
             unrounded_realized = float(sym_cost.get("realized_pnl") or 0.0)
             row["average_price"] = _round6(unrounded_avg)
             row["gross_realized_pnl"] = _round6(unrounded_realized)
-            costs_known = sym_cost.get("costs_known", True) is not False
+            costs_known = _entry_costs_known(sym_cost, descriptor.get("kind"))
             if costs_known:
                 unrounded_costs = float(sym_cost.get("costs") or 0.0)
                 row["costs"] = _round6(unrounded_costs)
@@ -1348,6 +1383,7 @@ class RuntimeSummaryProjectionStore:
                                 float(fill_price),
                                 fill_multiplier,
                                 fill_cost,
+                                fill_descriptor.get("kind"),
                             )
                             applied_lfc += 1
                             while str(applied_lfc + 1) in pending_fills:
@@ -1359,6 +1395,7 @@ class RuntimeSummaryProjectionStore:
                                     float(next_fill["price"]),
                                     float(next_fill.get("multiplier") or 1.0),
                                     next_fill.get("cost"),
+                                    next_fill.get("kind"),
                                 )
                                 applied_lfc += 1
                             current["_cost_by_symbol"] = cost_by_symbol
@@ -1377,6 +1414,7 @@ class RuntimeSummaryProjectionStore:
                                     "price": float(fill_price),
                                     "multiplier": fill_multiplier,
                                     "cost": fill_cost,
+                                    "kind": fill_descriptor.get("kind"),
                                 }
                                 current["_cost_pending_fills"] = pending_fills
                                 current["_cost_by_symbol"] = cost_by_symbol
@@ -1448,7 +1486,7 @@ class RuntimeSummaryProjectionStore:
                                     metadata, kind="stock_future"
                                 )
                                 settle_known = (
-                                    prior.get("costs_known", True) is not False
+                                    _entry_costs_known(prior, "stock_future")
                                     and settle_cost is not None
                                 )
                                 cost_by_symbol[settled_key] = {
@@ -2062,7 +2100,13 @@ class RuntimeSummaryProjectionStore:
                     for qty in positions.values()
                 ):
                     continue
-                if (
+                legacy_future_costs = (
+                    "_cost_by_symbol" in current
+                    and "_cost_withheld" not in current
+                    and "_cost_pending_fills" not in current
+                    and _has_legacy_future_cost_entry(current)
+                )
+                if not legacy_future_costs and (
                     "_cost_by_symbol" in current
                     or "_cost_withheld" in current
                     or "_cost_applied_fill_count" in current
@@ -2195,6 +2239,7 @@ class RuntimeSummaryProjectionStore:
                             _fill_recognized_cost(
                                 meta, kind=ev_descriptor.get("kind")
                             ),
+                            ev_descriptor.get("kind"),
                         )
 
                 if fold_ok:
@@ -2225,6 +2270,15 @@ class RuntimeSummaryProjectionStore:
                     current["_cost_applied_fill_count"] = expected_int
                     current["executed_trade_count"] = max(
                         int(current.get("executed_trade_count") or 0), expected_int
+                    )
+                elif legacy_future_costs:
+                    # Authoritative history is unavailable: keep the persisted
+                    # gross entries and leave their costs explicitly unknown.
+                    log.warning(
+                        "Legacy futures cost entries stay unknown for runtime_id=%s "
+                        "binding_id=%s: retained fill history incomplete",
+                        runtime_id,
+                        binding_id,
                     )
                 else:
                     _withhold_cost(current)

@@ -4281,6 +4281,75 @@ class TestPositionNetPnlRecognizedCosts(unittest.TestCase):
                 self.assertNotIn(absent, row)
             self.assertEqual(row["gross_realized_pnl"], 0.0)
 
+    def test_cash_fill_with_explicit_null_cost_is_unknown_not_zero(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        summary = store.project_event(
+            TestPositionCostCurrencyBrokerProjection._ledger_fill(
+                symbol="2330.TWSE",
+                quantity=2.0,
+                price=100.0,
+                ledger_fill_count=1,
+                created_at="2026-11-10T07:01:41Z",
+                extra_metadata={
+                    "instrument_id": "eq:2330", "kind": "cash_share",
+                    "multiplier": 1.0, "fee": None, "tax": 0.0,
+                },
+            )
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["costs_status"], "unknown")
+        self.assertNotIn("realized_pnl", row)
+
+    def _legacy_file(self, tmp: str, *, retained: bool):
+        path = Path(tmp) / "summary.json"
+        store = RuntimeSummaryProjectionStore(path=path)
+        fill = self._fut_fill(lfc=1, qty=2.0, price=97.1)
+        store.project_event(fill)
+        store._persist()
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        for summary in saved.values():
+            summary["ledger_fill_count"] = 1  # carried by runtime pnl snapshots
+            for entry in summary["_cost_by_symbol"].values():
+                entry.pop("costs", None)
+                entry.pop("costs_known", None)
+            for key in ("realized_pnl", "gross_realized_pnl", "costs", "costs_status"):
+                for row in summary.get("positions", []):
+                    row.pop(key, None)
+        path.write_text(json.dumps(saved), encoding="utf-8")
+
+        class _Retained:
+            def retained_paper_fill_events(self_inner, **_kw):
+                return [fill] if retained else []
+
+        return path, fill, _Retained()
+
+    def test_legacy_persisted_future_costs_stay_unknown_without_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, fill, retained = self._legacy_file(tmp, retained=False)
+            store = RuntimeSummaryProjectionStore(path=path)
+            store.backfill_open_position_costs(retained)
+            summary = store.project_event(dict(fill))  # duplicate event
+            summary = store.project_event(self._mark(97.1, 1))
+            row = summary["positions"][0]
+            self.assertEqual(row["costs_status"], "unknown")
+            self.assertNotIn("realized_pnl", row)
+
+    def test_legacy_persisted_future_costs_repaired_from_retained_fills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, fill, retained = self._legacy_file(tmp, retained=True)
+            store = RuntimeSummaryProjectionStore(path=path)
+            self.assertEqual(store.backfill_open_position_costs(retained), 1)
+            store.project_event(dict(fill))  # duplicate applies once
+            summary = store.project_event(self._mark(97.1, 1))
+            row = summary["positions"][0]
+            self.assertEqual(row["costs"], 19.884)
+            self.assertEqual(row["realized_pnl"], -19.884)
+            # Restart: reload from disk, nothing more to repair, cost not doubled.
+            again = RuntimeSummaryProjectionStore(path=path)
+            self.assertEqual(again.backfill_open_position_costs(retained), 0)
+            row = again.project_event(self._mark(97.1, 1))["positions"][0]
+            self.assertEqual(row["realized_pnl"], -19.884)
+
     def test_stale_mark_keeps_costs_and_leaves_unrealized_unknown(self) -> None:
         store = RuntimeSummaryProjectionStore()
         store.project_event(self._fut_fill(lfc=1, qty=2.0, price=97.1))
