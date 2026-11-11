@@ -9,10 +9,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+from .backfill import (
+    BACKFILL_SOURCES,
+    TW_EXCHANGE_HOLIDAYS,
+    estimate,
+    load_extra_holidays,
+    resolve_dates,
+    run_backfill,
+    two_year_range,
+)
 from .bundle import prune_expired_bundles, utc_iso
 from .config import DEFAULT_POLICY_PATH, load_collector_config
 from .privacy import AuthorHasher
 from .runner import CollectorRunner
+
+
+def _add_range_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--start-date", default=None, help="First trade date YYYY-MM-DD")
+    p.add_argument("--end-date", default=None, help="Last trade date (default: newest published trading day)")
+    p.add_argument("--trading-days", type=int, default=None, help="Last N trading days instead of a start date")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -43,6 +58,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_p = sub.add_parser("run", help="Run one collector source and write a bundle")
     run_p.add_argument("--source", required=True, help="Source ID from fetch-policy.json")
     run_p.add_argument("--run-id", default=None, help="Explicit run ID (defaults to UTC timestamp)")
+
+    _add_range_args(run_p)
+    bf = sub.add_parser(
+        "backfill",
+        help="Resumable per-date price-history backfill (one request per trading day, >= 5s apart)",
+    )
+    bf.add_argument("--source", required=True, help="TWSE/TPEx price history or T86 source ID")
+    bf.add_argument("--two-years", action="store_true", help="Backfill the last two years")
+    _add_range_args(bf)
+    bf.add_argument("--holidays-file", default=None, help="JSON list of extra closure dates (YYYY-MM-DD)")
+    bf.add_argument("--dry-run", action="store_true", help="Print request count and wall-clock only")
 
     prune_p = sub.add_parser("prune", help="Prune bundles older than raw_retention_days (90 days)")
     prune_p.add_argument("--max-age-days", type=int, default=None)
@@ -97,6 +123,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps({"updated_at": utc_iso(), "sources": {}}, indent=2))
         return 0
 
+    if args.command == "backfill":
+        now_iso = utc_iso()
+        holidays = TW_EXCHANGE_HOLIDAYS | load_extra_holidays(args.holidays_file)
+        try:
+            if args.two_years:
+                start, end = two_year_range(now_iso)
+                dates = resolve_dates(start_date=start, end_date=args.end_date or end,
+                                      trading_days=None, now_iso=now_iso, holidays=holidays)
+            else:
+                dates = resolve_dates(start_date=args.start_date, end_date=args.end_date,
+                                      trading_days=args.trading_days, now_iso=now_iso, holidays=holidays)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if args.source not in BACKFILL_SOURCES:
+            parser.error(f"backfill supports only {sorted(BACKFILL_SOURCES)}")
+        policy = config.get_source(args.source)
+        plan = {"source_id": args.source, "first_date": dates[0] if dates else None,
+                "last_date": dates[-1] if dates else None,
+                **estimate(dates, min_interval_seconds=policy.min_interval_seconds)}
+        if args.dry_run:
+            print(json.dumps(plan, indent=2, sort_keys=True))
+            return 0
+        runner = CollectorRunner(config, root_dir=args.root_dir, hasher=AuthorHasher.from_file(args.salt_file))
+        result = run_backfill(runner, args.source, dates)
+        print(json.dumps({"plan": plan, "result": result.to_dict()}, indent=2, sort_keys=True))
+        return 0 if result.complete else 2
+
     if args.command == "run":
         hasher = AuthorHasher.from_file(args.salt_file)
         runner = CollectorRunner(
@@ -105,7 +158,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             hasher=hasher,
         )
         run_id = args.run_id or datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
-        outcome = runner.run_source(args.source, run_id=run_id)
+        collect_kwargs = None
+        if args.start_date or args.end_date or args.trading_days:
+            if args.source not in BACKFILL_SOURCES:
+                parser.error(f"date range options are only supported for {sorted(BACKFILL_SOURCES)}")
+            collect_kwargs = {
+                "dates": resolve_dates(
+                    start_date=args.start_date, end_date=args.end_date,
+                    trading_days=args.trading_days, now_iso=utc_iso(),
+                )
+            }
+        outcome = runner.run_source(args.source, run_id=run_id, collect_kwargs=collect_kwargs)
         print(
             json.dumps(
                 {

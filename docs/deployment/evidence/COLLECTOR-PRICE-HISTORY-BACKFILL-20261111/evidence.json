@@ -1,0 +1,22 @@
+{
+  "task_id": "COLLECTOR-PRICE-HISTORY-BACKFILL-20261111",
+  "entry_points": {
+    "cli_backfill": "collector_stack backfill --source <twse-price-history|tpex-price-history|twse-t86> (--two-years | --start-date [--end-date] | --trading-days N) [--dry-run] [--holidays-file]",
+    "cli_run_range": "collector_stack run --source ... --start-date/--end-date/--trading-days (passes dates= to collect)",
+    "module": "deploy/collector/collector_stack/backfill.py"
+  },
+  "two_year_backfill": {
+    "window": "2024-11-10..2026-11-10 (computed 2026-11-11 10:00 Taipei)",
+    "requests_per_source": 492,
+    "min_interval_seconds": 5.0,
+    "wall_clock_minutes_per_source": 41.0,
+    "sources": 3,
+    "wall_clock_minutes_all_three_sequential": 123.0,
+    "note": "492 = weekdays minus built-in certain closures; unlisted closures cost one request and are recorded as no_data. fetch-policy estimate of 488 assumed 244 days/year."
+  },
+  "resume": "ledger at <root>/state/backfill/<source>.json; completed and confirmed-holiday dates are never refetched",
+  "daily_runs": "TWSE/TPEx price history default now uses latest_published_trading_date with count 1 (T86 already did)",
+  "event_time": "published_at = <trade_date>T06:30:00Z (T86 08:30Z) per row",
+  "tests": "deploy/collector/tests/test_backfill.py; full suite 118 passed, 2 skipped",
+  "coordinator_action": "after merge run the dry-run, then the backfill once per source on the collector host"
+}
