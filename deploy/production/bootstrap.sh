@@ -34,6 +34,16 @@ run_priv() {
   fi
 }
 
+# Like run_priv, but preserves the exported release/image environment across the sudo hop (sudo resets it by
+# default, which would drop the manifest release_id/owner images compose requires for interpolation).
+run_priv_env() {
+  if [[ "${PROD_USE_SUDO:-false}" == "true" || "${FAKE_OSLOGIN_NONROOT:-false}" == "true" ]]; then
+    "$SUDO" -E "$@"
+  else
+    "$@"
+  fi
+}
+
 for v in PROD_ROOT PROD_DATA_MOUNT PROD_BFF_HOST PROD_FE_HOST PROD_IDP_ISSUER \
          PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE PROD_COMPOSE_ENV_FILE PROD_TENANT_ID; do
   [[ -n "${!v:-}" ]] || fail MISSING_INPUT "required env ${v} is missing"
@@ -484,7 +494,7 @@ for k, v in out.items():
 PY
   )" || fail MANIFEST_RELEASE_VARS "manifest lacks release_id, backend.commit or digest-pinned owner images"
   eval "$RELEASE_VARS"
-  run_priv "$DOCKER" compose -p pantheon-production -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" \
+  run_priv_env "$DOCKER" compose -p pantheon-production -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" \
     --env-file "$PROD_COMPOSE_ENV_FILE" --profile stateful up -d --no-build \
     || fail STATEFUL_START "stateful services failed to start"
 fi
