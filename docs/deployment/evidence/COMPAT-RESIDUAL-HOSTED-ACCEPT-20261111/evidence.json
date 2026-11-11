@@ -1,0 +1,24 @@
+{
+  "task": "COMPAT-RESIDUAL-HOSTED-ACCEPT-20261111",
+  "as_of": "2026-11-11T18:15Z",
+  "status": "source_merged_hosted_acceptance_pending",
+  "source_merges": {
+    "FE#982": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
+    "BFF#7178": "13b1be189fde14e1cd68fcc9213d4d8e177e1e1e",
+    "Registry#7182": "a61c3d4f3786607ccfa976eb5975315c786bc8e4",
+    "FIFO#7174": "a504a3cbb03bfcc3ed51978d98351ac2cf7bb4f5",
+    "deploy#7176": "596abd9c1b5247f48e9d45a1610857cd6653b37d",
+    "financial#7177": "74769aa246b0711ccdde775f663405fbaf35c375"
+  },
+  "hosted_acceptance": {
+    "performed": false,
+    "reason": "Latest Pantheon Nonprod Deploy run (43011035366, 2026-11-11T11:19Z) failed and predates the source merges; no deploy of a candidate containing them exists. Sole publisher STRAT-DATASRC-HOSTED-ACCEPT-20261110 is still in_progress.",
+    "authenticated_readonly_navigation": "not_performed",
+    "served_manifest_identity": "not_verified"
+  },
+  "claims_not_made": [
+    "hosted delivery accepted",
+    "global zero traffic"
+  ],
+  "report": "report.txt"
+}
