@@ -1,0 +1,56 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-REGISTRY-ENTRYPOINT-ALIAS-RETIRE-20261111-CI-RED-4CBE8B2DC258",
+  "source_task_id": "REGISTRY-ENTRYPOINT-ALIAS-RETIRE-20261111",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/7182",
+  "source_head_sha": "f6233150d8848679bf7c1f883c522b6121948368",
+  "source_base_sha": "9ce4f3396f44b402290cd94578d20ba628b0ac48",
+  "root_cause": {
+    "classification": "CI runner package mirror DNS failure before test execution",
+    "workflow": ".github/workflows/branch-ci.yml",
+    "check": "Smoke acceptance",
+    "run_id": 43037639405,
+    "run_attempt": 1,
+    "job_id": 130587247367,
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/43037639405/job/130587247367",
+    "failed_step": "Provision real worker sandbox",
+    "step_timeout_minutes": 5,
+    "diagnostics": [
+      "2026-11-11T14:40:39Z apt-get update warned: Temporary failure resolving 'azure.archive.ubuntu.com'",
+      "2026-11-11T14:42:19Z bubblewrap package fetch failed: Temporary failure resolving 'azure.archive.ubuntu.com'",
+      "2026-11-11T14:42:27Z Provision real worker sandbox timed out after 5 minutes"
+    ],
+    "test_execution": "Install test dependencies and every subsequent test step were skipped. This attempt supplies no failing Registry test evidence.",
+    "integrator_behavior": "Correctly refused to merge while the required Smoke acceptance check was red. No integrator defect established."
+  },
+  "scope": {
+    "owned_layer": "Task-scoped diagnosis and same-head CI recovery evidence",
+    "unchanged_layers": [
+      "Source task branch and implementation",
+      "Exact-head independent approval",
+      "Required checks and sandbox provisioning policy",
+      "scripts/git/auto_integrator.py (no demonstrated defect)",
+      "Product runtime and hosted deployment"
+    ],
+    "composes_with": "Source PR #7182 remains independently approved; the supervisor integrator owns merge after required checks pass."
+  },
+  "recovery": {
+    "status": "pending",
+    "attempted_command": "gh run rerun --repo ajoe734/pantheon --job 130587247367",
+    "command_exit_status": 1,
+    "command_output": "job 130587247367 cannot be rerun",
+    "observed_run_state": "Other jobs in run 43037639405 were still in progress or queued; wait for the run to finish before retrying the failed job."
+  },
+  "verification": [
+    {
+      "command": "gh api repos/ajoe734/pantheon/actions/jobs/130587247367/logs",
+      "exit_status": 0,
+      "result": "Retrieved original completed job output and identified package mirror DNS failure and provisioning timeout."
+    },
+    {
+      "command": "gh api repos/ajoe734/pantheon/actions/runs/43037639405/attempts/1/jobs --paginate",
+      "exit_status": 0,
+      "result": "Confirmed sandbox provisioning failed and all test steps were skipped."
+    }
+  ],
+  "completion_claim": "Diagnosis only; CI recovery, repair PR review and merge remain pending."
+}
