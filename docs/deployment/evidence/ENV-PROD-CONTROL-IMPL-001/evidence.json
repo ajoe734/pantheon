@@ -467,5 +467,12 @@
     "not_changed": "Existing compose.env is preserved (no silent migration); explicit/pinned values keep precedence; unpinned input still fails closed.",
     "validation": "Local focused unit test only; not hosted/product acceptance.",
     "hosted_status": "pending: root updates VM image keys after merge and resumes the approved run; no Prod baseline, rollback drills or RPO/RTO claimed."
+  },
+  "prod_bootstrap_sudo_env_repair_20261111": {
+    "diagnosis": "Run 43018535862 attempt2/job130572149054 failed STATEFUL_START: x-core-env.PANTHEON_RELEASE_ID missing. Outer sudo -E bootstrap exported release_id/owner images, but run_priv's nested sudo reset the environment before the first stateful docker compose.",
+    "repair": "deploy/production/bootstrap.sh adds run_priv_env (sudo -E in the sudo/OSLogin path) used only for the stateful compose up; required variables not weakened, nothing written to persistent compose.env.",
+    "validation": "test_bootstrap_sudo_env_reset_still_delivers_release_and_images_to_first_stateful_compose uses a fake sudo that resets env unless -E; confirmed failing without the fix, passing with it; focused bootstrap tests pass locally. Local only, not hosted acceptance.",
+    "hosted_status": "pending: root publishes a new controller after review/CI/merge; no healthy Prod baseline, drills or RPO/RTO claimed.",
+    "release_complete_claimed": false
   }
 }
