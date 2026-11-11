@@ -347,6 +347,7 @@ class EvolutionController:
     _RESEARCH_ACTIONS = {
         EvolutionActionType.OBSERVE,
         EvolutionActionType.REVALIDATE,
+        EvolutionActionType.MUTATE,
         EvolutionActionType.RETRAIN,
         EvolutionActionType.REQUIRE_MORE_DATA,
         EvolutionActionType.FLAG_FOR_REVIEW,
