@@ -249,7 +249,12 @@ from .heartbeat_service import (
     build_telemetry_event_from_runtime_heartbeat,
     heartbeat_status_from_summary,
 )
-from .ingest_svc import TelemetryIngestService, build_postgres_event_reader, build_postgres_write_fn
+from .ingest_svc import (
+    CanonicalFillHistoryReader,
+    TelemetryIngestService,
+    build_postgres_event_reader,
+    build_postgres_write_fn,
+)
 from .lineage_read import LineageReadService
 from .runtime_summary import RuntimeSummaryProjectionStore
 from .trade_episode_projection import TradeEpisodeProjectionStore
@@ -624,7 +629,7 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         except Exception as exc:  # noqa: BLE001
             log.warning("trade episode startup backfill failed: %s", exc)
     runtime_summary_store.backfill_open_position_costs(
-        trade_episode_projection_store
+        CanonicalFillHistoryReader(trade_episode_projection_store, binding_events)
     )
 
     ingest_svc = TelemetryIngestService(
