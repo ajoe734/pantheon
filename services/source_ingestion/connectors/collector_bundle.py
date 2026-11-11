@@ -991,9 +991,14 @@ def community_ledger_entries(
             continue
         post_key = str(meta.get("post_id") or record.source_id)
         metrics = meta.get("metrics") if isinstance(meta.get("metrics"), Mapping) else {}
-        stance = str(metrics.get("sentiment") or metrics.get("stance") or meta.get("sentiment") or "").strip().lower()
+        raw_stance = metrics.get("sentiment_tag") or metrics.get("sentiment") or metrics.get("stance") or meta.get("sentiment") or ""
+        if isinstance(raw_stance, Mapping):
+            raw_stance = raw_stance.get("label") or ""
+        stance = str(raw_stance).strip().lower()
         stance = "bull" if stance in _BULLISH_LABELS else "bear" if stance in _BEARISH_LABELS else ""
-        raw_author = str(meta.get("author_hash") or meta.get("author_id") or meta.get("author") or "").strip()
+        raw_author = str(
+            meta.get("author_id_hash") or meta.get("author_hash") or meta.get("author_id") or meta.get("author") or ""
+        ).strip()
         author = (
             raw_author.lower()
             if len(raw_author) == 64 and all(c in "0123456789abcdefABCDEF" for c in raw_author)

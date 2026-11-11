@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -824,3 +825,27 @@ def test_community_attention_uses_60_day_history_with_dominance_downweight() -> 
     organic = [_apost(i, f"u{i}", "bullish") for i in range(30)]
     (r2,) = community_daily_feature_rows(organic, authority=auth, ledger=prior, seen_at="2026-11-10T17:00:00Z")
     assert r1["attention_zscore"] < r2["attention_zscore"]
+
+
+def _canonical_post(i: int, author_hash: str, tag: str) -> SourceRecord:
+    """Shape emitted by CollectorBundleAdapter._record for CMoney: author_id_hash + metrics.sentiment_tag."""
+    rec = _post(i, "2026-11-10", ["2330"])
+    rec.metadata["author_id_hash"] = author_hash
+    rec.metadata["metrics"] = {"like_count": 0, "sentiment_tag": tag}
+    return rec
+
+
+def test_canonical_collector_fields_feed_authors_and_sentiment(tmp_path) -> None:
+    adapter = _community_adapter(tmp_path, "2026-11-11T01:00:00Z", "2026-11-11T02:00:00Z")
+    spam, _ = adapter.governed_feature_records(
+        [_canonical_post(i, hashlib.sha256(b"same").hexdigest()[:16], "bullish") for i in range(4)]
+    )
+    row = spam[-1].metadata["normalized_row"]
+    assert row["unique_authors"] == 1 and row["engagement_weighted_sentiment"] == 1.0
+    assert "bull_bear_ratio" in row
+    other = _community_adapter(tmp_path / "o", "2026-11-11T01:00:00Z")
+    mixed, _ = other.governed_feature_records(
+        [_canonical_post(0, "a" * 16, "bullish"), _canonical_post(1, "b" * 16, "bearish")]
+    )
+    row2 = mixed[-1].metadata["normalized_row"]
+    assert row2["unique_authors"] == 2 and row2["bull_bear_ratio"] == pytest.approx(1.0)

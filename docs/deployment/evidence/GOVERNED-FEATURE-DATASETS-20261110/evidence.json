@@ -31,6 +31,7 @@
       "review_fix_rework_3": "Collector definitions now declare derived tw_community_daily/tw_macro_series with normalized_datasets/feature_targets/raw_only_datasets routing; original collector_* items are raw-only (no feature rows, never parsed as OHLCV). test_unfiltered_collector_pull_materializes_through_source_authority runs the unfiltered pull -> storage -> materialize_source_dataset_version for social and macro.",
       "review_fix_rework_4": "CollectorBundleAdapter.pull loads prior daily counts from stored normalized tw_community_daily rows (stored_community_daily_counts) so incremental pulls compute attention_zscore; test_incremental_community_pulls_use_persisted_history reproduces seven daily pulls -> 2.04939015319192.",
       "review_fix_rework_5": "Macro: PROVIDER_SERIES_MAP maps the real poller identities (CBC:BP01D01:01 -> tw_macro_cbc.usd_twd, NDC:6099:MONITORING_SCORE expands to monitoring_score/leading_index/coincident_index, DGBAS_CPI_TOTAL/DGBAS_GDP_REAL_YOY) with month/quarter period-end normalization; real CbcMacroPoller/NdcIndicatorsPoller fixtures -> bundle pull -> storage -> materialize_source_dataset_version covered by test_unfiltered_collector_pull_materializes_through_source_authority (CBC 3 governed rows, NDC 6). Community: persisted per-post ledger (dedupe, first-seen knowledge time, closed-day revisions, replay-idempotent) so split same-day pulls give volume 3 / ratio 1.5; bare symbols resolve through stored tw_price_daily identities (2330 -> 2330.TWSE), ambiguous/unknown rejected explicitly.",
+      "review_fix_rework_6": "community_ledger_entries now reads canonical collector fields: author_id_hash (CollectorBundleAdapter._record) and metrics.sentiment_tag (CMoneySpider), so unique_authors, engagement_weighted_sentiment, bull_bear_ratio and single-author down-weighting populate for real bundle pulls; test_canonical_collector_fields_feed_authors_and_sentiment. Validation: test_feature_catalogue.py + test_collector_bundle_connector.py 60 passed (exit 0).",
       "status": "implemented_unit_verified",
       "training_path": "services/training-session/source_dataset_authority.py::feature_observations_from_wrappers (tw_price_daily stays on the OHLCV path)"
     },
@@ -40,7 +41,7 @@
       "document": "generated on demand by services.source_ingestion.feature_catalogue.catalogue_document(); not committed (bulky)",
       "document_sha256_of_removed_472_line_file": "408df3fcc9c3897b7c257bbc48b3e9c62676a8445762c23aaaa418c204e7c610",
       "evaluator": "factor_rule lag floors pinned to catalogue by test_factor_rule_catalogue_lags_match_source_ingestion_catalogue",
-      "field_count": 39,
+      "field_count": 41,
       "paper_producer": "paper_signal_producer rejects factor-rule inputs outside the catalogue (feature_not_in_catalogue)",
       "review_fix_rework_3": "evaluate_factor_rule_view (shared by research/vectorbt and paper) now calls assert_governed_feature_inputs/observations; timestamp-free non-price features and uncatalogued datasets are rejected, price built-ins retained (tests in services/registry/test_factor_rule.py).",
       "schema": "docs/contracts/feature_catalogue.v1.schema.json",
