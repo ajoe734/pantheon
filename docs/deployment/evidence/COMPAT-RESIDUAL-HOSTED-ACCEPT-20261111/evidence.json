@@ -1,26 +1,397 @@
 {
-  "task": "COMPAT-RESIDUAL-HOSTED-ACCEPT-20261111",
-  "as_of": "2026-11-11T20:12Z",
-  "status": "source_merged_hosted_acceptance_pending",
-  "source_merges": {
-    "FE#982": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
-    "BFF#7178": "13b1be189fde14e1cd68fcc9213d4d8e177e1e1e",
-    "Registry#7182": "a61c3d4f3786607ccfa976eb5975315c786bc8e4",
-    "FIFO#7174": "a504a3cbb03bfcc3ed51978d98351ac2cf7bb4f5",
-    "deploy#7176": "596abd9c1b5247f48e9d45a1610857cd6653b37d",
-    "financial#7177": "74769aa246b0711ccdde775f663405fbaf35c375"
+  "schema_version": "pantheon.compat-residual-acceptance.v1",
+  "task_id": "COMPAT-RESIDUAL-HOSTED-ACCEPT-20261111",
+  "as_of": "2026-11-11T20:23:14.081815+00:00",
+  "status": "source_verified_hosted_acceptance_pending",
+  "report": "report.txt",
+  "scope": "Residual A07/A13/A16 and admitted A18 plus complete A01-A18 disposition consolidation. No new product implementation, compatibility platform, accepted Loops replay or business writes.",
+  "owner": "Codex",
+  "assigned_reviewer": "Codex2",
+  "review_boundary": "This draft is not an independent approval. Canonical handoff/review/CI/integration must bind the future complete exact head only after genuine hosted proof.",
+  "prior_acceptance": {
+    "task_id": "COMPAT-CLEANUP-ACCEPT-20261107",
+    "pr": 7085,
+    "merge_commit": "7924be0c0dd6feae39792450b5000151b8ec8cec",
+    "evidence": "docs/deployment/evidence/COMPAT-CLEANUP-ACCEPT-20261107/evidence.json",
+    "boundary": "2026-11-08 historical source and hosted evidence preserved; original A07/A13/A16 residual decisions are superseded by this report, not rewritten."
+  },
+  "source_deliveries": [
+    {
+      "task_id": "OPS-FIFO-UPGRADE-RETIRE-20261111",
+      "repository": "ajoe734/pantheon",
+      "pr": 7174,
+      "reviewed_head": "8d0fefbf77d25856d0a9d4b85a7d6e1740d63d29",
+      "merge_commit": "a504a3cbb03bfcc3ed51978d98351ac2cf7bb4f5",
+      "merged_at": "2026-11-11T12:34:09Z",
+      "reviewer": "Codex2",
+      "evidence_manifest": {"blob_sha": "fb493619ed68118e55966306e6c22e9a88171025", "path": "docs/deployment/evidence/OPS-FIFO-UPGRADE-RETIRE-20261111/evidence.json"},
+      "github_checks": {"SUCCESS": 54, "SKIPPED": 6}
+    },
+    {
+      "task_id": "REGISTRY-LEGACY-METADATA-RETIRE-20261111",
+      "repository": "ajoe734/pantheon",
+      "pr": 7173,
+      "reviewed_head": "48acabca3e9f4080889773342b510bdeaf82278b",
+      "merge_commit": "9ce4f3396f44b402290cd94578d20ba628b0ac48",
+      "merged_at": "2026-11-11T14:00:19Z",
+      "reviewer": "Codex2",
+      "evidence_manifest": {"blob_sha": "c18afa5db543cfc83d7bc83bf37e48403dd5c613", "path": "docs/deployment/evidence/REGISTRY-LEGACY-METADATA-RETIRE-20261111/evidence.json"},
+      "github_checks": {"SUCCESS": 55, "SKIPPED": 6}
+    },
+    {
+      "task_id": "FE-RETIRED-PROBE-CLEANUP-20261111",
+      "repository": "ajoe734/execute-plans",
+      "pr": 982,
+      "reviewed_head": "67ac192977d864b310f03d69cbd7b143af72d0a2",
+      "merge_commit": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
+      "merged_at": "2026-11-11T16:58:19Z",
+      "reviewer": "Codex2",
+      "evidence_manifest": {"blob_sha": "653f9b98e9ed2f9f3310ebf4a7139982cf018c03", "path": "docs/deployment/evidence/FE-RETIRED-PROBE-CLEANUP-20261111/evidence.json"},
+      "github_checks": {"SUCCESS": 10}
+    },
+    {
+      "task_id": "BFF-OLD-NOTIFICATION-RETIRE-20261111",
+      "repository": "ajoe734/pantheon",
+      "pr": 7178,
+      "reviewed_head": "9f7a259e9528073dd60a52b9ff1b0b8376b426e1",
+      "merge_commit": "13b1be189fde14e1cd68fcc9213d4d8e177e1e1e",
+      "merged_at": "2026-11-11T17:57:26Z",
+      "reviewer": "Codex2",
+      "evidence_manifest": {"blob_sha": "b992c38022e436980b7f921352e0429f848961d7", "path": "docs/deployment/evidence/BFF-OLD-NOTIFICATION-RETIRE-20261111/evidence.json"},
+      "github_checks": {"SUCCESS": 55, "SKIPPED": 6}
+    },
+    {
+      "task_id": "DEV-DEPLOY-REFRESH-PIN-RUNNING-IMAGE-20261111",
+      "repository": "ajoe734/pantheon",
+      "pr": 7170,
+      "reviewed_head": "e8c0c1ad7bfb95163f86bb4486ea0ee860ea3239",
+      "merge_commit": "4bd3f74cab0add621441c3c8017d8717a77010a2",
+      "merged_at": "2026-11-11T12:00:36Z",
+      "reviewer": "Codex2",
+      "evidence_manifest": {"blob_sha": "8017704ec8f2a77a65373719872083b671fc591b", "path": "docs/deployment/evidence/DEV-DEPLOY-REFRESH-PIN-RUNNING-IMAGE-20261111/evidence.json"},
+      "github_checks": {"SUCCESS": 16, "SKIPPED": 7}
+    },
+    {
+      "task_id": "DEV-DEPLOY-TW-REFRESH-AFTER-SWITCH-20261111",
+      "repository": "ajoe734/pantheon",
+      "pr": 7176,
+      "reviewed_head": "6a76cf5c9310d31a775e21db743f203d3fadf6bb",
+      "merge_commit": "596abd9c1b5247f48e9d45a1610857cd6653b37d",
+      "merged_at": "2026-11-11T18:05:24Z",
+      "reviewer": "Codex",
+      "evidence_manifest": {"blob_sha": "ee16b40c26a3fbbfd2afe97fd3feceae14d3dae9", "path": "docs/deployment/evidence/DEV-DEPLOY-TW-REFRESH-AFTER-SWITCH-20261111/evidence.json"},
+      "github_checks": {"SUCCESS": 55, "SKIPPED": 6}
+    },
+    {
+      "task_id": "REGISTRY-ENTRYPOINT-ALIAS-RETIRE-20261111",
+      "repository": "ajoe734/pantheon",
+      "pr": 7182,
+      "reviewed_head": "600bb1214609ee9b00840fdf8eb571d0f293a779",
+      "merge_commit": "a61c3d4f3786607ccfa976eb5975315c786bc8e4",
+      "merged_at": "2026-11-11T18:00:41Z",
+      "reviewer": "Codex2",
+      "evidence_manifest": {"blob_sha": "8faf89967360a07976e1c4085961009228e5b76d", "path": "docs/deployment/evidence/REGISTRY-ENTRYPOINT-ALIAS-RETIRE-20261111/evidence.json"},
+      "github_checks": {"SUCCESS": 55, "SKIPPED": 6}
+    },
+    {
+      "task_id": "FE-CI-APT-DNS-20261111",
+      "repository": "ajoe734/execute-plans",
+      "pr": 983,
+      "reviewed_head": "d553e11c642cae28da54d2ace68e2319fdca7fe6",
+      "merge_commit": "dab26e1f69181b7b6cbbae47ef4cf3d86050278c",
+      "merged_at": "2026-11-11T16:30:58Z",
+      "reviewer": "Codex2",
+      "evidence_manifest": {"blob_sha": "ec1aee765bda19b0e8d3c09d06d5bea6524dfcd9", "path": "docs/deployment/evidence/FE-CI-APT-DNS-20261111/evidence.json"},
+      "github_checks": {"SUCCESS": 11}
+    },
+    {
+      "task_id": "DEV-ROLLBACK-SOURCE-POSTURE-20261111",
+      "repository": "ajoe734/pantheon",
+      "pr": 7192,
+      "reviewed_head": "d6c62a617efe489bf3c962abe4e6ecafcafa1c29",
+      "merge_commit": "5c6afce7cd68ff88b6a21106da29e02172fe4f34",
+      "merged_at": "2026-11-11T19:58:46Z",
+      "reviewer": "Codex2",
+      "evidence_manifest": {"blob_sha": "cafd744da404dda4b7d1ad8e14fb6849cfd71a92", "path": "docs/deployment/evidence/DEV-ROLLBACK-SOURCE-POSTURE-20261111/evidence.json"},
+      "github_checks": {"SUCCESS": 55, "SKIPPED": 6}
+    }
+  ],
+  "previously_accepted_source_deliveries": [
+    {"repository": "ajoe734/pantheon", "pr": 7056, "merge_commit_sha": "757a804536d5d10710a6f1e07d53bba767efaad3"},
+    {"repository": "ajoe734/pantheon", "pr": 7053, "merge_commit_sha": "83ebb82ec33c5d5d31eb60b59bc1564dae9c2dad"},
+    {"repository": "ajoe734/execute-plans", "pr": 970, "merge_commit_sha": "7aa32465bdda0a90914220df04e8213a6b396996"},
+    {"repository": "ajoe734/pantheon", "pr": 7059, "merge_commit_sha": "a41a5780308af70e7e308e87633f96cf1768b8cf"},
+    {"repository": "ajoe734/pantheon", "pr": 7058, "merge_commit_sha": "e6c3c76e24db1e7c30bc25d7ee5358228f94c9b7"},
+    {"repository": "ajoe734/pantheon", "pr": 7070, "merge_commit_sha": "b9aefbfede3ede522f7204459aa75e0f3f3fee8e"}
+  ],
+  "findings": {
+    "A01": {"disposition": "removed_compat", "owner_task": "SOURCE-COMPAT-CLEANUP-20261107", "summary": "SourceIngestionRuntime owns stores/locks/config as plain attributes; _active_attr, sys.modules lookup, __code__ dispatch, and main.py forwarding aliases removed; callers and tests migrated."},
+    "A02": {
+      "disposition": "unified_writer_retained_jsonl",
+      "owner_task": "CORE-COMPAT-CLEANUP-20261107",
+      "summary": "AgoraService and management_service write audit events solely through AgoraAuditStore; read_store writer fallbacks removed; existing JSONL store retained because Governance decision store has different schema/semantics."
+    },
+    "A03": {
+      "disposition": "migrated_links_kept_embedded_views",
+      "owner_task": "FE-COMPAT-CLEANUP-20261107",
+      "summary": "Embedded PortfolioBook/PerformanceAttribution/PersonaLeague/QuarterlyRanking retained inside canonical centers; all frontend-generated legacy management links migrated; PromotionAllocation dead files removed; LEGACY_REDIRECTS kept for external/bookmark URL compatibility.",
+      "material_unknowns": "BFF pm12/service.py:1349 still generates /management/performance-attribution links; redirects have an actual maintained producer. External bookmarks are not measured. Hosted current-pair redirect proof pending."
+    },
+    "A04": {
+      "disposition": "retained_runtime_config_removed_legacy_globals",
+      "owner_task": "FE-COMPAT-CLEANUP-20261107",
+      "summary": "Same-origin /runtime-config.js (__PANTHEON_DEPLOYMENT_CONFIG__) retained for immutable cross-env bundles; legacy __PANTHEON_BFF_RUNTIME__, __PANTHEON_ENV__, and window.VITE_BFF_* readers removed."
+    },
+    "A05": {"disposition": "consolidated_timeout_policy", "owner_task": "FE-COMPAT-CLEANUP-20261107", "summary": "Frontend timeout policies consolidated into src/lib/v4/asyncTransitionPolicy.ts; src/lib/v5/timeoutPolicy.ts and src/lib/v4/asyncTransitions.ts shims deleted."},
+    "A06": {
+      "disposition": "retired_root_static_kept_fleet_and_exec_split",
+      "owner_task": "RUNTIME-COMPAT-CLEANUP-20261107",
+      "summary": "Retired root docker-compose.yml pantheon-paper-runtime service and static-paper-runtime profile; retained paper-fleet-reconciler and docker-compose.exec.yml split-topology service; dev VM docker ps confirms only pantheon-paper-fleet-reconciler-1 is present."
+    },
+    "A07": {
+      "disposition": "retired_transition_code_kept_fail_closed_directory_fences",
+      "owner_task": "OPS-FIFO-UPGRADE-RETIRE-20261111",
+      "summary": "Remove historical FIFO conversion from ordinary promotion after actual old-path and prior-runtime inspection; retain restrictive directory fences, FIFO fail-closed detection, drain and storage rollback.",
+      "measurement": "11:43 supervisor/worker used runtime872f9eb; retired state and approval paths absent; journal lock/head empty 0700 directories, not FIFO. Installed command runtime811b includes mergea504a3c (ancestry exit0). This is tooling activation evidence only.",
+      "data_backup_rollback": "Prior supported runtimec3db674 and runtime872f9eb already use worker-runtime paths/directory fences. No journal move, promotion, restart or old-data deletion by this acceptance lane.",
+      "material_unknowns": "External/historical caller absence is not globally proven; current supported caller inventory and retained interfaces bound the decision. Current-pair hosted verification is pending.",
+      "test_receipt": "102 promotion-runtime tests passed in source task; exact source head/independent review/CI bound in source_deliveries."
+    },
+    "A08": {"disposition": "removed_legacy_receipt_fallback", "owner_task": "OPS-COMPAT-CLEANUP-20261107", "summary": "Removed legacy .orchestrator/state.json fallback from worker_runner; migrated fixtures to worker-runtime/state.json."},
+    "A09": {"disposition": "deleted_unused_aliases", "owner_task": "CORE-COMPAT-CLEANUP-20261107", "summary": "Deleted unused SSEReconciler alias, Cron promotion_gate_factory parameter, and TwelveLoopProjector._recompute_observation_status wrapper."},
+    "A10": {
+      "disposition": "deleted_outer_wrappers_kept_hyphen_shim",
+      "owner_task": "CORE-COMPAT-CLEANUP-20261107",
+      "summary": "Deleted services/control_plane/internal_api.py and internal_api_min.py; updated CI py_compile to services/control_plane/internal/internal_api.py; retained hyphen-directory loader shim."
+    },
+    "A11": {"disposition": "removed_wave_config_fallbacks", "owner_task": "OPS-COMPAT-CLEANUP-20261107", "summary": "Removed wave_workflow config fallbacks across supervisor, auto_integrator, check_commit_trailers, publish_promote, and release_branch_discipline."},
+    "A12": {"disposition": "removed_wandb_deferred_prep_alias", "owner_task": "CORE-COMPAT-CLEANUP-20261107", "summary": "Removed PANTHEON_ENABLE_WANDB_DEFERRED_PREP alias and helper; migrated smoke/tests to PANTHEON_ENABLE_WANDB_OFFLINE_STORE."},
+    "A13": {
+      "disposition": "retired_notification_only_paths_kept_live_mixed_handlers",
+      "owner_task": "BFF-OLD-NOTIFICATION-RETIRE-20261111 + FE-RETIRED-PROBE-CLEANUP-20261111",
+      "summary": "Retire nine notification-only routes, injected helper wiring, dead mock/builders and probe fetch. Keep four persona lifecycle aliases, MCP create/action/tools, operator-checked POST deployment-plan business rejection and genuine product notification/SSE.",
+      "measurement": "Current-container Uvicorn logs:7720 HTTP requests between2026-11-10T17:14:49Z and2026-11-11T12:57:33Z, zero target notification matches. Caddy access logging disabled. Partial-day window only, never global zero/seven-day proof.",
+      "data_backup_rollback": "No traffic/data rewrite. Unsupported StartRuntime is skipped with zero fetches, never PASS. POST deployment-plans remains authenticated operator ACTION_RETIRED410, never creation; live persona/MCP routes are retained without invoking their business writes.",
+      "material_unknowns": "External/historical caller absence is not globally proven; current supported caller inventory and retained interfaces bound the decision. Current-pair hosted verification is pending.",
+      "test_receipt": "Current-base route/guard/MCP batch12 passed; lifecycle owner/confirmation/auth batch36 passed. Reviewer additionally ran100 catalog/safety/composition checks. Overlapping batches are not summed. | 46 files/480 tests, app typecheck, probe syntax and seven-status offline contract exit0; zero StartRuntime fetches, no status counts as plan creation. Exact-head CI push43060391130 and PR43060399603 SUCCESS."
+    },
+    "A14": {
+      "disposition": "removed_hidden_test_dom",
+      "owner_task": "FE-COMPAT-CLEANUP-20261107",
+      "summary": "Removed display:none completeness-grade and workshop-readiness DOM nodes from WorkshopSessionView.tsx and migrated tests to visible UI; hosted /agora/strategy-workshop has 0 hidden test-id nodes.",
+      "measurement": "Prior accepted2026-11-08 real browser saw zero retired hidden completeness/readiness DOM nodes. This is prior-pair evidence, not a new current-pair browser pass."
+    },
+    "A15": {
+      "disposition": "migrated_clients_removed_x_idempotency_key",
+      "owner_task": "FE-COMPAT-CLEANUP-20261107 + BFF-FINAL-COMPAT-20261107",
+      "summary": "Migrated execute-plans callers to Idempotency-Key and removed X-Idempotency-Key support across BFF; hosted POST /bff/v1/commands?dryRun=true with X-Idempotency-Key only returns 400 VALIDATION_FAILED while canonical Idempotency-Key passes header validation.",
+      "measurement": "Prior accepted2026-11-08 dryRun: X-Idempotency-Key only400 VALIDATION_FAILED; canonical header passed to428 CONFIRMATION_REQUIRED. Current report lane does not replay command writes or count refusal as execution."
+    },
+    "A16": {
+      "disposition": "canonical_only_loader_and_producers_after_supported_storage_inventory",
+      "owner_task": "REGISTRY-LEGACY-METADATA-RETIRE-20261111",
+      "summary": "Loader requires artifact_state=approved and exact deployment_stage; remove promotion_state fallback and redundant experiment/DeploymentPlanner emissions. Retain real rollback metadata, gates and telemetry target.promotion_state.",
+      "measurement": "Primary and supported.bak measured separately at11:56:56Z:159 bindings each,158 canonical+legacy metadata each,0 legacy-only,0 non-approved;152 retired/3 failed/4 paused;one tenant. Separate MinIO11:51:37Z S3 inventory:1 bucket/0 objects. The159th binding is retired with no execution projection,0 keys/no strategy_artifact.",
+      "data_backup_rollback": "ArtifactLoader reads exact openclaw/registry/<strategy>/<version>/metadata.json, no.bak fallback. RuntimeManager._rollback_once uses proven prior-binding fields and replacement_metadata; deployment outbox builds compensation metadata without requiring legacy promotion_state. target_registry_id/target_version remain business rollback identity. No archive deletion or hosted rollback executed.",
+      "material_unknowns": "Inventories are timestamped before the release, not claims about arbitrary historical archives or future objects. Empty MinIO cannot prove a production object load. Canonical loading is source-tested; actual post-release API and GUI evidence remains pending.",
+      "test_receipt": "Loader23, experiment adapter16, governance planner35, current-artifact/paper-signal130+9 subtests; independent204 tests+16 subtests exit0; existing smoke paper->canary->live exit0. Batches may overlap and are not summed."
+    },
+    "A17": {"disposition": "renamed_parameter_and_callers", "owner_task": "OPS-COMPAT-CLEANUP-20261107", "summary": "Renamed TaskStore.load_snapshot(refresh_checkpoint=False) to load_snapshot(observational=True) across all callers and tests."},
+    "A18": {
+      "disposition": "removed_root_forwarders_retained_canonical_gate_cli_and_telemetry",
+      "owner_task": "REGISTRY-ENTRYPOINT-ALIAS-RETIRE-20261111",
+      "summary": "Remove root gate.py/cli.py pure forwarders and obsolete dual-write migration instructions. Keep services.registry.promotion implementations, real alpha_replication revalidation gate consumer, lifecycle_state input and telemetry target.promotion_state. Migrate real Stage0 caller to python3 -m services.registry.promotion.smoke_test_gate.",
+      "measurement": "Caller resolution inspected: old service-local bare gate imports resolve adjacent service gate; root forwarding aliases add no business capability. Current package export allowlist remains explicit; no performance claim.",
+      "data_backup_rollback": "No distribution export broadening, new import shim, data migration or archive deletion. Actual PromotionGate approvals, forbidden skips, checksum and rollback validation retained.",
+      "material_unknowns": "No global external caller absence claim. Initial installed-venv-only validation missed unprovisioned Stage0 direct-script invocation; actual matrix caller was corrected and retested. That original failure remains historical, not PASS.",
+      "test_receipt": "Current-base21 focused tests0skip; empty-venv actual matrix command, canonical CLI and schema validation exit0. Reviewer117 tests+12 subtests passed. Earlier94+4 and23+8 batches are historical, not new-head totals."
+    }
+  },
+  "readonly_observations": {
+    "remote_binding_recovery_inventory-result.json": {
+      "source_sha256": "0ff718062aecc2c92674165322ecf57d4dbe1e5b4b2fe5a260f6c80750852755",
+      "observation": {
+        "captured_at_utc": "2026-11-11T11:56:56.142031+00:00",
+        "inventory": {
+          "status": "read_direct_supported_snapshot_and_backup_without_service_initialization",
+          "snapshots": [
+            {
+              "kind": "primary",
+              "configured_path": "/data/runtime/runtime_bindings.json",
+              "exists": true,
+              "binding_count": 159,
+              "status_counts": {"retired": 152, "failed": 3, "paused": 4},
+              "distinct_tenant_count": 1,
+              "counts": {"metadata_objects": 158, "canonical_with_legacy": 158, "metadata_rollback_refs": 158, "metadata_rollback_target_external": 158}
+            },
+            {
+              "kind": "supported_backup",
+              "configured_path": "/data/runtime/runtime_bindings.json.bak",
+              "exists": true,
+              "binding_count": 159,
+              "status_counts": {"retired": 152, "failed": 3, "paused": 4},
+              "distinct_tenant_count": 1,
+              "counts": {"metadata_objects": 158, "canonical_with_legacy": 158, "metadata_rollback_refs": 158, "metadata_rollback_target_external": 158}
+            }
+          ]
+        }
+      }
+    },
+    "remote_binding_missing_projection-result.json": {
+      "source_sha256": "a3bb40d77ac1f0ec65ddebed9dc0078c11af5e5167985c54a21411597027560d",
+      "observation": {
+        "captured_at_utc": "2026-11-11T12:14:06.394625+00:00",
+        "inventory": {
+          "binding_count": 159,
+          "missing_execution_projection_count": 1,
+          "missing_projection_records_without_identifiers": [
+            {"status": "retired", "deployment_mode": "paper", "execution_mode": "paper", "object_store_key_count": 0, "has_strategy_artifact": false}
+          ]
+        }
+      }
+    },
+    "remote_minio_inventory-result.json": {
+      "source_sha256": "d6d78f6779dffcdbac782c6ade3a110916c0648a53b4a131f92a0d225919233a",
+      "observation": {
+        "captured_at_utc": "2026-11-11T11:51:37.751186+00:00",
+        "bucket_list_exit": 0,
+        "status": "read_only_s3_client_inventory",
+        "counts": {"buckets": 1, "listed_rows": 0},
+        "errors": [],
+        "row_schemas": []
+      }
+    },
+    "remote_bff_access_inventory-result.json": {
+      "source_sha256": "8576505fb943a91bee565dd9c0567adac61ce3f57084678524ea7602f924a6c9",
+      "observation": {
+        "captured_at_utc": "2026-11-11T12:57:42.045871+00:00",
+        "container_started_at": "2026-11-10T17:14:33.148507996Z",
+        "driver": "json-file",
+        "docker_logs_exit": 0,
+        "returned_lines": 7735,
+        "max_tail_lines": 200000,
+        "matched_http_access_lines": 7720,
+        "first_matched_access_at": "2026-11-10T17:14:49.259103930Z",
+        "last_matched_access_at": "2026-11-11T12:57:33.091186720Z",
+        "retired_notification_matches": [],
+        "limits": ["Available current container logs only; not proof of seven-day coverage or zero external traffic.", "Route families and counts only; no raw request URI, query, identity or credential output."]
+      }
+    }
+  },
+  "installed_tooling": {
+    "runtime_sha": "811b714a6f17d94b090970fbb86f4413863a2afc",
+    "fifo_retirement": {"candidate_sha": "811b714a6f17d94b090970fbb86f4413863a2afc", "ancestor": true, "exit_status": 0},
+    "boundary": "Installed tooling ancestry only; no product delivery or promotion by this task."
+  },
+  "retained_interfaces": {
+    "management_redirects": "Actual BFF pm12 holding links generate the old performance-attribution URL; canonical center embeds retained business components.",
+    "runtime_config": "Same-origin runtime-config.js/__PANTHEON_DEPLOYMENT_CONFIG__ for immutable environment binding; live/strict and explicit write posture retained.",
+    "runtime_topology": "paper-fleet-reconciler and docker-compose.exec.yml split topology; no root static-paper-runtime profile.",
+    "python_imports": "Necessary hyphen-directory loader shim; canonical services.registry promotion gate/CLI; alpha_replication revalidation consumer.",
+    "business_lifecycle": "Persona AdvanceLifecycle/Promote/PromoteCandidate/Demote; MCP create/actions/tools; operator-checked POST deployment-plan ACTION_RETIRED rejection; real notification/SSE.",
+    "metadata": "Canonical artifact_state/deployment_stage plus genuine rollback target_registry_id/target_version, Registry lifecycle_state input and telemetry target.promotion_state event/query semantics.",
+    "tooling_safety": "Directory fences, FIFO rejection, writer drain, storage rollback, observational TaskStore and branch_workflow remain."
   },
   "hosted_acceptance": {
     "performed": false,
-    "reason": "Original publisher's Pantheon Nonprod Deploy run 43093653611 (head 5c6afce7cd68ff88b6a21106da29e02172fe4f34, created 20:08:16Z) was still in_progress at 20:12Z (deploy job running; L1-L12 gate and all-12 chain segments skipped so far). No final success, served FE/BFF identity or authenticated read-only acceptance exists yet; green CI or manifest label alone is not acceptance.",
-    "authenticated_readonly_navigation": "not_performed",
-    "served_manifest_identity": "not_verified",
+    "publisher_task": "STRAT-DATASRC-HOSTED-ACCEPT-20261110",
     "tracked_run": "43093653611",
-    "expected_fe_head": "acf3efaeb9141e1abd80375c9c2a357328c02c79"
+    "expected_bff_head": "5c6afce7cd68ff88b6a21106da29e02172fe4f34",
+    "expected_fe_head": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
+    "workflow_observation": {
+      "conclusion": "",
+      "databaseId": 43093653611,
+      "headSha": "5c6afce7cd68ff88b6a21106da29e02172fe4f34",
+      "jobs": [
+        {
+          "id": 130776856810,
+          "name": "Deploy dev under shared environment lease",
+          "status": "in_progress",
+          "conclusion": "",
+          "active_steps": ["Deploy dev VM stack under lease"]
+        },
+        {
+          "id": 130776858756,
+          "name": "Isolated L1-L12 gate with approved provider",
+          "status": "completed",
+          "conclusion": "skipped",
+          "active_steps": []
+        },
+        {
+          "id": 130776859490,
+          "name": "Hosted all-12 chain segment",
+          "status": "completed",
+          "conclusion": "skipped",
+          "active_steps": []
+        }
+      ],
+      "status": "in_progress",
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/43093653611"
+    },
+    "authenticated_readonly_navigation": "pending_existing_publisher",
+    "served_manifest_identity": "not_verified_after_terminal_success",
+    "expected_profiles": {"frontend_profile": "operator-live", "dev_auth_profile": "strict", "source": "Existing solepublisher ordinary-publisher-inputs-5c6afc.json; no new write authorization. Safe defaults and any explicitly enabled real writes must be read back and tied to existing operator authorization."},
+    "ordinary_release_inputs": {
+      "environment": "dev",
+      "component": "root",
+      "ref": "5c6afce7cd68ff88b6a21106da29e02172fe4f34",
+      "frontend_sha": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
+      "frontend_ref": "dev",
+      "frontend_profile": "operator-live",
+      "allow_dirty": "false",
+      "dev_auth_profile": "strict",
+      "ppl_alloc_009_dev_proof_enabled": "false",
+      "run_bounded_source_refresh": "false",
+      "run_evolution_dispatch_probe": "false",
+      "run_loop_prod_tel_002_probe": "false",
+      "bootstrap_empty_host": "false",
+      "isolated_provider_qualification": "false",
+      "run_exact_artifact_roundtrip": "false",
+      "hosted_all12_chain": "false",
+      "compensation_drill": "false"
+    },
+    "required_before_freeze": [
+      "Tracked root workflow final conclusion success, not only deploy step/green source CI or accepted label.",
+      "Same-run hosted deployment.json FE/BFF identities, pair/artifact identities and BFF/version agree with expected pair; actual gate-before-switch/post-switch/rollback receipts.",
+      "Read back live/strict auth, CORS and safe defaults; preserve any operator-authorized write setting without changing it.",
+      "Real authenticated read-only GUI navigation and canonical persona/deployment/ranking/metadata/MCP API reads on this exact served pair; record visible states and bounded errors honestly.",
+      "Relevant harmless retired-path probes only where no mutation is guaranteed; impossible IDs for retired nested actions, no lifecycle commands or generic onboarding write probe.",
+      "Commit final task evidence; push/PR, genuine assigned Codex2 exact-head review, required checks and existing canonical integrator merge."
+    ],
+    "prior_failed_runs": ["42836803401", "43079517858"],
+    "boundary": "Original publisher owns deployments/leases/authenticated hosted evidence. This lane has no fresh credentials and does not reuse prior login. Root/manifest/public200/source counts alone cannot prove hosted acceptance. Skipped L1-L12/chain jobs are not passes."
   },
-  "claims_not_made": [
-    "hosted delivery accepted",
-    "global zero traffic"
+  "material_unknowns": [
+    "Current run has no terminal successful hosted/authenticated proof yet; final acceptance is incomplete.",
+    "No global zero traffic, seven-day log coverage, arbitrary archive absence, production object load or measured cleanup performance improvement is established.",
+    "New rollback capture/restore source/tests cannot retrofit control posture into older sealed artifacts; no hosted rollback drill is claimed.",
+    "Financial/market refresh/Collector and fresh Loops acceptance remain the original publisher task scope; not asserted by this residual cleanup report."
   ],
-  "report": "report.txt"
+  "validation": [
+    {"command": "AI_NAME=Codex \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show <each of nine declared parents>", "exit_status": 0, "result": "All canonical archived status done; exact delivery/review/merge binding read without mutation."},
+    {
+      "command": "gh pr view <each source PR> --repo <its repository> --json state,headRefOid,mergeCommit,mergedAt,statusCheckRollup",
+      "exit_status": 0,
+      "result": "All nine actual MERGED heads and merge commits match canonical bindings. Exact observed successful/skipped checks retained per source; skipped never counted as passed."
+    },
+    {
+      "command": "git merge-base --is-ancestor <each source merge> <exact candidate>; git rev-parse <reviewed-head>:<evidence-manifest>",
+      "exit_status": 0,
+      "result": "All original and residual merges are candidate ancestors; all nine frozen manifest blobs match canonical bindings. FE history resides only in external bare audit repo."
+    },
+    {"command": "git -C \"$PANTHEON_COMMAND_ROOT\" merge-base --is-ancestor a504a3cbb03bfcc3ed51978d98351ac2cf7bb4f5 \"$PANTHEON_COMMAND_RUNTIME_SHA\"", "exit_status": 0, "result": "Installed runtime811b contains FIFO cleanup; not product hosted proof."},
+    {
+      "command": "python3 -m json.tool <task-evidence>; read-only A01-A18/report/source-binding consistency assertions; git diff --check; check_commit_trailers.py --range origin/dev..HEAD",
+      "exit_status": 0,
+      "result": "JSON valid; exactly A01-A18 present in report and evidence, nine DONE/blob/ancestry source receipts, expected pair and pending hosted boundary; diff/trailers pass. No product test rerun."
+    }
+  ],
+  "claims_not_made": ["hosted delivery accepted", "independent review approved", "global zero traffic", "StartRuntime passed", "deployment-plan creation succeeded", "fresh Loops/financial/market proof", "production acceptance"],
+  "interpretation": {
+    "source_test_receipts": "Inherited committed source/reviewer receipts; report A01-A18 supplies batch details. They were not rerun by this report worker; overlapping batches are not summed.",
+    "measurement": "No measured before/after cleanup speedup or global caller absence. Counts are bounded inventories at their stated timestamps; copied tests do not prove product use.",
+    "data_backup_rollback": "No data/schema migration, archive deletion or business writes. Existing storage and real recovery/gates remain; A07/A13/A16/A18 qualify the specific decisions.",
+    "prior_pair": "2026-11-08 browser/header measurements in prior acceptance are historical only. All current-pair hosted proof is pending."
+  },
+  "source_verification": {"all_nine_canonical_status": "done", "all_nine_frozen_manifest_blobs_match": true, "all_listed_source_merges_ancestor_of_exact_candidate_exit_status": 0, "prior_test_details": "See committed prior_acceptance.evidence; source-test counts are inherited historical receipts, not rerun here."}
 }

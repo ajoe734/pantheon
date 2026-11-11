@@ -1,5 +1,6 @@
 Pantheon 新舊實作、相容尾巴與開發偏移盤點
-工作版本：2026-11-11；已決定執行的來源清理均已合併，實際部署驗收與最終報告尚未完成。
+工作版本：2026-11-11T20:23Z。A01–A18 來源／刪留／實測證據已彙整；唯一 publisher 的 root43093653611 仍在部署，尚無本次 exact pair 的完整 authenticated 唯讀驗收。這是可續作草稿，不是最終驗收或 DONE。
+目前 owner／reviewer：Codex／Codex2，以本次 canonical task 為準。下列有時間的實作／CI 續查是原始歷史，不把舊 head 測試或舊 pair 的 hosted 結果冒充本輪結果。最新來源身分與剩餘驗收列於文末；可攜的匿名盤點、18 項處置、來源 frozen manifest 與驗證 exit 收於同目錄 evidence.json。
 
 判斷方法
 每項分開判斷原有能力、新實作的用途、仍有誰呼叫、資料／回復需求，再決定刪留。測試或路由清單自己引用自己，不等於產品仍需要。沒有 access log 不宣稱零流量；沒有掃到檔案不等於沒有資料。
@@ -144,3 +145,51 @@ CI 實際進展（16:02）：後端 PR #7183 exact head 7bb062a3bba00f6ee4cdbe01
 原前端清理續作（16:39）：FE-CI 修復已在 canonical state DONE（16:34:29Z），原 FE-RETIRED-PROBE worker 於16:35:46Z 實際接手。原 PR #982 已合入真正 dev 修復 dab26e1（merge46b6e0a19），再凍結 evidence head67ac192977d864b310f03d69cbd7b143af72d0a2。產品 diff 仍為原六檔清理範圍，沒有新 executor／replacement endpoint。新工作樹實跑46files／480tests、app typecheck、node syntax、七類狀態的離線 probe 契約、diff/trailers/budget 全 exit0；StartRuntime 網路請求數0、計畫 guard 不得判為建立成功。新版本正式 CI、獨立審查及合併尚待完成；原43f兩次 CI 失敗仍保留，不改成通過。
 
 後端 CI 修復來源交付（17:11）：PR #7183 final a162e1da12dd6b4fcde479fb22a8745f211768e4 已真正合併到 dev6547ff3493dc110b1537941f3ddf24c61495d0a0。gh pr checks exit0：15pass／7依路徑條件skip／0pending／0fail；完整Smoke26m36s成功，實際lean588pass／13既有skip／70subtests通過，三項必跑real sandbox negative controls皆成功、0skip。核心修正只為現有套件取得與合成測試時鐘，沒有產品能力新增、全域DNS／代理／簽章放寬或資料搬移。BFF #7178、Registry #7182 已透過既有reopen於17:12恢復，須在原PR採用真實currentdev後驗證新head、重新獨立審查並合併；此CI修復合併不能代替兩者來源交付與最後hosted驗收。
+
+本輪彙整讀回（2026-11-11T20:23Z）
+本 task 在正確的 task/COMPAT-RESIDUAL-HOSTED-ACCEPT-20261111 分支、乾淨 worktree 接續既有 anchor01b1c884；正常 merge current dev5c6afce，沒有重寫任何來源 task 或歷史 evidence。九個 declared parents 均以 AI_NAME=Codex 經 supervisor 提供的 command root show 讀回 canonical DONE；GitHub 實際 PR MERGED、reviewed head、merge SHA 與 canonical frozen manifest blob 逐一相符。下表是本輪實際讀回值，不是預定 merge：
+
+項目／repo PR／reviewed head／merge commit
+FIFO Pantheon#7174 8d0fefbf77d25856d0a9d4b85a7d6e1740d63d29 -> a504a3cbb03bfcc3ed51978d98351ac2cf7bb4f5
+Metadata Pantheon#7173 48acabca3e9f4080889773342b510bdeaf82278b -> 9ce4f3396f44b402290cd94578d20ba628b0ac48
+FE retired probe execute-plans#982 67ac192977d864b310f03d69cbd7b143af72d0a2 -> acf3efaeb9141e1abd80375c9c2a357328c02c79
+BFF notification Pantheon#7178 9f7a259e9528073dd60a52b9ff1b0b8376b426e1 -> 13b1be189fde14e1cd68fcc9213d4d8e177e1e1e
+Refresh image pin Pantheon#7170 e8c0c1ad7bfb95163f86bb4486ea0ee860ea3239 -> 4bd3f74cab0add621441c3c8017d8717a77010a2
+Refresh ordering Pantheon#7176 6a76cf5c9310d31a775e21db743f203d3fadf6bb -> 596abd9c1b5247f48e9d45a1610857cd6653b37d
+Registry entrypoint Pantheon#7182 600bb1214609ee9b00840fdf8eb571d0f293a779 -> a61c3d4f3786607ccfa976eb5975315c786bc8e4
+FE signed APT execute-plans#983 d553e11c642cae28da54d2ace68e2319fdca7fe6 -> dab26e1f69181b7b6cbbae47ef4cf3d86050278c
+Source rollback posture Pantheon#7192 d6c62a617efe489bf3c962abe4e6ecafcafa1c29 -> 5c6afce7cd68ff88b6a21106da29e02172fe4f34
+
+所有 backend merge 都是 publisher candidate5c6afce 的 ancestor，前次驗收六個來源 PR 同樣成立。FE#970、#983、#982 也都在 exact FEacf3efa 內。每個 ancestry 與 frozen evidence blob 比對 exit0；FE 僅在 /tmp 外部 bare audit repo 讀取，沒有把 frontend source 放進 Pantheon。逐 PR 的實際 SUCCESS／SKIPPED 數已記入 evidence.json；條件式 SKIPPED 不算 passed。歷史失敗／timeout 保留，不因後來成功而改寫。
+
+A01–A18 驗證範圍與資料／回復決策
+A01：既有 SourceIngestionRuntime／source tests 與 BFF 讀取契約支持移除 globals dispatch；繼續使用原有 ingestion store，沒有資料搬移；未做前後效能量測。
+A02：既有 Agora audit、management 與 internal smoke receipts 支持單一 Agora writer；保留 JSONL 與不同 schema 的 Governance store；沒有把測試筆數當作真實交易使用量。
+A03：既有 route/center tests 與 11/8 browser 是歷史證據。BFF pm12/service.py:1349 仍實際產生 performance-attribution link，因此保留 redirect 與嵌入元件；本輪 browser 仍待 publisher。
+A04：既有 runtime-config／runtimeEnv／devLoginHelper tests；正式同 origin config 仍有 immutable bundle 綁環境用途。舊 globals 不再讀；本輪 live/strict／write posture 尚待實際 readback。
+A05：既有 asyncTransitionPolicy 契約支持刪 shim；沒有證據宣稱 timeout 效能提升，保留原有 transition 語意。
+A06：既有 lease/deploy/paper-runtime tests 與先前 VM inventory 支持 fleet 權責；只退役 root 靜態入口，保留 exec 分離拓樸與引擎；本 task 不操作 runtime。
+A07：102 項來源測試；11:43 的 writer/path/prior-runtime 盤點與已安裝 runtime811b 的 ancestry 分別證明過渡完成及工具已包含修正。保留 directory fence、writer drain 與 rollback，沒有 journal 遷移或本輪 promotion。
+A08：worker receipt tests 已遷移現行 worker-runtime/state.json；不搬 canonical task journal，不把 supervisor 健康當作產品健康。
+A09：Agora/Cron/projector 既有測試支持刪無獨立呼叫的 alias；不碰真正 SSE 功能、業務 audit 或事件紀錄。
+A10：internal_api smoke 與更新後 py_compile caller；保留必要的 hyphen import shim，不新增資料／API 能力。
+A11：既有 workflow configuration caller tests 支持只留 branch_workflow；舊歷史設定記錄保留，不製造新的遷移服務。
+A12：既有 W&B smoke／matrix 加文件 PR#7168；現役只留 OFFLINE_STORE，歷史字串不當成 runtime caller。沒有外部 provider 寫入或量測效能宣稱。
+A13：BFF 新基底12 route/guard/MCP、36 lifecycle/auth 測試及 reviewer100 批次為來源證據，互有重疊不加總；FE46 files/480 tests、typecheck、syntax、七狀態離線 probe 及 exact-head push/PR CI 成功。實測流量僅7,720筆部分日視窗。StartRuntime零fetch且skipped，POST plan guard永不計建立成功；persona live4／MCP／產品notification/SSE保留，沒有執行 lifecycle 或通用 onboarding 寫入 probe。
+A14：既有可見 UI tests 與 11/8 browser 的兩類 hidden-node count0 是舊 pair 證據；本輪不以 hidden DOM 或測試 hook 冒充產品 readiness。
+A15：既有契約與 11/8 dryRun header驗證：舊 header400、canonical header走到428 confirmation。這不是本輪的成功 command，也不改 downstream 私有 wire 契約。
+A16：204 tests＋16 subtests 獨立來源驗證與 canonical paper→canary→live smoke 都 exit0；各別 source batches 可能重疊。主檔／支援.bak 各159筆、158 canonical、0 legacy-only；MinIO一bucket零objects是獨立時間點實測。第159筆已retired且無projection／artifact／keys。無物件可載入不能宣稱 hosted 物件執行成功；canonical loader能力由來源測試驗證。RuntimeManager._rollback_once 使用 proven prior_binding 欄位與 replacement_metadata；services/deployment/outbox_consumer_worker.py 組 compensation metadata。真正target_registry_id/target_version及人類核准／checksum／stage gates保留；沒有 archive刪除、資料遷移或 hosted rollback。
+A17：既有 TaskStore／worker tests 與文件 PR#7168 支持 observational keyword；沒有狀態儲存遷移或另造調度器。
+A18：真實 alpha_replication revalidation worker 仍用正式 PromotionGate 建draft／驗candidate；root forwarders移除。新基底21 focused tests、空venv實際matrix caller與CLI exit0；reviewer117tests＋12subtests通過。最初漏查未安裝環境caller的失敗已如實保留；package exports、lifecycle_state輸入、telemetry promotion_state 與真正業務 rollback 不變。
+除上述具名實測，沒有 before/after latency 或產品流量／效能提升量測。對 A01–A18 的清理收益只主張移除多餘轉接、單一設定／writer權責與較清楚的契約；不將返工算成新增產品功能。任意外部 caller、所有歷史 archive 或未來寫入物件是否存在，沒有全球不存在證明；刪留以當前 supported caller、writer、loader／recovery 路徑與明列實測範圍為準。
+
+原唯一發布 lane 的實際阻礙與修正
+除了 A01–A18 清理來源，PR#7170 把 bounded refresh／restore 固定到 running image ID，避免 stale plain tag；PR#7176 將既有 refresh 放到候選 stack 切換後，失敗仍補償。這些是既有交付路徑修復，不是相容平台。
+Root43079517858 曾因未要求的 bounded proof／DLQ 與 whole-stack restore 控制設定漏存失敗，不能拿其 manifest accepted 或短暫200當成功。本 task 不重跑該舊 payload。PR#7192 使既有 capture/restore 記錄 source scheduler五個非秘密控制鍵、source API egress兩鍵及restart policy；absent與empty分開，真實Compose以 !reset null 清除缺值，restore後fail closed比對。來源三suite589pass、1既有FE-helper skip；reviewer另驗真實Compose及controller13tests；不聲稱已替舊 sealed baseline補出這些欄位。舊artifact保持不動，新的capture仍走同一入口。臨時恢復舊來源健康是救援歷史，不是新pair交付。
+
+尚未滿足的 hosted 驗收（必須保留為 pending）
+唯一 publisher仍是 STRAT-DATASRC-HOSTED-ACCEPT-20261110；root43093653611、job130776856810，建立20:08:16Z。預期 BFF5c6afce7cd68ff88b6a21106da29e02172fe4f34 + FEacf3efaeb9141e1abd80375c9c2a357328c02c79。20:23Z GitHub讀回仍in_progress／Deploy dev VM stack under lease，尚無terminal success；L1-L12及all-12 chain為skipped，不算PASS。
+沿用原publisher的operator-live前端與strict auth設定；這是現有發布輸入，不是此worker新授權真實寫入。必須讀回實際live/strict／安全預設與任何已由operator明示啟用的write姿態，不由profile名稱推論安全或擅自改動。
+完成前仍需：(1) 該root整體terminal SUCCESS；(2) 同run之hosted deployment.json、BFF/version、exact FE/BFF／pair／artifact身分與gate-before-switch／post-switch／rollback receipts；(3) 同pair真實authenticated唯讀GUI及canonical persona/deployment/ranking/metadata/MCP API讀取；(4) 只在確保零業務mutation時，以impossible IDs驗證相關retired paths；不送life-cycle command、不跑會寫入的onboarding probe；(5) 最終evidence commit、push／PR、獨立Codex2 exact-head審查、必要CI與既有integrator合併。
+本worker只做read-only inventory／報告，不接管publisher的deploy／lease／guard／登入憑證。已在本task native note記錄對原publisher的sanitized hosted receipts需求；跨task note遭現行worker lease mismatch拒絕，未繞過或改變對方task。沒有重用舊auth/login、秘密輸出、服務restart、provider/data/business write或新增部署器。
+目前不能凍結最終驗收、handoff為完成證據或標DONE。Financial／market／Collector與fresh Loops的原始驗收仍由原publisher承擔，本清理報告不延伸主張。source合併、安裝後工具健康、greenCI、public200或manifest accepted label，均不能替代這些hosted證據。
