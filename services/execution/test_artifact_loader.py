@@ -377,7 +377,7 @@ class TestEX002RBLoaderMetadataMigration(unittest.TestCase):
         self.assertEqual(loaded.metadata["deployment_stage"], "paper")
         self.assertEqual(loaded.metadata["artifact_state"], "approved")
 
-    def test_loader_falls_back_to_legacy_promotion_state(self):
+    def test_loader_rejects_legacy_promotion_state_only_metadata(self):
         metadata = {
             "registry_id": "reg-strat-001-1.2.3",
             "strategy_id": "strat-001",
@@ -389,12 +389,28 @@ class TestEX002RBLoaderMetadataMigration(unittest.TestCase):
             "created_at": "2026-04-06T12:00:00Z",
         }
         loader = self._build_loader(metadata)
-        loaded = loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
 
-        self.assertIsNone(loaded.metadata.get("deployment_stage"))
-        self.assertEqual(loaded.metadata["promotion_state"], "paper")
+        with self.assertRaisesRegex(ArtifactLoadError, "artifact_state='approved'"):
+            loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
 
-    def test_loader_deployment_stage_takes_precedence_over_promotion_state(self):
+    def test_loader_rejects_approved_metadata_without_deployment_stage(self):
+        metadata = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "artifact_type": "model_artifact",
+            "artifact_state": "approved",
+            "promotion_state": "paper",
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+            "created_at": "2026-04-06T12:00:00Z",
+        }
+        loader = self._build_loader(metadata)
+
+        with self.assertRaisesRegex(ArtifactLoadError, "deployment_stage=None"):
+            loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
+
+    def test_loader_ignores_stray_promotion_state_when_deployment_stage_present(self):
         metadata = {
             "registry_id": "reg-strat-001-1.2.3",
             "strategy_id": "strat-001",
