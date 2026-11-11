@@ -70,9 +70,9 @@ def test_monthly_revenue_row_has_event_available_and_ingest_time() -> None:
 
 def test_quarterly_statements_join_equity_and_q4_lag() -> None:
     income = [
-        {"年度": "115", "季別": "3", "公司代號": "2330", "營業收入": "1000", "營業毛利（毛損）淨額": "500",
+        {"出表日期": "1151105", "年度": "115", "季別": "3", "公司代號": "2330", "營業收入": "1000", "營業毛利（毛損）淨額": "500",
          "營業利益（損失）": "400", "歸屬於母公司業主之淨利（損）": "300", "基本每股盈餘（元）": "12.5"},
-        {"年度": "114", "季別": "4", "公司代號": "2330", "營業收入": "1000", "營業利益（損失）": "100"},
+        {"出表日期": "1150331", "年度": "114", "季別": "4", "公司代號": "2330", "營業收入": "1000", "營業利益（損失）": "100"},
     ]
     balance = [{"年度": "115", "季別": "3", "公司代號": "2330", "歸屬於母公司業主之權益合計": "3000"}]
     rows = {r["fiscal_quarter"]: r for r in normalize_financial_statement_rows("TWSE", income, balance, **KW)}
@@ -159,7 +159,7 @@ def test_community_daily_features_are_available_after_day_close() -> None:
 
 def test_read_feature_series_applies_lag_and_rejects_uncatalogued() -> None:
     row = normalize_monthly_revenue_rows(
-        "TWSE", [{"資料年月": "11510", "公司代號": "2330", "營業收入-當月營收": "1", "營業收入-去年同月增減(%)": "9"}], **KW
+        "TWSE", [{"出表日期": "1151105", "資料年月": "11510", "公司代號": "2330", "營業收入-當月營收": "1", "營業收入-去年同月增減(%)": "9"}], **KW
     )[0]
     observations = fc.observations_from_row("tw_monthly_revenue", row)
     assert fc.read_feature_series(observations, "tw_monthly_revenue", "yoy", decision_time="2026-11-09") == ()
@@ -629,3 +629,64 @@ def test_paper_strategy_collapses_raw_revisions_without_helper() -> None:
     }
     decision = CurrentArtifactStrategy(expression_layer=False)(binding, "2026-11-11T02:05:00Z")
     assert decision["action"] == "HOLD"
+
+
+def _revenue_version(published: str, yoy: str, ingest: str) -> list[dict]:
+    (row,) = normalize_monthly_revenue_rows(
+        "TWSE",
+        [{"出表日期": published, "資料年月": "11510", "公司代號": "2330", "營業收入-當月營收": "1",
+          "營業收入-去年同月增減(%)": yoy}],
+        source_dataset="x", api_endpoint="https://openapi.twse.com.tw/v1/x", ingest_time=ingest,
+    )
+    return fc.observations_from_row("tw_monthly_revenue", row)
+
+
+def test_revision_is_not_backdated_to_filing_deadline() -> None:
+    original = _revenue_version("1151110", "2", "2026-11-10T12:00:00Z")
+    corrected = _revenue_version("1151201", "30", "2026-12-01T12:00:00Z")
+    assert corrected[0]["available_time"] == "2026-12-01T10:00:00Z"
+    obs = original + corrected
+    before = fc.read_feature_series(obs, "tw_monthly_revenue", "yoy", decision_time="2026-11-12")
+    after = fc.read_feature_series(obs, "tw_monthly_revenue", "yoy", decision_time="2026-12-02")
+    assert [o["value"] for o in before] == [2.0]
+    assert [o["value"] for o in after] == [30.0]
+
+
+def test_version_without_publication_date_falls_back_to_first_seen_and_keeps_floor() -> None:
+    (late,) = normalize_monthly_revenue_rows(
+        "TWSE", [{"資料年月": "11510", "公司代號": "2330", "營業收入-當月營收": "1"}],
+        source_dataset="x", api_endpoint="https://openapi.twse.com.tw/v1/x", ingest_time="2026-12-01T00:00:00Z",
+    )
+    assert late["available_time"] == "2026-12-01T00:00:00Z"
+    (early,) = normalize_monthly_revenue_rows(
+        "TWSE", [{"出表日期": "1151101", "資料年月": "11510", "公司代號": "2330", "營業收入-當月營收": "1"}],
+        source_dataset="x", api_endpoint="https://openapi.twse.com.tw/v1/x", ingest_time="2026-11-01T00:00:00Z",
+    )
+    assert early["available_time"] == "2026-11-10T10:00:00Z"  # lag floor still applies
+
+
+def test_revision_regression_through_public_factor_rule_evaluator() -> None:
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+    from services.registry.strategy_artifact import evaluate_strategy_action
+
+    artifact = _sample_factor_rule_artifact()
+    obs: list[dict] = []
+    for ym, y in (("11507", "10"), ("11508", "11"), ("11509", "10.5")):
+        (row,) = normalize_monthly_revenue_rows(
+            "TWSE", [{"出表日期": "1150101", "資料年月": ym, "公司代號": "2330", "營業收入-當月營收": "1",
+                      "營業收入-去年同月增減(%)": y}],
+            source_dataset="x", api_endpoint="https://openapi.twse.com.tw/v1/x", ingest_time="2026-01-01T00:00:00Z",
+        )
+        obs += fc.observations_from_row("tw_monthly_revenue", row)
+    obs += _revenue_version("1151110", "2", "2026-11-10T12:00:00Z")
+    obs += _revenue_version("1151201", "30", "2026-12-01T12:00:00Z")
+    closes = [500.0, 505.0, 510.0, 515.0]
+
+    def act(decision: str) -> str:
+        feats = fc.feature_inputs_for_factor_rule(
+            obs, artifact["strategy_logic"]["inputs"], decision_time=decision
+        )
+        return evaluate_strategy_action(artifact, closes, features=feats, decision_time=decision)
+
+    assert act("2026-11-12") == "SELL"  # only the original (2) is known; the correction is not leaked
+    assert act("2026-12-02") == "BUY"

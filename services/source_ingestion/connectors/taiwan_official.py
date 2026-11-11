@@ -3262,6 +3262,30 @@ def _fundamental_lag_available(event_time: str, lag_days: int, *, hour: int = 18
     return default_available_time(event_time, lag_days, hour=hour)
 
 
+def _version_available_time(
+    row: Mapping[str, Any], event_time: str, lag_days: int, ingest_time: str, *, hour: int = 18
+) -> str:
+    """Per-version availability: never earlier than the lag floor nor than first knowledge.
+
+    Uses the version's own publication date (``出表日期`` / ``PublishDate``) when the
+    source states one; otherwise the conservative first-seen time (``ingest_time``).
+    A later corrected version therefore never back-dates to the original deadline.
+    """
+    from ..feature_catalogue import parse_time, iso_utc
+
+    floor = parse_time(_fundamental_lag_available(event_time, lag_days, hour=hour))
+    known = None
+    published = _roc_date_to_iso(_first(row, "出表日期", "PublishDate", "PublicationDate", "published_time", "publish_date"))
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", published):
+        known = parse_time(_fundamental_lag_available(published, 0, hour=hour))
+    else:
+        try:
+            known = parse_time(ingest_time)
+        except Exception:
+            known = None
+    return iso_utc(max(floor, known) if known else floor)
+
+
 def normalize_monthly_revenue_rows(
     venue: str,
     payload: Any,
@@ -3292,7 +3316,7 @@ def normalize_monthly_revenue_rows(
         item = _fundamental_base(
             "tw_monthly_revenue", canonical, symbol, row,
             source_dataset=source_dataset, api_endpoint=api_endpoint, event_time=event_time,
-            lag_days=lag, available_time=_fundamental_lag_available(event_time, lag), ingest_time=ingested,
+            lag_days=lag, available_time=_version_available_time(row, event_time, lag, ingested), ingest_time=ingested,
         )
         item.update(
             revenue=revenue,
@@ -3353,7 +3377,7 @@ def normalize_financial_statement_rows(
         item = _fundamental_base(
             "tw_financial_statement", canonical, symbol, row,
             source_dataset=source_dataset, api_endpoint=api_endpoint, event_time=event_time,
-            lag_days=lag, available_time=_fundamental_lag_available(event_time, lag), ingest_time=ingested,
+            lag_days=lag, available_time=_version_available_time(row, event_time, lag, ingested), ingest_time=ingested,
         )
         item.update(
             fiscal_year=year,
@@ -3395,7 +3419,7 @@ def normalize_valuation_rows(
         item = _fundamental_base(
             "tw_valuation_bwibbu", canonical, symbol, row,
             source_dataset=source_dataset, api_endpoint=api_endpoint, event_time=event_time,
-            lag_days=0, available_time=_fundamental_lag_available(event_time, 0), ingest_time=ingested,
+            lag_days=0, available_time=_version_available_time(row, event_time, 0, ingested), ingest_time=ingested,
         )
         item.update(pe_ratio=pe, pb_ratio=pb, dividend_yield=dy)
         out.append(item)
