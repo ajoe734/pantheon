@@ -6,19 +6,32 @@
     "registry": "connector_definitions.py: tw-finmind-kbar-1m (datasets=tw_price_1m only); connectors/__init__.py export",
     "pit_contract": "normalized row carries provider_published_at (only if supplied, never invented), fetched_at, reconciled_at, bar_availability_ts = max(bar_end, fetched_at, reconciled_at), None (pending_reconciliation) until reconciled; raw row, request id, source hash and quota_meta (request_url stripped) are kept per record",
     "session_rules": "bars kept for 09:00..13:30 Asia/Taipei start; others dropped and counted; conflicting duplicate minute -> reported for day quarantine; non-trading day rejected via injected is_trading_day",
-    "out_of_list_edit": "services/source_ingestion/provider_adapters.py: registered FinMindTaiwanKBarAdapter token + _finmind_kbar handler. Required because ConnectorDefinition rejects adapter tokens missing from the provider allowlist (module import fails otherwise). No behaviour change for other adapters."
+    "out_of_list_edit": "services/source_ingestion/provider_adapters.py: registered FinMindTaiwanKBarAdapter token + _finmind_kbar handler. Required because ConnectorDefinition rejects adapter tokens missing from the provider allowlist (module import fails otherwise). No behaviour change for other adapters.",
+    "production_path": "provider_adapters._finmind_kbar: when request has no caller payload it performs a real FinMindLiveFetcher.fetch_kbar via fetch_kbar() with the process-wide shared KBarHourlyBudget (4500/h); missing credential -> FinMindCredentialError with zero network; budget exhausted / 402 -> SourceEvidenceError (stop, no retry in window). fetched_at comes from the real response. Caller-supplied payload still accepted for replay."
   },
   "tests": {
-    "new": "services/source_ingestion/tests/test_finmind_kbar.py, test_finmind_kbar_availability.py: 17 passed",
+    "new": "test_finmind_kbar.py (19 incl. 2 provider-path tests exercising real fetch_kbar + shared budget + missing credential), test_finmind_kbar_availability.py; 85 passed with related regression suites",
     "regression": "test_finmind_taiwan_connectors, test_finmind_broker_backfill, test_provider_management_coverage, test_connector_framework, test_financial_source_catalog, test_registry_split passed with pyarrow/fastapi/jsonschema installed in a scratch venv",
     "preexisting_failures": "5 failures in test_controller_worker.py (persona schedule / projector truth) fail identically on the untouched base branch in this venv; not caused by this change"
   },
   "real_source_probes": {
     "status": "NOT_RUN",
     "reason": "FINMIND_API_TOKEN is not present in this worker environment (credential_unavailable); no live request was made and no data was fabricated",
-    "range_request": {"status": "not_run", "tool": "classify_range_probe", "note": "range support unverified; production fetch stays one (stock_id, date) per request"},
-    "volume_unit": {"status": "not_run", "tool": "measure_volume_unit", "note": "needs 2 symbols' KBar day vs official tw_price_daily volume; factor unverified"},
-    "publication_time": {"status": "not_run", "tool": "observe_publication_time", "note": "documented ~15:50 Asia/Taipei is unconfirmed by real fetched_at observations"},
+    "range_request": {
+      "status": "not_run",
+      "tool": "classify_range_probe",
+      "note": "range support unverified; production fetch stays one (stock_id, date) per request"
+    },
+    "volume_unit": {
+      "status": "not_run",
+      "tool": "measure_volume_unit",
+      "note": "needs 2 symbols' KBar day vs official tw_price_daily volume; factor unverified"
+    },
+    "publication_time": {
+      "status": "not_run",
+      "tool": "observe_publication_time",
+      "note": "documented ~15:50 Asia/Taipei is unconfirmed by real fetched_at observations"
+    },
     "quota_metadata": "captured per response via _extract_quota_meta into record quota_meta; no real response observed"
   },
   "not_verified": [

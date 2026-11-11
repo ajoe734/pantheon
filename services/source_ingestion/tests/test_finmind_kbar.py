@@ -149,3 +149,32 @@ def test_range_probe_classification():
     assert classify_range_probe(one, multi, start_date="2026-11-09", end_date="2026-11-10")["range_supported"]
     assert not classify_range_probe(one, one, start_date="2026-11-09", end_date="2026-11-10")["range_supported"]
     assert not classify_range_probe(one, None, start_date="a", end_date="b", range_error="HTTP 400")["range_supported"]
+
+
+def test_provider_path_fetches_through_shared_budget(monkeypatch):
+    from services.source_ingestion import provider_adapters as pa
+
+    monkeypatch.setenv("FINMIND_API_TOKEN", "x")
+    budget = KBarHourlyBudget(1)
+    monkeypatch.setattr(pa, "_finmind_shared_kbar_budget", lambda: budget)
+    calls = []
+
+    def fake(self, symbol, date, **kw):
+        calls.append(symbol)
+        return {"status": 200, "data": [_row("09:00:00")]}, {"fetched_at": "2026-11-10T08:00:00Z"}
+
+    monkeypatch.setattr(FinMindLiveFetcher, "fetch_kbar", fake)
+    req = {"symbol": "2330", "date": DAY}
+    pa._finmind_kbar(FinMindTaiwanKBarAdapter(), req, "t")
+    assert calls == ["2330"]
+    with pytest.raises(pa.SourceEvidenceError):
+        pa._finmind_kbar(FinMindTaiwanKBarAdapter(), req, "t")
+    assert calls == ["2330"]  # budget spent: no second network call
+
+
+def test_provider_path_missing_credential_no_network(monkeypatch):
+    from services.source_ingestion import provider_adapters as pa
+
+    monkeypatch.delenv("FINMIND_API_TOKEN", raising=False)
+    with pytest.raises(FinMindCredentialError):
+        pa._finmind_kbar(FinMindTaiwanKBarAdapter(), {"symbol": "2330", "date": DAY}, "t")

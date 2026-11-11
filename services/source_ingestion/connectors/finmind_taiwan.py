@@ -887,6 +887,14 @@ class KBarHourlyBudget:
             }
 
 
+_SHARED_KBAR_BUDGET = KBarHourlyBudget()
+
+
+def shared_kbar_budget() -> KBarHourlyBudget:
+    """Process-wide 4,500/h budget used by the production KBar provider path."""
+    return _SHARED_KBAR_BUDGET
+
+
 @dataclass(frozen=True)
 class KBarFetchResult:
     status: str  # "ok" | "budget_exhausted" | "quota_402"

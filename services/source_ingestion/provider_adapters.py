@@ -26,6 +26,8 @@ from .connectors.finmind_taiwan import (
     FinMindTaiwanBrokerBulkBackfillAdapter,
     FinMindTaiwanKBarAdapter,
     FinMindTaiwanBrokerDailyReportAdapter,
+    fetch_kbar as _finmind_fetch_kbar,
+    shared_kbar_budget as _finmind_shared_kbar_budget,
     FinMindTaiwanDatasetAdapter,
 )
 from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter
@@ -327,14 +329,34 @@ def _finmind_kbar(
     request: Mapping[str, Any],
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
+    symbol = str(_require(request.get("symbol"), "symbol"))
+    session_date = str(_require(request.get("date") or request.get("run_date"), "date"))
+    payload = request.get("payload")
+    quota_meta = request.get("quota_meta")
+    fetched_at = request.get("fetched_at")
+    if payload is None:
+        # Production path: real budgeted FinMind fetch (shared 4,500/h, 402 stop).
+        fetcher = FinMindLiveFetcher(secret_ref_id=adapter.secret_ref_id)
+        if not fetcher.credential_status().get("available"):
+            raise FinMindCredentialError(f"missing credential at {adapter.secret_ref_id}")
+        result = _finmind_fetch_kbar(
+            fetcher, symbol, session_date, budget=_finmind_shared_kbar_budget()
+        )
+        if result.status != "ok":
+            raise SourceEvidenceError(
+                f"FinMind KBar fetch stopped ({result.status}) for {symbol}; "
+                f"resume after {result.resume_after_seconds}s; no retry in this window"
+            )
+        payload, quota_meta = result.payload, dict(result.quota_meta)
+        fetched_at = quota_meta.get("fetched_at")
     return adapter.records_from_kbar_payload(
-        _require(request.get("payload"), "payload"),
-        symbol=str(_require(request.get("symbol"), "symbol")),
-        session_date=str(_require(request.get("date") or request.get("run_date"), "date")),
-        fetched_at=_require(request.get("fetched_at"), "fetched_at"),
+        payload,
+        symbol=symbol,
+        session_date=session_date,
+        fetched_at=_require(fetched_at, "fetched_at"),
         reconciled_at=request.get("reconciled_at"),
         provider_published_at=request.get("provider_published_at"),
-        quota_meta=request.get("quota_meta"),
+        quota_meta=quota_meta,
         trace_id=trace_id,
     )
 
