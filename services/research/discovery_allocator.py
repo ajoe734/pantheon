@@ -160,6 +160,142 @@ from pathlib import Path as _Path  # noqa: E402
 DAILY_INTERVAL_SECONDS = 24 * 60 * 60
 
 
+class OwnerUnreachable(RuntimeError):
+    """An owning service (persona / provisioning) could not be reached."""
+
+    def __init__(self, service: str, detail: str) -> None:
+        super().__init__(detail)
+        self.service = service
+
+
+# ---------------------------------------------------------------------------
+# Production ports: real persona/binding readers, scorer and provisioner.
+# ``call(service, method, url, body)`` is the orchestrator's authenticated
+# owner-call transport; it must raise OwnerUnreachable on transport/auth/5xx.
+# ---------------------------------------------------------------------------
+OwnerCall = Callable[[str, str, str, "dict[str, Any] | None"], Any]
+BINDING_LABEL = "discovery_allocator"
+
+
+def _load_match_persona_strategies() -> Callable[..., Any]:
+    import importlib.util as _ilu
+    import sys as _sys
+
+    persona_dir = _Path(__file__).resolve().parents[1] / "control-plane" / "persona"
+    path = persona_dir / "persona_strategy_discovery.py"
+    if not path.is_file():
+        raise OwnerUnreachable("persona-matcher", f"persona_strategy_discovery.py not found at {path}")
+    if str(persona_dir) not in _sys.path:
+        _sys.path.append(str(persona_dir))
+    spec = _ilu.spec_from_file_location("_discovery_allocator_persona_match", path)
+    module = _ilu.module_from_spec(spec)  # type: ignore[arg-type]
+    _sys.modules[spec.name] = module  # type: ignore[union-attr]
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return module.match_persona_strategies
+
+
+def make_persona_scorer(match_fn: Callable[..., Any] | None = None) -> Scorer:
+    def scorer(persona: Mapping[str, Any], artifact: Mapping[str, Any]) -> Any:
+        fn = match_fn or _load_match_persona_strategies()
+        matches = fn(persona, strategy_specs=[dict(artifact)])
+        if not matches:
+            return {"score": 0.0, "match_id": "", "blockers": ["no_match"]}
+        top = matches[0]
+        return {"score": top.score, "match_id": top.match_id, "blockers": tuple(top.blockers)}
+
+    return scorer
+
+
+def _persona_rows(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, Mapping):
+        payload = payload.get("data", payload.get("personas", []))
+    return [dict(p) for p in payload if isinstance(p, Mapping)] if isinstance(payload, list) else []
+
+
+def _binding_of(persona: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    labels = persona.get("labels")
+    binding = labels.get(BINDING_LABEL) if isinstance(labels, Mapping) else None
+    return binding if isinstance(binding, Mapping) and binding.get("artifact_ref") else None
+
+
+def make_production_ports(
+    *,
+    call: OwnerCall,
+    persona_url: str,
+    provisioning_url: str,
+    tenant_id: str,
+    paper_capital_cap: float,
+    per_persona_capital: float,
+    min_score: float = DEFAULT_MIN_SCORE,
+) -> dict[str, Any]:
+    persona_url = persona_url.rstrip("/")
+    provisioning_url = provisioning_url.rstrip("/")
+
+    def _read() -> list[dict[str, Any]]:
+        rows = _persona_rows(call("persona", "GET", f"{persona_url}/api/personas", None))
+        return [p for p in rows if str(p.get("tenant_id") or tenant_id) == tenant_id]
+
+    def list_personas() -> list[dict[str, Any]]:
+        return [
+            p for p in _read()
+            if _binding_of(p) is None
+            and str(p.get("persona_class") or "") != "baseline"
+            and not (isinstance(p.get("labels"), Mapping) and p["labels"].get("baseline"))
+        ]
+
+    def list_active_bindings() -> list[dict[str, Any]]:
+        out = []
+        for p in _read():
+            b = _binding_of(p)
+            if b is not None:
+                out.append({
+                    "persona_id": str(p.get("persona_id") or p.get("id")),
+                    "artifact_ref": b.get("artifact_ref"),
+                    "paper_capital": b.get("paper_capital") or 0.0,
+                })
+        return out
+
+    def provision(request: dict[str, Any]) -> Any:
+        import hashlib as _hashlib
+
+        token = _hashlib.sha256(request["idempotency_key"].encode()).hexdigest()[:16]
+        body = {
+            "capital_pool_id": f"cp-discovery-{token}",
+            "binding_id": f"pcb-discovery-{token}",
+            "budget": request["budget"],
+            "strategy_spec_registry_id": request["strategy_artifact_ref"],
+            "labels": {
+                BINDING_LABEL: {
+                    "artifact_ref": request["strategy_artifact_ref"],
+                    "paper_capital": request["budget"],
+                    **request["metadata"],
+                },
+                "execution_context": request["execution_context"],
+            },
+        }
+        return call(
+            "provisioning", "POST",
+            f"{provisioning_url}/bff/personas/{request['persona_id']}/provisioning/paper-capital",
+            body,
+        )
+
+    def allocator_factory() -> DiscoveryAllocator:
+        return DiscoveryAllocator(
+            scorer=make_persona_scorer(),
+            provision=provision,
+            paper_capital_cap=paper_capital_cap,
+            per_persona_capital=per_persona_capital,
+            max_personas=MAX_DISCOVERY_PERSONAS,
+            min_score=min_score,
+        )
+
+    return {
+        "list_personas": list_personas,
+        "list_active_bindings": list_active_bindings,
+        "allocator_factory": allocator_factory,
+    }
+
+
 def _env_true(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -211,13 +347,12 @@ def run_scheduled_allocation(
                 str(a.get("registry_id") or a.get("artifact_id") or a.get("strategy_spec_id"))
                 for a in admitted
             ]
-            personas = list(list_personas())
             if not admitted:
                 record["reason"] = "no_admitted_candidates"
-            elif not personas:
-                record["reason"] = "no_discovery_personas"
             elif allocator_factory is None:
                 record["reason"] = "allocator_not_configured"
+            elif not (personas := list(list_personas())):
+                record["reason"] = "no_discovery_personas"
             else:
                 result = allocator_factory().allocate(
                     admitted_artifacts=admitted,
@@ -230,6 +365,8 @@ def run_scheduled_allocation(
                 record["skipped"] = result.skipped
                 if not result.bindings:
                     record["reason"] = "no_eligible_match"
+    except OwnerUnreachable as exc:
+        record["reason"] = f"owner_unreachable:{exc.service}:{exc}"
     except Exception as exc:  # noqa: BLE001 - a failed run must be recorded, not crash the loop
         record["reason"] = f"error:{type(exc).__name__}:{exc}"
     if record_path is not None:

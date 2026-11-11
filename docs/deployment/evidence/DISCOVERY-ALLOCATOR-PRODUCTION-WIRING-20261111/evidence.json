@@ -1,14 +1,21 @@
 {
   "task": "DISCOVERY-ALLOCATOR-PRODUCTION-WIRING-20261111",
   "commands": [
-    {"cmd": "pytest services/research/tests/test_discovery_allocator_schedule.py services/research/test_discovery_allocator.py", "result": "9 passed"},
-    {"cmd": "pytest services/research/tests/test_research_orchestrator_http_service.py", "result": "2 failed (derivatives_pricing_risk_provenance) - pre-existing on baseline, unrelated; rest pass"}
+    {
+      "cmd": "pytest services/research/tests/test_discovery_allocator_schedule.py services/research/test_discovery_allocator.py",
+      "result": "11 passed"
+    },
+    {
+      "cmd": "pytest services/research/tests/test_research_orchestrator_http_service.py",
+      "result": "2 failed (derivatives_pricing_risk_provenance) - pre-existing on baseline, unrelated; rest pass"
+    }
   ],
   "acceptance": {
     "1": "main.py startup handler start_discovery_allocator_schedule runs the allocator daily (DISCOVERY_ALLOCATOR_INTERVAL_SECONDS default 86400) behind DISCOVERY_ALLOCATOR_ENABLED; the setting defaults to enabled (paper-only, cap 5) and DISCOVERY_ALLOCATOR_ENABLED=false turns it off; compose files untouched (outside task artifact contract)",
     "2": "each run appends a record to <data_dir>/discovery_allocator_runs.jsonl: admitted_candidates_seen/refs, bound[], skipped[], reason",
     "3": "test_startup_schedule_runs_allocator_paper_only_cap_five: TestClient startup, 8 admitted x 8 personas, max_personas=99 -> exactly 5 bound, all paper",
-    "4": "test_setting_off_records_disabled_and_allocates_nothing"
+    "4": "test_setting_off_records_disabled_and_allocates_nothing",
+    "5": "Production ports (discovery_allocator.make_production_ports) are built at main.py import: persona reader GET {DISCOVERY_ALLOCATOR_PERSONA_URL}/api/personas, active-binding reader (persona labels.discovery_allocator), persona_strategy_discovery scorer, BFF paper-capital provisioner (POST /bff/personas/{id}/provisioning/paper-capital); cap 5, paper only. Owner unreachable -> run records owner_unreachable:<service>:<detail>. Tests: test_default_boot_uses_production_ports_not_stubs, test_unreachable_owner_recorded_per_run."
   },
-  "known_limitation": "Persona source, scorer and provisioner are injectable ports (main.discovery_allocator_ports); no production persona/provision adapter exists in the research service yet, so by default a run records reason=no_discovery_personas. A follow-up must supply the real ports (control-plane persona list, persona_strategy_discovery scorer, provisioning call)."
+  "known_limitation": "Needs RESEARCH_PERSONA_SERVICE_TOKEN and RESEARCH_BFF_SERVICE_TOKEN mounted (compose untouched, outside artifact contract); until then each run records owner_unreachable. Active-binding readback relies on the labels.discovery_allocator label that the provisioner writes; the BFF paper-capital endpoint requires an operator role, so the service principal must be granted it by its owner."
 }

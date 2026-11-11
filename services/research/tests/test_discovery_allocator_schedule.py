@@ -23,6 +23,7 @@ def _wire(module, calls):
 
     module.discovery_allocator_ports.update(
         list_personas=lambda: [{"persona_id": f"p{i}"} for i in range(8)],
+        list_active_bindings=lambda: [],
         allocator_factory=factory,
     )
 
@@ -66,6 +67,8 @@ def test_setting_off_records_disabled_and_allocates_nothing() -> None:
 
 def test_no_personas_records_reason() -> None:
     module = _load_service_module()
+    _wire(module, [])
+    module.discovery_allocator_ports.update(list_personas=lambda: [])
     admitted = [{"strategy_spec_id": "s", "registry_id": "s", "status": "admitted"}]
     with mock.patch.object(module.alpha_replication_admission_store, "list_admissions", return_value=admitted), \
          mock.patch.dict("os.environ", {"DISCOVERY_ALLOCATOR_ENABLED": "true"}):
@@ -73,3 +76,36 @@ def test_no_personas_records_reason() -> None:
             rec = _records(module)[0]
     assert rec["admitted_candidates_seen"] == 1
     assert rec["reason"] == "no_discovery_personas"
+
+
+def test_default_boot_uses_production_ports_not_stubs() -> None:
+    module = _load_service_module()  # no injection
+    ports = module.discovery_allocator_ports
+    assert callable(ports["allocator_factory"])
+    assert ports["list_personas"].__module__ == da.__name__
+    assert ports["list_active_bindings"].__module__ == da.__name__
+    alloc = ports["allocator_factory"]()
+    assert isinstance(alloc, da.DiscoveryAllocator)
+    assert alloc.max_personas == 5
+    # Readers really call the persona owner.
+    with mock.patch.object(module, "_retrain_call", return_value=[
+        {"persona_id": "p1", "tenant_id": module.DISCOVERY_ALLOCATOR_TENANT},
+        {"persona_id": "p2", "tenant_id": module.DISCOVERY_ALLOCATOR_TENANT,
+         "labels": {"discovery_allocator": {"artifact_ref": "a", "paper_capital": 10}}},
+    ]) as owner:
+        assert [p["persona_id"] for p in ports["list_personas"]()] == ["p1"]
+        assert ports["list_active_bindings"]() == [{"persona_id": "p2", "artifact_ref": "a", "paper_capital": 10}]
+    assert owner.call_args.kwargs["url"].endswith("/api/personas")
+
+
+def test_unreachable_owner_recorded_per_run() -> None:
+    module = _load_service_module()
+    admitted = [{"strategy_spec_id": "s", "registry_id": "s", "status": "admitted"}]
+    failure = module._RetrainFailure("x", "persona request failed: boom")
+    with mock.patch.object(module.alpha_replication_admission_store, "list_admissions", return_value=admitted), \
+         mock.patch.object(module, "_retrain_call", side_effect=failure), \
+         mock.patch.dict("os.environ", {"DISCOVERY_ALLOCATOR_ENABLED": "true"}):
+        with TestClient(module.app):
+            rec = _records(module)[0]
+    assert rec["reason"].startswith("owner_unreachable:persona:")
+    assert rec["bound"] == []

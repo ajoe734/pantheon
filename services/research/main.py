@@ -2127,13 +2127,38 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
 
 # --- Discovery allocator: daily paper-only run inside this orchestrator ---
 DISCOVERY_ALLOCATOR_TENANT = os.getenv("DISCOVERY_ALLOCATOR_TENANT_ID", "default")
-# Ports are module-level so deployments/tests can inject the persona source,
-# scorer and provisioner; unset personas => run records no_discovery_personas.
-discovery_allocator_ports: Dict[str, Any] = {
-    "list_personas": lambda: [],
-    "list_active_bindings": lambda: [],
-    "allocator_factory": None,
-}
+def _discovery_owner_call(service: str, method: str, url: str, body: Optional[Dict[str, Any]]) -> Any:
+    from services.research import discovery_allocator as _da
+
+    token_variable = {
+        "persona": "RESEARCH_PERSONA_SERVICE_TOKEN",
+        "provisioning": "RESEARCH_BFF_SERVICE_TOKEN",
+    }[service]
+    try:
+        return _retrain_call(
+            step=f"discovery_allocator_{service}", service=service, method=method, url=url,
+            tenant_id=DISCOVERY_ALLOCATOR_TENANT, token_variable=token_variable, body=body,
+        )
+    except (_RetrainFailure, _OwnerRejection) as exc:
+        raise _da.OwnerUnreachable(service, str(exc)) from None
+
+
+def _build_discovery_allocator_ports() -> Dict[str, Any]:
+    from services.research import discovery_allocator as _da
+
+    return _da.make_production_ports(
+        call=_discovery_owner_call,
+        persona_url=os.getenv("DISCOVERY_ALLOCATOR_PERSONA_URL", "http://persona:8002"),
+        provisioning_url=os.getenv("DISCOVERY_ALLOCATOR_BFF_URL", "http://operator-bff:8001"),
+        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
+        paper_capital_cap=float(os.getenv("DISCOVERY_ALLOCATOR_PAPER_CAPITAL_CAP", "50000")),
+        per_persona_capital=float(os.getenv("DISCOVERY_ALLOCATOR_PER_PERSONA_CAPITAL", "10000")),
+    )
+
+
+# Module-level so tests can inject; the default is the real production wiring
+# (persona service reader, active-binding reader, scorer, BFF provisioner).
+discovery_allocator_ports: Dict[str, Any] = _build_discovery_allocator_ports()
 
 
 def run_discovery_allocator_once() -> Dict[str, Any]:
