@@ -195,6 +195,16 @@ class CanonicalCostRecoveryPagingTest(unittest.TestCase):
         self.assertIn("event_type = 'paper_fill_simulated'", sql)
         self.assertLess(sql.index("event_type"), sql.index("LIMIT"))
         self.assertEqual(args, ("rb-1", "t-1", 100, 200))
+        # Binding filter must be index-usable JSONB containment, not text-extract OR scans.
+        self.assertNotIn("payload->>'binding_id'", sql)
+        self.assertNotIn("payload->>'runtime_binding_id'", sql)
+        self.assertNotIn("metadata'->>'binding_id'", sql)
+        self.assertIn("payload @> jsonb_build_object('binding_id', $1::text)", sql)
+        self.assertIn("payload @> jsonb_build_object('runtime_binding_id', $1::text)", sql)
+        self.assertIn("jsonb_build_object('metadata', jsonb_build_object('binding_id', $1::text))", sql)
+        # tenant scope retained, ordering/paging retained.
+        self.assertIn("payload->>'tenant_id' = $2", sql)
+        self.assertIn("ORDER BY created_at DESC, ingested_seq DESC LIMIT $3 OFFSET $4", sql)
 
 
 if __name__ == "__main__":

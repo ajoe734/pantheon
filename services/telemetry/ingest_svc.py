@@ -1078,7 +1078,10 @@ def build_postgres_event_reader(
         page, off = min(max(1, int(limit or 100)), 100), max(0, int(offset or 0))
         sql = (f"SELECT event_id, payload, ingested_seq FROM {table} WHERE event_type = 'paper_fill_simulated'"
                " AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2)"
-               " AND (payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1 OR payload->'metadata'->>'binding_id' = $1)"
+               # JSONB containment (index-usable via the payload GIN index) instead of text-extract OR filters.
+               " AND (payload @> jsonb_build_object('binding_id', $1::text)"
+               " OR payload @> jsonb_build_object('runtime_binding_id', $1::text)"
+               " OR payload @> jsonb_build_object('metadata', jsonb_build_object('binding_id', $1::text)))"
                " ORDER BY created_at DESC, ingested_seq DESC LIMIT $3 OFFSET $4")
         return _sync(sql, clean_bid, tid, page, off)
 
