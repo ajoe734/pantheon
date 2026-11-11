@@ -51,7 +51,8 @@ sudo ufw --force enable
 ```bash
 # Data directories for bundles, per-source state, and operator-owned book library
 sudo mkdir -p /var/lib/pantheon-collector/{bundles,state,library/books}
-sudo chown -R 10001:10001 /var/lib/pantheon-collector/{bundles,state}
+# The data root itself must be owned by uid 10001 too: the worker writes status.json at its top level
+sudo chown -R 10001:10001 /var/lib/pantheon-collector
 sudo chmod 0755 /var/lib/pantheon-collector /var/lib/pantheon-collector/bundles
 
 # Secret directory (root-owned; salt never leaves this host)
@@ -88,13 +89,19 @@ sudo sed -i "s/REPLACE_WITH_OPENSSL_RAND_HEX_32_ON_HOST/${BUNDLE_TOKEN}/" /opt/p
 ```bash
 cd /opt/pantheon-collector
 
-# Build the worker image and verify start-up policy checks
+# Build the worker image (installs from the committed requirements.lock: CPU-only torch, no resolver run)
+# and verify start-up policy checks
 sudo docker compose build collector-worker
 sudo docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config
 
 # Start the unmodified RSSHub container and the HTTPS Caddy bundle server
 sudo docker compose up -d rsshub bundle-server
 ```
+
+The data root is mounted whole at `/data` in the worker (`docker-compose.yml`) and read-only at `/srv/collector`
+in Caddy, so `status.json` and `bundles/` written by the worker are what the bundle server serves. Set
+`COLLECTOR_GEMINI_MODEL` in `.env` to a model your key can list (default `gemini-2.5-flash`). Source runs are
+rate-limited for real (GDELT waits 5 s between requests).
 
 ### Step 2.5 — Install and Enable Systemd Timers
 
@@ -106,11 +113,11 @@ sudo systemctl daemon-reload
 # Enable the daily 90-day bundle pruner
 sudo systemctl enable --now pantheon-collector-prune.timer
 
-# Enable timers for enabled sources (CMoney and PTT mirrors remain disabled by default per O-4 / O-11)
+# Enable timers for enabled sources (PTT mirrors stay disabled per O-11; collector-tw-macro-dgbas is disabled
+# because www.stat.gov.tw serves a Cloudflare challenge, see `disabled_reason` in fetch-policy.json)
 for src in \
   collector-tw-macro-cbc \
   collector-tw-macro-ndc \
-  collector-tw-macro-dgbas \
   collector-gdelt \
   collector-macro-dbnomics \
   collector-papers \
@@ -119,6 +126,7 @@ for src in \
   collector-paper-nber-rss \
   collector-tw-threads \
   collector-tw-instagram-popular \
+  collector-tw-cmoney-forum \
   collector-tw-ptt-stock \
   collector-youtube-finance \
   collector-youtube-gemini-notes \
@@ -152,6 +160,7 @@ curl -fsSL \
 All spiders, pollers, manifest hashers, HMAC scrubbers, start-up safety checks, and auto-pause state transitions run offline against captured fixtures in `deploy/collector/tests/fixtures/` with socket connections blocked:
 
 ```bash
+# requirements.lock is regenerated with the `uv pip compile` command in its header
 PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
 "$PANTHEON_PY" -m pytest -q deploy/collector
 ```
