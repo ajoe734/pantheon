@@ -2111,10 +2111,15 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     if not candidate_metrics.get("sharpe_defined") or candidate_sharpe is None or not candidate_sharpe > baseline_sharpe:
         raise _RetrainFinished("no_candidate", "not_better_than_baseline")
 
-    # 7. Register the candidate child through the existing Registry mutate route.
+    # 7. Every retrain child is judged on the untouched out-of-sample window by the real
+    #    §10 ReplicationGate (family trial counts accumulate, deflated Sharpe) BEFORE any
+    #    Registry write.  Training's whole-dataset preview proof alone never registers a child.
+    from services.research.alpha_replication import evolution_search as search
+
     suffix = hashlib.sha256(decision_id.encode("utf-8")).hexdigest()[:10]
     new_artifact_id = f"{target_artifact_id}-retrain-{suffix}"
     child_url = f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(new_artifact_id, safe='')}"
+    family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
 
     def read_child() -> Optional[Dict[str, Any]]:
         try:
@@ -2127,41 +2132,66 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
 
     child_view = read_child()  # an earlier attempt of this decision already registered it: adopt, never duplicate
     if child_view is None:
-        def semver(value: Any) -> tuple:
-            try:
-                parts = tuple(int(part) for part in str(value).split("."))
-            except ValueError:
-                return (0, 0, 0)
-            return parts if len(parts) == 3 else (0, 0, 0)
+        def registry_read(step: str, path: str) -> Any:
+            return _retrain_call(
+                step=step, service="registry", method="GET", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+                url=f"{registry_url}{path}", tenant_id=tenant_id,
+            )
 
-        highest = semver(parent_artifact.get("version") or "1.0.0")
-        try:
-            family = _retrain_call(
-                step="register_candidate", service="registry", method="GET",
-                token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
-                url=f"{registry_url}/api/registry/strategies/{urllib.parse.quote(str(parent_artifact.get('strategy_id') or ''), safe='')}/strategy-artifacts",
+        gate, factory = _evolution_oos_context(
+            parent=parent_artifact, entry_meta=metadata, params=params, tenant_id=tenant_id,
+            decision_id=decision_id, family_id=family_id, read=registry_read,
+        )
+        source_runs = [session_id, proof_ref]
+        child_view = None
+        for _attempt in range(3):
+            new_version = search.allocate_child_version(
+                parent_artifact.get("version") or "1.0.0",
+                _registry_family_versions(registry_url, tenant_id, parent_artifact),
             )
-        except _OwnerRejection:
-            family = []
-        for view in family if isinstance(family, list) else []:
-            highest = max(highest, semver(((view or {}).get("entry") or {}).get("version")))
-        new_version = f"{highest[0]}.{highest[1] + 1}.0"
-        try:
-            child_view = _retrain_call(
-                step="register_candidate", service="registry", method="POST", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
-                url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate",
-                tenant_id=tenant_id,
-                body={
-                    "new_artifact_id": new_artifact_id,
-                    "new_version": new_version,
-                    "parameter_updates": proposed,
-                    "source_run_ids": [decision_id, session_id, proof_ref],
-                },
-            )
-        except _OwnerRejection as exc:
-            child_view = read_child() if exc.status == 409 else None
-            if child_view is None:
-                raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+            try:
+                child, _descriptor = search.build_child_artifact(
+                    parent_artifact, decision_id=decision_id, kind="retrain", parameter_updates=proposed,
+                    source_run_ids=source_runs, child_version=new_version,
+                )
+            except search.EvolutionSearchError as exc:
+                raise _RetrainFinished("no_candidate", f"retrain_child_invalid: {exc}") from None
+            prev_backend = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+            try:
+                verdict = search.judge_child_out_of_sample(child, gate=gate, request_factory=factory, family_id=family_id)
+            except search_errors() as exc:
+                raise _RetrainFinished("evaluation_rejected", f"oos_evaluation_unavailable: {exc}") from None
+            finally:
+                if prev_backend is None:
+                    os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+                else:
+                    os.environ["PANTHEON_VECTORBT_BACKEND"] = prev_backend
+            _retrain_record(run_id, out_of_sample_gate=verdict, family_trial_count=verdict.get("trial_count_after"))
+            if not verdict["passed"]:
+                raise _RetrainFinished("no_candidate", "children_failed_out_of_sample_gate")
+            try:
+                child_view = _retrain_call(
+                    step="register_candidate", service="registry", method="POST", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+                    url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate",
+                    tenant_id=tenant_id,
+                    body={
+                        "new_artifact_id": new_artifact_id,
+                        "new_version": new_version,
+                        "parameter_updates": proposed,
+                        "source_run_ids": [decision_id, *source_runs],
+                    },
+                )
+                break
+            except _OwnerRejection as exc:
+                if exc.status != 409:
+                    raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+                child_view = read_child()
+                if child_view is not None:
+                    break  # this decision's own child already exists: adopt
+                # the revision was taken by another registration: allocate a fresh one and re-judge
+        if child_view is None:
+            raise _RetrainFinished("evaluation_rejected", "candidate_version_allocation_conflict")
     child_entry = child_view.get("entry") if isinstance(child_view, dict) else {}
     child_id = str((child_entry or {}).get("registry_id") or new_artifact_id)
     if str((child_entry or {}).get("artifact_state") or "") != "candidate":
@@ -2171,6 +2201,64 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
     _retrain_record(run_id, candidate_artifact_id=child_id, registry_writebacks=writebacks)
     raise _RetrainFinished("candidate_created", "candidate_passed_gate_and_beat_baseline")
+
+
+def _registry_family_versions(registry_url: str, tenant_id: str, parent: Dict[str, Any]) -> List[str]:
+    """Every version already registered for the parent's strategy family (read fresh per allocation)."""
+    try:
+        family = _retrain_call(
+            step="register_candidate", service="registry", method="GET",
+            token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
+            url=f"{registry_url}/api/registry/strategies/{urllib.parse.quote(str(parent.get('strategy_id') or ''), safe='')}/strategy-artifacts",
+        )
+    except _OwnerRejection:
+        return []
+    return [
+        str(((view or {}).get("entry") or {}).get("version") or "")
+        for view in (family if isinstance(family, list) else [])
+    ]
+
+
+def _evolution_oos_context(
+    *, parent: Dict[str, Any], entry_meta: Dict[str, Any], params: Dict[str, Any], tenant_id: str,
+    decision_id: str, family_id: str, read: Any,
+) -> tuple:
+    """Real §10 ReplicationGate + request factory bound to the governed dataset (shared by every child kind)."""
+    from services.research.alpha_replication import evolution_executor as executor
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
+
+    # The admitted StrategySpec the gate validates the candidate content against.
+    spec_id = str((parent.get("lineage") or {}).get("source_strategy_spec_id") or entry_meta.get("strategy_spec_id") or "")
+    if not spec_id:
+        raise _RetrainFinished("evaluation_rejected", "strategy_spec_unavailable")
+    try:
+        spec_view = read("read_strategy_spec", f"/api/registry/strategy-specs/{urllib.parse.quote(spec_id, safe='')}")
+    except _OwnerRejection as exc:
+        raise _RetrainFinished("evaluation_rejected", f"strategy_spec_unavailable: {exc.detail}") from None
+    spec_entry = (spec_view or {}).get("entry") or {}
+    spec = (spec_entry.get("metadata") or {}).get("strategy_spec")
+    if (
+        spec_entry.get("artifact_state") != "approved"
+        or str(spec_entry.get("owner_tenant") or (spec_entry.get("metadata") or {}).get("tenant_id") or "") != tenant_id
+        or not isinstance(spec, dict)
+    ):
+        raise _RetrainFinished("evaluation_rejected", "strategy_spec_not_approved_for_tenant")
+
+    dataset = params.get("dataset") if isinstance(params.get("dataset"), dict) else None
+    if dataset is None and callable(_RETRAIN_DATASET_LOADER):
+        dataset = _RETRAIN_DATASET_LOADER(parent, params)
+    if not isinstance(dataset, dict):
+        raise _RetrainFinished("evaluation_rejected", "governed_dataset_unavailable")
+
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
+    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    factory = executor.build_gate_request_factory(
+        spec=spec, dataset=dataset, decision_id=decision_id, tenant_id=tenant_id,
+        record_backtest=backtests.record, family_id=family_id, timestamp=utc_now(),
+    )
+
+    return gate, factory
 
 
 def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
@@ -2185,7 +2273,6 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     """
     from services.registry.strategy_artifact import strategy_artifact_checksum
     from services.research.alpha_replication import evolution_executor as executor
-    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
 
     action = _evolution_action(params)
     decision_id = str(params["decision_id"])
@@ -2223,43 +2310,21 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
         raise _RetrainFailure("read_target_artifact", "Registry entry carries no strategy_artifact")
     family_id = str(parent.get("strategy_id") or parent.get("artifact_id"))
 
-    # The admitted StrategySpec the gate validates the candidate content against.
-    spec_id = str((parent.get("lineage") or {}).get("source_strategy_spec_id") or entry_meta.get("strategy_spec_id") or "")
-    if not spec_id:
-        raise _RetrainFinished("evaluation_rejected", "strategy_spec_unavailable")
-    try:
-        spec_view = read("read_strategy_spec", f"/api/registry/strategy-specs/{urllib.parse.quote(spec_id, safe='')}")
-    except _OwnerRejection as exc:
-        raise _RetrainFinished("evaluation_rejected", f"strategy_spec_unavailable: {exc.detail}") from None
-    spec_entry = (spec_view or {}).get("entry") or {}
-    spec = (spec_entry.get("metadata") or {}).get("strategy_spec")
-    if (
-        spec_entry.get("artifact_state") != "approved"
-        or str(spec_entry.get("owner_tenant") or (spec_entry.get("metadata") or {}).get("tenant_id") or "") != tenant_id
-        or not isinstance(spec, dict)
-    ):
-        raise _RetrainFinished("evaluation_rejected", "strategy_spec_not_approved_for_tenant")
-
-    dataset = params.get("dataset") if isinstance(params.get("dataset"), dict) else None
-    if dataset is None and callable(_RETRAIN_DATASET_LOADER):
-        dataset = _RETRAIN_DATASET_LOADER(parent, params)
-    if not isinstance(dataset, dict):
-        raise _RetrainFinished("evaluation_rejected", "governed_dataset_unavailable")
-
-    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
-    backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
-    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
-    factory = executor.build_gate_request_factory(
-        spec=spec, dataset=dataset, decision_id=decision_id, tenant_id=tenant_id,
-        record_backtest=backtests.record, family_id=family_id, timestamp=utc_now(),
+    gate, factory = _evolution_oos_context(
+        parent=parent, entry_meta=entry_meta, params=params, tenant_id=tenant_id, decision_id=decision_id,
+        family_id=family_id, read=read,
     )
 
     def register_child(child: Dict[str, Any], verdict: Dict[str, Any]) -> Any:
         child_id = str(child["artifact_id"])
-        try:
-            existing = read("register_candidate", f"/api/registry/strategy-artifacts/{urllib.parse.quote(child_id, safe='')}")
-        except _OwnerRejection:
-            existing = None
+
+        def read_existing(artifact_id: str) -> Any:
+            try:
+                return read("register_candidate", f"/api/registry/strategy-artifacts/{urllib.parse.quote(artifact_id, safe='')}")
+            except _OwnerRejection:
+                return None
+
+        existing = read_existing(child_id)
         if existing is None:
             try:
                 existing = _retrain_call(
@@ -2276,7 +2341,16 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                     },
                 )
             except _OwnerRejection as exc:
-                raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+                if exc.status == 409:
+                    again = read_existing(child_id)
+                    if again is not None:  # an earlier attempt already registered this very child: adopt it
+                        existing = again
+                    else:  # immutable (strategy, version, type) taken by another registration: re-allocate
+                        from services.research.alpha_replication.evolution_search import RegistryVersionConflict
+
+                        raise RegistryVersionConflict(str(exc.detail)) from None
+                else:
+                    raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
         if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") != "candidate":
             raise _RetrainFailure("register_candidate", "Registry did not report the child as a candidate")
         run = get_store().get_run(run_id) or {}
@@ -2292,6 +2366,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
             result = executor.execute_mutate(
                 parent, decision_id=decision_id, family_id=family_id, gate=gate,
                 request_factory=factory, register_child=register_child,
+                family_versions=lambda: _registry_family_versions(registry_url, tenant_id, parent),
             )
         else:
             result = executor.execute_revalidate(parent, family_id=family_id, gate=gate, request_factory=factory)

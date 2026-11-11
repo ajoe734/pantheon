@@ -41,6 +41,7 @@ class World:
         self.parent = parent
         self.passes = passes
         self.registered = {}
+        self.foreign_versions = []  # versions registered behind this run's back
         self.calls = []
 
 
@@ -65,12 +66,21 @@ def world(research, monkeypatch):
             return path_entry
         if method == "GET" and url.endswith("/strategy-specs/spec-1"):
             return spec_entry
+        if method == "GET" and url.endswith("/strategy-artifacts") and "/strategies/" in url:
+            rows = [{"entry": {"registry_id": parent["artifact_id"], "version": parent["version"]}}]
+            for registry_id, posted in w.registered.items():
+                rows.append({"entry": {"registry_id": registry_id, "version": posted["strategy_artifact"]["version"]}})
+            return [*rows, *[{"entry": {"version": v}} for v in w.foreign_versions]]
         if method == "GET" and "/strategy-artifacts/" in url:
             child_id = url.rsplit("/", 1)[-1]
             if child_id in w.registered:
                 return {"entry": {"registry_id": child_id, "artifact_state": "candidate"}}
             raise research._OwnerRejection(404, "not found")
         if method == "POST" and url.endswith("/api/registry/strategy-artifacts"):
+            version = body["strategy_artifact"]["version"]
+            taken = {p["strategy_artifact"]["version"] for p in w.registered.values()} | set(w.foreign_versions)
+            if version in taken:  # immutable (strategy, version, type): what the real Registry does
+                raise research._OwnerRejection(409, "version already registered")
             w.registered[body["registry_id"]] = body
             return {"entry": {"registry_id": body["registry_id"], "artifact_state": "candidate"}}
         raise AssertionError(f"unexpected owner call {method} {url}")
@@ -104,7 +114,7 @@ def world(research, monkeypatch):
     return w
 
 
-def _dispatch(research, action, decision_id):
+def _dispatch(research, action, decision_id, children=None):
     from fastapi.testclient import TestClient
 
     client = TestClient(research.app)
@@ -164,3 +174,33 @@ def test_missing_governed_dataset_fails_closed(research, world, monkeypatch):
     run, _ = _dispatch(research, "mutate", "evd-m3")
     assert run["outcome"] == "evaluation_rejected" and run["outcome_reason"] == "governed_dataset_unavailable"
     assert world.registered == {}
+
+
+def test_repeated_decisions_from_one_parent_register_unique_family_revisions(research, world):
+    versions = []
+    for n in range(3):
+        run, _ = _dispatch(research, "mutate", f"evd-v{n}")
+        assert run["outcome"] == "candidate_created", run
+        versions.append(list(world.registered.values())[-1]["strategy_artifact"]["version"])
+    assert versions == ["1.1.0", "1.2.0", "1.3.0"]
+    assert len(world.registered) == 3
+
+
+def test_a_lost_revision_race_reallocates_and_rejudges(research, world, monkeypatch):
+    from services.research.alpha_replication import evolution_search as search
+
+    real = search.allocate_child_version
+    calls = {"n": 0}
+
+    def stale_first(parent_version, existing=()):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            world.foreign_versions.append("1.1.0")  # another writer takes 1.1.0 after our family read
+            return real(parent_version, ())
+        return real(parent_version, existing)
+
+    monkeypatch.setattr(search, "allocate_child_version", stale_first)
+    run, _ = _dispatch(research, "mutate", "evd-race")
+    assert run["outcome"] == "candidate_created", run
+    assert [p["strategy_artifact"]["version"] for p in world.registered.values()] == ["1.2.0"]
+    assert run["family_trial_count"] == 2  # the re-judged child is a second family trial

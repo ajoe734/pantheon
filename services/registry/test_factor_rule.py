@@ -715,3 +715,41 @@ def test_remove_filter_without_added_filter_is_refused() -> None:
 
 def test_unseeded_choice_is_deterministic_for_a_seed() -> None:
     assert _mutate(None, seed=3)[1] == _mutate(None, seed=3)[1]
+
+
+def test_repeated_mutation_decisions_register_unique_family_revisions_in_the_real_registry(monkeypatch) -> None:
+    """Siblings of one parent get distinct immutable versions; a stale allocation is a 409, a fresh one registers."""
+    from fastapi.testclient import TestClient
+
+    from services.governance.test_approval_authority import configure_registry_unit_auth, registry_unit_headers
+    from services.registry.service import app
+    from services.registry.storage import reset_store
+    from services.research.alpha_replication import evolution_search as es
+
+    configure_registry_unit_auth(monkeypatch)
+    reset_store()
+    try:
+        parent = _sample_factor_rule_artifact()
+        with TestClient(app, headers=registry_unit_headers()) as client:
+            def post(artifact: dict[str, Any]):
+                return client.post("/api/registry/strategy-artifacts", json={
+                    "registry_id": artifact["artifact_id"], "artifact_state": "candidate", "strategy_artifact": artifact})
+
+            assert post(parent).status_code == 200
+            versions = []
+            for n in range(3):
+                listed = client.get(f"/api/registry/strategies/{parent['strategy_id']}/strategy-artifacts").json()
+                known = [row["entry"]["version"] for row in listed]
+                child, _ = es.build_child_artifact(
+                    parent, decision_id=f"evd-real-{n}", kind="mutate", existing_versions=known,
+                    structural_operator="change_window")
+                response = post(child)
+                assert response.status_code == 200, response.text
+                versions.append(child["version"])
+            assert versions == ["1.1.0", "1.2.0", "1.3.0"]
+            stale, _ = es.build_child_artifact(parent, decision_id="evd-real-stale", kind="mutate",
+                                               structural_operator="change_window")  # no family view: 1.1.0 again
+            assert stale["version"] == "1.1.0"
+            assert post(stale).status_code == 409
+    finally:
+        reset_store()

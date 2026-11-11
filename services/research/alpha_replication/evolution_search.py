@@ -273,6 +273,24 @@ def make_in_sample_walk_forward_scorer(
     return score
 
 
+class RegistryVersionConflict(Exception):
+    """Registry refused the child's immutable (strategy, version, type); allocate a fresh revision and retry."""
+
+
+def _semver(value: Any) -> tuple[int, int, int]:
+    try:
+        parts = tuple(int(p) for p in str(value).split("."))
+    except ValueError:
+        return (0, 0, 0)
+    return parts if len(parts) == 3 else (0, 0, 0)  # type: ignore[return-value]
+
+
+def allocate_child_version(parent_version: Any, existing_versions: Sequence[Any] = ()) -> str:
+    """Next unused family revision: one minor above the highest version known in the family."""
+    highest = max([_semver(parent_version), *[_semver(v) for v in existing_versions]])
+    return f"{highest[0]}.{highest[1] + 1}.0"
+
+
 def build_child_artifact(
     parent: Mapping[str, Any],
     *,
@@ -282,8 +300,13 @@ def build_child_artifact(
     rng: random.Random | None = None,
     structural_operator: str | None = None,
     source_run_ids: Sequence[str] = (),
+    child_version: str | None = None,
+    existing_versions: Sequence[Any] = (),
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build one registered-ready child. Returns ``(child_artifact, descriptor)``.
+
+    ``child_version`` is used as given; otherwise the next unused family revision is
+    allocated above the parent and ``existing_versions``.
 
     ``kind`` is ``"retrain"`` (``parameter_updates`` from the search) or
     ``"mutate"`` (one structural operator, ``factor_rule_v1`` parents only).
@@ -298,8 +321,7 @@ def build_child_artifact(
 
     suffix = hashlib.sha256(f"{decision_id}|{kind}".encode("utf-8")).hexdigest()[:10]
     child_id = f"{parent['artifact_id']}-{kind}-{suffix}"
-    major, minor, _patch = (int(p) for p in str(parent["version"]).split("."))
-    child_version = f"{major}.{minor + 1}.0"
+    child_version = child_version or allocate_child_version(parent["version"], existing_versions)
     runs = [decision_id, *[r for r in source_run_ids if r != decision_id]]
 
     if kind == "retrain":
@@ -386,6 +408,8 @@ def run_mutation_decision(
     children: int = 1,
     seed: int | None = None,
     register_child: Callable[[Mapping[str, Any], Mapping[str, Any]], Any] | None = None,
+    family_versions: Callable[[], Sequence[Any]] | None = None,
+    max_version_retries: int = 3,
 ) -> dict[str, Any]:
     """Approved ``mutate`` decision: structural children, each judged out-of-sample.
 
@@ -396,25 +420,36 @@ def run_mutation_decision(
     """
     rng = random.Random(stable_seed(decision_id, family_id) if seed is None else seed)
     results: list[dict[str, Any]] = []
+    taken: list[str] = []  # versions this decision already built: siblings never share a revision
     for index in range(max(1, children)):
-        try:
-            child, descriptor = build_child_artifact(
-                parent, decision_id=f"{decision_id}#{index}", kind="mutate", rng=rng,
-                source_run_ids=[decision_id],
+        result: dict[str, Any] | None = None
+        for _attempt in range(max(1, max_version_retries)):
+            known = [*(family_versions() if family_versions else []), *taken]
+            try:
+                child, descriptor = build_child_artifact(
+                    parent, decision_id=f"{decision_id}#{index}", kind="mutate", rng=rng,
+                    source_run_ids=[decision_id], existing_versions=known,
+                )
+            except EvolutionSearchError as exc:
+                result = {"index": index, "built": False, "error": str(exc)}
+                break
+            verdict = judge_child_out_of_sample(
+                child, gate=gate, request_factory=request_factory, family_id=family_id
             )
-        except EvolutionSearchError as exc:
-            results.append({"index": index, "built": False, "error": str(exc)})
-            continue
-        verdict = judge_child_out_of_sample(
-            child, gate=gate, request_factory=request_factory, family_id=family_id
-        )
-        registered = None
-        if verdict["passed"] and register_child is not None:
-            registered = register_child(child, verdict)
-        results.append(
-            {"index": index, "built": True, "mutation": descriptor, "verdict": verdict,
-             "registered": registered is not None}
-        )
+            registered = None
+            if verdict["passed"] and register_child is not None:
+                try:
+                    registered = register_child(child, verdict)
+                except RegistryVersionConflict:
+                    taken.append(str(child["version"]))  # lost the revision race: re-allocate, rebuild, rejudge
+                    continue
+            taken.append(str(child["version"]))
+            result = {"index": index, "built": True, "mutation": descriptor, "verdict": verdict,
+                      "registered": registered is not None, "version": child["version"]}
+            break
+        if result is None:
+            result = {"index": index, "built": False, "error": "version_allocation_conflict"}
+        results.append(result)
     return {
         "decision_id": decision_id,
         "family_id": family_id,

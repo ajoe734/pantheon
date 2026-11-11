@@ -105,6 +105,7 @@ def execute_mutate(
     request_factory: Callable[[Mapping[str, Any]], Any],
     register_child: Callable[[Mapping[str, Any], Mapping[str, Any]], Any],
     children: int = 1,
+    family_versions: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     logic = parent.get("strategy_logic")
     if not isinstance(logic, Mapping) or logic.get("kind") != "factor_rule_v1":
@@ -112,6 +113,7 @@ def execute_mutate(
     result = search.run_mutation_decision(
         parent, decision_id=decision_id, gate=gate, request_factory=request_factory,
         family_id=family_id, children=children, register_child=register_child,
+        family_versions=family_versions,
     )
     built = [c for c in result["children"] if c.get("built")]
     registered = [c["verdict"]["child_artifact_id"] for c in built if c.get("registered")]
