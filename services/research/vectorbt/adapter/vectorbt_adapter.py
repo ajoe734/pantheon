@@ -233,10 +233,12 @@ class GovernedVectorbtInputAdapter:
             if isinstance(raw_dataset_features, Mapping):
                 if inst in raw_dataset_features and isinstance(raw_dataset_features[inst], Mapping):
                     for fk, fv in raw_dataset_features[inst].items():
+                        _reject_mixed_dated_undated(fv, str(fk))
                         inst_features[str(fk)] = fv
                 else:
                     for fk, fv in raw_dataset_features.items():
                         if fk not in instruments:
+                            _reject_mixed_dated_undated(fv, str(fk))
                             inst_features[str(fk)] = fv
             features_by_instrument[inst] = inst_features
 
@@ -686,6 +688,66 @@ class VectorbtBackend:
         )
 
 
+def _is_undated_aligned_observation(obs: Any) -> bool:
+    """True for numeric scalars or mappings carrying no date stamp (index-aligned to bars)."""
+    if isinstance(obs, bool):
+        return False
+    if isinstance(obs, (int, float)):
+        return True
+    if isinstance(obs, Mapping):
+        return not any(
+            obs.get(k) is not None for k in ("event_time", "date", "as_of", "available_time")
+        )
+    return False
+
+
+def _is_dated_observation(obs: Any) -> bool:
+    """True for any timestamped observation the factor-rule interpreter accepts."""
+    if isinstance(obs, Mapping):
+        return any(
+            obs.get(k) is not None for k in ("event_time", "date", "as_of", "available_time")
+        )
+    # (timestamp, value) pair format
+    if isinstance(obs, (tuple, list)) and len(obs) == 2:
+        ts, val = obs
+        return (
+            ts is not None
+            and not isinstance(ts, (int, float))
+            and isinstance(val, (int, float))
+            and not isinstance(val, bool)
+        )
+    return False
+
+
+def _reject_mixed_dated_undated(value: Any, path: str) -> None:
+    """Reject sequences mixing dated and undated observations (availability is ambiguous)."""
+    if isinstance(value, Mapping):
+        for k, v in value.items():
+            _reject_mixed_dated_undated(v, f"{path}.{k}")
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        if any(_is_dated_observation(x) for x in value) and any(
+            _is_undated_aligned_observation(x) for x in value
+        ):
+            raise VectorbtWorkflowError(
+                f"feature {path} mixes dated and undated observations; "
+                "point-in-time availability is ambiguous"
+            )
+
+
+def _slice_aligned_feature(value: Any, total_len: int, start: int, end: int) -> Any:
+    """Slice index-aligned undated series (recursing into nested dataset.field mappings)."""
+    if (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes))
+        and len(value) == total_len
+        and all(_is_undated_aligned_observation(x) for x in value)
+    ):
+        return list(value[start:end])
+    if isinstance(value, Mapping):
+        return {k: _slice_aligned_feature(v, total_len, start, end) for k, v in value.items()}
+    return value
+
+
 def _bar_features_for_index(
     dataset: PreparedVectorbtDataset,
     instrument: str,
@@ -705,15 +767,7 @@ def _bar_features_for_index(
     for fk, fv in inst_features.items():
         if fk in {"open", "high", "low", "close", "volume"}:
             continue
-        if (
-            isinstance(fv, Sequence)
-            and not isinstance(fv, (str, bytes))
-            and len(fv) == total_len
-            and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in fv)
-        ):
-            bar_features[fk] = list(fv[: index + 1])
-        else:
-            bar_features[fk] = fv
+        bar_features[fk] = _slice_aligned_feature(fv, total_len, 0, index + 1)
 
     dates = dataset.dates_by_instrument.get(instrument)
     decision_time = dates[index] if dates and index < len(dates) else None
@@ -1057,15 +1111,7 @@ def _slice_prepared_dataset(
         for fk, fv in raw_inst_features.items():
             if fk in {"open", "high", "low", "close", "volume"}:
                 continue
-            if (
-                isinstance(fv, Sequence)
-                and not isinstance(fv, (str, bytes))
-                and len(fv) == total_len
-                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in fv)
-            ):
-                inst_features[fk] = list(fv[start_idx:end_idx])
-            else:
-                inst_features[fk] = fv
+            inst_features[fk] = _slice_aligned_feature(fv, total_len, start_idx, end_idx)
         features_by_inst[inst] = inst_features
 
     return PreparedVectorbtDataset(
@@ -1103,7 +1149,7 @@ def _measure_pit_history(
     strategy_artifact: Mapping[str, Any],
 ) -> tuple[int, int, dict[str, Any]]:
     """Measure point-in-time history length (calendar days and bars) across candidate inputs."""
-    from datetime import date as _date
+    from datetime import date as _date, timedelta
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
     parameters = strategy_artifact.get("parameters") or {}
@@ -1156,54 +1202,212 @@ def _measure_pit_history(
     if isinstance(explicit_years, (int, float)) and not isinstance(explicit_years, bool):
         min_calendar_days = min(min_calendar_days, int(round(float(explicit_years) * 365)))
 
-    # For factor_rule_v1, also check PIT span of referenced non-OHLCV feature inputs
+    # For factor_rule_v1, resolve the real ref graph (signal/entry/exit/strength/filters)
+    # to declared inputs and measure the PIT history of every required feature.
     feature_spans: dict[str, dict[str, Any]] = {}
     logic = strategy_artifact.get("strategy_logic") or {}
     if logic.get("kind") == "factor_rule_v1":
+        from services.registry.factor_rule import (
+            BUILT_IN_PRICE_VOLUME_FIELDS,
+            _lookup_raw_feature,
+            get_feature_definition,
+            collect_expression_refs_and_params,
+        )
+
         referenced: set[str] = set()
-        if "signal" in logic:
-            referenced |= _collect_inputs(logic["signal"])
+        roots: list[Any] = [logic.get("signal"), logic.get("strength")]
         for flt in logic.get("filters") or []:
-            referenced |= _collect_inputs(flt)
-        exit_cfg = logic.get("exit") or {}
-        if "flat_when" in exit_cfg:
-            referenced |= _collect_inputs(exit_cfg["flat_when"])
-        non_ohlcv = referenced - {"open", "high", "low", "close", "volume"}
+            roots.append(flt)
+        for section in ("entry", "exit"):
+            cfg = logic.get(section)
+            if isinstance(cfg, Mapping):
+                roots.extend(cfg.values())
+        for root in roots:
+            if isinstance(root, Mapping):
+                refs, _ = collect_expression_refs_and_params(root)
+                referenced |= refs
+        declared = {
+            str(item.get("name")): item
+            for item in logic.get("inputs") or []
+            if isinstance(item, Mapping)
+        }
+        price_fields = set(BUILT_IN_PRICE_VOLUME_FIELDS) | {"open", "high", "low", "close", "volume"}
         raw_features = dataset.get("features_by_instrument") or dataset.get("features") or {}
-        for feat_name in sorted(non_ohlcv):
-            for inst_key, inst_val in (
-                raw_features.items() if isinstance(raw_features, Mapping) else []
-            ):
-                series = (
-                    inst_val.get(feat_name)
-                    if isinstance(inst_val, Mapping)
-                    else (inst_val if inst_key == feat_name else None)
-                )
-                if isinstance(series, Sequence) and not isinstance(series, (str, bytes)):
-                    if series and isinstance(series[0], Mapping):
-                        obs_dates: list[str] = []
-                        for obs in series:
-                            if isinstance(obs, Mapping):
-                                ts = str(
-                                    obs.get("event_time") or obs.get("available_at") or ""
-                                ).strip()[:10]
-                                if len(ts) == 10:
-                                    obs_dates.append(ts)
-                        if len(obs_dates) >= 2:
-                            obs_dates.sort()
-                            f_days = (
-                                _date.fromisoformat(obs_dates[-1])
-                                - _date.fromisoformat(obs_dates[0])
-                            ).days
-                        else:
-                            f_days = 0
-                        feature_spans[feat_name] = {
-                            "observations": len(series),
-                            "calendar_days": f_days,
-                        }
-                        min_calendar_days = min(min_calendar_days, f_days)
-                    elif len(series) < min_bars:
-                        min_bars = len(series)
+
+        def _present(value: Any) -> bool:
+            if value is None:
+                return False
+            if isinstance(value, float) and math.isnan(value):
+                return False
+            return True
+
+        def _day(value: Any) -> _date | None:
+            text = str(value or "").strip()[:10]
+            if len(text) != 10:
+                return None
+            try:
+                return _date.fromisoformat(text)
+            except ValueError:
+                return None
+
+        def _obs_stamp(obs: Any, lag_days: int) -> tuple[bool, _date | None]:
+            """Return (non-null, effective availability day).
+
+            Effective availability = max(available_time, event_time + lag).
+            """
+            if isinstance(obs, Mapping):
+                event = _day(obs.get("event_time") or obs.get("date") or obs.get("as_of"))
+                avail = _day(obs.get("available_time"))
+                ok = _present(obs["value"]) if "value" in obs else True
+            elif isinstance(obs, (list, tuple)) and len(obs) == 2:
+                event, avail, ok = None, _day(obs[0]), _present(obs[1])
+            else:
+                event, avail, ok = None, None, _present(obs)
+            if event is not None:
+                lagged = event + timedelta(days=max(0, lag_days))
+                if avail is None or lagged > avail:
+                    avail = lagged
+            return ok, avail
+
+        def _span(stamps: list[str]) -> int:
+            days = sorted(d for d in (_day(x) for x in stamps) if d is not None)
+            return (days[-1] - days[0]).days if len(days) >= 2 else 0
+
+        def _usable(avail_days: list[_date], decisions: list[str]) -> tuple[int, int]:
+            """(usable decision bars, calendar span) from first effective availability."""
+            if not avail_days:
+                return 0, 0
+            first_avail = min(avail_days)
+            usable = [d for d in (_day(x) for x in decisions) if d is not None and d >= first_avail]
+            if len(usable) < 2:
+                return len(usable), 0
+            return len(usable), (max(usable) - min(usable)).days
+
+        def _norm_key(key: Any) -> str | None:
+            try:
+                return normalize_taiwan_symbol(str(key))[0]
+            except (ValueError, TypeError, IndexError):
+                return None
+
+        wanted_codes = {w[0] for w in wanted}
+        inst_maps: dict[str, Mapping[str, Any]] = {}
+        global_map: dict[str, Any] = {}
+        if isinstance(raw_features, Mapping):
+            for k, v in raw_features.items():
+                code = _norm_key(k) if isinstance(v, Mapping) else None
+                if code is not None and (code in dates_by_symbol or code in wanted_codes):
+                    inst_maps[code] = v
+                else:
+                    global_map[str(k)] = v
+
+        def _measure_symbol(
+            code: str, name: str, ds: str, fld: str, lag_days: int
+        ) -> tuple[int, int | None, bool, int | None] | None:
+            """Usable PIT coverage of one input for one instrument; None when absent.
+
+            Returns (visible observations, calendar days, bar_aligned, usable decision bars).
+            """
+            decisions = dates_by_symbol.get(code, [])
+            last_decision = _day(max(decisions)) if decisions else None
+            series = None
+            if code in inst_maps:
+                series = _lookup_raw_feature(inst_maps[code], name=name, dataset=ds, field=fld)
+            if series is None and global_map:
+                series = _lookup_raw_feature(global_map, name=name, dataset=ds, field=fld)
+            if isinstance(series, Sequence) and not isinstance(series, (str, bytes)):
+                pairs = [_obs_stamp(o, lag_days) for o in series]
+                good = [ts for ok, ts in pairs if ok]
+                if good:
+                    stamps = [ts for ts in good if ts is not None]
+                    if not stamps:
+                        # Undated values: only usable when index-aligned to the decision bars;
+                        # then measure the dates of the finite non-null values. Otherwise
+                        # fail closed rather than inheriting the price history.
+                        ordered = sorted(decisions)
+                        if len(series) != len(ordered):
+                            return len(good), 0, True, 0
+                        nn_days = sorted(
+                            d
+                            for (ok, _ts), dstr in zip(pairs, ordered)
+                            if ok and (d := _day(dstr)) is not None
+                        )
+                        if len(nn_days) < 2:
+                            return len(nn_days), 0, True, len(nn_days)
+                        return len(nn_days), (nn_days[-1] - nn_days[0]).days, True, len(nn_days)
+                    visible = [t for t in stamps if last_decision is None or t <= last_decision]
+                    bars, days = _usable(visible, decisions)
+                    return len(visible), days, False, bars
+            # Fall back to non-null per-record values for this instrument.
+            stamps_s: list[str] = []
+            for rec in records:
+                if not isinstance(rec, Mapping) or _norm_key(rec.get("instrument")) != code:
+                    continue
+                feats = rec.get("features") if isinstance(rec.get("features"), Mapping) else {}
+                if any(_present(rec.get(k)) or _present(feats.get(k)) for k in {name, fld}):
+                    stamps_s.append(str(rec.get("date") or "").strip()[:10])
+            if stamps_s:
+                dated = [t for t in stamps_s if len(t) == 10]
+                return len(stamps_s), (_span(dated) if dated else 0), True, None
+            return None
+
+        for ref in sorted(referenced - {"signal"}):
+            item = declared.get(ref)
+            if item is None:
+                if ref in price_fields:
+                    continue
+                feature_spans[ref] = {"observations": 0, "calendar_days": 0, "missing": True}
+                min_calendar_days = 0
+                min_bars = 0
+                continue
+            name, ds, fld = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
+            if fld in price_fields:
+                continue
+            lag_days = int(item.get("availability_lag_days") or 0)
+            cat_def = get_feature_definition(ds, fld)
+            if cat_def is not None:
+                lag_days = max(lag_days, cat_def.min_availability_lag_days)
+            worst_bars: int | None = None
+            per_inst: dict[str, Any] = {}
+            missing_codes: list[str] = []
+            worst_n: int | None = None
+            worst_days: int | None = None
+            bar_aligned = False
+            for code in sorted(wanted_codes):
+                res = _measure_symbol(code, name, ds, fld, lag_days)
+                if res is None:
+                    missing_codes.append(code)
+                    per_inst[code] = {"observations": 0, "calendar_days": 0, "missing": True}
+                    continue
+                n, d, aligned, ubars = res
+                bar_aligned = bar_aligned or aligned
+                per_inst[code] = {"observations": n, "calendar_days": d, "usable_bars": ubars}
+                if ubars is not None:
+                    worst_bars = ubars if worst_bars is None else min(worst_bars, ubars)
+                worst_n = n if worst_n is None else min(worst_n, n)
+                if d is not None:
+                    worst_days = d if worst_days is None else min(worst_days, d)
+            if missing_codes or worst_n is None:
+                feature_spans[ref] = {
+                    "observations": 0,
+                    "calendar_days": 0,
+                    "missing": True,
+                    "missing_instruments": missing_codes,
+                    "per_instrument": per_inst,
+                }
+                min_calendar_days = 0
+                min_bars = 0
+                continue
+            feature_spans[ref] = {
+                "observations": worst_n,
+                "calendar_days": worst_days if worst_days is not None else min_calendar_days,
+                "per_instrument": per_inst,
+            }
+            if worst_days is not None:
+                min_calendar_days = min(min_calendar_days, worst_days)
+            if worst_days is None or bar_aligned:
+                min_bars = min(min_bars, worst_n)
+            if worst_bars is not None:
+                min_bars = min(min_bars, worst_bars)
 
     return (
         int(min_calendar_days),
