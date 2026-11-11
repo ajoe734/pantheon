@@ -32,6 +32,7 @@ try:
     from ..models import (
         ApproveMutationCommandPayload,
         AuditContext,
+        CancelMutationCommandPayload,
         CommandType,
         ErrorCode,
         ExecuteMutationCommandPayload,
@@ -48,6 +49,7 @@ except (ImportError, ValueError):
     from models import (
         ApproveMutationCommandPayload,
         AuditContext,
+        CancelMutationCommandPayload,
         CommandType,
         ErrorCode,
         ExecuteMutationCommandPayload,
@@ -288,6 +290,18 @@ def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComma
                     action="reject_mutation",
                     params=params,
                     audit_context=AuditContext(reason=note or mutation.command_type),
+                )
+            if command_type == CommandType.CANCEL_MUTATION.value:
+                mutation = CancelMutationCommandPayload.model_validate(payload)
+                note = mutation.note.strip()
+                if not note:
+                    raise ValueError("CancelMutation requires a non-empty note.")
+                return OperatorCommand(
+                    command=CommandType.CANCEL_MUTATION,
+                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
+                    action="cancel_mutation",
+                    params={"decision_id": mutation.decision_id, "note": note},
+                    audit_context=AuditContext(reason=note),
                 )
             if command_type == CommandType.REVIEW_MUTATION.value:
                 mutation = ReviewMutationCommandPayload.model_validate(payload)
