@@ -209,6 +209,8 @@ class AlphaRevalidationWorker:
             actor_id=self._worker_id,
         )
         self._trial_counter_path = self._data_dir / "family_trial_counts.json"
+        self._backtest_run_store_path = self._data_dir / "backtest_runs.json"
+        self._backtest_run_store = self._new_backtest_run_store()
         self._outbox_path = self._data_dir / "research_memory_outbox.jsonl"
         self._metrics = self._load_metrics()
         self._loop_records = self._load_loop_records()
@@ -704,7 +706,10 @@ class AlphaRevalidationWorker:
             },
         )
 
-    _CACHED_DEFAULT_TW_BACKTEST: dict[str, Any] | None = None
+    def _new_backtest_run_store(self) -> Any:
+        from services.research.replication.gate import BacktestRunStore
+
+        return BacktestRunStore(self._backtest_run_store_path)
 
     def _resolve_backtest_evaluation(
         self,
@@ -714,9 +719,14 @@ class AlphaRevalidationWorker:
         entry: Mapping[str, Any],
         raw_spec: Mapping[str, Any],
     ) -> dict[str, Any] | None:
+        """Run the real protocol on the candidate's own approved inputs.
+
+        Fails closed (returns ``None``) when the exact candidate artifact or the
+        governed dataset version it was approved against is absent or unbound.
+        No artifact, dataset or cached result is ever generated or reused here.
+        """
+        from services.registry.strategy_artifact import strategy_artifact_checksum
         from services.research.vectorbt.adapter.vectorbt_adapter import (
-            build_canonical_tw_strategy_artifact,
-            build_governed_tw_replication_dataset,
             run_replication_backtest_protocol,
         )
 
@@ -725,65 +735,36 @@ class AlphaRevalidationWorker:
 
         provided_eval = raw_spec.get("backtest_evaluation")
         if isinstance(provided_eval, Mapping):
+            # Never trusted: ReplicationGate accepts it only if it matches a
+            # persisted run bound to the candidate artifact and dataset.
             return dict(provided_eval)
 
-        market_scope = (
-            raw_spec.get("market_scope")
-            if isinstance(raw_spec.get("market_scope"), Mapping)
-            else {}
-        )
-        raw_symbols = (
-            list(market_scope.get("symbols") or [])
-            if isinstance(market_scope.get("symbols"), list)
-            else []
-        )
-        tw_symbols = [
-            s for s in raw_symbols if isinstance(s, str) and s[:1].isdigit()
-        ] or ["2330", "2317"]
+        strategy_artifact = raw_spec.get("strategy_artifact")
+        dataset = raw_spec.get("backtest_dataset")
+        if not isinstance(strategy_artifact, Mapping) or not isinstance(dataset, Mapping):
+            return None
+        strategy_artifact = dict(strategy_artifact)
+        dataset = dict(dataset)
 
-        provided_artifact = raw_spec.get("strategy_artifact")
-        provided_dataset = raw_spec.get("backtest_dataset")
-        dataset_ref = str(task.dataset_version_id or "").lower()
-        trading_days = int(raw_spec.get("history_trading_days") or 756)
-        if "1y" in dataset_ref or "insufficient_history" in dataset_ref or "short_history" in dataset_ref:
-            trading_days = min(trading_days, 252)
-
-        is_default_tw = (
-            not isinstance(provided_artifact, Mapping)
-            and not isinstance(provided_dataset, Mapping)
-            and tw_symbols == ["2330", "2317"]
-            and trading_days == 756
-        )
-        if is_default_tw and AlphaRevalidationWorker._CACHED_DEFAULT_TW_BACKTEST is not None:
-            cached = copy.deepcopy(AlphaRevalidationWorker._CACHED_DEFAULT_TW_BACKTEST)
-            cached["backtest_run_id"] = f"bt-{run_id}"
-            return cached
-
-        if isinstance(provided_artifact, Mapping):
-            strategy_artifact = dict(provided_artifact)
-        else:
-            strategy_artifact = build_canonical_tw_strategy_artifact(
-                strategy_id=str(entry.get("strategy_id") or "tw_replication_strategy"),
-                symbols=tw_symbols,
-            )
-
-        if isinstance(provided_dataset, Mapping):
-            dataset = dict(provided_dataset)
-        else:
-            dataset = build_governed_tw_replication_dataset(
-                symbols=list(
-                    strategy_artifact.get("universe", {}).get("symbols") or tw_symbols
-                ),
-                trading_days=trading_days,
-            )
+        requested_dataset = str(task.dataset_version_id or "").strip()
+        if not requested_dataset or dataset.get("dataset_id") != requested_dataset:
+            return None
+        if strategy_artifact.get("strategy_id") != entry.get("strategy_id"):
+            return None
+        expected_checksum = raw_spec.get("strategy_artifact_checksum")
+        try:
+            actual_checksum = strategy_artifact_checksum(strategy_artifact)
+        except Exception:
+            return None
+        if isinstance(expected_checksum, str) and expected_checksum != actual_checksum:
+            return None
 
         evaluated = run_replication_backtest_protocol(
             strategy_artifact=strategy_artifact,
             dataset=dataset,
             run_id=f"bt-{run_id}",
         )
-        if is_default_tw:
-            AlphaRevalidationWorker._CACHED_DEFAULT_TW_BACKTEST = copy.deepcopy(evaluated)
+        self._backtest_run_store.record(evaluated)
         return evaluated
 
     def _publish_research_finding(
@@ -885,6 +866,7 @@ class AlphaRevalidationWorker:
         tick_at: str,
     ) -> ExperimentRun:
         from services.registry.promotion.gate import PromotionGate, PromotionState
+        from services.registry.strategy_artifact import strategy_artifact_checksum
         from services.research.replication.gate import (
             ReplicationGate,
             create_promotion_request,
@@ -916,6 +898,13 @@ class AlphaRevalidationWorker:
             "history_trading_days",
         ):
             evaluation_spec.pop(non_schema_key, None)
+
+        artifact_checksum: str | None = None
+        if isinstance(raw_spec.get("strategy_artifact"), Mapping):
+            try:
+                artifact_checksum = strategy_artifact_checksum(raw_spec["strategy_artifact"])
+            except Exception:
+                artifact_checksum = None
 
         backtest_eval = self._resolve_backtest_evaluation(
             run_id=run_id,
@@ -964,10 +953,15 @@ class AlphaRevalidationWorker:
                 "tenant_id": entry["tenant_id"],
                 "strategy_spec_id": entry["strategy_spec_id"],
                 "approval_decision_id": entry["approval_decision_id"],
+                "dataset_version_id": task.dataset_version_id,
+                **({"strategy_artifact_checksum": artifact_checksum} if artifact_checksum else {}),
             },
             timestamp=tick_at,
         )
-        gate = ReplicationGate(trial_counter_path=self._trial_counter_path)
+        gate = ReplicationGate(
+            trial_counter_path=self._trial_counter_path,
+            backtest_run_store=self._backtest_run_store,
+        )
         gate_response = gate.evaluate_candidate(request)
 
         gate_metadata = getattr(gate_response, "metadata", None)

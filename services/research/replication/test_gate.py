@@ -37,6 +37,17 @@ def _get_valid_backtest() -> dict:
     return copy.deepcopy(_CACHED_VALID_BACKTEST)
 
 
+def _bind_run(request, gate) -> None:
+    """Persist the request's evaluation as a completed run and bind the candidate to it."""
+    evaluation = request.backtest_evaluation
+    gate.backtest_run_store.record(evaluation)
+    request.metadata = {
+        **(request.metadata or {}),
+        "strategy_artifact_checksum": evaluation["strategy_artifact"]["checksum"],
+        "dataset_version_id": evaluation["dataset_id"],
+    }
+
+
 class TestGateSchema(unittest.TestCase):
     """Tests for gate schema dataclasses."""
 
@@ -181,7 +192,12 @@ class TestReplicationGate(unittest.TestCase):
         self.gate = ReplicationGate()
 
     def _create_valid_request(self) -> ReplicationRequest:
-        """Create a valid replication request."""
+        """Create a valid replication request bound to a persisted completed run."""
+        request = self._build_request()
+        _bind_run(request, self.gate)
+        return request
+
+    def _build_request(self) -> ReplicationRequest:
         return ReplicationRequest(
             candidate_id="cand-001",
             source_task_id="RS-002",
@@ -400,6 +416,7 @@ class TestReplicationGate(unittest.TestCase):
             dataset=dataset,
             run_id="bt-neg-oos-001",
         )
+        _bind_run(request, self.gate)
         self.assertGreater(
             request.backtest_evaluation["in_sample"]["sharpe_ratio"],
             1.0,
@@ -430,6 +447,7 @@ class TestReplicationGate(unittest.TestCase):
         req_trial_1.candidate_id = "cand-family-v1"
         req_trial_1.research_handoff["family_id"] = "tw-momentum-family-alpha"
         req_trial_1.backtest_evaluation = copy.deepcopy(marginal_eval)
+        _bind_run(req_trial_1, gate)
 
         resp_trial_1 = gate.evaluate_candidate(req_trial_1)
         self.assertTrue(resp_trial_1.passed)
@@ -441,6 +459,7 @@ class TestReplicationGate(unittest.TestCase):
             req_i.candidate_id = f"cand-family-v{idx}"
             req_i.research_handoff["family_id"] = "tw-momentum-family-alpha"
             req_i.backtest_evaluation = copy.deepcopy(marginal_eval)
+            _bind_run(req_i, gate)
             gate.evaluate_candidate(req_i)
 
         # Trial 20 with the exact same marginal OOS Sharpe (0.85) must now be refused
@@ -448,6 +467,7 @@ class TestReplicationGate(unittest.TestCase):
         req_trial_20.candidate_id = "cand-family-v20"
         req_trial_20.research_handoff["family_id"] = "tw-momentum-family-alpha"
         req_trial_20.backtest_evaluation = copy.deepcopy(marginal_eval)
+        _bind_run(req_trial_20, gate)
 
         resp_trial_20 = gate.evaluate_candidate(req_trial_20)
         self.assertEqual(gate.get_family_trial_count("tw-momentum-family-alpha"), 20)
@@ -479,6 +499,7 @@ class TestReplicationGate(unittest.TestCase):
             dataset=one_year_dataset,
             run_id="bt-1y-history",
         )
+        _bind_run(request, self.gate)
 
         response = self.gate.evaluate_candidate(request)
         self.assertFalse(response.passed)
@@ -498,6 +519,60 @@ class TestReplicationGate(unittest.TestCase):
             response.replication_status,
             (ReplicationStatus.PASSED, ReplicationStatus.FAILED),
         )
+
+    def _assert_unbound_refused(self, request, reason):
+        response = self.gate.evaluate_candidate(request)
+        self.assertFalse(response.passed)
+        self.assertEqual(response.admission_status, CandidateAdmissionStatus.REJECTED)
+        bt_result = next(
+            r for r in response.results if r.criterion_id == "real_backtest_validation"
+        )
+        self.assertFalse(bt_result.passed)
+        self.assertEqual(bt_result.details.get("reason"), reason)
+
+    def test_fabricated_run_id_without_persisted_run_is_refused(self):
+        request = self._create_valid_request()
+        request.backtest_evaluation["backtest_run_id"] = "nonexistent-run-review-probe"
+        self._assert_unbound_refused(request, "unknown_backtest_run")
+
+    def test_evaluation_edited_after_persisted_run_is_refused(self):
+        request = self._create_valid_request()
+        request.backtest_evaluation["out_of_sample"]["sharpe_ratio"] = 9.0
+        self._assert_unbound_refused(request, "evaluation_differs_from_persisted_run")
+
+    def test_run_bound_to_other_artifact_is_refused(self):
+        request = self._create_valid_request()
+        request.metadata["strategy_artifact_checksum"] = "sha256:unrelated-artifact"
+        self._assert_unbound_refused(request, "artifact_checksum_mismatch")
+
+    def test_run_on_other_dataset_version_is_refused(self):
+        request = self._create_valid_request()
+        request.metadata["dataset_version_id"] = "dataset:nonexistent-dataset-review-probe"
+        self._assert_unbound_refused(request, "dataset_version_mismatch")
+
+    def test_supplied_artifact_conflicting_with_metadata_binding_is_refused(self):
+        request = self._create_valid_request()
+        artifact = build_canonical_tw_strategy_artifact(strategy_id="swapped-candidate")
+        request.proposed_strategy_spec["strategy_artifact"] = artifact
+        self._assert_unbound_refused(request, "candidate_binding_conflict")
+
+    def test_supplied_dataset_conflicting_with_metadata_binding_is_refused(self):
+        request = self._create_valid_request()
+        request.proposed_strategy_spec["backtest_dataset"] = {
+            "dataset_id": "dataset:other-version"
+        }
+        self._assert_unbound_refused(request, "candidate_binding_conflict")
+
+    def test_request_without_artifact_or_dataset_binding_is_refused(self):
+        request = self._create_valid_request()
+        request.metadata = {}
+        self._assert_unbound_refused(request, "candidate_artifact_or_dataset_binding_missing")
+
+    def test_persisted_run_without_history_proof_is_refused(self):
+        request = self._create_valid_request()
+        request.backtest_evaluation.pop("history_check")
+        _bind_run(request, self.gate)
+        self._assert_unbound_refused(request, "missing_point_in_time_history_proof")
 
     def test_worker_request_without_grok_processing_notes_passes_with_verified_policy_and_real_backtest(self):
         """Verify ReplicationGate evaluates governance from StrategySpec policy + real backtest when grok_processing_notes is not self-attested."""

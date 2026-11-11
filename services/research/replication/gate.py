@@ -6,6 +6,7 @@ Validates research candidates against admission criteria before
 allowing promotion to the registry.
 """
 
+import hashlib
 import uuid
 import json
 from pathlib import Path
@@ -32,6 +33,9 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
     build_canonical_tw_strategy_artifact,
     run_replication_backtest_protocol,
 )
+
+
+CONFLICT = object()
 
 
 class FamilyTrialCounterStore:
@@ -65,6 +69,65 @@ class FamilyTrialCounterStore:
         return next_val
 
 
+class BacktestRunStore:
+    """Authoritative record of backtest runs the protocol actually executed.
+
+    Only ``record`` (called by the code that ran the protocol) can create an entry;
+    the gate accepts a caller-supplied evaluation only when it is byte-identical
+    (digest) to the persisted completed run and is bound to the expected artifact
+    checksum and governed dataset version.
+    """
+
+    def __init__(self, path: Optional[Path] = None):
+        self._path = Path(path) if path is not None else None
+        self._runs: Dict[str, Dict[str, Any]] = {}
+        if self._path is not None and self._path.exists():
+            try:
+                loaded = json.loads(self._path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    self._runs = {str(k): dict(v) for k, v in loaded.items() if isinstance(v, dict)}
+            except Exception:
+                self._runs = {}
+
+    @staticmethod
+    def evaluation_digest(evaluation: Dict[str, Any]) -> str:
+        payload = json.dumps(evaluation, sort_keys=True, default=str, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def record(self, evaluation: Dict[str, Any]) -> Optional[str]:
+        run_id = evaluation.get("backtest_run_id")
+        if not isinstance(run_id, str) or not run_id.strip():
+            return None
+        identity = evaluation.get("strategy_artifact")
+        identity = identity if isinstance(identity, dict) else {}
+        self._runs[run_id] = {
+            "backtest_run_id": run_id,
+            "status": evaluation.get("status"),
+            "artifact_checksum": identity.get("checksum"),
+            "dataset_id": evaluation.get("dataset_id"),
+            "source_dataset_refs": list(evaluation.get("source_dataset_refs") or []),
+            "artifact_ref": evaluation.get("artifact_ref"),
+            "evaluation_digest": self.evaluation_digest(evaluation),
+        }
+        if self._path is not None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps(self._runs, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+        return run_id
+
+    def get(self, run_id: str) -> Optional[Dict[str, Any]]:
+        if self._path is not None and self._path.exists():
+            try:
+                loaded = json.loads(self._path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict) and isinstance(loaded.get(run_id), dict):
+                    return dict(loaded[run_id])
+            except Exception:
+                pass
+        record = self._runs.get(run_id)
+        return dict(record) if record is not None else None
+
+
 class ReplicationGate:
     """
     Gate that sits between discovered research (RS-001/RS-002) and registry entry (REG-001).
@@ -82,8 +145,10 @@ class ReplicationGate:
         self,
         config: Optional[GateConfig] = None,
         trial_counter_path: Optional[Path] = None,
+        backtest_run_store: Optional[BacktestRunStore] = None,
     ):
         self.config = config or GateConfig()
+        self.backtest_run_store = backtest_run_store or BacktestRunStore()
         self.gate_run_logs: List[Dict[str, Any]] = []
         self._canonical_spec_validator = self._build_strategy_spec_validator()
         self._trial_counter_store = FamilyTrialCounterStore(trial_counter_path)
@@ -512,9 +577,99 @@ class ReplicationGate:
                 mandate_max_drawdown=mandate_dd,
                 min_oos_round_trips=self.config.min_oos_round_trips,
             )
+            if computed.get("status") in ("completed", INSUFFICIENT_HISTORY_STATUS):
+                self.backtest_run_store.record(computed)
             request.backtest_evaluation = computed
             return computed
 
+        return None
+
+    def _expected_binding(self, request: ReplicationRequest) -> tuple:
+        """Return (artifact_checksum, dataset_version_id) the candidate must be bound to."""
+        from services.registry.strategy_artifact import strategy_artifact_checksum
+
+        metadata = request.metadata if isinstance(request.metadata, dict) else {}
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+
+        checksums = set()
+        meta_checksum = metadata.get("strategy_artifact_checksum")
+        if isinstance(meta_checksum, str) and meta_checksum.strip():
+            checksums.add(meta_checksum.strip())
+        for artifact in (spec.get("strategy_artifact"), handoff.get("strategy_artifact")):
+            if isinstance(artifact, dict):
+                try:
+                    checksums.add(strategy_artifact_checksum(artifact))
+                except Exception:
+                    checksums.add("<uncomputable_artifact_checksum>")
+
+        dataset_ids = set()
+        meta_dataset = metadata.get("dataset_version_id")
+        if isinstance(meta_dataset, str) and meta_dataset.strip():
+            dataset_ids.add(meta_dataset.strip())
+        for dataset in (handoff.get("backtest_dataset"), spec.get("backtest_dataset")):
+            if isinstance(dataset, dict):
+                ds_id = dataset.get("dataset_id")
+                if isinstance(ds_id, str) and ds_id.strip():
+                    dataset_ids.add(ds_id.strip())
+                else:
+                    dataset_ids.add("<missing_dataset_id>")
+
+        def resolve(values: set) -> Any:
+            if not values:
+                return None
+            if len(values) > 1:
+                return CONFLICT
+            return next(iter(values))
+
+        return resolve(checksums), resolve(dataset_ids)
+
+    def _verify_authoritative_run(
+        self, request: ReplicationRequest, backtest_eval: Dict[str, Any]
+    ) -> Optional[ReplicationResult]:
+        """Refuse evaluations not backed by a persisted run bound to the candidate."""
+
+        def refuse(reason: str, **details: Any) -> ReplicationResult:
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=f"Backtest evaluation is not an authoritative bound run: {reason}",
+                details={"reason": reason, **details},
+            )
+
+        run_id = backtest_eval.get("backtest_run_id")
+        record = (
+            self.backtest_run_store.get(run_id)
+            if isinstance(run_id, str) and run_id.strip()
+            else None
+        )
+        if record is None:
+            return refuse("unknown_backtest_run", backtest_run_id=run_id)
+        if record.get("evaluation_digest") != BacktestRunStore.evaluation_digest(backtest_eval):
+            return refuse("evaluation_differs_from_persisted_run", backtest_run_id=run_id)
+        if record.get("status") not in ("completed", INSUFFICIENT_HISTORY_STATUS) or record.get(
+            "status"
+        ) != backtest_eval.get("status"):
+            return refuse("run_not_completed", backtest_run_id=run_id, status=record.get("status"))
+        expected_checksum, expected_dataset = self._expected_binding(request)
+        if expected_checksum is CONFLICT or expected_dataset is CONFLICT:
+            return refuse("candidate_binding_conflict")
+        if expected_checksum is None or expected_dataset is None:
+            return refuse("candidate_artifact_or_dataset_binding_missing")
+        if record.get("artifact_checksum") != expected_checksum:
+            return refuse("artifact_checksum_mismatch", expected=expected_checksum)
+        if record.get("dataset_id") != expected_dataset:
+            return refuse("dataset_version_mismatch", expected=expected_dataset)
+        if not record.get("source_dataset_refs"):
+            return refuse("missing_source_dataset_refs")
+        history = backtest_eval.get("history_check")
+        if not (
+            isinstance(history, dict)
+            and isinstance(history.get("calendar_days"), int)
+            and isinstance(history.get("trading_days"), int)
+            and isinstance(history.get("sufficient"), bool)
+        ):
+            return refuse("missing_point_in_time_history_proof")
         return None
 
     def _check_real_backtest_validation(
@@ -534,15 +689,15 @@ class ReplicationGate:
                 details={"reason": "missing_backtest_run"},
             )
 
-        history_check = (
-            backtest_eval.get("history_check")
-            if isinstance(backtest_eval.get("history_check"), dict)
-            else {}
-        )
+        unbound = self._verify_authoritative_run(request, backtest_eval)
+        if unbound is not None:
+            return unbound
+
+        history_check = backtest_eval["history_check"]
         eval_status = str(backtest_eval.get("status", ""))
         calendar_days = int(history_check.get("calendar_days", 0))
         trading_days = int(history_check.get("trading_days", 0))
-        history_sufficient = bool(history_check.get("sufficient", True))
+        history_sufficient = bool(history_check["sufficient"])
 
         if (
             eval_status == INSUFFICIENT_HISTORY_STATUS

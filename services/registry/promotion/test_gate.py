@@ -169,9 +169,21 @@ class TestPromotionGate(unittest.TestCase):
                 },
             },
             backtest_evaluation=bt_eval,
+            metadata={
+                "strategy_artifact_checksum": bt_eval["strategy_artifact"]["checksum"],
+                "dataset_version_id": bt_eval["dataset_id"],
+            },
         )
-        rep_response = ReplicationGate().evaluate_candidate(req)
+        rep_gate = ReplicationGate()
+        # The recorded fixture stands in for the persisted run the protocol wrote.
+        rep_gate.backtest_run_store.record(bt_eval)
+        rep_response = rep_gate.evaluate_candidate(req)
         self.assertTrue(rep_response.passed)
+
+        # An unpersisted / unbound copy of the same evaluation must not be admitted.
+        req.backtest_evaluation = {**bt_eval, "backtest_run_id": "nonexistent-run-review-probe"}
+        self.assertFalse(rep_gate.evaluate_candidate(req).passed)
+        req.backtest_evaluation = bt_eval
 
         promo_req = create_promotion_request(rep_response, req.proposed_strategy_spec)
         self.assertIsNotNone(promo_req)

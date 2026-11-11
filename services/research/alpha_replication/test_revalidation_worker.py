@@ -382,11 +382,23 @@ def test_approved_spec_creates_authoritative_task_and_completed_run(tmp_path) ->
     assert queued["experiment_run_ids"] == [run.run_id]
 
 
+def _tw_registry_entry(payload: dict) -> dict:
+    spec = _strategy_spec(strategy_id=payload["strategy_id"])
+    spec["market_scope"] = {
+        "symbols": ["2330", "2317"],
+        "asset_classes": ["equity"],
+        "frequency": "1d",
+        "venues": ["TWSE"],
+    }
+    _attach_real_inputs(spec, symbols=["2330", "2317"])
+    return _registry_entry(payload, spec)
+
+
 def test_real_replication_gate_accepts_the_approved_canonical_spec(tmp_path) -> None:
     authority = FakeAuthority()
     queue, worker = _worker(tmp_path, authority)
     payload = _queue_payload()
-    registry_entry = _registry_entry(payload)
+    registry_entry = _tw_registry_entry(payload)
     queue.enqueue(payload)
 
     with mock.patch.object(
@@ -1520,6 +1532,27 @@ def test_failed_baseline_with_final_reason_is_never_retried(
 # --- REPLICATION-GATE-REAL-BACKTEST-20261110 tests --------------------------
 
 
+def _attach_real_inputs(spec: dict, *, symbols: list[str], trading_days: int = 756) -> None:
+    """Supply the candidate's own approved artifact and governed dataset version."""
+    from services.research.vectorbt.adapter.vectorbt_adapter import (
+        build_canonical_tw_strategy_artifact,
+        build_governed_tw_replication_dataset,
+    )
+
+    dataset_ref = next(
+        d["ref"] for d in spec["data_dependencies"] if d.get("kind") == "dataset"
+    )
+    artifact = build_canonical_tw_strategy_artifact(
+        strategy_id=spec["strategy_id"], symbols=symbols
+    )
+    spec["strategy_artifact"] = artifact
+    spec["backtest_dataset"] = build_governed_tw_replication_dataset(
+        dataset_id=dataset_ref,
+        symbols=list(artifact["parameters"]["symbols"]),
+        trading_days=trading_days,
+    )
+
+
 def test_worker_does_not_write_self_attested_governance_values(tmp_path) -> None:
     authority = FakeAuthority()
     queue, worker = _worker(tmp_path, authority)
@@ -1538,7 +1571,7 @@ def test_worker_does_not_write_self_attested_governance_values(tmp_path) -> None
     with mock.patch.object(
         worker,
         "_fetch_strategy_spec_entry",
-        return_value=_registry_entry(payload),
+        return_value=_tw_registry_entry(payload),
     ), mock.patch.object(
         ReplicationGate,
         "evaluate_candidate",
@@ -1568,6 +1601,7 @@ def test_worker_end_to_end_real_backtest_promotion_gate_and_research_finding_out
         "frequency": "1d",
         "venues": ["TWSE"],
     }
+    _attach_real_inputs(spec, symbols=["2330", "2317"])
     registry_entry = _registry_entry(payload, spec)
     queue.enqueue(payload)
 
@@ -1625,9 +1659,8 @@ def test_worker_records_insufficient_history_when_pit_history_under_two_years(
         "frequency": "1d",
         "venues": ["TWSE"],
     }
-    spec["data_dependencies"] = [
-        {"ref": "dataset:tw-1y-insufficient_history", "kind": "dataset"}
-    ]
+    spec["data_dependencies"] = [{"ref": "dataset:tw-one-year", "kind": "dataset"}]
+    _attach_real_inputs(spec, symbols=["2330"], trading_days=252)
     registry_entry = _registry_entry(payload, spec)
     queue.enqueue(payload)
 
@@ -1673,3 +1706,64 @@ def test_worker_refuses_admission_without_real_backtest(tmp_path) -> None:
     run = next(iter(authority.runs.values()))
     assert run.status == "failed"
 
+
+
+def _run_with_inputs(tmp_path, mutate) -> tuple[dict, FakeAuthority]:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload(strategy_spec_id="reg-strategy-spec-unbound-1.0.0")
+    spec = _strategy_spec(strategy_id=payload["strategy_id"])
+    spec["market_scope"] = {
+        "symbols": ["2330"],
+        "asset_classes": ["equity"],
+        "frequency": "1d",
+        "venues": ["TWSE"],
+    }
+    _attach_real_inputs(spec, symbols=["2330"])
+    mutate(spec)
+    registry_entry = _registry_entry(payload, spec)
+    queue.enqueue(payload)
+    with mock.patch.object(
+        worker, "_fetch_strategy_spec_entry", return_value=registry_entry
+    ):
+        return worker.run_once(tenant_id="tenant-a"), authority
+
+
+def test_worker_refuses_when_candidate_inputs_are_absent_instead_of_generating_them(
+    tmp_path,
+) -> None:
+    def drop_inputs(spec):
+        spec.pop("strategy_artifact")
+        spec.pop("backtest_dataset")
+
+    result, authority = _run_with_inputs(tmp_path, drop_inputs)
+    assert "real_backtest_validation" in result["errors"][0]["error"]
+    run = next(iter(authority.runs.values()))
+    assert run.status == "failed"
+    assert not run.metadata.get("backtest_run_id")
+
+
+def test_worker_refuses_dataset_that_is_not_the_requested_version(tmp_path) -> None:
+    def other_dataset(spec):
+        spec["backtest_dataset"]["dataset_id"] = "dataset:tw-governed-daily-v1"
+
+    result, authority = _run_with_inputs(tmp_path, other_dataset)
+    assert "real_backtest_validation" in result["errors"][0]["error"]
+    assert not next(iter(authority.runs.values())).metadata.get("backtest_run_id")
+
+
+def test_worker_refuses_artifact_not_matching_approved_checksum(tmp_path) -> None:
+    def wrong_checksum(spec):
+        spec["strategy_artifact_checksum"] = "sha256:not-the-approved-artifact"
+
+    result, authority = _run_with_inputs(tmp_path, wrong_checksum)
+    assert "real_backtest_validation" in result["errors"][0]["error"]
+    assert not next(iter(authority.runs.values())).metadata.get("backtest_run_id")
+
+
+def test_worker_never_reuses_cached_results_across_candidates() -> None:
+    from services.research.alpha_replication.revalidation_worker import (
+        AlphaRevalidationWorker,
+    )
+
+    assert not hasattr(AlphaRevalidationWorker, "_CACHED_DEFAULT_TW_BACKTEST")
