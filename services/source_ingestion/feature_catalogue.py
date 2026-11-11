@@ -176,9 +176,14 @@ _FIELDS += [
     CatalogueField("tw_community_attention", "post_volume", "post_volume", "posts",
                    "Aggregated community post volume"),
     CatalogueField("tw_community_attention", "attention_zscore", "attention_zscore", "zscore",
-                   "Community attention volume z-score vs prior 20 days"),
+                   "Community attention volume z-score vs prior 60 days (author-concentration down-weighted)"),
     CatalogueField("tw_community_attention", "bull_bear_ratio", "bull_bear_ratio", "ratio",
                    "Community (bull+1)/(bear+1) mention ratio"),
+    CatalogueField("tw_community_attention", "unique_authors", "unique_authors", "authors",
+                   "Distinct hashed authors posting about the symbol that day"),
+    CatalogueField("tw_community_attention", "engagement_weighted_sentiment",
+                   "engagement_weighted_sentiment", "score",
+                   "Engagement-weighted bull(+1)/bear(-1) sentiment; single-author bursts down-weighted"),
 ]
 
 _SPEC_BY_NAME: dict[str, DatasetSpec] = {spec.name: spec for spec in DATASET_SPECS}

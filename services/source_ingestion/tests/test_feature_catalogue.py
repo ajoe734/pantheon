@@ -154,7 +154,7 @@ def test_community_daily_features_are_available_after_day_close() -> None:
     assert r["available_time"] == "2026-11-10T17:00:00Z"  # after the Taipei day closed (16:00Z) and when first seen
     assert "attention_zscore" not in rows["2317"] and "bull_bear_ratio" not in rows["2317"]
     obs = fc.observations_from_row("tw_community_attention", r)
-    assert {o["field"] for o in obs} == {"post_volume", "attention_zscore", "bull_bear_ratio"}
+    assert {o["field"] for o in obs} == {"post_volume", "attention_zscore", "bull_bear_ratio", "engagement_weighted_sentiment"}
 
 
 def test_read_feature_series_applies_lag_and_rejects_uncatalogued() -> None:
@@ -768,3 +768,59 @@ def test_late_balance_correction_regression_through_public_factor_rule_evaluator
     before, after = act("2026-11-15"), act("2026-12-02")
     assert before != "BUY"  # the corrected ROE (1.0) is not visible until its balance is published
     assert after == "BUY"
+
+
+# -- official-key ROE and §8.5 author/engagement regressions ------------------
+
+def test_roe_reads_official_twse_net_income_key() -> None:
+    income = {"出表日期": "1151110", "年度": "115", "季別": "3", "公司代號": "1201", "營業收入": "1000",
+              "淨利（淨損）歸屬於母公司業主": "242971"}
+    balance = {"出表日期": "1151101", "年度": "115", "季別": "3", "公司代號": "1201",
+               "歸屬於母公司業主之權益合計": "3000000"}
+    (row,) = normalize_financial_statement_rows(
+        "TWSE", [income], [balance], source_dataset="x",
+        api_endpoint="https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ci", ingest_time="2026-11-01T00:00:00Z",
+    )
+    assert row["roe"] == 242971 / 3000000
+    assert [o for o in fc.observations_from_row("tw_quarterly_statements", row) if o["field"] == "roe"]
+
+
+def _apost(i: int, author: str | None, stance: str, likes: int = 0, day: str = "2026-11-10") -> SourceRecord:
+    rec = _post(i, day, ["2330"], stance)
+    rec.metadata["metrics"]["likes"] = likes
+    if author:
+        rec.metadata["author_id"] = author
+    return rec
+
+
+def test_community_features_emit_authors_engagement_and_downweight_single_author() -> None:
+    auth = {"2330": ("2330.TWSE",)}
+    seen = "2026-11-10T17:00:00Z"
+    spam = [_apost(i, "same", "bullish") for i in range(10)]
+    (row,) = community_daily_feature_rows(spam, authority=auth, seen_at=seen)
+    assert row["post_volume"] == 10 and row["unique_authors"] == 1
+    assert row["engagement_weighted_sentiment"] == 1.0
+    assert len(fc.observations_from_row("tw_community_attention", row)) >= 3
+    mixed = [_apost(0, "a", "bullish", likes=9), _apost(1, "b", "bearish", likes=0)]
+    (row2,) = community_daily_feature_rows(mixed, authority=auth, seen_at=seen)
+    assert row2["unique_authors"] == 2
+    assert row2["engagement_weighted_sentiment"] == (10 - 1) / 11
+    # raw author ids are never stored
+    assert "same" not in str(row)
+
+
+def test_community_attention_uses_60_day_history_with_dominance_downweight() -> None:
+    auth = {"2330": ("2330.TWSE",)}
+    from datetime import date, timedelta
+    prior = {}
+    for off in range(1, 50):
+        d = (date(2026, 11, 10) - timedelta(days=off)).isoformat()
+        for i in range(2 + off % 2):
+            k = f"h{d}-{i}|2330.TWSE"
+            prior[k] = {"key": k, "symbol": "2330.TWSE", "day": d, "stance": "", "author": f"a{i}", "engagement": 0.0,
+                        "available": f"{d}T03:00:00Z", "first_seen": f"{d}T04:00:00Z"}
+    burst = [_apost(i, "same", "bullish") for i in range(30)]
+    (r1,) = community_daily_feature_rows(burst, authority=auth, ledger=prior, seen_at="2026-11-10T17:00:00Z")
+    organic = [_apost(i, f"u{i}", "bullish") for i in range(30)]
+    (r2,) = community_daily_feature_rows(organic, authority=auth, ledger=prior, seen_at="2026-11-10T17:00:00Z")
+    assert r1["attention_zscore"] < r2["attention_zscore"]

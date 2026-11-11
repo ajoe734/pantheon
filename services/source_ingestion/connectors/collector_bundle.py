@@ -774,7 +774,9 @@ def _slug(value: str) -> str:
 
 TW_MACRO_SERIES_DATASET = "tw_macro_series"
 TW_COMMUNITY_DAILY_DATASET = "tw_community_daily"
-COMMUNITY_ZSCORE_WINDOW_DAYS = 20
+COMMUNITY_ZSCORE_WINDOW_DAYS = 60  # design §8.5: attention vs 60-day mean
+COMMUNITY_AUTHOR_DOMINANCE_SHARE = 0.5  # one author above this share of a day's posts => down-weighted
+_ENGAGEMENT_KEYS = ("engagement", "likes", "like_count", "comments", "comment_count", "replies", "reply_count", "shares", "share_count", "push_count", "upvotes")
 COMMUNITY_ZSCORE_MIN_HISTORY_DAYS = 5
 _TAIPEI_TZ = timezone(timedelta(hours=8))
 _BULLISH_LABELS = frozenset({"bullish", "bull", "positive", "long", "看多", "多"})
@@ -991,6 +993,20 @@ def community_ledger_entries(
         metrics = meta.get("metrics") if isinstance(meta.get("metrics"), Mapping) else {}
         stance = str(metrics.get("sentiment") or metrics.get("stance") or meta.get("sentiment") or "").strip().lower()
         stance = "bull" if stance in _BULLISH_LABELS else "bear" if stance in _BEARISH_LABELS else ""
+        raw_author = str(meta.get("author_hash") or meta.get("author_id") or meta.get("author") or "").strip()
+        author = (
+            raw_author.lower()
+            if len(raw_author) == 64 and all(c in "0123456789abcdefABCDEF" for c in raw_author)
+            else (hashlib.sha256(raw_author.encode("utf-8")).hexdigest() if raw_author else "")
+        )
+        engagement = 0.0
+        for k in _ENGAGEMENT_KEYS:
+            try:
+                v = float(metrics.get(k) if k in metrics else meta.get(k) or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            if v > 0 and v == v and v != float("inf"):
+                engagement += v
         canonical_symbols: set[str] = set()
         for raw in symbols:
             if not str(raw).strip():
@@ -1006,6 +1022,8 @@ def community_ledger_entries(
                     "symbol": symbol,
                     "day": event.astimezone(_TAIPEI_TZ).date().isoformat(),
                     "stance": stance,
+                    "author": author,
+                    "engagement": engagement,
                     "available": _feature_iso(available),
                     "first_seen": seen_at,
                 }
@@ -1026,6 +1044,18 @@ def load_community_ledger(path: Path) -> dict[str, dict[str, Any]]:
 
 def _known_at(entry: Mapping[str, Any]) -> datetime:
     return max(_feature_time(entry["available"]), _feature_time(entry["first_seen"]))
+
+
+def _community_post_weights(entries: Sequence[Mapping[str, Any]]) -> list[float]:
+    """Per-post weights: 1.0, or 1/author_posts when one hashed author dominates the day (§8.5)."""
+    n = len(entries)
+    counts: dict[str, int] = {}
+    for e in entries:
+        if e.get("author"):
+            counts[e["author"]] = counts.get(e["author"], 0) + 1
+    if n and counts and max(counts.values()) / n > COMMUNITY_AUTHOR_DOMINANCE_SHARE and max(counts.values()) > 1:
+        return [1.0 / counts[e["author"]] if e.get("author") else 1.0 for e in entries]
+    return [1.0] * n
 
 
 def community_daily_rows_from_ledger(
@@ -1069,10 +1099,14 @@ def community_daily_rows_from_ledger(
             visible = [e for e in day_entries if _known_at(e) <= step]
             bull = sum(e["stance"] == "bull" for e in visible)
             bear = sum(e["stance"] == "bear" for e in visible)
-            history_counts: dict[str, int] = {}
+            weights = _community_post_weights(visible)
+            history_entries: dict[str, list[Mapping[str, Any]]] = {}
             for e in by_symbol.get(symbol, []):
                 if e["day"] != day and _known_at(e) <= step:
-                    history_counts[e["day"]] = history_counts.get(e["day"], 0) + 1
+                    history_entries.setdefault(e["day"], []).append(e)
+            history_counts = {
+                d: sum(_community_post_weights(es)) for d, es in history_entries.items()
+            }
             history = [
                 history_counts[(day_date - timedelta(days=offset)).isoformat()]
                 for offset in range(1, COMMUNITY_ZSCORE_WINDOW_DAYS + 1)
@@ -1089,10 +1123,22 @@ def community_daily_rows_from_ledger(
                 "availability_lag_days": 0,
                 "post_volume": float(len(visible)),
             }
+            authors = {e.get("author") for e in visible if e.get("author")}
+            if authors:
+                row["unique_authors"] = float(len(authors))
+            scored = [
+                (w * (1.0 + float(e.get("engagement") or 0.0)), 1.0 if e["stance"] == "bull" else -1.0)
+                for e, w in zip(visible, weights)
+                if e["stance"]
+            ]
+            total_weight = sum(w for w, _ in scored)
+            if total_weight > 0:
+                row["engagement_weighted_sentiment"] = sum(w * x for w, x in scored) / total_weight
+            effective_volume = sum(weights)
             if len(history) >= COMMUNITY_ZSCORE_MIN_HISTORY_DAYS:
                 sd = pstdev(history)
                 if sd > 0:
-                    row["attention_zscore"] = (len(visible) - mean(history)) / sd
+                    row["attention_zscore"] = (effective_volume - mean(history)) / sd
             if bull + bear > 0:
                 row["bull_bear_ratio"] = (bull + 1) / (bear + 1)
             rows.append(row)
@@ -1112,7 +1158,7 @@ def community_daily_feature_rows(
     Days are Asia/Taipei days; symbols are venue-qualified through ``authority``. ``ledger``
     holds previously seen posts (keyed, so replays do not double count); the rows returned
     cover every (symbol, day) touched by ``records``. ``post_volume`` is the day's post
-    count, ``attention_zscore`` compares it with the preceding up to 20 observed days (needs
+    count, ``attention_zscore`` compares it with the preceding up to 60 observed days (needs
     5, else omitted), ``bull_bear_ratio`` is ``(bull + 1) / (bear + 1)``. A day's row is
     available only after that day closes and its latest contributing post was fetched.
     """

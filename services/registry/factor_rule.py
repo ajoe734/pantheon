@@ -139,6 +139,8 @@ def _seed_default_feature_catalogue() -> None:
         ("tw_community_attention", "post_volume", 0, "Aggregated community post volume"),
         ("tw_community_attention", "attention_zscore", 0, "Community attention volume z-score"),
         ("tw_community_attention", "bull_bear_ratio", 0, "Community bull-to-bear mention ratio"),
+        ("tw_community_attention", "unique_authors", 0, "Distinct hashed community authors"),
+        ("tw_community_attention", "engagement_weighted_sentiment", 0, "Engagement-weighted community sentiment"),
     )
     for dataset, field, lag_days, desc in seeded:
         register_feature_definition(

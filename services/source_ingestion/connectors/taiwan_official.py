@@ -3378,7 +3378,13 @@ def normalize_financial_statement_rows(
         revenue = _float(_first(row, "營業收入", "Revenue", "OperatingRevenue"))
         gross = _float(_first(row, "營業毛利（毛損）淨額", "營業毛利（毛損）", "GrossProfit"))
         operating = _float(_first(row, "營業利益（損失）", "OperatingIncome"))
-        net_parent = _float(_first(row, "歸屬於母公司業主之淨利（損）", "NetIncomeAttributableToParent"))
+        net_parent = _float(_first(
+            row,
+            "淨利（淨損）歸屬於母公司業主",
+            "歸屬於母公司業主之淨利（損）",
+            "本期淨利（淨損）歸屬於母公司業主",
+            "NetIncomeAttributableToParent",
+        ))
         eps = _float(_first(row, "基本每股盈餘（元）", "EarningsPerShare", "BasicEarningsPerShare"))
         parent_equity, balance_available = equity.get((symbol, year, quarter), (None, None))
         income_available = _version_available_time(row, event_time, lag, ingested)

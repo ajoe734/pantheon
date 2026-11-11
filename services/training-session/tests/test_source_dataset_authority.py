@@ -1767,7 +1767,7 @@ def _collector_files(source_id: str, rows_extra: list[dict[str, Any]]) -> dict[s
                 {"id": "b", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bearish"}},
             ],
             "tw_community_daily",
-            {"post_volume", "bull_bear_ratio"},
+            {"post_volume", "bull_bear_ratio", "engagement_weighted_sentiment"},
         ),
         (
             "collector-tw-macro-cbc",
@@ -1884,7 +1884,7 @@ def _real_poller_files(source_id: str, tmp_path: Path) -> dict[str, bytes]:
         ("collector-tw-cmoney-forum", "social", "collector_social_posts", "tw_community_daily",
          [{"id": "a", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bullish"}},
           {"id": "b", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bearish"}}],
-         {"post_volume", "bull_bear_ratio"}),
+         {"post_volume", "bull_bear_ratio", "engagement_weighted_sentiment"}),
         ("collector-tw-macro-cbc", "macro", "collector_macro_series", "tw_macro_series",
          [{"id": "a", "series_id": "cbc_policy_rate", "value": 2.0, "unit": "percent",
            "period_end": "2026-09-17T00:00:00Z", "available_time": "2026-09-17T08:00:00Z"}],
