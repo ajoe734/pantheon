@@ -23,7 +23,8 @@
       "legacy upgrade without history stays unknown",
       "cash fill explicit null fee unknown"
     ],
-    "latest_run": "test_main_routes + runtime_summary_projection + paper_runtime_ingest_contract + ingest_svc_canonical_cost_recovery + PM12: 268 passed, 1 failed (pre-existing PM12 test_portfolio_holdings_reproduces_h12_76062... stale_or_future_market_marks, identical on base 9ce4f3396)"
+    "latest_run": "PM12 file: 72 passed (H12 76062 test now passes after fixture-only clock fix: PaperRuntimeService._valuation_now pinned to Oct25 scenario clock); telemetry runtime_summary_projection + paper_runtime_ingest_contract + ingest_svc_canonical_cost_recovery + main_routes: 197 passed, 34 subtests. No production change in the fix.",
+    "h12_clock_fix": "Root cause: test set only SourceIngestMarkProvider.now and _iso_now; PaperRuntimeService passes now=self._valuation_now() (real clock) to value_portfolio, overriding the fixture default. Fixture now sets service._valuation_now. Calendar pins, recorded data, expected DTO and assertions unchanged."
   },
   "existing_assertions_updated": [
     "test_stock_future_fill_scales_cost_and_realized_by_multiplier",
