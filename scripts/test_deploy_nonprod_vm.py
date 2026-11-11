@@ -1951,13 +1951,6 @@ def _run_pinned_taiwan_preflight(
                 self.end_headers()
                 self.wfile.write(payload)
                 return
-            if parsed.path == "/api/source-ingest/source-records":
-                payload = json.dumps({"source_records": source_records or []}).encode()
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-                return
             symbol = urllib.parse.parse_qs(parsed.query)["symbol"][0]
             requested.append(symbol)
             snap = snapshots.get(symbol)
@@ -1978,6 +1971,13 @@ def _run_pinned_taiwan_preflight(
         "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
         "PANTHEON_REFRESH_PREFLIGHT_NOW": now_utc,
     }
+    import tempfile
+
+    records_file = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    records_file.write(json.dumps({"source_records": source_records or []}))
+    records_file.close()
+    if source_records is not None:
+        env["FINMIND_SOURCE_RECORDS_PATH"] = records_file.name
     env.pop("PANTHEON_DEV_PAPER_BASELINE_SYMBOL", None)
     env.pop("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", None)
     env.pop("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", None)
@@ -1999,6 +1999,7 @@ def _run_pinned_taiwan_preflight(
         )
     finally:
         server.shutdown()
+        Path(records_file.name).unlink(missing_ok=True)
     result = json.loads(proc.stdout)
     result["_requested"] = requested
     result["_requested_paths"] = requested_paths
@@ -2593,7 +2594,7 @@ def test_finmind_preflight_partial_coverage_is_not_already_fresh_and_retries_mis
     assert stale_session["status"] == "proceed"
 
 
-def _run_finmind_verifier(covered_batches: list[tuple[list[str], list[str]]], tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run_finmind_verifier(covered_batches: list[tuple[list[str], list[str]]], tmp_path: Path, *, with_records: bool = True) -> subprocess.CompletedProcess[str]:
     import http.server
     import os
     import threading
@@ -2623,30 +2624,17 @@ def _run_finmind_verifier(covered_batches: list[tuple[list[str], list[str]]], tm
     }]}))
     (tmp_path / "agora.json").write_text("{}")
 
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            raw = json.dumps({"source_records": records}).encode()
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(raw)))
-            self.end_headers()
-            self.wfile.write(raw)
-
-        def log_message(self, *args: Any) -> None:
-            pass
-
-    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        return subprocess.run(
-            ["python3", "-c", f"import sys\nexec(compile({body!r}, 'verify', 'exec'))\n", connector,
-             "2026-11-06T12:00:00Z", str(tmp_path / "receipts.json"), str(tmp_path / "readback.json"),
-             str(tmp_path / "agora.json"), "2330.TW,2317.TW", "tw_broker_top"],
-            cwd=ROOT,
-            env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}"},
-            capture_output=True, text=True, check=False,
-        )
-    finally:
-        server.shutdown()
+    (tmp_path / "records.json").write_text(json.dumps({"source_records": records}))
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    env.pop("FINMIND_SOURCE_RECORDS_PATH", None)
+    if with_records:
+        env["FINMIND_SOURCE_RECORDS_PATH"] = str(tmp_path / "records.json")
+    return subprocess.run(
+        ["python3", "-c", f"import sys\nexec(compile({body!r}, 'verify', 'exec'))\n", connector,
+         "2026-11-06T12:00:00Z", str(tmp_path / "receipts.json"), str(tmp_path / "readback.json"),
+         str(tmp_path / "agora.json"), "2330.TW,2317.TW", "tw_broker_top"],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+    )
 
 
 def test_finmind_readback_rejects_partial_coverage_and_accepts_union_of_batches(tmp_path: Path) -> None:
@@ -3350,3 +3338,91 @@ def test_finmind_refresh_workflow_polls_after_18_taipei_publication() -> None:
     wf = (_COLLECTOR_ENV_REPO / ".github/workflows/dev-tw-market-refresh.yml").read_text()
     assert "'30 10 * * 1-5'" in wf and "'30 12 * * 1-5'" in wf
     assert "'0 7 * * 1-5'" in wf and "'0 8 * * 1-5'" in wf
+
+
+def test_finmind_coverage_readback_fails_closed_without_authenticated_records(tmp_path: Path) -> None:
+    missing = _run_finmind_verifier([(["2330"], []), (["2317"], [])], tmp_path, with_records=False)
+    assert missing.returncode != 0
+    assert "FinMind coverage readback failed" in missing.stderr
+
+
+def test_finmind_coverage_readback_passes_the_real_strict_auth_boundary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The in-container fetcher must authenticate against the production _source_read_tenant guard."""
+    import http.server
+    import os
+    import threading
+
+    from fastapi import HTTPException
+
+    from services.source_ingestion.routers.ingest_operations import _source_read_tenant
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'FINMIND_RECORDS_PY' || return 1\n", 1)[1].split("\nFINMIND_RECORDS_PY", 1)[0]
+    auth_env = {
+        "PANTHEON_RUNTIME_JWT_SECRET": "s" * 40,
+        "PANTHEON_RUNTIME_JWT_ISSUER": "pantheon-dev",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": "bff-operators",
+        "PANTHEON_TENANT_ID": "tenant-dev",
+    }
+    for key, value in auth_env.items():
+        monkeypatch.setenv(key, value)
+    seen: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            try:
+                tenant = _source_read_tenant(self.headers.get("Authorization"), self.headers.get("X-Tenant-Id"))
+                raw, code = json.dumps({"source_records": [{"tenant": tenant}]}).encode(), 200
+            except HTTPException as exc:
+                raw, code = json.dumps({"detail": exc.detail}).encode(), exc.status_code
+            seen.append(str(code))
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        import urllib.error
+        import urllib.request
+
+        with pytest.raises(urllib.error.HTTPError) as unauth:
+            urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/api/source-ingest/source-records")
+        assert unauth.value.code == 401
+        proc = subprocess.run(
+            ["python3", "-c", f"exec(compile({body!r}, 'fetch', 'exec'))"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "PORT": str(server.server_port)},
+            capture_output=True, text=True, check=False,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {"source_records": [{"tenant": "tenant-dev"}]}
+    assert seen[-1] == "200"
+    assert "eyJ" not in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("symbols", "batches", "concurrency", "ticks"),
+    [(25, 1, 1, 1), (26, 2, 2, 1), (51, 3, 3, 1), (100, 4, 4, 1), (101, 5, 4, 2), (2400, 96, 4, 24)],
+)
+def test_finmind_bounded_refresh_sizes_controller_to_drain_every_batch(symbols: int, batches: int, concurrency: int, ticks: int) -> None:
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    start = script.index("  local bounded_max_ticks=1 bounded_concurrency=1")
+    end = script.index("  # A ten second interval keeps the one-shot lease")
+    snippet = script[start:end]
+    symbol_csv = ",".join(f"{1000 + i}.TW" for i in range(symbols))
+    proc = subprocess.run(
+        ["bash", "-c", "info(){ :; }; error(){ echo \"$*\" >&2; exit 9; }\n"
+         f"SOURCE_INGEST_BOUNDED_CONNECTOR_ID=tw-finmind-broker-daily-report SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS={symbol_csv}\n"
+         f"f(){{\n{snippet}\necho $bounded_concurrency $bounded_max_ticks\n}}\nf"],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.split() == [str(concurrency), str(ticks)]
+    assert concurrency * ticks >= batches

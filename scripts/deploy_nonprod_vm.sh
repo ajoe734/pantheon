@@ -1699,7 +1699,12 @@ verify_bounded_source_refresh_readback() {
     "${evidence_dir}/agora_watchlist.json" \
     || { rm -rf "${evidence_dir}"; return 1; }
 
-  if ! python3 - \
+  local finmind_records_file=""
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-finmind-broker-daily-report" ]]; then
+    finmind_records_file="$(mktemp)"
+    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
+  fi
+  if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - \
     "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     "${deploy_started_at}" \
     "${evidence_dir}/receipts.json" \
@@ -1867,10 +1872,11 @@ if connector_id == "tw-finmind-broker-daily-report":
     expected_symbols = [item for item in priority_csv.split(",") if item.strip()]
     if not expected_symbols:
         raise SystemExit("FinMind coverage check requires the resolved active symbols")
-    records_url = os.environ.get("SOURCE_INGEST_API_URL", "http://127.0.0.1:18097").rstrip("/") + "/api/source-ingest/source-records"
+    records_path = os.environ.get("FINMIND_SOURCE_RECORDS_PATH", "").strip()
     try:
-        with urllib.request.urlopen(urllib.request.Request(records_url, headers={"Accept": "application/json"}), timeout=30) as response:
-            all_records = json.loads(response.read().decode("utf-8")).get("source_records") or []
+        if not records_path:
+            raise RuntimeError("authenticated source-records readback unavailable")
+        all_records = json.loads(Path(records_path).read_text(encoding="utf-8")).get("source_records") or []
     except Exception as exc:
         raise SystemExit(f"FinMind coverage readback failed: {exc}") from exc
     seen, missing_syms, covered_syms, _ = finmind_coverage(
@@ -1989,10 +1995,12 @@ print(
 PY
   then
     rm -rf "${evidence_dir}"
+    [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
     LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed"
     return 1
   fi
   rm -rf "${evidence_dir}"
+  [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
   info "bounded source refresh services exited zero and receipt/projection readback advanced"
 }
 
@@ -2038,9 +2046,43 @@ ensure_dev_caddy_ingress() (
   info "dev Caddy HTTPS ingress verified: ${bff_host}"
 )
 
+# Reads /api/source-ingest/source-records through the real strict JWT/tenant
+# boundary. A short-lived HS256 token is minted inside the source-ingest
+# container from its own runtime verifier env, so no secret reaches the host
+# command line, logs or this script's stdout. Writes the JSON body to $1.
+fetch_finmind_source_records() {
+  local out_path="$1" cid=""
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+  [[ -n "${cid}" ]] || return 1
+  docker exec -i "${cid}" python3 - >"${out_path}" 2>/dev/null <<'FINMIND_RECORDS_PY' || return 1
+import json, os, time, urllib.request
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "").strip()
+tenant = (os.environ.get("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.environ.get("PANTHEON_TENANT_ID") or "").strip()
+if not secret or not tenant:
+    raise SystemExit(2)
+now = int(time.time())
+claims = {"sub": "deploy-finmind-coverage-readback", "roles": ["source_ingest_reader"], "tenant_id": tenant, "iat": now, "exp": now + 120}
+if os.environ.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip():
+    claims["iss"] = os.environ["PANTHEON_RUNTIME_JWT_ISSUER"].strip()
+if os.environ.get("PANTHEON_RUNTIME_JWT_AUDIENCE", "").strip():
+    claims["aud"] = os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"].strip()
+headers = {"Accept": "application/json", "Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret), "X-Tenant-Id": tenant}
+port = os.environ.get("PORT", "8097")
+req = urllib.request.Request(f"http://127.0.0.1:{port}/api/source-ingest/source-records", headers=headers)
+with urllib.request.urlopen(req, timeout=30) as resp:
+    print(resp.read().decode("utf-8"))
+FINMIND_RECORDS_PY
+}
+
 check_taiwan_refresh_preflight() {
-  local force="${1:-false}"
-  python3 - "${force}" <<'PREFLIGHT_PY'
+  local force="${1:-false}" finmind_records_file=""
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
+    finmind_records_file="$(mktemp)"
+    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
+  fi
+  FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - "${force}" <<'PREFLIGHT_PY'
 import json, os, sys, urllib.error, urllib.parse, urllib.request
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -2255,14 +2297,14 @@ if connector_id in CHIP_CONNECTORS:
     if record_session_date is None or record_session_date < session_date or obs_dt is None or obs_dt < session_close:
         emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if connector_id == "tw-finmind-broker-daily-report":
+        records_path = os.environ.get("FINMIND_SOURCE_RECORDS_PATH", "").strip()
         try:
-            with urllib.request.urlopen(
-                urllib.request.Request(f"{api_url}/api/source-ingest/source-records", headers={"Accept": "application/json"}),
-                timeout=30,
-            ) as rec_resp:
-                all_records = json.loads(rec_resp.read().decode("utf-8")).get("source_records") or []
+            if not records_path:
+                raise RuntimeError("authenticated source-records readback unavailable")
+            with open(records_path, encoding="utf-8") as rec_file:
+                all_records = json.load(rec_file).get("source_records") or []
         except Exception:
-            all_records = []
+            emit("proceed", reason="coverage_readback_unavailable", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
 
         def current_session_batch(rec):
             rec_meta = rec.get("metadata") if isinstance(rec.get("metadata"), dict) else {}
@@ -2324,6 +2366,9 @@ if now_t.time() < time(13, 30):
     emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
 emit("noop", reason="already_fresh", session_date=str(session_date), snapshot_id=snaps[0][1].get("snapshot_id"), checked_at=now_u.isoformat())
 PREFLIGHT_PY
+  local preflight_rc=$?
+  [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
+  return "${preflight_rc}"
 }
 
 manage_source_ingest_refresh_runtime() {
@@ -3223,19 +3268,35 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     extra_bounded_env_args+=(-e SOURCE_INGEST_DESIRED_STATE_PATH=/data/source-ingest/bounded-refresh/desired_state.json)
   fi
 
+  # Every FinMind symbol batch (25 symbols each) is its own frontier item and one tick claims at
+  # most max_concurrency items, while the controller rejects any remaining backlog. Size the
+  # concurrency and the bounded tick count so every batch drains: <=4 batches finish in a single
+  # tick; more need ceil(batches/4) ticks (hard cap 24 ticks, i.e. 96 batches / 2400 symbols).
+  local bounded_max_ticks=1 bounded_concurrency=1
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-finmind-broker-daily-report" ]]; then
+    local finmind_symbol_count finmind_batch_count
+    finmind_symbol_count="$(printf '%s' "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sort -u | wc -l | tr -d ' ')"
+    finmind_batch_count=$(( (finmind_symbol_count + 24) / 25 ))
+    (( finmind_batch_count >= 1 )) || finmind_batch_count=1
+    bounded_concurrency=$(( finmind_batch_count < 4 ? finmind_batch_count : 4 ))
+    bounded_max_ticks=$(( (finmind_batch_count + bounded_concurrency - 1) / bounded_concurrency ))
+    (( bounded_max_ticks <= 24 )) || error "FinMind bounded refresh needs ${bounded_max_ticks} ticks for ${finmind_symbol_count} symbols; exceeds the 24 tick bound"
+    info "FinMind bounded refresh draining ${finmind_batch_count} batch(es) with concurrency=${bounded_concurrency} ticks=${bounded_max_ticks}"
+  fi
+
   # A ten second interval keeps the one-shot lease (twice the interval) short,
   # so the restored steady scheduler is fenced for at most one tick.
   for bounded_service in "${bounded_services[@]}"; do
     COMPOSE_PROFILES="source-ingest-scheduler,workers" \
     SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
     SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
-    SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
+    SOURCE_INGEST_CONTROLLER_MAX_TICKS="${bounded_max_ticks}" \
     SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=10 \
     SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no \
     SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
-    SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
+    SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${bounded_concurrency}" \
     SOURCE_INGEST_MAX_RECORDS=100 \
     SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \

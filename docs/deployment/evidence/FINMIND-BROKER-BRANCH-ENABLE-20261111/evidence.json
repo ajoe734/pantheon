@@ -1,49 +1,54 @@
 {
- "task_id": "FINMIND-BROKER-BRANCH-ENABLE-20261111",
- "scope": "deploy wiring only; connector/backfill live in FINMIND-BROKER-CONNECTOR-BACKFILL-20261111",
- "secret_flow": "GitHub env dev secret FINMIND_API_TOKEN -> workflow step env -> deploy_nonprod_vm.sh remote prefix (both refresh-only and normal deploy) -> compose env; bounded runtime recreation overrides the recorded container value with the supplied token and restore rebuilds from the recorded pre-environment",
- "secret_handling": "never echoed; workflow logs presence by length only; empty value => step records reason=missing_credential, status=skipped, nothing else changes",
- "refresh": {
-  "connector_id": "tw-finmind-broker-daily-report",
-  "dataset": "tw_broker_top",
-  "exact_hosts": [
-   "api.finmindtrade.com",
-   "storage.googleapis.com"
+  "task_id": "FINMIND-BROKER-BRANCH-ENABLE-20261111",
+  "scope": "deploy wiring only; connector/backfill live in FINMIND-BROKER-CONNECTOR-BACKFILL-20261111",
+  "secret_flow": "GitHub env dev secret FINMIND_API_TOKEN -> workflow step env -> deploy_nonprod_vm.sh remote prefix (both refresh-only and normal deploy) -> compose env; bounded runtime recreation overrides the recorded container value with the supplied token and restore rebuilds from the recorded pre-environment",
+  "secret_handling": "never echoed; workflow logs presence by length only; empty value => step records reason=missing_credential, status=skipped, nothing else changes",
+  "refresh": {
+    "connector_id": "tw-finmind-broker-daily-report",
+    "dataset": "tw_broker_top",
+    "exact_hosts": [
+      "api.finmindtrade.com",
+      "storage.googleapis.com"
+    ],
+    "guard": "validate_source_refresh_profile rejects any other host set for this connector",
+    "blocking": "non-blocking (continue-on-error), runs before TWSE step; TWSE tw_price_daily truth untouched"
+  },
+  "tests": {
+    "passed": "see review_round_3_fixes; test_deploy_nonprod_vm.py finmind/collector/bounded/preflight and test_dev_tw_market_refresh.py re-run after round 3"
+  },
+  "not_verified": [
+    "live dev run with a real token and receipt/readback (requires deploy)",
+    "backfill/licence acceptance 3/4 belong to the connector/backfill task",
+    "test_finmind_broker_backfill.py: 9 failures in local venv from missing pyarrow (dependency_unavailable), identical on base; unrelated to this change"
   ],
-  "guard": "validate_source_refresh_profile rejects any other host set for this connector",
-  "blocking": "non-blocking (continue-on-error), runs before TWSE step; TWSE tw_price_daily truth untouched"
- },
- "tests": {
-  "passed": "see review_round_3_fixes; test_deploy_nonprod_vm.py finmind/collector/bounded/preflight and test_dev_tw_market_refresh.py re-run after round 3"
- },
- "not_verified": [
-  "live dev run with a real token and receipt/readback (requires deploy)",
-  "backfill/licence acceptance 3/4 belong to the connector/backfill task",
-  "test_finmind_broker_backfill.py: 9 failures in local venv from missing pyarrow (dependency_unavailable), identical on base; unrelated to this change"
- ],
- "review_fixes": {
-  "p1_token_normal_deploy": "token assignment now in the normal-deploy prefix branch (was refresh-only twice)",
-  "p1_bounded_compose_env": "manage_source_ingest_refresh_runtime bounded action sets FINMIND_API_TOKEN from the supplied secret; restore returns the recorded value",
-  "p1_dataset": "dataset is tw_broker_top everywhere (adapter and active-universe rule); guard admits only that",
-  "p1_enable": "prepare_bounded_source_refresh_dataset registers connector/fetch/schedule and desired state for the resolved active symbols",
-  "missing_secret": "entrypoint writes status=skipped reason=missing_credential before any container mutation"
- },
- "daily_refresh_fetch": {
-  "change": "provider_adapters._finmind_broker: with no payload, fetches per resolved active symbol via FinMindLiveFetcher (existing token/egress/quota), bounded to 200 symbols; payload path unchanged",
-  "fail_closed": "missing credential -> FinMindCredentialError before any network; upstream/HTTP/malformed/empty -> SourceEvidenceError; no compatibility fallback",
-  "tests": "test_finmind_taiwan_connectors.py 31 passed (5 new); test_dev_tw_market_refresh.py 63 passed; test_deploy_nonprod_vm.py finmind/bounded/collector 23 passed"
- },
- "review_round_2_fixes": {
-  "p1_symbol_normalization": "_finmind_stock_code strips .TW/.TWSE/.TWO and dedupes before fetch_broker_report (data_id is the bare code); test with resolver-shaped input",
-  "p1_publication_timing": "dev-tw-market-refresh.yml adds crons 10:30 and 12:30 UTC (18:30/20:30 Taipei, after the 18:00 Taipei broker publication); late crons skip TWSE/TAIFEX steps so TWSE timing is unchanged; lease release accepts skipped",
-  "p1_max_records": "prepare step sets fetch.max_records = max_rank*2 * symbol count so no side is truncated; generic guards untouched",
-  "p1_all_batches": "prepare step unions symbols from every fanout batch and verifies enqueued coverage when job_parameters expose symbols",
-  "p2_coverage": "per-symbol coverage: records carry refresh_coverage {status, requested, covered, missing}; any missing symbol is explicitly partial; all-missing raises",
-  "tests": "finmind/broker/collector/bounded 58 passed; test_dev_tw_market_refresh.py 63 passed; bash -n and git diff --check ok"
- },
- "review_round_3_fixes": {
-  "p1_max_records_guard": "prepare step bounds the FinMind rule to 25 symbols per job (25*40=1000 = provider_owned_adapter cap), fetch.max_records=1000, every fanout batch is scheduled via job_parameters.symbols; generic guards untouched; schedule coverage check is now strict and reads the 'enqueued' response key",
-  "p2_coverage_acceptance": "verify_bounded_source_refresh_readback unions refresh_coverage across all current-run FinMind records against resolved active symbols and rejects status=partial; check_taiwan_refresh_preflight returns proceed/coverage_incomplete (listing missing symbols) instead of noop/already_fresh unless the current session's batches cover every symbol",
-  "tests": "behavioral: real PREPARE_DATASET_PY for 25/26/51 symbols through the real config validator; real preflight with partial vs split-batch coverage; real verifier partial rejected / union accepted"
- }
+  "review_fixes": {
+    "p1_token_normal_deploy": "token assignment now in the normal-deploy prefix branch (was refresh-only twice)",
+    "p1_bounded_compose_env": "manage_source_ingest_refresh_runtime bounded action sets FINMIND_API_TOKEN from the supplied secret; restore returns the recorded value",
+    "p1_dataset": "dataset is tw_broker_top everywhere (adapter and active-universe rule); guard admits only that",
+    "p1_enable": "prepare_bounded_source_refresh_dataset registers connector/fetch/schedule and desired state for the resolved active symbols",
+    "missing_secret": "entrypoint writes status=skipped reason=missing_credential before any container mutation"
+  },
+  "daily_refresh_fetch": {
+    "change": "provider_adapters._finmind_broker: with no payload, fetches per resolved active symbol via FinMindLiveFetcher (existing token/egress/quota), bounded to 200 symbols; payload path unchanged",
+    "fail_closed": "missing credential -> FinMindCredentialError before any network; upstream/HTTP/malformed/empty -> SourceEvidenceError; no compatibility fallback",
+    "tests": "test_finmind_taiwan_connectors.py 31 passed (5 new); test_dev_tw_market_refresh.py 63 passed; test_deploy_nonprod_vm.py finmind/bounded/collector 23 passed"
+  },
+  "review_round_2_fixes": {
+    "p1_symbol_normalization": "_finmind_stock_code strips .TW/.TWSE/.TWO and dedupes before fetch_broker_report (data_id is the bare code); test with resolver-shaped input",
+    "p1_publication_timing": "dev-tw-market-refresh.yml adds crons 10:30 and 12:30 UTC (18:30/20:30 Taipei, after the 18:00 Taipei broker publication); late crons skip TWSE/TAIFEX steps so TWSE timing is unchanged; lease release accepts skipped",
+    "p1_max_records": "prepare step sets fetch.max_records = max_rank*2 * symbol count so no side is truncated; generic guards untouched",
+    "p1_all_batches": "prepare step unions symbols from every fanout batch and verifies enqueued coverage when job_parameters expose symbols",
+    "p2_coverage": "per-symbol coverage: records carry refresh_coverage {status, requested, covered, missing}; any missing symbol is explicitly partial; all-missing raises",
+    "tests": "finmind/broker/collector/bounded 58 passed; test_dev_tw_market_refresh.py 63 passed; bash -n and git diff --check ok"
+  },
+  "review_round_3_fixes": {
+    "p1_max_records_guard": "prepare step bounds the FinMind rule to 25 symbols per job (25*40=1000 = provider_owned_adapter cap), fetch.max_records=1000, every fanout batch is scheduled via job_parameters.symbols; generic guards untouched; schedule coverage check is now strict and reads the 'enqueued' response key",
+    "p2_coverage_acceptance": "verify_bounded_source_refresh_readback unions refresh_coverage across all current-run FinMind records against resolved active symbols and rejects status=partial; check_taiwan_refresh_preflight returns proceed/coverage_incomplete (listing missing symbols) instead of noop/already_fresh unless the current session's batches cover every symbol",
+    "tests": "behavioral: real PREPARE_DATASET_PY for 25/26/51 symbols through the real config validator; real preflight with partial vs split-batch coverage; real verifier partial rejected / union accepted"
+  },
+  "review_round_4_fixes": {
+    "p1_auth_readback": "fetch_finmind_source_records mints a short-lived HS256 reader JWT inside the source-ingest container from its own runtime verifier env (never on host argv/logs) and reads /api/source-ingest/source-records through the strict _source_read_tenant boundary; preflight/verifier consume the file via FINMIND_SOURCE_RECORDS_PATH; verifier fails closed, preflight proceeds with reason=coverage_readback_unavailable. Test runs the real fetcher against the production guard (401 unauthenticated, 200 minted).",
+    "p1_drain_all_batches": "bounded controller concurrency=min(4,batches) and ticks=ceil(batches/concurrency) (<=24, else error) so 26/51/101-symbol universes drain every batch; sizing tested for 25/26/51/100/101/2400 symbols; completion still requires union refresh_coverage readback.",
+    "tests": "scripts/test_deploy_nonprod_vm.py 113 passed 2 skipped; test_dev_tw_market_refresh.py + test_finmind_taiwan_connectors.py 96 passed"
+  }
 }
