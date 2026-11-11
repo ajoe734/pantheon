@@ -2005,7 +2005,7 @@ def test_two_controller_ticks_preserve_active_persona_only_schedule(tmp_path: Pa
 
     req_spec = [
         {
-            "dataset": "tw_price_daily",
+            "dataset": "tw_day_trading",
             "market": "TW",
             "cadence": "daily",
             "source_class": "live_pull",
@@ -2169,7 +2169,7 @@ def test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchange
         "mandate": "Testing",
         "required_data_sources": [
             {
-                "dataset": "tw_price_daily",
+                "dataset": "tw_day_trading",
                 "market": "TW",
                 "cadence": "daily",
                 "source_class": "live_pull",
