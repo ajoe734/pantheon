@@ -5,8 +5,8 @@
     "1_backfill_resumable": "run_backfill walks weekdays over 2y, fetches bulk storage-object manifest per date, state file skips completed dates (test_resume_does_not_refetch_completed_dates)",
     "2_governed_datasets": "tw_broker_top + tw_broker_branch_detail partitions with event_time/available_time, license_scope=vendor_research, redistribution_allowed=false",
     "3_missing_credential": "status=credential_unavailable, zero fetches (test_no_token_records_reason_and_fetches_nothing)",
-    "4_no_tw_price_daily": "FinMind TaiwanStockPrice emits no normalized_row, targets finmind_tw_price_reference; catalog no longer routes to normalized/tw_price_daily",
-    "5_tests": "252 passed, 2 skipped across focused source_ingestion suites; fixtures only, no live API, token never emitted"
+    "4_no_tw_price_daily": "FinMind TaiwanStockPrice emits no normalized_row, targets finmind_tw_price_reference; catalog no longer routes to normalized/tw_price_daily; persona reconciler tests aligned: tw_price_daily with FinMind candidates always routes to tw-twse-tpex-official-market, sole FinMind candidate is unsupported (test_keyed_finmind_preference_never_takes_tw_price_daily)",
+    "5_tests": "source_ingestion full suite: 1158 passed, 4 skipped, 2 failed; both failures are in test_controller_worker.py (out-of-scope file) using obsolete tw_price_daily + tw-finmind-datasets candidate: test_two_controller_ticks_preserve_active_persona_only_schedule, test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchanged. All in-scope suites (persona_source_reconciler, finmind_*, market_data_foundation) pass; fixtures only, no live API, token never emitted"
   },
   "throttle": "default 1.5s/request (<=2400/h) under SponsorYear 6000/h",
   "live_run": "not performed (no token in worker env); no deploy files touched"
