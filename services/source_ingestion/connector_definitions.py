@@ -440,6 +440,13 @@ def _collector_definition(
 # Canonical Deployed Connector Definitions Inventory (SD §3.1 & SA §7)
 # ==============================================================================
 
+# Governed TWSE/TPEx OpenAPI fundamentals (feature catalogue datasets).
+GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS: tuple[str, ...] = (
+    "tw_monthly_revenue",
+    "tw_financial_statement",
+    "tw_valuation_bwibbu",
+)
+
 _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
     ConnectorDefinition(
         definition_id="tw-twse-tpex-official-market",
@@ -448,14 +455,16 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         provider="TWSE/TPEx",
         source_kinds=("data_source",),
         source_types=("market",),
-        source_classes=("market_daily",),
-        datasets=("tw_price_daily",),
+        source_classes=("market_daily", "financial_fundamental"),
+        datasets=("tw_price_daily", *GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS),
         auth_modes=("none",),
         fetch_modes=("provider_owned_adapter",),
         cursor_modes=("time_watermark",),
         config_schema={
             "type": "object",
             "properties": {
+                "dataset": {"type": "string"},
+                "datasets": {"type": "array", "items": {"type": "string"}},
                 "symbols": {"type": "array", "items": {"type": "string"}},
                 "market": {"type": "string"},
                 "venues": {"type": "array", "items": {"type": "string"}},
@@ -470,7 +479,12 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         test_manifest_ref="evidence://connector-definition/tw-twse-tpex-official-market",
         metadata={
             "feature_targets": ("returns",),
-            "storage_targets": ("normalized/tw_price_daily", "features/returns"),
+            "storage_targets": (
+                "normalized/tw_price_daily",
+                "features/returns",
+                *(f"normalized/{ds}" for ds in GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS),
+            ),
+            "normalized_datasets": ("tw_price_daily", *GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS),
         },
     ),
     ConnectorDefinition(

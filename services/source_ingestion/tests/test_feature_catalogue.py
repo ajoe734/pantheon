@@ -313,3 +313,88 @@ def test_provider_entrypoint_fetches_and_joins_income_and_balance_statements(
     row = records[0].metadata["normalized_row"]
     assert row["eps"] == 12.5 and row["operating_margin"] == 0.4 and row["roe"] is not None
     assert "available_time" in row and "ingest_time" in row
+
+
+@pytest.mark.parametrize(
+    "dataset", ["tw_monthly_revenue", "tw_financial_statement", "tw_valuation_bwibbu"]
+)
+def test_governed_fundamentals_are_creatable_through_management_and_stored(
+    tmp_path: Path, dataset: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Management create -> provider fetch -> storage for each new TWSE/TPEx fundamental."""
+    from services.source_ingestion.connector_definitions import get_connector_definition
+    from services.source_ingestion.connectors.base import SourceConnector, SourceType
+    from services.source_ingestion.connectors.taiwan_official import TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS
+    from services.source_ingestion.connectors import taiwan_official as tw
+    from services.source_ingestion.financial_source_catalog import financial_data_source_catalog_payload
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+    from services.source_ingestion.source_management_commands import SourceCommandEngine
+    from services.source_ingestion.source_management_models import CommandType, ReceiptStatus, SourceManagementCommand
+    from services.source_ingestion.source_management_store import JsonlSourceManagementStore
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+
+    definition_id = "tw-twse-tpex-official-market"
+    assert dataset in get_connector_definition(definition_id).datasets
+    engine = SourceCommandEngine(
+        store=JsonlSourceManagementStore(tmp_path),
+        connector_store=JsonlConfiguredConnectorStore(tmp_path / "connector_config.jsonl"),
+        schedule_config_store=JsonlConnectorScheduleStore(tmp_path / "connector_schedule.jsonl"),
+        deployment_sha="test-sha",
+    )
+    receipt = engine.execute_command(
+        SourceManagementCommand(
+            command_id=f"cmd-{dataset}",
+            idempotency_key=f"idem-{dataset}",
+            command_type=CommandType.CREATE,
+            source_instance_id=f"ds-{dataset}",
+            expected_revision=None,
+            actor={"actor_type": "operator", "actor_id": "operator-alice", "roles": ["operator"]},
+            reason="register governed fundamentals",
+            parameters={
+                "definition_id": definition_id,
+                "connector_id": f"conn-{dataset}",
+                "datasets": [{"dataset_id": dataset, "dataset_class": "financial_fundamental"}],
+                "source_class": "financial_fundamental",
+                "connector_config": {"public": {"dataset": dataset}},
+            },
+        )
+    )
+    assert receipt.status == ReceiptStatus.SUCCEEDED
+
+    catalog_ids = {
+        d["dataset_id"]
+        for entry in financial_data_source_catalog_payload()["entries"]
+        if entry["connector_id"] == definition_id
+        for d in entry["datasets"]
+    }
+    assert dataset in catalog_ids
+
+    payloads = {
+        "tw_monthly_revenue": [{"資料年月": "11509", "公司代號": "2330", "營業收入-當月營收": "100",
+                                "營業收入-去年同月增減(%)": "12.5"}],
+        "tw_financial_statement": {"income": [{"年度": "115", "季別": "2", "公司代號": "2330",
+                                                "營業收入": "100", "基本每股盈餘（元）": "5"}]},
+        "tw_valuation_bwibbu": [{"Code": "2330", "Date": "1151110", "PEratio": "20", "PBratio": "5",
+                                  "DividendYield": "2"}],
+    }
+    connector = SourceConnector(
+        connector_id=f"conn-{dataset}", source_type=SourceType.MARKET, provider="TWSE/TPEx",
+        license_scope="official_reference", metadata={"normalized_target": dataset},
+    )
+    records = execute_provider_owned_adapter(
+        connector=connector,
+        fetch={
+            "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
+            "request": {"dataset": dataset, "venues": ["TWSE"], "payload": payloads[dataset]},
+            "max_records": 50,
+        },
+        trace_id="t",
+    )
+    assert records and all(r.metadata["dataset"] == dataset for r in records)
+    manifest = MarketDataStorageWriter(tmp_path / "store").write_run(
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id="run-1")),
+        connector=connector,
+    )
+    assert {r["dataset"] for r in manifest.to_dict()["normalized_refs"]} == {dataset}
+    depth = measure_stored_history_depth(tmp_path / "store")
+    assert depth["datasets"][dataset]["row_count"] == len(records)
