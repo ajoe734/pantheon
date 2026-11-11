@@ -291,6 +291,7 @@ def _build_validators(get_read_store):
         CommandType.REJECT_MUTATION: lambda p, i: _mutation_family(
             p, i, command="RejectMutation", required={"decision_id"}, allowed_action_key="canRejectMutation"
         ),
+        CommandType.CANCEL_MUTATION: lambda p, i: _require_fields(p, {"decision_id", "note"}, "CancelMutation"),
         CommandType.REVIEW_MUTATION: lambda p, i: _mutation_family(
             p,
             i,
@@ -826,6 +827,35 @@ def test_submit_command_accepts_reject_mutation_published_payload() -> None:
         payload = response.json()
         assert payload["data"]["command"] == "RejectMutation"
         assert payload["status"] == "accepted"
+
+
+def test_submit_command_accepts_cancel_mutation_published_payload() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        h = _Harness(td)
+        response = h.client.post(
+            "/bff/v1/commands",
+            headers=_command_headers(OPERATOR_TOKEN, "idmp-cancel-mutation-001"),
+            json={
+                "command_type": "CancelMutation",
+                "decision_id": "evo-dec-88f3a2c1",
+                "note": "Stale infrastructure alert proposal",
+            },
+        )
+        assert response.status_code == 202, response.text
+        payload = response.json()
+        assert payload["data"]["command"] == "CancelMutation"
+        assert payload["status"] == "accepted"
+
+
+def test_submit_command_rejects_cancel_mutation_without_note() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        h = _Harness(td)
+        response = h.client.post(
+            "/bff/v1/commands",
+            headers=_command_headers(OPERATOR_TOKEN, "idmp-cancel-mutation-002"),
+            json={"command_type": "CancelMutation", "decision_id": "evo-dec-88f3a2c1"},
+        )
+        assert response.status_code in (400, 422), response.text
 
 
 def test_submit_command_accepts_review_mutation_published_payload() -> None:
