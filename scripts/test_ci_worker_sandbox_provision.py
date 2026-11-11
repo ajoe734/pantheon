@@ -27,7 +27,11 @@ class ProvisionTests(unittest.TestCase):
             _exe(d / "apt-get", f'''
 echo "$*" >> {log}
 fb=0; case "$*" in *Dir::Etc::sourcelist*) fb=1;; esac
-for a in "$@"; do [ "$a" = update ] && cmd=update; [ "$a" = install ] && cmd=install; done
+for a in "$@"; do
+  [ "$a" = update ] && cmd=update
+  [ "$a" = install ] && cmd=install
+  case "$a" in Dir::Etc::sourcelist=*) cat "${{a#*=}}" >> {log};; esac
+done
 if [ $fb = 1 ]; then
   if [ $cmd = update ]; then echo "fb-update-diag" >&2; exit {fb_update}; fi
   echo "fb-install-diag" >&2; exit {fb_install}
@@ -38,9 +42,6 @@ exit {primary_install}
             _exe(d / "dpkg-query", "echo bubblewrap 1.0\n")
             _exe(d / "parser", f'echo "$*" >> {log}\n')
             _exe(d / "bwrap", f'[ "$1" = --version ] && {{ echo bwrap 0; exit 0; }}\nexit {probe}\n')
-            _exe(d / "getent", "exit 2\n")
-            (d / "hosts").write_text("127.0.0.1 localhost\n")
-            (d / "resolv.conf").write_text("nameserver 10.0.0.1\n")
             (d / "profile").write_text("profile")
             (d / "os-release").write_text(f"ID={os_id}\nVERSION_CODENAME=noble\n")
             env = dict(os.environ,
@@ -49,10 +50,9 @@ exit {primary_install}
                        SANDBOX_APPARMOR_PARSER=str(d / "parser"),
                        SANDBOX_BWRAP=str(d / "bwrap"), SANDBOX_PROFILE=str(d / "profile"),
                        SANDBOX_OS_RELEASE=str(d / "os-release"),
-                       SANDBOX_GETENT=str(d / "getent"), SANDBOX_HOSTS=str(d / "hosts"),
-                       SANDBOX_RESOLV=str(d / "resolv.conf"),
                        SANDBOX_UPDATE_TIMEOUT="5", SANDBOX_INSTALL_TIMEOUT="5")
-            r = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True)
+            r = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True,
+                               timeout=20)
             return r, log.read_text() if log.exists() else ""
 
     def test_success_uses_primary_only(self):
@@ -62,31 +62,36 @@ exit {primary_install}
         self.assertIn("capability probe passed", r.stdout)
         self.assertIn("--replace", log)
 
-    def test_temporary_primary_failure_falls_back_to_official_signed_source(self):
+    def test_temporary_primary_failure_uses_registered_mirror_with_ubuntu_keyring(self):
         r, log = self.run_script(primary_update=100)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("Temporary failure resolving", r.stderr)  # original diagnostics kept
         self.assertIn("Dir::Etc::sourcelist", log)
+        self.assertIn("Dir::Etc::sourceparts=/dev/null", log)
+        for suite in ("noble", "noble-updates", "noble-security"):
+            self.assertIn(
+                "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] "
+                f"https://mirrors.mit.edu/ubuntu {suite} main universe", log)
         self.assertNotIn("allow-unauthenticated", log)
         self.assertNotIn("trusted=yes", log)
 
     def test_persistent_failure_is_metadata_exit_10(self):
-        r, _ = self.run_script(primary_update=100, fb_update=100)
+        r, log = self.run_script(primary_update=100, fb_update=100)
         self.assertEqual(r.returncode, 10)
         self.assertIn("Temporary failure resolving", r.stderr)
+        self.assertIn("fb-update-diag", r.stderr)
+        self.assertNotIn(" install ", log)
+        self.assertNotIn("--replace", log)
 
-    def test_persistent_failure_emits_counts_only_dns_diagnostics(self):
-        r, _ = self.run_script(primary_update=100, fb_update=100)
-        self.assertEqual(r.returncode, 10)
-        self.assertIn("diag getent-dns host=archive.ubuntu.com exit=2 answer_lines=0", r.stdout)
-        self.assertIn("diag getent-dns-tcp host=github.com", r.stdout)
-        self.assertIn("diag hosts-file-entries host=security.ubuntu.com count=0", r.stdout)
-        self.assertIn("diag resolv-conf readable=yes nameserver_count=1", r.stdout)
-        self.assertNotIn("10.0.0.1", r.stdout + r.stderr)
-
-    def test_success_emits_no_dns_diagnostics(self):
-        r, _ = self.run_script()
-        self.assertNotIn("diag getent", r.stdout)
+    def test_all_metadata_errors_are_fatal_and_attempts_are_bounded(self):
+        r, log = self.run_script(primary_update=100)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = [line for line in log.splitlines() if line.startswith("-o ")]
+        self.assertEqual(len(calls), 3)  # primary update, mirror update + install
+        for call in calls:
+            self.assertIn("APT::Update::Error-Mode=any", call)
+            self.assertIn("Acquire::Retries=1", call)
+            self.assertIn("Acquire::https::Timeout=15", call)
 
     def test_install_failure_is_exit_11(self):
         r, _ = self.run_script(primary_install=100, fb_install=100)

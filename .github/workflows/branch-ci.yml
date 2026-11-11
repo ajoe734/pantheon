@@ -282,7 +282,7 @@ jobs:
 
       - name: Verify workflow contract
         run: |
-          python3 -m unittest scripts.test_branch_ci_gate_selection
+          python3 -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision
 
       # Unconditional (no path filter): source_ingestion reds came from changes
       # in other services. Fresh data dir avoids incompatible shared state; the

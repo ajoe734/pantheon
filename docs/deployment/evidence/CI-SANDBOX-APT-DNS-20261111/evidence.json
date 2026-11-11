@@ -2,7 +2,7 @@
   "task_id": "CI-SANDBOX-APT-DNS-20261111",
   "owner": "Codex2",
   "reviewer": "Claude",
-  "status": "hosted_smoke_failed_dns_persists",
+  "status": "registered_mirror_candidate_awaiting_runner_proof",
   "failed_attempts": [
     {
       "run": "43032317523",
@@ -25,8 +25,9 @@
   ],
   "change": {
     "helper": "scripts/ci/provision_worker_sandbox.sh",
-    "bounds": "update 45s, install 60s per attempt, Acquire::Retries=1, 15s http timeouts; worst case ~210s inside the unchanged 5-minute step",
-    "fallback": "official archive.ubuntu.com / security.ubuntu.com for the runner's Ubuntu codename, signed-by ubuntu-archive-keyring; refused on non-Ubuntu",
+    "bounds": "update 45s, install 60s per attempt, Acquire::Retries=1, 15s HTTP/HTTPS timeouts and 5s kill grace; at most 230s inside the unchanged 5-minute step",
+    "fallback": "one HTTPS fallback to Launchpad-registered MIT SIPB mirrors.mit.edu/ubuntu for all three Ubuntu suites, signed-by ubuntu-archive-keyring; refused on non-Ubuntu. APT::Update::Error-Mode=any prevents partial metadata failures being accepted with stale lists.",
+    "diagnostics": "Temporary DNS discriminator code removed from candidate. Existing 8f434dced diagnostic run is separate historical evidence, not a requirement to pass.",
     "exit_codes": {
       "10": "metadata",
       "11": "install",
@@ -43,7 +44,7 @@
   },
   "validation": {
     "local": "python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection; bash -n helper",
-    "local_result": "24 tests OK on 8f434dced using checkout-scoped .venv-pantheon/bin/python3; bash -n helper OK; git diff --check OK",
+    "local_result": "23 tests OK for candidate using checkout-scoped .venv-pantheon/bin/python3; bash -n helper OK; git diff --check OK. Previous 8f434dced diagnostic head had 24 tests before replacing its two diagnostic-only cases with one strict metadata/attempt-bound case.",
     "local_note": "fixture tests only; development-host DNS is not proof of GitHub runner DNS",
     "hosted": "exact head 3e3982afb Branch CI run 43043688209: Python packaging provision success; Service suites (postgres/runtime/misc/heavy) success; Runtime mirror guard and Commit trailers success; Smoke acceptance FAILURE in 'Provision real worker sandbox' - primary azure mirror apt update exit 124, fallback archive/security.ubuntu.com exit 124 ('Temporary failure resolving security.ubuntu.com'), helper fail-closed exit 10 (primary=10 fallback=10). Runner DNS to Ubuntu hosts was down for the whole ~90s window; the bounded fallback did not help in that case. No hosted pass claimed."
   },
@@ -63,7 +64,7 @@
       "mirror": "https://mirrors.mit.edu/ubuntu/",
       "registration": "https://launchpad.net/ubuntu/+archivemirrors (MIT SIPB)",
       "development_host_check": "HTTPS curl and gpgv with installed ubuntu-archive-keyring succeeded for noble, noble-updates, noble-security; signed Origin Ubuntu and Codename noble. Updates Date 2026-11-11 05:14:56 UTC; security Date 2026-11-11 07:35:28 UTC.",
-      "limitation": "Development-host evidence only. Mirror transport not implemented or proven on GitHub runner. No extra acceptance gate or public resolver override introduced."
+      "limitation": "Development-host evidence only. Mirror transport is a candidate, not yet proven on GitHub runner. No extra acceptance gate or public resolver override introduced."
     }
   }
 }

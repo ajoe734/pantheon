@@ -24,7 +24,9 @@ STEP_NAMES = (
 )
 
 WORKFLOW_CONTRACT_STEP_NAME = "Verify workflow contract"
-EXPECTED_CONTRACT_TEST_COMMAND = "python3 -m unittest scripts.test_branch_ci_gate_selection"
+EXPECTED_CONTRACT_TEST_COMMAND = (
+    "python3 -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision"
+)
 TENANT_FALLBACK_AUDIT_STEP_NAME = "BFF tenant fallback audit gate"
 EXPECTED_TENANT_FALLBACK_AUDIT_COMMAND = (
     "python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py"
