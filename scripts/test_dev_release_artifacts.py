@@ -507,7 +507,7 @@ def test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite(tm
 STACK_SIZE = 57
 SEALED = artifacts.SERVICES
 SCHEDULER = artifacts.CONTROL_SERVICE
-OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 2)) + ("source-ingest", SCHEDULER)
+OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 3)) + ("source-ingest", SCHEDULER, "paper-signal-producer")
 # Healthy steady scheduler posture; EXCLUSIVE is absent (not empty), FORCE is empty.
 STEADY_CONTROL = {"SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only", "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
                   "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": "",
@@ -522,8 +522,15 @@ API = artifacts.API_SERVICE
 STEADY_API = {"PANTHEON_EXTERNAL_EGRESS": "allowlist", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": ""}
 BOUNDED_API = {"PANTHEON_EXTERNAL_EGRESS": "allowlist",
                "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "openapi.twse.com.tw,www.tpex.org.tw"}
-STEADY = {SCHEDULER: STEADY_CONTROL, API: STEADY_API}
-CALLER = {SCHEDULER: BOUNDED_CALLER, API: BOUNDED_API}
+# Paper producer capital reader reference: the mounted credential file path is recorded,
+# never its value; a restoring caller carries an empty file reference and expression off.
+PAPER = artifacts.PAPER_SERVICE
+STEADY_PAPER = {"PANTHEON_PAPER_EXPRESSION_LAYER": "on", "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
+                "DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": "/run/pantheon-principals/DEPLOYMENT_CAPITAL_SERVICE_TOKEN"}
+EMPTY_PAPER_CALLER = {"PANTHEON_PAPER_EXPRESSION_LAYER": "off", "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
+                      "DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": ""}
+STEADY = {SCHEDULER: STEADY_CONTROL, API: STEADY_API, PAPER: STEADY_PAPER}
+CALLER = {SCHEDULER: BOUNDED_CALLER, API: BOUNDED_API, PAPER: EMPTY_PAPER_CALLER}
 ONE_SHOT = "minio-init"
 TENANT = "tenant-recorded-at-baseline"
 
@@ -606,7 +613,7 @@ class StackDocker:
                                    "health_test": row["health_test"], "health": row["health"]})
             if args[2] == artifacts.STACK_ENV_FORMAT:
                 return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row["env"].items())
-            if args[2] in (artifacts.CONTROL_ENV_FORMAT, artifacts.API_ENV_FORMAT):
+            if args[2] in (artifacts.CONTROL_ENV_FORMAT, artifacts.API_ENV_FORMAT, artifacts.PAPER_ENV_FORMAT):
                 keys = artifacts.CONTROL_POSTURE[service][0]
                 return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row.get("control_env", {}).items() if k in keys)
             if args[2] == artifacts.RESTART_FORMAT:
@@ -1063,16 +1070,30 @@ def test_restore_preserves_source_scheduler_and_api_posture_against_a_bounded_ca
     assert recorded["env"]["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == ""
     assert set(stack["services"][API]["control"]["env"]) == set(artifacts.API_ENV_KEYS)
     docker.mutate_to_candidate()
-    for service in (SCHEDULER, API):
+    for service in (SCHEDULER, API, PAPER):
         docker.containers[service]["control_env"] = dict(CALLER[service])
         docker.containers[service].update(restart="no")
     docker.containers[SCHEDULER].update(status="exited", exit_code=1, health=None)
     result, _ = restore_stack(stack_case)
-    for service in (SCHEDULER, API):
+    for service in (SCHEDULER, API, PAPER):
         row = docker.containers[service]
         assert row["control_env"] == baseline[service]["control_env"] == STEADY[service]
         assert row["restart"] == "unless-stopped" and row["status"] == "running"
         assert service in result["recreated_services"]
+
+
+def test_paper_reader_reference_is_recorded_without_any_credential(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    recorded = stack["services"][PAPER]["control"]["env"]
+    assert recorded == STEADY_PAPER and set(recorded) == set(artifacts.PAPER_ENV_KEYS)
+    assert "DEPLOYMENT_CAPITAL_SERVICE_TOKEN" not in recorded
+    assert "DEPLOYMENT_CAPITAL_SERVICE_TOKEN=" not in json.dumps(stack)
+
+
+def test_paper_producer_absent_reference_stays_absent(stack_case):
+    stack = json.loads(json.dumps(stack_case[4]))
+    stack["services"][PAPER]["control"]["env"]["DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE"] = None
+    assert artifacts.validate_stack(stack) is stack
 
 
 def test_exited_scheduler_on_recorded_image_with_bounded_posture_is_recreated_not_started(stack_case):
@@ -1089,7 +1110,7 @@ def test_matching_scheduler_posture_is_left_alone(stack_case):
     assert SCHEDULER not in result["recreated_services"] and API not in result["recreated_services"]
 
 
-@pytest.mark.parametrize("service", [SCHEDULER, API])
+@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER])
 def test_readback_fails_closed_on_source_posture_drift(stack_case, service):
     _, docker, _, _, stack, _, _ = stack_case
     docker.containers[service]["control_env"] = dict(CALLER[service])
@@ -1099,7 +1120,7 @@ def test_readback_fails_closed_on_source_posture_drift(stack_case, service):
     assert service in caught.value.services
 
 
-@pytest.mark.parametrize("service", [SCHEDULER, API])
+@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER])
 def test_running_source_service_without_control_posture_is_invalid(stack_case, service):
     # No legacy shim: a capture lacking the required posture cannot prove restoration.
     stack = json.loads(json.dumps(stack_case[4]))
@@ -1125,7 +1146,7 @@ def test_real_compose_render_ignores_a_bounded_caller_for_every_recorded_key(sta
     if run.returncode:
         pytest.skip("docker compose cannot render the repository file in this environment")
     rendered = json.loads(run.stdout)["services"]
-    for service in (SCHEDULER, API):
+    for service in (SCHEDULER, API, PAPER):
         recorded = stack["services"][service]["control"]
         env = rendered[service]["environment"]
         for key, value in recorded["env"].items():
