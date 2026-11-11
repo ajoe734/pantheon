@@ -333,7 +333,53 @@ def _round6(val: float) -> float:
     return 0.0 if rounded == 0.0 else rounded
 
 
+def _fill_recognized_cost(metadata: Any, *, kind: Any = None) -> Optional[float]:
+    """Return the owner-recorded cost (fee + tax) of one fill, or None if unknown.
+
+    A stock-future fill must carry finite non-negative ``fee`` and ``tax``;
+    anything else is explicitly unknown, never an invented 0. A cash-share
+    fill predating the futures cost schedule carries neither key and is a
+    recorded zero-cost fill; a key that is present must still be valid.
+    """
+    meta = metadata if isinstance(metadata, dict) else {}
+    parts: list[float] = []
+    for key in ("fee", "tax"):
+        if key not in meta or meta[key] is None:
+            if kind == "stock_future":
+                return None
+            continue
+        value = _finite_number(meta[key])
+        if value is None or value < 0.0:
+            return None
+        parts.append(value)
+    return float(sum(parts))
+
+
 def _fold_symbol_cost(
+    entry: Optional[dict[str, Any]],
+    fill_qty: float,
+    fill_price: float,
+    multiplier: float = 1.0,
+    cost: Optional[float] = 0.0,
+) -> dict[str, Any]:
+    """Fold one fill and its recognized cost into the per-instrument entry.
+
+    Cumulative ``costs`` are tracked beside the gross ``realized_pnl`` and
+    ``costs_known`` turns False permanently once any fill's cost is unknown.
+    """
+    folded = _fold_symbol_cost_gross(entry, fill_qty, fill_price, multiplier)
+    prior_known = (entry or {}).get("costs_known", True) is not False
+    prior_costs = float((entry or {}).get("costs") or 0.0)
+    if prior_known and cost is not None and math.isfinite(float(cost)):
+        folded["costs"] = prior_costs + float(cost)
+        folded["costs_known"] = True
+    else:
+        folded["costs"] = prior_costs
+        folded["costs_known"] = False
+    return folded
+
+
+def _fold_symbol_cost_gross(
     entry: Optional[dict[str, Any]],
     fill_qty: float,
     fill_price: float,
@@ -542,7 +588,16 @@ def _rebuild_positions(
         if unrounded_avg is not None and isinstance(sym_cost, dict):
             unrounded_realized = float(sym_cost.get("realized_pnl") or 0.0)
             row["average_price"] = _round6(unrounded_avg)
-            row["realized_pnl"] = _round6(unrounded_realized)
+            row["gross_realized_pnl"] = _round6(unrounded_realized)
+            costs_known = sym_cost.get("costs_known", True) is not False
+            if costs_known:
+                unrounded_costs = float(sym_cost.get("costs") or 0.0)
+                row["costs"] = _round6(unrounded_costs)
+                # Recognized costs are cash expenses already paid: they are
+                # part of net realized PnL, never of unrealized or margin.
+                row["realized_pnl"] = _round6(unrounded_realized - unrounded_costs)
+            else:
+                row["costs_status"] = "unknown"
         mark = marks.get(position_key)
         if isinstance(mark, dict) and str(mark.get("binding_id") or "") == binding_id:
             failed_symbols = failure.get("symbols") if isinstance(failure, dict) else None
@@ -620,7 +675,7 @@ def _rebuild_positions(
             row["market_value"] = round(
                 float(quantity) * multiplier * float(mark["price"]), 6
             )
-            if unrounded_avg is not None:
+            if unrounded_avg is not None and row.get("costs_status") != "unknown":
                 row["unrealized_pnl"] = _round6(
                     float(quantity) * multiplier * (float(mark["price"]) - unrounded_avg)
                 )
@@ -1154,6 +1209,9 @@ class RuntimeSummaryProjectionStore:
                     metadata, symbol
                 )
                 fill_multiplier = float(fill_descriptor.get("multiplier") or 1.0)
+                fill_cost = _fill_recognized_cost(
+                    metadata, kind=fill_descriptor.get("kind")
+                )
                 raw_lfc = metadata.get("ledger_fill_count")
                 usable_lfc = (
                     isinstance(raw_lfc, int)
@@ -1289,6 +1347,7 @@ class RuntimeSummaryProjectionStore:
                                 float(fill_qty),
                                 float(fill_price),
                                 fill_multiplier,
+                                fill_cost,
                             )
                             applied_lfc += 1
                             while str(applied_lfc + 1) in pending_fills:
@@ -1299,6 +1358,7 @@ class RuntimeSummaryProjectionStore:
                                     float(next_fill["quantity"]),
                                     float(next_fill["price"]),
                                     float(next_fill.get("multiplier") or 1.0),
+                                    next_fill.get("cost"),
                                 )
                                 applied_lfc += 1
                             current["_cost_by_symbol"] = cost_by_symbol
@@ -1316,6 +1376,7 @@ class RuntimeSummaryProjectionStore:
                                     "quantity": float(fill_qty),
                                     "price": float(fill_price),
                                     "multiplier": fill_multiplier,
+                                    "cost": fill_cost,
                                 }
                                 current["_cost_pending_fills"] = pending_fills
                                 current["_cost_by_symbol"] = cost_by_symbol
@@ -1383,11 +1444,21 @@ class RuntimeSummaryProjectionStore:
                             ):
                                 cost_by_symbol = dict(cost_by_symbol)
                                 prior = cost_by_symbol.get(settled_key) or {}
+                                settle_cost = _fill_recognized_cost(
+                                    metadata, kind="stock_future"
+                                )
+                                settle_known = (
+                                    prior.get("costs_known", True) is not False
+                                    and settle_cost is not None
+                                )
                                 cost_by_symbol[settled_key] = {
                                     "quantity": 0.0,
                                     "average_price": None,
                                     "realized_pnl": float(prior.get("realized_pnl") or 0.0)
                                     + realized_delta,
+                                    "costs": float(prior.get("costs") or 0.0)
+                                    + (settle_cost if settle_known else 0.0),
+                                    "costs_known": settle_known,
                                     "settled_event_ids": [
                                         *(prior.get("settled_event_ids") or []),
                                         *([event_id] if event_id else []),
@@ -2121,6 +2192,9 @@ class RuntimeSummaryProjectionStore:
                             float(qty),
                             float(price),
                             fill_mult,
+                            _fill_recognized_cost(
+                                meta, kind=ev_descriptor.get("kind")
+                            ),
                         )
 
                 if fold_ok:
