@@ -2414,6 +2414,7 @@ def test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar
             mark_provider=provider,
             poll_interval_seconds=3600,
         )
+        service._valuation_now = lambda: now_oct25
         assert service._algo.BindPerformanceBinding(h12_binding_id)
         service._algo._initial_cash = 100000.0
         service._algo._cash = 104800.0
