@@ -17,7 +17,7 @@
     "4": "test_setting_off_records_disabled_and_allocates_nothing",
     "5": "Production ports (discovery_allocator.make_production_ports) are built at main.py import: persona reader GET {DISCOVERY_ALLOCATOR_PERSONA_URL}/api/personas, active-binding reader (persona labels.discovery_allocator), persona_strategy_discovery scorer, BFF paper-capital provisioner (POST /bff/personas/{id}/provisioning/paper-capital); cap 5, paper only. Owner unreachable -> run records owner_unreachable:<service>:<detail>. Tests: test_default_boot_uses_production_ports_not_stubs, test_unreachable_owner_recorded_per_run."
   },
-  "known_limitation": "Needs RESEARCH_PERSONA_SERVICE_TOKEN and RESEARCH_BFF_SERVICE_TOKEN mounted (compose untouched, outside artifact contract); until then each run records owner_unreachable. Active-binding readback relies on the labels.discovery_allocator label that the provisioner writes; the BFF paper-capital endpoint requires an operator role, so the service principal must be granted it by its owner.",
+  "known_limitation": "RESEARCH_BFF_SERVICE_TOKEN is now issued and mounted (operator decision A). RESEARCH_PERSONA_SERVICE_TOKEN is still not issued/mounted and was outside the decision; until it is, runs record owner_unreachable (401/403) for persona reads. Active-binding readback relies on the labels.discovery_allocator label the provisioner writes.",
   "principal_wiring": {
     "variable": "RESEARCH_BFF_SERVICE_TOKEN",
     "subject": "research-orchestrator",
