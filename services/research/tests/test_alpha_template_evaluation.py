@@ -558,3 +558,68 @@ def test_http_endpoint_fails_closed_without_governed_data(monkeypatch):
         listed = client.get("/api/research-orchestrator/alpha-templates/evaluations", params={"status": "evaluated"})
         assert listed.json()["count"] == 0
     reset_store()
+
+
+def _forged_governed_universe(taiwan_universe, provenance):
+    forged = copy.deepcopy(taiwan_universe)
+    for entry in forged.values():
+        entry["source_kind"] = "governed_normalized_file"
+        entry["provenance"] = dict(provenance)
+    return forged
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [{}, {"source_kind": "governed_normalized_file"},
+     {"source_kind": "governed_normalized_file", "path": "/nonexistent/2330.json", "sha256": "0" * 64}],
+)
+def test_run_rejects_forged_governed_file_label(tmp_path, taiwan_universe, provenance):
+    registry_service, research_store = _fresh_run_env(tmp_path)
+    forged = _forged_governed_universe(taiwan_universe, provenance)
+    with pytest.raises(TaiwanEvaluationDataError):
+        run_alpha_template_evaluation(
+            research_store=None, registry_service=registry_service,
+            template_ids=["qlib_alpha158:KMID"], universe=forged,
+        )
+    with pytest.raises(TaiwanEvaluationDataError):
+        run_alpha_template_evaluation(
+            research_store=research_store, registry_service=registry_service,
+            template_ids=["qlib_alpha158:KMID"], universe=forged,
+        )
+    _assert_nothing_published(registry_service, research_store)
+    reset_store()
+
+
+def test_run_rejects_governed_label_with_wrong_sha(tmp_path, taiwan_universe):
+    registry_service, research_store = _fresh_run_env(tmp_path)
+    data_dir = _write_governed_dir(tmp_path / "twse", taiwan_universe)
+    universe = load_taiwan_evaluation_universe(normalized_data_dir=data_dir)
+    for entry in universe.values():
+        entry["provenance"]["sha256"] = "f" * 64
+    with pytest.raises(TaiwanEvaluationDataError, match="sha256"):
+        run_alpha_template_evaluation(
+            research_store=research_store, registry_service=registry_service,
+            template_ids=["qlib_alpha158:KMID"], universe=universe,
+        )
+    _assert_nothing_published(registry_service, research_store)
+    reset_store()
+
+
+def test_http_rejects_forged_governed_market_data(monkeypatch, taiwan_universe):
+    from services.research.main import app
+
+    reset_store()
+    monkeypatch.delenv("PANTHEON_TAIWAN_EVAL_DATA_DIR", raising=False)
+    forged = {
+        s: {"bars": e["bars"], "source_kind": "governed_normalized_file", "provenance": {}}
+        for s, e in taiwan_universe.items()
+    }
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/research-orchestrator/alpha-templates/evaluate",
+            json={"template_ids": ["qlib_alpha158:KMID"], "run_id": "rrun-http-forged", "market_data": forged},
+        )
+        assert resp.status_code == 422, resp.text
+        listed = client.get("/api/research-orchestrator/alpha-templates/evaluations", params={"status": "evaluated"})
+        assert listed.json()["count"] == 0
+    reset_store()

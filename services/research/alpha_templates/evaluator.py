@@ -485,6 +485,37 @@ def load_taiwan_evaluation_universe(
     return _load_governed_file_universe(Path(data_dir_raw), symbols)
 
 
+def _verify_governed_file_provenance(
+    sym: str, entry: Mapping[str, Any], prov: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Re-verify a governed-file claim against the file on disk; never trust the label."""
+    path = str(prov.get("path") or "").strip()
+    claimed_sha = str(prov.get("sha256") or "").strip()
+    if (
+        prov.get("source_kind") != GOVERNED_FILE_SOURCE_KIND
+        or not path
+        or not claimed_sha
+    ):
+        raise TaiwanEvaluationDataError(
+            f"symbol {sym} claims governed_normalized_file without verifiable snapshot provenance"
+        )
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise TaiwanEvaluationDataError(
+            f"symbol {sym} governed file provenance unverifiable: {path}: {exc}"
+        ) from exc
+    if hashlib.sha256(raw).hexdigest() != claimed_sha:
+        raise TaiwanEvaluationDataError(
+            f"symbol {sym} governed file sha256 does not match provenance: {path}"
+        )
+    if int(prov.get("bar_count") or -1) != len(entry.get("decision_times") or ()):
+        raise TaiwanEvaluationDataError(
+            f"symbol {sym} governed provenance bar_count does not match supplied data"
+        )
+    return dict(prov)
+
+
 def summarize_universe_provenance(universe: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     """Return run-level source/snapshot provenance; raise unless the data is governed."""
     if not universe:
@@ -499,7 +530,7 @@ def summarize_universe_provenance(universe: Mapping[str, Mapping[str, Any]]) -> 
                 f"symbol {sym} is synthetic fixture data; governed evaluation refuses it"
             )
         if kind == GOVERNED_FILE_SOURCE_KIND:
-            per_symbol[sym] = dict(prov)
+            per_symbol[sym] = _verify_governed_file_provenance(sym, entry, prov)
             continue
         snapshot = str(prov.get("snapshot_id") or prov.get("sha256") or "").strip()
         source = str(prov.get("source") or prov.get("source_ref") or "").strip()
