@@ -85,9 +85,7 @@
     "ndc_live_check": "single GET of the ZIP on 2026-11-11 confirmed member names and header"
   },
   "not_verified_here": [
-    "docker image build was not run on this dev machine (no Docker); the lock is resolved but the build must be confirmed on the collector host",
     "gemini-2.5-flash being listed for the configured key could not be checked (no key available); coordinator should confirm with GET /v1beta/models or set COLLECTOR_GEMINI_MODEL",
-    "acceptance 1 (every enabled source completes a run on the host) and the replacement of live temporary repairs are for the coordinator re-run after merge",
     "Threads, Instagram and CMoney pages show relative times only; published_at falls back to fetched_at"
   ],
   "followup_20261111": {
@@ -106,5 +104,40 @@
       "ndc_real_zip": "real ZIP downloaded from ws.ndc.gov.tw on 2026-11-11 contains manifest.csv, schema-*.csv and 景氣指標與燈號.csv (538 lines, Date=202609 latest)"
     },
     "not_verified_here": "live run of Threads/Instagram/CMoney on the collector host (sites may still block headless Chromium; that would now surface as fetch_failed/blocked or parse_zero, not no_data_for_date)"
+  },
+  "coordinator_live_verification_20261111": {
+    "by": "coordinator (not the worker's run)",
+    "when": "2026-11-11T04:0xZ",
+    "host": "real collector host",
+    "image": "built from commit 338b642aa (cached build)",
+    "path": "CLI runner, every enabled source except YouTube and books",
+    "complete": {
+      "collector-tw-macro-cbc": 450,
+      "collector-tw-macro-ndc": 24,
+      "twse-t86": 1349,
+      "twse-price-history": 1375,
+      "tpex-price-history": 6042,
+      "collector-macro-dbnomics": 60,
+      "papers": 70,
+      "arxiv": 10,
+      "openalex": 10,
+      "nber-rss": 50,
+      "news-rss": 20,
+      "collector-tw-ptt-stock": 19,
+      "collector-instagram": 12,
+      "collector-tw-cmoney": 9
+    },
+    "partial": {
+      "collector-gdelt": "http_429 (external rate limit on this IP after several runs today; pause behaviour is correct)",
+      "collector-tw-threads": "parse_zero on this run (previous run of same browser path returned 5 posts; logged-out Threads is intermittent)"
+    },
+    "status_json_sources": 16,
+    "privacy_check": "social items carry only a 64-hex hashed_author; no handle or display name field",
+    "known_intermittent_external_behaviour": [
+      "gdelt http_429 rate limit",
+      "threads logged-out intermittency (parse_zero)"
+    ],
+    "acceptance_1": "accepted by coordinator on this evidence; no further code change required",
+    "note": "source ids for ptt/instagram/cmoney/ndc/cbc/dbnomics/news names mapped from collector names; counts as reported by coordinator"
   }
 }
