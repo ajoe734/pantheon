@@ -16,6 +16,7 @@
   },
   "validation": {
     "local": "python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection; bash -n helper",
+    "local_result": "22 tests OK; bash -n helper OK; git diff --check OK (re-run on follow-up head)",
     "local_note": "fixture tests only; development-host DNS is not proof of GitHub runner DNS",
     "hosted": "pending: actual GitHub Branch CI provisioning and Smoke result on repair head required"
   }
