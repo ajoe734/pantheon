@@ -54,6 +54,7 @@ class RunOutcome:
     status: str
     bundle: WrittenBundle
     state: SourceRuntimeState
+    skipped_count: int = 0
 
 
 class CollectorRunner:
@@ -252,6 +253,7 @@ class CollectorRunner:
                 state=updated_state,
             )
 
+        skipped = _skipped_count(collector)
         updated_state = self.state_store.record_run_outcome(
             source_id=source_id,
             run_id=run_id,
@@ -267,6 +269,7 @@ class CollectorRunner:
             paused_reason=None,
             started_at=started_iso,
             finished_at=finished_iso,
+            skipped_count=skipped,
         )
         return RunOutcome(
             source_id=source_id,
@@ -274,7 +277,16 @@ class CollectorRunner:
             status="complete",
             bundle=written,
             state=updated_state,
+            skipped_count=skipped,
         )
+
+
+def _skipped_count(collector: Any) -> int:
+    """Items a parser skipped as malformed/incomplete (composite collectors sum their parts)."""
+    total = int(getattr(collector, "skipped_count", 0) or 0)
+    for part in ("arxiv", "openalex", "nber"):
+        total += int(getattr(getattr(collector, part, None), "skipped_count", 0) or 0)
+    return total
 
 
 class _CompositePaperCollector:

@@ -403,6 +403,7 @@ class DgbasMacroSpider:
     """Scrapling HTTP spider for DGBAS CPI downloads and GDP/unemployment statistical tables (SD §5.1, §6.2)."""
 
     source_id = "collector-tw-macro-dgbas"
+    skipped_count = 0
 
     def __init__(
         self,
@@ -434,7 +435,10 @@ class DgbasMacroSpider:
             rows = extract_html_elements(response.text, "tr", class_name="dgbas-obs")
             for row in rows:
                 series_id = row.attrs.get("data-series-id") or "DGBAS_SERIES"
-                period = row.attrs.get("data-period") or "2026-10"
+                period = row.attrs.get("data-period") or ""
+                if not period:
+                    self.skipped_count += 1
+                    continue
                 item_id = f"dgbas-{series_id.lower()}-{period}"
                 if item_id in seen_item_ids:
                     continue

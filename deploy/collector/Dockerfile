@@ -23,13 +23,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Install from the committed lock only: every package is pinned, so pip does no dependency resolution
+# (no backtracking) and torch comes from the CPU wheel index (no CUDA/triton wheels).
+COPY requirements.txt requirements.lock /app/
+RUN pip install --no-cache-dir --no-deps \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r /app/requirements.lock
 
 COPY collector_stack /app/collector_stack
 COPY fetch-policy.json /app/fetch-policy.json
 
-RUN useradd --create-home --uid 10001 collector
+RUN useradd --create-home --uid 10001 collector \
+    && mkdir -p /data/bundles /data/state /data/library \
+    && chown -R 10001:10001 /data
 USER collector
 
 ENTRYPOINT ["python3", "-m", "collector_stack.cli"]

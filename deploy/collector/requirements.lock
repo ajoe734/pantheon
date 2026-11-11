@@ -1,0 +1,421 @@
+# Fully pinned lock for the collector worker image (CPU-only torch, no CUDA/triton).
+# Regenerate: uv pip compile requirements.txt --python-version 3.11 --python-platform x86_64-manylinux_2_28 \
+#   --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match -o requirements.lock
+accelerate==1.15.0
+    # via docling-ibm-models
+annotated-types==0.8.0
+    # via pydantic
+anyio==4.16.0
+    # via httpx
+attrs==26.1.0
+    # via
+    #   jsonlines
+    #   jsonschema
+    #   referencing
+beautifulsoup4==4.15.0
+    # via docling
+blessed==1.52.0
+    # via inquirer
+brotli==1.2.1
+    # via httpx
+camoufox==0.5.9
+    # via scrapling
+certifi==2026.10.23
+    # via
+    #   docling
+    #   httpcore
+    #   httpx
+    #   requests
+charset-normalizer==3.5.2
+    # via requests
+click==8.5.1
+    # via
+    #   fpgen
+    #   rich-click
+    #   scrapling
+    #   typer
+cssselect==1.6.0
+    # via scrapling
+deepsearch-glm==1.0.0
+    # via docling
+defusedxml==0.7.1
+    # via
+    #   -r requirements.txt
+    #   docling-core
+dill==0.4.1
+    # via multiprocess
+docling==2.15.1
+    # via -r requirements.txt
+docling-core==2.84.0
+    # via
+    #   docling
+    #   docling-ibm-models
+    #   docling-parse
+docling-ibm-models==3.15.0
+    # via docling
+docling-parse==3.4.0
+    # via docling
+easyocr==1.7.2
+    # via docling
+editor==2.0.1
+    # via inquirer
+et-xmlfile==2.0.0
+    # via openpyxl
+filelock==4.2.10
+    # via
+    #   huggingface-hub
+    #   tldextract
+    #   torch
+    #   transformers
+filetype==1.2.0
+    # via docling
+fpgen==1.3.0
+    # via camoufox
+frostwork==0.2.2
+    # via w3lib
+fsspec==2026.9.0
+    # via
+    #   huggingface-hub
+    #   torch
+greenlet==3.5.6
+    # via
+    #   playwright
+    #   rebrowser-playwright
+h11==0.16.0
+    # via httpcore
+hf-xet==1.8.0
+    # via huggingface-hub
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via
+    #   -r requirements.txt
+    #   fpgen
+    #   scrapling
+huggingface-hub==0.36.2
+    # via
+    #   accelerate
+    #   docling
+    #   docling-ibm-models
+    #   tokenizers
+    #   transformers
+idna==3.20
+    # via
+    #   anyio
+    #   httpx
+    #   requests
+    #   tldextract
+imageio==2.38.1
+    # via scikit-image
+indexed-zstd==1.7.2
+    # via fpgen
+inquirer==3.4.1
+    # via camoufox
+jinja2==3.1.6
+    # via torch
+jinxed==2.1.0
+    # via blessed
+jsonlines==4.0.0
+    # via docling-ibm-models
+jsonref==1.1.0
+    # via docling-core
+jsonschema==4.26.0
+    # via docling-core
+jsonschema-specifications==2025.9.1
+    # via jsonschema
+language-tags==1.3.2
+    # via camoufox
+latex2mathml==3.81.1
+    # via docling-core
+lazy-loader==0.6
+    # via scikit-image
+lxml==5.3.0
+    # via
+    #   -r requirements.txt
+    #   docling
+    #   python-docx
+    #   python-pptx
+    #   scrapling
+markdown-it-py==4.3.0
+    # via rich
+marko==2.2.5
+    # via docling
+markupsafe==3.0.4
+    # via jinja2
+maxminddb==3.2.0
+    # via camoufox
+mdurl==0.1.2
+    # via markdown-it-py
+mpire==2.10.2
+    # via semchunk
+mpmath==1.3.0
+    # via sympy
+multiprocess==0.70.19
+    # via mpire
+networkx==3.6.1
+    # via
+    #   scikit-image
+    #   torch
+ninja==1.13.2
+    # via easyocr
+numpy==2.4.6
+    # via
+    #   accelerate
+    #   camoufox
+    #   docling-ibm-models
+    #   easyocr
+    #   fpgen
+    #   imageio
+    #   opencv-python-headless
+    #   pandas
+    #   safetensors
+    #   scikit-image
+    #   scipy
+    #   shapely
+    #   tifffile
+    #   torchvision
+    #   transformers
+opencv-python-headless==5.0.0.93
+    # via easyocr
+openpyxl==3.1.5
+    # via docling
+orjson==3.13.0
+    # via
+    #   camoufox
+    #   fpgen
+    #   scrapling
+packaging==26.3
+    # via
+    #   accelerate
+    #   huggingface-hub
+    #   lazy-loader
+    #   scikit-image
+    #   transformers
+pandas==2.3.3
+    # via
+    #   docling
+    #   docling-core
+pillow==11.3.0
+    # via
+    #   docling-core
+    #   docling-ibm-models
+    #   docling-parse
+    #   easyocr
+    #   imageio
+    #   python-pptx
+    #   scikit-image
+    #   torchvision
+platformdirs==4.14.5
+    # via camoufox
+playwright==1.62.0
+    # via
+    #   camoufox
+    #   scrapling
+psutil==7.2.2
+    # via accelerate
+pyclipper==1.4.0
+    # via easyocr
+pydantic==2.14.3
+    # via
+    #   docling
+    #   docling-core
+    #   docling-ibm-models
+    #   docling-parse
+    #   pydantic-settings
+pydantic-core==2.50.4
+    # via pydantic
+pydantic-settings==2.16.2
+    # via
+    #   docling
+    #   docling-core
+pyee==13.0.1
+    # via
+    #   playwright
+    #   rebrowser-playwright
+pygments==2.21.0
+    # via
+    #   mpire
+    #   rich
+pypdfium2==4.30.0
+    # via docling
+pysocks==1.7.1
+    # via camoufox
+python-bidi==0.6.12
+    # via easyocr
+python-dateutil==4.0.0
+    # via pandas
+python-docx==1.2.0
+    # via docling
+python-dotenv==1.2.4
+    # via pydantic-settings
+python-pptx==1.0.2
+    # via docling
+pytz==2026.6
+    # via pandas
+pyyaml==6.0.3
+    # via
+    #   accelerate
+    #   camoufox
+    #   docling-core
+    #   easyocr
+    #   huggingface-hub
+    #   transformers
+readchar==4.2.2
+    # via inquirer
+rebrowser-playwright==1.64.102
+    # via scrapling
+referencing==0.37.0
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
+regex==2026.11.9
+    # via transformers
+requests==2.34.2
+    # via
+    #   camoufox
+    #   docling
+    #   huggingface-hub
+    #   requests-file
+    #   tldextract
+    #   transformers
+requests-file==3.0.1
+    # via tldextract
+rich==15.0.0
+    # via
+    #   camoufox
+    #   rich-click
+    #   typer
+rich-click==1.9.9
+    # via camoufox
+rpds-py==2026.9.1
+    # via
+    #   jsonschema
+    #   referencing
+rtree==1.4.1
+    # via
+    #   docling
+    #   docling-ibm-models
+runs==1.3.0
+    # via editor
+safetensors==0.8.0
+    # via
+    #   accelerate
+    #   docling-ibm-models
+    #   transformers
+scikit-image==0.26.0
+    # via easyocr
+scipy==1.17.1
+    # via
+    #   docling
+    #   easyocr
+    #   scikit-image
+scrapling==0.2.99
+    # via -r requirements.txt
+screeninfo==0.8.1
+    # via camoufox
+semchunk==3.2.5
+    # via docling-core
+setuptools==84.2.1
+    # via torch
+shapely==2.2.0
+    # via easyocr
+shellingham==1.5.4
+    # via typer
+socksio==1.0.0
+    # via httpx
+soupsieve==2.10
+    # via beautifulsoup4
+sympy==1.14.0
+    # via torch
+tabulate==0.10.0
+    # via
+    #   docling-core
+    #   docling-parse
+tifffile==2026.3.3
+    # via scikit-image
+tldextract==5.4.0
+    # via scrapling
+tokenizers==0.22.2
+    # via transformers
+torch==2.15.0+cpu
+    # via
+    #   accelerate
+    #   docling-ibm-models
+    #   easyocr
+    #   safetensors
+    #   torchvision
+torchvision==0.29.2+cpu
+    # via
+    #   docling-ibm-models
+    #   easyocr
+tqdm==4.70.1
+    # via
+    #   docling-ibm-models
+    #   huggingface-hub
+    #   mpire
+    #   semchunk
+    #   transformers
+transformers==4.57.6
+    # via
+    #   docling-core
+    #   docling-ibm-models
+tree-sitter==0.26.1
+    # via docling-core
+tree-sitter-c==0.24.2
+    # via docling-core
+tree-sitter-javascript==0.25.0
+    # via docling-core
+tree-sitter-python==0.25.0
+    # via docling-core
+tree-sitter-typescript==0.23.2
+    # via docling-core
+typer==0.12.5
+    # via
+    #   docling
+    #   docling-core
+typing-extensions==4.16.0
+    # via
+    #   anyio
+    #   beautifulsoup4
+    #   camoufox
+    #   docling-core
+    #   frostwork
+    #   huggingface-hub
+    #   pydantic
+    #   pydantic-core
+    #   pydantic-settings
+    #   pyee
+    #   python-docx
+    #   python-pptx
+    #   referencing
+    #   torch
+    #   typer
+    #   typing-inspection
+typing-inspection==0.4.5
+    # via
+    #   pydantic
+    #   pydantic-settings
+tzdata==2026.6
+    # via
+    #   pandas
+    #   python-dateutil
+ua-parser==1.0.2
+    # via camoufox
+ua-parser-builtins==202610
+    # via ua-parser
+urllib3==2.8.0
+    # via requests
+w3lib==2.6.0
+    # via scrapling
+wcwidth==0.9.4
+    # via blessed
+xlsxwriter==3.3.1
+    # via python-pptx
+xmod==1.10.0
+    # via
+    #   editor
+    #   runs
+zstandard==0.25.0
+    # via
+    #   fpgen
+    #   httpx

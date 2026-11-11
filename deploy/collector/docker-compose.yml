@@ -37,12 +37,17 @@ services:
       COLLECTOR_AUTHOR_HMAC_SALT_FILE: "/run/secrets/author_hmac_salt"
       YOUTUBE_DATA_API_KEY_FILE: "/run/secrets/youtube_data_api_key"
       GEMINI_API_KEY_FILE: "/run/secrets/gemini_api_key"
+      # Must be a model listed for the configured key (GET /v1beta/models); default gemini-2.5-flash
+      COLLECTOR_GEMINI_MODEL: "${COLLECTOR_GEMINI_MODEL:-gemini-2.5-flash}"
     volumes:
       - ./fetch-policy.json:/app/fetch-policy.json:ro
-      - ${COLLECTOR_DATA_ROOT:-/var/lib/pantheon-collector}/bundles:/data/bundles
-      - ${COLLECTOR_DATA_ROOT:-/var/lib/pantheon-collector}/state:/data/state
+      # The whole data root is mounted at /data: status.json, bundles/ and state/ must all be
+      # writable (owner uid 10001) and visible to the bundle server; library/ is read-only.
+      - ${COLLECTOR_DATA_ROOT:-/var/lib/pantheon-collector}:/data
       - ${COLLECTOR_DATA_ROOT:-/var/lib/pantheon-collector}/library:/data/library:ro
       - ${COLLECTOR_SECRETS_DIR:-/etc/pantheon-collector}/author_hmac.salt:/run/secrets/author_hmac_salt:ro
+      - ${COLLECTOR_SECRETS_DIR:-/etc/pantheon-collector}/youtube_data_api_key:/run/secrets/youtube_data_api_key:ro
+      - ${COLLECTOR_SECRETS_DIR:-/etc/pantheon-collector}/gemini_api_key:/run/secrets/gemini_api_key:ro
     networks:
       - collector_internal
     security_opt:
