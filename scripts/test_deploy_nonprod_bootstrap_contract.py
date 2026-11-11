@@ -143,7 +143,7 @@ def _source_profile_budget(*, outer=1800, bounded=True, override=None):
     env = _clean_env({
         "PANTHEON_DEV_COMPOSE_PROFILES": "root,source-ingest-scheduler" if bounded else "root",
         "PANTHEON_EXTERNAL_EGRESS": "allowlist" if bounded else "deny",
-        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" if bounded else "",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "openapi.twse.com.tw,www.tpex.org.tw" if bounded else "",
         "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull" if bounded else "reconcile_only",
         "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "reconciled_live_proof" if bounded else "scheduled_tick",
         "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "1" if bounded else "0",
@@ -987,8 +987,8 @@ printf 'FORCE=%s\\nEXCLUSIVE=%s\\n' "${{SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR
     [
         ("tw-taifex-futures-options-chip", "openapi.taifex.com.tw,www.taifex.com.tw", ""),
         ("tw-taifex-futures-options-chip", "www.taifex.com.tw,openapi.taifex.com.tw", "taifex_ssf_contracts"),
-        ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw", ""),
-        ("tw-twse-tpex-official-market", "www.tpex.org.tw,www.twse.com.tw,openapi.twse.com.tw", "tw_price_daily"),
+        ("tw-twse-tpex-official-market", "openapi.twse.com.tw,www.tpex.org.tw", ""),
+        ("tw-twse-tpex-official-market", "www.tpex.org.tw,openapi.twse.com.tw", "tw_price_daily"),
     ],
 )
 def test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors(
@@ -1055,21 +1055,21 @@ def test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors
         ),
         (
             "tw-twse-tpex-official-market",
-            "openapi.twse.com.tw,www.tpex.org.tw",
+            "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw",
             "",
-            "official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw,www.twse.com.tw",
+            "official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw",
         ),
         (
             "tw-twse-tpex-official-market",
             "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw",
             "",
-            "official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw,www.twse.com.tw",
+            "official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw",
         ),
         (
             "tw-twse-tpex-official-market",
             "openapi.taifex.com.tw,www.taifex.com.tw",
             "",
-            "official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw,www.twse.com.tw",
+            "official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw",
         ),
         (
             "tw-twse-tpex-official-market",
@@ -1079,7 +1079,7 @@ def test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors
         ),
         (
             "tw-twse-tpex-official-market",
-            "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw",
+            "openapi.twse.com.tw,www.tpex.org.tw",
             "taifex_ssf_contracts",
             "official TWSE/TPEx refresh does not admit dataset: taifex_ssf_contracts",
         ),
