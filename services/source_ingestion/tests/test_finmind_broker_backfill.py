@@ -49,6 +49,12 @@ def loader(manifest):
     return list(ROWS)
 
 
+@pytest.fixture
+def injected_rows(monkeypatch):
+    """Injected rows_loader tests never decode parquet; skip the optional-dependency preflight."""
+    monkeypatch.setattr(fbb, "require_pyarrow", lambda: None)
+
+
 def test_no_token_records_reason_and_fetches_nothing(tmp_path) -> None:
     fetcher = FakeFetcher(token=False)
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 12),
@@ -59,7 +65,7 @@ def test_no_token_records_reason_and_fetches_nothing(tmp_path) -> None:
     assert not list(tmp_path.rglob("*.jsonl"))
 
 
-def test_backfill_writes_governed_datasets_with_times_and_licence(tmp_path) -> None:
+def test_backfill_writes_governed_datasets_with_times_and_licence(tmp_path, injected_rows) -> None:
     fetcher = FakeFetcher()
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
                           fetcher=fetcher, rows_loader=loader, sleep=lambda s: None)
@@ -77,7 +83,7 @@ def test_backfill_writes_governed_datasets_with_times_and_licence(tmp_path) -> N
     assert "SECRET" not in "".join(p.read_text() for p in tmp_path.rglob("*.jsonl"))
 
 
-def test_resume_does_not_refetch_completed_dates(tmp_path) -> None:
+def test_resume_does_not_refetch_completed_dates(tmp_path, injected_rows) -> None:
     first = FakeFetcher(quota_after=2)
     r1 = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 12),
                       fetcher=first, rows_loader=loader, sleep=lambda s: None)
@@ -89,7 +95,7 @@ def test_resume_does_not_refetch_completed_dates(tmp_path) -> None:
     assert r2.skipped_completed == ["2026-06-08", "2026-06-09"]
 
 
-def test_throttle_spaces_requests(tmp_path) -> None:
+def test_throttle_spaces_requests(tmp_path, injected_rows) -> None:
     sleeps: list[float] = []
     now = [0.0]
     run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 10),
