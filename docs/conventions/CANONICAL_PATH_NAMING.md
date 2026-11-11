@@ -126,7 +126,7 @@ observed traffic is made.
 
 Kept (live semantics): `POST /bff/personas/{id}/actions/{action_id}` (live
 `AdvanceLifecycle`/`Promote`/`PromoteCandidate`/`Demote` admission; other
-actions return `410 ACTION_RETIRED` with the existing HTTPException error shape; the
+actions return `404 RESOURCE_NOT_FOUND` via the existing `ctx.bff_error`; the
 personas `_deprecated_bff_path_response` helper has been deleted), `POST /bff/mcp/servers`,
 `POST /bff/mcp/servers/{server_id}/actions/{action_id}`,
 `GET /bff/mcp/servers/{server_id}/tools`, and all `ACTION_RETIRED` guards in §3.3.
