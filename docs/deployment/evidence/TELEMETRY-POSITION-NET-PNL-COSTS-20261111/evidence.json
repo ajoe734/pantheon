@@ -17,7 +17,7 @@
     "expected_unrealized": 0.0
   },
   "tests": {
-    "services/telemetry/test_runtime_summary_projection.py + test_paper_runtime_ingest_contract.py + test_bff_pm12_portfolio_book_contract.py": "199 passed, 1 failed (pre-existing test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar_projection stale_or_future_market_marks; identical on frozen base)",
+    "services/telemetry/test_runtime_summary_projection.py + test_paper_runtime_ingest_contract.py + test_bff_pm12_portfolio_book_contract.py": "telemetry suites incl. test_main_routes/test_l12 durable ingest: 216 passed, 1 skipped; PM12: 71 passed, 1 failed (pre-existing test_portfolio_holdings_reproduces_h12_76062... stale_or_future_market_marks, identical on frozen base 9ce4f3396)",
     "new regressions": [
       "file-backed legacy upgrade repaired from retained fills (+duplicate event, +restart no double count)",
       "legacy upgrade without history stays unknown",
@@ -39,7 +39,7 @@
       "services/telemetry/main.py",
       "services/telemetry/ingest_svc.py"
     ],
-    "change": "CanonicalFillHistoryReader unions retained fills with canonical paper_fill_simulated events from the existing build_postgres_event_reader binding reader (strict tenant/runtime/binding match, dedup by event_id and ledger_fill_count, read-only). main.py passes it to backfill_open_position_costs at startup. Incomplete committed sequence or reader failure keeps costs unknown.",
-    "tests": "services/telemetry/test_ingest_svc_canonical_cost_recovery.py: 3 passed (old SRF fee16+tax3.884 -> costs 19.884 / realized -19.884, restart + duplicates once, foreign tenant/runtime/binding ignored, reader failure unknown). Telemetry runtime_summary/paper ingest suites pass; flask/pytest-dependent classes cannot run in this worker env (ModuleNotFoundError), CI required."
+    "change": "CanonicalFillHistoryReader unions retained fills with canonical paper_fill_simulated events from the existing build_postgres_event_reader binding reader (strict tenant/runtime/binding match, dedup by event_id and ledger_fill_count, read-only). main.py passes it to backfill_open_position_costs at startup. Incomplete committed sequence or reader failure keeps costs unknown. Review fix (P1): the binding reader capped to newest 100 events of ALL types hid older fills. build_postgres_event_reader's binding reader now exposes .paper_fills(bid, tenant_id, limit, offset), filtering event_type='paper_fill_simulated'/tenant/binding in SQL BEFORE LIMIT/OFFSET; CanonicalFillHistoryReader pages it (100/page, max 50 pages) and falls back to the legacy reader only when absent. Any page read failure discards history (unknown); truncation leaves a ledger_fill_count gap (unknown).",
+    "tests": "services/telemetry/test_ingest_svc_canonical_cost_recovery.py: 18 passed incl. 101 newer heartbeats hiding the original SRF fill through real main._build_service startup + reload (19.884/-19.884), 250-fill multi-page read, mid-paging failure -> no partial history, SQL-shape check (event_type filter precedes LIMIT). test_main_routes startup-backfill call-count expectation updated to 2 reads (episode backfill + cost backfill)."
   }
 }
