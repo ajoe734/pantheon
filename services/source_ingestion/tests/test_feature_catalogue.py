@@ -275,3 +275,41 @@ def test_collector_adapter_derives_storable_macro_and_community_records() -> Non
     social = CollectorBundleAdapter(connector_id="s", source_id="s", source_type="social", dataset="tw_community_daily")
     posts, _ = social.governed_feature_records([_post(1, "2026-11-10", ["2330"], "bullish")])
     assert posts and posts[0].metadata["dataset"] == "tw_community_daily"
+
+
+def test_provider_entrypoint_fetches_and_joins_income_and_balance_statements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The configured provider path (no prewrapped payload) must fetch both endpoints."""
+    from services.source_ingestion.connectors import taiwan_official as tw
+    from services.source_ingestion.connectors.base import SourceConnector, SourceType
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    spec = TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS["tw_financial_statement"]["TWSE"]
+    income = [{"年度": "115", "季別": "3", "公司代號": "2330", "營業收入": "1000",
+               "營業利益（損失）": "400", "歸屬於母公司業主之淨利（損）": "300", "基本每股盈餘（元）": "12.5"}]
+    balance = [{"年度": "115", "季別": "3", "公司代號": "2330", "歸屬於母公司業主之權益合計": "3000"}]
+    seen: list[str] = []
+
+    def fake_fetch(request, **_kwargs):
+        seen.append(request.full_url)
+        return {spec["endpoint"]: income, spec["balance_endpoint"]: balance}[request.full_url]
+
+    monkeypatch.setattr(tw, "_fetch_official", fake_fetch)
+    connector = SourceConnector(
+        connector_id="tw-official", source_type=SourceType.MARKET, provider="twse", license_scope="official_reference"
+    )
+    records = execute_provider_owned_adapter(
+        connector=connector,
+        fetch={
+            "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
+            "request": {"dataset": "tw_financial_statement", "venues": ["TWSE"]},
+            "max_records": 50,
+        },
+        trace_id="t",
+    )
+    assert seen == [spec["endpoint"], spec["balance_endpoint"]]
+    assert records and records[0].metadata["dataset"] == "tw_financial_statement"
+    row = records[0].metadata["normalized_row"]
+    assert row["eps"] == 12.5 and row["operating_margin"] == 0.4 and row["roe"] is not None
+    assert "available_time" in row and "ingest_time" in row

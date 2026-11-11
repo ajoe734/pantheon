@@ -1054,20 +1054,33 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 "data": rows,
                 "bundle_manifest": manifest_info,
             }
-        request = urllib.request.Request(
-            url,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "pantheon-source-ingest/0.1",
-            },
-        )
-        return _fetch_official(
-            request,
-            caller="source_ingest.taiwan_official",
-            timeout_seconds=timeout_seconds,
-            max_bytes=10485760,
-            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8")),
-        )
+        def _get_json(target: str) -> Any:
+            request = urllib.request.Request(
+                target,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "pantheon-source-ingest/0.1",
+                },
+            )
+            return _fetch_official(
+                request,
+                caller="source_ingest.taiwan_official",
+                timeout_seconds=timeout_seconds,
+                max_bytes=10485760,
+                parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8")),
+            )
+
+        if dataset == "tw_financial_statement":
+            # Quarterly statements join the income (t187ap06) and balance (t187ap07)
+            # OpenAPI responses; both are fetched here so the payload matches
+            # ``normalized_rows_from_payload``'s {"income", "balance"} contract.
+            balance_url = str(
+                TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS[dataset][_canonical_venue(venue)]["balance_endpoint"]
+            )
+            _assert_twse_tpex_openapi_only_url(url)
+            _assert_twse_tpex_openapi_only_url(balance_url)
+            return {"income": _get_json(url), "balance": _get_json(balance_url)}
+        return _get_json(url)
 
     def price_history_endpoint(
         self,
