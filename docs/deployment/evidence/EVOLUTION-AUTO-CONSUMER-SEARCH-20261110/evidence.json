@@ -69,5 +69,14 @@
       "test_externally_frozen_live_origin_persona_is_never_auto_retired"
     ],
     "focused_run": "services/evolution auto_consumer/runtime/dispatch/governed_persona_lifecycle: 52 passed; wider batch 204 passed, failures only from missing flask/asyncpg in venv"
+  },
+  "freeze_proof_contract_fix": {
+    "defect": "Reviewer P1 on head ac1b6284: verify_freeze read record.subject, but Governance GET serializes the exact-action binding under metadata.subject (ApprovalDecisionResponse); a valid own frozen approval returned False and retire stayed frozen forever.",
+    "fix": "services/evolution/governed_persona_lifecycle.py verify_freeze reads metadata.subject; own-freeze (last_lifecycle_governance_decision_id), tenant, decided/approved and exact persona/from/to checks preserved. FakeWorld now stores subject under metadata.",
+    "tests": [
+      "test_verify_freeze_against_production_response_shape_same_tick_and_resume (real ApprovalDecision.create_proposed/accept_review/decide serialized via ApprovalDecisionResponse; fails on the old record.subject read)",
+      "test_verify_freeze_rejects_external_freeze_and_wrong_tenant_on_production_shape"
+    ],
+    "focused_run": "/tmp/codex-replication-review-20261111/bin/python -m pytest governed_persona_lifecycle+auto_consumer+runtime+dispatch: 57 passed, exit 0; git diff --check clean"
   }
 }
