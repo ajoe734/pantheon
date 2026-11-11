@@ -54,5 +54,10 @@
       "cmd": ".venv-pantheon/bin/python3 -m pytest services/research/tests/test_reviewed_memory_writeback.py services/research/tests/test_research_orchestrator_http_service.py -q",
       "result": "39 passed"
     }
-  ]
+  ],
+  "ci_remediation_2026_11_11": {
+    "problem": "Registry and source_ingestion suites raised VectorbtWorkflowError because the vectorbt backend is not installed there.",
+    "fix": "Those suites use recorded real-vectorbt backtest outputs from services/research/tests/fixtures/recorded_backtest_tw_2330*.json; the real vectorbt run stays in the research suite.",
+    "verification": "python3 -m unittest services.registry.promotion.test_gate -> 8 tests OK"
+  }
 }
