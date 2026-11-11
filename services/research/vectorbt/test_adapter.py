@@ -655,9 +655,21 @@ class TestFactorRuleBacktestAndPaperParity(unittest.TestCase):
         closes_2317 = [150.0 + (i % 5) * 1.5 for i in range(32)]
 
         raw_ds = _canonical_dataset(closes_2330, closes_2317)
+        # Governed inputs are timestamped observations: bar i's observation is published
+        # (event_time == available_time) ten days before the bar so the catalogue lag of 10
+        # days makes it visible exactly at bar i.
+        bar_start = date(2024, 1, 1)
+        rev_yoy_observations = [
+            {
+                "value": value,
+                "event_time": f"{(bar_start + timedelta(days=i - 10)).isoformat()}T00:00:00Z",
+                "available_time": f"{(bar_start + timedelta(days=i - 10)).isoformat()}T00:00:00Z",
+            }
+            for i, value in enumerate(rev_yoy_series)
+        ]
         raw_ds["features_by_instrument"] = {
-            "2330.TWSE": {"rev_yoy": rev_yoy_series},
-            "2317.TWSE": {"rev_yoy": rev_yoy_series},
+            "2330.TWSE": {"rev_yoy": rev_yoy_observations},
+            "2317.TWSE": {"rev_yoy": rev_yoy_observations},
         }
         prepared = GovernedVectorbtInputAdapter().prepare(raw_ds)
 
