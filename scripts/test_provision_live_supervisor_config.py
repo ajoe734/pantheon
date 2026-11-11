@@ -970,9 +970,11 @@ def test_build_live_config_retires_incumbent_watchdog_cap(tmp_path):
         python_executable=Path(sys.executable),
     )
     from supervisor_watchdog import watchdog_settings
-    assert rendered["ready_dispatcher"]["max_concurrent_workers"] == 13
+    fleet_cap = config["ready_dispatcher"]["max_concurrent_workers"]
+    assert fleet_cap != 12
+    assert rendered["ready_dispatcher"]["max_concurrent_workers"] == fleet_cap
     assert "max_active_workers" not in rendered["watchdog"]
-    assert watchdog_settings(rendered)["max_active_workers"] == 13
+    assert watchdog_settings(rendered)["max_active_workers"] == fleet_cap
     del config["ready_dispatcher"]["max_concurrent_workers"]
     with pytest.raises(ValueError, match="max_concurrent_workers"):
         provision.build_live_config(
