@@ -24,12 +24,24 @@ ROWS = [
 ]
 
 
+def _parquet_bytes() -> bytes:
+    pa = pytest.importorskip("pyarrow")
+    import io
+
+    import pyarrow.parquet as pq
+
+    buf = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(ROWS), buf)
+    return buf.getvalue()
+
+
 class FakeFetcher(FinMindLiveFetcher):
-    def __init__(self, *, token: bool = True, quota_after: int | None = None) -> None:
+    def __init__(self, *, token: bool = True, quota_after: int | None = None, body: bytes | None = None) -> None:
         super().__init__()
         self.has_token = token
         self.calls: list[str] = []
         self.quota_after = quota_after
+        self.body = body
 
     def credential_status(self):
         if self.has_token:
@@ -40,35 +52,23 @@ class FakeFetcher(FinMindLiveFetcher):
         if self.quota_after is not None and len(self.calls) >= self.quota_after:
             raise FinMindQuotaError("quota")
         self.calls.append(date)
-        body = {"status": 200, "data": [{"object_name": f"{date}.parquet",
-                                         "url": "https://signed.example/x?sig=SECRET"}]}
-        return json.dumps(body).encode(), {}
-
-
-def loader(manifest):
-    return list(ROWS)
-
-
-@pytest.fixture
-def injected_rows(monkeypatch):
-    """Injected rows_loader tests never decode parquet; skip the optional-dependency preflight."""
-    monkeypatch.setattr(fbb, "require_pyarrow", lambda: None)
+        return (self.body if self.body is not None else _parquet_bytes()), {}
 
 
 def test_no_token_records_reason_and_fetches_nothing(tmp_path) -> None:
     fetcher = FakeFetcher(token=False)
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 12),
-                          fetcher=fetcher, rows_loader=loader, sleep=lambda s: None)
+                          fetcher=fetcher, sleep=lambda s: None)
     assert result.status == "credential_unavailable"
     assert "missing credential" in (result.reason or "")
     assert fetcher.calls == []
     assert not list(tmp_path.rglob("*.jsonl"))
 
 
-def test_backfill_writes_governed_datasets_with_times_and_licence(tmp_path, injected_rows) -> None:
+def test_backfill_writes_governed_datasets_with_times_and_licence(tmp_path) -> None:
     fetcher = FakeFetcher()
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
-                          fetcher=fetcher, rows_loader=loader, sleep=lambda s: None)
+                          fetcher=fetcher, sleep=lambda s: None)
     assert result.status == "ok" and result.completed == ["2026-06-08"]
     top = [json.loads(l) for l in (tmp_path / "tw_broker_top/date=2026-06-08/records.jsonl").read_text().splitlines()]
     detail = [json.loads(l) for l in (tmp_path / "tw_broker_branch_detail/date=2026-06-08/records.jsonl").read_text().splitlines()]
@@ -83,23 +83,23 @@ def test_backfill_writes_governed_datasets_with_times_and_licence(tmp_path, inje
     assert "SECRET" not in "".join(p.read_text() for p in tmp_path.rglob("*.jsonl"))
 
 
-def test_resume_does_not_refetch_completed_dates(tmp_path, injected_rows) -> None:
+def test_resume_does_not_refetch_completed_dates(tmp_path) -> None:
     first = FakeFetcher(quota_after=2)
     r1 = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 12),
-                      fetcher=first, rows_loader=loader, sleep=lambda s: None)
+                      fetcher=first, sleep=lambda s: None)
     assert r1.status == "quota_exhausted" and first.calls == ["2026-06-08", "2026-06-09"]
     second = FakeFetcher()
     r2 = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 12),
-                      fetcher=second, rows_loader=loader, sleep=lambda s: None)
+                      fetcher=second, sleep=lambda s: None)
     assert second.calls == ["2026-06-10", "2026-06-11", "2026-06-12"]
     assert r2.skipped_completed == ["2026-06-08", "2026-06-09"]
 
 
-def test_throttle_spaces_requests(tmp_path, injected_rows) -> None:
+def test_throttle_spaces_requests(tmp_path) -> None:
     sleeps: list[float] = []
     now = [0.0]
     run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 10),
-                 fetcher=FakeFetcher(), rows_loader=loader, min_interval_seconds=1.5,
+                 fetcher=FakeFetcher(), min_interval_seconds=1.5,
                  sleep=lambda s: (sleeps.append(s), now.__setitem__(0, now[0] + s)),
                  clock=lambda: now[0])
     assert len(sleeps) == 2 and all(abs(s - 1.5) < 1e-9 for s in sleeps)
@@ -150,17 +150,6 @@ class _Resp:
         return self._body.read(n)  # honours n, like a real HTTP response
 
 
-def _parquet_bytes() -> bytes:
-    pa = pytest.importorskip("pyarrow")
-    import io
-
-    import pyarrow.parquet as pq
-
-    buf = io.BytesIO()
-    pq.write_table(pa.Table.from_pylist(ROWS), buf)
-    return buf.getvalue()
-
-
 def test_real_parquet_body_through_fetch_decode_path(tmp_path, monkeypatch) -> None:
     body = _parquet_bytes()
     assert body[:4] == b"PAR1"
@@ -197,7 +186,7 @@ def test_missing_pyarrow_fails_before_any_fetch(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(fbb, "require_pyarrow", boom)
     fetcher = FakeFetcher()
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 9),
-                          fetcher=fetcher, rows_loader=loader, sleep=lambda s: None)
+                          fetcher=fetcher, sleep=lambda s: None)
     assert result.status == "dependency_unavailable" and fetcher.calls == []
 
 
@@ -252,3 +241,24 @@ def test_corrupt_parquet_fails_that_day_without_aborting(tmp_path, monkeypatch) 
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 9),
                           sleep=lambda s: None)
     assert result.status == "partial" and len(result.failed) == 2
+
+
+def test_json_application_error_body_is_not_treated_as_data(tmp_path) -> None:
+    body = json.dumps({"status": 402, "msg": "Requests reach limit"}).encode()
+    result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
+                          fetcher=FakeFetcher(body=body), sleep=lambda s: None)
+    assert result.status in {"quota_exhausted", "partial"} and not result.completed
+
+
+def test_json_empty_data_body_is_a_no_data_day(tmp_path) -> None:
+    body = json.dumps({"status": 200, "data": []}).encode()
+    result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
+                          fetcher=FakeFetcher(body=body), sleep=lambda s: None)
+    assert result.empty_dates == ["2026-06-08"]
+
+
+def test_json_manifest_body_is_rejected_not_loaded(tmp_path) -> None:
+    body = json.dumps({"status": 200, "data": [{"url": "https://signed.example/x"}]}).encode()
+    result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
+                          fetcher=FakeFetcher(body=body), sleep=lambda s: None)
+    assert result.status == "partial" and "2026-06-08" in result.failed

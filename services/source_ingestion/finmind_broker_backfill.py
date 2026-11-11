@@ -1,7 +1,7 @@
 """One-time FinMind broker-branch backfill (TaiwanStockTradingDailyReport).
 
 Walks weekdays over a two-year window, fetches each date's SponsorPro
-storage-object manifest through the existing bulk parquet adapter, loads the
+storage-object parquet body through the existing bulk parquet adapter, decodes the
 branch rows, and writes governed ``tw_broker_top`` and
 ``tw_broker_branch_detail`` records as JSONL partitions.
 
@@ -43,9 +43,6 @@ BACKFILL_YEARS = 2
 DEFAULT_MIN_INTERVAL_SECONDS = 1.5
 STATE_SCHEMA = "finmind_broker_backfill_state.v1"
 
-RowsLoader = Callable[[Sequence[Mapping[str, Any]]], Sequence[Mapping[str, Any]]]
-
-
 PARQUET_MAGIC = b"PAR1"
 PYARROW_REQUIREMENTS = "docs/deployment/evidence/FINMIND-BROKER-CONNECTOR-BACKFILL-20261111/requirements-finmind-backfill.txt"
 
@@ -70,26 +67,6 @@ def decode_parquet_bytes(raw: bytes) -> list[dict[str, Any]]:
     import io
 
     return require_pyarrow().read_table(io.BytesIO(raw)).to_pylist()
-
-
-def default_parquet_rows_loader(manifest_rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Download signed parquet objects and return rows (needs pyarrow at runtime)."""
-    import io
-    import urllib.request
-
-    pq = require_pyarrow()
-
-    from services.external_egress import open_external_url
-
-    rows: list[dict[str, Any]] = []
-    for item in manifest_rows:
-        url = item.get("url") or item.get("signed_url") or item.get("download_url")
-        if not url:
-            continue
-        request = urllib.request.Request(str(url), headers={"User-Agent": "pantheon-source-ingest/0.1"})
-        with open_external_url(request, caller="source_ingest.finmind_broker_backfill", timeout=60) as resp:
-            rows.extend(pq.read_table(io.BytesIO(resp.read())).to_pylist())
-    return rows
 
 
 def weekdays(start: date, end: date) -> Iterable[date]:
@@ -169,7 +146,6 @@ def run_backfill(
     start: date,
     end: date,
     fetcher: FinMindLiveFetcher | None = None,
-    rows_loader: RowsLoader = default_parquet_rows_loader,
     min_interval_seconds: float = DEFAULT_MIN_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
@@ -209,7 +185,7 @@ def run_backfill(
             raw, meta = fetcher.fetch_storage_objects_raw(FINMIND_BROKER_REPORT_DATASET, day_s)
             result.requests_made += 1
             if raw[:4] == PARQUET_MAGIC:
-                # Official shape: response body is the parquet file itself.
+                # The response body is the parquet file itself.
                 try:
                     rows = decode_parquet_bytes(raw)
                 except Exception as exc:  # corrupt/truncated body: fail this day only
@@ -222,13 +198,12 @@ def run_backfill(
                     date=day_s,
                 )
             else:
-                # JSON: application error (raises) or a signed-URL manifest.
+                # Non-parquet body: JSON application error/quota/credential raises;
+                # an empty-data response is a no-data day; anything else is unexpected.
                 payload, _ = fetcher.parse_json_payload(raw, dict(meta))
-                manifest_records = bulk.records_from_storage_objects_payload(payload, date=day_s)
-                manifest_rows = [
-                    row for row in (payload.get("data") or []) if isinstance(row, Mapping)
-                ]
-                rows = list(rows_loader(manifest_rows)) if manifest_rows else []
+                if payload.get("data"):
+                    raise FinMindFetchError("unexpected non-parquet storage_objects body")
+                rows, manifest_records = [], []
         except FinMindCredentialError as exc:
             result.status, result.reason = "credential_unavailable", type(exc).__name__
             break
