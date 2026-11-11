@@ -348,7 +348,6 @@ class EvolutionController:
         EvolutionActionType.OBSERVE,
         EvolutionActionType.REVALIDATE,
         EvolutionActionType.RETRAIN,
-        EvolutionActionType.MUTATE,
         EvolutionActionType.REQUIRE_MORE_DATA,
         EvolutionActionType.FLAG_FOR_REVIEW,
     }

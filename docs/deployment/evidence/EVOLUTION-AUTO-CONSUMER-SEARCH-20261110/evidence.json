@@ -7,7 +7,7 @@
     "1_automated_gate": {
       "implementation": "services/evolution/auto_consumer.py (evaluate_gate, AutoConsumer.tick)",
       "behaviour": "proposed retrain/mutate/revalidate/retire decisions whose target resolves through the persona/registry owners to a paper-only, tenant-owned discovery persona artifact are reviewed then approved as automated_gate; each check is written to the review/approve note and to an append-only evidence sink before state moves. Any other action, risk, proposer, stage, tenant or an owner outage is left proposed for the operator.",
-      "decision_model": "evolution_decision.py: new MUTATE action (low risk); a paper-stage retire of a discovery target is low risk only with metadata.discovery_auto_scope=true, otherwise retire stays high (committee). validate() recomputes risk so a forged low retire fails. evolution_controller.py routes mutate to the research plane (one-line necessity outside the listed artifacts).",
+      "decision_model": "evolution_decision.py: new MUTATE action (low risk); a paper-stage retire of a discovery target is low risk only with metadata.discovery_auto_scope=true, otherwise retire stays high (committee). validate() recomputes risk so a forged low retire fails.",
       "tests": "services/evolution/test_auto_consumer.py (25, incl. end-to-end against the real evolution FastAPI app), services/control-plane/governance/test_evolution_decision.py TestDiscoveryAutoScopeRisk"
     },
     "2_random_search": {
@@ -38,6 +38,7 @@
     "services/research/tests": "test_alpha_template_* not collectable here (numpy missing); test_retrain_executor_real_auth.py skips without real vectorbt (fixture updated to pin the search proposal)"
   },
   "not_done_here": [
+    "evolution_controller.py (outside this task's artifact contract) does not yet route the new 'mutate' action: boundary_for raises, so an approved mutate decision gets no dispatch intent until a follow-up adds MUTATE to EvolutionController._RESEARCH_ACTIONS (one line) and a research executor calls evolution_search.run_mutation_decision.",
     "Hosted wiring of approved mutate/revalidate decisions to a research executor, the discovery-scope resolver adapter over live persona/registry owners, and the consumer scheduler loop: ports are defined and tested; deployment/hosted acceptance owners retain these.",
     "Real-vectorbt execution of the search/judge (no vectorbt in this environment); parameter_search stage mapping to ray_tune left unchanged (control-plane schema pins it).",
     "Decisions are not moved to 'executed' by the consumer; the existing receipt-readback /execute path keeps that authority."
