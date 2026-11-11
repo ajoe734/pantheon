@@ -2,7 +2,7 @@
   "task_id": "CI-SANDBOX-APT-DNS-20261111",
   "owner": "Codex2",
   "reviewer": "Claude",
-  "status": "registered_mirror_candidate_awaiting_runner_proof",
+  "status": "real_mirror_provision_passed_blocked_by_product_smoke",
   "failed_attempts": [
     {
       "run": "43032317523",
@@ -48,13 +48,54 @@
     "local": "python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection; bash -n helper",
     "local_result": "23 tests OK for candidate using checkout-scoped .venv-pantheon/bin/python3; bash -n helper OK; git diff --check OK. Previous 8f434dced diagnostic head had 24 tests before replacing its two diagnostic-only cases with one strict metadata/attempt-bound case.",
     "local_note": "fixture tests only; development-host DNS is not proof of GitHub runner DNS",
-    "hosted": "exact head 3e3982afb Branch CI run 43043688209: Python packaging provision success; Service suites (postgres/runtime/misc/heavy) success; Runtime mirror guard and Commit trailers success; Smoke acceptance FAILURE in 'Provision real worker sandbox' - primary azure mirror apt update exit 124, fallback archive/security.ubuntu.com exit 124 ('Temporary failure resolving security.ubuntu.com'), helper fail-closed exit 10 (primary=10 fallback=10). Runner DNS to Ubuntu hosts was down for the whole ~90s window; the bounded fallback did not help in that case. No hosted pass claimed."
+    "previous_failed_candidate": "exact head 3e3982afb Branch CI run 43043688209: Python packaging provision success; Service suites (postgres/runtime/misc/heavy) success; Runtime mirror guard and Commit trailers success; Smoke acceptance FAILURE in 'Provision real worker sandbox' - primary azure mirror apt update exit 124, fallback archive/security.ubuntu.com exit 124 ('Temporary failure resolving security.ubuntu.com'), helper fail-closed exit 10 (primary=10 fallback=10). Runner DNS to Ubuntu hosts was down for the whole ~90s window; the bounded fallback did not help in that case. No hosted pass claimed.",
+    "hosted": {
+      "head": "7bb062a3bba00f6ee4cdbe01615b8ee595551096",
+      "base": "9ce4f3396f44b402290cd94578d20ba628b0ac48",
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/43051904067",
+      "smoke_job": "https://github.com/ajoe734/pantheon/actions/runs/43051904067/job/130632539407",
+      "raw_job_log_sha256": "1b679c8ae694ebfc26b863349c948c1f39f0a0a624393c73fd9474a2262b5f43",
+      "helper_blob": "47fd4622901dad34cc3fe905b054859b92444162",
+      "workflow_blob": "cadb8abaf81a09ecf9ede2e834157d2f7f9744d1",
+      "provision": {
+        "result": "success",
+        "started_at": "2026-11-11T15:51:43Z",
+        "completed_at": "2026-11-11T15:53:04Z",
+        "primary": "APT update bounded timeout exit 124 at 15:52:28Z; original output retained",
+        "fallback": "Same runner fetched all three noble InRelease files and package indexes over HTTPS from mirrors.mit.edu, then installed bubblewrap and apparmor-profiles using signed-by ubuntu-archive-keyring with no signature/TLS/freshness bypass",
+        "packages": {
+          "bubblewrap": "0.9.0-1ubuntu0.3",
+          "apparmor": "4.0.1really4.0.1-0ubuntu0.24.04.9",
+          "apparmor-profiles": "4.0.1really4.0.1-0ubuntu0.24.04.9"
+        },
+        "upstream_profile_sha256": "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9",
+        "capability": "Unchanged upstream AppArmor profile loaded; real /usr/bin/bwrap capability probe passed (exit 0) at 15:52:59Z"
+      },
+      "passed_steps": [
+        "Verify workflow contract (23 focused tests)",
+        "BFF test architecture gate",
+        "BFF tenant fallback audit gate",
+        "Run source ingestion tests",
+        "Run compose contract tests"
+      ],
+      "smoke": "FAILURE at Run lean runtime and paper lifecycle tests: 1 failed, 587 passed, 13 skipped, 70 subtests passed; process exit 1",
+      "boundary_checks": "Verify real worker sandbox boundaries SKIPPED because the preceding product suite failed. No boundary/browser/full-Smoke pass or completed delivery claimed.",
+      "other_checks_as_of_1604Z": "Commit trailers, Runtime mirror guard, Python packaging provision, Service suites misc/runtime passed; heavy installs, postgres, Research still running (not counted as passed)"
+    },
+    "product_blocker": {
+      "test": "services/execution/lean_runtime/test_futures_session_inputs.py::ProducerRuntimeFuturesWiringIntegrationTests::test_summary_projection_and_drift_see_futures_valuation",
+      "failure": "KeyError: mark_price at test_futures_session_inputs.py:1038",
+      "local_reproduction": "timeout 150s .venv-pantheon/bin/python3 -m pytest -q <test above>: exit 1, same KeyError, 2.98s",
+      "scope_evidence": "git diff origin/dev HEAD -- services/execution/lean_runtime services/telemetry/runtime_summary.py is empty. Product files are outside this task's declared artifacts; no product source or assertions changed.",
+      "routing": "Claude owns the archived PAPER-FUTURES-SESSION-MARK-AND-WINDOW-20261110 task containing this test. Request existing coordination to route the current product regression; that completed task is NOT a blocking task dependency.",
+      "remaining": "Repair the product baseline through its own authorized scope, synchronize current dev, then rerun exact-head full CI including real worker boundaries before independent review/integration/done. PR7176 remains with its existing owner; no repair merge exists yet."
+    }
   },
   "recovery": {
     "pr": "https://github.com/ajoe734/pantheon/pull/7183",
     "diagnostic_head": "8f434dced6913cf27c77b9ed6bdccffd7b7070c4",
     "diagnostic_run": "https://github.com/ajoe734/pantheon/actions/runs/43050526399",
-    "diagnostic_status": "Smoke job130629176269 still queued at 15:46:44 UTC; candidate push may supersede it via existing concurrency. No runner diagnostic result or pass claimed. Canonical scope explicitly permits registered-mirror testing as an alternative, not an additional diagnostic gate.",
+    "diagnostic_status": "Run completed cancelled after candidate push via existing concurrency; Smoke job130629176269 had remained queued. No runner diagnostic result or pass claimed. Canonical scope explicitly permits registered-mirror testing as an alternative, not an additional diagnostic gate.",
     "candidate_code_commit": "a84750563",
     "previous_runner_failure": {
       "head": "ee941531f975b1ce2e714066dfe663e19a619a89",
@@ -63,11 +104,11 @@
       "result": "primary update timeout 124; fallback update timeout 124; security.ubuntu.com temporary resolution failure; helper exit 10"
     },
     "context_correction": "Advisory PR983 is a different historical merged task; source180ae1a46 is unavailable locally. Actual task PR7183 and GitHub evidence above control this recovery.",
-    "candidate_only": {
+    "registered_mirror_validation": {
       "mirror": "https://mirrors.mit.edu/ubuntu/",
       "registration": "https://launchpad.net/ubuntu/+archivemirrors (MIT SIPB)",
       "development_host_check": "HTTPS curl and gpgv with installed ubuntu-archive-keyring succeeded for noble, noble-updates, noble-security; signed Origin Ubuntu and Codename noble. Updates Date 2026-11-11 05:14:56 UTC; security Date 2026-11-11 07:35:28 UTC.",
-      "limitation": "Development-host evidence only. Mirror transport is a candidate, not yet proven on GitHub runner. No extra acceptance gate or public resolver override introduced."
+      "limitation": "Development-host gpgv is supplementary; actual runner APT install and capability proof are recorded above. Full Smoke remains red for a separate product regression. No extra acceptance gate or public resolver override introduced."
     }
   }
 }
