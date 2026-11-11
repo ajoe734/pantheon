@@ -1103,7 +1103,7 @@ def _measure_pit_history(
     strategy_artifact: Mapping[str, Any],
 ) -> tuple[int, int, dict[str, Any]]:
     """Measure point-in-time history length (calendar days and bars) across candidate inputs."""
-    from datetime import date as _date
+    from datetime import date as _date, timedelta
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
     parameters = strategy_artifact.get("parameters") or {}
@@ -1164,6 +1164,7 @@ def _measure_pit_history(
         from services.registry.factor_rule import (
             BUILT_IN_PRICE_VOLUME_FIELDS,
             _lookup_raw_feature,
+            get_feature_definition,
             collect_expression_refs_and_params,
         )
 
@@ -1194,26 +1195,47 @@ def _measure_pit_history(
                 return False
             return True
 
-        def _obs_stamp(obs: Any) -> tuple[bool, str]:
-            """Return (non-null, YYYY-MM-DD stamp or '')."""
+        def _day(value: Any) -> _date | None:
+            text = str(value or "").strip()[:10]
+            if len(text) != 10:
+                return None
+            try:
+                return _date.fromisoformat(text)
+            except ValueError:
+                return None
+
+        def _obs_stamp(obs: Any, lag_days: int) -> tuple[bool, _date | None]:
+            """Return (non-null, effective availability day).
+
+            Effective availability = max(available_time, event_time + lag).
+            """
             if isinstance(obs, Mapping):
-                ts = obs.get("event_time") or obs.get("date") or obs.get("as_of") or obs.get("available_time")
+                event = _day(obs.get("event_time") or obs.get("date") or obs.get("as_of"))
+                avail = _day(obs.get("available_time"))
                 ok = _present(obs["value"]) if "value" in obs else True
             elif isinstance(obs, (list, tuple)) and len(obs) == 2:
-                ts, ok = obs[0], _present(obs[1])
+                event, avail, ok = None, _day(obs[0]), _present(obs[1])
             else:
-                ts, ok = None, _present(obs)
-            ts = str(ts or "").strip()[:10]
-            return ok, ts if len(ts) == 10 else ""
+                event, avail, ok = None, None, _present(obs)
+            if event is not None:
+                lagged = event + timedelta(days=max(0, lag_days))
+                if avail is None or lagged > avail:
+                    avail = lagged
+            return ok, avail
 
         def _span(stamps: list[str]) -> int:
-            if len(stamps) < 2:
-                return 0
-            stamps = sorted(stamps)
-            try:
-                return (_date.fromisoformat(stamps[-1]) - _date.fromisoformat(stamps[0])).days
-            except ValueError:
-                return 0
+            days = sorted(d for d in (_day(x) for x in stamps) if d is not None)
+            return (days[-1] - days[0]).days if len(days) >= 2 else 0
+
+        def _usable(avail_days: list[_date], decisions: list[str]) -> tuple[int, int]:
+            """(usable decision bars, calendar span) from first effective availability."""
+            if not avail_days:
+                return 0, 0
+            first_avail = min(avail_days)
+            usable = [d for d in (_day(x) for x in decisions) if d is not None and d >= first_avail]
+            if len(usable) < 2:
+                return len(usable), 0
+            return len(usable), (max(usable) - min(usable)).days
 
         def _norm_key(key: Any) -> str | None:
             try:
@@ -1233,30 +1255,41 @@ def _measure_pit_history(
                 else:
                     global_map[str(k)] = v
 
-        def _measure_symbol(code: str, name: str, ds: str, fld: str) -> tuple[int, int | None, bool] | None:
-            """Non-null dated coverage of one input for one instrument; None when absent."""
+        def _measure_symbol(
+            code: str, name: str, ds: str, fld: str, lag_days: int
+        ) -> tuple[int, int | None, bool, int | None] | None:
+            """Usable PIT coverage of one input for one instrument; None when absent.
+
+            Returns (visible observations, calendar days, bar_aligned, usable decision bars).
+            """
+            decisions = dates_by_symbol.get(code, [])
+            last_decision = _day(max(decisions)) if decisions else None
             series = None
             if code in inst_maps:
                 series = _lookup_raw_feature(inst_maps[code], name=name, dataset=ds, field=fld)
             if series is None and global_map:
                 series = _lookup_raw_feature(global_map, name=name, dataset=ds, field=fld)
             if isinstance(series, Sequence) and not isinstance(series, (str, bytes)):
-                pairs = [_obs_stamp(o) for o in series]
+                pairs = [_obs_stamp(o, lag_days) for o in series]
                 good = [ts for ok, ts in pairs if ok]
                 if good:
-                    stamps = [ts for ts in good if ts]
-                    return len(good), (_span(stamps) if stamps else None), not stamps
+                    stamps = [ts for ts in good if ts is not None]
+                    if not stamps:
+                        return len(good), None, True, None
+                    visible = [t for t in stamps if last_decision is None or t <= last_decision]
+                    bars, days = _usable(visible, decisions)
+                    return len(visible), days, False, bars
             # Fall back to non-null per-record values for this instrument.
-            stamps = []
+            stamps_s: list[str] = []
             for rec in records:
                 if not isinstance(rec, Mapping) or _norm_key(rec.get("instrument")) != code:
                     continue
                 feats = rec.get("features") if isinstance(rec.get("features"), Mapping) else {}
                 if any(_present(rec.get(k)) or _present(feats.get(k)) for k in {name, fld}):
-                    stamps.append(str(rec.get("date") or "").strip()[:10])
-            if stamps:
-                dated = [t for t in stamps if len(t) == 10]
-                return len(stamps), (_span(dated) if dated else None), True
+                    stamps_s.append(str(rec.get("date") or "").strip()[:10])
+            if stamps_s:
+                dated = [t for t in stamps_s if len(t) == 10]
+                return len(stamps_s), (_span(dated) if dated else None), True, None
             return None
 
         for ref in sorted(referenced - {"signal"}):
@@ -1271,20 +1304,27 @@ def _measure_pit_history(
             name, ds, fld = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
             if fld in price_fields:
                 continue
+            lag_days = int(item.get("availability_lag_days") or 0)
+            cat_def = get_feature_definition(ds, fld)
+            if cat_def is not None:
+                lag_days = max(lag_days, cat_def.min_availability_lag_days)
+            worst_bars: int | None = None
             per_inst: dict[str, Any] = {}
             missing_codes: list[str] = []
             worst_n: int | None = None
             worst_days: int | None = None
             bar_aligned = False
             for code in sorted(wanted_codes):
-                res = _measure_symbol(code, name, ds, fld)
+                res = _measure_symbol(code, name, ds, fld, lag_days)
                 if res is None:
                     missing_codes.append(code)
                     per_inst[code] = {"observations": 0, "calendar_days": 0, "missing": True}
                     continue
-                n, d, aligned = res
+                n, d, aligned, ubars = res
                 bar_aligned = bar_aligned or aligned
-                per_inst[code] = {"observations": n, "calendar_days": d}
+                per_inst[code] = {"observations": n, "calendar_days": d, "usable_bars": ubars}
+                if ubars is not None:
+                    worst_bars = ubars if worst_bars is None else min(worst_bars, ubars)
                 worst_n = n if worst_n is None else min(worst_n, n)
                 if d is not None:
                     worst_days = d if worst_days is None else min(worst_days, d)
@@ -1308,6 +1348,8 @@ def _measure_pit_history(
                 min_calendar_days = min(min_calendar_days, worst_days)
             if worst_days is None or bar_aligned:
                 min_bars = min(min_bars, worst_n)
+            if worst_bars is not None:
+                min_bars = min(min_bars, worst_bars)
 
     return (
         int(min_calendar_days),

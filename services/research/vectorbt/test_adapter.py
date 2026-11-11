@@ -857,6 +857,46 @@ class TestReplicationGateRealBacktestProtocol(unittest.TestCase):
         days, _bars, _d = _measure_pit_history(long_ok, artifact)
         self.assertGreaterEqual(days, 730)
 
+    def test_pit_history_uses_effective_availability_for_late_publication(self) -> None:
+        from datetime import date, timedelta
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        start = date(2023, 1, 2)
+        records = [
+            {
+                "instrument": "2330.TWSE",
+                "date": (start + timedelta(days=i)).isoformat(),
+                "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0,
+            }
+            for i in range(760)
+        ]
+        # Long event history, but everything only became available 5 days before the end.
+        late = [
+            {
+                "event_time": (start + timedelta(days=30 * i)).isoformat(),
+                "available_time": "2025-01-25T00:00:00Z",
+                "value": 1.0,
+            }
+            for i in range(26)
+        ]
+        dataset = {"records": records, "features_by_instrument": {"2330.TWSE": {"rev_yoy": late}}}
+        days, bars, details = _measure_pit_history(dataset, artifact)
+        self.assertLess(days, 30)
+        self.assertLess(bars, 30)
+        self.assertLess(details["features"]["rev_yoy"]["calendar_days"], 30)
+
+        # Observations whose effective availability is after the last decision are invisible.
+        future = [
+            {"event_time": "2023-01-02", "available_time": "2026-01-01T00:00:00Z", "value": 1.0}
+        ] * 3
+        dataset = {"records": records, "features_by_instrument": {"2330.TWSE": {"rev_yoy": future}}}
+        days, bars, details = _measure_pit_history(dataset, artifact)
+        self.assertLess(days, 730)
+        self.assertEqual(details["features"]["rev_yoy"]["observations"], 0)
+
     def test_pit_history_feature_coverage_is_non_null_and_per_instrument(self) -> None:
         from datetime import date, timedelta
         from adapter.vectorbt_adapter import _measure_pit_history
