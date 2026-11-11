@@ -942,6 +942,35 @@ class TestReplicationGateRealBacktestProtocol(unittest.TestCase):
         self.assertTrue(details["features"]["rev_yoy"].get("missing"))
         self.assertIn("2317", details["features"]["rev_yoy"]["missing_instruments"])
 
+    def test_pit_history_undated_bar_aligned_arrays_measure_non_null_or_fail_closed(self) -> None:
+        from datetime import date, timedelta
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        start = date(2023, 1, 2)
+        records = [
+            {
+                "instrument": "2330.TWSE",
+                "date": (start + timedelta(days=i)).isoformat(),
+                "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0,
+            }
+            for i in range(1000)
+        ]
+        sparse = [None] * 500 + [float(i % 7) for i in range(500)]
+        dataset = {"records": records, "features_by_instrument": {"2330.TWSE": {"rev_yoy": sparse}}}
+        days, bars, details = _measure_pit_history(dataset, artifact)
+        self.assertLess(days, 730)
+        self.assertLessEqual(bars, 500)
+        self.assertEqual(details["features"]["rev_yoy"]["calendar_days"], 499)
+
+        short = [1.0] * 500
+        dataset = {"records": records, "features_by_instrument": {"2330.TWSE": {"rev_yoy": short}}}
+        days, bars, _details = _measure_pit_history(dataset, artifact)
+        self.assertLess(days, 730)
+        self.assertEqual(bars, 0)
+
     def test_replication_backtest_protocol_insufficient_history_under_two_years(self) -> None:
         from adapter.vectorbt_adapter import (
             INSUFFICIENT_HISTORY_STATUS,

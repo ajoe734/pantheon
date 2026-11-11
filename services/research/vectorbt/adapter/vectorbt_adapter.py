@@ -1275,7 +1275,20 @@ def _measure_pit_history(
                 if good:
                     stamps = [ts for ts in good if ts is not None]
                     if not stamps:
-                        return len(good), None, True, None
+                        # Undated values: only usable when index-aligned to the decision bars;
+                        # then measure the dates of the finite non-null values. Otherwise
+                        # fail closed rather than inheriting the price history.
+                        ordered = sorted(decisions)
+                        if len(series) != len(ordered):
+                            return len(good), 0, True, 0
+                        nn_days = sorted(
+                            d
+                            for (ok, _ts), dstr in zip(pairs, ordered)
+                            if ok and (d := _day(dstr)) is not None
+                        )
+                        if len(nn_days) < 2:
+                            return len(nn_days), 0, True, len(nn_days)
+                        return len(nn_days), (nn_days[-1] - nn_days[0]).days, True, len(nn_days)
                     visible = [t for t in stamps if last_decision is None or t <= last_decision]
                     bars, days = _usable(visible, decisions)
                     return len(visible), days, False, bars
@@ -1289,7 +1302,7 @@ def _measure_pit_history(
                     stamps_s.append(str(rec.get("date") or "").strip()[:10])
             if stamps_s:
                 dated = [t for t in stamps_s if len(t) == 10]
-                return len(stamps_s), (_span(dated) if dated else None), True, None
+                return len(stamps_s), (_span(dated) if dated else 0), True, None
             return None
 
         for ref in sorted(referenced - {"signal"}):
