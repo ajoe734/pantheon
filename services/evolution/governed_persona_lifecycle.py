@@ -52,6 +52,11 @@ def _digest(*parts: str) -> str:
     return hashlib.sha256(json.dumps(list(parts)).encode()).hexdigest()[:24]
 
 
+def transition_approval_id(evolution_decision_id: str, persona_id: str, source: str, target: str) -> str:
+    """Deterministic Governance decision id for one exact retire step of one evolution decision."""
+    return f"apv-evo-{_digest(evolution_decision_id, persona_id, source, target)}"
+
+
 class GovernedPersonaLifecycle:
     def __init__(
         self,
@@ -129,6 +134,27 @@ class GovernedPersonaLifecycle:
             "actor_id": self._gate_id, "target_state": target_state, "governance_decision_id": approval_id,
         })
         return str(advanced.get("lifecycle_state") or "")
+
+    def verify_freeze(self, evolution_decision_id: str, persona_id: str, tenant_id: str) -> bool:
+        """True only if this evolution decision's own approved paper_owner->frozen step froze the persona.
+
+        Checks the Persona owner binding (last lifecycle governance id) and the
+        Governance record (decided/approved, exact persona and transition).
+        """
+        approval_id = transition_approval_id(evolution_decision_id, persona_id, "paper_owner", "frozen")
+        persona = self._call("GET", f"{self._persona}/api/personas/{persona_id}", self._persona_token())
+        meta = persona.get("metadata") or {}
+        if (str(persona.get("tenant_id") or "") != tenant_id or str(persona.get("lifecycle_state") or "") != "frozen"
+                or str(meta.get("last_lifecycle_governance_decision_id") or "") != approval_id):
+            return False
+        record = self._existing(approval_id) or {}
+        subject = record.get("subject") or {}
+        return (str(record.get("decision_state") or "") == "decided"
+                and str(record.get("decision") or record.get("outcome") or "approved") == "approved"
+                and str(record.get("target_id") or persona_id) == persona_id
+                and str(subject.get("persona_id") or "") == persona_id
+                and str(subject.get("from_state") or "") == "paper_owner"
+                and str(subject.get("to_state") or "") == "frozen")
 
     def _existing(self, approval_id: str) -> dict[str, Any] | None:
         try:

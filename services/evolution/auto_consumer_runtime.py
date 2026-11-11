@@ -155,7 +155,9 @@ class DiscoveryBindingScope:
         return {
             "tenant_id": tenant, "persona_id": persona_id, "artifact_id": target,
             "binding_id": matches[0].get("binding_id"),
-            "stage": "paper" if state in ("paper_owner", "frozen") else state,
+            "stage": "paper" if state == "paper_owner" else state,
+            "last_lifecycle_governance_decision_id": str(
+                (persona.get("metadata") or {}).get("last_lifecycle_governance_decision_id") or ""),
             "strategy_kind": kind, "persona_lifecycle_state": state,
         }
 

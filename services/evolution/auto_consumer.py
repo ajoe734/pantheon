@@ -77,6 +77,8 @@ class PersonaLifecyclePort(Protocol):
 
     def advance(self, persona_id: str, tenant_id: str, target_state: str, governance_decision_id: str) -> str: ...
 
+    def verify_freeze(self, evolution_decision_id: str, persona_id: str, tenant_id: str) -> bool: ...
+
 
 class ExecutionApprovalPort(Protocol):
     def ensure_approved(self, decision: Mapping[str, Any]) -> str:
@@ -215,7 +217,21 @@ def evaluate_gate(
     tenant = _text(decision.get("tenant_id"))
     if not check("scope_tenant_matches_decision", _text(scope.get("tenant_id")) == tenant and bool(tenant), scope.get("tenant_id")):
         return refuse("tenant_mismatch", scope)
-    if not check("scope_stage_is_paper", _text(scope.get("stage")) == PAPER_STAGE, scope.get("stage")):
+    scope_stage = _text(scope.get("stage"))
+    if scope_stage == "frozen":
+        # Only a *resume* of this exact decision's own paper_owner->frozen step; any other
+        # frozen persona (external freeze, live-origin) stays operator-owned.
+        from services.evolution.governed_persona_lifecycle import transition_approval_id
+
+        own_freeze = transition_approval_id(decision_id, _text(scope.get("persona_id")), "paper_owner", "frozen")
+        if not check(
+            "frozen_resume_proves_own_freeze",
+            action == "retire" and state != "proposed"
+            and _text(scope.get("last_lifecycle_governance_decision_id")) == own_freeze,
+            scope.get("last_lifecycle_governance_decision_id"),
+        ):
+            return refuse("artifact_not_paper_only", scope)
+    elif not check("scope_stage_is_paper", scope_stage == PAPER_STAGE, scope.get("stage")):
         return refuse("artifact_not_paper_only", scope)
     target_id = _text(decision.get("target_id"))
     if not check(
@@ -337,6 +353,8 @@ class AutoConsumer:
             state = self.personas.advance(persona_id, tenant, "frozen", approval_id)
             steps.append("frozen")
         if state == "frozen":
+            if not steps and not self.personas.verify_freeze(_text(decision.get("decision_id")), persona_id, tenant):
+                raise RuntimeError(f"persona {persona_id} is frozen without proof this decision froze it")
             state = self.personas.advance(persona_id, tenant, "retired", approval_id)
             steps.append("retired")
         if state != "retired":

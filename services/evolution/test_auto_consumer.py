@@ -74,8 +74,13 @@ class Personas:
     def __init__(self, state="paper_owner"):
         self.state, self.log = state, []
 
+    own_freeze = True
+
     def get_state(self, pid, tenant):
         return self.state
+
+    def verify_freeze(self, did, pid, tenant):
+        return self.own_freeze
 
     def advance(self, pid, tenant, target, gov):
         self.log.append((pid, target, gov))
@@ -136,6 +141,39 @@ def test_retire_is_idempotent_for_already_frozen_or_retired_persona():
         consumer, _ = _consumer([_decision(action_type="retire", metadata={"discovery_auto_scope": True})], personas=personas)
         consumer.tick()
         assert [t for _p, t, _g in personas.log] == expected
+
+
+def _frozen_scope(last_id=""):
+    return Scope({"tenant_id": "t1", "persona_id": "per-1", "artifact_id": "art-1", "stage": "frozen",
+                  "strategy_kind": "factor_rule_v1", "persona_lifecycle_state": "frozen",
+                  "last_lifecycle_governance_decision_id": last_id})
+
+
+@pytest.mark.parametrize("action", ["retire", "retrain", "mutate", "revalidate"])
+def test_fresh_proposal_on_externally_frozen_persona_is_operator_owned(action):
+    personas = Personas("frozen")
+    consumer, _ = _consumer([_decision(action_type=action, metadata={"discovery_auto_scope": True})],
+                            scope=_frozen_scope("approved-live-owner-freeze"), personas=personas)
+    report = consumer.tick()
+    assert report.left_for_operator == {"evo-auto-1": "artifact_not_paper_only"}
+    assert not report.approved and not report.retired and not personas.log
+
+
+def test_partial_paper_retire_resume_requires_own_freeze_proof():
+    from services.evolution.governed_persona_lifecycle import transition_approval_id
+
+    own = transition_approval_id("evo-auto-1", "per-1", "paper_owner", "frozen")
+    bound = {"decision_state": "reviewed", "approval_decision_id": "auto-gate-evo-auto-1",
+             "action_type": "retire", "metadata": {"discovery_auto_scope": True}}
+    personas = Personas("frozen")
+    consumer, _ = _consumer([_decision(**bound)], scope=_frozen_scope(own), personas=personas)
+    report = consumer.tick()
+    assert report.retired == ["evo-auto-1"] and [t for _p, t, _g in personas.log] == ["retired"]
+    # same resume with a foreign freeze id is refused
+    personas = Personas("frozen")
+    consumer, _ = _consumer([_decision(**bound)], scope=_frozen_scope("other"), personas=personas)
+    report = consumer.tick()
+    assert not report.retired and not personas.log
 
 
 def test_live_persona_is_not_retired_automatically():

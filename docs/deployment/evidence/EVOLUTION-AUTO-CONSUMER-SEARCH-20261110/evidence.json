@@ -59,5 +59,15 @@
     "Operators must add approved expected_sharpe_ratio (with policy_source) to services/evolution/config/threshold_sweep_baselines.json per discovery artifact before decay retire can fire; none is fabricated.",
     "New env for the consumer: AUTO_CONSUMER_CAPITAL_URL/TOKEN, AUTO_CONSUMER_REGISTRY_URL/TOKEN, optional AUTO_CONSUMER_TELEMETRY_TOKEN, AUTO_CONSUMER_DECAY_LEDGER_PATH.",
     "No live provider/deploy performed; hosted validation is out of scope."
-  ]
+  ],
+  "frozen_authority_fix": {
+    "defect": "frozen persona mapped to paper; fresh actions on externally/live-origin frozen persona were auto-approved",
+    "fix": "scope stage stays 'frozen'; gate admits frozen only for retire resume (state!=proposed) when persona last_lifecycle_governance_decision_id equals this decision's own paper_owner->frozen Governance id; retire_persona re-verifies owner binding and decided Governance record (verify_freeze)",
+    "tests": [
+      "test_fresh_proposal_on_externally_frozen_persona_is_operator_owned",
+      "test_partial_paper_retire_resume_requires_own_freeze_proof",
+      "test_externally_frozen_live_origin_persona_is_never_auto_retired"
+    ],
+    "focused_run": "services/evolution auto_consumer/runtime/dispatch/governed_persona_lifecycle: 52 passed; wider batch 204 passed, failures only from missing flask/asyncpg in venv"
+  }
 }

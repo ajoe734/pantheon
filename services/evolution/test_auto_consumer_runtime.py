@@ -162,6 +162,18 @@ def test_paper_decay_telemetry_drives_the_governed_retire_through_the_scheduler_
     assert again["decay"]["proposed"] == [] and again["retired"] == [] and again["errors"] == {}
 
 
+def test_externally_frozen_live_origin_persona_is_never_auto_retired(tmp_path, monkeypatch):
+    series = [_summary(0.8, 0.1, "2026-11-01T00:00:00Z")]
+    client, transport, env, persona = _stack(tmp_path, monkeypatch, lambda: series)
+    persona["lifecycle_state"] = "frozen"
+    persona["metadata"] = {**(persona.get("metadata") or {}), "last_lifecycle_governance_decision_id": "approved-live-owner-freeze"}
+    for i, sharpe in ((1, 0.8), (2, 0.6), (3, 0.3)):
+        series[:] = [_summary(sharpe, 0.1, f"2026-11-0{i}T00:00:00Z")]
+        out = rt.run_consumer_tick(env, transport)
+    assert out["approved"] == [] and out["retired"] == [], out
+    assert persona["lifecycle_state"] == "frozen"
+
+
 def test_failed_proposal_is_retried_next_tick(tmp_path, monkeypatch):
     series = [_summary(0.8, 0.1, "2026-11-01T00:00:00Z")]
     client, transport, env, persona = _stack(tmp_path, monkeypatch, lambda: series)
