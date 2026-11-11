@@ -208,6 +208,8 @@ services:
       PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}
       # FinMind broker connectors read env://FINMIND_API_TOKEN; empty => missing-credential outcome.
       FINMIND_API_TOKEN: ${FINMIND_API_TOKEN:-}
+      # Tenant admitted for the deploy coverage readback through the strict JWT boundary.
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
       # Product-level default is transactional Postgres; JSONL remains an explicit local rollback mode.
       SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}

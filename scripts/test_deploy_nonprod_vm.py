@@ -3409,7 +3409,7 @@ def test_finmind_coverage_readback_passes_the_real_strict_auth_boundary(monkeypa
 
 @pytest.mark.parametrize(
     ("symbols", "batches", "concurrency", "ticks"),
-    [(25, 1, 1, 1), (26, 2, 2, 1), (51, 3, 3, 1), (100, 4, 4, 1), (101, 5, 4, 2), (2400, 96, 4, 24)],
+    [(25, 1, 1, 1), (26, 2, 2, 1), (51, 3, 2, 2), (100, 4, 2, 2), (101, 5, 2, 3), (1200, 48, 2, 24)],
 )
 def test_finmind_bounded_refresh_sizes_controller_to_drain_every_batch(symbols: int, batches: int, concurrency: int, ticks: int) -> None:
     script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
@@ -3418,11 +3418,19 @@ def test_finmind_bounded_refresh_sizes_controller_to_drain_every_batch(symbols: 
     snippet = script[start:end]
     symbol_csv = ",".join(f"{1000 + i}.TW" for i in range(symbols))
     proc = subprocess.run(
-        ["bash", "-c", "info(){ :; }; error(){ echo \"$*\" >&2; exit 9; }\n"
+        ["bash", "-c", "info(){ :; }; error(){ echo \"$*\" >&2; exit 9; }; cid=x; docker(){ echo 2; }\n"
          f"SOURCE_INGEST_BOUNDED_CONNECTOR_ID=tw-finmind-broker-daily-report SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS={symbol_csv}\n"
          f"f(){{\n{snippet}\necho $bounded_concurrency $bounded_max_ticks\n}}\nf"],
         capture_output=True, text=True, check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.split() == [str(concurrency), str(ticks)]
+    assert concurrency <= 2  # real source-ingest API cap (Compose default)
     assert concurrency * ticks >= batches
+
+
+def test_source_ingest_compose_env_supplies_tenant_for_finmind_readback() -> None:
+    import yaml
+
+    env = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))["services"]["source-ingest"]["environment"]
+    assert env["PANTHEON_TENANT_ID"].startswith("${PANTHEON_TENANT_ID:-")

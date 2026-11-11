@@ -3270,15 +3270,20 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
 
   # Every FinMind symbol batch (25 symbols each) is its own frontier item and one tick claims at
   # most max_concurrency items, while the controller rejects any remaining backlog. Size the
-  # concurrency and the bounded tick count so every batch drains: <=4 batches finish in a single
-  # tick; more need ceil(batches/4) ticks (hard cap 24 ticks, i.e. 96 batches / 2400 symbols).
+  # concurrency and the bounded tick count so every batch drains: batches up to the API cap finish in a
+  # single tick; more need ceil(batches/cap) ticks (hard cap 24 ticks).
   local bounded_max_ticks=1 bounded_concurrency=1
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-finmind-broker-daily-report" ]]; then
     local finmind_symbol_count finmind_batch_count
     finmind_symbol_count="$(printf '%s' "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sort -u | wc -l | tr -d ' ')"
     finmind_batch_count=$(( (finmind_symbol_count + 24) / 25 ))
     (( finmind_batch_count >= 1 )) || finmind_batch_count=1
-    bounded_concurrency=$(( finmind_batch_count < 4 ? finmind_batch_count : 4 ))
+    # Stay within the recreated source-ingest API cap or the API rejects the run with HTTP 400;
+    # read the real cap from the running container (Compose default 2).
+    local api_cap
+    api_cap="$(docker exec "${cid}" printenv SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY 2>/dev/null | tr -d '[:space:]' || true)"
+    [[ "${api_cap}" =~ ^[0-9]+$ ]] && (( api_cap >= 1 )) || api_cap=2
+    bounded_concurrency=$(( finmind_batch_count < api_cap ? finmind_batch_count : api_cap ))
     bounded_max_ticks=$(( (finmind_batch_count + bounded_concurrency - 1) / bounded_concurrency ))
     (( bounded_max_ticks <= 24 )) || error "FinMind bounded refresh needs ${bounded_max_ticks} ticks for ${finmind_symbol_count} symbols; exceeds the 24 tick bound"
     info "FinMind bounded refresh draining ${finmind_batch_count} batch(es) with concurrency=${bounded_concurrency} ticks=${bounded_max_ticks}"
