@@ -1,0 +1,54 @@
+{
+  "task_id": "REGISTRY-SEED-UNIQUE-SCAN-20261110",
+  "environment": "local postgres:16-alpine at 127.0.0.1:55432, same machine for before and after; no hosted/VM access",
+  "table_shape": {
+    "strategy_spec_rows": 5096,
+    "execution_bundle_rows": 323,
+    "strategy_spec_payload": "realistic payload from test_strategy_summary_page_bounded._realistic_strategy_spec_payload",
+    "alpha_templates": 182
+  },
+  "change": "PostgresJsonOwnerStore.insert_if_absent now finds a unique_fields collision with one SQL query (COALESCE(payload->field,'null') = ANY(python-equal json candidates), ORDER BY updated_at, record_id LIMIT 1) instead of SELECT payload of every row. Legacy JSON-string payloads are probed by a string-typed query (partial index, normally zero rows); only if one matches does it fall back to the previous oldest-first pass. An expression index on the compared expressions plus a tiny partial index for string payloads is created lazily (savepoint, once per process, failure falls back to the correct scan).",
+  "timings": {
+    "before": {
+      "fresh_seed_182_templates_seconds": 264.69,
+      "single_register_if_absent_p50_ms": 1461.98,
+      "single_register_if_absent_max_ms": 1744.08,
+      "rerun_with_140_present": "not measured separately (about 42 new templates at 1.45 s each, roughly 61 s expected)"
+    },
+    "after_in_db_comparison_only_no_index": {
+      "fresh_seed_seconds": 77.12,
+      "single_register_if_absent_p50_ms": 412.4,
+      "note": "one in-database scan still detoasts 12 MB of payload (EXPLAIN ANALYZE 210 ms per scan), so acceptance 4 and 5 are not met without the index. This is the evidence that justifies the lazy index."
+    },
+    "after_with_lazy_index": {
+      "fresh_seed_seconds": 6.715,
+      "rerun_with_140_present_seconds": 4.2,
+      "single_register_if_absent_p50_ms": 28.87,
+      "single_register_if_absent_max_ms": 1175.75,
+      "note": "max is the one-time index build on the first call after bootstrap"
+    }
+  },
+  "acceptance_map": {
+    "1": "test_unique_lookup_never_returns_table_rows_to_python counts rows fetched into Python on a real 200-row table: at most 1 for a hit, 0 for a new insert",
+    "2": "test_new_insert_id_hit_and_unique_hit, test_oldest_by_updated_at_wins_among_shared_identity, test_concurrent_callers_same_identity_different_ids_one_winner, test_legacy_string_payload_still_collides_and_oldest_wins (services/foundation/tests/test_postgres_json_store_unique_fields.py)",
+    "3": "test_equality_matches_python_semantics, test_missing_stored_field_equals_null_probe",
+    "4_5": "services/registry/test_alpha_template_seed_postgres.py"
+  },
+  "equality_semantics": {
+    "same_as_before": [
+      "string",
+      "number (1 == 1.0)",
+      "null",
+      "missing stored field equals null probe",
+      "top-level object/array values"
+    ],
+    "emulated": "bool vs 0/1: Python True == 1 but jsonb true != 1; both spellings are sent as candidates so results are unchanged",
+    "known_difference": "booleans nested inside an object or array unique field value compare by jsonb equality (true != 1) rather than Python equality; no caller uses a container value (callers: registry split_api _REVISION_UNIQUE_FIELDS strategy_id/version/artifact_type strings; reliable_delivery idempotency_key string)",
+    "tie_break": "rows with identical updated_at now resolve by record_id ascending; previously unspecified"
+  },
+  "existing_tests": {
+    "changed": "none; no existing test edited, weakened or deleted",
+    "results": "services/foundation/tests (except test_health.py): 76 passed. Earlier full foundation+registry run: 462 passed; 7 failures (test_owner_durability_real_process x3, test_registry_auth_wiring deployment_view, test_service deployment_view x3) fail identically on the original postgres_json_store.py, so pre-existing and unrelated; services/foundation/tests/test_health.py errors at collection in this venv (pre-existing)."
+  },
+  "file_backed_store": "services/foundation/reliable_delivery.py file store is unchanged (no database; it scans an in-memory dict)."
+}

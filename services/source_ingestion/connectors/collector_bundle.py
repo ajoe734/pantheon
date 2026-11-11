@@ -63,7 +63,8 @@ BUNDLE_STATUSES = frozenset({"complete", "partial", "paused"})
 CURSOR_LAG_DEGRADED_DAYS = 7
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_RAW_BYTES = 32 * 1024 * 1024
-COLLECTOR_SOURCE_TYPES = frozenset({"social", "news", "paper", "macro", "filing"})
+COLLECTOR_SOURCE_TYPES = frozenset({"social", "news", "paper", "macro", "filing", "market"})
+COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
 
 
 def collector_host() -> str:
@@ -121,6 +122,25 @@ class HttpBundleTransport(BundleTransport):
         )
         with open_external_url(request, caller="source_ingest.collector_bundle", timeout=self.timeout_seconds) as response:
             return read_bounded_response(response, max_bytes=max_bytes)
+
+
+@dataclass(frozen=True)
+class LocalDirectoryBundleTransport(BundleTransport):
+    """Reads collector bundles from a local or mounted collector directory."""
+
+    root_dir: Path | str
+
+    def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+        p = PurePosixPath(str(relative_path).lstrip("/"))
+        if p.is_absolute() or ".." in p.parts or not p.parts:
+            raise SourceEvidenceError(f"collector bundle relative path is invalid: {relative_path!r}")
+        target = Path(self.root_dir) / Path(*p.parts)
+        if not target.is_file():
+            raise SourceEvidenceError(f"collector bundle file not found: {target}")
+        data = target.read_bytes()
+        if len(data) > max_bytes:
+            raise SourceEvidenceError(f"collector bundle file exceeds max_bytes={max_bytes}: {target}")
+        return data
 
 
 @dataclass(frozen=True)
@@ -511,7 +531,34 @@ class CollectorBundleAdapter:
             metadata["attribution_text"] = attribution
         if text:
             metadata["body"] = str(text)
-        for optional in ("symbols", "series_id", "value", "unit", "authors", "doi", "arxiv_id"):
+        for optional in (
+            "symbols",
+            "symbol",
+            "security_name",
+            "trade_date",
+            "dataset",
+            "exchange",
+            "source_dataset",
+            "upstream_endpoint",
+            "open",
+            "high",
+            "low",
+            "close",
+            "change",
+            "volume_shares",
+            "turnover_twd",
+            "transactions",
+            "foreign_net_shares",
+            "investment_trust_net_shares",
+            "dealer_net_shares",
+            "total_institutional_net_shares",
+            "series_id",
+            "value",
+            "unit",
+            "authors",
+            "doi",
+            "arxiv_id",
+        ):
             if row.get(optional) not in (None, "", [], {}):
                 metadata[optional] = row[optional]
 
@@ -528,6 +575,37 @@ class CollectorBundleAdapter:
             )
         elif self.source_type == "news":
             metadata.update(publisher=str(row.get("publisher") or self.publisher or self.source_id), published_at=_iso(published_at))
+        elif self.source_type == "market":
+            metrics_dict = dict(row.get("metrics") or {})
+            market_row: dict[str, Any] = dict(metrics_dict)
+            for market_key in (
+                "symbol",
+                "security_name",
+                "trade_date",
+                "dataset",
+                "exchange",
+                "source_dataset",
+                "upstream_endpoint",
+                "open",
+                "high",
+                "low",
+                "close",
+                "change",
+                "volume_shares",
+                "turnover_twd",
+                "transactions",
+                "foreign_net_shares",
+                "investment_trust_net_shares",
+                "dealer_net_shares",
+                "total_institutional_net_shares",
+            ):
+                if metadata.get(market_key) not in (None, "", [], {}):
+                    market_row.setdefault(market_key, metadata[market_key])
+            if market_row:
+                metadata.setdefault("normalized_row", market_row)
+            for key, val in metrics_dict.items():
+                if val not in (None, "", [], {}):
+                    metadata.setdefault(key, val)
 
         record = SourceRecord(
             source_id=f"collector:{self.source_id}:{item_id}:{sha[:12]}",
@@ -540,10 +618,15 @@ class CollectorBundleAdapter:
         )
         return validate_external_source_record(record, connector=self.connector(), force=True)
 
+    def fetch_bundle(self, *, cursor: str | None = None, trace_id: str = "") -> CollectorPullResult:
+        return self.pull(cursor=cursor, trace_id=trace_id)
+
     # -- raw storage -----------------------------------------------------------
     def _raw_root(self) -> Path:
         if self.raw_root:
             return Path(self.raw_root)
+        if isinstance(self.transport, LocalDirectoryBundleTransport):
+            return Path(self.transport.root_dir) / "raw_store"
         explicit = os.environ.get("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT")
         if explicit:
             return Path(explicit)

@@ -14,7 +14,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from .config import CollectorConfigError, SourceFetchPolicy
+from .config import CollectorConfigError, EXCHANGE_WEBSITE_SOURCE_IDS, SourceFetchPolicy
 from .state import classify_access_block
 
 
@@ -226,11 +226,27 @@ class PolicyEnforcedFetcher:
             raise CollectorConfigError(
                 f"source {policy.source_id} requires ScraplingBrowserFetcher (fetcher='browser')"
             )
+        if policy.max_connections <= 0:
+            raise CollectorConfigError(
+                f"source {policy.source_id} max_connections must be >= 1, got {policy.max_connections}"
+            )
+        if policy.source_id in EXCHANGE_WEBSITE_SOURCE_IDS:
+            if policy.max_connections != 1:
+                raise CollectorConfigError(
+                    f"source {policy.source_id} requires max_connections=1 (single connection)"
+                )
+            if policy.min_interval_seconds < 5.0:
+                raise CollectorConfigError(
+                    f"source {policy.source_id} requires min_interval_seconds >= 5.0"
+                )
         self.policy = policy
         self.transport = transport
         self.contact_user_agent = contact_user_agent
         self.sleep_fn = sleep_fn
         self.request_count = 0
+        self.max_connections = policy.max_connections
+        self._active_connections = 0
+        self.sleep_calls: list[float] = []
 
     def fetch(
         self,
@@ -245,7 +261,12 @@ class PolicyEnforcedFetcher:
             raise CollectorConfigError(
                 f"source {self.policy.source_id} exceeded max_requests_per_run={self.policy.max_requests_per_run}"
             )
+        if self._active_connections >= self.max_connections:
+            raise CollectorConfigError(
+                f"source {self.policy.source_id} exceeded max_connections={self.max_connections}"
+            )
         if self.request_count > 0 and self.policy.min_interval_seconds > 0:
+            self.sleep_calls.append(self.policy.min_interval_seconds)
             self.sleep_fn(self.policy.min_interval_seconds)
 
         req_headers = dict(headers or {})
@@ -262,15 +283,21 @@ class PolicyEnforcedFetcher:
             )
         else:
             req_headers.setdefault("User-Agent", self.contact_user_agent)
+        if self.max_connections == 1:
+            req_headers.setdefault("Connection", "close")
 
         self.request_count += 1
-        response = self.transport.request(
-            url,
-            method=method,
-            headers=req_headers,
-            body=body,
-            fetcher_kind=self.policy.fetcher,
-        )
+        self._active_connections += 1
+        try:
+            response = self.transport.request(
+                url,
+                method=method,
+                headers=req_headers,
+                body=body,
+                fetcher_kind=self.policy.fetcher,
+            )
+        finally:
+            self._active_connections -= 1
 
         block_reason = classify_access_block(
             http_status=response.http_status,

@@ -137,16 +137,6 @@ SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
 SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"
 SOURCE_REFRESH_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}"
 SOURCE_REFRESH_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}"
-if [[ "${SOURCE_REFRESH_SELECTED}" == "true" \
-  && "${SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market" ]]; then
-  # The reviewed official connector uses TWSE OpenAPI for today's full-market
-  # close and the TWSE market site for bounded per-symbol monthly history.
-  # Keep the second host connector-specific instead of widening default egress.
-  case ",${SOURCE_REFRESH_ALLOWED_HOSTS}," in
-    *,www.twse.com.tw,*) ;;
-    *) SOURCE_REFRESH_ALLOWED_HOSTS="${SOURCE_REFRESH_ALLOWED_HOSTS:+${SOURCE_REFRESH_ALLOWED_HOSTS},}www.twse.com.tw" ;;
-  esac
-fi
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 DEPLOY_ENV=""
@@ -1315,7 +1305,7 @@ if not hosts:
     raise SystemExit("source refresh exact host allowlist is empty")
 dataset = sys.argv[3] if len(sys.argv) > 3 else ""
 if sys.argv[2] == "tw-twse-tpex-official-market":
-    required = {"openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"}
+    required = {"openapi.twse.com.tw", "www.tpex.org.tw"}
     if hosts != required:
         raise SystemExit(
             "official TWSE/TPEx refresh requires exact hosts: " + ",".join(sorted(required))
@@ -2187,7 +2177,7 @@ for k in ("SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS", "SOURCE_INGEST_CONTROLLER_
     env.pop(k, None)
 cmd = ["docker", "compose", "-p", "pantheon", "-f", "docker-compose.yml"]
 if action == "bounded":
-    allowed_hosts = os.environ.get("PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS") or "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+    allowed_hosts = os.environ.get("PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS") or "openapi.twse.com.tw,www.tpex.org.tw"
     env.update({"PANTHEON_EXTERNAL_EGRESS": "allowlist", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": allowed_hosts, "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull"})
     if arg:
         env["SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"] = arg
@@ -2680,7 +2670,7 @@ execute_taiwan_refresh_preflight_only() {
   # Same profile as the refresh entrypoint, so the same active symbols are resolved and checked.
   PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler" \
   PANTHEON_EXTERNAL_EGRESS="allowlist" \
-  PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" \
+  PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.tpex.org.tw" \
   SOURCE_INGEST_BOUNDED_CONNECTOR_ID="tw-twse-tpex-official-market" \
   SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}" \
   SOURCE_INGEST_CONTROLLER_MODE="reconcile_and_pull" \
@@ -2703,7 +2693,7 @@ execute_taiwan_refresh_preflight_only() {
 
 execute_bounded_source_refresh_entrypoint() {
   local force="${1:-false}" output_path="${2:-}" preflight_output preflight_status default_allowed_hosts default_bounded_dataset
-  default_allowed_hosts="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+  default_allowed_hosts="openapi.twse.com.tw,www.tpex.org.tw"
   default_bounded_dataset=""
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}" == "tw-taifex-futures-options-chip" ]]; then
     default_allowed_hosts="openapi.taifex.com.tw,www.taifex.com.tw"

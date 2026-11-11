@@ -124,7 +124,7 @@ def test_taiwan_official_connector_call_path_handles_short_chunk(monkeypatch: py
     monkeypatch.setattr(taiwan_official, "open_external_url", fake_open)
 
     result = _fetch_official(
-        urllib.request.Request("https://www.twse.com.tw/test"),
+        urllib.request.Request("https://openapi.twse.com.tw/v1/exchangeReport/TWTB4U"),
         caller="source_ingest.taiwan_official",
         timeout_seconds=5.0,
         max_bytes=10485760,
@@ -143,7 +143,7 @@ def test_taiwan_official_connector_call_path_oversized_payload(monkeypatch: pyte
 
     with pytest.raises(SourceEvidenceError, match=r"Payload exceeded max byte limit \(100 bytes\)"):
         _fetch_official(
-            urllib.request.Request("https://www.twse.com.tw/test"),
+            urllib.request.Request("https://openapi.twse.com.tw/v1/exchangeReport/TWTB4U"),
             caller="source_ingest.taiwan_official",
             timeout_seconds=5.0,
             max_bytes=100,

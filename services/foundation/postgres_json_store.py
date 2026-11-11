@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 
 
+_UNIQUE_INDEX_READY: set[tuple[str, tuple[str, ...]]] = set()
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -318,6 +320,109 @@ class PostgresJsonOwnerStore:
             )
             return self._fetch_one(cursor) is not None
 
+    @staticmethod
+    def _python_equal_json_candidates(value: Any) -> List[str]:
+        """JSON texts of every value Python ``==`` treats as equal to ``value``.
+
+        jsonb equality already agrees with Python for strings, numbers
+        (``1 == 1.0``), null, arrays and objects.  It differs only for
+        booleans, which Python equates with 0/1, so those get both spellings.
+        """
+        candidates = [json.dumps(value, ensure_ascii=True, sort_keys=True)]
+        if isinstance(value, bool) or (
+            isinstance(value, (int, float)) and value in (0, 1)
+        ):
+            other = int(value) if isinstance(value, bool) else bool(value)
+            candidates.append(json.dumps(other))
+        return candidates
+
+    def _ensure_unique_lookup_index(self, conn: Any, fields: tuple[str, ...]) -> None:
+        """Create (once per process) the expression indexes the lookup uses.
+
+        Detoasting every wide payload to compare three fields costs ~200 ms on
+        a 5.4k-row registry even inside Postgres, so the identity lookup is
+        backed by an expression index on exactly the compared expression plus
+        a tiny partial index for legacy string payloads.  Creation runs in a
+        savepoint and failure (e.g. a role without CREATE on the schema) only
+        leaves the correct-but-slower scan in place.
+        """
+        key = (self.table, fields)
+        if key in _UNIQUE_INDEX_READY:
+            return
+        digest = hashlib.sha1(json.dumps(list(fields)).encode("utf-8")).hexdigest()[:12]
+        base = self.table_name.split(".")[-1][:30]
+        exprs = ", ".join(
+            "(COALESCE(payload -> '" + f.replace("'", "''") + "', 'null'::jsonb))"
+            for f in fields
+        )
+        statements = (
+            f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(f'{base}_uq_{digest}_idx')} "
+            f"ON {self.table} ({exprs}, updated_at, record_id) "
+            "WHERE jsonb_typeof(payload) = 'object'",
+            f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(f'{base}_legacy_str_idx')} "
+            f"ON {self.table} (record_id) WHERE jsonb_typeof(payload) = 'string'",
+        )
+        try:
+            with conn.transaction():
+                for statement in statements:
+                    conn.execute(statement)
+        except Exception:
+            # Savepoint rolled back; the scan path stays correct.
+            return
+        _UNIQUE_INDEX_READY.add(key)
+
+    def _find_unique_collision(
+        self, conn: Any, fields: tuple[str, ...], payload: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Return the oldest stored payload sharing every ``fields`` value.
+
+        The comparison runs inside Postgres, so only the single matching row
+        crosses the wire.  A missing stored field compares as JSON null (as
+        ``dict.get`` did).
+        """
+        self._ensure_unique_lookup_index(conn, fields)
+        # Legacy rows whose jsonb is a JSON *string* of an object cannot be
+        # compared in SQL.  They are rare (a partial index makes this probe
+        # free when there are none); when one matches, ordering against
+        # object rows needs the full oldest-first pass the code used before.
+        legacy = conn.execute(
+            f"SELECT payload FROM {self.table} WHERE jsonb_typeof(payload) = 'string'"
+        ).fetchall()
+        for lrow in legacy:
+            decoded = self._decode_payload(lrow[0] if isinstance(lrow, tuple) else lrow.get("payload"))
+            if decoded is not None and all(
+                decoded.get(f) == payload.get(f) for f in fields
+            ):
+                cursor = conn.execute(
+                    f"SELECT payload FROM {self.table} ORDER BY updated_at ASC, record_id ASC"
+                )
+                for row in cursor.fetchall():
+                    existing = self._decode_payload(
+                        row[0] if isinstance(row, tuple) else row.get("payload")
+                    )
+                    if existing is not None and all(
+                        existing.get(f) == payload.get(f) for f in fields
+                    ):
+                        return existing
+        clauses = []
+        params: list[Any] = []
+        for field in fields:
+            clauses.append(
+                "COALESCE(payload -> %s, 'null'::jsonb) = ANY(%s::jsonb[])"
+            )
+            params.append(field)
+            params.append(self._python_equal_json_candidates(payload.get(field)))
+        cursor = conn.execute(
+            f"SELECT payload FROM {self.table} "
+            f"WHERE jsonb_typeof(payload) = 'object' AND {' AND '.join(clauses)} "
+            "ORDER BY updated_at ASC, record_id ASC LIMIT 1",
+            tuple(params),
+        )
+        row = self._fetch_one(cursor)
+        if row is None:
+            return None
+        return self._decode_payload(row[0] if isinstance(row, tuple) else row.get("payload"))
+
     def insert_if_absent(
         self,
         record_id: str,
@@ -365,12 +470,9 @@ class PostgresJsonOwnerStore:
                 return False, dict(self._decode_payload(existing) or {})
 
             if fields:
-                cursor = conn.execute(f"SELECT payload FROM {self.table} ORDER BY updated_at ASC")
-                for row in cursor.fetchall():
-                    existing = row[0] if isinstance(row, tuple) else row.get("payload")
-                    decoded = self._decode_payload(existing)
-                    if decoded is not None and all(decoded.get(field) == payload.get(field) for field in fields):
-                        return False, dict(decoded)
+                collided = self._find_unique_collision(conn, fields, payload)
+                if collided is not None:
+                    return False, dict(collided)
 
             conn.execute(
                 f"""

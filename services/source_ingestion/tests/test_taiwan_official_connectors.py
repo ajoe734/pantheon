@@ -205,7 +205,9 @@ def test_taiwan_official_connector_catalog_tier_policy_and_auth() -> None:
     assert {
         item["source_dataset"]
         for item in connector.metadata["price_history_endpoint_inventory"]
-    } == {"STOCK_DAY", "tpex_individual_stock_monthly_history"}
+    } == {"MI_INDEX_ALLBUT0999", "tpex_daily_quotes_all"}
+    assert connector.metadata["holiday_calendar_endpoint"] == "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule"
+    assert any(endpoint["dataset"] == "tw_holiday_calendar" and endpoint["status"] == "implemented" for endpoint in TAIWAN_OFFICIAL_ENDPOINTS)
     assert any(endpoint["dataset"] == "tdcc_shareholding_distribution" and endpoint["status"] == "implemented" for endpoint in TAIWAN_OFFICIAL_ENDPOINTS)
     assert any(endpoint["dataset"] == "taifex_futures_chip" and endpoint["status"] == "implemented" for endpoint in TAIWAN_OFFICIAL_ENDPOINTS)
 
@@ -232,20 +234,20 @@ def test_taiwan_official_adapter_emits_authentic_monthly_history_records() -> No
         "2330.TWSE",
         "TWSE",
         TWSE_PRICE_HISTORY_PAYLOAD,
-        api_endpoint="https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20260601&stockNo=2330&response=json",
+        api_endpoint="bundle://collector-tw-twse-price-history?date=20260601&symbol=2330",
         trace_id="trace-twse-history",
     )
     tpex = adapter.records_from_price_history_payload(
         "3105.TPEX",
         "TPEx",
         TPEX_PRICE_HISTORY_PAYLOAD,
-        api_endpoint="https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock?code=3105&date=2026%2F06%2F01&id=&response=json",
+        api_endpoint="bundle://collector-tw-tpex-price-history?date=20260601&symbol=3105",
         trace_id="trace-tpex-history",
     )
 
     assert [record.metadata["event_time"] for record in twse] == ["2026-06-09", "2026-06-10"]
     assert [record.metadata["normalized_row"]["close"] for record in twse] == [950.0, 955.0]
-    assert twse[0].metadata["source_dataset"] == "STOCK_DAY"
+    assert twse[0].metadata["source_dataset"] == "MI_INDEX_ALLBUT0999"
     assert twse[0].metadata["history_window"] == "official_monthly"
     assert twse[0].metadata["raw_row"]["日期"] == "115/06/09"
     assert twse[0].source_id.startswith("tw-official:tw_price_daily:TWSE:2330:")
@@ -1117,12 +1119,16 @@ def test_tw_history_trading_days_resolution_and_month_derivation(monkeypatch) ->
 
 
 def test_tw_official_egress_allowlist_contains_twse_web_host() -> None:
+    """Guard test: official connector allowlist no longer contains www.twse.com.tw."""
     from services.source_ingestion.connector_definitions import get_connector_definition
 
     definition = get_connector_definition("tw-twse-tpex-official-market")
-    assert "www.twse.com.tw" in definition.allowed_host_patterns
-    assert "openapi.twse.com.tw" in definition.allowed_host_patterns
-    assert "www.tpex.org.tw" in definition.allowed_host_patterns
+    assert "www.twse.com.tw" not in definition.allowed_host_patterns
+    assert set(definition.allowed_host_patterns) == {"openapi.twse.com.tw", "www.tpex.org.tw"}
+
+
+def test_tw_official_egress_allowlist_excludes_twse_web_host() -> None:
+    test_tw_official_egress_allowlist_contains_twse_web_host()
 
 
 def test_tw_official_records_and_rows_guarantee_aware_available_time() -> None:
@@ -2071,4 +2077,227 @@ def test_taifex_ssf_true_absence_in_chinese_csv_emits_tombstone() -> None:
     assert rows[0]["kind"] == "stock_future_tombstone"
     assert rows[0]["snapshot_scope"] == ["2317"]
     assert rows[0]["date"] == "2026-11-06"
+
+
+def test_pantheon_blocks_non_openapi_twse_tpex_website_requests() -> None:
+    """AC3: Pantheon makes no request to a TWSE or TPEx website endpoint other than OpenAPI paths."""
+    from services.source_ingestion.connectors.taiwan_official import (
+        _assert_twse_tpex_openapi_only_url,
+        _fetch_official,
+    )
+    import urllib.request
+
+    # OpenAPI paths are allowed by the guard
+    _assert_twse_tpex_openapi_only_url("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL")
+    _assert_twse_tpex_openapi_only_url("https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule")
+    _assert_twse_tpex_openapi_only_url("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes")
+
+    # Website endpoints on www.twse.com.tw or non-openapi paths on www.tpex.org.tw are blocked
+    for forbidden_url in (
+        "https://www.twse.com.tw/rwd/zh/fund/T86?response=json&selectType=ALLBUT0999",
+        "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20261101&stockNo=2330&response=json",
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20261110&type=ALLBUT0999&response=json",
+        "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock?code=3105&date=2026/11/01&id=&response=json",
+        "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026/11/10&id=&response=json",
+    ):
+        with pytest.raises(SourceEvidenceError, match="forbids direct requests"):
+            _assert_twse_tpex_openapi_only_url(forbidden_url)
+        with pytest.raises(SourceEvidenceError, match="forbids direct requests"):
+            _fetch_official(
+                urllib.request.Request(forbidden_url),
+                caller="source_ingest.taiwan_official",
+                timeout_seconds=1.0,
+                max_bytes=1024,
+                parse=lambda raw: raw,
+            )
+
+
+def test_taiwan_official_reads_t86_and_price_history_from_collector_bundles(tmp_path) -> None:
+    """AC1, AC2, AC3: Collector writes T86 and TWSE/TPEx price history bundles; Pantheon reads them without website calls."""
+    import sys
+
+    repo_root = _Path(__file__).resolve().parents[3]
+    collector_dir = repo_root / "deploy" / "collector"
+    if str(collector_dir) not in sys.path:
+        sys.path.insert(0, str(collector_dir))
+    from collector_stack.config import load_collector_config
+    from collector_stack.fetchers import FixtureTransport
+    from collector_stack.privacy import AuthorHasher
+    from collector_stack.runner import CollectorRunner
+    from collector_stack.spiders import TwseDailyPriceHistorySpider
+
+    fixtures_dir = collector_dir / "tests" / "fixtures"
+    config = load_collector_config(collector_dir / "fetch-policy.json", env={})
+
+    transport = FixtureTransport()
+    transport.register(
+        "https://www.twse.com.tw/rwd/zh/fund/T86",
+        (fixtures_dir / "twse_t86_20261110.json").read_bytes(),
+    )
+    transport.register(
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX",
+        (fixtures_dir / "twse_mi_index_20261110.json").read_bytes(),
+    )
+    transport.register(
+        "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes",
+        (fixtures_dir / "tpex_daily_quotes_20261110.json").read_bytes(),
+    )
+    hasher = AuthorHasher(b"collector-bundle-test-secret-key-0123456789abcdef")
+
+    # Verify >=5.0s rate limit and single connection header on multi-date collector backfill
+    sleeps: list[float] = []
+    hist_spider = TwseDailyPriceHistorySpider(
+        config.get_source("collector-tw-twse-price-history"),
+        transport=transport,
+        sleep_fn=sleeps.append,
+    )
+    hist_items = hist_spider.collect(dates=("2026-11-10", "2026-11-09"))
+    assert len(hist_items) == 2
+    assert sleeps == [5.0]
+    assert transport.calls[-1]["headers"]["Connection"] == "close"
+
+    runner = CollectorRunner(
+        config,
+        root_dir=tmp_path,
+        library_dir=tmp_path / "library" / "books",
+        hasher=hasher,
+        transport=transport,
+    )
+    for sid in (
+        "collector-tw-twse-t86",
+        "collector-tw-twse-price-history",
+        "collector-tw-tpex-price-history",
+    ):
+        outcome = runner.run_source(
+            sid,
+            run_id=f"run-{sid}",
+            started_at="2026-11-10T10:00:00Z",
+            finished_at="2026-11-10T10:00:10Z",
+        )
+        assert outcome.status == "complete"
+
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=50, bundle_root=tmp_path)
+    t86_records = adapter.records_from_collector_bundle(
+        "tw_institutional_flow",
+        "TWSE",
+        trace_id="trace-bundle-t86",
+    )
+    assert len(t86_records) == 2
+    assert t86_records[0].metadata["api_endpoint"] == "bundle://collector-tw-twse-t86"
+    assert t86_records[0].metadata["normalized_row"]["symbol_canonical"] == "2330.TWSE"
+    assert t86_records[0].metadata["normalized_row"]["foreign_net"] == 6500000
+    assert t86_records[0].metadata["normalized_row"]["total_net"] == 7850000
+
+    twse_hist = adapter.fetch_price_history_records(
+        "2330.TWSE",
+        "TWSE",
+        anchor_date="2026-11-10",
+        history_trading_days=1,
+        trace_id="trace-bundle-twse-hist",
+        today_provider=lambda: "2026-11-10",
+    )
+    assert len(twse_hist) >= 1
+    assert twse_hist[-1].metadata["normalized_row"]["close"] == 1080.0
+    assert twse_hist[-1].metadata["api_endpoint"].startswith("bundle://collector-tw-twse-price-history")
+
+    tpex_hist = adapter.fetch_price_history_records(
+        "6488.TPEX",
+        "TPEx",
+        anchor_date="2026-11-10",
+        history_trading_days=1,
+        trace_id="trace-bundle-tpex-hist",
+        today_provider=lambda: "2026-11-10",
+    )
+    assert len(tpex_hist) >= 1
+    assert tpex_hist[-1].metadata["normalized_row"]["close"] == 512.0
+    assert tpex_hist[-1].metadata["api_endpoint"].startswith("bundle://collector-tw-tpex-price-history")
+
+
+def test_openapi_daily_refresh_keeps_running_paper_personas_refreshing_without_gap(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """AC4: Daily price, margin, lending, and day trading keep OpenAPI sources and running paper personas refresh without a gap."""
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW,3105.TWO")
+    monkeypatch.delenv("PANTHEON_COLLECTOR_BUNDLE_ROOT", raising=False)
+
+    # Seed prior session close in LatestMarketSnapshotStore (e.g. from collector bundle or prior session)
+    snapshot_path = tmp_path / "latest-market-snapshots.jsonl"
+    store = LatestMarketSnapshotStore(snapshot_path)
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    prior_records = (
+        *adapter.records_from_payload(
+            "tw_price_daily",
+            "TWSE",
+            [{"Date": "1150609", "Code": "2330", "Name": "台積電", "ClosingPrice": "950.00"}],
+        ),
+        *adapter.records_from_payload(
+            "tw_price_daily",
+            "TPEx",
+            [{"Date": "1150609", "SecuritiesCompanyCode": "3105", "CompanyName": "穩懋", "Close": "117.00"}],
+        ),
+    )
+    store.append_normalized_records(prior_records, ingest_run_id="ingest-prior-day", observed_at="2026-06-09T08:00:00Z")
+
+    # OpenAPI daily refresh with no history_payloads and no website calls refreshes today's close
+    openapi_records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 10},
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE", "TPEx"],
+                "payloads": {
+                    "TWSE": TWSE_PRICE_PAYLOAD,
+                    "TPEx": TPEX_PRICE_PAYLOAD,
+                },
+            },
+            "max_records": 10,
+        },
+        trace_id="trace-openapi-daily-refresh",
+    )
+    store.append_normalized_records(openapi_records, ingest_run_id="ingest-today-openapi", observed_at="2026-06-10T08:00:00Z")
+
+    reloaded = LatestMarketSnapshotStore(snapshot_path)
+    assert reloaded.get("2330.TW").closes == (950.0, 955.0)
+    assert reloaded.get("3105.TWO").closes == (117.0, 118.5)
+
+    # Verify OpenAPI endpoints are retained for daily price, margin, lending, day trading, and TPEx institutional flow
+    by_ds_venue = {(ep["dataset"], ep["venue"]): ep["endpoint"] for ep in TAIWAN_OFFICIAL_ENDPOINTS}
+    assert by_ds_venue[("tw_price_daily", "TWSE")] == "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+    assert by_ds_venue[("tw_price_daily", "TPEx")] == "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
+    assert by_ds_venue[("tw_institutional_flow", "TPEx")] == "https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading"
+    assert by_ds_venue[("tw_margin_short_balance", "TWSE")] == "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN"
+    assert by_ds_venue[("tw_margin_short_balance", "TPEx")] == "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance"
+    assert by_ds_venue[("tw_securities_lending", "TWSE")] == "https://openapi.twse.com.tw/v1/SBL/TWT96U"
+    assert by_ds_venue[("tw_securities_lending", "TPEx")] == "https://www.tpex.org.tw/openapi/v1/tpex_margin_sbl"
+    assert by_ds_venue[("tw_day_trading", "TWSE")] == "https://openapi.twse.com.tw/v1/exchangeReport/TWTB4U"
+    assert by_ds_venue[("tw_day_trading", "TPEx")] == "https://www.tpex.org.tw/openapi/v1/tpex_securities"
+
+
+def test_holiday_calendar_is_sourced_from_twse_openapi_endpoint() -> None:
+    """AC6: The holiday calendar is sourced from the TWSE OpenAPI endpoint."""
+    from services.source_ingestion.connectors.taiwan_official import TWSE_HOLIDAY_SCHEDULE_OPENAPI_ENDPOINT
+
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    assert adapter.holiday_calendar_endpoint() == "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule"
+    assert TWSE_HOLIDAY_SCHEDULE_OPENAPI_ENDPOINT == "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule"
+
+    records = adapter.records_from_payload(
+        "tw_holiday_calendar",
+        "TWSE",
+        [
+            {"Date": "1150101", "Name": "中華民國開國紀念日", "Weekday": "四", "Description": "休市"},
+            {"Date": "1150217", "Name": "農曆除夕及春節", "Weekday": "二", "Description": "休市"},
+        ],
+        trace_id="trace-holiday-openapi",
+    )
+    assert len(records) == 2
+    assert records[0].metadata["dataset"] == "tw_holiday_calendar"
+    assert records[0].metadata["api_endpoint"] == "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule"
+    assert records[0].metadata["normalized_row"]["date"] == "2026-01-01"
+    assert records[0].metadata["normalized_row"]["name"] == "中華民國開國紀念日"
+
 
