@@ -272,6 +272,24 @@ class TestEvolutionControllerDispatch(unittest.TestCase):
         self.assertEqual(decision.cooldown_ends_at, "2026-04-14T10:00:00Z")
         self.assertEqual(decision.observation_window_ends_at, "2026-04-18T10:00:00Z")
 
+    def test_mutate_dispatches_to_research(self):
+        controller = EvolutionController()
+        decision = make_approved_decision(
+            decision_id="evo-ctrl-mutate",
+            action_type=EvolutionActionType.MUTATE,
+            target_stage=None,
+            linked_postmortem_id=None,
+        )
+
+        outcome = route_and_execute(
+            controller,
+            decision,
+            actor_id="controller-01",
+            executed_at="2026-04-11T10:00:00Z",
+        )
+
+        self.assertEqual(outcome.primary_command.execution_plane, "research")
+
     def test_redeploy_followthrough_requires_parent_in_observation(self):
         controller = EvolutionController()
         decision = make_approved_decision(
