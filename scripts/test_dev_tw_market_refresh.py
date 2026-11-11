@@ -2759,10 +2759,36 @@ def test_refresh_entrypoint_finmind_rejects_wrong_hosts(tmp_path: Path, bad_host
     proc = subprocess.run(
         ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force",
          "--connector-id", "tw-finmind-broker-daily-report", "--allowed-hosts", bad_hosts,
-         "--dataset", "tw_broker_daily_report", "--output", str(output_file)],
+         "--dataset", "tw_broker_top", "--output", str(output_file)],
         env=test_env, capture_output=True, text=True, cwd=str(ROOT),
     )
     assert proc.returncode != 0
     assert "unsupported bounded source refresh connector" not in proc.stderr + proc.stdout
     events = [json.loads(l) for l in events_file.read_text().splitlines() if l] if events_file.exists() else []
     assert not any(e.get("event") == "compose_up" and e.get("env", {}).get("PANTHEON_EXTERNAL_EGRESS") == "allowlist" for e in events)
+
+
+def test_finmind_token_reaches_both_remote_prefixes_and_bounded_compose_env():
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    refresh_part, normal_part = script.split('    command_prefix+=" bash -s"\n  else\n', 1)
+    assert 'FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")' in refresh_part
+    assert 'FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")' in normal_part.split("assert_", 1)[0][:6000]
+    # The supplied secret overrides a stale/empty recorded container value for the bounded window.
+    assert 'env["FINMIND_API_TOKEN"] = finmind_token' in script
+
+
+def test_finmind_dataset_is_tw_broker_top_everywhere():
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    wf = (ROOT / ".github/workflows/dev-tw-market-refresh.yml").read_text(encoding="utf-8")
+    assert "tw_broker_daily_report" not in script + wf
+    assert 'dataset != "tw_broker_top"' in script
+    assert "SOURCE_INGEST_BOUNDED_DATASET: tw_broker_top" in wf
+
+
+def test_finmind_prepare_and_missing_secret_paths_exist():
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    assert "FinMindTaiwanBrokerDailyReportAdapter(connector_id=connector_id)" in script
+    assert '=~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then\n    extra_bounded_env_args' in script
+    guard = script.index('== "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}"')
+    assert guard < script.index("resolve_bounded_source_refresh_active_symbols\n  preflight_output=")
+    assert '"skipped" "missing_credential"' in script[guard:guard + 600]

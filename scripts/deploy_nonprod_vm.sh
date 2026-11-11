@@ -930,7 +930,6 @@ ssh_bash() {
     command_prefix+=" SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_HOST=$(shell_quote "${PANTHEON_COLLECTOR_HOST:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_BUNDLE_TOKEN=$(shell_quote "${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}")"
-  command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
     command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
     command_prefix+=" bash -s"
   else
@@ -939,6 +938,7 @@ ssh_bash() {
     command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
     command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
+  command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
   command_prefix+=" PANTHEON_DEPLOY_RECEIPT_ROOT=$(shell_quote "${PANTHEON_DEPLOY_RECEIPT_ROOT:-}")"
   command_prefix+=" PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH=$(shell_quote "${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-}")"
@@ -1360,8 +1360,8 @@ elif sys.argv[2] == "tw-finmind-broker-daily-report":
         raise SystemExit(
             "FinMind broker refresh requires exact hosts: " + ",".join(sorted(required))
         )
-    if dataset and dataset not in ("tw_broker_daily_report", "tw_broker_top", "tw_broker_branch_detail"):
-        raise SystemExit(f"FinMind broker refresh does not admit dataset: {dataset}")
+    if dataset and dataset != "tw_broker_top":
+        raise SystemExit(f"FinMind broker refresh requires dataset tw_broker_top, got: {dataset}")
 elif sys.argv[2].startswith("collector-"):
     collector = (sys.argv[4] if len(sys.argv) > 4 else "").strip().lower()
     if not collector:
@@ -2008,7 +2008,7 @@ connector_id = raw_connector or (
 CHIP_CONNECTORS = {"tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report"}
 bounded_dataset = raw_dataset or (
     "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip"
-    else "tw_broker_daily_report" if connector_id == "tw-finmind-broker-daily-report"
+    else "tw_broker_top" if connector_id == "tw-finmind-broker-daily-report"
     else "tw_price_daily"
 )
 
@@ -2235,6 +2235,14 @@ if action == "bounded":
     bounded_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET") or ""
     if bounded_dataset:
         env["SOURCE_INGEST_BOUNDED_DATASET"] = bounded_dataset
+    # FinMind reads env://FINMIND_API_TOKEN; the recorded container env may carry
+    # an old or empty value, so the supplied secret overrides it for this window only.
+    # Restore rebuilds env from the recorded pre-environment, so the old value returns.
+    if os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID") == "tw-finmind-broker-daily-report":
+        finmind_token = os.environ.get("FINMIND_API_TOKEN") or ""
+        if not finmind_token:
+            raise SystemExit("FINMIND_API_TOKEN is required for the FinMind bounded refresh")
+        env["FINMIND_API_TOKEN"] = finmind_token
 elif action == "restore":
     # Restore the steady posture: allowlist with exactly the collector host
     # (named deployment variable); deny only when no collector host is configured.
@@ -2477,10 +2485,11 @@ RECOVER_DLQ_PY
 
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
-  if [[ "${connector_id}" != "tw-taifex-futures-options-chip" ]]; then
+  if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then
+    [[ "${dataset}" == "tw_broker_top" ]] || error "FinMind bounded refresh requires dataset tw_broker_top, got '${dataset:-missing}'"
+  elif [[ "${connector_id}" != "tw-taifex-futures-options-chip" ]]; then
     return 0
-  fi
-  if [[ "${dataset}" != "taifex_ssf_contracts" ]]; then
+  elif [[ "${dataset}" != "taifex_ssf_contracts" ]]; then
     error "TAIFEX bounded refresh requires dataset taifex_ssf_contracts, got '${dataset:-missing}'"
   fi
 
@@ -2524,6 +2533,7 @@ from services.source_ingestion.active_universe import (
     DEFAULT_SOURCE_UPDATE_RULES,
     build_active_universe_job_fanout,
 )
+from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
 from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
 
 api_url = (os.environ.get("SOURCE_INGEST_API_URL") or "http://127.0.0.1:18097").rstrip("/")
@@ -2532,14 +2542,15 @@ dataset = (sys.argv[2] if len(sys.argv) > 2 else "").strip()
 active_symbols_csv = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
 controller_token = (os.environ.get("SOURCE_INGEST_CONTROLLER_TOKEN") or "").strip()
 
-if connector_id != "tw-taifex-futures-options-chip" or dataset != "taifex_ssf_contracts":
+is_finmind = connector_id == "tw-finmind-broker-daily-report" and dataset == "tw_broker_top"
+if not is_finmind and (connector_id != "tw-taifex-futures-options-chip" or dataset != "taifex_ssf_contracts"):
     raise SystemExit(f"Unsupported bounded dataset profile: connector_id={connector_id!r} dataset={dataset!r}")
 if not controller_token:
     raise SystemExit("Missing SOURCE_INGEST_CONTROLLER_TOKEN for bounded source refresh dataset preparation")
 
 raw_symbols = [s.strip() for s in active_symbols_csv.split(",") if s.strip()]
 if not raw_symbols:
-    raise SystemExit("No active Taiwan paper symbols available for TAIFEX SSF bounded refresh")
+    raise SystemExit("No active Taiwan paper symbols available for the bounded refresh")
 
 run_date = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
 members = [
@@ -2575,34 +2586,46 @@ selected_rule = next(
 if selected_rule is None:
     raise SystemExit(f"Missing DEFAULT_SOURCE_UPDATE_RULES entry for {connector_id}:{dataset}")
 
-contracts = [str(c).strip() for c in (selected_job.get("contracts") or []) if str(c).strip()]
 symbols = [str(s).strip() for s in (selected_job.get("symbols") or []) if str(s).strip()]
+if is_finmind:
+    # FinMind is keyed by the exact resolved active symbols, not by derivative contracts.
+    contracts = list(symbols)
+else:
+    contracts = [str(c).strip() for c in (selected_job.get("contracts") or []) if str(c).strip()]
 if not contracts:
     raise SystemExit(f"Active-universe {dataset} job has empty contracts list for symbols {raw_symbols}")
 
 interval_seconds = 86400
 priority = int(selected_rule.priority)
 
-adapter = TaifexDerivativesChipAdapter(
-    connector_id=connector_id,
-    dataset=dataset,
-    contracts=tuple(contracts),
-)
+if is_finmind:
+    adapter = FinMindTaiwanBrokerDailyReportAdapter(connector_id=connector_id)
+else:
+    adapter = TaifexDerivativesChipAdapter(
+        connector_id=connector_id,
+        dataset=dataset,
+        contracts=tuple(contracts),
+    )
 conn_dict = adapter.connector().to_dict()
 conn_dict.pop("schema_version", None)
 fetch_cfg = adapter.fetch_config()
-adapter_cfg = fetch_cfg.get("adapter_config") or {}
-req_cfg = fetch_cfg.get("request") or {}
-if adapter_cfg.get("dataset") != dataset or req_cfg.get("dataset") != dataset:
-    raise SystemExit(f"Adapter fetch_config dataset mismatch: adapter_config={adapter_cfg!r} request={req_cfg!r}")
-if list(adapter_cfg.get("contracts") or []) != contracts:
-    raise SystemExit(f"Adapter fetch_config contracts mismatch: {adapter_cfg.get('contracts')!r} != {contracts!r}")
+if is_finmind:
+    # The adapter's own request is empty; bind the resolved symbols so the run is bounded.
+    fetch_cfg = {**fetch_cfg, "request": {"dataset": dataset, "symbols": list(contracts)}}
+    conn_dict["secret_ref_id"] = "env://FINMIND_API_TOKEN"
+else:
+    adapter_cfg = fetch_cfg.get("adapter_config") or {}
+    req_cfg = fetch_cfg.get("request") or {}
+    if adapter_cfg.get("dataset") != dataset or req_cfg.get("dataset") != dataset:
+        raise SystemExit(f"Adapter fetch_config dataset mismatch: adapter_config={adapter_cfg!r} request={req_cfg!r}")
+    if list(adapter_cfg.get("contracts") or []) != contracts:
+        raise SystemExit(f"Adapter fetch_config contracts mismatch: {adapter_cfg.get('contracts')!r} != {contracts!r}")
 
 desired_requirement = {
     "connector_id": connector_id,
-    "provider": "TAIFEX",
+    "provider": "FinMind" if is_finmind else "TAIFEX",
     "dataset": dataset,
-    "source_class": "derivatives_chip",
+    "source_class": "taiwan_chip" if is_finmind else "derivatives_chip",
     "cadence": "daily",
     "schedule_interval_seconds": interval_seconds,
     "priority": priority,
@@ -2674,7 +2697,7 @@ if enqueued_items:
             if isinstance(item, dict)
             and item.get("connector_id") == connector_id
             and (item.get("job_parameters") or {}).get("dataset") == dataset
-            and list((item.get("job_parameters") or {}).get("contracts") or []) == contracts
+            and (is_finmind or list((item.get("job_parameters") or {}).get("contracts") or []) == contracts)
         ),
         None,
     )
@@ -2778,7 +2801,7 @@ execute_bounded_source_refresh_entrypoint() {
     default_bounded_dataset="taifex_ssf_contracts"
   elif [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
     default_allowed_hosts="api.finmindtrade.com,storage.googleapis.com"
-    default_bounded_dataset="tw_broker_daily_report"
+    default_bounded_dataset="tw_broker_top"
   fi
   # Resolve active Taiwan paper symbols first so the preflight checks the same symbols as the refresh.
   PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler" \
@@ -2842,6 +2865,14 @@ OUTCOME_PY
     rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
   }
   trap handle_pre_mutation_refresh_exit EXIT INT TERM
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}" ]]; then
+    # No credential: record the reason and leave the stack untouched.
+    write_bounded_refresh_outcome "skipped" "missing_credential" '{"status": "skipped", "reason": "missing_credential"}'
+    info "FinMind broker refresh skipped: missing_credential (no container mutation)"
+    trap - EXIT INT TERM
+    rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+    return 0
+  fi
   resolve_bounded_source_refresh_active_symbols
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
   preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"
@@ -3016,7 +3047,7 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   [[ -n "${projector_img_id}" && "${projector_img_sha}" == "${GIT_SHA}" ]] || error "source-ingest-agora-projector image revision ${projector_img_sha:-missing} != expected ${GIT_SHA} (stale_projector_image)"
 
   local extra_bounded_env_args=()
-  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-taifex-futures-options-chip" ]]; then
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
     extra_bounded_env_args+=(-e SOURCE_INGEST_DESIRED_STATE_PATH=/data/source-ingest/bounded-refresh/desired_state.json)
   fi
 

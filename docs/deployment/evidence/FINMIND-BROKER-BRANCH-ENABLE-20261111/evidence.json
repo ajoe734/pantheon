@@ -1,25 +1,30 @@
 {
   "task_id": "FINMIND-BROKER-BRANCH-ENABLE-20261111",
-  "scope": "deploy wiring only; connector/backfill live in FINMIND-BROKER-CONNECTOR-BACKFILL-20261111",
-  "secret_flow": "GitHub env dev secret FINMIND_API_TOKEN -> nonprod-deploy.yml and dev-tw-market-refresh.yml step env -> deploy_nonprod_vm.sh shell_quote remote prefix -> docker-compose source-ingest and source-ingest-scheduler env",
+  "scope": "deploy wiring plus the minimal live-fetch hook in provider_adapters._finmind_broker; connector/backfill otherwise live in FINMIND-BROKER-CONNECTOR-BACKFILL-20261111",
+  "secret_flow": "GitHub env dev secret FINMIND_API_TOKEN -> workflow step env -> deploy_nonprod_vm.sh remote prefix (both refresh-only and normal deploy) -> compose env; bounded runtime recreation overrides the recorded container value with the supplied token and restore rebuilds from the recorded pre-environment",
   "secret_handling": "never echoed; workflow logs presence by length only; empty value => step records reason=missing_credential, status=skipped, nothing else changes",
   "refresh": {
     "connector_id": "tw-finmind-broker-daily-report",
-    "dataset": "tw_broker_daily_report",
-    "exact_hosts": ["api.finmindtrade.com", "storage.googleapis.com"],
+    "dataset": "tw_broker_top",
+    "exact_hosts": [
+      "api.finmindtrade.com",
+      "storage.googleapis.com"
+    ],
     "guard": "validate_source_refresh_profile rejects any other host set for this connector",
     "blocking": "non-blocking (continue-on-error), runs before TWSE step; TWSE tw_price_daily truth untouched"
   },
   "tests": {
-    "passed": "scripts/test_dev_tw_market_refresh.py and scripts/test_deploy_nonprod_vm.py: 154+ passed",
-    "preexisting_failures_on_base": [
-      "test_bounded_refresh_controller_writes_the_authoritative_readback_state",
-      "test_paper_signal_producer_binding_recovery_and_health_lifecycle"
-    ]
+    "passed": "test_dev_tw_market_refresh.py 63 passed (two batches); test_deploy_nonprod_vm.py finmind/collector/bounded 20 passed; test_finmind_taiwan_connectors.py + new live-fetch test passed; bash -n ok"
   },
   "not_verified": [
-    "live dev run of the FinMind refresh (requires deploy)",
-    "acceptance 3/4 (backfill command, governed dataset licence metadata) belong to the connector/backfill task",
-    "FinMind connector must be enabled in dev desired state for the refresh to produce receipts"
-  ]
+    "live dev run with a real token and receipt/readback (requires deploy)",
+    "backfill/licence acceptance 3/4 belong to the connector/backfill task"
+  ],
+  "review_fixes": {
+    "p1_token_normal_deploy": "token assignment now in the normal-deploy prefix branch (was refresh-only twice)",
+    "p1_bounded_compose_env": "manage_source_ingest_refresh_runtime bounded action sets FINMIND_API_TOKEN from the supplied secret; restore returns the recorded value",
+    "p1_dataset": "dataset is tw_broker_top everywhere (adapter and active-universe rule); guard admits only that",
+    "p1_enable": "prepare_bounded_source_refresh_dataset registers connector/fetch/schedule and desired state for the resolved active symbols; provider adapter fetches the live report per symbol when no payload is supplied",
+    "missing_secret": "entrypoint writes status=skipped reason=missing_credential before any container mutation"
+  }
 }
