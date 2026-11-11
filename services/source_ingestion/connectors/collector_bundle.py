@@ -451,6 +451,7 @@ class CollectorBundleAdapter:
         *,
         cursor: str | None = None,
         trace_id: str = "",
+        max_records: int | None = None,
     ) -> CollectorPullResult:
         transport = self._transport()
         index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
@@ -470,40 +471,46 @@ class CollectorBundleAdapter:
 
         verified = [verify_bundle(transport, expected_source_id=self.source_id, entry=e) for _, _, e in pending]
 
-        records: list[SourceRecord] = []
-        raw_plan: list[tuple[VerifiedBundle, Mapping[str, Any]]] = []
+        all_records: list[SourceRecord] = []
         paused: list[str] = []
-        next_cursor = cursor
         for bundle in verified:
-            next_cursor = bundle.cursor
             if bundle.status == "paused":
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
                 continue
-            raw_plan.append((bundle, {}))
             for row in bundle.items:
-                records.append(self._record(bundle, row, trace_id=trace_id))
-        records = records[: self.max_records]
-        # Truncation must not skip unconsumed bundles: only advance the cursor to the
-        # last bundle fully represented in `records`.
-        if len(records) < sum(len(b.items) for b, _ in raw_plan):
-            kept = len(records)
-            next_cursor = cursor
-            running = 0
-            for bundle in verified:
-                n = 0 if bundle.status == "paused" else len(bundle.items)
-                if running + n > kept:
-                    break
-                running += n
-                next_cursor = bundle.cursor
-            raw_plan = [(b, x) for b, x in raw_plan if b.cursor <= (next_cursor or "")]
+                all_records.append(self._record(bundle, row, trace_id=trace_id))
 
+        # The caller's output cap covers raw + derived feature records together. Shrink the
+        # raw budget until both fit; derived rows are acknowledged (ledger / emission
+        # markers) only if actually returned, so a capped expansion stays pending.
+        total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
+        budget = total_cap
+        while True:
+            records, next_cursor, raw_plan = self._select_raw(verified, all_records, cursor, budget)
+            plan = self._plan_governed_features(records)
+            # Already-acknowledged replays are idempotent and droppable; only pending
+            # rows must fit alongside the raw items.
+            pending = sum(1 for r in plan.rows if not plan.is_acked(r))
+            overflow = pending + len(records) - total_cap
+            if overflow <= 0 or budget <= 0:
+                break
+            budget = max(min(budget - 1, total_cap - pending), 0)
+        if not records and all_records and budget < total_cap:
+            # Even one bundle's expansion cannot fit alongside its raw items. Persist its
+            # posts to the durable ledger and return only the (capped) derived rows; raw
+            # items and the cursor stay put, and the unacknowledged rows flush on later
+            # pulls until the bundle's raw items fit.
+            first = next((b for b in verified if b.status != "paused"), None)
+            if first is not None:
+                candidate = [r for r in all_records[: len(first.items)]]
+                plan = self._plan_governed_features(candidate)
+        feature_records, feature_rejected = self._commit_governed_features(
+            plan, limit=max(total_cap - len(records), 0), trace_id=trace_id
+        )
         self._write_raw(raw_plan, records)
         observed = observed_from_collector_status(
             self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self.cadence_seconds
         )
-        # Governed macro / community sources also emit normalized point-in-time feature
-        # records (listed first so a record cap never drops them in favour of raw items).
-        feature_records, feature_rejected = self.governed_feature_records(records, trace_id=trace_id)
         return CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
@@ -669,6 +676,34 @@ class CollectorBundleAdapter:
                 authority.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
         return {k: tuple(sorted(v)) for k, v in authority.items()}
 
+    def _select_raw(
+        self,
+        verified: Sequence[VerifiedBundle],
+        all_records: Sequence[SourceRecord],
+        cursor: str | None,
+        budget: int,
+    ) -> tuple[list[SourceRecord], str | None, list[tuple[VerifiedBundle, Mapping[str, Any]]]]:
+        raw_plan = [(b, {}) for b in verified if b.status != "paused"]
+        next_cursor = verified[-1].cursor if verified else cursor
+        records = list(all_records[:budget])
+        # Truncation must not skip unconsumed bundles: only advance the cursor to the
+        # last bundle fully represented in `records`.
+        if len(records) < len(all_records):
+            kept = len(records)
+            next_cursor = cursor
+            running = 0
+            for bundle in verified:
+                n = 0 if bundle.status == "paused" else len(bundle.items)
+                if running + n > kept:
+                    break
+                running += n
+                next_cursor = bundle.cursor
+            raw_plan = [(b, x) for b, x in raw_plan if b.cursor <= (next_cursor or "")]
+            # Only whole bundles are consumed; drop records of unconsumed bundles.
+            consumed = sum(len(b.items) for b, _ in raw_plan)
+            records = records[:consumed]
+        return records, next_cursor, raw_plan
+
     def _community_ledger_path(self) -> Path:
         return self._raw_root() / "state" / _slug(self.connector_id) / "community_ledger.jsonl"
 
@@ -684,25 +719,26 @@ class CollectorBundleAdapter:
         replays and multiple pulls in one Taipei day aggregate the whole day). Returns
         ``(records, rejected)``; other datasets yield nothing.
         """
+        return self._commit_governed_features(self._plan_governed_features(records), limit=None, trace_id=trace_id)
+
+    def _plan_governed_features(self, records: Sequence[SourceRecord]) -> "_FeaturePlan":
+        """Derive feature rows without any durable write (ledger / emission markers)."""
         if self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
-            extra = {}
+            extra: dict[str, list] = {}
             for provider_id, dataset, field_name, source, period_kind in self.macro_series_map:
                 extra.setdefault(provider_id, []).append((dataset, field_name, source, period_kind))
             rows, rejected = macro_feature_rows(records, extra_series_map=extra)
-        elif self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
+            return _FeaturePlan(tuple(rows), tuple(rejected), (), frozenset())
+        if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
             path = self._community_ledger_path()
-            ledger = load_community_ledger(path)
+            ledger = dict(load_community_ledger(path))
             now = _feature_iso(self.clock() if self.clock else datetime.now(timezone.utc))
             entries, rejected_list = community_ledger_entries(
                 records, authority=self._instrument_authority(), seen_at=now
             )
-            fresh = [e for e in entries if e["key"] not in ledger]
-            if fresh:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with path.open("a", encoding="utf-8") as handle:
-                    for entry in {e["key"]: e for e in fresh}.values():
-                        handle.write(json.dumps(entry, sort_keys=True) + "\n")
-            ledger = load_community_ledger(path)
+            fresh = list({e["key"]: e for e in entries if e["key"] not in ledger}.values())
+            for entry in fresh:
+                ledger[entry["key"]] = entry
             emitted_path = path.with_name("community_emitted.jsonl")
             done = []
             if emitted_path.is_file():
@@ -714,6 +750,27 @@ class CollectorBundleAdapter:
                 ledger, {(e["symbol"], e["day"]) for e in entries}, now=_feature_time(now), emitted=done
             )
             known = set(done)
+            return _FeaturePlan(tuple(rows), tuple(rejected_list), tuple(fresh), frozenset(known))
+        return _FeaturePlan((), (), (), frozenset())
+
+    def _commit_governed_features(
+        self, plan: "_FeaturePlan", *, limit: int | None, trace_id: str = ""
+    ) -> tuple[tuple[SourceRecord, ...], tuple[dict[str, str], ...]]:
+        """Return up to ``limit`` rows; acknowledge ledger/markers only for what is returned."""
+        rows = plan.rows
+        if limit is not None and len(rows) > limit:
+            # An output cap must never starve unacknowledged revisions: keep those first
+            # (then already-acknowledged replays), preserving chronological order.
+            ranked = sorted(range(len(rows)), key=lambda i: (plan.is_acked(rows[i]), i))[:limit]
+            rows = tuple(rows[i] for i in sorted(ranked))
+        if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
+            path = self._community_ledger_path()
+            if plan.fresh_entries:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as handle:
+                    for entry in plan.fresh_entries:
+                        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+            known = set(plan.known_markers)
             new_markers = []
             for r in rows:
                 marker = (r["symbol"], r["event_time"], r["available_time"])
@@ -721,14 +778,12 @@ class CollectorBundleAdapter:
                     known.add(marker)
                     new_markers.append(marker)
             if new_markers:
+                emitted_path = path.with_name("community_emitted.jsonl")
                 emitted_path.parent.mkdir(parents=True, exist_ok=True)
                 with emitted_path.open("a", encoding="utf-8") as handle:
                     for m in new_markers:
                         handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
-            rejected = rejected_list
-        else:
-            return (), ()
-        return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), tuple(rejected)
+        return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), plan.rejected
 
     def fetch_bundle(self, *, cursor: str | None = None, trace_id: str = "") -> CollectorPullResult:
         return self.pull(cursor=cursor, trace_id=trace_id)
@@ -760,6 +815,17 @@ class CollectorBundleAdapter:
             finally:
                 if tmp.exists():
                     shutil.rmtree(tmp, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class _FeaturePlan:
+    rows: tuple
+    rejected: tuple
+    fresh_entries: tuple
+    known_markers: frozenset
+
+    def is_acked(self, row: Mapping[str, Any]) -> bool:
+        return (row["symbol"], row["event_time"], row["available_time"]) in self.known_markers
 
 
 def _slug(value: str) -> str:

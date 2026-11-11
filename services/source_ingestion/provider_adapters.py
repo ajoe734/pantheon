@@ -966,7 +966,11 @@ def _collector_bundle(
     """Pull verified bundles newer than the cursor; any mismatch raises with no write."""
 
     cursor = request.get("cursor") or request.get("watermark") or None
-    return adapter.pull(cursor=str(cursor) if cursor else None, trace_id=trace_id).records
+    return adapter.pull(
+        cursor=str(cursor) if cursor else None,
+        trace_id=trace_id,
+        max_records=request.get(EFFECTIVE_MAX_RECORDS_KEY),
+    ).records
 
 
 PROVIDER_ADAPTER_ALIASES: dict[str, str] = {

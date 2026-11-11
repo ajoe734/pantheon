@@ -319,3 +319,45 @@ def test_cursor_skips_already_consumed_bundles(tmp_path):
     assert len(first.records) == 4
     assert len(adapter.pull(cursor=first.next_cursor).records) == 0
     assert len(adapter.pull(cursor="2026-11-10T02:05:00Z#r1").records) == 2
+
+
+def _multi_symbol_bundle(tmp_path):
+    files, entry, _ = make_bundle(source_id="collector-tw-cmoney-forum", run_id="cap1")
+    base = "bundles/collector-tw-cmoney-forum/2026-11-10/cap1"
+    rows = [json.loads(x) for x in files[f"{base}/items.jsonl"].decode().splitlines()]
+    for row in rows:
+        row["symbols"] = ["1101.TW", "2317.TW", "2330.TW"]
+        row["metrics"] = {"sentiment": "bullish"}
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    return files, entry
+
+
+def test_capped_community_expansion_flushes_across_empty_cursor_pulls(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    files, entry = _multi_symbol_bundle(tmp_path)
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setattr(
+        CollectorBundleAdapter, "_instrument_authority",
+        lambda self: {"1101": ("1101.TWSE",), "2317": ("2317.TWSE",), "2330": ("2330.TWSE",)},
+    )
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {
+        "source_id": "collector-tw-cmoney-forum", "source_type": "social", "dataset": "tw_community_daily",
+        "platform": "cmoney", "host": HOST, "max_records": 2,
+    }
+    adapter = CollectorBundleAdapter(connector_id="conn-cap", **{k: v for k, v in config.items() if k != "host"})
+    seen: set[str] = set()
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 2}
+    raw_returned = False
+    for _ in range(6):
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+        assert len(records) <= 2
+        seen |= {r.metadata["symbol"] for r in records if r.content_ref.startswith("collector-feature://")}
+        raw_returned = raw_returned or any(not r.content_ref.startswith("collector-feature://") for r in records)
+        if raw_returned:
+            break
+    assert seen == {"1101.TWSE", "2317.TWSE", "2330.TWSE"}
+    assert raw_returned
+    assert adapter.pull(cursor=None, max_records=2).next_cursor is not None

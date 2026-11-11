@@ -1767,7 +1767,7 @@ def _collector_files(source_id: str, rows_extra: list[dict[str, Any]]) -> dict[s
                 {"id": "b", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bearish"}},
             ],
             "tw_community_daily",
-            {"post_volume", "bull_bear_ratio", "engagement_weighted_sentiment"},
+            {"post_volume", "unique_authors", "bull_bear_ratio", "engagement_weighted_sentiment"},
         ),
         (
             "collector-tw-macro-cbc",
