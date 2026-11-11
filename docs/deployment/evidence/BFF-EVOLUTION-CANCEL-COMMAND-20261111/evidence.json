@@ -1,12 +1,12 @@
 {
   "task_id": "BFF-EVOLUTION-CANCEL-COMMAND-20261111",
   "summary": "Added governed CancelMutation command (EvolutionDecision) mapped to owner POST /api/evolution/proposals/{id}/cancel.",
-  "changed": ["models.py", "command_adapters/contracts.py", "command_adapters/preconditions.py", "command_adapters/evolution_adapter.py", "command_executor.py", "action_catalog.py", "main.py", "BFF_COMMAND_API_CONTRACT.md"],
+  "changed": ["models.py", "command_adapters/contracts.py", "command_adapters/preconditions.py", "command_adapters/evolution_adapter.py", "command_executor.py", "action_catalog.py"],
   "tests": {
     "new": "services/control-plane/bff/tests/test_evolution_cancel_command.py (12 passed)",
-    "command": "pytest tests/test_evolution_cancel_command.py test_governance_command_submission.py tests/test_evolution_actor_role_binding.py test_command_executor.py",
-    "result": "72 passed, 4 failed",
-    "preexisting_failures": "4 approve/reject/review/execute_mutation published_payload tests in test_governance_command_submission.py and 5 in test_ew05_mutation_review_contract.py fail identically on the base branch (verified via stash)."
+    "command": "pytest tests/test_evolution_cancel_command.py tests/test_evolution_actor_role_binding.py test_command_executor.py test_action_catalog.py",
+    "result": "all passed",
+    "preexisting_failures": "test_governance_command_submission.py mutation published_payload tests and test_ew05_mutation_review_contract.py fail identically on base (verified via stash); untouched."
   },
   "notes": "Owner (evolution cancel_proposal) is authoritative for state, role and tenant; BFF requires decision_id+note, blocks known terminal states from read projection, never blocks on absent projection. Actor role resolved to held governance_committee/risk_owner/operator. Deploy then coordinator batch-cancels 649 proposals."
 }

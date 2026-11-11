@@ -230,7 +230,7 @@ confirmation, and audit gates.
 | Approval | `ApproveDecision`, `RejectDecision` (`RequestApprovalRevision`, `ApproveRollback`, `RejectRollback` are retired: 410, not CommandType values) | approver/admin role; approval or rollback target; policy decision and audit action. |
 | Runtime | `PauseRuntime`, `PauseExecution`, `ExecuteRollback`, `HardRollback` | operator/admin/approver role per action; runtime or runtime-binding target; live broker scope fail-closed when disabled. |
 | Incident / kill switch | `IssueRiskOff`, `LiquidateAll`, `IssueSafeMode`, `ActivateKillSwitch` | operator/admin role per action; admin+MFA for destructive commands; audit reason and command receipt. |
-| Evolution / governance | `ApproveEvolutionDecision`, `ExecuteEvolutionAction`, `ApproveMutation`, `RejectMutation`, `CancelMutation` (note required; owner `POST /api/evolution/proposals/{id}/cancel`, states proposed/reviewed/approved), `RecordSponsorDecision` | policy-gated governance role; target state checked against read projection before dispatch. |
+| Evolution / governance | `ApproveEvolutionDecision`, `ExecuteEvolutionAction`, `ApproveMutation`, `RejectMutation`, `RecordSponsorDecision` | policy-gated governance role; target state checked against read projection before dispatch. |
 
 ### 7.1 H4: Evolution decision approval and paper-freeze execution sequence
 
