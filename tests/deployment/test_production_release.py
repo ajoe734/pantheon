@@ -121,7 +121,11 @@ PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-rea
 echo "$tool $*" >> "$BIN_LOG"
 case "$tool" in
   sudo)
-    if [[ "$1" == "-E" ]]; then shift; fi
+    if [[ "$1" == "-E" ]]; then shift; exec "$@"; fi
+    if [[ "${FAKE_SUDO_RESET_ENV:-}" == "true" ]]; then
+      # Real sudo resets the environment unless -E: keep only harness plumbing, drop exported release/image vars.
+      exec env -i PATH="$PATH" BIN_LOG="$BIN_LOG" FAKE_STATE="$FAKE_STATE" HOME="${HOME:-/}" "$@"
+    fi
     exec "$@"
     ;;
   mountpoint) [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
@@ -954,6 +958,13 @@ class BootstrapTests(OpsHarness):
         self.assertEqual(r_sudo.returncode, 0, r_sudo.stderr)
         self.assertIn("sudo ", self.log.read_text())
         self.assertTrue((self.state / "docker_logins").exists())
+
+    def test_bootstrap_sudo_env_reset_still_delivers_release_and_images_to_first_stateful_compose(self):
+        r = self._run(FAKE_OSLOGIN_NONROOT="true", FAKE_SUDO_RESET_ENV="true")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        seen = (self.state / "stateful_env").read_text()
+        self.assertIn("PANTHEON_RELEASE_ID=", seen)
+        self.assertRegex(seen, r"PANTHEON_[A-Z_]+_IMAGE=\S+@sha256:")
 
     def test_bootstrap_never_mounts_or_formats_and_rejects_bad_secrets(self):
         r = self._run(FAKE_MOUNTED="no")

@@ -345,7 +345,7 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     BffActionCatalogEntry(
         action_id="StrategyAction",
         entity_type="Strategy",
-        endpoint="/bff/strategies/{strategy_id}/actions/{action_id}",
+        endpoint="/bff/v1/commands",
         risk_level=RiskLevel.MEDIUM,
         requires_approval=False,
         requires_confirm_token=False,
@@ -419,7 +419,7 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     BffActionCatalogEntry(
         action_id="DeploymentAction",
         entity_type="Deployment",
-        endpoint="/bff/deployments/{deployment_id}/actions/{action_id}",
+        endpoint="/bff/v1/commands",
         risk_level=RiskLevel.HIGH,
         requires_approval=False,
         requires_confirm_token=False,
@@ -432,7 +432,7 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     BffActionCatalogEntry(
         action_id="RuntimeAction",
         entity_type="RuntimeBinding",
-        endpoint="/bff/runtimes/{runtime_id}/actions/{action_id}",
+        endpoint="/bff/v1/commands",
         risk_level=RiskLevel.HIGH,
         requires_approval=False,
         requires_confirm_token=False,

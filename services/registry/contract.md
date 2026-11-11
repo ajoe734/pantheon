@@ -202,14 +202,18 @@ The projection must make these checks possible without extra registry calls:
 - `live` mode may only load artifacts with `deployment_stage=live`
 - `candidate`, `retired`, `none`, and `frozen` must be rejected for new execution loads
 
-### Compatibility window
+### Current projection boundary
 
-Current `REG-002` / `REG-003` / `EX-001` code paths still emit legacy `lifecycle_state` and
-`promotion_state` fields. During the migration window:
+`REGISTRY-LEGACY-METADATA-RETIRE-20261111` retired the artifact projection alias:
 
-- `lifecycle_state` and `promotion_state` are legacy compatibility fields only
-- new registry contracts must treat `artifact_state` / `deployment_stage` as canonical
-- follow-on tasks `GOV-001`, `DEP-001`, and execution-side contract updates will migrate the code path to the new projection envelope
+- promotion and experiment projection producers emit `artifact_state` and
+  `deployment_stage`, without `promotion_state`
+- the execution loader reads canonical fields only; there is no required dual-write window
+- the retained promotion gate/CLI still takes `lifecycle_state` entry input;
+  experiment adapter normalization and its `compat` metadata are separate
+- telemetry `target.promotion_state` remains an event/query field, not an artifact alias
+- optional archived schema fields and existing stored metadata remain intact;
+  this source retirement requires no data/schema migration or archive deletion
 
 ### v1 Object Store key continuity
 
@@ -415,7 +419,6 @@ This contract is now aligned to the canonical architecture, but several follow-o
 
 - `ApprovalDecision` schema and write authority from `GOV-001`
 - `DeploymentPlan` contract and stage planner from `DEP-001`
-- migration of `REG-002` / `REG-003` / `EX-001` metadata from `promotion_state` to `artifact_state + deployment_stage`
 - experiment-backend mirroring updates in `LP-003`
 - any additional canary/frozen runtime requirements once runtime-manager semantics are locked
 
@@ -429,7 +432,7 @@ Claude should review this contract for:
 
 - whether `artifact_state` and `deployment_stage` are now unambiguously separated
 - whether derived deployment summaries are clearly marked non-authoritative
-- whether the compatibility window is explicit enough for downstream migration work
+- whether the retained lifecycle input, canonical projection, and telemetry fields are clearly distinguished
 
 ## First-release APPROVED admission
 

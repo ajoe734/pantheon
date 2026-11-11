@@ -76,7 +76,6 @@ def _make_client(store: Any) -> TestClient:
         sse_buffers={},
         sse_subscribers={},
         gov_bff_action_command=lambda *a, **kw: {},
-        deprecated_bff_path_response=lambda *a, **kw: None,
         sem_command_response=lambda *a, **kw: {},
         stream_generic_events=lambda *a, **kw: iter(()),
         surface_degradation_reason=lambda *a, **kw: None,

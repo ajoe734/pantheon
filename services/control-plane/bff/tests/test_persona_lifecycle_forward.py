@@ -424,9 +424,9 @@ def test_mounted_entries_reject_unverified_approval_at_owner(mounted, entry):
 
 
 @pytest.mark.parametrize("entry", ["Observe", "wrapper/observe", "rest/Observe"])
-def test_mounted_observe_is_retired_not_a_fake_write(mounted, entry):
+def test_mounted_observe_is_not_a_fake_write(mounted, entry):
     response = submit(mounted, entry, confirmation=None)
-    assert response.status_code == 410, response.text
+    assert response.status_code == (404 if entry.startswith("rest/") else 410), response.text
     assert mounted.boundary.calls == []
     assert mounted.store._get_all_commands() == []
 

@@ -198,14 +198,23 @@ class TestExportedNamesAgreeAcrossFiles(unittest.TestCase):
     def test_ac2_regression_guards_the_dangerous_root_modules(self):
         guarded = self._literal_from(TELEMETRY_AC2_TEST, "UNEXPORTED_ROOT_MODULES")
         root_modules = {entry.stem for entry in REPO_ROOT.glob("*.py")}
+        # Retired generic names remain negative export guards even after their
+        # root forwarding modules are deleted. Any other missing guard is stale.
+        retired_root_aliases = {"cli", "gate"}
         self.assertTrue(
-            guarded <= root_modules,
-            f"UNEXPORTED_ROOT_MODULES names modules that no longer exist: "
-            f"{sorted(guarded - root_modules)}",
+            guarded <= root_modules | retired_root_aliases,
+            f"UNEXPORTED_ROOT_MODULES names unexpected missing modules: "
+            f"{sorted(guarded - root_modules - retired_root_aliases)}",
         )
         # The three names that collide with widely used PyPI distributions are
         # the ones worth pinning explicitly.
         self.assertTrue({"cli", "gate", "workflows"} <= guarded)
+        for name in guarded:
+            with self.subTest(name=name):
+                self.assertFalse(
+                    any(fnmatch.fnmatch(name, pattern) for pattern in _include_patterns()),
+                    f"guarded generic name {name!r} must never match the package allowlist",
+                )
 
 
 class TestProvisioningFailsClosed(unittest.TestCase):

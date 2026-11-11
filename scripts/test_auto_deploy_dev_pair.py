@@ -151,23 +151,21 @@ def test_attempt_that_never_acquired_the_dev_lease_does_not_fail_the_pair():
     assert run(apply=True)["state"] == "failed_pair_not_retried"
 
 
-def test_market_session_refresh_failure_keeps_the_same_pair_eligible():
-    # The step runs under the lease but before any stack change, like a lost lease race.
-    from scripts.auto_deploy_dev_pair import MARKET_REFRESH_STEP, LEASE_STEP
+def test_market_session_refresh_failure_is_post_switch_and_not_retried():
+    # The refresh now runs after the candidate stack deploy, so a failure is compensated
+    # like other post-switch failures and the same pair is not retried automatically.
+    from scripts.auto_deploy_dev_pair import MARKET_REFRESH_STEP, LEASE_STEP, PRE_MUTATION_STEPS
     workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
     assert f"- name: {MARKET_REFRESH_STEP}\n" in workflow and MARKET_REFRESH_STEP != LEASE_STEP
+    assert MARKET_REFRESH_STEP not in PRE_MUTATION_STEPS
     backend, _, _, _, run = setup_pair()
     backend.deploys = [deploy_run(10, "failure")]
-    backend.failed_steps[10] = MARKET_REFRESH_STEP
-    assert run(apply=False)["state"] != "failed_pair_not_retried"
-    assert run(apply=True)["state"] == "dispatched"
-    assert len(backend.dispatches) == 1
-    for later in ("Capture actual prior artifacts under pinned dev lease", "Deploy dev VM stack under lease",
-                  "Ensure governed dev paper baseline under lease"):
-        backend.failed_steps[10] = later
+    for step in (MARKET_REFRESH_STEP, "Capture actual prior artifacts under pinned dev lease",
+                 "Deploy dev VM stack under lease", "Ensure governed dev paper baseline under lease"):
+        backend.failed_steps[10] = step
         backend.dispatches.clear()
         for apply in (False, True):
-            assert run(apply=apply)["state"] == "failed_pair_not_retried", later
+            assert run(apply=apply)["state"] == "failed_pair_not_retried", step
         assert not backend.dispatches
 
 

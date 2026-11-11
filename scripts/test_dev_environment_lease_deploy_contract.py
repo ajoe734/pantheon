@@ -3209,7 +3209,7 @@ def test_workflow_has_no_hard_coded_ssh_host_fallback() -> None:
     assert "vars.DEV_DEPLOY_SSH_HOST ||" not in text
 
 
-MARKET_REFRESH_STEP = "Refresh Taiwan market session under lease before stack mutation"
+MARKET_REFRESH_STEP = "Refresh Taiwan market session under lease after candidate stack deploy"
 
 
 def _dev_steps() -> list[dict]:
@@ -3222,24 +3222,27 @@ def _step_index(steps: list[dict], name: str) -> int:
     return [step.get("name") for step in steps].index(name)
 
 
-def test_market_refresh_runs_under_held_lease_before_any_stack_mutation() -> None:
+def test_market_refresh_runs_under_held_lease_after_candidate_stack_deploy() -> None:
     steps = _dev_steps()
     refresh = _step_index(steps, MARKET_REFRESH_STEP)
-    # After the heartbeat, before bootstrap predecessor, artifact capture, and deploy.
+    # After the heartbeat and the candidate stack switch, before the paper baseline.
     assert _step_index(steps, "Start identity-bound lease heartbeat") < refresh
-    for later in (
+    for earlier in (
         "Deploy bootstrap predecessor pair in strict live read-only mode under lease",
         "Capture actual prior artifacts under pinned dev lease",
         "Upload sealed prior artifact metadata before candidate mutation",
         "Deploy dev VM stack under lease",
-        "Ensure governed dev paper baseline under lease",
     ):
-        assert refresh < _step_index(steps, later), later
+        assert _step_index(steps, earlier) < refresh, earlier
+    assert refresh < _step_index(steps, "Ensure governed dev paper baseline under lease")
     assert steps[refresh]["id"] == "market_refresh"
 
     text = steps[refresh]["run"]
     # Existing refresh-only path under the pinned wrapper; no second lease or implementation.
-    assert text.count('"${controller}/scripts/run_with_dev_environment_lease.sh" \\\n  bash "${deploy_script}"') == 2
+    assert text.count('run_with_dev_environment_lease.sh" \\\n') - 1 == 2  # minus the checksum printf
+    assert text.count('"${controller}/scripts/run_with_dev_environment_lease.sh" \\\n') - 1 == text.count(
+        'bash "${deploy_script}"'
+    )
     assert text.count('bash "${deploy_script}"') == 2
     assert '--refresh-only --output "${outcome_dir}/refresh.json"' in text
     assert '--refresh-only --preflight-only --output "${outcome_dir}/preflight.json"' in text
@@ -3255,17 +3258,20 @@ def test_market_refresh_runs_under_held_lease_before_any_stack_mutation() -> Non
     assert "status={status!r} reason={reason!r}" in text
 
 
-def test_market_refresh_failure_stops_before_baseline_so_compensation_cannot_run() -> None:
+def test_market_refresh_failure_is_a_post_switch_failure_handled_by_compensation() -> None:
     steps = _dev_steps()
     names = [step.get("name") for step in steps]
-    baseline_pos = names.index("Capture actual prior artifacts under pinned dev lease")
-    assert names.index(MARKET_REFRESH_STEP) < baseline_pos
-    # Later mutating steps are not `always()` steps, so they never run after this failure.
-    for later in ("Capture actual prior artifacts under pinned dev lease", "Deploy dev VM stack under lease"):
+    # The artifact baseline exists before the refresh runs, so compensation is eligible.
+    assert names.index("Capture actual prior artifacts under pinned dev lease") < names.index(MARKET_REFRESH_STEP)
+    assert names.index("Deploy dev VM stack under lease") < names.index(MARKET_REFRESH_STEP)
+    refresh = steps[names.index(MARKET_REFRESH_STEP)]
+    assert "continue-on-error" not in refresh
+    # The baseline and lifecycle steps are not `always()` steps: they never run after this failure.
+    for later in ("Ensure governed dev paper baseline under lease",):
         assert "always()" not in str(steps[names.index(later)].get("if", ""))
-    # Compensation requires a successful artifact baseline.
     compensation = next(step for step in steps if step.get("id") == "deploy_compensation")
     assert "steps.artifact_baseline.outcome == 'success'" in compensation["if"]
+    assert "steps.market_refresh.outcome == 'failure'" in compensation["if"]
 
 
 def test_market_refresh_skips_for_refresh_bootstrap_and_non_paper_modes() -> None:

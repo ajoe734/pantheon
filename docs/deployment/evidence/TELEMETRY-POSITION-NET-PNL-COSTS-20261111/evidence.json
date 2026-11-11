@@ -1,0 +1,53 @@
+{
+  "task_id": "TELEMETRY-POSITION-NET-PNL-COSTS-20261111",
+  "kind": "source_only",
+  "deployed": false,
+  "change": "services/telemetry/runtime_summary.py now carries per-instrument recognized fee+tax (cumulative, once per ledger_fill_count / settlement event_id); position rows expose gross_realized_pnl, costs, and net realized_pnl = gross - costs; unrealized_pnl stays gross mark-to-market. Unknown future cost inputs yield costs_status=unknown and no net components. Pre-change persisted futures cost entries (no costs/costs_known) are NOT assumed zero: they stay costs_status=unknown until startup backfill_open_position_costs reconstructs them from retained owner paper_fill events (exact tenant/runtime/binding, complete ledger_fill_count history); incomplete history keeps them unknown. Cash-share fills with explicit null fee/tax are unknown; only an absent key is the legacy zero-cost shape.",
+  "real_shape": {
+    "instrument": "ssf:SRF:202611",
+    "qty": 2,
+    "avg": 97.1,
+    "multiplier": 1000,
+    "fee": 16.0,
+    "tax": 3.884,
+    "ledger_cash": 99980.116,
+    "initial_cash": 100000.0,
+    "margin_reserved": 17400.0,
+    "expected_realized": -19.884,
+    "expected_unrealized": 0.0
+  },
+  "tests": {
+    "services/telemetry/test_runtime_summary_projection.py + test_paper_runtime_ingest_contract.py + test_bff_pm12_portfolio_book_contract.py": "telemetry suites incl. test_main_routes/test_l12 durable ingest: 216 passed, 1 skipped; PM12: 71 passed, 1 failed (pre-existing test_portfolio_holdings_reproduces_h12_76062... stale_or_future_market_marks, identical on frozen base 9ce4f3396)",
+    "new regressions": [
+      "file-backed legacy upgrade repaired from retained fills (+duplicate event, +restart no double count)",
+      "legacy upgrade without history stays unknown",
+      "cash fill explicit null fee unknown"
+    ],
+    "latest_run": "PM12 file: 72 passed (H12 76062 test now passes after fixture-only clock fix: PaperRuntimeService._valuation_now pinned to Oct25 scenario clock); telemetry runtime_summary_projection + paper_runtime_ingest_contract + ingest_svc_canonical_cost_recovery + main_routes: 197 passed, 34 subtests. No production change in the fix.",
+    "h12_clock_fix": "Root cause: test set only SourceIngestMarkProvider.now and _iso_now; PaperRuntimeService passes now=self._valuation_now() (real clock) to value_portfolio, overriding the fixture default. Fixture now sets service._valuation_now. Calendar pins, recorded data, expected DTO and assertions unchanged."
+  },
+  "existing_assertions_updated": [
+    "test_stock_future_fill_scales_cost_and_realized_by_multiplier",
+    "test_future_flip_realizes_only_closed_contracts_times_multiplier"
+  ],
+  "unchanged": [
+    "old fills/ledger",
+    "no episode/fill-history fabrication",
+    "unrealized-percent semantics",
+    "BFF service"
+  ],
+  "production_wiring": {
+    "files": [
+      "services/telemetry/main.py",
+      "services/telemetry/ingest_svc.py"
+    ],
+    "change": "CanonicalFillHistoryReader unions retained fills with canonical paper_fill_simulated events from the existing build_postgres_event_reader binding reader (strict tenant/runtime/binding match, dedup by event_id and ledger_fill_count, read-only). main.py passes it to backfill_open_position_costs at startup. Incomplete committed sequence or reader failure keeps costs unknown. Review fix (P1): the binding reader capped to newest 100 events of ALL types hid older fills. build_postgres_event_reader's binding reader now exposes .paper_fills(bid, tenant_id, limit, offset), filtering event_type='paper_fill_simulated'/tenant/binding in SQL BEFORE LIMIT/OFFSET; CanonicalFillHistoryReader pages it (100/page, max 50 pages) and falls back to the legacy reader only when absent. Any page read failure discards history (unknown); truncation leaves a ledger_fill_count gap (unknown).",
+    "tests": "services/telemetry/test_ingest_svc_canonical_cost_recovery.py: 18 passed incl. 101 newer heartbeats hiding the original SRF fill through real main._build_service startup + reload (19.884/-19.884), 250-fill multi-page read, mid-paging failure -> no partial history, SQL-shape check (event_type filter precedes LIMIT). RESOLVED: services/telemetry/test_main_routes.py::test_startup_backfill_projects_missing_stock_future_episode now expects 2 identical canonical binding-history reads (episode backfill + open-position cost backfill); all identity/episode/restart-idempotence assertions kept."
+  },
+  "canonical_fill_query_index_usable": {
+    "change": "ingest_svc.py _fetch_binding_paper_fills replaces the three text-extract binding OR filters with JSONB containment (payload @> jsonb_build_object(...)) for binding_id, runtime_binding_id, metadata.binding_id so the existing payload GIN index is usable; event_type/tenant filters, ORDER BY, LIMIT/OFFSET paging (type filtered before LIMIT) unchanged; post-fetch strict tenant/runtime/binding checks in CanonicalFillHistoryReader unchanged.",
+    "root_readonly_observation": "Root-supplied bounded readonly variant on actual dev PostgreSQL returned the original fee16/tax3.884 fill in 0.6377s under the same 5s timeout (vs 07bb factory TimeoutError at 5.98s). Not re-run by this worker (no DB access).",
+    "no_ddl_no_timeout_change": true,
+    "tests": "test_ingest_svc_canonical_cost_recovery SQL contract extended (no text-extract binding OR, containment present, tenant/order/limit retained); full telemetry/ingest suites pass except tests needing flask/pytest which are not installed in this worker env (ModuleNotFoundError), unverified locally -> CI."
+  }
+}

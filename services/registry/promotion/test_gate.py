@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import unittest
 from pathlib import Path
 
-_PROMOTION_DIR = os.path.dirname(os.path.abspath(__file__))
-if _PROMOTION_DIR not in sys.path:
-    sys.path.insert(0, _PROMOTION_DIR)
-
-from gate import ExecutionProjection, PromotionError, PromotionGate, PromotionState
+from services.registry.promotion.gate import ExecutionProjection, PromotionError, PromotionGate, PromotionState
 
 
 def build_candidate_entry() -> dict:

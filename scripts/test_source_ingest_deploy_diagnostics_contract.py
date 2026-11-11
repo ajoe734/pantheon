@@ -138,13 +138,15 @@ def test_nonprod_workflow_exposes_only_fixed_bounded_source_refresh() -> None:
         "PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' "
         "&& 'root,source-ingest-scheduler' || 'root' }}"
     ) in workflow
+    # The steady posture is allowlist with exactly the collector host when one is
+    # configured (deny otherwise); the bounded switch only widens it to the fixed hosts.
     assert (
-        "PANTHEON_EXTERNAL_EGRESS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' "
-        "&& 'allowlist' || 'deny' }}"
+        "PANTHEON_EXTERNAL_EGRESS: ${{ (env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' "
+        "|| vars.PANTHEON_COLLECTOR_HOST != '') && 'allowlist' || 'deny' }}"
     ) in workflow
     assert (
         "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' "
-        "&& 'openapi.twse.com.tw,www.tpex.org.tw' || '' }}"
+        "&& 'openapi.twse.com.tw,www.tpex.org.tw' || vars.PANTHEON_COLLECTOR_HOST }}"
     ) in workflow
     assert "SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market" in workflow
     assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS: "1"' in workflow
@@ -549,8 +551,8 @@ def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_t
     d_taifex_idx, d_taifex_step = deploy_by_id["bounded_taifex_refresh"]
     taifex_upload_idx, taifex_upload_step = deploy_by_id["taifex_market_refresh_upload"]
     paper_idx, _ = deploy_by_id["paper_bootstrap"]
-    assert m_twse_idx < d_twse_idx < m_taifex_idx < d_taifex_idx < taifex_upload_idx < paper_idx, (
-        "TWSE market_refresh must stay before stack mutation while TAIFEX refresh and its evidence upload run after candidate stack deploy"
+    assert d_twse_idx < m_twse_idx < m_taifex_idx < d_taifex_idx < taifex_upload_idx < paper_idx, (
+        "TWSE market_refresh and TAIFEX refresh must both run after the candidate stack deploy and before the paper baseline"
     )
     assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"

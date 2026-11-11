@@ -1071,7 +1071,114 @@ def build_postgres_event_reader(
             out.append(r)
         return out
 
+    def _fetch_binding_paper_fills(bid: str, tenant_id: Optional[str] = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        """One page of paper_fill_simulated events, filtered by event type/tenant/binding BEFORE limiting."""
+        tid, clean_bid = str(tenant_id or "").strip(), str(bid or "").strip()
+        if not (clean_bid and tid): return []
+        page, off = min(max(1, int(limit or 100)), 100), max(0, int(offset or 0))
+        sql = (f"SELECT event_id, payload, ingested_seq FROM {table} WHERE event_type = 'paper_fill_simulated'"
+               " AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2)"
+               # JSONB containment (index-usable via the payload GIN index) instead of text-extract OR filters.
+               " AND (payload @> jsonb_build_object('binding_id', $1::text)"
+               " OR payload @> jsonb_build_object('runtime_binding_id', $1::text)"
+               " OR payload @> jsonb_build_object('metadata', jsonb_build_object('binding_id', $1::text)))"
+               " ORDER BY created_at DESC, ingested_seq DESC LIMIT $3 OFFSET $4")
+        return _sync(sql, clean_bid, tid, page, off)
+
+    _fetch_binding_events.paper_fills = _fetch_binding_paper_fills  # type: ignore[attr-defined]
     return _fetch_event, _fetch_binding_events
+
+
+class CanonicalFillHistoryReader:
+    """Read-only fill-history source for startup position-cost backfill.
+
+    Unions the in-memory retained fills with canonical ``paper_fill_simulated``
+    events read through the existing binding reader. Only events whose tenant,
+    runtime and binding all match the requested identity are returned; fills are
+    deduplicated by ``event_id`` and, for ``ledger_fill_count``, the retained
+    copy wins. Completeness of the committed sequence is still judged by the
+    caller (``backfill_open_position_costs``), so any gap stays unknown.
+    Performs no writes.
+    """
+
+    _FILL_PAGE_SIZE = 100
+    _MAX_FILL_PAGES = 50
+
+    def __init__(self, retained_store: Any, binding_events: Optional[Callable[..., Any]]) -> None:
+        self._retained_store = retained_store
+        self._binding_events = binding_events
+
+    def retained_paper_fill_events(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        seen_lfc: set[int] = set()
+
+        def _lfc(ev: dict[str, Any]) -> Optional[int]:
+            meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
+            v = meta.get("ledger_fill_count")
+            return v if isinstance(v, int) and not isinstance(v, bool) and v >= 1 else None
+
+        def _add(ev: dict[str, Any]) -> None:
+            eid = str(ev.get("event_id") or "").strip()
+            if eid and eid in seen_ids:
+                return
+            lfc = _lfc(ev)
+            if lfc is not None and lfc in seen_lfc:
+                return
+            if eid:
+                seen_ids.add(eid)
+            if lfc is not None:
+                seen_lfc.add(lfc)
+            out.append(ev)
+
+        retained = getattr(self._retained_store, "retained_paper_fill_events", None)
+        if callable(retained):
+            for ev in retained(tenant_id=tenant_id, runtime_id=runtime_id, binding_id=binding_id):
+                if isinstance(ev, dict):
+                    _add(ev)
+
+        bid = str(binding_id or "").strip()
+        tid = str(tenant_id or "").strip()
+        rid = str(runtime_id or "").strip()
+        if self._binding_events is None or not (bid and tid and rid):
+            return out
+        paged = getattr(self._binding_events, "paper_fills", None)
+        rows: list[dict[str, Any]] = []
+        try:
+            if callable(paged):
+                # Event-type filtering happens in SQL before paging, so newer non-fill events
+                # can never hide committed fills. Bounded; truncation leaves a ledger gap -> unknown.
+                for page_no in range(self._MAX_FILL_PAGES):
+                    page = list(paged(bid, tenant_id=tid, limit=self._FILL_PAGE_SIZE, offset=page_no * self._FILL_PAGE_SIZE) or [])
+                    rows.extend(page)
+                    if len(page) < self._FILL_PAGE_SIZE:
+                        break
+            else:
+                rows = self._binding_events(bid, tenant_id=tid, limit=100)
+        except Exception as exc:  # noqa: BLE001 - history stays unknown on read failure
+            log.warning("canonical fill history read failed for binding_id=%s: %s", bid, exc)
+            return out
+        for ev in rows or []:
+            if not isinstance(ev, dict) or ev.get("event_type") != "paper_fill_simulated":
+                continue
+            meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
+            if str(ev.get("runtime_id") or meta.get("runtime_id") or "").strip() != rid:
+                continue
+            ev_tid = str(ev.get("tenant_id") or meta.get("tenant_id") or "").strip()
+            if ev_tid != tid:
+                continue
+            b1 = str(ev.get("binding_id") or "").strip()
+            b2 = str(ev.get("runtime_binding_id") or meta.get("binding_id") or "").strip()
+            if (b1 and b1 != bid) or (b2 and b2 != bid) or not (b1 or b2):
+                continue
+            _add(ev)
+        return out
 
 
 # ---------------------------------------------------------------------------
