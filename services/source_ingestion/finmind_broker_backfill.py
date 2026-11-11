@@ -44,7 +44,7 @@ DEFAULT_MIN_INTERVAL_SECONDS = 1.5
 STATE_SCHEMA = "finmind_broker_backfill_state.v1"
 
 PARQUET_MAGIC = b"PAR1"
-PYARROW_REQUIREMENTS = "docs/deployment/evidence/FINMIND-BROKER-CONNECTOR-BACKFILL-20261111/requirements-finmind-backfill.txt"
+PYARROW_REQUIREMENTS = "services/source_ingestion/requirements.txt"
 
 
 class ParquetDependencyError(RuntimeError):

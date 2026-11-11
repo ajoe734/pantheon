@@ -1,2 +1,0 @@
-# Scoped deps for services.source_ingestion.finmind_broker_backfill (parquet decode)
-pyarrow>=15,<30

@@ -25,7 +25,7 @@ ROWS = [
 
 
 def _parquet_bytes() -> bytes:
-    pa = pytest.importorskip("pyarrow")
+    import pyarrow as pa
     import io
 
     import pyarrow.parquet as pq
@@ -208,7 +208,7 @@ def test_bulk_body_over_bulk_cap_fails_loudly(monkeypatch) -> None:
 
 
 def test_large_parquet_body_decodes_end_to_end(tmp_path, monkeypatch) -> None:
-    pa = pytest.importorskip("pyarrow")
+    import pyarrow as pa
     import io
 
     import pyarrow.parquet as pq
