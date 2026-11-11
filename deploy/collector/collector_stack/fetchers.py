@@ -7,6 +7,7 @@ import logging
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
@@ -158,6 +159,33 @@ def _page_to_response(url: str, page: Any) -> FetchResponse:
     )
 
 
+# DOM-ready + a post selector replaces network_idle, which never settles on some pages (CMoney).
+_BROWSER_WAIT_SELECTORS = {"www.cmoney.tw": "article.articleContent"}
+
+
+def _raw_http_get(url: str, headers: Mapping[str, str]) -> FetchResponse:  # pragma: no cover - network path
+    """GET returning the untouched wire bytes.
+
+    Scrapling 0.2.99 ``Response.body`` is the lxml re-serialisation (``html_content``), which wraps JSON/XML
+    in ``<html><body>`` and corrupts it, so http/api/rss fetches use httpx (a Scrapling dependency) directly.
+    """
+    import httpx
+
+    with httpx.Client(follow_redirects=True, timeout=30.0) as client:
+        resp = client.get(url, headers=dict(headers))
+    return _httpx_to_response(url, resp)
+
+
+def _httpx_to_response(url: str, resp: Any) -> FetchResponse:
+    return FetchResponse(
+        requested_url=url,
+        final_url=str(resp.url),
+        http_status=int(resp.status_code),
+        body=bytes(resp.content),
+        headers={str(k).lower(): str(v) for k, v in resp.headers.items()},
+    )
+
+
 class LiveScraplingTransport(FetchTransport):
     """Production transport: Scrapling ``Fetcher`` (http) and ``PlayWrightFetcher`` (browser).
 
@@ -183,6 +211,7 @@ class LiveScraplingTransport(FetchTransport):
                 from scrapling.fetchers import PlayWrightFetcher  # type: ignore[import-not-found]
             except ImportError as exc:
                 raise FetchBackendUnavailableError("scrapling.PlayWrightFetcher", repr(exc)) from exc
+            wait_selector = _BROWSER_WAIT_SELECTORS.get(urllib.parse.urlparse(url).hostname or "", "body")
             user_agent = next((v for k, v in req_headers.items() if k.lower() == "user-agent"), None)
             try:
                 page = PlayWrightFetcher.fetch(
@@ -190,7 +219,10 @@ class LiveScraplingTransport(FetchTransport):
                     headless=True,
                     stealth=False,
                     disable_resources=True,
-                    network_idle=True,
+                    network_idle=False,
+                    wait_selector=wait_selector,
+                    wait_selector_state="attached",
+                    timeout=60000,
                     useragent=user_agent,
                     google_search=False,
                 )
@@ -202,8 +234,8 @@ class LiveScraplingTransport(FetchTransport):
                 from scrapling.fetchers import Fetcher  # type: ignore[import-not-found]
             except ImportError as exc:
                 raise FetchBackendUnavailableError("scrapling.Fetcher", repr(exc)) from exc
-            page = Fetcher(auto_match=False).get(url, headers=req_headers, stealthy_headers=False)
-            return _page_to_response(url, page)
+            del Fetcher  # import kept as the fail-loud guard; the body must come from the raw wire bytes
+            return _raw_http_get(url, req_headers)
 
         req = urllib.request.Request(url, data=body, headers=req_headers, method=method)
         try:

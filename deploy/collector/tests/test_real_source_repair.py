@@ -271,3 +271,63 @@ def test_zero_requests_is_not_complete_and_records_no_targets(tmp_path: Path, te
     outcome = runner.run_source("collector-tw-twse-t86", run_id="none", collect_kwargs={"urls": []})
     assert outcome.status == "partial"
     assert outcome.bundle.manifest["reason"] == "no_targets"
+
+
+def test_http_transport_passes_json_and_rss_through_byte_identical(monkeypatch) -> None:
+    pytest.importorskip("httpx")
+    import sys
+    import types
+
+    from collector_stack.fetchers import LiveScraplingTransport
+
+    payloads = {
+        "/j": (b'{"a": [1, 2], "t": "\xe4\xb8\xad"}', "text/plain"),
+        "/r": (b'<?xml version="1.0"?><rss version="2.0"><channel><item><title>x</title></item></channel></rss>', "application/xml"),
+    }
+
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body, ctype = payloads[request.url.path]
+        return httpx.Response(200, content=body, headers={"content-type": ctype})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    stub = types.ModuleType("scrapling.fetchers")
+    stub.Fetcher = object
+    monkeypatch.setitem(sys.modules, "scrapling", types.ModuleType("scrapling"))
+    monkeypatch.setitem(sys.modules, "scrapling.fetchers", stub)
+    for path, (body, _) in payloads.items():
+        resp = LiveScraplingTransport().request(f"http://example.test{path}", fetcher_kind="http")
+        assert resp.body == body
+
+
+def test_browser_fetch_waits_for_selector_not_network_idle() -> None:
+    src = (COLLECTOR_DIR / "collector_stack" / "fetchers.py").read_text(encoding="utf-8")
+    assert "network_idle=False" in src and "network_idle=True" not in src
+    assert 'wait_selector' in src
+
+
+def test_parse_error_writes_partial_bundle_with_parse_failed_and_url(tmp_path: Path, test_hasher) -> None:
+    transport = FixtureTransport()
+    transport.register("https://www.ptt.cc/bbs/Stock/index.html", "<html></html>")
+    runner = CollectorRunner(_config(), root_dir=tmp_path, hasher=test_hasher, transport=transport)
+
+    def boom(self, **kw):
+        self.fetcher.fetch("https://www.ptt.cc/bbs/Stock/index.html")
+        raise ValueError("mismatched tag")
+
+    import collector_stack.runner as r
+    from collector_stack.spiders import PttStockSpider as P
+
+    orig = P.collect
+    P.collect = boom
+    try:
+        outcome = runner.run_source("collector-tw-ptt-stock", run_id="pf")
+    finally:
+        P.collect = orig
+    assert outcome.status == "partial"
+    assert outcome.bundle.manifest["reason"] == "parse_failed"
+    assert outcome.bundle.manifest["source_url"] == "https://www.ptt.cc/bbs/Stock/index.html"
+    status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
+    assert status["sources"]["collector-tw-ptt-stock"]["reason"] == "parse_failed"

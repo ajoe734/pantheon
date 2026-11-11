@@ -126,6 +126,7 @@ class BundleWriter:
         run_date: str | None = None,
         skipped_count: int = 0,
         reason: str | None = None,
+        source_url: str | None = None,
     ) -> WrittenBundle:
         if status not in VALID_BUNDLE_STATUSES:
             raise ValueError(f"bundle status must be one of {sorted(VALID_BUNDLE_STATUSES)}, got {status!r}")
@@ -190,6 +191,8 @@ class BundleWriter:
             manifest["paused_reason"] = paused_reason
         if reason:
             manifest["reason"] = reason
+        if source_url:
+            manifest["source_url"] = source_url
 
         items_path = bundle_dir / "items.jsonl"
         items_path.write_text(

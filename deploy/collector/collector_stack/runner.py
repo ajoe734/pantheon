@@ -278,6 +278,17 @@ class CollectorRunner:
                 bundle=written,
                 state=updated_state,
             )
+        except FetchBackendUnavailableError:
+            raise
+        except Exception as parse_exc:  # noqa: BLE001 - a bad payload must still leave a manifest
+            logger.error("source %s parse failed: %s", source_id, parse_exc)
+            source_url = _first_request_url(collector) or (policy.base_urls[0] if policy.base_urls else None)
+            written = self.bundle_writer.write_bundle(
+                policy=policy, run_id=run_id, items=(), status="partial", paused_reason=None,
+                started_at=started_iso, finished_at=finished_iso,
+                reason="parse_failed", source_url=source_url,
+            )
+            return RunOutcome(source_id=source_id, run_id=run_id, status="partial", bundle=written, state=current_state)
 
         skipped = _skipped_count(collector)
         updated_state = self.state_store.record_run_outcome(
@@ -313,6 +324,14 @@ class CollectorRunner:
             state=updated_state,
             skipped_count=skipped,
         )
+
+
+def _first_request_url(collector: Any) -> str | None:
+    for fetcher in _fetchers(collector):
+        for entry in getattr(fetcher, "request_log", ()):
+            if entry.get("url"):
+                return str(entry["url"])
+    return None
 
 
 def _fetchers(collector: Any) -> list[Any]:
