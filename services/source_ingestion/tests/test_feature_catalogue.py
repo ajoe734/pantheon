@@ -690,3 +690,81 @@ def test_revision_regression_through_public_factor_rule_evaluator() -> None:
 
     assert act("2026-11-12") == "SELL"  # only the original (2) is known; the correction is not leaked
     assert act("2026-12-02") == "BUY"
+
+
+_ROE_INCOME = {"出表日期": "1151110", "年度": "115", "季別": "3", "公司代號": "2330", "營業收入": "1000",
+               "歸屬於母公司業主之淨利（損）": "300"}
+
+
+def _roe_obs(balance: dict, ingest: str = "2026-12-01T12:00:00Z") -> list[dict]:
+    (row,) = normalize_financial_statement_rows(
+        "TWSE", [_ROE_INCOME], [balance],
+        source_dataset="x", api_endpoint="https://openapi.twse.com.tw/v1/x", ingest_time=ingest,
+    )
+    return [o for o in fc.observations_from_row("tw_quarterly_statements", row) if o["field"] == "roe"]
+
+
+def test_late_balance_correction_delays_joined_roe_availability() -> None:
+    balance = {"出表日期": "1151201", "年度": "115", "季別": "3", "公司代號": "2330", "歸屬於母公司業主之權益合計": "300"}
+    (roe,) = _roe_obs(balance)
+    assert roe["value"] == 1.0
+    assert roe["available_time"] == "2026-12-01T10:00:00Z"  # not the income-only 2026-11-10 deadline
+    assert fc.read_feature_series([roe], "tw_quarterly_statements", "roe", decision_time="2026-11-15") == ()
+    assert len(fc.read_feature_series([roe], "tw_quarterly_statements", "roe", decision_time="2026-12-02")) == 1
+
+
+def test_balance_without_publication_date_uses_first_seen_for_joined_roe() -> None:
+    balance = {"年度": "115", "季別": "3", "公司代號": "2330", "歸屬於母公司業主之權益合計": "300"}
+    (roe,) = _roe_obs(balance)
+    assert roe["available_time"] == "2026-12-01T12:00:00Z"
+    assert fc.read_feature_series([roe], "tw_quarterly_statements", "roe", decision_time="2026-11-15") == ()
+
+
+def test_early_balance_does_not_advance_roe_beyond_income_knowledge() -> None:
+    balance = {"出表日期": "1151101", "年度": "115", "季別": "3", "公司代號": "2330", "歸屬於母公司業主之權益合計": "3000"}
+    (roe,) = _roe_obs(balance, ingest="2026-11-01T00:00:00Z")
+    assert roe["available_time"] == "2026-11-14T10:00:00Z"
+    assert roe["value"] == 0.1
+
+
+def _roe_version(year: str, quarter: str, income_pub: str, balance_pub: str, equity: str, ingest: str) -> list[dict]:
+    inc = {"出表日期": income_pub, "年度": year, "季別": quarter, "公司代號": "2330", "營業收入": "1000",
+           "歸屬於母公司業主之淨利（損）": "300"}
+    bal = {"出表日期": balance_pub, "年度": year, "季別": quarter, "公司代號": "2330",
+           "歸屬於母公司業主之權益合計": equity}
+    (row,) = normalize_financial_statement_rows(
+        "TWSE", [inc], [bal],
+        source_dataset="x", api_endpoint="https://openapi.twse.com.tw/v1/x", ingest_time=ingest,
+    )
+    return [o for o in fc.observations_from_row("tw_quarterly_statements", row) if o["field"] == "roe"]
+
+
+def test_late_balance_correction_regression_through_public_factor_rule_evaluator() -> None:
+    import copy
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+    from services.registry.strategy_artifact import evaluate_strategy_action
+
+    artifact = copy.deepcopy(_sample_factor_rule_artifact())
+    artifact["strategy_logic"]["inputs"] = [
+        {"name": "rev_yoy", "dataset": "tw_quarterly_statements", "field": "roe", "availability_lag_days": 45}
+    ]
+    obs = _roe_version("114", "2", "1140815", "1140815", "30000", "2025-08-15T00:00:00Z")
+    obs += _roe_version("114", "3", "1141110", "1141110", "30000", "2025-11-10T00:00:00Z")
+    obs += _roe_version("114", "4", "1150331", "1150331", "30000", "2026-03-31T00:00:00Z")
+    obs += _roe_version("115", "1", "1150515", "1150515", "30000", "2026-05-15T00:00:00Z")
+    obs += _roe_version("115", "2", "1150815", "1150815", "30000", "2026-08-15T00:00:00Z")
+    obs += _roe_version("115", "3", "1151110", "1151110", "30000", "2026-11-10T12:00:00Z")
+    corrected = _roe_version("115", "3", "1151110", "1151201", "300", "2026-12-01T12:00:00Z")
+    assert corrected[0]["available_time"] == "2026-12-01T10:00:00Z"
+    obs += corrected
+    closes = [500.0, 505.0, 510.0, 515.0]
+
+    def act(decision: str) -> str:
+        feats = fc.feature_inputs_for_factor_rule(
+            obs, artifact["strategy_logic"]["inputs"], decision_time=decision
+        )
+        return evaluate_strategy_action(artifact, closes, features=feats, decision_time=decision)
+
+    before, after = act("2026-11-15"), act("2026-12-02")
+    assert before != "BUY"  # the corrected ROE (1.0) is not visible until its balance is published
+    assert after == "BUY"

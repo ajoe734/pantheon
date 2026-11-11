@@ -3350,14 +3350,21 @@ def normalize_financial_statement_rows(
     canonical = _canonical_venue(venue)
     ingested = ingest_time or _utc_now()
     base_lag = lag_days_for("tw_quarterly_statements", "eps")
-    equity: dict[tuple[str, int, int], float] = {}
+    equity: dict[tuple[str, int, int], tuple[float, str]] = {}
     for row in _rows_from_payload(balance_payload) if balance_payload is not None else ():
         symbol = _text(_first(row, "公司代號", "Code", "SecuritiesCompanyCode")).upper()
         year = _roc_year_to_ad(_first(row, "年度", "Year"))
         quarter = _int(_first(row, "季別", "Season", "Quarter"))
         value = _float(_first(row, "歸屬於母公司業主之權益合計", "歸屬於母公司業主之權益", "權益總額", "權益總計"))
-        if symbol and year and quarter and value:
-            equity[(symbol, year, quarter)] = value
+        if symbol and year and quarter in _QUARTER_END_MONTH_DAY and value:
+            b_month, b_day = _QUARTER_END_MONTH_DAY[quarter]
+            b_lag = 90 if quarter == 4 else base_lag
+            b_available = _version_available_time(
+                row, f"{year:04d}-{b_month:02d}-{b_day:02d}", b_lag, ingested
+            )
+            # Retain the balance version's own knowledge time (conservative first-seen
+            # when it states no publication date); a later correction wins with its time.
+            equity[(symbol, year, quarter)] = (value, b_available)
     out: list[dict[str, Any]] = []
     for row in _rows_from_payload(income_payload):
         symbol = _text(_first(row, "公司代號", "Code", "SecuritiesCompanyCode")).upper()
@@ -3373,11 +3380,18 @@ def normalize_financial_statement_rows(
         operating = _float(_first(row, "營業利益（損失）", "OperatingIncome"))
         net_parent = _float(_first(row, "歸屬於母公司業主之淨利（損）", "NetIncomeAttributableToParent"))
         eps = _float(_first(row, "基本每股盈餘（元）", "EarningsPerShare", "BasicEarningsPerShare"))
-        parent_equity = equity.get((symbol, year, quarter))
+        parent_equity, balance_available = equity.get((symbol, year, quarter), (None, None))
+        income_available = _version_available_time(row, event_time, lag, ingested)
+        use_roe = net_parent is not None and bool(parent_equity)
+        row_available = (
+            max(income_available, balance_available)
+            if use_roe and balance_available
+            else income_available
+        )
         item = _fundamental_base(
             "tw_financial_statement", canonical, symbol, row,
             source_dataset=source_dataset, api_endpoint=api_endpoint, event_time=event_time,
-            lag_days=lag, available_time=_version_available_time(row, event_time, lag, ingested), ingest_time=ingested,
+            lag_days=lag, available_time=row_available, ingest_time=ingested,
         )
         item.update(
             fiscal_year=year,
