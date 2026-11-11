@@ -1605,3 +1605,37 @@ def test_feature_observations_read_catalogued_fields_with_declared_lag() -> None
             [_feature_wrapper(row, "tw_unknown")], catalogue=catalogue, connector_id="tw-test",
             dataset_id="tw_unknown", trusted_now=NOW,
         )
+
+
+def test_storage_manifest_reads_governed_feature_datasets_not_ohlcv(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.connectors.base import SourceConnector, SourceType
+        from services.source_ingestion.connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+    finally:
+        sys.path.remove(str(repo))
+    authority = _load_authority_module()
+    adapter = TaiwanOfficialMarketDatasetAdapter(connector_id="tw-test")
+    connector = SourceConnector(
+        connector_id="tw-test", source_type=SourceType.MARKET, provider="p", license_scope="official_reference",
+        metadata={"feature_targets": ["tw_feature_rows"]},
+    )
+    rows = [{"資料年月": "11509", "公司代號": "2330", "營業收入-當月營收": "100", "營業收入-去年同月增減(%)": "12.5"}]
+    records = adapter.records_from_payload("tw_monthly_revenue", "TWSE", rows)
+    manifest = MarketDataStorageWriter(tmp_path).write_run(
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id="run-1")),
+        connector=connector,
+    ).to_dict()
+    storage = authority._validate_and_read_storage_manifest(
+        manifest, source_root=tmp_path, connector_id="tw-test",
+        normalized_targets={"tw_monthly_revenue"}, run_id="run-1", expected_market="TW",
+        trusted_now=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    assert storage["records"] == []
+    by_field = {o["field"]: o for o in storage["feature_observations"]}
+    assert by_field["yoy"]["value"] == 12.5 and by_field["yoy"]["entity"] == "2330.TWSE"
+    assert by_field["yoy"]["availability_lag_days"] == 10

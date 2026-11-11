@@ -172,6 +172,51 @@ def assert_governed_feature_inputs(strategy_logic: Mapping[str, Any]) -> None:
             )
 
 
+def assert_governed_feature_observations(
+    strategy_logic: Mapping[str, Any],
+    features: Mapping[str, Any] | None,
+    decision_time: Any,
+) -> None:
+    """Require catalogued, timestamped, already-available observations for non-price inputs.
+
+    Raw numbers or untimestamped series cannot carry an availability lag, so they are
+    rejected, as is an observation lacking ``event_time`` / ``available_time``.
+    Future-available observations are hidden by the evaluator, never read.
+    """
+    if not isinstance(strategy_logic, Mapping) or strategy_logic.get("kind") != "factor_rule_v1":
+        return
+    feature_map: Mapping[str, Any] = features if isinstance(features, Mapping) else {}
+    _parse_timestamp_utc(decision_time, is_decision_time=True)
+    for item in strategy_logic.get("inputs") or ():
+        if not isinstance(item, Mapping):
+            continue
+        name, dataset, field = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
+        if dataset in PRICE_VOLUME_DATASETS:
+            continue
+        cat_def = get_feature_definition(dataset, field)
+        if cat_def is None:
+            raise FactorRuleValidationError(f"{dataset}.{field} is not in the governed feature catalogue")
+        series = _lookup_raw_feature(feature_map, name=name, dataset=dataset, field=field)
+        if not isinstance(series, (list, tuple)) or not series:
+            raise FactorRuleValidationError(
+                f"feature input '{name}' ({dataset}.{field}) requires catalogued timestamped observations"
+            )
+        for idx, obs in enumerate(series):
+            if (
+                not isinstance(obs, Mapping)
+                or not _is_number(obs.get("value"))
+                or not obs.get("event_time")
+                or not obs.get("available_time")
+            ):
+                raise FactorRuleValidationError(
+                    f"feature input '{name}[{idx}]' must carry value, event_time and available_time"
+                )
+            # Observations that are not yet available (or still inside the declared lag)
+            # stay invisible: the evaluator drops them, and it raises when none remain.
+            _parse_timestamp_utc(obs["available_time"], is_decision_time=False)
+            _parse_timestamp_utc(obs["event_time"], is_decision_time=False)
+
+
 # Design §9.2 (22 operators) + Plan §3.4 (14 time-series operators) = 36 operators.
 DESIGN_9_2_OPERATORS: frozenset[str] = frozenset(
     {

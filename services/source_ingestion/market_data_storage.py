@@ -364,6 +364,10 @@ def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _
                         skipped[dataset_dir.name] = skipped.get(dataset_dir.name, 0) + 1
                         continue
                     entities.setdefault(parsed[0], set()).add(parsed[1])
+    from .feature_catalogue import dataset_specs
+
+    for spec in dataset_specs():  # governed datasets with nothing stored are reported as zero
+        per_dataset.setdefault(_slug(spec.normalized_dataset), {})
     bar_symbols = sorted(per_dataset.get(_slug(daily_bar_dataset), {}))
     datasets: dict[str, Any] = {}
     for name, entities in sorted(per_dataset.items()):
@@ -374,7 +378,7 @@ def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _
             "entity_count": len(entities),
             **_depth_stats(all_dates),
         }
-        if name == _slug(daily_bar_dataset) or name.startswith("tw_macro"):
+        if name == _slug(daily_bar_dataset) or name == "tw_macro_series":
             entry["per_entity"] = {e: _depth_stats(d) for e, d in sorted(entities.items())}
         else:
             entry["per_daily_bar_symbol"] = {s: _depth_stats(entities.get(s, set())) for s in bar_symbols}

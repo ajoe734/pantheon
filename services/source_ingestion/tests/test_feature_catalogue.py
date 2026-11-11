@@ -219,3 +219,59 @@ def test_factor_rule_rejects_uncatalogued_inputs_for_paper_producer() -> None:
     bad = {"kind": "factor_rule_v1", "inputs": [{"name": "a", "dataset": "tw_secret", "field": "x", "availability_lag_days": 0}]}
     with pytest.raises(factor_rule.FactorRuleValidationError):
         factor_rule.assert_governed_feature_inputs(bad)
+
+
+def test_history_depth_reports_zero_for_missing_governed_datasets(tmp_path: Path) -> None:
+    d = tmp_path / "normalized/tw_price_daily/date=2026-11-04"
+    d.mkdir(parents=True)
+    (d / "r.jsonl").write_text(
+        json.dumps({"dataset": "tw_price_daily", "metadata": {"symbol_canonical": "2330.TWSE", "date": "2026-11-04"}}) + "\n"
+    )
+    report = measure_stored_history_depth(tmp_path)
+    for spec in fc.dataset_specs():
+        entry = report["datasets"][spec.normalized_dataset]
+        if spec.normalized_dataset == "tw_price_daily":
+            continue
+        assert entry["row_count"] == 0 and entry["distinct_event_dates"] == 0
+    zero = report["datasets"]["tw_monthly_revenue"]["per_daily_bar_symbol"]["2330.TWSE"]
+    assert zero["distinct_event_dates"] == 0
+
+
+def test_adapter_ingests_governed_fundamentals_end_to_end(tmp_path: Path) -> None:
+    from services.source_ingestion.connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+
+    adapter = TaiwanOfficialMarketDatasetAdapter()
+    rev = [{"資料年月": "11509", "公司代號": "2330", "營業收入-當月營收": "100", "營業收入-去年同月增減(%)": "12.5"}]
+    inc = [{"年度": "115", "季別": "2", "公司代號": "2330", "營業收入": "100", "基本每股盈餘（元）": "5"}]
+    val = [{"Code": "2330", "Date": "1151110", "PEratio": "20", "PBratio": "5", "DividendYield": "2"}]
+    payloads = {"tw_monthly_revenue": rev, "tw_financial_statement": {"income": inc}, "tw_valuation_bwibbu": val}
+    for dataset, payload in payloads.items():
+        records = adapter.records_from_payload(dataset, "TWSE", payload)
+        assert records, dataset
+        meta = records[0].metadata
+        assert meta["dataset"] == dataset and meta["ingest_time"] and "availability_lag_days" in meta
+        assert fc.observations_from_row(dataset_to_catalogue[dataset], meta["normalized_row"])
+
+    fetched = adapter.fundamental_records("tw_monthly_revenue", "TWSE", fetch=lambda url: rev, ingest_time=INGEST)
+    assert fetched and fetched[0].metadata["dataset"] == "tw_monthly_revenue"
+
+
+dataset_to_catalogue = {
+    "tw_monthly_revenue": "tw_monthly_revenue",
+    "tw_financial_statement": "tw_quarterly_statements",
+    "tw_valuation_bwibbu": "tw_valuation_bwibbu",
+}
+
+
+def test_collector_adapter_derives_storable_macro_and_community_records() -> None:
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+
+    macro = CollectorBundleAdapter(connector_id="m", source_id="m", source_type="macro", dataset="tw_macro_series")
+    out, rejected = macro.governed_feature_records(
+        [_macro_record("cbc_policy_rate", 2.0, "2026-09-17T00:00:00Z", "2026-09-17T08:00:00Z")]
+    )
+    assert len(out) == 1 and not rejected
+    assert out[0].metadata["dataset"] == "tw_macro_series" and out[0].metadata["normalized_row"]["series_id"] == "cbc_policy_rate"
+    social = CollectorBundleAdapter(connector_id="s", source_id="s", source_type="social", dataset="tw_community_daily")
+    posts, _ = social.governed_feature_records([_post(1, "2026-11-10", ["2330"], "bullish")])
+    assert posts and posts[0].metadata["dataset"] == "tw_community_daily"

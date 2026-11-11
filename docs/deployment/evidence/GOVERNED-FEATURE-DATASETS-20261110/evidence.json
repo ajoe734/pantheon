@@ -111,7 +111,7 @@
           "row_count": 2830
         },
         "measured_by": "coordinator, read-only, 2026-11-11, standalone script of measure_stored_history_depth run in pantheon-source-ingest-1 against /data/source-ingest/market_data_store (SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT not set there)",
-        "source_file": "hosted_history_depth_20261111.json (symbols and dates only)",
+        "source_file": "hosted_history_depth_20261111.json (verbatim hosted per-dataset/per-daily-bar-symbol measurement, committed) and hosted_governed_dataset_coverage_20261111.json (explicit zero coverage for every governed dataset absent from the hosted store)",
         "taifex_ssf_contracts": {
           "note": "no event time on any row",
           "row_count": 177

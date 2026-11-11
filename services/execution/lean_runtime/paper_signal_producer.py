@@ -674,9 +674,11 @@ class CurrentArtifactStrategy:
             from services.registry.factor_rule import (
                 FactorRuleValidationError,
                 assert_governed_feature_inputs,
+                assert_governed_feature_observations,
             )
 
             assert_governed_feature_inputs(strategy_logic)
+            assert_governed_feature_observations(strategy_logic, features, decision_time)
         except FactorRuleValidationError as exc:
             raise SignalDecisionUnavailable(
                 "feature_not_in_catalogue",

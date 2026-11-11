@@ -838,6 +838,18 @@ def _rows_from_payload(payload: Mapping[str, Any] | Sequence[Mapping[str, Any]] 
 
 def _endpoint_for(dataset: str, venue: str) -> Mapping[str, Any]:
     canonical = _canonical_venue(venue)
+    fundamental = TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS.get(dataset)
+    if fundamental is not None:
+        if canonical not in fundamental:
+            raise ValueError(f"unsupported Taiwan official endpoint: dataset={dataset} venue={venue}")
+        return {
+            "dataset": dataset,
+            "venue": canonical,
+            "source_dataset": fundamental[canonical]["source_dataset"],
+            "endpoint": fundamental[canonical]["endpoint"],
+            "cadence": "monthly_or_quarterly_filing" if dataset != "tw_valuation_bwibbu" else "daily_after_close",
+            "tier_scope": [],
+        }
     for endpoint in TAIWAN_OFFICIAL_ENDPOINTS:
         if endpoint.get("dataset") == dataset and endpoint.get("venue") == canonical:
             return endpoint
@@ -1577,6 +1589,14 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                         "date": row.get("date"),
                         "event_time": row.get("date"),
                         "available_time": row_available_time,
+                        **(
+                            {
+                                "ingest_time": row["ingest_time"],
+                                "availability_lag_days": row.get("availability_lag_days"),
+                            }
+                            if row.get("ingest_time")
+                            else {}
+                        ),
                         "api_endpoint": api_endpoint,
                         "cadence": endpoint.get("cadence"),
                         "tier_scope": list(endpoint.get("tier_scope") or []),
@@ -1615,6 +1635,19 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         available_time: str | None = None,
     ) -> tuple[dict[str, Any], ...]:
         canonical = _canonical_venue(venue)
+        if dataset in TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS:
+            common = {"source_dataset": source_dataset, "api_endpoint": api_endpoint}
+            if dataset == "tw_monthly_revenue":
+                return normalize_monthly_revenue_rows(canonical, payload, **common)
+            if dataset == "tw_valuation_bwibbu":
+                return normalize_valuation_rows(canonical, payload, **common)
+            if not isinstance(payload, Mapping) or "income" not in payload:
+                raise ValueError(
+                    "tw_financial_statement payload must map 'income' (and optional 'balance') responses"
+                )
+            return normalize_financial_statement_rows(
+                canonical, payload["income"], payload.get("balance"), **common
+            )
         rows = _rows_from_payload(payload)
         if dataset == "tw_price_daily":
             return tuple(
@@ -1671,6 +1704,23 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 if row is not None
             )
         raise ValueError(f"unsupported Taiwan official dataset: {dataset}")
+
+    def fundamental_records(
+        self,
+        dataset: str,
+        venue: str,
+        *,
+        fetch: Callable[[str], Any] | None = None,
+        max_records: int | None = None,
+        ingest_time: str | None = None,
+        trace_id: str = "",
+    ) -> tuple[SourceRecord, ...]:
+        """Fetch one governed fundamentals dataset and wrap it for the storage writer."""
+        rows = fetch_fundamental_rows(dataset, venue, fetch=fetch, ingest_time=ingest_time)
+        limit = max_records if max_records is not None else self.max_records
+        return fundamental_rows_to_records(
+            rows[:limit] if limit else rows, connector_id=self.connector_id, trace_id=trace_id
+        )
 
     def source_health_from_result(self, result: Any) -> SourceHealth:
         watermark = getattr(result, "watermark", None)

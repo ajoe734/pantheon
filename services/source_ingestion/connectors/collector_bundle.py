@@ -619,6 +619,26 @@ class CollectorBundleAdapter:
         )
         return validate_external_source_record(record, connector=self.connector(), force=True)
 
+    def governed_feature_records(
+        self,
+        records: Sequence[SourceRecord],
+        *,
+        prior_daily_counts: Mapping[str, Mapping[str, int]] | None = None,
+        trace_id: str = "",
+    ) -> tuple[tuple[SourceRecord, ...], tuple[dict[str, str], ...]]:
+        """Derive storable governed feature records (macro series or community daily).
+
+        Returns ``(records, rejected)``; datasets other than the two governed bundle
+        feature datasets yield nothing.
+        """
+        if self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
+            rows, rejected = macro_feature_rows(records)
+        elif self.dataset == TW_COMMUNITY_DAILY_DATASET:
+            rows, rejected = community_daily_feature_rows(records, prior_daily_counts=prior_daily_counts), ()
+        else:
+            return (), ()
+        return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), tuple(rejected)
+
     def fetch_bundle(self, *, cursor: str | None = None, trace_id: str = "") -> CollectorPullResult:
         return self.pull(cursor=cursor, trace_id=trace_id)
 
@@ -817,3 +837,44 @@ def community_daily_feature_rows(
             row["bull_bear_ratio"] = (bucket["bull"] + 1) / (bucket["bear"] + 1)
         rows.append(row)
     return tuple(rows)
+
+
+def feature_rows_to_records(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    connector_id: str,
+    trace_id: str = "",
+) -> tuple[SourceRecord, ...]:
+    """Wrap governed macro/community feature rows so the storage writer can persist them."""
+    out: list[SourceRecord] = []
+    for row in rows:
+        dataset = str(row["dataset"])
+        entity = str(row.get("series_id") or row.get("symbol") or "")
+        row_hash = hashlib.sha256(json.dumps(dict(row), sort_keys=True, default=str).encode()).hexdigest()[:24]
+        out.append(
+            SourceRecord(
+                source_id=f"{connector_id}:{dataset}:{entity}:{row.get('field') or 'daily'}:{row['event_time']}:{row_hash}",
+                connector_id=connector_id,
+                source_type="market",
+                title=f"{dataset} {entity} {row['event_time']}",
+                content_ref=f"collector-feature://{dataset}/{entity}/{row['event_time']}/{row_hash}",
+                metadata={
+                    "dataset": dataset,
+                    "symbol": entity,
+                    "symbol_canonical": row.get("symbol_canonical") or entity,
+                    "series_id": row.get("series_id"),
+                    "date": row["event_time"],
+                    "event_time": row["event_time"],
+                    "available_time": row["available_time"],
+                    "ingest_time": row["ingest_time"],
+                    "availability_lag_days": row["availability_lag_days"],
+                    "normalized_row": dict(row),
+                    "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                    "access_scope": ["public", "research"],
+                    "license_scope": "collector_public_web",
+                    "schema_hash": f"{dataset}.v1",
+                },
+                trace_id=trace_id,
+            )
+        )
+    return tuple(out)

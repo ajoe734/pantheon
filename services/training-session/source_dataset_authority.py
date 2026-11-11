@@ -330,6 +330,10 @@ def materialize_source_dataset_version(
     canonical_bytes = b"".join(_canonical_json_bytes(record) + b"\n" for record in records)
     canonical_digest = hashlib.sha256(canonical_bytes).hexdigest()
     canonical_path = authority_root / f"canonical-ohlcv-{canonical_digest}.jsonl"
+    feature_observations = list(storage.get("feature_observations") or [])
+    feature_bytes = b"".join(_canonical_json_bytes(o) + b"\n" for o in feature_observations)
+    feature_digest = hashlib.sha256(feature_bytes).hexdigest()
+    feature_path = authority_root / f"canonical-features-{feature_digest}.jsonl"
 
     controller_binding_digest = stable_json_sha256(controller_binding)
     storage_binding = {
@@ -375,7 +379,10 @@ def materialize_source_dataset_version(
 
     payload_without_id: dict[str, Any] = {
         "market_scope": [storage["market"]],
-        "instrument_scope": sorted({str(record["instrument"]) for record in records}),
+        "instrument_scope": sorted(
+            {str(record["instrument"]) for record in records}
+            | {str(o["entity"]) for o in feature_observations if o["entity"]}
+        ),
         "raw_dataset_refs": [item["uri"] for item in storage["raw_refs"]],
         "normalized_dataset_refs": [item["uri"] for item in storage["normalized_refs"]],
         "feature_dataset_refs": [item["uri"] for item in storage["feature_refs"]],
@@ -389,9 +396,21 @@ def materialize_source_dataset_version(
                 "uri": canonical_path.resolve(strict=False).as_posix(),
                 "sha256": canonical_digest,
                 "row_count": len(records),
-            }
+            },
+            *(
+                [
+                    {
+                        "uri": feature_path.resolve(strict=False).as_posix(),
+                        "sha256": feature_digest,
+                        "row_count": len(feature_observations),
+                    }
+                ]
+                if feature_observations
+                else []
+            ),
         ],
         "records": records,
+        **({"feature_observations": feature_observations} if feature_observations else {}),
     }
     identity_digest = stable_json_sha256(payload_without_id)
     payload = {
@@ -421,8 +440,12 @@ def materialize_source_dataset_version(
         )
         if existing_version is not None:
             _atomic_materialize(canonical_path, canonical_bytes, authority_root)
+            if feature_observations:
+                _atomic_materialize(feature_path, feature_bytes, authority_root)
             return existing_version
         _atomic_materialize(canonical_path, canonical_bytes, authority_root)
+        if feature_observations:
+            _atomic_materialize(feature_path, feature_bytes, authority_root)
         _atomic_materialize(dataset_path, dataset_bytes, authority_root)
     finally:
         try:
@@ -952,6 +975,7 @@ def _validate_and_read_storage_manifest(
     checked_feature: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
     seen_records: set[tuple[str, str]] = set()
+    feature_observations: list[dict[str, Any]] = []
     market: str | None = None
     total_source_rows = 0
 
@@ -1006,7 +1030,18 @@ def _validate_and_read_storage_manifest(
                     ref.get("source_dataset"), f"{ref_label}.source_dataset"
                 )
             destination.append(checked)
-            if label == "normalized":
+            if label == "normalized" and _is_governed_feature_dataset(ref_dataset):
+                # Governed point-in-time feature datasets are never read as OHLCV bars.
+                feature_observations.extend(
+                    feature_observations_from_wrappers(
+                        rows,
+                        catalogue=_feature_catalogue_document(),
+                        connector_id=connector_id,
+                        dataset_id=ref_dataset,
+                        trusted_now=trusted_now,
+                    )
+                )
+            elif label == "normalized":
                 for row_number, wrapper in enumerate(rows, start=1):
                     record, row_market = _ohlcv_from_wrapper(
                         wrapper,
@@ -1055,7 +1090,7 @@ def _validate_and_read_storage_manifest(
                             f"{ref_label} line {row_number} belongs to a different source dataset"
                         )
 
-    if not records:
+    if not records and not feature_observations:
         raise SourceDatasetAuthorityError("normalized source has no OHLCV records")
     if sum(item["row_count"] for item in checked_normalized) != _strict_int(
         summary.get("normalized_row_count"),
@@ -1073,6 +1108,10 @@ def _validate_and_read_storage_manifest(
         "normalized_refs": checked_normalized,
         "feature_refs": checked_feature,
         "records": sorted(records, key=lambda item: (item["date"], item["instrument"])),
+        "feature_observations": sorted(
+            feature_observations,
+            key=lambda o: (o["dataset"], o["field"], o["entity"], o["event_time"], o["available_time"]),
+        ),
         "market": expected_market,
     }
 
@@ -1142,6 +1181,19 @@ def _ohlcv_from_wrapper(
         raise SourceDatasetAuthorityError(f"{label} low is inconsistent with OHLC")
     market = _required_text(market_value, f"{value_label}.market") if market_value not in (None, "") else None
     return {"instrument": instrument, "date": date_text, **values}, market
+
+
+def _feature_catalogue_document() -> Mapping[str, Any]:
+    from services.source_ingestion.feature_catalogue import catalogue_document
+
+    return catalogue_document()
+
+
+def _is_governed_feature_dataset(dataset_id: str) -> bool:
+    return any(
+        spec.get("normalized_dataset") == dataset_id
+        for spec in _feature_catalogue_document().get("datasets", ())
+    )
 
 
 def feature_observations_from_wrappers(
