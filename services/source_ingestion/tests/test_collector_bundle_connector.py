@@ -99,7 +99,8 @@ def test_single_adapter_token_allowlisted_and_each_source_has_definition():
     ids = {d.definition_id for d in DEPLOYED_CONNECTOR_DEFINITIONS if d.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN}
     assert {"collector-tw-threads", "collector-tw-instagram-popular", "collector-tw-cmoney-forum", "collector-tw-ptt-stock",
             "collector-youtube-finance", "collector-news-rss", "collector-tw-macro-cbc", "collector-tw-macro-ndc",
-            "collector-tw-macro-dgbas", "collector-gdelt", "collector-library-books", "strategy-seed-paper-corpus"} <= ids
+            "collector-tw-macro-dgbas", "collector-gdelt", "collector-library-books", "strategy-seed-paper-corpus",
+            "collector-tw-twse-t86", "collector-tw-twse-price-history", "collector-tw-tpex-price-history"} <= ids
     assert "collector-tw-tpex-flows" not in ids
 
 
