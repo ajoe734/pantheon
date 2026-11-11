@@ -2,7 +2,7 @@
   "task_id": "CI-SANDBOX-APT-DNS-20261111",
   "owner": "Codex2",
   "reviewer": "Claude",
-  "status": "real_mirror_provision_passed_blocked_by_product_smoke",
+  "status": "fixture_clock_corrected_awaiting_exact_head_ci_and_independent_review",
   "failed_attempts": [
     {
       "run": "43032317523",
@@ -86,9 +86,21 @@
       "test": "services/execution/lean_runtime/test_futures_session_inputs.py::ProducerRuntimeFuturesWiringIntegrationTests::test_summary_projection_and_drift_see_futures_valuation",
       "failure": "KeyError: mark_price at test_futures_session_inputs.py:1038",
       "local_reproduction": "timeout 150s .venv-pantheon/bin/python3 -m pytest -q <test above>: exit 1, same KeyError, 2.98s",
-      "scope_evidence": "git diff origin/dev HEAD -- services/execution/lean_runtime services/telemetry/runtime_summary.py is empty. Product files are outside this task's declared artifacts; no product source or assertions changed.",
+      "scope_evidence": "At historical head 7bb062a3b, git diff origin/dev HEAD -- services/execution/lean_runtime services/telemetry/runtime_summary.py was empty. The fixture was then outside the declared scope; no product source or assertions had changed.",
       "routing": "Claude owns the archived PAPER-FUTURES-SESSION-MARK-AND-WINDOW-20261110 task containing this test. Request existing coordination to route the current product regression; that completed task is NOT a blocking task dependency.",
-      "remaining": "Repair the product baseline through its own authorized scope, synchronize current dev, then rerun exact-head full CI including real worker boundaries before independent review/integration/done. PR7176 remains with its existing owner; no repair merge exists yet."
+      "remaining": "The 2026-11-11T16:07:45Z canonical artifact-contract admission now permits this exact existing fixture in the original task. Fixture correction is recorded below; exact-head full CI including real worker boundaries, independent review and integration remain required. PR7176 remains with its existing owner; no repair merge exists yet."
+    },
+    "fixture_resolution": {
+      "scope": "Only test_summary_projection_and_drift_see_futures_valuation transport inputs in the existing test_futures_session_inputs.py; no production code, clock, freshness rule or assertion changes.",
+      "cause": "Risk/order/fill/position payloads carried the runtime wall clock while only pnl/drawdown created_at was fixed to 2026-11-10T07:13:29Z. After that date the projection correctly rejected the earlier valuation against later position observations.",
+      "correction": "Keep the existing valuation instant and transport all opening events at the fixture's 2026-11-09T09:00:00Z opening instant, in existing event order. Retain exact 97.1 mark, net -19.884, drawdown, provenance and missing/stale/tombstone/calendar assertions.",
+      "anchor_commit": "cc162bb9815ed828ff8fc7bcf35399d07294b2fa",
+      "before": "timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_futures_session_inputs.py::ProducerRuntimeFuturesWiringIntegrationTests::test_summary_projection_and_drift_see_futures_valuation: exit 1; same KeyError mark_price; 3.07s.",
+      "after": "Same exact node/command: exit 0; 1 passed, 1 warning; 2.97s.",
+      "lean_batch_command": "timeout 240s .venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "lean_batch_result": "exit 0; 588 passed, 13 skipped, 1 warning, 70 subtests passed in 182.68s. No skip/xfail or assertion changes were introduced.",
+      "focused": "timeout 90s .venv-pantheon/bin/python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection: exit 0; 23 tests OK. bash -n scripts/ci/provision_worker_sandbox.sh and git diff --check: exit 0. Checkout-scoped Python distribution check-only: exit 0.",
+      "delivery": "Freeze final source/evidence head on existing PR7183 after this correction. Later terminal CI/review/merge outcomes belong in canonical delivery/review/final reporting, without evidence-only commits that invalidate useful CI or exact-head approval. Historical 7bb provisioning SUCCESS and whole-Smoke FAILURE above remain unchanged; final-head CI and real negative boundary results are not yet claimed."
     }
   },
   "recovery": {
