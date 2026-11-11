@@ -250,12 +250,16 @@ def test_alpha_factory_builds_cards_from_owner_route_with_hosted_shapes(monkeypa
         tenant_id: Optional[str] = None,
     ) -> Tuple[int, Any]:
         observed_calls.append((url, auth_header, tenant_id))
+        if url.endswith("/alpha-templates/evaluations"):
+            return 200, {"count": 0, "items": []}
         return 200, _hosted_owner_entries()
 
     client = _make_bff_client(monkeypatch, http_get=fake_http_get)
     resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200
-    assert len(observed_calls) == 1
+    # entries read + templates evaluation read (BFF-DISCOVERY-READ-SURFACES)
+    assert len(observed_calls) == 2
+    observed_calls = observed_calls[:1]
     assert observed_calls[0][0] == (
         "http://research-orchestrator.local/api/research-orchestrator/alpha-replication/entries"
     )
@@ -298,8 +302,10 @@ def test_alpha_factory_builds_cards_from_owner_route_with_hosted_shapes(monkeypa
     assert rep["last_revalidation_at"] == "2026-10-15T08:30:00Z"
     assert rep["approver"] == "pantheon-dev-approver"
     assert rep["approved_at"] == "2026-08-14T01:00:00Z"
-    for invented_field in ("sharpe", "sharpe_ratio", "metrics", "risk", "win_rate"):
+    for invented_field in ("sharpe", "sharpe_ratio", "risk", "win_rate"):
         assert invented_field not in rep
+    # metrics is present only as a pass-through: null when the owner supplied none.
+    assert rep["metrics"] is None
 
     scaffolded_cards = lanes["scaffolded"]["items"]
     assert len(scaffolded_cards) == 3

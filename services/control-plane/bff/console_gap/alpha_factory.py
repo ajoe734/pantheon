@@ -32,11 +32,18 @@ except (ImportError, ValueError):
         )
         from core.owner_reads import authorization as owner_authorization, selected_tenant  # type: ignore
 
+try:
+    from ..research import discovery_projection
+except (ImportError, ValueError):
+    from services.control_plane.bff.research import discovery_projection  # type: ignore
+
 _SURFACE_KEY = "alpha_factory"
 _STRATEGY_STATE_SURFACE_KEY = "alpha_factory_strategy_state"
 _OWNER_SOURCE = "research_orchestrator"
 _ORCHESTRATOR_URL_ENV = "PANTHEON_RESEARCH_ORCHESTRATOR_API_URL"
 _ORCHESTRATOR_ENTRIES_PATH = "/api/research-orchestrator/alpha-replication/entries"
+_ORCHESTRATOR_TEMPLATES_PATH = "/api/research/alpha-templates/evaluations"
+_TEMPLATES_SURFACE_KEY = "alpha_factory_templates"
 _DISCOVERED_REASON = "no_candidate_source"
 
 _LANES: List[Dict[str, Any]] = [
@@ -178,6 +185,27 @@ def _project_alpha_factory_card(entry: Dict[str, Any]) -> Dict[str, Any]:
         "revalidation_count": entry.get("revalidation_count"),
         # Filled from the registry strategy reader after projection.
         "strategy_state": None,
+        # Sample metrics are passed through only when the owner supplies them.
+        "metrics": discovery_projection.project_sample_metrics(
+            entry.get("metrics"),
+            entry.get("backtest_summary"),
+            entry.get("backtest_evaluation"),
+        ),
+        "lineage": {
+            "strategy_spec_id": entry.get("strategy_spec_id"),
+            "strategy_id": entry.get("strategy_id"),
+            "approval_decision_id": entry.get("approval_decision_id"),
+            "review_ref": entry.get("review_ref"),
+            "experiment_task_id": entry.get("experiment_task_id"),
+            "experiment_run_ids": exp_run_ids,
+            "authority_run_ids": auth_run_ids,
+            "source_records": discovery_projection.project_lineage(
+                entry.get("lineage")
+            )["source_records"],
+        },
+        "attribution": discovery_projection.attribution_block(
+            entry.get("lineage"), entry.get("metrics"), entry.get("datasets")
+        ),
     }
 
 
@@ -216,6 +244,32 @@ def _attach_strategy_state(
     return {"status": "ok", "source": source}
 
 
+def _read_templates(
+    http_get: Callable[..., Tuple[Any, Any]],
+    base_url: str,
+    auth: Optional[str],
+    tenant: Optional[str],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Templates with evaluation metrics from the research owner; degrade, never fail the board."""
+    source = _OWNER_SOURCE
+    url = f"{base_url.rstrip('/')}{_ORCHESTRATOR_TEMPLATES_PATH}"
+    try:
+        try:
+            status, payload = http_get(url, auth_header=auth, tenant_id=tenant)
+        except TypeError:
+            status, payload = http_get(url)
+    except ActionUnavailableError:
+        raise
+    except Exception:  # noqa: BLE001
+        status, payload = 503, None
+    ok = status is True if isinstance(status, bool) else int(status) == 200
+    rows = _extract_entries(payload) if ok else None
+    if rows is None:
+        return [], {"status": "unavailable", "source": source, "reason": "templates_read_failed"}
+    projected = [t for t in (discovery_projection.project_template_evaluation(r) for r in rows) if t]
+    return projected, {"status": "ok", "source": source}
+
+
 def _build_alpha_factory_payload(
     snapshot_at: str,
     *,
@@ -225,6 +279,8 @@ def _build_alpha_factory_payload(
     lane: Optional[str],
     surface: Dict[str, Any],
     strategy_state_surface: Optional[Dict[str, Any]] = None,
+    templates: Optional[List[Dict[str, Any]]] = None,
+    templates_surface: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     is_unavailable = surface.get("status") == "unavailable"
     effective_cards = [] if is_unavailable else list(all_cards)
@@ -272,8 +328,11 @@ def _build_alpha_factory_payload(
         "scaffolded": scaffolded_items,
         "replicated": replicated_items,
         "items": page_items,
+        "templates": list(templates or []),
     }
     surfaces: Dict[str, Any] = {_SURFACE_KEY: surface}
+    if templates_surface is not None:
+        surfaces[_TEMPLATES_SURFACE_KEY] = templates_surface
     if strategy_state_surface is not None:
         surfaces[_STRATEGY_STATE_SURFACE_KEY] = strategy_state_surface
     return {
@@ -392,6 +451,9 @@ def create_alpha_factory_router(
             cards.append(_project_alpha_factory_card(entry))
 
         strategy_state_surface = _attach_strategy_state(cards, read_strategy_state)
+        templates, templates_surface = _read_templates(
+            eff_http_get, base_url, eff_auth, verified_tenant
+        )
 
         surface = {
             "status": "ok",
@@ -405,6 +467,8 @@ def create_alpha_factory_router(
             lane=lane,
             surface=surface,
             strategy_state_surface=strategy_state_surface,
+            templates=templates,
+            templates_surface=templates_surface,
         )
 
     return router

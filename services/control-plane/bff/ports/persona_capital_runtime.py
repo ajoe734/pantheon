@@ -1031,6 +1031,12 @@ class EvolutionProjectionPort:
                 "status": "pending",
                 "score": d.get("score"),
                 "proposed_at": d.get("created_at"),
+                "artifact_ref": d.get("artifact_ref"),
+                "metrics": d.get("metrics"),
+                "evaluation_summary": d.get("evaluation_summary"),
+                "backtest_summary": d.get("backtest_summary"),
+                "lineage": d.get("lineage"),
+                "hypothesis_card": d.get("hypothesis_card"),
             }
             for d in related
         ]

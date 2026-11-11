@@ -40,6 +40,7 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from services.control_plane.bff.command_adapters.base import ActionUnavailableError
 from services.control_plane.bff.models import ErrorCode, ObjectType
+from services.control_plane.bff.research import discovery_projection
 from services.control_plane.bff.ports.evolution_program_commands import (
     EvolutionProgramCommandError,
     EvolutionProgramCommandPort,
@@ -525,6 +526,10 @@ def _register_evolution_programs_routes(
         snapshot_at = utc_now()
         candidates = getattr(read_store, "list_evolution_program_candidates", lambda pid: [])(clean_id) or []
         page_items, next_page_token = page_slice(candidates, page_token, page_size)
+        page_items = [
+            {**c, "discovery": discovery_projection.project_discovery_block(c)} if isinstance(c, dict) else c
+            for c in page_items
+        ]
         meta = snapshot_meta(snapshot_at)
         return {"items": page_items, "page_info": {"next_page_token": next_page_token}, "meta": meta}
 
