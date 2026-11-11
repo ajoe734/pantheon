@@ -1,5 +1,5 @@
 {
-  "note": "Certain TWSE/TPEx full-day closures only. An unlisted closure costs one request answered with 'no data' (recorded as a holiday); a wrong entry would drop a real trading day. Extra closures: --holidays-file.",
+  "note": "Certain TWSE/TPEx full-day closures only. An unlisted closure costs one request answered with 'no data' (recorded as a holiday); a wrong entry would drop a real trading day. Extra closures: --holidays-file. Reconciled with TWSE holidaySchedule (https://www.twse.com.tw/holidaySchedule/holidaySchedule) for 2024-11 through 2026-12; weekday closures only.",
   "holidays": [
     "2025-01-01",
     "2025-01-23",
@@ -14,8 +14,11 @@
     "2025-04-04",
     "2025-05-01",
     "2025-05-30",
+    "2025-09-29",
     "2025-10-06",
     "2025-10-10",
+    "2025-10-24",
+    "2025-12-25",
     "2026-01-01",
     "2026-02-12",
     "2026-02-13",
@@ -30,6 +33,9 @@
     "2026-05-01",
     "2026-06-19",
     "2026-09-25",
-    "2026-10-09"
+    "2026-09-28",
+    "2026-10-09",
+    "2026-10-26",
+    "2026-12-25"
   ]
 }

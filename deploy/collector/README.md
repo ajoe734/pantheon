@@ -190,4 +190,4 @@ docker compose run --rm collector-worker ... backfill --source collector-tw-twse
 - Resume: completed dates are recorded in `/data/state/backfill/<source>.json`; re-running the same command
   skips them. A block (429/403) or fetch failure stops the run (exit 2) and the date is retried next time.
 - `run --source ... --start-date/--end-date/--trading-days` passes the same dates to one ordinary run bundle.
-- Two years ≈ 492 requests per source ≈ 41 minutes; all three sources ≈ 123 minutes (run sequentially).
+- Two years ≈ 487 requests per source ≈ 41 minutes; all three sources ≈ 123 minutes (run sequentially).

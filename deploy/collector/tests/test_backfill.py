@@ -143,13 +143,53 @@ def test_daily_default_date_skips_exchange_closures_for_all_sources(fixtures_dir
     assert len(transport.calls) == 1 and "date=20260211" in transport.calls[0]["url"]
 
 
+def test_non_lny_closures_match_official_twse_schedule() -> None:
+    from collector_stack.spiders import latest_published_trading_date
+
+    for day in ("2025-09-29", "2025-10-24", "2025-12-25", "2026-09-28", "2026-10-26", "2026-12-25"):
+        assert day in TW_EXCHANGE_HOLIDAYS
+    # Teachers' Day 09-28 and the Retrocession Day make-up 10-26 are skipped in ranges.
+    assert trading_dates("2026-09-24", "2026-09-29") == ["2026-09-24", "2026-09-29"]
+    assert trading_dates("2026-10-22", "2026-10-27") == ["2026-10-22", "2026-10-23", "2026-10-27"]
+    # 10:00 Taipei on 2026-10-27: newest published day is Fri 10-23, not the closed Mon 10-26.
+    assert latest_published_trading_date("2026-10-27T02:00:00Z") == "2026-10-23"
+    assert latest_published_trading_date("2026-09-29T02:00:00Z") == "2026-09-24"
+
+
+@pytest.mark.parametrize(
+    "spider_name,fixture,prefix,compact,expected",
+    [
+        ("TwseDailyPriceHistorySpider", "twse_mi_index_20261110.json",
+         "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX", True, "date=20261023"),
+        ("TpexDailyPriceHistorySpider", "tpex_daily_quotes_20261110.json",
+         "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes", False, "date=2026/10/23"),
+        ("TwseT86DailySpider", "twse_t86_20261110.json",
+         "https://www.twse.com.tw/rwd/zh/fund/T86", True, "date=20261023"),
+    ],
+)
+def test_daily_selection_skips_non_lny_closure_for_all_sources(
+    fixtures_dir: Path, spider_name, fixture, prefix, compact, expected
+) -> None:
+    from collector_stack import spiders
+
+    cls = getattr(spiders, spider_name)
+    transport = _transport(fixtures_dir, fixture, prefix, compact=compact)
+    spider = cls(load_collector_config(DEFAULT_POLICY_PATH).get_source(cls.source_id), transport=transport,
+                 sleep_fn=lambda _s: None)
+    try:
+        spider.collect(fetched_at="2026-10-27T02:00:00Z")
+    except Exception:  # fixture payload shape is irrelevant; only the requested date matters
+        pass
+    assert len(transport.calls) == 1 and expected in transport.calls[0]["url"]
+
+
 def test_run_rejects_oversized_range_before_any_request(tmp_path: Path, capsys) -> None:
     salt = tmp_path / "salt"
     salt.write_text("x" * 64, encoding="utf-8")
     with pytest.raises(SystemExit):
         cli_main([
             "--root-dir", str(tmp_path), "--salt-file", str(salt), "run", "--source", TWSE,
-            "--start-date", "2024-11-10", "--end-date", "2026-11-10",
+            "--start-date", "2024-01-01", "--end-date", "2026-11-10",
         ])
     err = capsys.readouterr().err
     assert "backfill" in err and "no request was made" in err

@@ -7,12 +7,12 @@
   },
   "two_year_backfill": {
     "window": "2024-11-10..2026-11-10 (computed 2026-11-11 10:00 Taipei)",
-    "requests_per_source": 492,
+    "requests_per_source": 487,
     "min_interval_seconds": 5.0,
-    "wall_clock_minutes_per_source": 41.0,
+    "wall_clock_minutes_per_source": 40.6,
     "sources": 3,
-    "wall_clock_minutes_all_three_sequential": 123.0,
-    "note": "492 = weekdays minus built-in certain closures; unlisted closures cost one request and are recorded as no_data. fetch-policy estimate of 488 assumed 244 days/year."
+    "wall_clock_minutes_all_three_sequential": 121.8,
+    "note": "487 = weekdays 2024-11-10..2026-11-10 minus built-in closures reconciled with the TWSE holidaySchedule (<=488 policy cap); unlisted closures cost one request and are recorded as no_data."
   },
   "resume": "ledger at <root>/state/backfill/<source>.json; completed and confirmed-holiday dates are never refetched",
   "daily_runs": "TWSE/TPEx price history default now uses latest_published_trading_date with count 1 (T86 already did)",
@@ -22,6 +22,18 @@
   "review_fixes": {
     "holiday_aware_default_date": "latest_published_trading_date/recent_weekday_dates skip TW_EXCHANGE_HOLIDAYS (now in spiders.py); 2026-02-23 -> 2026-02-11",
     "oversized_run_range": "`run` rejects ranges above max_requests_per_run before any request and points to resumable `backfill`",
-    "tests": "pytest deploy/collector: 120 passed, 2 skipped"
+    "tests": "non-LNY regression tests added (daily selection TWSE/TPEx/T86 + range skipping); pytest deploy/collector: 124 passed, 2 skipped",
+    "calendar_reconciliation": {
+      "source": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?date=<year>&response=json (2024,2025,2026)",
+      "added": [
+        "2025-09-29",
+        "2025-10-24",
+        "2025-12-25",
+        "2026-09-28",
+        "2026-10-26",
+        "2026-12-25"
+      ],
+      "result": "latest_published_trading_date(2026-10-27T02:00Z)=2026-10-23; trading_dates(2026-09-24,2026-09-29) excludes 09-28"
+    }
   }
 }
