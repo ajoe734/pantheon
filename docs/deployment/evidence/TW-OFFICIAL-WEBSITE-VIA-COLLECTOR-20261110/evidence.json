@@ -1,0 +1,114 @@
+{
+  "task_id": "TW-OFFICIAL-WEBSITE-VIA-COLLECTOR-20261110",
+  "title": "Fetch TWSE and TPEx website datasets from the collector host",
+  "supersedes": [
+    "TW-OFFICIAL-WEBSITE-ENDPOINT-COMPLIANCE-20261110"
+  ],
+  "dependencies": [
+    "COLLECTOR-STACK-20261110",
+    "SOURCE-COLLECTOR-BUNDLE-CONNECTOR-20261110"
+  ],
+  "operator_decision_date": "2026-11-10",
+  "operator_decision_summary": "Fetch TWSE T86 daily, TWSE daily price history, TPEx daily price history, and CMoney forum datasets through the collector host with one connection and at most one request every five seconds, without contacting the exchanges or CMoney prior to collection.",
+  "collector_fetch_policy": {
+    "max_connections": 1,
+    "min_interval_seconds": 5.0,
+    "backfill_page_granularity": "per_date_all_stocks",
+    "website_endpoints": [
+      {
+        "source_id": "collector-tw-twse-t86",
+        "exchange": "TWSE",
+        "dataset": "tw_institutional_flow",
+        "endpoint_template": "https://www.twse.com.tw/rwd/zh/fund/T86?date={yyyymmdd}&selectType=ALLBUT0999&response=json",
+        "page_granularity": "per_date_all_stocks",
+        "max_connections": 1,
+        "min_interval_seconds": 5.0,
+        "requests_per_trading_day": 1,
+        "two_year_trading_days": 488,
+        "two_year_request_count": 488
+      },
+      {
+        "source_id": "collector-tw-twse-price-history",
+        "exchange": "TWSE",
+        "dataset": "tw_daily_price_history",
+        "endpoint_template": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={yyyymmdd}&type=ALLBUT0999&response=json",
+        "page_granularity": "per_date_all_stocks",
+        "max_connections": 1,
+        "min_interval_seconds": 5.0,
+        "requests_per_trading_day": 1,
+        "two_year_trading_days": 488,
+        "two_year_request_count": 488
+      },
+      {
+        "source_id": "collector-tw-tpex-price-history",
+        "exchange": "TPEx",
+        "dataset": "tw_daily_price_history",
+        "endpoint_template": "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date={yyyy_mm_dd}&id=&response=json",
+        "page_granularity": "per_date_all_stocks",
+        "max_connections": 1,
+        "min_interval_seconds": 5.0,
+        "requests_per_trading_day": 1,
+        "two_year_trading_days": 488,
+        "two_year_request_count": 488
+      }
+    ],
+    "two_year_backfill_summary": {
+      "assumed_trading_days_per_year": 244,
+      "years": 2,
+      "total_trading_days": 488,
+      "requests_by_source_id": {
+        "collector-tw-twse-t86": 488,
+        "collector-tw-twse-price-history": 488,
+        "collector-tw-tpex-price-history": 488
+      },
+      "price_history_combined_request_count": 976,
+      "all_exchange_website_endpoints_total_request_count": 1464,
+      "minimum_wall_clock_seconds_per_endpoint_at_5s_pacing": 2435.0
+    }
+  },
+  "pantheon_direct_egress_compliance": {
+    "connector_id": "tw-twse-tpex-official-market",
+    "allowed_host_patterns": [
+      "openapi.twse.com.tw",
+      "www.tpex.org.tw"
+    ],
+    "excluded_hosts": [
+      "www.twse.com.tw"
+    ],
+    "openapi_only_guard": "_assert_twse_tpex_openapi_only_url enforces that direct HTTP requests only target https://openapi.twse.com.tw/v1/* and https://www.tpex.org.tw/openapi/v1/*",
+    "bundle_backed_datasets": {
+      "twse_t86_institutional_flow": "bundle://collector-tw-twse-t86",
+      "twse_daily_price_history": "bundle://collector-tw-twse-price-history",
+      "tpex_daily_price_history": "bundle://collector-tw-tpex-price-history"
+    },
+    "openapi_direct_datasets": {
+      "tw_daily_price_twse": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+      "tw_daily_price_tpex": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
+      "tw_institutional_flow_tpex": "https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading",
+      "tw_margin_short_twse": "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN",
+      "tw_margin_short_tpex": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance",
+      "tw_sbl_lending_twse": "https://openapi.twse.com.tw/v1/exchangeReport/TWT93U",
+      "tw_day_trading_twse": "https://openapi.twse.com.tw/v1/exchangeReport/TWTB4U",
+      "tw_day_trading_tpex": "https://www.tpex.org.tw/openapi/v1/tpex_Authenticated_Day_Trading",
+      "tw_holiday_calendar": "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule"
+    },
+    "paper_persona_continuity": "Daily price, margin, lending, and day trading datasets retain their OpenAPI sources so running paper personas continue refreshing without a gap even when collector history bundles are absent."
+  },
+  "plan_documentation": {
+    "path": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10.md",
+    "sections_updated": [
+      "0. 2026-11-10 執行進度快照",
+      "1. 治理與合規前提 (O-1, O-4)",
+      "2. 22 個免費公開訊號源盤點與落點 (#2, #7)",
+      "4. 架構設計 (A4)",
+      "5. Task 清單與依賴 (TW-OFFICIAL-WEBSITE-VIA-COLLECTOR-20261110)"
+    ]
+  },
+  "validation": {
+    "commands": [
+      "./.venv-pantheon/bin/python3 -m pytest -q deploy/collector/tests services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_financial_source_catalog.py",
+      "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py"
+    ],
+    "status": "passed"
+  }
+}

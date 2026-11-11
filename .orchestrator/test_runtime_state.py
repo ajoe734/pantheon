@@ -356,6 +356,18 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertEqual(state["watchdog"]["safe_mode_reason"], "stale_heartbeat")
         self.assertIn("last_safe_mode_observed_until", state["watchdog"])
 
+    def test_supervisor_pid_namespace_survives_save_and_reload(self) -> None:
+        state = runtime_state.default_state()
+        state["supervisor"]["pid"] = 244638
+        state["supervisor"]["pid_namespace"] = "pid:[4026531836]"
+        state["supervisor"]["not_a_supervisor_key"] = "dropped"
+
+        runtime_state.save_runtime_state(self.config, state)
+        reloaded = runtime_state.load_runtime_state(self.config)
+
+        self.assertEqual(reloaded["supervisor"]["pid_namespace"], "pid:[4026531836]")
+        self.assertNotIn("not_a_supervisor_key", reloaded["supervisor"])
+
     def test_runtime_phase_reservation_survives_save_and_reload(self) -> None:
         state = runtime_state.default_state()
         state["supervisor"]["runtime_phase_reservations"] = {

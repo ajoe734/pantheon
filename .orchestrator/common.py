@@ -178,6 +178,19 @@ def cmdline_is_worker_runner(parts: list[str]) -> bool:
     return worker_runner_script(parts) is not None
 
 
+def current_pid_namespace() -> str | None:
+    """Return this process's PID namespace identity, e.g. ``pid:[4026531836]``.
+
+    PIDs recorded in runtime state only mean something inside the namespace
+    that recorded them. Worker sandboxes run with a private PID namespace and
+    their own /proc, so a host PID that is alive looks absent from inside one.
+    """
+    try:
+        return os.readlink("/proc/self/ns/pid")
+    except OSError:
+        return None
+
+
 GITHUB_REVIEW_IDENTITY_INDEPENDENT = "independent"
 GITHUB_REVIEW_IDENTITY_SHARED = "shared"
 VALID_GITHUB_REVIEW_IDENTITIES = frozenset(

@@ -23,6 +23,16 @@ from collector_stack.pollers import (
 )
 from collector_stack.privacy import AuthorHasher
 from collector_stack.runner import CollectorRunner
+from collector_stack.spiders import (
+    TPEX_DAILY_QUOTES_WEBSITE_URL_TEMPLATE,
+    TWO_YEAR_BACKFILL_TRADING_DAYS,
+    TWSE_MI_INDEX_WEBSITE_URL_TEMPLATE,
+    TWSE_T86_WEBSITE_URL_TEMPLATE,
+    TpexDailyPriceHistorySpider,
+    TwseDailyPriceHistorySpider,
+    TwseT86DailySpider,
+    estimate_two_year_backfill_requests,
+)
 
 
 def _build_ndc_zip_bytes(csv_bytes: bytes) -> bytes:
@@ -52,6 +62,18 @@ def _build_fixture_transport(fixtures_dir: Path) -> FixtureTransport:
     transport.register(
         "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
         (fixtures_dir / "twse_t187ap05_l.json").read_bytes(),
+    )
+    transport.register(
+        "https://www.twse.com.tw/rwd/zh/fund/T86",
+        (fixtures_dir / "twse_t86_20261110.json").read_bytes(),
+    )
+    transport.register(
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX",
+        (fixtures_dir / "twse_mi_index_20261110.json").read_bytes(),
+    )
+    transport.register(
+        "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes",
+        (fixtures_dir / "tpex_daily_quotes_20261110.json").read_bytes(),
     )
     transport.register(
         "https://api.gdeltproject.org/api/v2/doc/doc",
@@ -127,6 +149,9 @@ def _build_fixture_transport(fixtures_dir: Path) -> FixtureTransport:
         ("collector-tw-macro-ndc", 2, True),
         ("collector-tw-macro-dgbas", 3, True),
         ("collector-tw-twse-openapi", 2, True),
+        ("collector-tw-twse-t86", 2, True),
+        ("collector-tw-twse-price-history", 2, True),
+        ("collector-tw-tpex-price-history", 2, True),
         ("collector-gdelt", 1, True),
         ("collector-macro-dbnomics", 2, True),
         # §5.2 Papers and research
@@ -245,3 +270,86 @@ def test_source_specific_guardrails_gdelt_youtube_rsshub_and_books(
     for bad_route in ("/yahoo/news", "/cnyes/news", "/anue/headline", "/ptt/Stock"):
         with pytest.raises(CollectorConfigError):
             news.collect(routes=[bad_route])
+
+
+def test_exchange_website_spiders_rate_limit_single_connection_all_stock_pages_and_two_year_counts(
+    tmp_path: Path, fixtures_dir: Path, test_hasher: AuthorHasher
+) -> None:
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    transport = _build_fixture_transport(fixtures_dir)
+
+    backfill_summary = estimate_two_year_backfill_requests()
+    assert backfill_summary["trading_days_per_year"] == 244
+    assert backfill_summary["trading_days_total"] == TWO_YEAR_BACKFILL_TRADING_DAYS == 488
+    assert backfill_summary["price_history_requests_for_two_years"] == 976
+    assert backfill_summary["all_exchange_website_requests_for_two_years"] == 1464
+    assert (
+        backfill_summary["endpoints"]["collector-tw-twse-t86"]["endpoint_template"]
+        == TWSE_T86_WEBSITE_URL_TEMPLATE
+    )
+    assert (
+        backfill_summary["endpoints"]["collector-tw-twse-price-history"]["endpoint_template"]
+        == TWSE_MI_INDEX_WEBSITE_URL_TEMPLATE
+    )
+    assert (
+        backfill_summary["endpoints"]["collector-tw-tpex-price-history"]["endpoint_template"]
+        == TPEX_DAILY_QUOTES_WEBSITE_URL_TEMPLATE
+    )
+    for sid in (
+        "collector-tw-twse-t86",
+        "collector-tw-twse-price-history",
+        "collector-tw-tpex-price-history",
+    ):
+        ep = backfill_summary["endpoints"][sid]
+        assert ep["page_granularity"] == "per_date_all_stocks"
+        assert ep["requests_for_two_years"] == 488
+        assert ep["max_connections"] == 1
+        assert ep["min_interval_seconds"] == 5.0
+
+    # Verify >= 5.0s sleep between consecutive requests and Connection: close single-connection header
+    t86_sleeps: list[float] = []
+    t86_spider = TwseT86DailySpider(
+        config.get_source("collector-tw-twse-t86"),
+        transport=transport,
+        sleep_fn=t86_sleeps.append,
+    )
+    t86_items = t86_spider.collect(dates=("2026-11-10", "2026-11-09"))
+    assert len(t86_items) >= 2
+    assert t86_sleeps == [5.0]
+    assert transport.calls[-1]["headers"]["Connection"] == "close"
+
+    twse_hist_sleeps: list[float] = []
+    twse_hist_spider = TwseDailyPriceHistorySpider(
+        config.get_source("collector-tw-twse-price-history"),
+        transport=transport,
+        sleep_fn=twse_hist_sleeps.append,
+    )
+    twse_hist_items = twse_hist_spider.collect(dates=("2026-11-10", "2026-11-09"))
+    assert len(twse_hist_items) >= 2
+    assert twse_hist_sleeps == [5.0]
+    assert transport.calls[-1]["headers"]["Connection"] == "close"
+
+    tpex_hist_sleeps: list[float] = []
+    tpex_hist_spider = TpexDailyPriceHistorySpider(
+        config.get_source("collector-tw-tpex-price-history"),
+        transport=transport,
+        sleep_fn=tpex_hist_sleeps.append,
+    )
+    tpex_hist_items = tpex_hist_spider.collect(dates=("2026-11-10", "2026-11-09"))
+    assert len(tpex_hist_items) >= 2
+    assert tpex_hist_sleeps == [5.0]
+    assert transport.calls[-1]["headers"]["Connection"] == "close"
+
+    # Per-stock queries must be rejected so history backfill always uses per-date all-stock pages
+    with pytest.raises(CollectorConfigError, match="per-date all-stock"):
+        t86_spider.collect(
+            urls=["https://www.twse.com.tw/rwd/zh/fund/T86?date=20261110&stockNo=2330&response=json"]
+        )
+    with pytest.raises(CollectorConfigError, match="per-date all-stock"):
+        twse_hist_spider.collect(
+            urls=["https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20261110&stockNo=2330&response=json"]
+        )
+    with pytest.raises(CollectorConfigError, match="per-date all-stock"):
+        tpex_hist_spider.collect(
+            urls=["https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026/11/10&id=6488&response=json"]
+        )

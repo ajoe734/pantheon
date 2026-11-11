@@ -300,11 +300,24 @@ def _mops_route(payload: Mapping[str, Any]) -> MopsRouteSpec:
     )
 
 
+_DEFAULT_FETCH_PRICE_HISTORY_PAYLOAD = TaiwanOfficialMarketDatasetAdapter.fetch_price_history_payload
+_DEFAULT_FETCH_PRICE_HISTORY_RECORDS = TaiwanOfficialMarketDatasetAdapter.fetch_price_history_records
+
+
 def _taiwan_official(
     adapter: TaiwanOfficialMarketDatasetAdapter,
     request: Mapping[str, Any],
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
+    if request.get("bundle_transport") is not None or request.get("bundle_root") not in (None, ""):
+        adapter = TaiwanOfficialMarketDatasetAdapter(
+            connector_id=adapter.connector_id,
+            max_records=adapter.max_records,
+            source_metadata=adapter.source_metadata,
+            connector_metadata=adapter.connector_metadata,
+            bundle_transport=request.get("bundle_transport") or adapter.bundle_transport,
+            bundle_root=request.get("bundle_root") or adapter.bundle_root,
+        )
     dataset = str(request.get("dataset") or "tw_price_daily")
     venues = _string_list(request.get("venues") or request.get("venue")) or ["TWSE", "TPEx"]
     payloads = _mapping(request.get("payloads")) if request.get("payloads") not in (None, "") else {}
@@ -403,6 +416,13 @@ def _taiwan_official(
                 + ", ".join(missing)
             )
         configured_history = _mapping(request.get("history_payloads"))
+        has_bundle_transport = adapter._resolve_bundle_transport() is not None
+        is_history_patched = (
+            TaiwanOfficialMarketDatasetAdapter.fetch_price_history_payload
+            is not _DEFAULT_FETCH_PRICE_HISTORY_PAYLOAD
+            or TaiwanOfficialMarketDatasetAdapter.fetch_price_history_records
+            is not _DEFAULT_FETCH_PRICE_HISTORY_RECORDS
+        )
         priority_history: list[SourceRecord] = []
         for symbol in priority_symbols:
             current = current_by_symbol[symbol]
@@ -414,15 +434,25 @@ def _taiwan_official(
             anchor_date = str(current_row.get("date") or current_row.get("event_time") or "")
             venue = "TWSE" if symbol.endswith(".TWSE") else "TPEx"
             supplied_payloads = configured_history.get(symbol)
+            min_closes_required = TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL
             if supplied_payloads is None:
-                history_records = adapter.fetch_price_history_records(
-                    symbol,
-                    venue,
-                    anchor_date=anchor_date,
-                    history_trading_days=history_trading_days,
-                    timeout_seconds=timeout_seconds,
-                    trace_id=trace_id,
-                )
+                if (
+                    has_bundle_transport
+                    or is_history_patched
+                    or _bool(request.get("require_price_history_bundle"), default=False)
+                ):
+                    history_records = adapter.fetch_price_history_records(
+                        symbol,
+                        venue,
+                        anchor_date=anchor_date,
+                        history_trading_days=history_trading_days,
+                        timeout_seconds=timeout_seconds,
+                        trace_id=trace_id,
+                    )
+                else:
+                    # OpenAPI-only daily price refresh: never contact exchange website history endpoints.
+                    history_records = tuple()
+                    min_closes_required = 1
             else:
                 if isinstance(supplied_payloads, Mapping):
                     payload_sequence: Sequence[Any] = (supplied_payloads,)
@@ -468,10 +498,10 @@ def _taiwan_official(
                 ):
                     by_event_time[event_time] = candidate
             selected_dates = sorted(by_event_time)[-per_symbol_depth:]
-            if len(selected_dates) < TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL:
+            if len(selected_dates) < min_closes_required:
                 raise SourceEvidenceError(
                     "bounded official refresh did not resolve distinct finite close history for "
-                    f"{symbol}: required={TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL} "
+                    f"{symbol}: required={min_closes_required} "
                     f"resolved={len(selected_dates)}"
                 )
             priority_history.extend(by_event_time[event_time] for event_time in selected_dates)
@@ -971,7 +1001,7 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         token="TaiwanOfficialMarketDatasetAdapter.records_from_payload",
         adapter_cls=TaiwanOfficialMarketDatasetAdapter,
         handler=_taiwan_official,
-        config_keys=("max_records",),
+        config_keys=("max_records", "bundle_root", "bundle_transport"),
     ),
     "TdccShareholdingDistributionAdapter.records_from_payload": ProviderAdapterSpec(
         token="TdccShareholdingDistributionAdapter.records_from_payload",

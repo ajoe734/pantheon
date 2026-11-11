@@ -21,6 +21,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from services.external_egress import open_external_url
@@ -42,6 +43,12 @@ from .bounded_reader import (
     ResponseTruncated,
     read_bounded_response,
 )
+from .collector_bundle import (
+    COLLECTOR_BUNDLE_ROOT_ENV,
+    BundleTransport,
+    CollectorBundleAdapter,
+    LocalDirectoryBundleTransport,
+)
 
 
 TW_OFFICIAL_CONNECTOR_ID = "tw-twse-tpex-official-market"
@@ -51,6 +58,7 @@ TW_INSTITUTIONAL_FLOW_SCHEMA_HASH = "tw_institutional_flow.v1"
 TW_MARGIN_SHORT_BALANCE_SCHEMA_HASH = "tw_margin_short_balance.v1"
 TW_SECURITIES_LENDING_SCHEMA_HASH = "tw_securities_lending.v1"
 TW_DAY_TRADING_SCHEMA_HASH = "tw_day_trading.v1"
+TW_HOLIDAY_CALENDAR_SCHEMA_HASH = "tw_holiday_calendar.v1"
 TDCC_SHAREHOLDING_CONNECTOR_ID = "tw-tdcc-shareholding-distribution"
 TDCC_SHAREHOLDING_SCHEMA_HASH = "tw_tdcc_shareholding_distribution.v1"
 TAIFEX_DERIVATIVES_CONNECTOR_ID = "tw-taifex-futures-options-chip"
@@ -58,12 +66,17 @@ TAIFEX_FUTURES_CHIP_SCHEMA_HASH = "tw_taifex_futures_chip.v1"
 TAIFEX_OPTIONS_CHIP_SCHEMA_HASH = "tw_taifex_options_chip.v1"
 
 TWSE_OPENAPI_BASE_URL = "https://openapi.twse.com.tw/v1"
+TWSE_HOLIDAY_SCHEDULE_OPENAPI_ENDPOINT = f"{TWSE_OPENAPI_BASE_URL}/holidaySchedule/holidaySchedule"
 TWSE_LEGACY_BASE_URL = "https://www.twse.com.tw/rwd/zh"
 TPEX_OPENAPI_BASE_URL = "https://www.tpex.org.tw/openapi/v1"
 TPEX_MARKET_BASE_URL = "https://www.tpex.org.tw/www/zh-tw"
 TDCC_OPENAPI_BASE_URL = "https://openapi.tdcc.com.tw/v1"
 TDCC_SMART_BASE_URL = "https://smart.tdcc.com.tw/opendata"
 TAIFEX_OPENAPI_BASE_URL = "https://openapi.taifex.com.tw/v1"
+
+COLLECTOR_TWSE_T86_SOURCE_ID = "collector-tw-twse-t86"
+COLLECTOR_TWSE_PRICE_HISTORY_SOURCE_ID = "collector-tw-twse-price-history"
+COLLECTOR_TPEX_PRICE_HISTORY_SOURCE_ID = "collector-tw-tpex-price-history"
 
 TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL = 2
 TW_OFFICIAL_HISTORY_MAX_MONTHS = 2
@@ -207,6 +220,7 @@ _DATASET_SCHEMA_HASHES = {
     "tw_margin_short_balance": TW_MARGIN_SHORT_BALANCE_SCHEMA_HASH,
     "tw_securities_lending": TW_SECURITIES_LENDING_SCHEMA_HASH,
     "tw_day_trading": TW_DAY_TRADING_SCHEMA_HASH,
+    "tw_holiday_calendar": TW_HOLIDAY_CALENDAR_SCHEMA_HASH,
     "tdcc_shareholding_distribution": TDCC_SHAREHOLDING_SCHEMA_HASH,
     "taifex_futures_chip": TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
     "taifex_options_chip": TAIFEX_OPTIONS_CHIP_SCHEMA_HASH,
@@ -238,8 +252,10 @@ TAIWAN_OFFICIAL_ENDPOINTS: tuple[dict[str, Any], ...] = (
         "dataset": "tw_institutional_flow",
         "venue": "TWSE",
         "source_dataset": "T86",
-        "endpoint": f"{TWSE_LEGACY_BASE_URL}/fund/T86?response=json&selectType=ALLBUT0999",
-        "transport": "twse_legacy_json",
+        "endpoint": f"bundle://{COLLECTOR_TWSE_T86_SOURCE_ID}",
+        "transport": "collector_bundle",
+        "collector_source_id": COLLECTOR_TWSE_T86_SOURCE_ID,
+        "upstream_website_endpoint": f"{TWSE_LEGACY_BASE_URL}/fund/T86?response=json&selectType=ALLBUT0999",
         "cadence": "daily_after_close",
         "tier_scope": ["core_universe", "candidate_universe"],
         "status": "implemented",
@@ -315,6 +331,16 @@ TAIWAN_OFFICIAL_ENDPOINTS: tuple[dict[str, Any], ...] = (
         "status": "implemented_symbol_eligibility",
     },
     {
+        "dataset": "tw_holiday_calendar",
+        "venue": "TWSE",
+        "source_dataset": "holidaySchedule",
+        "endpoint": TWSE_HOLIDAY_SCHEDULE_OPENAPI_ENDPOINT,
+        "transport": "twse_openapi",
+        "cadence": "annual_and_on_demand",
+        "tier_scope": ["core_universe", "candidate_universe", "archive_universe"],
+        "status": "implemented",
+    },
+    {
         "dataset": "tdcc_shareholding_distribution",
         "venue": "TDCC",
         "source_dataset": "TDCC_OD_1-5",
@@ -350,19 +376,23 @@ TAIWAN_OFFICIAL_PRICE_HISTORY_ENDPOINTS: Mapping[str, dict[str, Any]] = {
     "TWSE": {
         "dataset": "tw_price_daily",
         "venue": "TWSE",
-        "source_dataset": "STOCK_DAY",
-        "endpoint": f"{TWSE_LEGACY_BASE_URL}/afterTrading/STOCK_DAY",
-        "transport": "twse_legacy_json",
-        "cadence": "monthly_window_on_demand",
+        "source_dataset": "MI_INDEX_ALLBUT0999",
+        "endpoint": f"bundle://{COLLECTOR_TWSE_PRICE_HISTORY_SOURCE_ID}",
+        "transport": "collector_bundle",
+        "collector_source_id": COLLECTOR_TWSE_PRICE_HISTORY_SOURCE_ID,
+        "upstream_website_endpoint": f"{TWSE_LEGACY_BASE_URL}/afterTrading/MI_INDEX",
+        "cadence": "daily_after_close_and_backfill",
         "status": "implemented_bounded_active_symbols",
     },
     "TPEx": {
         "dataset": "tw_price_daily",
         "venue": "TPEx",
-        "source_dataset": "tpex_individual_stock_monthly_history",
-        "endpoint": f"{TPEX_MARKET_BASE_URL}/afterTrading/tradingStock",
-        "transport": "tpex_market_json",
-        "cadence": "monthly_window_on_demand",
+        "source_dataset": "tpex_daily_quotes_all",
+        "endpoint": f"bundle://{COLLECTOR_TPEX_PRICE_HISTORY_SOURCE_ID}",
+        "transport": "collector_bundle",
+        "collector_source_id": COLLECTOR_TPEX_PRICE_HISTORY_SOURCE_ID,
+        "upstream_website_endpoint": f"{TPEX_MARKET_BASE_URL}/afterTrading/dailyQuotes",
+        "cadence": "daily_after_close_and_backfill",
         "status": "implemented_bounded_active_symbols",
     },
 }
@@ -372,6 +402,23 @@ OFFICIAL_FETCH_ATTEMPTS = 3
 OFFICIAL_FETCH_BACKOFF_SECONDS = 1.0
 
 
+def _assert_twse_tpex_openapi_only_url(url: str) -> None:
+    """Fail closed if Pantheon attempts any non-OpenAPI request to TWSE or TPEx websites."""
+    parsed = urllib.parse.urlparse(str(url or ""))
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    if host.endswith("twse.com.tw") and host != "mops.twse.com.tw":
+        if host != "openapi.twse.com.tw" or not path.startswith("/v1/"):
+            raise SourceEvidenceError(
+                f"Pantheon forbids direct requests to non-OpenAPI TWSE website endpoint: {url} "
+                "(only https://openapi.twse.com.tw/v1/... is permitted; read T86 and price history from collector bundles)"
+            )
+    if host.endswith("tpex.org.tw"):
+        if host not in {"www.tpex.org.tw", "openapi.tpex.org.tw"} or not path.startswith("/openapi/v1/"):
+            raise SourceEvidenceError(
+                f"Pantheon forbids direct requests to non-OpenAPI TPEx website endpoint: {url} "
+                "(only https://www.tpex.org.tw/openapi/v1/... is permitted; read price history from collector bundles)"
+            )
 
 
 def _fetch_official(
@@ -388,6 +435,7 @@ def _fetch_official(
     read; the same request is retried a bounded number of times. HTTP errors,
     egress denial and the byte limit are raised immediately.
     """
+    _assert_twse_tpex_openapi_only_url(request.full_url)
     failures: list[str] = []
     for attempt in range(1, OFFICIAL_FETCH_ATTEMPTS + 1):
         try:
@@ -812,6 +860,23 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
     max_records: int = 100
     source_metadata: SourceMetadata | Mapping[str, Any] | None = None
     connector_metadata: Mapping[str, Any] = field(default_factory=dict)
+    bundle_transport: BundleTransport | None = None
+    bundle_root: str | Path | None = None
+
+    def _resolve_bundle_transport(
+        self,
+        *,
+        bundle_transport: BundleTransport | None = None,
+        bundle_root: str | Path | None = None,
+    ) -> BundleTransport | None:
+        if bundle_transport is not None:
+            return bundle_transport
+        if self.bundle_transport is not None:
+            return self.bundle_transport
+        resolved_root = bundle_root or self.bundle_root or os.getenv(COLLECTOR_BUNDLE_ROOT_ENV, "").strip()
+        if resolved_root:
+            return LocalDirectoryBundleTransport(resolved_root)
+        return None
 
     def connector(self) -> SourceConnector:
         return SourceConnector(
@@ -849,6 +914,12 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 "official_reference_truth": True,
                 "dataset_schema_hash": TW_OFFICIAL_SCHEMA_HASH,
                 "normalized_datasets": sorted(_DATASET_SCHEMA_HASHES),
+                "holiday_calendar_endpoint": TWSE_HOLIDAY_SCHEDULE_OPENAPI_ENDPOINT,
+                "collector_bundle_sources": [
+                    COLLECTOR_TWSE_T86_SOURCE_ID,
+                    COLLECTOR_TWSE_PRICE_HISTORY_SOURCE_ID,
+                    COLLECTOR_TPEX_PRICE_HISTORY_SOURCE_ID,
+                ],
                 "endpoint_inventory": [dict(endpoint) for endpoint in TAIWAN_OFFICIAL_ENDPOINTS],
                 "price_history_endpoint_inventory": [
                     dict(TAIWAN_OFFICIAL_PRICE_HISTORY_ENDPOINTS[venue])
@@ -920,6 +991,12 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             "max_records": self.max_records,
         }
 
+    def holiday_calendar_endpoint(self) -> str:
+        return TWSE_HOLIDAY_SCHEDULE_OPENAPI_ENDPOINT
+
+    def fetch_holiday_calendar_payload(self, *, timeout_seconds: float = 20.0) -> Any:
+        return self.fetch_payload("tw_holiday_calendar", "TWSE", timeout_seconds=timeout_seconds)
+
     def fetch_payload(
         self,
         dataset: str,
@@ -931,6 +1008,37 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         url = str(endpoint.get("endpoint") or "")
         if not url:
             raise ValueError(f"Taiwan official endpoint is not fetchable: dataset={dataset} venue={venue}")
+        if url.startswith("bundle://"):
+            collector_source_id = str(
+                endpoint.get("collector_source_id") or url[len("bundle://") :].split("?", 1)[0]
+            )
+            transport = self._resolve_bundle_transport()
+            if transport is None:
+                raise SourceEvidenceError(
+                    f"Taiwan official website dataset {dataset} ({venue}) is fetched via collector bundle "
+                    f"{collector_source_id}; direct exchange website requests from Pantheon are forbidden"
+                )
+            bundle = CollectorBundleAdapter(
+                connector_id=collector_source_id,
+                source_id=collector_source_id,
+                source_type="market",
+                transport=transport,
+                max_records=max(self.max_records, 5000),
+            ).fetch_bundle()
+            rows = [
+                dict(record.metadata.get("normalized_row") or record.metadata.get("metrics") or record.metadata)
+                for record in bundle.records
+            ]
+            manifest_info = (
+                dict(bundle.records[0].metadata.get("collector") or {})
+                if bundle.records
+                else {}
+            )
+            return {
+                "stat": "OK",
+                "data": rows,
+                "bundle_manifest": manifest_info,
+            }
         request = urllib.request.Request(
             url,
             headers={
@@ -963,19 +1071,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         ticker = canonical_symbol.rsplit(".", 1)[0]
         [month_anchor] = _month_anchors(anchor_date, max_months=1)
         descriptor = TAIWAN_OFFICIAL_PRICE_HISTORY_ENDPOINTS[canonical_venue]
-        if canonical_venue == "TWSE":
-            parameters = {
-                "date": month_anchor.replace("-", ""),
-                "stockNo": ticker,
-                "response": "json",
-            }
-        else:
-            parameters = {
-                "code": ticker,
-                "date": month_anchor.replace("-", "/"),
-                "id": "",
-                "response": "json",
-            }
+        parameters = {
+            "date": month_anchor.replace("-", ""),
+            "symbol": ticker,
+        }
         return str(descriptor["endpoint"]) + "?" + urllib.parse.urlencode(parameters)
 
     def fetch_price_history_payload(
@@ -987,6 +1086,59 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         timeout_seconds: float = 20.0,
     ) -> tuple[Mapping[str, Any], str]:
         url = self.price_history_endpoint(symbol, venue, anchor_date=anchor_date)
+        canonical_venue = _canonical_venue(venue)
+        canonical_symbol = canonical_taiwan_equity_symbol(symbol)
+        ticker = canonical_symbol.rsplit(".", 1)[0]
+        [month_anchor] = _month_anchors(anchor_date, max_months=1)
+        month_prefix = month_anchor[:7]
+        if url.startswith("bundle://"):
+            descriptor = TAIWAN_OFFICIAL_PRICE_HISTORY_ENDPOINTS[canonical_venue]
+            collector_source_id = str(
+                descriptor.get("collector_source_id") or url[len("bundle://") :].split("?", 1)[0]
+            )
+            transport = self._resolve_bundle_transport()
+            if transport is None:
+                raise SourceEvidenceError(
+                    f"Taiwan official price history for {canonical_symbol} is fetched via collector bundle "
+                    f"{collector_source_id}; direct exchange website requests from Pantheon are forbidden"
+                )
+            bundle = CollectorBundleAdapter(
+                connector_id=collector_source_id,
+                source_id=collector_source_id,
+                source_type="market",
+                transport=transport,
+                max_records=max(self.max_records, 5000),
+            ).fetch_bundle()
+            all_rows = [
+                dict(record.metadata.get("normalized_row") or record.metadata.get("metrics") or record.metadata)
+                for record in bundle.records
+            ]
+            symbol_rows = [
+                row
+                for row in all_rows
+                if _text(row.get("symbol")).upper() == ticker
+                or _text(row.get("symbol_canonical")).upper() == canonical_symbol
+            ]
+            month_rows = [
+                row
+                for row in symbol_rows
+                if str(row.get("date") or row.get("trade_date") or "").startswith(month_prefix)
+            ]
+            selected = month_rows if month_rows else symbol_rows
+            if not selected:
+                raise SourceEvidenceError(
+                    f"Taiwan official collector bundle {collector_source_id} contains no price history rows for {canonical_symbol}"
+                )
+            manifest_info = (
+                dict(bundle.records[0].metadata.get("collector") or {})
+                if bundle.records
+                else {}
+            )
+            return {
+                "stat": "OK",
+                "bundle_records": selected,
+                "bundle_manifest": manifest_info,
+            }, url
         request = urllib.request.Request(
             url,
             headers={
@@ -1004,6 +1156,78 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         if not isinstance(payload, Mapping):
             raise SourceEvidenceError("Taiwan official price history payload must be an object")
         return payload, url
+
+    def records_from_collector_bundle(
+        self,
+        dataset: str,
+        venue: str,
+        *,
+        bundle_transport: BundleTransport | None = None,
+        bundle_root: str | Path | None = None,
+        symbol: str | None = None,
+        priority_symbols: Sequence[str] | str | None = None,
+        universe_tier: str = "core_universe",
+        max_records: int | None = None,
+        trace_id: str = "",
+    ) -> tuple[SourceRecord, ...]:
+        canonical_venue = _canonical_venue(venue)
+        transport = self._resolve_bundle_transport(
+            bundle_transport=bundle_transport,
+            bundle_root=bundle_root,
+        )
+        if transport is None:
+            raise SourceEvidenceError(
+                f"collector bundle transport is required to read {dataset} ({canonical_venue})"
+            )
+        if dataset == "tw_institutional_flow" and canonical_venue == "TWSE":
+            collector_source_id = COLLECTOR_TWSE_T86_SOURCE_ID
+            endpoint_uri = f"bundle://{COLLECTOR_TWSE_T86_SOURCE_ID}"
+            source_dataset = "T86"
+        elif dataset == "tw_price_daily" and canonical_venue == "TWSE":
+            collector_source_id = COLLECTOR_TWSE_PRICE_HISTORY_SOURCE_ID
+            endpoint_uri = f"bundle://{COLLECTOR_TWSE_PRICE_HISTORY_SOURCE_ID}"
+            source_dataset = "MI_INDEX_ALLBUT0999"
+        elif dataset == "tw_price_daily" and canonical_venue == "TPEx":
+            collector_source_id = COLLECTOR_TPEX_PRICE_HISTORY_SOURCE_ID
+            endpoint_uri = f"bundle://{COLLECTOR_TPEX_PRICE_HISTORY_SOURCE_ID}"
+            source_dataset = "tpex_daily_quotes_all"
+        else:
+            raise ValueError(
+                f"dataset={dataset} venue={canonical_venue} is not backed by a collector bundle"
+            )
+
+        limit = max_records if max_records is not None else self.max_records
+        bundle = CollectorBundleAdapter(
+            connector_id=collector_source_id,
+            source_id=collector_source_id,
+            source_type="market",
+            transport=transport,
+            max_records=max(limit, 5000),
+        ).fetch_bundle(trace_id=trace_id)
+        rows = [
+            dict(record.metadata.get("normalized_row") or record.metadata.get("metrics") or record.metadata)
+            for record in bundle.records
+        ]
+        if symbol:
+            canonical_symbol = canonical_taiwan_equity_symbol(symbol)
+            ticker = canonical_symbol.rsplit(".", 1)[0]
+            rows = [
+                row
+                for row in rows
+                if _text(row.get("symbol")).upper() == ticker
+                or _text(row.get("symbol_canonical")).upper() == canonical_symbol
+            ]
+        return self.records_from_payload(
+            dataset,
+            canonical_venue,
+            rows,
+            source_dataset=source_dataset,
+            api_endpoint=endpoint_uri,
+            universe_tier=universe_tier,
+            priority_symbols=priority_symbols,
+            max_records=limit,
+            trace_id=trace_id,
+        )
 
     def fetch_price_history_records(
         self,
@@ -1099,76 +1323,135 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         descriptor = TAIWAN_OFFICIAL_PRICE_HISTORY_ENDPOINTS[canonical_venue]
         source_dataset = str(descriptor["source_dataset"])
 
-        if canonical_venue == "TWSE":
-            if str(payload.get("stat") or "").upper() != "OK":
-                raise SourceEvidenceError("TWSE official price history response is not OK")
-            fields = payload.get("fields")
-            data = payload.get("data")
-            name = _text(payload.get("title"))
-        else:
-            if str(payload.get("stat") or "").lower() != "ok":
-                raise SourceEvidenceError("TPEx official price history response is not OK")
-            tables = payload.get("tables")
-            if not isinstance(tables, list):
-                raise SourceEvidenceError("TPEx official price history tables are missing")
-            table = next(
-                (
-                    item
-                    for item in tables
-                    if isinstance(item, Mapping)
-                    and isinstance(item.get("fields"), list)
-                    and isinstance(item.get("data"), list)
-                ),
-                None,
-            )
-            if table is None:
-                raise SourceEvidenceError("TPEx official price history table is missing")
-            fields = table.get("fields")
-            data = table.get("data")
-            name = _text(payload.get("name") or table.get("subtitle"))
-
-        if not isinstance(fields, list) or not isinstance(data, list):
-            raise SourceEvidenceError("Taiwan official price history fields/data are invalid")
-        raw_rows = tuple(
-            dict(zip((str(field) for field in fields), item))
-            for item in data
-            if isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray))
-        )
         normalized_rows: list[dict[str, Any]] = []
-        for raw_row in raw_rows:
-            date = _roc_date_to_iso(_first(raw_row, "日期", "日 期", "Date"))
-            close = _float(_first(raw_row, "收盤價", "收盤", "Close", "ClosingPrice"))
-            if not date or close is None or not math.isfinite(close) or close <= 0:
-                continue
-            normalized_rows.append(
-                {
-                    "dataset": "tw_price_daily",
-                    "date": date,
-                    "symbol": ticker,
-                    "symbol_canonical": canonical_symbol,
-                    "market": "TW",
-                    "venue": canonical_venue,
-                    "name": name,
-                    "open": _float(_first(raw_row, "開盤價", "開盤", "Open", "OpeningPrice")),
-                    "high": _float(_first(raw_row, "最高價", "最高", "High", "HighestPrice")),
-                    "low": _float(_first(raw_row, "最低價", "最低", "Low", "LowestPrice")),
-                    "close": close,
-                    "change": _float(_first(raw_row, "漲跌價差", "漲跌", "Change")),
-                    "volume": _int(_first(raw_row, "成交股數", "TradeVolume")),
-                    "volume_lots": _int(_first(raw_row, "成交張數")),
-                    "value": _int(_first(raw_row, "成交金額", "TradeValue")),
-                    "value_thousands": _int(_first(raw_row, "成交仟元")),
-                    "transactions": _int(_first(raw_row, "成交筆數", "筆數", "Transaction")),
-                    "source_dataset": source_dataset,
-                    "api_endpoint": api_endpoint or str(descriptor["endpoint"]),
-                    "available_time": _tw_price_available_time(
-                        available_time or _first(raw_row, "available_time", "AvailableTime"),
-                        date,
+        bundle_records = payload.get("bundle_records") if isinstance(payload, Mapping) else None
+        if isinstance(bundle_records, list):
+            for raw_item in bundle_records:
+                if not isinstance(raw_item, Mapping):
+                    continue
+                row_symbol = _text(_first(raw_item, "symbol", "Code", "證券代號", "代號")).upper()
+                if row_symbol and row_symbol != ticker:
+                    continue
+                date = _roc_date_to_iso(_first(raw_item, "date", "trade_date", "日期", "日 期", "Date"))
+                close = _float(_first(raw_item, "close", "收盤價", "收盤", "Close", "ClosingPrice"))
+                if not date or close is None or not math.isfinite(close) or close <= 0:
+                    continue
+                normalized_rows.append(
+                    {
+                        "dataset": "tw_price_daily",
+                        "date": date,
+                        "symbol": ticker,
+                        "symbol_canonical": canonical_symbol,
+                        "market": "TW",
+                        "venue": canonical_venue,
+                        "name": _text(_first(raw_item, "name", "security_name", "證券名稱", "名稱", "Name")),
+                        "open": _float(_first(raw_item, "open", "開盤價", "開盤", "Open", "OpeningPrice")),
+                        "high": _float(_first(raw_item, "high", "最高價", "最高", "High", "HighestPrice")),
+                        "low": _float(_first(raw_item, "low", "最低價", "最低", "Low", "LowestPrice")),
+                        "close": close,
+                        "change": _float(_first(raw_item, "change", "漲跌價差", "漲跌", "Change")),
+                        "volume": _int(_first(raw_item, "volume", "volume_shares", "成交股數", "TradeVolume")),
+                        "volume_lots": _int(_first(raw_item, "volume_lots", "成交張數")),
+                        "value": _int(_first(raw_item, "value", "turnover_twd", "成交金額", "成交金額(元)", "TradeValue")),
+                        "value_thousands": _int(_first(raw_item, "value_thousands", "成交仟元")),
+                        "transactions": _int(_first(raw_item, "transactions", "成交筆數", "筆數", "Transaction")),
+                        "source_dataset": str(raw_item.get("source_dataset") or source_dataset),
+                        "api_endpoint": api_endpoint or str(descriptor["endpoint"]),
+                        "available_time": _tw_price_available_time(
+                            available_time or _first(raw_item, "available_time", "AvailableTime"),
+                            date,
+                        ),
+                        "history_window": str(raw_item.get("history_window") or "collector_bundle"),
+                        "raw_row": dict(raw_item.get("raw_row") or raw_item),
+                    }
+                )
+        else:
+            if canonical_venue == "TWSE":
+                if str(payload.get("stat") or "").upper() != "OK":
+                    raise SourceEvidenceError("TWSE official price history response is not OK")
+                fields = payload.get("fields")
+                data = payload.get("data")
+                name = _text(payload.get("title"))
+                if (not isinstance(fields, list) or not isinstance(data, list)) and isinstance(payload.get("tables"), list):
+                    for candidate_table in payload["tables"]:
+                        if (
+                            isinstance(candidate_table, Mapping)
+                            and isinstance(candidate_table.get("fields"), list)
+                            and isinstance(candidate_table.get("data"), list)
+                            and any(k in candidate_table["fields"] for k in ("證券代號", "日期"))
+                        ):
+                            fields = candidate_table["fields"]
+                            data = candidate_table["data"]
+                            name = _text(candidate_table.get("title") or name)
+                            break
+            else:
+                if str(payload.get("stat") or "").lower() != "ok":
+                    raise SourceEvidenceError("TPEx official price history response is not OK")
+                tables = payload.get("tables")
+                if not isinstance(tables, list):
+                    raise SourceEvidenceError("TPEx official price history tables are missing")
+                table = next(
+                    (
+                        item
+                        for item in tables
+                        if isinstance(item, Mapping)
+                        and isinstance(item.get("fields"), list)
+                        and isinstance(item.get("data"), list)
                     ),
-                    "history_window": "official_monthly",
-                    "raw_row": raw_row,
-                }
+                    None,
+                )
+                if table is None:
+                    raise SourceEvidenceError("TPEx official price history table is missing")
+                fields = table.get("fields")
+                data = table.get("data")
+                name = _text(payload.get("name") or table.get("subtitle") or table.get("title"))
+
+            if not isinstance(fields, list) or not isinstance(data, list):
+                raise SourceEvidenceError("Taiwan official price history fields/data are invalid")
+            raw_rows = tuple(
+                dict(zip((str(field) for field in fields), item))
+                for item in data
+                if isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray))
             )
+            payload_trade_date = _roc_date_to_iso(_first(payload, "date", "Date", "資料日期"))
+            for raw_row in raw_rows:
+                row_code = _text(_first(raw_row, "證券代號", "代號", "Code", "symbol")).upper()
+                if row_code and row_code != ticker:
+                    continue
+                date = _roc_date_to_iso(_first(raw_row, "日期", "日 期", "Date")) or payload_trade_date
+                close = _float(_first(raw_row, "收盤價", "收盤", "Close", "ClosingPrice"))
+                if not date or close is None or not math.isfinite(close) or close <= 0:
+                    continue
+                row_name = _text(_first(raw_row, "證券名稱", "名稱", "Name")) or name
+                normalized_rows.append(
+                    {
+                        "dataset": "tw_price_daily",
+                        "date": date,
+                        "symbol": ticker,
+                        "symbol_canonical": canonical_symbol,
+                        "market": "TW",
+                        "venue": canonical_venue,
+                        "name": row_name,
+                        "open": _float(_first(raw_row, "開盤價", "開盤", "Open", "OpeningPrice")),
+                        "high": _float(_first(raw_row, "最高價", "最高", "High", "HighestPrice")),
+                        "low": _float(_first(raw_row, "最低價", "最低", "Low", "LowestPrice")),
+                        "close": close,
+                        "change": _float(_first(raw_row, "漲跌價差", "漲跌", "Change")),
+                        "volume": _int(_first(raw_row, "成交股數", "TradeVolume")),
+                        "volume_lots": _int(_first(raw_row, "成交張數")),
+                        "value": _int(_first(raw_row, "成交金額", "成交金額(元)", "TradeValue")),
+                        "value_thousands": _int(_first(raw_row, "成交仟元")),
+                        "transactions": _int(_first(raw_row, "成交筆數", "筆數", "Transaction")),
+                        "source_dataset": source_dataset,
+                        "api_endpoint": api_endpoint or str(descriptor["endpoint"]),
+                        "available_time": _tw_price_available_time(
+                            available_time or _first(raw_row, "available_time", "AvailableTime"),
+                            date,
+                        ),
+                        "history_window": "per_date_all_stocks" if row_code else "official_monthly",
+                        "raw_row": raw_row,
+                    }
+                )
 
         limit = max_records if max_records is not None else self.max_records
         return self._records_from_normalized_rows(
@@ -1375,6 +1658,15 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 )
                 if row is not None
             )
+        if dataset == "tw_holiday_calendar":
+            return tuple(
+                row
+                for row in (
+                    self._normalize_holiday_calendar_row(canonical, raw, source_dataset, api_endpoint, available_time)
+                    for raw in rows
+                )
+                if row is not None
+            )
         raise ValueError(f"unsupported Taiwan official dataset: {dataset}")
 
     def source_health_from_result(self, result: Any) -> SourceHealth:
@@ -1409,8 +1701,8 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         api_endpoint: str,
         available_time: str | None,
     ) -> dict[str, Any] | None:
-        symbol = _text(_first(row, "Code", "SecuritiesCompanyCode", "證券代號", "股票代號")).upper()
-        date = _roc_date_to_iso(_first(row, "Date", "資料日期", "date"))
+        symbol = _text(_first(row, "Code", "SecuritiesCompanyCode", "證券代號", "股票代號", "代號", "symbol")).upper()
+        date = _roc_date_to_iso(_first(row, "Date", "資料日期", "date", "trade_date", "日期", "日 期"))
         if not symbol or not date:
             return None
         return {
@@ -1420,22 +1712,22 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             "symbol_canonical": _symbol_canonical(symbol, venue),
             "market": "TW",
             "venue": venue,
-            "name": _text(_first(row, "Name", "CompanyName", "證券名稱", "股票名稱")),
-            "open": _float(_first(row, "OpeningPrice", "Open", "開盤價")),
-            "high": _float(_first(row, "HighestPrice", "High", "最高價")),
-            "low": _float(_first(row, "LowestPrice", "Low", "最低價")),
-            "close": _float(_first(row, "ClosingPrice", "Close", "收盤價")),
-            "change": _float(_first(row, "Change", "漲跌價差", "漲跌")),
-            "volume": _int(_first(row, "TradeVolume", "TradingShares", "成交股數")),
-            "value": _int(_first(row, "TradeValue", "TransactionAmount", "成交金額")),
-            "transactions": _int(_first(row, "Transaction", "TransactionNumber", "成交筆數")),
+            "name": _text(_first(row, "Name", "CompanyName", "證券名稱", "股票名稱", "名稱", "name", "security_name")),
+            "open": _float(_first(row, "OpeningPrice", "Open", "開盤價", "開盤", "open")),
+            "high": _float(_first(row, "HighestPrice", "High", "最高價", "最高", "high")),
+            "low": _float(_first(row, "LowestPrice", "Low", "最低價", "最低", "low")),
+            "close": _float(_first(row, "ClosingPrice", "Close", "收盤價", "收盤", "close")),
+            "change": _float(_first(row, "Change", "漲跌價差", "漲跌", "change")),
+            "volume": _int(_first(row, "TradeVolume", "TradingShares", "成交股數", "volume", "volume_shares")),
+            "value": _int(_first(row, "TradeValue", "TransactionAmount", "成交金額", "成交金額(元)", "value", "turnover_twd")),
+            "transactions": _int(_first(row, "Transaction", "TransactionNumber", "成交筆數", "筆數", "transactions")),
             "source_dataset": source_dataset,
             "api_endpoint": api_endpoint,
             "available_time": _tw_price_available_time(
                 available_time or _first(row, "available_time", "AvailableTime"),
                 date,
             ),
-            "raw_row": dict(row),
+            "raw_row": dict(row.get("raw_row") if isinstance(row.get("raw_row"), Mapping) else row),
         }
 
     def _normalize_institutional_row(
@@ -1447,19 +1739,19 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         trade_date: str | None,
         available_time: str | None,
     ) -> dict[str, Any] | None:
-        symbol = _text(_first(row, "證券代號", "SecuritiesCompanyCode", "Code", "股票代號")).upper()
-        date = _roc_date_to_iso(_first(row, "Date", "資料日期", "date") or trade_date)
+        symbol = _text(_first(row, "證券代號", "SecuritiesCompanyCode", "Code", "股票代號", "symbol")).upper()
+        date = _roc_date_to_iso(_first(row, "Date", "資料日期", "date", "trade_date") or trade_date)
         if not symbol or not date:
             return None
-        foreign_buy = _int(_first(row, "外陸資買進股數(不含外資自營商)", "ForeignInvestorsIncludeMainlandAreaInvestors-TotalBuy", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Total Buy"))
-        foreign_sell = _int(_first(row, "外陸資賣出股數(不含外資自營商)", "ForeignInvestorsIncludeMainlandAreaInvestors-TotalSell", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Total Sell"))
-        foreign_net = _int(_first(row, "外陸資買賣超股數(不含外資自營商)", "ForeignInvestorsIncludeMainlandAreaInvestors-Difference", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Difference"))
-        trust_buy = _int(_first(row, "投信買進股數", "SecuritiesInvestmentTrustCompanies-TotalBuy"))
-        trust_sell = _int(_first(row, "投信賣出股數", "SecuritiesInvestmentTrustCompanies-TotalSell"))
-        trust_net = _int(_first(row, "投信買賣超股數", "SecuritiesInvestmentTrustCompanies-Difference"))
-        dealer_buy = _int(_first(row, "自營商買進股數(自行買賣)", "Dealers-TotalBuy", "自營商買進股數"))
-        dealer_sell = _int(_first(row, "自營商賣出股數(自行買賣)", "Dealers-TotalSell", "Dealers -TotalSell", "自營商賣出股數"))
-        dealer_net = _int(_first(row, "自營商買賣超股數", "Dealers-Difference"))
+        foreign_buy = _int(_first(row, "外陸資買進股數(不含外資自營商)", "ForeignInvestorsIncludeMainlandAreaInvestors-TotalBuy", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Total Buy", "foreign_buy"))
+        foreign_sell = _int(_first(row, "外陸資賣出股數(不含外資自營商)", "ForeignInvestorsIncludeMainlandAreaInvestors-TotalSell", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Total Sell", "foreign_sell"))
+        foreign_net = _int(_first(row, "外陸資買賣超股數(不含外資自營商)", "ForeignInvestorsIncludeMainlandAreaInvestors-Difference", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Difference", "foreign_net", "foreign_net_shares"))
+        trust_buy = _int(_first(row, "投信買進股數", "SecuritiesInvestmentTrustCompanies-TotalBuy", "investment_trust_buy"))
+        trust_sell = _int(_first(row, "投信賣出股數", "SecuritiesInvestmentTrustCompanies-TotalSell", "investment_trust_sell"))
+        trust_net = _int(_first(row, "投信買賣超股數", "SecuritiesInvestmentTrustCompanies-Difference", "investment_trust_net", "investment_trust_net_shares"))
+        dealer_buy = _int(_first(row, "自營商買進股數(自行買賣)", "Dealers-TotalBuy", "自營商買進股數", "dealer_buy"))
+        dealer_sell = _int(_first(row, "自營商賣出股數(自行買賣)", "Dealers-TotalSell", "Dealers -TotalSell", "自營商賣出股數", "dealer_sell"))
+        dealer_net = _int(_first(row, "自營商買賣超股數", "Dealers-Difference", "dealer_net", "dealer_net_shares"))
         return {
             "dataset": "tw_institutional_flow",
             "date": date,
@@ -1467,7 +1759,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             "symbol_canonical": _symbol_canonical(symbol, venue),
             "market": "TW",
             "venue": venue,
-            "name": _text(_first(row, "證券名稱", "CompanyName", "Name", "股票名稱")),
+            "name": _text(_first(row, "證券名稱", "CompanyName", "Name", "股票名稱", "name", "security_name")),
             "foreign_buy": foreign_buy,
             "foreign_sell": foreign_sell,
             "foreign_net": foreign_net,
@@ -1477,10 +1769,40 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             "dealer_buy": dealer_buy,
             "dealer_sell": dealer_sell,
             "dealer_net": dealer_net,
-            "total_net": _int(_first(row, "三大法人買賣超股數", "TotalDifference")),
+            "total_net": _int(_first(row, "三大法人買賣超股數", "TotalDifference", "total_net", "total_institutional_net_shares")),
             "source_dataset": source_dataset,
             "api_endpoint": api_endpoint,
-            "available_time": available_time or date,
+            "available_time": available_time or _first(row, "available_time") or date,
+            "raw_row": dict(row.get("raw_row") if isinstance(row.get("raw_row"), Mapping) else row),
+        }
+
+    def _normalize_holiday_calendar_row(
+        self,
+        venue: str,
+        row: Mapping[str, Any],
+        source_dataset: str,
+        api_endpoint: str,
+        available_time: str | None,
+    ) -> dict[str, Any] | None:
+        date = _roc_date_to_iso(_first(row, "Date", "日期", "date"))
+        if not date:
+            return None
+        name = _text(_first(row, "Name", "名稱", "HolidayName", "name"), "Holiday")
+        weekday = _text(_first(row, "Weekday", "星期", "weekday"))
+        description = _text(_first(row, "Description", "說明", "description"))
+        return {
+            "dataset": "tw_holiday_calendar",
+            "date": date,
+            "symbol": "TWSE",
+            "symbol_canonical": "TWSE",
+            "market": "TW",
+            "venue": venue,
+            "name": name,
+            "weekday": weekday,
+            "description": description,
+            "source_dataset": source_dataset,
+            "api_endpoint": api_endpoint or TWSE_HOLIDAY_SCHEDULE_OPENAPI_ENDPOINT,
+            "available_time": available_time or f"{date}T00:00:00Z",
             "raw_row": dict(row),
         }
 

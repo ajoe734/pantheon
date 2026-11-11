@@ -209,6 +209,13 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
         metadata={
             "preferred_role": "official_taiwan_market_reference",
             "official_reference_truth": True,
+            "openapi_only_direct_egress": True,
+            "holiday_calendar_endpoint": "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule",
+            "collector_bundle_sources": [
+                "collector-tw-twse-t86",
+                "collector-tw-twse-price-history",
+                "collector-tw-tpex-price-history",
+            ],
             "config_template_ids": ["template-tw-twse-tpex-official-market"],
         },
     ),
