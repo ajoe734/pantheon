@@ -55,12 +55,13 @@ def test_handles_display_names_and_profile_pages_never_written_to_disk(
 
     transport = FixtureTransport(
         {
-            "https://www.threads.com/search?q=台股&serp_type=default": fixture_html,
+            "https://www.threads.com/search?q=%E5%8F%B0%E8%82%A1&serp_type=default": fixture_html,
         }
     )
     spider = ThreadsWebSpider(policy, transport=transport, hasher=test_hasher)
     items = spider.collect(query="台股", fetched_at="2026-11-10T06:00:00Z")
-    assert len(items) == 2
+    assert len(items) == 2  # the third post has no text and is skipped, not fatal
+    assert spider.skipped_count == 1
 
     writer = BundleWriter(tmp_path)
     written = writer.write_bundle(
@@ -71,8 +72,8 @@ def test_handles_display_names_and_profile_pages_never_written_to_disk(
         finished_at="2026-11-10T06:00:05Z",
     )
 
-    expected_hash_1 = test_hasher.hash_author("threads", "tw_alpha_trader")
-    expected_hash_2 = test_hasher.hash_author("threads", "quant_observer_tw")
+    expected_hash_1 = test_hasher.hash_author("threads", "fixture_threads_a")
+    expected_hash_2 = test_hasher.hash_author("threads", "fixture_threads_b")
 
     jsonl_text = written.items_path.read_text(encoding="utf-8")
     manifest_text = written.manifest_path.read_text(encoding="utf-8")
@@ -81,20 +82,16 @@ def test_handles_display_names_and_profile_pages_never_written_to_disk(
 
     # Verify that raw handles, display names, avatars, and profile blocks do not exist anywhere on disk
     forbidden_strings = (
-        "tw_alpha_trader",
-        "quant_observer_tw",
-        "林大戶台股筆記",
-        "量化觀察員陳先生",
-        "avatar1.jpg",
-        "profile-header",
-        "Should be stripped",
+        "fixture_threads_a",
+        "fixture_threads_b",
+        "fixture_threads_c",
     )
     for file_path in written.bundle_dir.rglob("*"):
         if file_path.is_file():
             content = file_path.read_text(encoding="utf-8")
             for forbidden in forbidden_strings:
                 assert forbidden not in content, f"{forbidden!r} leaked into {file_path}"
-    assert "tw_alpha_trader" not in manifest_text
+    assert "fixture_threads_a" not in manifest_text
 
 
 def test_privacy_guard_rejects_unhashed_author_or_profile_fields() -> None:

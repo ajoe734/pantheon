@@ -1,14 +1,1 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-  <channel>
-    <title>中央社即時新聞 - 產經</title>
-    <link>https://www.cna.com.tw</link>
-    <item>
-      <guid>https://www.cna.com.tw/news/afe/202611100088.aspx</guid>
-      <title>2330 台積電十月營收創歷史新高 2454 聯發科同步成長</title>
-      <link>https://www.cna.com.tw/news/afe/202611100088.aspx</link>
-      <pubDate>2026-11-10T06:30:00Z</pubDate>
-      <description>受惠 AI 晶片需求強勁，2330 十月合併營收年增近三成，帶動半導體供應鏈表現。</description>
-    </item>
-  </channel>
-</rss>
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0"><channel><title>即時 | 中央社 CNA</title><link>https://www.cna.com.tw/list/aall.aspx</link><atom:link href="http://rsshub:1200/cna/aall" rel="self" type="application/rss+xml"></atom:link><generator>RSSHub</generator><lastBuildDate>Tue, 10 Nov 2026 15:28:09 GMT</lastBuildDate><item><title>範例新聞標題 2330</title><description>&lt;p&gt;範例內文 2330&lt;/p&gt;</description><pubDate>Tue, 10 Nov 2026 15:20:00 GMT</pubDate><guid isPermaLink="false">https://www.cna.com.tw/news/aall/fixture0001.aspx</guid><link>https://www.cna.com.tw/news/aall/fixture0001.aspx</link></item></channel></rss>

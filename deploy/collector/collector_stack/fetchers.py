@@ -213,7 +213,7 @@ class PolicyEnforcedFetcher:
         *,
         transport: FetchTransport,
         contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
-        sleep_fn: Callable[[float], None] = lambda _: None,
+        sleep_fn: Callable[[float], None] | None = None,
         allow_browser: bool = False,
     ) -> None:
         if policy.logged_in:
@@ -242,7 +242,7 @@ class PolicyEnforcedFetcher:
         self.policy = policy
         self.transport = transport
         self.contact_user_agent = contact_user_agent
-        self.sleep_fn = sleep_fn
+        self.sleep_fn = sleep_fn if sleep_fn is not None else (lambda s: time.sleep(s))
         self.request_count = 0
         self.max_connections = policy.max_connections
         self._active_connections = 0
@@ -320,7 +320,7 @@ class ScraplingHttpFetcher(PolicyEnforcedFetcher):
         *,
         transport: FetchTransport,
         contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
-        sleep_fn: Callable[[float], None] = lambda _: None,
+        sleep_fn: Callable[[float], None] | None = None,
     ) -> None:
         if policy.fetcher != "http":
             raise CollectorConfigError(
@@ -344,7 +344,7 @@ class ScraplingBrowserFetcher(PolicyEnforcedFetcher):
         *,
         transport: FetchTransport,
         contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
-        sleep_fn: Callable[[float], None] = lambda _: None,
+        sleep_fn: Callable[[float], None] | None = None,
     ) -> None:
         super().__init__(
             policy,
