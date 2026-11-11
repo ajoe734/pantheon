@@ -9,5 +9,16 @@
     "5_tests": "source_ingestion full suite: 1158 passed, 4 skipped, 2 failed; both failures are in test_controller_worker.py (out-of-scope file) using obsolete tw_price_daily + tw-finmind-datasets candidate: test_two_controller_ticks_preserve_active_persona_only_schedule, test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchanged. All in-scope suites (persona_source_reconciler, finmind_*, market_data_foundation) pass; fixtures only, no live API, token never emitted"
   },
   "throttle": "default 1.5s/request (<=2400/h) under SponsorYear 6000/h",
-  "live_run": "not performed (no token in worker env); no deploy files touched"
+  "live_run": "not performed (no token in worker env); no deploy files touched",
+  "controller_regression_scope": {
+    "change": "test_controller_worker.py: two stale tw_price_daily+tw-finmind-datasets fixtures now use FinMind-only tw_day_trading; all assertions preserved; official TWSE/TPEx daily authority unchanged",
+    "tests": [
+      "test_controller_worker.py",
+      "test_persona_source_reconciler.py",
+      "test_market_data_foundation.py",
+      "test_*finmind*.py"
+    ],
+    "result": "195 passed (recorded fixtures only, no live provider call, no token logged)",
+    "validated_source_head": "fc86d0320b41c33e7584bc608db5aa291ab0b424"
+  }
 }
