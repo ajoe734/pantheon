@@ -135,7 +135,10 @@ class DiscoveryBindingScope:
         matches = [b for b in self.discovery_bindings(tenant)
                    if str((b.get("metadata") or {}).get("strategy_spec_registry_id") or "") in spec_ids]
         if persona_hint:
-            matches = [b for b in matches if str(b.get("persona_id")) == persona_hint] or matches
+            matches = [b for b in matches if str(b.get("persona_id")) == persona_hint]
+        decision_persona = str(decision.get("persona_id") or (decision.get("metadata") or {}).get("persona_id") or "")
+        if decision_persona:
+            matches = [b for b in matches if str(b.get("persona_id")) == decision_persona]
         if len(matches) != 1:
             return None
         persona_id = str(matches[0].get("persona_id") or "")

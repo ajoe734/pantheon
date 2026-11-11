@@ -31,7 +31,8 @@ def _binding(**over):
     return row
 
 
-def _owners(bindings=None, persona_state="paper_owner", kind="factor_rule_v1", persona_tenant=TENANT):
+def _owners(bindings=None, persona_state="paper_owner", kind="factor_rule_v1", persona_tenant=TENANT,
+            artifact_persona=None):
     bindings = [_binding()] if bindings is None else bindings
     persona = {"persona_id": "p1", "tenant_id": persona_tenant, "lifecycle_state": persona_state, "metadata": {}}
 
@@ -39,8 +40,9 @@ def _owners(bindings=None, persona_state="paper_owner", kind="factor_rule_v1", p
         if url == "http://cap/api/bindings":
             return 200, bindings
         if url == f"http://reg/api/registry/strategy-artifacts/{ARTIFACT_ID}":
+            meta = {"persona_id": artifact_persona} if artifact_persona else {}
             return 200, {"entry": {"registry_id": ARTIFACT_ID, "owner_tenant": TENANT, "metadata": {
-                "strategy_artifact": {"strategy_logic": {"kind": kind}, "lineage": {"source_strategy_spec_id": SPEC_ID}}}}}
+                **meta, "strategy_artifact": {"strategy_logic": {"kind": kind}, "lineage": {"source_strategy_spec_id": SPEC_ID}}}}}
         if url.startswith("http://reg/"):
             return 404, {"detail": "nf"}
         if url == "http://per/api/personas/p1":
@@ -78,6 +80,20 @@ def test_scope_fails_closed():
         assert _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID}) is None, kw
     call, _ = _owners()
     assert _scope(call).resolve({"tenant_id": "other", "target_id": ARTIFACT_ID}) is None
+
+
+def test_explicit_persona_mismatch_fails_closed():
+    # artifact metadata names a non-discovery persona while the only discovery binding belongs to p1
+    call, _ = _owners(artifact_persona="non-discovery-persona-2")
+    assert _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID}) is None
+    from services.evolution.auto_consumer import evaluate_gate
+    verdict = evaluate_gate({"decision_id": "d1", "decision_state": "proposed", "action_type": "retrain",
+                             "tenant_id": TENANT, "target_id": ARTIFACT_ID}, _scope(call))
+    assert verdict.eligible is False
+    # agreeing artifact persona and a conflicting decision persona
+    call, _ = _owners(artifact_persona="p1")
+    assert _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID})["persona_id"] == "p1"
+    assert _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID, "persona_id": "p9"}) is None
 
 
 # ------------------------------------------------------------ decay telemetry -> governed retire
