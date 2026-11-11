@@ -945,20 +945,20 @@ def compute_template_evaluation_metrics(
         else:
             f_norm_list = factors
 
-        sym_ic: dict[str, float] = {}
-        sym_hit: dict[str, float] = {}
+        sym_ic: dict[str, float | None] = {}
+        sym_hit: dict[str, float | None] = {}
         sym_obs: dict[str, int] = {}
         for h in horizons:
             h_key = f"{h}d"
             fwd_ret = _compute_forward_returns(closes, h)
-            ic_val = _spearman_ic_pandas(factors, fwd_ret)
-            hit_val = _compute_hit_rate_pandas(factors, fwd_ret)
-            sym_ic[h_key] = ic_val
-            sym_hit[h_key] = hit_val
             sym_obs[h_key] = sum(
                 1 for f_raw, r_val in zip(factors, fwd_ret)
                 if math.isfinite(f_raw) and math.isfinite(r_val)
             )
+            # Below MIN_IC_OBSERVATIONS (including zero) the metric is absent, never estimated.
+            enough = sym_obs[h_key] >= MIN_IC_OBSERVATIONS
+            sym_ic[h_key] = _spearman_ic_pandas(factors, fwd_ret) if enough else None
+            sym_hit[h_key] = _compute_hit_rate_pandas(factors, fwd_ret) if enough else None
             for f_raw, f_norm, r_val in zip(factors, f_norm_list, fwd_ret):
                 if math.isfinite(f_raw) and math.isfinite(r_val):
                     pooled_factors_by_h[h].append(
@@ -979,7 +979,7 @@ def compute_template_evaluation_metrics(
         per_symbol_ic[symbol] = sym_ic
         per_symbol[symbol] = {
             "ic": sym_ic,
-            "hit_rate": sym_hit["1d"],
+            "hit_rate": sym_hit.get("1d"),
             "hit_rate_by_horizon": sym_hit,
             "turnover": sym_turnover_by_h.get("1d", 0.0),
             "turnover_by_horizon": sym_turnover_by_h,
@@ -991,18 +991,23 @@ def compute_template_evaluation_metrics(
             },
         }
 
-    pooled_ic: dict[str, float] = {}
-    mean_symbol_ic: dict[str, float] = {}
-    hit_rate_by_horizon: dict[str, float] = {}
+    pooled_ic: dict[str, float | None] = {}
+    mean_symbol_ic: dict[str, float | None] = {}
+    hit_rate_by_horizon: dict[str, float | None] = {}
     for h in horizons:
         h_key = f"{h}d"
-        pooled_ic[h_key] = _spearman_ic_pandas(
-            pooled_factors_by_h[h], pooled_returns_by_h[h]
+        enough = len(pooled_returns_by_h[h]) >= MIN_IC_OBSERVATIONS
+        pooled_ic[h_key] = (
+            _spearman_ic_pandas(pooled_factors_by_h[h], pooled_returns_by_h[h]) if enough else None
         )
-        sym_vals = [per_symbol_ic[s][h_key] for s in sorted(per_symbol_ic)]
-        mean_symbol_ic[h_key] = round(float(np.mean(sym_vals)) if sym_vals else 0.0, 6)
-        hit_rate_by_horizon[h_key] = _compute_hit_rate_pandas(
-            pooled_centered_factors_by_h[h], pooled_returns_by_h[h]
+        sym_vals = [
+            v for s in sorted(per_symbol_ic) if (v := per_symbol_ic[s][h_key]) is not None
+        ]
+        mean_symbol_ic[h_key] = round(float(np.mean(sym_vals)), 6) if sym_vals else None
+        hit_rate_by_horizon[h_key] = (
+            _compute_hit_rate_pandas(pooled_centered_factors_by_h[h], pooled_returns_by_h[h])
+            if enough
+            else None
         )
 
     turnover_by_horizon = {
@@ -1010,32 +1015,39 @@ def compute_template_evaluation_metrics(
         for h_key, vals in turnover_by_h_lists.items()
     }
     overall_turnover = turnover_by_horizon.get("1d", 0.0)
-    overall_hit_rate = hit_rate_by_horizon.get("1d", 0.0)
+    overall_hit_rate = hit_rate_by_horizon.get("1d")
     mean_ac1 = round(float(np.mean(autocorr_list)) if autocorr_list else 0.0, 6)
 
-    ic_1d = pooled_ic.get("1d", 0.0)
-    ic_5d = pooled_ic.get("5d", 0.0)
-    ic_20d = pooled_ic.get("20d", 0.0)
-    abs_1d = abs(ic_1d)
-    abs_20d = abs(ic_20d)
-    decay_ratio = round(ic_20d / ic_1d, 6) if abs_1d > 1e-6 else 0.0
-    # OLS slope of IC across horizons (1, 5, 20)
-    x_h = np.array([1.0, 5.0, 20.0], dtype="float64")
-    y_ic = np.array([ic_1d, ic_5d, ic_20d], dtype="float64")
-    slope_per_day = round(float(np.cov(x_h, y_ic, bias=True)[0, 1] / np.var(x_h)), 6)
-    if abs_1d > abs_20d and abs_20d > 1e-6:
+    ic_1d = pooled_ic.get("1d")
+    ic_5d = pooled_ic.get("5d")
+    ic_20d = pooled_ic.get("20d")
+
+    def _diff(a: float | None, b: float | None) -> float | None:
+        return round(a - b, 6) if a is not None and b is not None else None
+
+    abs_1d = abs(ic_1d) if ic_1d is not None else None
+    abs_20d = abs(ic_20d) if ic_20d is not None else None
+    decay_ratio: float | None = None
+    if ic_1d is not None and ic_20d is not None and abs(ic_1d) > 1e-6:
+        decay_ratio = round(ic_20d / ic_1d, 6)
+    # OLS slope of IC across horizons (1, 5, 20); only when all three are measured
+    slope_per_day: float | None = None
+    if ic_1d is not None and ic_5d is not None and ic_20d is not None:
+        x_h = np.array([1.0, 5.0, 20.0], dtype="float64")
+        y_ic = np.array([ic_1d, ic_5d, ic_20d], dtype="float64")
+        slope_per_day = round(float(np.cov(x_h, y_ic, bias=True)[0, 1] / np.var(x_h)), 6)
+    half_life_days: float | None = None
+    if abs_1d is not None and abs_20d is not None and abs_1d > abs_20d and abs_20d > 1e-6:
         rate = math.log(abs_1d / abs_20d) / 19.0
-        half_life_days: float | None = round(math.log(2.0) / rate, 4) if rate > 1e-9 else None
-    else:
-        half_life_days = None
+        half_life_days = round(math.log(2.0) / rate, 4) if rate > 1e-9 else None
 
     decay_summary = {
         "1d": ic_1d,
         "5d": ic_5d,
         "20d": ic_20d,
-        "ic_change_1d_to_5d": round(ic_5d - ic_1d, 6),
-        "ic_change_1d_to_20d": round(ic_20d - ic_1d, 6),
-        "abs_ic_decay_1d_to_20d": round(abs_1d - abs_20d, 6),
+        "ic_change_1d_to_5d": _diff(ic_5d, ic_1d),
+        "ic_change_1d_to_20d": _diff(ic_20d, ic_1d),
+        "abs_ic_decay_1d_to_20d": _diff(abs_1d, abs_20d),
         "decay_ratio_20d_over_1d": decay_ratio,
         "slope_per_day": slope_per_day,
         "half_life_days": half_life_days,

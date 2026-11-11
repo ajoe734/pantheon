@@ -300,10 +300,10 @@
     "duplicate_note": "No template was active in the registry for this run, so no duplicate_of marks were produced here; the >0.9 duplicate logic is covered by tests.",
     "metrics_file": "docs/deployment/evidence/ALPHA-TEMPLATE-EVALUATION-20261110/real_snapshot_template_metrics.jsonl",
     "pooled_ic_note": "Pooled IC pools only 3 symbols over <=60 days with overlapping forward windows; observations are not independent, treat as exploratory.",
-    "new_tests": "services/research/tests/test_alpha_template_snapshot_loader.py (6)",
+    "new_tests": "services/research/tests/test_alpha_template_snapshot_loader.py (7; includes numeric-absence assertions at low and zero observation counts)",
     "verification": "pytest snapshot_loader + test_alpha_template_evaluation + registry test_alpha_template: 41 passed",
     "metrics_file_format": "JSON Lines, one compact line per template (template_id, run_id, snapshot_id, per-symbol and pooled IC at 1/5/20d, hit_rate, turnover, decay, observations, insufficient flags, duplicate_of)",
-    "metrics_file_sha256": "d43d89f95e2dd31a8e966434209d4a4748d21a21920c85b8e624fc954af8f453",
+    "metrics_file_sha256": "0878e793b246fbc40d2b0ed34f66a715a55ecd42cbebaff951fa4d77a5e3175a",
     "metrics_file_lines": 171,
     "metrics_summary": {
       "templates_evaluated": 171,
@@ -352,6 +352,7 @@
           "pooled_ic_5d": 0.207101
         }
       ]
-    }
+    },
+    "null_propagation": "Shared engine (compute_template_evaluation_metrics) emits null, never 0.0, for per-symbol IC/hit rate, pooled IC/hit rate, mean_symbol_ic, ic_1d/5d/20d aliases and every derived decay field (changes, ratio, slope, half-life) whenever the contributing observation count is < min_ic_observations (including zero). The metrics JSONL is exported from the persisted research run result (run_alpha_template_evaluation + ResearchOrchestratorStore), so run/task/artifact/API and this file agree; asserted per horizon at export. Decay is the engine decay object with null fields (no longer collapsed to a single null)."
   }
 }

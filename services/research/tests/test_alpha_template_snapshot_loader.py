@@ -94,3 +94,31 @@ def test_short_history_is_flagged_insufficient_not_estimated():
     assert metrics["observations_by_horizon"] == {"1d": 29, "5d": 25, "20d": 10}
     assert metrics["insufficient_by_horizon"] == {"1d": False, "5d": False, "20d": True}
     assert metrics["min_ic_observations"] == MIN_IC_OBSERVATIONS
+    # numeric absence below the floor, per-symbol and pooled, incl. aliases and derived decay
+    assert metrics["pooled_ic"]["20d"] is None
+    assert metrics["pooled_ic"]["1d"] is not None
+    assert metrics["ic_20d"] is None and metrics["decay"]["20d"] is None
+    assert metrics["ic_decay"]["20d"] is None
+    assert metrics["hit_rate_by_horizon"]["20d"] is None
+    assert metrics["hit_rate_by_horizon"]["1d"] is not None
+    assert metrics["mean_symbol_ic"]["20d"] is None
+    sym = metrics["per_symbol"]["AAA"]
+    assert sym["ic"]["20d"] is None and sym["hit_rate_by_horizon"]["20d"] is None
+    assert metrics["per_symbol_ic"]["AAA"]["20d"] is None
+    d = metrics["decay"]
+    for k in ("ic_change_1d_to_20d", "abs_ic_decay_1d_to_20d", "decay_ratio_20d_over_1d",
+              "slope_per_day", "half_life_days"):
+        assert d[k] is None, k
+
+
+def test_zero_observations_yield_null_not_zero():
+    metrics = compute_template_evaluation_metrics(
+        {"AAA": {"factor_values": [float("nan")] * 30, "closes": [100.0 + i for i in range(30)]}}
+    )
+    assert all(v == 0 for v in metrics["observations_by_horizon"].values())
+    for h in ("1d", "5d", "20d"):
+        assert metrics["pooled_ic"][h] is None
+        assert metrics["hit_rate_by_horizon"][h] is None
+        assert metrics["mean_symbol_ic"][h] is None
+        assert metrics["per_symbol"]["AAA"]["ic"][h] is None
+    assert metrics["hit_rate"] is None and metrics["ic_1d"] is None
