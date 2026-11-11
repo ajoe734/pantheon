@@ -20,7 +20,8 @@
       5,
       20
     ],
-    "redundancy_correlation_threshold": 0.9
+    "redundancy_correlation_threshold": 0.9,
+    "dataset_source": "governed normalized Taiwan bars loaded from PANTHEON_TAIWAN_EVAL_DATA_DIR (<symbol>.json); fails closed (TaiwanEvaluationDataError) when unset/missing/empty/partial/unreadable; no synthetic fallback"
   },
   "library_coverage": {
     "total_seed_templates": 182,
@@ -105,7 +106,7 @@
     "ac4_research_run_stored_and_linked_from_evaluation_ref": "verified by test_research_run_stored_and_linked_from_template_evaluation_ref and test_research_orchestrator_http_endpoints_for_alpha_template_evaluation"
   },
   "verification_command": "./.venv-pantheon/bin/python3 -m pytest services/registry/test_alpha_template.py services/research/tests/test_alpha_template_evaluation.py -v",
-  "verification_result": "20 passed in 37.26s",
+  "verification_result": "30 passed (services/registry/test_alpha_template.py + services/research/tests/test_alpha_template_evaluation.py)",
   "delivery": {
     "note": "Implementation is already on dev; this branch carries only this evidence update and no other change.",
     "prs": [
@@ -141,5 +142,17 @@
         }
       }
     ]
-  }
+  },
+  "sample_evaluations_provenance": {
+    "source_kind": "synthetic_fixture",
+    "governed": false,
+    "note": "sample_evaluations were produced from the deterministic sin/cos/hash fixture (build_taiwan_point_in_time_universe) and are NOT governed Taiwan results. They illustrate output shape only. A governed run records data_provenance (per-symbol path, sha256, bar_count, time range) and snapshot_id on the research run, task, artifact and API response; the governed run must be executed against a real snapshot and its run_id/snapshot_id attached before acceptance."
+  },
+  "fail_closed_regression_tests": [
+    "test_missing_or_unusable_governed_data_fails_closed[unset|missing_dir|empty_dir|partial|bad_json|too_few_bars]",
+    "test_loader_never_falls_back_to_synthetic",
+    "test_run_refuses_synthetic_fixture_universe",
+    "test_run_refuses_synthetic_file_and_unprovenanced_caller_data",
+    "test_http_endpoint_fails_closed_without_governed_data"
+  ]
 }

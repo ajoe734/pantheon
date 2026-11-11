@@ -16,6 +16,7 @@ Covers:
 from __future__ import annotations
 
 import copy
+import json
 import math
 from pathlib import Path
 
@@ -35,10 +36,12 @@ from services.research.alpha_templates import (
     DEFAULT_TAIWAN_SYMBOLS,
     EVALUATION_HORIZONS,
     HORIZON_KEYS,
+    TaiwanEvaluationDataError,
     build_taiwan_point_in_time_universe,
     evaluate_alpha_template_library,
     evaluate_single_alpha_template,
     evaluate_template_point_in_time_symbol,
+    load_taiwan_evaluation_universe,
     run_alpha_template_evaluation,
 )
 from services.research.store import ResearchOrchestratorStore
@@ -56,6 +59,16 @@ def taiwan_universe():
         symbols=DEFAULT_TAIWAN_SYMBOLS,
         bar_count=160,
     )
+
+
+def _write_governed_dir(directory: Path, universe) -> Path:
+    """Write bar files shaped like a governed normalized snapshot (loader-path test data)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for sym, entry in universe.items():
+        (directory / f"{sym}.json").write_text(
+            json.dumps({"bars": entry["bars"]}), encoding="utf-8"
+        )
+    return directory
 
 
 @pytest.fixture(scope="module")
@@ -305,7 +318,7 @@ def test_redundancy_correlation_above_0_9_marks_duplicate_of_active_template(
 
 
 def test_research_run_stored_and_linked_from_template_evaluation_ref(
-    tmp_path: Path, taiwan_universe
+    tmp_path: Path, taiwan_universe, monkeypatch
 ):
     """AC 4: Results are stored as a research run and linked from the template evaluation_ref."""
     reset_store()
@@ -324,6 +337,8 @@ def test_research_run_stored_and_linked_from_template_evaluation_ref(
         new_metadata=kmid2_meta,
     )
 
+    data_dir = _write_governed_dir(tmp_path / "twse", taiwan_universe)
+    monkeypatch.setenv("PANTHEON_TAIWAN_EVAL_DATA_DIR", str(data_dir))
     research_store = ResearchOrchestratorStore(tmp_path / "research-store")
     subset_ids = [
         "qlib_alpha158:KMID",
@@ -335,7 +350,6 @@ def test_research_run_stored_and_linked_from_template_evaluation_ref(
         research_store=research_store,
         registry_service=registry_service,
         template_ids=subset_ids,
-        universe=taiwan_universe,
         run_id="rrun-alpha-eval-20261110",
         task_id="rtask-alpha-eval-20261110",
     )
@@ -351,6 +365,12 @@ def test_research_run_stored_and_linked_from_template_evaluation_ref(
     assert stored_run is not None
     assert stored_run["status"] == "completed"
     assert stored_run["run_type"] == "alpha_template_evaluation"
+    prov = stored_run["data_provenance"]
+    assert prov["governed"] is True
+    assert stored_run["snapshot_id"] == prov["snapshot_id"] == result["snapshot_id"]
+    assert set(prov["symbols"]) == set(DEFAULT_TAIWAN_SYMBOLS)
+    assert all(len(v["sha256"]) == 64 for v in prov["symbols"].values())
+    assert research_store.get_task("rtask-alpha-eval-20261110")["snapshot_id"] == prov["snapshot_id"]
     assert set(stored_run["evaluations"].keys()) == set(subset_ids)
 
     stored_task = research_store.get_task("rtask-alpha-eval-20261110")
@@ -380,12 +400,16 @@ def test_research_run_stored_and_linked_from_template_evaluation_ref(
 
 
 def test_research_orchestrator_http_endpoints_for_alpha_template_evaluation(
-    taiwan_universe,
+    taiwan_universe, tmp_path, monkeypatch
 ):
     """Verify HTTP routes on services/research/main.py evaluate templates and link evaluation_ref."""
     from services.research.main import app
 
     reset_store()
+    monkeypatch.setenv(
+        "PANTHEON_TAIWAN_EVAL_DATA_DIR",
+        str(_write_governed_dir(tmp_path / "twse-http", taiwan_universe)),
+    )
     with TestClient(app) as client:
         resp = client.post(
             "/api/research-orchestrator/alpha-templates/evaluate",
@@ -423,3 +447,114 @@ def test_cross_sectional_template_refused_in_single_evaluator(taiwan_universe):
     cs_tpl = next(t for t in load_library_templates() if t["scope"] == "cross_sectional")
     with pytest.raises(AlphaTemplateValidationError, match="refuses cross-sectional"):
         evaluate_single_alpha_template(cs_tpl, universe=taiwan_universe)
+
+
+# ---- fail-closed governed-data regressions --------------------------------
+
+
+def _fresh_run_env(tmp_path):
+    reset_store()
+    registry_service = RegistryService(get_store())
+    ensure_builtin_alpha_templates(registry_service)
+    return registry_service, ResearchOrchestratorStore(tmp_path / "research-store")
+
+
+def _assert_nothing_published(registry_service, research_store):
+    assert research_store.list_runs() == []
+    for view in registry_service.list_all_entries():
+        meta = (view.entry.metadata or {}).get(ALPHA_TEMPLATE_METADATA_KEY)
+        if meta:
+            assert not meta.get("evaluation_ref")
+
+
+@pytest.mark.parametrize("mode", ["unset", "missing_dir", "empty_dir", "partial", "bad_json", "too_few_bars"])
+def test_missing_or_unusable_governed_data_fails_closed(
+    tmp_path, monkeypatch, taiwan_universe, mode
+):
+    registry_service, research_store = _fresh_run_env(tmp_path)
+    data_dir = tmp_path / "twse"
+    if mode == "unset":
+        monkeypatch.delenv("PANTHEON_TAIWAN_EVAL_DATA_DIR", raising=False)
+    else:
+        if mode == "empty_dir":
+            data_dir.mkdir()
+        elif mode == "partial":
+            _write_governed_dir(
+                data_dir, {k: v for k, v in taiwan_universe.items() if k != "2330"}
+            )
+        elif mode == "bad_json":
+            _write_governed_dir(data_dir, taiwan_universe)
+            (data_dir / "2330.json").write_text("{not json", encoding="utf-8")
+        elif mode == "too_few_bars":
+            _write_governed_dir(data_dir, taiwan_universe)
+            (data_dir / "2330.json").write_text(
+                json.dumps({"bars": taiwan_universe["2330"]["bars"][:10]}), encoding="utf-8"
+            )
+        monkeypatch.setenv("PANTHEON_TAIWAN_EVAL_DATA_DIR", str(data_dir))
+
+    with pytest.raises(TaiwanEvaluationDataError):
+        run_alpha_template_evaluation(
+            research_store=research_store,
+            registry_service=registry_service,
+            template_ids=["qlib_alpha158:KMID"],
+        )
+    _assert_nothing_published(registry_service, research_store)
+    reset_store()
+
+
+def test_loader_never_falls_back_to_synthetic(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHEON_TAIWAN_EVAL_DATA_DIR", str(tmp_path / "does-not-exist"))
+    with pytest.raises(TaiwanEvaluationDataError):
+        load_taiwan_evaluation_universe()
+
+
+def test_run_refuses_synthetic_fixture_universe(tmp_path, taiwan_universe):
+    registry_service, research_store = _fresh_run_env(tmp_path)
+    with pytest.raises(TaiwanEvaluationDataError, match="synthetic"):
+        run_alpha_template_evaluation(
+            research_store=research_store,
+            registry_service=registry_service,
+            template_ids=["qlib_alpha158:KMID"],
+            universe=taiwan_universe,
+        )
+    _assert_nothing_published(registry_service, research_store)
+    reset_store()
+
+
+def test_run_refuses_synthetic_file_and_unprovenanced_caller_data(tmp_path, monkeypatch, taiwan_universe):
+    registry_service, research_store = _fresh_run_env(tmp_path)
+    data_dir = _write_governed_dir(tmp_path / "twse", taiwan_universe)
+    (data_dir / "2330.json").write_text(
+        json.dumps({"source_kind": "synthetic_fixture", "bars": taiwan_universe["2330"]["bars"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PANTHEON_TAIWAN_EVAL_DATA_DIR", str(data_dir))
+    with pytest.raises(TaiwanEvaluationDataError, match="synthetic"):
+        run_alpha_template_evaluation(
+            research_store=research_store, registry_service=registry_service,
+            template_ids=["qlib_alpha158:KMID"],
+        )
+    caller = {s: e["bars"] for s, e in taiwan_universe.items()}
+    with pytest.raises(TaiwanEvaluationDataError, match="provenance"):
+        run_alpha_template_evaluation(
+            research_store=research_store, registry_service=registry_service,
+            template_ids=["qlib_alpha158:KMID"], universe=caller,
+        )
+    _assert_nothing_published(registry_service, research_store)
+    reset_store()
+
+
+def test_http_endpoint_fails_closed_without_governed_data(monkeypatch):
+    from services.research.main import app
+
+    reset_store()
+    monkeypatch.delenv("PANTHEON_TAIWAN_EVAL_DATA_DIR", raising=False)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/research-orchestrator/alpha-templates/evaluate",
+            json={"template_ids": ["qlib_alpha158:KMID"], "run_id": "rrun-http-failclosed"},
+        )
+        assert resp.status_code == 422, resp.text
+        listed = client.get("/api/research-orchestrator/alpha-templates/evaluations", params={"status": "evaluated"})
+        assert listed.json()["count"] == 0
+    reset_store()

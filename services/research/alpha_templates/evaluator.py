@@ -64,6 +64,16 @@ _SYMBOL_PROFILES: dict[str, dict[str, float]] = {
 }
 
 
+SYNTHETIC_SOURCE_KIND = "synthetic_fixture"
+GOVERNED_FILE_SOURCE_KIND = "governed_normalized_file"
+CALLER_SUPPLIED_SOURCE_KIND = "caller_supplied"
+MIN_GOVERNED_BAR_COUNT = 85
+
+
+class TaiwanEvaluationDataError(ValueError):
+    """Governed Taiwan evaluation data is missing, unreadable, empty, or not governed."""
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -84,7 +94,11 @@ def build_taiwan_point_in_time_universe(
     bar_count: int = DEFAULT_TAIWAN_BAR_COUNT,
     start_date: str = "2025-01-02",
 ) -> dict[str, dict[str, Any]]:
-    """Build a deterministic governed Taiwan point-in-time multi-symbol daily dataset.
+    """Build a deterministic SYNTHETIC Taiwan-shaped daily dataset (test fixture only).
+
+    The bars are generated from sin/cos/hash dynamics, NOT real market data. Entries
+    are tagged ``source_kind=synthetic_fixture`` and are refused by
+    ``run_alpha_template_evaluation`` / ``load_taiwan_evaluation_universe``.
 
     Every observation carries explicit ``event_time`` and ``available_time`` UTC
     timestamps on the governed ``TWSE_Normalized`` dataset (``open``, ``high``,
@@ -173,6 +187,8 @@ def build_taiwan_point_in_time_universe(
         universe[symbol] = {
             "symbol": symbol,
             "dataset": "TWSE_Normalized",
+            "source_kind": SYNTHETIC_SOURCE_KIND,
+            "provenance": {"source_kind": SYNTHETIC_SOURCE_KIND, "governed": False},
             "decision_times": list(dates),
             "bars": bars,
             "features": features,
@@ -222,6 +238,15 @@ def _attach_zero_lag_cache(entry: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_symbol_panel_entry(symbol: str, raw_entry: Any) -> dict[str, Any]:
     """Normalize caller-supplied symbol data into ``{symbol, decision_times, features, closes}``."""
+    out = _normalize_symbol_panel_entry_core(symbol, raw_entry)
+    if isinstance(raw_entry, Mapping):
+        for key in ("source_kind", "provenance"):
+            if key in raw_entry and key not in out:
+                out[key] = raw_entry[key]
+    return out
+
+
+def _normalize_symbol_panel_entry_core(symbol: str, raw_entry: Any) -> dict[str, Any]:
     if isinstance(raw_entry, Mapping) and "_zero_lag_fields" in raw_entry and "decision_times" in raw_entry:
         return dict(raw_entry)
 
@@ -371,37 +396,132 @@ def _normalize_symbol_panel_entry(symbol: str, raw_entry: Any) -> dict[str, Any]
     raise ValueError(f"unsupported panel entry for symbol {symbol!r}")
 
 
+def _load_governed_file_universe(
+    data_dir: Path, symbols: Sequence[str]
+) -> dict[str, dict[str, Any]]:
+    if not data_dir.is_dir():
+        raise TaiwanEvaluationDataError(
+            f"governed Taiwan evaluation data directory is missing or not a directory: {data_dir}"
+        )
+    loaded: dict[str, dict[str, Any]] = {}
+    missing: list[str] = []
+    for sym in symbols:
+        sym = str(sym)
+        candidate = data_dir / f"{sym}.json"
+        if not candidate.is_file():
+            missing.append(sym)
+            continue
+        try:
+            raw = candidate.read_bytes()
+            doc = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise TaiwanEvaluationDataError(
+                f"governed Taiwan data for {sym} is unreadable: {candidate}: {exc}"
+            ) from exc
+        if isinstance(doc, Mapping) and (
+            doc.get("source_kind") == SYNTHETIC_SOURCE_KIND
+            or (doc.get("provenance") or {}).get("source_kind") == SYNTHETIC_SOURCE_KIND
+        ):
+            raise TaiwanEvaluationDataError(f"{candidate} is a synthetic fixture, not governed data")
+        bars = doc.get("bars") if isinstance(doc, Mapping) else doc
+        if not isinstance(bars, Sequence) or isinstance(bars, (str, bytes)) or len(bars) < MIN_GOVERNED_BAR_COUNT:
+            raise TaiwanEvaluationDataError(
+                f"governed Taiwan data for {sym} must contain at least {MIN_GOVERNED_BAR_COUNT} bars: {candidate}"
+            )
+        try:
+            entry = _normalize_symbol_panel_entry(sym, bars)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise TaiwanEvaluationDataError(f"governed Taiwan data for {sym} is invalid: {exc}") from exc
+        decision_times = entry["decision_times"]
+        entry["source_kind"] = GOVERNED_FILE_SOURCE_KIND
+        entry["provenance"] = {
+            "source_kind": GOVERNED_FILE_SOURCE_KIND,
+            "governed": True,
+            "path": str(candidate),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bar_count": len(decision_times),
+            "first_event_time": decision_times[0],
+            "last_event_time": decision_times[-1],
+        }
+        loaded[sym] = entry
+    if missing:
+        raise TaiwanEvaluationDataError(
+            f"governed Taiwan data missing for symbols {missing} in {data_dir}"
+        )
+    if not loaded:
+        raise TaiwanEvaluationDataError(f"governed Taiwan data directory is empty: {data_dir}")
+    return loaded
+
+
 def load_taiwan_evaluation_universe(
     market_data: Mapping[str, Any] | None = None,
     *,
     symbols: Sequence[str] = DEFAULT_TAIWAN_SYMBOLS,
-    bar_count: int = DEFAULT_TAIWAN_BAR_COUNT,
     normalized_data_dir: str | Path | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Load or construct the governed Taiwan point-in-time evaluation universe."""
+    """Load the governed Taiwan point-in-time evaluation universe.
+
+    Fails closed (``TaiwanEvaluationDataError``) when no source is configured or
+    the configured directory is missing, empty, unreadable, or incomplete. It never
+    falls back to synthetic data; use ``build_taiwan_point_in_time_universe`` and pass
+    the result explicitly as ``market_data`` for test fixtures.
+    """
     if market_data is not None:
-        return {
-            str(sym): _normalize_symbol_panel_entry(str(sym), entry)
-            for sym, entry in market_data.items()
+        if not market_data:
+            raise TaiwanEvaluationDataError("supplied market_data is empty")
+        out: dict[str, dict[str, Any]] = {}
+        for sym, entry in market_data.items():
+            norm = _normalize_symbol_panel_entry(str(sym), entry)
+            norm.setdefault("source_kind", CALLER_SUPPLIED_SOURCE_KIND)
+            out[str(sym)] = norm
+        return out
+
+    data_dir_raw = str(normalized_data_dir or os.getenv("PANTHEON_TAIWAN_EVAL_DATA_DIR", "")).strip()
+    if not data_dir_raw:
+        raise TaiwanEvaluationDataError(
+            "no governed Taiwan evaluation data source configured "
+            "(set PANTHEON_TAIWAN_EVAL_DATA_DIR or supply market_data)"
+        )
+    return _load_governed_file_universe(Path(data_dir_raw), symbols)
+
+
+def summarize_universe_provenance(universe: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Return run-level source/snapshot provenance; raise unless the data is governed."""
+    if not universe:
+        raise TaiwanEvaluationDataError("evaluation universe is empty")
+    per_symbol: dict[str, Any] = {}
+    for sym in sorted(universe):
+        entry = universe[sym]
+        kind = entry.get("source_kind")
+        prov = entry.get("provenance") if isinstance(entry.get("provenance"), Mapping) else {}
+        if kind == SYNTHETIC_SOURCE_KIND or prov.get("source_kind") == SYNTHETIC_SOURCE_KIND:
+            raise TaiwanEvaluationDataError(
+                f"symbol {sym} is synthetic fixture data; governed evaluation refuses it"
+            )
+        if kind == GOVERNED_FILE_SOURCE_KIND:
+            per_symbol[sym] = dict(prov)
+            continue
+        snapshot = str(prov.get("snapshot_id") or prov.get("sha256") or "").strip()
+        source = str(prov.get("source") or prov.get("source_ref") or "").strip()
+        if not snapshot or not source:
+            raise TaiwanEvaluationDataError(
+                f"caller-supplied data for {sym} lacks provenance (source and snapshot_id required)"
+            )
+        per_symbol[sym] = {
+            "source_kind": CALLER_SUPPLIED_SOURCE_KIND,
+            "governed": True,
+            "source": source,
+            "snapshot_id": snapshot,
+            "bar_count": len(entry.get("decision_times") or ()),
         }
-
-    data_dir_raw = normalized_data_dir or os.getenv("PANTHEON_TAIWAN_EVAL_DATA_DIR", "").strip()
-    if data_dir_raw:
-        data_dir = Path(data_dir_raw)
-        loaded: dict[str, dict[str, Any]] = {}
-        for sym in symbols:
-            candidate = data_dir / f"{sym}.json"
-            if candidate.exists():
-                doc = json.loads(candidate.read_text(encoding="utf-8"))
-                bars = doc.get("bars") if isinstance(doc, Mapping) else doc
-                loaded[str(sym)] = _normalize_symbol_panel_entry(str(sym), bars)
-        if loaded:
-            return loaded
-
-    raw_universe = build_taiwan_point_in_time_universe(symbols=symbols, bar_count=bar_count)
+    digest = hashlib.sha256(
+        json.dumps(per_symbol, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
     return {
-        sym: _normalize_symbol_panel_entry(sym, entry)
-        for sym, entry in raw_universe.items()
+        "governed": True,
+        "dataset": "TWSE_Normalized",
+        "snapshot_id": f"sha256:{digest}",
+        "symbols": per_symbol,
     }
 
 
@@ -1046,9 +1166,12 @@ def run_alpha_template_evaluation(
         wanted = {str(t["template_id"]) for t in source_templates}
         selected_templates = source_templates
 
+    eval_universe = load_taiwan_evaluation_universe(universe)
+    universe_provenance = summarize_universe_provenance(eval_universe)
+
     batch_result = evaluate_alpha_template_library(
         selected_templates,
-        universe=universe,
+        universe=eval_universe,
         strict_stepwise=strict_stepwise,
         redundancy_threshold=redundancy_threshold,
     )
@@ -1089,6 +1212,8 @@ def run_alpha_template_evaluation(
             "title": "AlphaTemplate Taiwan Point-in-Time Evaluation",
             "task_type": "alpha_template_evaluation",
             "status": "completed",
+            "data_provenance": universe_provenance,
+            "snapshot_id": universe_provenance["snapshot_id"],
             "symbols": batch_result["symbols"],
             "horizons": batch_result["horizons"],
             "evaluated_count": len(target_evaluations),
@@ -1104,6 +1229,8 @@ def run_alpha_template_evaluation(
             "task_id": resolved_task_id,
             "artifact_type": "alpha_template_evaluation_report",
             "schema_version": "alpha_template_evaluation.v1",
+            "data_provenance": universe_provenance,
+            "snapshot_id": universe_provenance["snapshot_id"],
             "symbols": batch_result["symbols"],
             "horizons": batch_result["horizons"],
             "evaluated_count": len(target_evaluations),
@@ -1125,6 +1252,8 @@ def run_alpha_template_evaluation(
             "status": "completed",
             "market": "TW",
             "dataset": "TWSE_Normalized",
+            "data_provenance": universe_provenance,
+            "snapshot_id": universe_provenance["snapshot_id"],
             "symbols": batch_result["symbols"],
             "horizons": batch_result["horizons"],
             "evaluated_count": len(target_evaluations),
@@ -1164,6 +1293,8 @@ def run_alpha_template_evaluation(
             "status": "completed",
             "market": "TW",
             "dataset": "TWSE_Normalized",
+            "data_provenance": universe_provenance,
+            "snapshot_id": universe_provenance["snapshot_id"],
             "symbols": batch_result["symbols"],
             "horizons": batch_result["horizons"],
             "evaluated_count": len(target_evaluations),
@@ -1185,6 +1316,8 @@ def run_alpha_template_evaluation(
         "task_id": resolved_task_id,
         "artifact_id": artifact_id,
         "status": "completed",
+        "data_provenance": universe_provenance,
+        "snapshot_id": universe_provenance["snapshot_id"],
         "symbols": batch_result["symbols"],
         "horizons": batch_result["horizons"],
         "evaluated_count": len(target_evaluations),
