@@ -2239,14 +2239,15 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 0)
 
     def test_repo_codex_slots_inherit_logical_lane_capacity(self) -> None:
-        # The operator stopped the Codex lanes on 2026-10-06 and restored one
-        # review-only slot each on 2026-10-24: the lane capacity, never a
-        # per-slot value, decides whether any slot can be dispatched.
+        # The operator stopped the Codex lanes on 2026-10-06, restored one
+        # review-only slot each on 2026-10-24 and on 2026-11-11 opened all four
+        # slots of each lane for owner and review work: the lane capacity, never
+        # a per-slot value, decides whether any slot can be dispatched.
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         for agent_id in ("codex", "codex2"):
             with self.subTest(agent_id=agent_id):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
-                self.assertEqual(lane.max_parallel, 1)
+                self.assertEqual(lane.max_parallel, 4)
                 self.assertTrue(lane.endpoints)
                 self.assertTrue(all(endpoint.enabled for endpoint in lane.endpoints))
                 self.assertTrue(
@@ -2265,8 +2266,9 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         account = supervisor.agent_account_id(config, "claude")
         self.assertTrue(bool(account) and account == supervisor.agent_account_id(config, "claude2"))
-        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 3)
-        expected_capacity = {"claude": 3, "claude2": 0}
+        # Operator 2026-11-11: run Claude2 at full capacity; both lanes share the claude1 account cap.
+        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 6)
+        expected_capacity = {"claude": 3, "claude2": 3}
         for agent_id, capacity in expected_capacity.items():
             with self.subTest(agent_id=agent_id, capacity=capacity):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
@@ -22070,12 +22072,13 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                     "a Codex quota exhaustion would stop all dispatch",
                 )
 
-    def test_codex_reviewer_fallbacks_are_review_only_with_capacity(self) -> None:
-        # The operator stopped the Codex lanes on 2026-10-06 and restored them
-        # on 2026-10-24 only as last-resort reviewers for when the Antigravity
-        # account runs out of quota. A zero-capacity reviewer in a chain is
-        # only reassigned away again, and the lanes must never take owner work.
+    def test_codex_reviewer_fallbacks_have_capacity_and_come_last(self) -> None:
+        # The operator stopped the Codex lanes on 2026-10-06, restored them on
+        # 2026-10-24 as last-resort reviewers, and on 2026-11-11 opened them for
+        # owner work at full capacity. They stay last in every reviewer chain,
+        # and a zero-capacity reviewer in a chain is only reassigned away again.
         review_only = set(self.config["worker_reassignment"]["review_only_agents"])
+        self.assertFalse({"Codex", "Codex2"} & review_only)
         capacity: dict[str, int] = {}
         for agent in (self.config.get("agents") or {}).values():
             lane = str(agent.get("display_name") or "")
@@ -22085,7 +22088,6 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                 continue
             for name in {"Codex", "Codex2"} & set(chain):
                 with self.subTest(lane=lane, reviewer=name):
-                    self.assertIn(name, review_only)
                     self.assertGreater(
                         capacity.get(name, 0),
                         0,
