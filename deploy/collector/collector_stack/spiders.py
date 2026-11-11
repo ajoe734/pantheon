@@ -554,6 +554,24 @@ def recent_weekday_dates(reference_iso: str, *, count: int) -> list[str]:
     return out
 
 
+TAIWAN_UTC_OFFSET_HOURS = 8
+T86_PUBLISH_HOUR_TW = 15
+
+
+def latest_published_trading_date(reference_iso: str) -> str:
+    """Latest weekday whose TWSE daily data is published: before 15:00 Taiwan time that is the previous weekday."""
+    ref = datetime.fromisoformat(reference_iso.replace("Z", "+00:00"))
+    if ref.tzinfo is None:
+        ref = ref.replace(tzinfo=timezone.utc)
+    local = ref.astimezone(timezone(timedelta(hours=TAIWAN_UTC_OFFSET_HOURS)))
+    day = local.date()
+    if local.hour < T86_PUBLISH_HOUR_TW:
+        day -= timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day.isoformat()
+
+
 def _normalize_iso_date(raw_value: Any) -> str:
     value = str(raw_value or "").strip()
     if not value:
@@ -655,7 +673,8 @@ class TwseT86DailySpider:
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
         if dates is None:
-            dates = recent_weekday_dates(fetched_iso, count=self.DEFAULT_RECENT_DATES)
+            latest = latest_published_trading_date(fetched_iso)
+            dates = recent_weekday_dates(latest, count=self.DEFAULT_RECENT_DATES)
         target_urls = list(urls) if urls is not None else [self.build_date_url(d) for d in dates]
         items: list[CollectedItem] = []
         seen_ids: set[str] = set()

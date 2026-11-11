@@ -261,24 +261,42 @@ class CollectorRunner:
             policy_hash=policy.policy_hash,
             block_reason=None,
         )
+        requests = _request_count(collector)
+        reason: str | None = None
+        if requests is not None and requests == 0:
+            reason = "no_targets"  # nothing was requested, so nothing can be called complete
+        elif requests is not None and not items:
+            reason = "no_data_for_date"
+        bundle_status = "partial" if reason else "complete"
         written = self.bundle_writer.write_bundle(
             policy=policy,
             run_id=run_id,
             items=items,
-            status="complete",
+            status=bundle_status,
             paused_reason=None,
             started_at=started_iso,
             finished_at=finished_iso,
             skipped_count=skipped,
+            reason=reason,
         )
         return RunOutcome(
             source_id=source_id,
             run_id=run_id,
-            status="complete",
+            status=bundle_status,
             bundle=written,
             state=updated_state,
             skipped_count=skipped,
         )
+
+
+def _request_count(collector: Any) -> int | None:
+    """Requests issued by a collector (composites sum parts); None when it has no fetcher (local library)."""
+    total: int | None = None
+    for part in (collector, *(getattr(collector, n, None) for n in ("arxiv", "openalex", "nber"))):
+        fetcher = getattr(part, "fetcher", None)
+        if fetcher is not None and hasattr(fetcher, "request_count"):
+            total = (total or 0) + int(fetcher.request_count)
+    return total
 
 
 def _skipped_count(collector: Any) -> int:

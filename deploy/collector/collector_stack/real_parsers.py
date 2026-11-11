@@ -29,6 +29,7 @@ _PTT_DATE = re.compile(r'<div class="date">\s*([^<]*?)\s*</div>')
 def parse_ptt_index(page: str) -> tuple[list[dict[str, Any]], int]:
     records: list[dict[str, Any]] = []
     skipped = 0
+    seen_ids: set[str] = set()
     for match in _PTT_ENTRY.finditer(page):
         block = match.group(1)
         href = _PTT_HREF.search(block)
@@ -38,6 +39,9 @@ def parse_ptt_index(page: str) -> tuple[list[dict[str, Any]], int]:
             skipped += 1  # deleted post or missing author
             continue
         article_id = href.group(1).rsplit("/", 1)[-1].removesuffix(".html")
+        if article_id in seen_ids:
+            continue  # the real index lists pinned posts twice; keep the first occurrence
+        seen_ids.add(article_id)
         push_raw = (_PTT_PUSH.search(block) or [None, ""])[1] or ""
         push = int(push_raw) if push_raw.isdigit() else (100 if push_raw == "爆" else 0)
         date = _PTT_DATE.search(block)

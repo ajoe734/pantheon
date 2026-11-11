@@ -1,28 +1,84 @@
 {
   "task_id": "COLLECTOR-REAL-SOURCE-REPAIR-20261110",
   "title": "Repair collector sources against real responses and pin the image",
-  "supersedes": ["COLLECTOR-IMAGE-DEPENDENCY-RESOLUTION-20261110"],
+  "supersedes": [
+    "COLLECTOR-IMAGE-DEPENDENCY-RESOLUTION-20261110"
+  ],
   "real_capture": {
     "date": "2026-11-10",
     "location": "dev machine only (mode 700, never committed)",
     "committed_fixtures": "minimized, de-identified: social fixtures keep the real DOM/JSON shape with synthetic handles and text; public numeric data (CBC, DBnomics, NDC) is kept as-is"
   },
   "findings_and_fixes": [
-    {"source": "collector-tw-macro-cbc", "failure": "JSON served as text/plain parsed as dict; hard-coded date; real shape is data.dataSets rows [YYYYMMDD, values...] + structure columns", "fix": "parse body ourselves, derive periods from rows, last 30 rows per series, '-' cells skipped"},
-    {"source": "collector-tw-macro-ndc", "failure": "guessed ZIP URL; picked manifest.csv (first sorted csv)", "fix": "resolve ZIP from data.gov.tw dataset 6099 distribution, read 景氣指標與燈號.csv, YYYYMM periods, rows without score skipped and counted"},
-    {"source": "collector-tw-macro-dgbas", "failure": "403 Cloudflare challenge", "fix": "enabled=false with disabled_reason; bypass is forbidden by policy"},
-    {"source": "collector-gdelt", "failure": "2s interval (429); sleep function was a no-op by default; unencoded query; plain-text body crashed JSON parse", "fix": "min_interval_seconds=5.0 (validated), fetcher now really sleeps (time.sleep), urlencode, non-JSON body skipped+counted"},
-    {"source": "collector-macro-dbnomics", "failure": "400 on /v22/series?q=; series_code lost provider; 2 of 4 configured series return 404", "fix": "documented /v22/series/{provider}/{dataset}/{series}?observations=1; policy lists the 2 verified series (FED, NBS) and records the dropped ECB and BOJ ids with reasons; latest 60 observations"},
-    {"source": "collector-tw-ptt-stock", "failure": "parser targeted invented data-* attributes; a post without author aborted the batch", "fix": "parse real r-ent markup; deleted/authorless entries skipped and counted"},
-    {"source": "collector-tw-threads / instagram / cmoney", "failure": "parsers targeted invented markup; Threads/IG URL query not percent-encoded", "fix": "parse real DOM (Threads post anchors + time), embedded IG JSON, CMoney article.articleContent; urls percent-encoded; incomplete items skipped and counted"},
-    {"source": "twse-t86 / price-history / tpex", "failure": "hard-coded default dates", "fix": "default dates derived from the run time (recent weekdays)"},
-    {"source": "collector-news-rss", "failure": "route /cna/realtime not the captured route", "fix": "/cna/aall"},
-    {"source": "collector-youtube-gemini-notes", "failure": "model hard-coded gemini-2.0-flash; fake default video id; API keys never read from the *_FILE secrets", "fix": "model from COLLECTOR_GEMINI_MODEL (default gemini-2.5-flash); no video id means no request; keys read from secret files and sent via x-goog-api-key header (also YouTube)"},
-    {"source": "runner/status", "failure": "state/status written to /data but only bundles and state were mounted", "fix": "compose mounts the whole data root at /data (library read-only); README chowns the root to 10001; status.json now carries skipped_items per source"},
-    {"source": "image", "failure": "pip backtracking >15 min", "fix": "requirements.lock generated with uv pip compile (torch 2.15.0+cpu, no nvidia/cuda/triton lines), Dockerfile installs it with --no-deps and the CPU wheel index"}
+    {
+      "source": "collector-tw-macro-cbc",
+      "failure": "JSON served as text/plain parsed as dict; hard-coded date; real shape is data.dataSets rows [YYYYMMDD, values...] + structure columns",
+      "fix": "parse body ourselves, derive periods from rows, last 30 rows per series, '-' cells skipped"
+    },
+    {
+      "source": "collector-tw-macro-ndc",
+      "failure": "guessed ZIP URL; picked manifest.csv (first sorted csv)",
+      "fix": "resolve ZIP from data.gov.tw dataset 6099 distribution, read 景氣指標與燈號.csv, YYYYMM periods, rows without score skipped and counted"
+    },
+    {
+      "source": "collector-tw-macro-dgbas",
+      "failure": "403 Cloudflare challenge",
+      "fix": "enabled=false with disabled_reason; bypass is forbidden by policy"
+    },
+    {
+      "source": "collector-gdelt",
+      "failure": "2s interval (429); sleep function was a no-op by default; unencoded query; plain-text body crashed JSON parse",
+      "fix": "min_interval_seconds=5.0 (validated), fetcher now really sleeps (time.sleep), urlencode, non-JSON body skipped+counted"
+    },
+    {
+      "source": "collector-macro-dbnomics",
+      "failure": "400 on /v22/series?q=; series_code lost provider; 2 of 4 configured series return 404",
+      "fix": "documented /v22/series/{provider}/{dataset}/{series}?observations=1; policy lists the 2 verified series (FED, NBS) and records the dropped ECB and BOJ ids with reasons; latest 60 observations"
+    },
+    {
+      "source": "collector-tw-ptt-stock",
+      "failure": "parser targeted invented data-* attributes; a post without author aborted the batch",
+      "fix": "parse real r-ent markup; deleted/authorless entries skipped and counted"
+    },
+    {
+      "source": "collector-tw-threads / instagram / cmoney",
+      "failure": "parsers targeted invented markup; Threads/IG URL query not percent-encoded",
+      "fix": "parse real DOM (Threads post anchors + time), embedded IG JSON, CMoney article.articleContent; urls percent-encoded; incomplete items skipped and counted"
+    },
+    {
+      "source": "twse-t86 / price-history / tpex",
+      "failure": "hard-coded default dates",
+      "fix": "default dates derived from the run time (recent weekdays)"
+    },
+    {
+      "source": "collector-news-rss",
+      "failure": "route /cna/realtime not the captured route",
+      "fix": "/cna/aall"
+    },
+    {
+      "source": "collector-youtube-gemini-notes",
+      "failure": "model hard-coded gemini-2.0-flash; fake default video id; API keys never read from the *_FILE secrets",
+      "fix": "model from COLLECTOR_GEMINI_MODEL (default gemini-2.5-flash); no video id means no request; keys read from secret files and sent via x-goog-api-key header (also YouTube)"
+    },
+    {
+      "source": "runner/status",
+      "failure": "state/status written to /data but only bundles and state were mounted",
+      "fix": "compose mounts the whole data root at /data (library read-only); README chowns the root to 10001; status.json now carries skipped_items per source"
+    },
+    {
+      "source": "image",
+      "failure": "pip backtracking >15 min",
+      "fix": "requirements.lock generated with uv pip compile (torch 2.15.0+cpu, no nvidia/cuda/triton lines), Dockerfile installs it with --no-deps and the CPU wheel index"
+    },
+    {
+      "source": "live run 2026-11-11 (PR #7154 head 70157c5c3)",
+      "failure": "PTT Stock index lists pinned posts twice -> duplicate item_id aborted the bundle; T86/NDC/Threads/IG/CMoney ended 'complete' with 0 items; T86 asked for a day whose data is not yet published",
+      "fix": "parse_ptt_index de-duplicates by article id; runner marks a run with zero requests 'partial' reason=no_targets and zero items 'partial' reason=no_data_for_date (manifest.reason, status.json reason, CLI output); T86 targets latest_published_trading_date (before 15:00 Taiwan time = previous weekday)",
+      "note": "Through the CLI runner path with a fake transport every network source issues >=1 request (parametrized test), so the 0-item runs were real responses with nothing parseable (e.g. login-walled Threads/IG, unpublished T86 day) now surfaced as partial/no_data_for_date rather than complete"
+    }
   ],
   "verification": {
-    "offline_tests": "python -m pytest -q deploy/collector -> 81 passed",
+    "offline_tests": "pytest deploy/collector -> 101 passed",
     "real_capture_parser_smoke": "PTT 23 records + 1 skipped, Threads 1, Instagram 12, CMoney 10 parsed from the captured files (not committed)",
     "lock_resolution": "uv pip compile resolved in ~6s with zero backtracking messages",
     "dbnomics_live_check": "single GET per series on 2026-11-11: FED and NBS 200, ECB and BOJ 404",

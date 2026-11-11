@@ -185,3 +185,89 @@ def test_compose_mounts_data_root_whole_and_lock_is_cpu_only() -> None:
             assert "==" in line, f"unpinned lock line: {line}"
     dockerfile = (COLLECTOR_DIR / "Dockerfile").read_text(encoding="utf-8")
     assert "requirements.lock" in dockerfile and "--no-deps" in dockerfile and "whl/cpu" in dockerfile
+
+
+def test_ptt_pinned_posts_listed_twice_are_deduplicated(fixtures_dir: Path, test_hasher, tmp_path: Path) -> None:
+    page = (fixtures_dir / "ptt_stock_index.html").read_text(encoding="utf-8")
+    transport = FixtureTransport()
+    transport.register("https://www.ptt.cc/bbs/Stock/index.html", page + page)  # every entry twice
+    runner = CollectorRunner(_config(), root_dir=tmp_path, hasher=test_hasher, transport=transport)
+    outcome = runner.run_source("collector-tw-ptt-stock", run_id="dup")
+    assert outcome.status == "complete"
+    assert len(outcome.bundle.manifest["items"]) == 3
+
+
+@pytest.mark.parametrize(
+    ("now_utc", "expected"),
+    [
+        ("2026-11-11T02:50:00Z", "2026-11-10"),  # 10:50 Taiwan, before 15:00 -> previous trading day
+        ("2026-11-11T07:00:00Z", "2026-11-11"),  # 15:00 Taiwan -> today
+        ("2026-11-09T03:00:00Z", "2026-11-06"),  # Monday morning -> Friday
+        ("2026-11-14T08:00:00Z", "2026-11-13"),  # Saturday -> Friday
+    ],
+)
+def test_t86_targets_latest_published_trading_day(now_utc: str, expected: str) -> None:
+    from collector_stack.spiders import latest_published_trading_date
+
+    assert latest_published_trading_date(now_utc) == expected
+
+
+class _RecordingTransport(FixtureTransport):
+    def request(self, url, **kwargs):  # type: ignore[override]
+        from collector_stack.fetchers import FetchResponse
+
+        self.calls.append({"url": url})
+        return FetchResponse(requested_url=url, final_url=url, http_status=200, body=b"{}")
+
+
+_NETWORK_SOURCES = [
+    "collector-tw-threads",
+    "collector-tw-cmoney-forum",
+    "collector-tw-instagram-popular",
+    "collector-tw-twse-t86",
+    "collector-tw-macro-ndc",
+    "collector-tw-ptt-stock",
+    "collector-tw-macro-cbc",
+    "collector-gdelt",
+    "collector-macro-dbnomics",
+    "collector-paper-arxiv",
+    "collector-paper-openalex",
+    "collector-paper-nber-rss",
+    "collector-news-rss",
+]
+
+
+@pytest.mark.parametrize("source_id", _NETWORK_SOURCES)
+def test_cli_run_path_issues_at_least_one_request(
+    source_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from collector_stack import cli
+    from collector_stack import runner as runner_module
+
+    transport = _RecordingTransport()
+    monkeypatch.setattr(runner_module, "LiveScraplingTransport", lambda: transport)
+    salt = tmp_path / "salt"
+    salt.write_bytes(b"cli-path-test-salt-0123456789abcdef-0123456789")
+    try:
+        cli.main(["--root-dir", str(tmp_path), "--salt-file", str(salt), "run", "--source", source_id])
+    except Exception:  # an empty fake body may be unparseable; the assertion is about requests
+        pass
+    assert len(transport.calls) >= 1, f"{source_id} issued no request through the CLI runner path"
+
+
+def test_zero_items_is_not_complete_and_records_reason(tmp_path: Path, test_hasher) -> None:
+    transport = FixtureTransport()
+    transport.register("https://www.ptt.cc/bbs/Stock/index.html", "<html></html>")
+    runner = CollectorRunner(_config(), root_dir=tmp_path, hasher=test_hasher, transport=transport)
+    outcome = runner.run_source("collector-tw-ptt-stock", run_id="empty")
+    assert outcome.status == "partial"
+    assert outcome.bundle.manifest["reason"] == "no_data_for_date"
+    status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
+    assert status["sources"]["collector-tw-ptt-stock"]["reason"] == "no_data_for_date"
+
+
+def test_zero_requests_is_not_complete_and_records_no_targets(tmp_path: Path, test_hasher) -> None:
+    runner = CollectorRunner(_config(), root_dir=tmp_path, hasher=test_hasher, transport=FixtureTransport())
+    outcome = runner.run_source("collector-tw-twse-t86", run_id="none", collect_kwargs={"urls": []})
+    assert outcome.status == "partial"
+    assert outcome.bundle.manifest["reason"] == "no_targets"

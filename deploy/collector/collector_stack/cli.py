@@ -113,6 +113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "run_id": outcome.run_id,
                     "status": outcome.status,
                     "skipped_items": outcome.skipped_count,
+                    "reason": outcome.bundle.manifest.get("reason"),
                     "bundle_dir": str(outcome.bundle.bundle_dir),
                     "bundle_sha256": outcome.bundle.manifest["bundle_sha256"],
                 },
