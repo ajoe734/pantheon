@@ -530,6 +530,7 @@ class StackDocker:
         self.unhealthy = set()      # services that never become healthy
         self.no_stop = set()        # services that ignore "docker stop"
         self.up_calls = []
+        self.pinned = {}            # service -> digest-pinned Compose image reference
         for index, service in enumerate(self.names):
             image = _sid("a", index)
             self.add_image(image)
@@ -612,7 +613,8 @@ class StackDocker:
             row["status"], row["health"] = "running", "healthy"
             return ""
         if args[0] == "compose" and "config" in args:
-            return json.dumps({"services": {name: {"build": {"context": "."}, "image": "pantheon-" + name}
+            return json.dumps({"services": {name: ({"image": self.pinned[name]} if name in self.pinned else
+                                                   {"build": {"context": "."}, "image": "pantheon-" + name})
                                             for name in self.names}})
         if args[0] == "compose":
             paths = [args[i + 1] for i, value in enumerate(args) if value == "-f"]
@@ -959,3 +961,58 @@ def test_readback_names_service_whose_compose_image_still_resolves_to_candidate(
         restore_stack(stack_case)
     assert caught.value.services == ("svc-03",)
     assert "svc-03" in str(caught.value)
+
+
+PINS = {"svc-01": "nats:2.11-alpine@sha256:" + "1" * 64, "svc-02": "postgres:16-alpine@sha256:" + "2" * 64,
+        "svc-03": "redis:7-alpine@sha256:" + "3" * 64, "svc-04": "busybox:1.36@sha256:" + "4" * 64}
+
+
+def pin_stack(docker):
+    docker.pinned = dict(PINS)
+    for service, ref in PINS.items():
+        docker.tags[ref] = docker.containers[service]["image_id"]
+
+
+def test_restore_skips_digest_pinned_refs_and_still_repoints_the_rest(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    pin_stack(docker)
+    docker.mutate_to_candidate()
+    for service, ref in PINS.items():
+        docker.tags[ref] = stack["services"][service]["image_id"]  # a digest pin never drifts
+    result, _ = restore_stack(stack_case)
+    tagged = {call[2] for call in docker.calls if call[0] == "tag"}
+    assert not tagged & set(PINS.values())
+    assert all("pantheon-" + s in tagged for s in docker.names if s not in PINS)
+    assert all(docker.tags["pantheon-" + s] == stack["services"][s]["image_id"] for s in docker.names if s not in PINS)
+    assert set(result["stack"]["services"]) == set(stack["services"])
+
+
+def test_digest_pinned_ref_not_resolving_to_recorded_image_fails_closed_naming_service(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    pin_stack(docker)
+    docker.tags[PINS["svc-02"]] = _sid("c", 2)
+    docker.add_image(_sid("c", 2))
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        restore_stack(stack_case)
+    assert caught.value.services == ("svc-02",)
+
+
+def test_readback_checks_pinned_and_plain_refs_together(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    pin_stack(docker)
+    refs = {**PINS, "svc-05": "pantheon-svc-05"}
+    docker.tags["pantheon-svc-05"] = _sid("c", 5)
+    docker.add_image(_sid("c", 5))
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        artifacts.readback_stack(stack, docker=docker, check_lease=lambda: None, compose_refs=refs)
+    assert caught.value.services == ("svc-05",)
+
+
+@pytest.mark.parametrize("bad", ["nats@sha256:abc", "nats@sha512:" + "1" * 64, "nats@" + "1" * 64,
+                                 "-nats@sha256:" + "1" * 64, "nats @sha256:" + "1" * 64, "@sha256:" + "1" * 64])
+def test_malformed_compose_reference_still_fails_closed(stack_case, bad):
+    _, docker, _, _, stack, _, _ = stack_case
+    docker.pinned = {"svc-01": bad}
+    with pytest.raises(artifacts.StackError) as caught:
+        restore_stack(stack_case)
+    assert "svc-01" in str(caught.value)

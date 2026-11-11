@@ -1,0 +1,19 @@
+{
+  "task": "DEV-RESTORE-DIGEST-PIN-REPOINT-20261110",
+  "root_cause": "compose_image_refs raised StackError for any image containing '@'; digest-pinned nats/postgres/redis/busybox in docker-compose.yml aborted restore_images after containers were already restored (run 42857877166).",
+  "change": "compose_image_refs accepts digest pins matching PINNED_REF and returns them unchanged; restore_images skips tagging refs containing '@'; readback_stack still resolves every ref (pinned included) and fails closed with compose-image-mismatch naming the service. Other shapes still raise StackError.",
+  "tests": {
+    "before_fix": "2 failed (StackError svc-01 digest-pinned ref; fail-closed naming test), 112 passed, 1 skipped",
+    "after_fix": "114 passed, 1 skipped",
+    "new": [
+      "test_restore_skips_digest_pinned_refs_and_still_repoints_the_rest",
+      "test_digest_pinned_ref_not_resolving_to_recorded_image_fails_closed_naming_service",
+      "test_readback_checks_pinned_and_plain_refs_together",
+      "test_malformed_compose_reference_still_fails_closed (6 shapes)"
+    ],
+    "command": "python -m pytest scripts/test_dev_release_artifacts.py -q"
+  },
+  "existing_tests": "No existing test or assertion changed or removed; StackDocker fake gained an optional 'pinned' map defaulting to empty, and its compose config output is unchanged when empty.",
+  "not_changed": ["docker-compose.yml", "scripts/deploy_nonprod_vm.sh", "protect tags"],
+  "hosted_verification": "Not performed; no VM/SSH access. Left to the operator acceptance task."
+}
