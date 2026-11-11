@@ -153,6 +153,25 @@ def _seed_default_feature_catalogue() -> None:
 _seed_default_feature_catalogue()
 
 
+def assert_governed_feature_inputs(strategy_logic: Mapping[str, Any]) -> None:
+    """Require every declared ``inputs[]`` entry to exist in the governed feature catalogue.
+
+    Price-volume built-ins resolve through the seeded price datasets. Anything else
+    must be catalogued so its availability lag is governed; the paper signal producer
+    calls this before evaluating so features can only enter through the catalogue.
+    """
+    if not isinstance(strategy_logic, Mapping) or strategy_logic.get("kind") != "factor_rule_v1":
+        return
+    for idx, item in enumerate(strategy_logic.get("inputs") or ()):
+        if not isinstance(item, Mapping):
+            continue
+        dataset, field = str(item.get("dataset") or ""), str(item.get("field") or "")
+        if get_feature_definition(dataset, field) is None:
+            raise FactorRuleValidationError(
+                f"inputs[{idx}] ({dataset}.{field}) is not in the governed feature catalogue"
+            )
+
+
 # Design §9.2 (22 operators) + Plan §3.4 (14 time-series operators) = 36 operators.
 DESIGN_9_2_OPERATORS: frozenset[str] = frozenset(
     {

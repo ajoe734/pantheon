@@ -553,6 +553,7 @@ class CollectorBundleAdapter:
             "dealer_net_shares",
             "total_institutional_net_shares",
             "series_id",
+            "period_end",
             "value",
             "unit",
             "authors",
@@ -654,3 +655,165 @@ def _slug(value: str) -> str:
     import re
 
     return re.sub(r"[^A-Za-z0-9_.=-]+", "-", str(value).strip().lower()).strip("-") or "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Governed feature rows from collector bundles (task GOVERNED-FEATURE-DATASETS-20261110)
+# ---------------------------------------------------------------------------
+
+TW_MACRO_SERIES_DATASET = "tw_macro_series"
+TW_COMMUNITY_DAILY_DATASET = "tw_community_daily"
+COMMUNITY_ZSCORE_WINDOW_DAYS = 20
+COMMUNITY_ZSCORE_MIN_HISTORY_DAYS = 5
+_TAIPEI_TZ = timezone(timedelta(hours=8))
+_BULLISH_LABELS = frozenset({"bullish", "bull", "positive", "long", "看多", "多"})
+_BEARISH_LABELS = frozenset({"bearish", "bear", "negative", "short", "看空", "空"})
+
+
+def _feature_time(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise SourceEvidenceError("feature row time is empty")
+        dt = datetime.fromisoformat(text[:-1] + "+00:00" if text[-1] in "zZ" else text)
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def _feature_iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def macro_feature_rows(
+    records: Sequence[SourceRecord],
+) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, str], ...]]:
+    """Normalize macro bundle records (CBC / NDC / DGBAS) into governed series rows.
+
+    ``series_id`` must be a catalogued macro series (``<agency>_<field>``); unknown
+    series, non-numeric values, or availability earlier than the period are rejected,
+    never imputed. Returns ``(rows, rejected)``.
+    """
+    from ..feature_catalogue import MACRO_SERIES_MAP, lag_days_for
+
+    rows: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+    for record in records:
+        meta = record.metadata
+        series_id = str(meta.get("series_id") or "").strip()
+        target = MACRO_SERIES_MAP.get(series_id)
+        if target is None:
+            rejected.append({"source_id": record.source_id, "reason": f"series_id {series_id!r} is not catalogued"})
+            continue
+        value = meta.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+            rejected.append({"source_id": record.source_id, "reason": "value is not numeric"})
+            continue
+        try:
+            period = _feature_time(meta.get("period_end") or meta.get("event_time"))
+            available = _feature_time(meta.get("available_time"))
+            ingest = _feature_time(meta.get("ingest_time"))
+        except (ValueError, SourceEvidenceError) as exc:
+            rejected.append({"source_id": record.source_id, "reason": f"invalid time: {exc}"})
+            continue
+        if available < period:
+            rejected.append({"source_id": record.source_id, "reason": "available_time precedes period"})
+            continue
+        dataset, field_name = target
+        rows.append(
+            {
+                "dataset": TW_MACRO_SERIES_DATASET,
+                "catalogue_dataset": dataset,
+                "field": field_name,
+                "series_id": series_id,
+                "symbol": series_id,
+                "event_time": period.date().isoformat(),
+                "date": period.date().isoformat(),
+                "available_time": _feature_iso(available),
+                "ingest_time": _feature_iso(ingest),
+                "availability_lag_days": lag_days_for(dataset, field_name),
+                "value": float(value),
+                "unit": str(meta.get("unit") or ""),
+                "source_id": record.source_id,
+                "connector_id": record.connector_id,
+            }
+        )
+    return tuple(rows), tuple(rejected)
+
+
+def community_daily_feature_rows(
+    records: Sequence[SourceRecord],
+    *,
+    prior_daily_counts: Mapping[str, Mapping[str, int]] | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Aggregate community posts into daily per-symbol features (design §8.5).
+
+    Days are Asia/Taipei days. ``post_volume`` is the post count; ``attention_zscore``
+    compares it with the preceding up to 20 days (needs at least 5 days of history,
+    else it is omitted); ``bull_bear_ratio`` is ``(bull + 1) / (bear + 1)`` over posts
+    with an explicit stance label (omitted when no post is labelled). A day's row is
+    available only after that day closes and after its latest contributing post was
+    fetched, so a decision inside the day never sees its own aggregate.
+    """
+    from statistics import mean, pstdev
+
+    buckets: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in records:
+        meta = record.metadata
+        symbols = meta.get("symbols") or ([meta["symbol"]] if meta.get("symbol") else [])
+        if isinstance(symbols, str):
+            symbols = [symbols]
+        try:
+            event = _feature_time(meta.get("event_time"))
+            available = _feature_time(meta.get("available_time"))
+        except (ValueError, SourceEvidenceError):
+            continue
+        day = event.astimezone(_TAIPEI_TZ).date()
+        metrics = meta.get("metrics") if isinstance(meta.get("metrics"), Mapping) else {}
+        stance = str(metrics.get("sentiment") or metrics.get("stance") or meta.get("sentiment") or "").strip().lower()
+        for symbol in {str(s).strip().upper() for s in symbols if str(s).strip()}:
+            bucket = buckets.setdefault(
+                (symbol, day.isoformat()),
+                {"posts": 0, "bull": 0, "bear": 0, "available": available},
+            )
+            bucket["posts"] += 1
+            bucket["bull"] += stance in _BULLISH_LABELS
+            bucket["bear"] += stance in _BEARISH_LABELS
+            bucket["available"] = max(bucket["available"], available)
+
+    counts: dict[str, dict[str, int]] = {
+        sym: dict(days) for sym, days in (prior_daily_counts or {}).items()
+    }
+    for (symbol, day), bucket in buckets.items():
+        counts.setdefault(symbol, {})[day] = bucket["posts"]
+
+    now = _feature_iso(datetime.now(timezone.utc))
+    rows: list[dict[str, Any]] = []
+    for (symbol, day), bucket in sorted(buckets.items()):
+        day_date = datetime.fromisoformat(day).date()
+        history = [
+            counts[symbol].get((day_date - timedelta(days=offset)).isoformat(), 0)
+            for offset in range(1, COMMUNITY_ZSCORE_WINDOW_DAYS + 1)
+            if (day_date - timedelta(days=offset)).isoformat() in counts[symbol]
+        ]
+        row: dict[str, Any] = {
+            "dataset": TW_COMMUNITY_DAILY_DATASET,
+            "symbol": symbol,
+            "symbol_canonical": symbol,
+            "event_time": day,
+            "date": day,
+            "available_time": _feature_iso(
+                max(bucket["available"], datetime.combine(day_date + timedelta(days=1), datetime.min.time(), tzinfo=_TAIPEI_TZ))
+            ),
+            "ingest_time": now,
+            "availability_lag_days": 0,
+            "post_volume": float(bucket["posts"]),
+        }
+        if len(history) >= COMMUNITY_ZSCORE_MIN_HISTORY_DAYS:
+            sd = pstdev(history)
+            if sd > 0:
+                row["attention_zscore"] = (bucket["posts"] - mean(history)) / sd
+        if bucket["bull"] + bucket["bear"] > 0:
+            row["bull_bear_ratio"] = (bucket["bull"] + 1) / (bucket["bear"] + 1)
+        rows.append(row)
+    return tuple(rows)

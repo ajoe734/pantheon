@@ -291,3 +291,99 @@ class MarketDataStorageWriter:
             normalized_refs=tuple(normalized_refs),
             feature_refs=tuple(feature_refs),
         )
+
+
+# ---------------------------------------------------------------------------
+# Stored history depth (task GOVERNED-FEATURE-DATASETS-20261110)
+# ---------------------------------------------------------------------------
+
+HISTORY_DEPTH_SCHEMA_VERSION = "feature_history_depth.v1"
+_DAILY_BAR_DATASET = "tw_price_daily"
+
+
+def _iter_normalized_rows(path: Path) -> Any:
+    opener = gzip.open if path.suffix == ".gz" else Path.open
+    with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[operator]
+        for line in handle:
+            line = line.strip()
+            if line:
+                yield json.loads(line)
+
+
+def _row_entity_and_event_date(row: Mapping[str, Any]) -> tuple[str, str] | None:
+    meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
+    nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
+    entity = (
+        meta.get("symbol_canonical")
+        or nrow.get("symbol_canonical")
+        or nrow.get("series_id")
+        or meta.get("series_id")
+        or meta.get("symbol")
+        or nrow.get("symbol")
+    )
+    event = nrow.get("event_time") or nrow.get("date") or meta.get("event_time") or meta.get("date") or meta.get("trade_date")
+    if not entity or not event or len(str(event)) < 10:
+        return None
+    return str(entity), str(event)[:10]
+
+
+def _depth_stats(dates: set[str]) -> dict[str, Any]:
+    if not dates:
+        return {"distinct_event_dates": 0, "first_event_date": None, "last_event_date": None, "span_days": 0}
+    first, last = min(dates), max(dates)
+    span = (datetime.fromisoformat(last) - datetime.fromisoformat(first)).days + 1
+    return {
+        "distinct_event_dates": len(dates),
+        "first_event_date": first,
+        "last_event_date": last,
+        "span_days": span,
+    }
+
+
+def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _DAILY_BAR_DATASET) -> dict[str, Any]:
+    """Measure stored event-time history per normalized dataset and per symbol.
+
+    Reads ``<root>/normalized/<dataset>/date=*/<run>.jsonl[.gz]``. Depth is counted in
+    distinct event dates (re-ingested rows are not double counted). For symbol-keyed
+    datasets, ``per_daily_bar_symbol`` lists every symbol that has stored daily bars,
+    reporting zero depth where the dataset holds nothing for it; macro series are
+    reported per series.
+    """
+    base = Path(root) / "normalized"
+    per_dataset: dict[str, dict[str, set[str]]] = {}
+    row_counts: dict[str, int] = {}
+    skipped: dict[str, int] = {}
+    if base.is_dir():
+        for dataset_dir in sorted(p for p in base.iterdir() if p.is_dir()):
+            entities = per_dataset.setdefault(dataset_dir.name, {})
+            for path in sorted(dataset_dir.glob("date=*/*.jsonl*")):
+                for row in _iter_normalized_rows(path):
+                    row_counts[dataset_dir.name] = row_counts.get(dataset_dir.name, 0) + 1
+                    parsed = _row_entity_and_event_date(row)
+                    if parsed is None:
+                        skipped[dataset_dir.name] = skipped.get(dataset_dir.name, 0) + 1
+                        continue
+                    entities.setdefault(parsed[0], set()).add(parsed[1])
+    bar_symbols = sorted(per_dataset.get(_slug(daily_bar_dataset), {}))
+    datasets: dict[str, Any] = {}
+    for name, entities in sorted(per_dataset.items()):
+        all_dates = set().union(*entities.values()) if entities else set()
+        entry: dict[str, Any] = {
+            "row_count": row_counts.get(name, 0),
+            "rows_without_entity_or_event_time": skipped.get(name, 0),
+            "entity_count": len(entities),
+            **_depth_stats(all_dates),
+        }
+        if name == _slug(daily_bar_dataset) or name.startswith("tw_macro"):
+            entry["per_entity"] = {e: _depth_stats(d) for e, d in sorted(entities.items())}
+        else:
+            entry["per_daily_bar_symbol"] = {s: _depth_stats(entities.get(s, set())) for s in bar_symbols}
+            entry["daily_bar_symbols_without_history"] = sum(1 for s in bar_symbols if not entities.get(s))
+        datasets[name] = entry
+    return {
+        "schema_version": HISTORY_DEPTH_SCHEMA_VERSION,
+        "storage_root": Path(root).as_posix(),
+        "daily_bar_dataset": _slug(daily_bar_dataset),
+        "daily_bar_symbol_count": len(bar_symbols),
+        "datasets": datasets,
+    }

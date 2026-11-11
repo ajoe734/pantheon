@@ -1552,3 +1552,56 @@ def test_semantic_authority_changes_are_rejected_on_rematerialization(tmp_path: 
     with pytest.raises(SourceDatasetAuthorityError, match="differing authority bindings"):
         _materialize(case3)
 
+
+
+def _load_authority_module():
+    return _load_module("source_dataset_authority_feature_test")
+
+
+def _feature_wrapper(row: dict[str, Any], dataset: str = "tw_monthly_revenue") -> dict[str, Any]:
+    return {
+        "connector_id": "tw-test",
+        "dataset": dataset,
+        "source_id": "s1",
+        "content_ref": "ref",
+        "metadata": {"symbol_canonical": "2330.TWSE", "normalized_row": row},
+    }
+
+
+def test_feature_observations_read_catalogued_fields_with_declared_lag() -> None:
+    authority = _load_authority_module()
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.feature_catalogue import catalogue_document
+    finally:
+        sys.path.remove(str(repo))
+    catalogue = catalogue_document()
+    row = {
+        "dataset": "tw_monthly_revenue", "event_time": "2026-06-30",
+        "available_time": "2026-07-10T10:00:00Z", "ingest_time": "2026-07-11T00:00:00Z",
+        "availability_lag_days": 10, "yoy": 12.5, "mom": None, "revenue": 100.0,
+    }
+    obs = authority.feature_observations_from_wrappers(
+        [_feature_wrapper(row)], catalogue=catalogue, connector_id="tw-test",
+        dataset_id="tw_monthly_revenue", trusted_now=NOW,
+    )
+    assert {o["field"]: o["value"] for o in obs} == {"yoy": 12.5, "revenue": 100.0}
+    assert all(o["availability_lag_days"] == 10 and o["entity"] == "2330.TWSE" for o in obs)
+
+    for bad in (
+        {**row, "available_time": "2026-07-10"},  # not offset aware
+        {**row, "available_time": "2026-06-01T00:00:00Z"},  # before event
+        {**row, "event_time": "2026-12-31"},  # future event
+        {k: v for k, v in row.items() if k != "ingest_time"},
+    ):
+        with pytest.raises(authority.SourceDatasetAuthorityError):
+            authority.feature_observations_from_wrappers(
+                [_feature_wrapper(bad)], catalogue=catalogue, connector_id="tw-test",
+                dataset_id="tw_monthly_revenue", trusted_now=NOW,
+            )
+    with pytest.raises(authority.SourceDatasetAuthorityError):
+        authority.feature_observations_from_wrappers(
+            [_feature_wrapper(row, "tw_unknown")], catalogue=catalogue, connector_id="tw-test",
+            dataset_id="tw_unknown", trusted_now=NOW,
+        )

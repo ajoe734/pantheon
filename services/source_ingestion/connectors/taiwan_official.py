@@ -224,6 +224,9 @@ _DATASET_SCHEMA_HASHES = {
     "tdcc_shareholding_distribution": TDCC_SHAREHOLDING_SCHEMA_HASH,
     "taifex_futures_chip": TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
     "taifex_options_chip": TAIFEX_OPTIONS_CHIP_SCHEMA_HASH,
+    "tw_monthly_revenue": "tw_monthly_revenue.v1",
+    "tw_financial_statement": "tw_financial_statement.v1",
+    "tw_valuation_bwibbu": "tw_valuation_bwibbu.v1",
 }
 
 
@@ -3071,3 +3074,336 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 "source_type": "market",
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# Governed point-in-time fundamentals (task GOVERNED-FEATURE-DATASETS-20261110)
+#
+# Monthly revenue, quarterly statements and daily valuation come from the
+# TWSE/TPEx OpenAPI only (never the exchange websites). Every normalized row
+# carries ``event_time`` (the period the figure describes), ``available_time``
+# (the earliest time the figure may be used: the declared filing deadline or
+# the same-day close) and ``ingest_time`` (when Pantheon read it), plus the
+# declared ``availability_lag_days`` from the governed feature catalogue.
+# ---------------------------------------------------------------------------
+
+TW_MONTHLY_REVENUE_SCHEMA_HASH = "tw_monthly_revenue.v1"
+TW_FINANCIAL_STATEMENT_SCHEMA_HASH = "tw_financial_statement.v1"
+TW_VALUATION_SCHEMA_HASH = "tw_valuation_bwibbu.v1"
+_TWSE_OPENDATA_BASE_URL = f"{TWSE_OPENAPI_BASE_URL}/opendata"
+_TWSE_EXCHANGE_REPORT_BASE_URL = f"{TWSE_OPENAPI_BASE_URL}/exchangeReport"
+
+TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS: Mapping[str, Mapping[str, Mapping[str, str]]] = {
+    "tw_monthly_revenue": {
+        "TWSE": {"source_dataset": "t187ap05_L", "endpoint": f"{_TWSE_OPENDATA_BASE_URL}/t187ap05_L"},
+        "TPEx": {"source_dataset": "mopsfin_t187ap05_O", "endpoint": f"{TPEX_OPENAPI_BASE_URL}/mopsfin_t187ap05_O"},
+    },
+    "tw_financial_statement": {
+        "TWSE": {
+            "source_dataset": "t187ap06_L_ci",
+            "endpoint": f"{_TWSE_OPENDATA_BASE_URL}/t187ap06_L_ci",
+            "balance_source_dataset": "t187ap07_L_ci",
+            "balance_endpoint": f"{_TWSE_OPENDATA_BASE_URL}/t187ap07_L_ci",
+        },
+        "TPEx": {
+            "source_dataset": "mopsfin_t187ap06_O_ci",
+            "endpoint": f"{TPEX_OPENAPI_BASE_URL}/mopsfin_t187ap06_O_ci",
+            "balance_source_dataset": "mopsfin_t187ap07_O_ci",
+            "balance_endpoint": f"{TPEX_OPENAPI_BASE_URL}/mopsfin_t187ap07_O_ci",
+        },
+    },
+    "tw_valuation_bwibbu": {
+        "TWSE": {"source_dataset": "BWIBBU_ALL", "endpoint": f"{_TWSE_EXCHANGE_REPORT_BASE_URL}/BWIBBU_ALL"},
+        "TPEx": {
+            "source_dataset": "tpex_mainboard_peratio_analysis",
+            "endpoint": f"{TPEX_OPENAPI_BASE_URL}/tpex_mainboard_peratio_analysis",
+        },
+    },
+}
+
+_QUARTER_END_MONTH_DAY = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
+
+
+def _roc_year_to_ad(value: Any) -> int | None:
+    digits = re.sub(r"\D", "", _text(value))
+    if not digits:
+        return None
+    year = int(digits)
+    return year + 1911 if year < 1911 else year
+
+
+def _month_end_iso(year: int, month: int) -> str:
+    first_next = datetime(year + (month == 12), (month % 12) + 1, 1)
+    return (first_next - timedelta(days=1)).date().isoformat()
+
+
+def _fundamental_base(
+    dataset: str,
+    venue: str,
+    symbol: str,
+    row: Mapping[str, Any],
+    *,
+    source_dataset: str,
+    api_endpoint: str,
+    event_time: str,
+    lag_days: int,
+    available_time: str,
+    ingest_time: str,
+) -> dict[str, Any]:
+    return {
+        "dataset": dataset,
+        "symbol": symbol,
+        "symbol_canonical": _symbol_canonical(symbol, venue),
+        "market": "TW",
+        "venue": venue,
+        "name": _text(_first(row, "公司名稱", "CompanyName", "Name")),
+        "event_time": event_time,
+        "date": event_time,
+        "available_time": available_time,
+        "ingest_time": ingest_time,
+        "availability_lag_days": lag_days,
+        "source_dataset": source_dataset,
+        "api_endpoint": api_endpoint,
+        "raw_row": dict(row),
+    }
+
+
+def _fundamental_lag_available(event_time: str, lag_days: int, *, hour: int = 18) -> str:
+    from ..feature_catalogue import default_available_time
+
+    return default_available_time(event_time, lag_days, hour=hour)
+
+
+def normalize_monthly_revenue_rows(
+    venue: str,
+    payload: Any,
+    *,
+    source_dataset: str,
+    api_endpoint: str,
+    ingest_time: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Normalize TWSE ``t187ap05_L`` / TPEx ``mopsfin_t187ap05_O`` monthly revenue rows."""
+    from ..feature_catalogue import lag_days_for
+
+    canonical = _canonical_venue(venue)
+    ingested = ingest_time or _utc_now()
+    lag = lag_days_for("tw_monthly_revenue", "revenue")
+    out: list[dict[str, Any]] = []
+    for row in _rows_from_payload(payload):
+        symbol = _text(_first(row, "公司代號", "Code", "SecuritiesCompanyCode")).upper()
+        ym = re.sub(r"\D", "", _text(_first(row, "資料年月", "DataYearMonth", "ReportYearMonth")))
+        if not symbol or len(ym) < 5:
+            continue
+        year, month = _roc_year_to_ad(ym[:-2]), int(ym[-2:])
+        if year is None or not 1 <= month <= 12:
+            continue
+        event_time = _month_end_iso(year, month)
+        revenue = _float(_first(row, "營業收入-當月營收", "Revenue-CurrentMonth", "CurrentMonthRevenue"))
+        if revenue is None:
+            continue
+        item = _fundamental_base(
+            "tw_monthly_revenue", canonical, symbol, row,
+            source_dataset=source_dataset, api_endpoint=api_endpoint, event_time=event_time,
+            lag_days=lag, available_time=_fundamental_lag_available(event_time, lag), ingest_time=ingested,
+        )
+        item.update(
+            revenue=revenue,
+            revenue_previous_month=_float(_first(row, "營業收入-上月營收", "Revenue-PreviousMonth")),
+            revenue_previous_year_month=_float(_first(row, "營業收入-去年當月營收", "Revenue-SameMonthLastYear")),
+            mom=_float(_first(row, "營業收入-上月比較增減(%)", "Revenue-PercentageChangeFromPreviousMonth")),
+            yoy=_float(_first(row, "營業收入-去年同月增減(%)", "Revenue-PercentageChangeFromSameMonthLastYear")),
+            industry=_text(_first(row, "產業別", "Industry")),
+        )
+        out.append(item)
+    return tuple(out)
+
+
+def normalize_financial_statement_rows(
+    venue: str,
+    income_payload: Any,
+    balance_payload: Any = None,
+    *,
+    source_dataset: str,
+    api_endpoint: str,
+    ingest_time: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Normalize quarterly income statements, joining parent equity for ROE.
+
+    Figures are the period-to-date amounts as reported by MOPS; margins and ROE are
+    ratios of those reported amounts and are not annualised. Q1-Q3 are available
+    after the 45-day filing deadline, Q4 after the 90-day annual-report deadline.
+    """
+    from ..feature_catalogue import lag_days_for
+
+    canonical = _canonical_venue(venue)
+    ingested = ingest_time or _utc_now()
+    base_lag = lag_days_for("tw_quarterly_statements", "eps")
+    equity: dict[tuple[str, int, int], float] = {}
+    for row in _rows_from_payload(balance_payload) if balance_payload is not None else ():
+        symbol = _text(_first(row, "公司代號", "Code", "SecuritiesCompanyCode")).upper()
+        year = _roc_year_to_ad(_first(row, "年度", "Year"))
+        quarter = _int(_first(row, "季別", "Season", "Quarter"))
+        value = _float(_first(row, "歸屬於母公司業主之權益合計", "歸屬於母公司業主之權益", "權益總額", "權益總計"))
+        if symbol and year and quarter and value:
+            equity[(symbol, year, quarter)] = value
+    out: list[dict[str, Any]] = []
+    for row in _rows_from_payload(income_payload):
+        symbol = _text(_first(row, "公司代號", "Code", "SecuritiesCompanyCode")).upper()
+        year = _roc_year_to_ad(_first(row, "年度", "Year"))
+        quarter = _int(_first(row, "季別", "Season", "Quarter"))
+        if not symbol or not year or quarter not in _QUARTER_END_MONTH_DAY:
+            continue
+        month, day = _QUARTER_END_MONTH_DAY[quarter]
+        event_time = f"{year:04d}-{month:02d}-{day:02d}"
+        lag = 90 if quarter == 4 else base_lag
+        revenue = _float(_first(row, "營業收入", "Revenue", "OperatingRevenue"))
+        gross = _float(_first(row, "營業毛利（毛損）淨額", "營業毛利（毛損）", "GrossProfit"))
+        operating = _float(_first(row, "營業利益（損失）", "OperatingIncome"))
+        net_parent = _float(_first(row, "歸屬於母公司業主之淨利（損）", "NetIncomeAttributableToParent"))
+        eps = _float(_first(row, "基本每股盈餘（元）", "EarningsPerShare", "BasicEarningsPerShare"))
+        parent_equity = equity.get((symbol, year, quarter))
+        item = _fundamental_base(
+            "tw_financial_statement", canonical, symbol, row,
+            source_dataset=source_dataset, api_endpoint=api_endpoint, event_time=event_time,
+            lag_days=lag, available_time=_fundamental_lag_available(event_time, lag), ingest_time=ingested,
+        )
+        item.update(
+            fiscal_year=year,
+            fiscal_quarter=quarter,
+            revenue=revenue,
+            eps=eps,
+            gross_margin=(gross / revenue) if gross is not None and revenue else None,
+            operating_margin=(operating / revenue) if operating is not None and revenue else None,
+            roe=(net_parent / parent_equity) if net_parent is not None and parent_equity else None,
+        )
+        if all(item[k] is None for k in ("eps", "gross_margin", "operating_margin", "roe")):
+            continue
+        out.append(item)
+    return tuple(out)
+
+
+def normalize_valuation_rows(
+    venue: str,
+    payload: Any,
+    *,
+    source_dataset: str,
+    api_endpoint: str,
+    ingest_time: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Normalize TWSE ``BWIBBU_ALL`` / TPEx P/E analysis rows (same-day close availability)."""
+    canonical = _canonical_venue(venue)
+    ingested = ingest_time or _utc_now()
+    out: list[dict[str, Any]] = []
+    for row in _rows_from_payload(payload):
+        symbol = _text(_first(row, "Code", "SecuritiesCompanyCode", "股票代號", "證券代號")).upper()
+        event_time = _roc_date_to_iso(_first(row, "Date", "資料日期", "date"))
+        if not symbol or not re.match(r"^\d{4}-\d{2}-\d{2}$", event_time):
+            continue
+        pe = _float(_first(row, "PEratio", "PriceEarningRatio", "本益比"))
+        pb = _float(_first(row, "PBratio", "PriceBookRatio", "股價淨值比"))
+        dy = _float(_first(row, "DividendYield", "YieldRatio", "殖利率(%)"))
+        if pe is None and pb is None and dy is None:
+            continue
+        item = _fundamental_base(
+            "tw_valuation_bwibbu", canonical, symbol, row,
+            source_dataset=source_dataset, api_endpoint=api_endpoint, event_time=event_time,
+            lag_days=0, available_time=_fundamental_lag_available(event_time, 0), ingest_time=ingested,
+        )
+        item.update(pe_ratio=pe, pb_ratio=pb, dividend_yield=dy)
+        out.append(item)
+    return tuple(out)
+
+
+def fetch_fundamental_rows(
+    dataset: str,
+    venue: str,
+    *,
+    fetch: Callable[[str], Any] | None = None,
+    timeout_seconds: float = 30.0,
+    ingest_time: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Fetch one governed fundamentals dataset from the official OpenAPI and normalize it.
+
+    ``fetch`` is an injectable ``url -> parsed JSON`` transport; the default goes
+    through the egress-guarded, OpenAPI-only official fetcher.
+    """
+    canonical = _canonical_venue(venue)
+    try:
+        spec = TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS[dataset][canonical]
+    except KeyError as exc:
+        raise ValueError(f"unsupported fundamentals dataset: dataset={dataset} venue={venue}") from exc
+
+    def _get(url: str) -> Any:
+        if fetch is not None:
+            _assert_twse_tpex_openapi_only_url(url)
+            return fetch(url)
+        request = urllib.request.Request(
+            url, headers={"Accept": "application/json", "User-Agent": "pantheon-source-ingest/0.1"}
+        )
+        return _fetch_official(
+            request,
+            caller="source_ingest.taiwan_official",
+            timeout_seconds=timeout_seconds,
+            max_bytes=20971520,
+            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8-sig")),
+        )
+
+    common = {
+        "source_dataset": spec["source_dataset"],
+        "api_endpoint": spec["endpoint"],
+        "ingest_time": ingest_time,
+    }
+    payload = _get(spec["endpoint"])
+    if dataset == "tw_monthly_revenue":
+        return normalize_monthly_revenue_rows(canonical, payload, **common)
+    if dataset == "tw_valuation_bwibbu":
+        return normalize_valuation_rows(canonical, payload, **common)
+    return normalize_financial_statement_rows(
+        canonical, payload, _get(spec["balance_endpoint"]), **common
+    )
+
+
+def fundamental_rows_to_records(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    connector_id: str = TW_OFFICIAL_CONNECTOR_ID,
+    trace_id: str = "",
+) -> tuple[SourceRecord, ...]:
+    """Wrap normalized fundamentals rows as SourceRecords the storage writer can persist."""
+    records: list[SourceRecord] = []
+    for row in rows:
+        dataset = str(row["dataset"])
+        row_hash = _stable_hash({"dataset": dataset, "venue": row["venue"], "row": dict(row)})
+        symbol = str(row["symbol"])
+        records.append(
+            SourceRecord(
+                source_id=f"tw-official:{dataset}:{row['venue']}:{symbol}:{row_hash}",
+                connector_id=connector_id,
+                source_type="market",
+                title=f"TW official {dataset} {row['venue']} {symbol} {row['event_time']}",
+                content_ref=f"tw-official://{dataset}/{row['venue']}/{symbol}/{row['event_time']}/{row_hash}",
+                metadata={
+                    "source_class": "official_reference",
+                    "provider": "TWSE/TPEx",
+                    "dataset": dataset,
+                    "source_dataset": row.get("source_dataset"),
+                    "venue": row["venue"],
+                    "symbol": symbol,
+                    "symbol_canonical": row.get("symbol_canonical"),
+                    "date": row["event_time"],
+                    "event_time": row["event_time"],
+                    "available_time": row["available_time"],
+                    "ingest_time": row["ingest_time"],
+                    "availability_lag_days": row["availability_lag_days"],
+                    "api_endpoint": row.get("api_endpoint"),
+                    "normalized_row": dict(row),
+                    "raw_row": dict(row.get("raw_row") or {}),
+                    "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                    "access_scope": ["public", "research"],
+                    "license_scope": "official_reference",
+                    "schema_hash": _DATASET_SCHEMA_HASHES[dataset],
+                },
+                trace_id=trace_id,
+            )
+        )
+    return tuple(records)

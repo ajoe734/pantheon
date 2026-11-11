@@ -3277,3 +3277,28 @@ class TestFactorRulePaperSignalProducer(unittest.TestCase):
             strategy(bad_binding, "2026-05-15T06:05:00Z")
         self.assertEqual(ctx.exception.code, "artifact_interpreter_unsupported")
 
+    def test_paper_producer_rejects_inputs_outside_governed_catalogue(self) -> None:
+        import copy
+        from services.execution.lean_runtime.paper_signal_producer import (
+            CurrentArtifactStrategy,
+            SignalDecisionUnavailable,
+        )
+        from services.execution.lean_runtime.test_current_artifact_signal import _binding
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        art = copy.deepcopy(_sample_factor_rule_artifact())
+        art["artifact_id"] = "strat-tw-ungoverned-feature"
+        art["strategy_logic"]["inputs"][0]["dataset"] = "tw_ungoverned_dataset"
+        binding = _binding(art, binding_id="rb-factor-rule-ungoverned", include_market_input=False)
+        binding["symbol"] = "2330.TW"
+        binding["market_input"] = {
+            "symbol": "2330.TW",
+            "closes": [500.0, 505.0, 510.0, 515.0],
+            "features": {"rev_yoy": [10.0, 12.0, 11.0, 19.0]},
+            "source_ref": "source-ingest://normalized/tw-price/2330",
+            "observed_at": "2026-05-15T06:00:00Z",
+            "event_time": "2026-05-15T05:30:00Z",
+        }
+        with self.assertRaises(SignalDecisionUnavailable) as ctx:
+            CurrentArtifactStrategy(expression_layer=False)(binding, "2026-05-15T06:05:00Z")
+        self.assertEqual(ctx.exception.code, "feature_not_in_catalogue")

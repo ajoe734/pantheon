@@ -671,6 +671,18 @@ class CurrentArtifactStrategy:
                 f"binding {binding_id} StrategyArtifact validation failed: {exc}",
             ) from exc
         try:
+            from services.registry.factor_rule import (
+                FactorRuleValidationError,
+                assert_governed_feature_inputs,
+            )
+
+            assert_governed_feature_inputs(strategy_logic)
+        except FactorRuleValidationError as exc:
+            raise SignalDecisionUnavailable(
+                "feature_not_in_catalogue",
+                f"binding {binding_id} factor rule input rejected: {exc}",
+            ) from exc
+        try:
             expression_enabled = (
                 self._expression_on()
                 and strategy_artifact.get("expression_policy") is not None
