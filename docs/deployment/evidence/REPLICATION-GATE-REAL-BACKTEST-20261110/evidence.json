@@ -77,5 +77,14 @@
       "test_adapter.test_pit_history_feature_coverage_is_non_null_and_per_instrument (sparse last-10-rows feature; 2330 long + 2317 empty)"
     ],
     "validation": "unittest -k pit_history: 2 OK (pytest stubbed; pytest/vectorbt not installed in this env). Full test_adapter: 48 run, 2 errors only from 'vectorbt backend unavailable', 6 skipped. No full-suite pass claimed."
+  },
+  "review_fix_mixed_dated_undated_20261111": {
+    "finding": "Mixed dated/undated feature sequence left index-aligned scalars unsliced; future observation changed earlier action.",
+    "fix": "GovernedVectorbtInputAdapter.prepare rejects (fail closed) any sequence, including nested dataset.field mappings, that mixes dated and undated observations; fully timestamped PIT filtering unchanged.",
+    "tests": [
+      "test_mixed_dated_undated_feature_sequences_rejected",
+      "test_fully_dated_feature_sequences_accepted"
+    ],
+    "validation_note": "Local env lacks pytest/numpy/vectorbt; unittest run of test_adapter.py: new tests pass, 7 errors are all missing-dependency (numpy/vectorbt) and pre-existing environmental; CI is authoritative."
   }
 }
