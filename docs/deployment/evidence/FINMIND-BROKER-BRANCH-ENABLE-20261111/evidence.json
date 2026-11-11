@@ -50,5 +50,10 @@
     "p1_auth_readback": "fetch_finmind_source_records mints a short-lived HS256 reader JWT inside the source-ingest container from its own runtime verifier env (never on host argv/logs) and reads /api/source-ingest/source-records through the strict _source_read_tenant boundary; preflight/verifier consume the file via FINMIND_SOURCE_RECORDS_PATH; verifier fails closed, preflight proceeds with reason=coverage_readback_unavailable. Test runs the real fetcher against the production guard (401 unauthenticated, 200 minted).",
     "p1_drain_all_batches": "bounded controller concurrency=min(4,batches) and ticks=ceil(batches/concurrency) (<=24, else error) so 26/51/101-symbol universes drain every batch; sizing tested for 25/26/51/100/101/2400 symbols; completion still requires union refresh_coverage readback.",
     "tests": "scripts/test_deploy_nonprod_vm.py 113 passed 2 skipped; test_dev_tw_market_refresh.py + test_finmind_taiwan_connectors.py 96 passed"
+  },
+  "review_round_5_fixes": {
+    "p1_tenant_for_readback": "docker-compose.yml source-ingest now sets PANTHEON_TENANT_ID (chain to PANTHEON_BFF_TENANT_ID, default 'default') so the in-container coverage readback can mint a tenant-scoped JWT; test reads the compose service env",
+    "p1_controller_concurrency": "deploy_nonprod_vm.sh reads the real SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY from the recreated source-ingest container (default 2) and never exceeds it; extra batches drain via more bounded ticks (cap 24); test covers 51/101/1200 symbols with the cap stubbed to 2",
+    "tests": "test_deploy_nonprod_vm.py -k finmind 17 passed; test_compose_activation.py 2 passed"
   }
 }
