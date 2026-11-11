@@ -8,11 +8,13 @@
     {
       "failing_check": "Smoke acceptance (Branch CI Gate run 43044156059, job 130609818240)",
       "cause": "Infrastructure flake, not a code defect: step 'Provision real worker sandbox' hit the 5-minute action timeout after apt reported 'Some index files failed to download'. All other completed checks on the PR (Commit trailers, Runtime mirror guard, Python packaging provision, Service suites runtime/misc, Stage 0 discover/smoke) were green; no test assertion failed.",
-      "fix": "No product or integrator code change required. Re-run the failed Smoke acceptance job on PR #7177 once the run finishes."
+      "fix": "No product or integrator code change required. The failed Smoke acceptance (job 130609818240) was on stale source head 03155e4918b6; source task was reopened and PR #7177 was rewritten to head fe48b89fe8d57aeb64cc93ec796858f4f6bb8ecf (updated 2026-11-11T15:30:18Z), which started a fresh Branch CI Gate run 43049016263. Retrying the stale run is intentionally NOT done; the stale failure no longer applies to the PR head."
     }
   ],
   "verification": {
-    "method": "Inspected job log: only error annotation is the provisioning timeout; probe step never reached.",
-    "result": "no source change; rerun required"
+    "method": "gh pr view 7177 / gh run list inspected 2026-11-11 after source reopen.",
+    "result": "stale failure superseded by new source head; source PR #7177 OPEN at fe48b89fe8d5; run 43049016263: Commit trailers, Runtime mirror guard, Python packaging provision SUCCESS; Smoke acceptance and service suites QUEUED (not yet passed).",
+    "source_pr_head": "fe48b89fe8d57aeb64cc93ec796858f4f6bb8ecf",
+    "outcome": "no-longer-stranded for the stale ci-red cause; final merge gating is owned by the reopened source task and its fresh CI, not by this repair"
   }
 }
