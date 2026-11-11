@@ -20,8 +20,13 @@ from .common import (
 
 try:
     from services.control_plane.bff.models import ErrorCode
+    from services.control_plane.bff.core.owner_reads import (
+        request_read_cache,
+        submit_owner_read,
+    )
 except (ImportError, ValueError):
     from models import ErrorCode
+    from core.owner_reads import request_read_cache, submit_owner_read
 
 
 def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
@@ -40,6 +45,48 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         ]
         page, next_token = ctx.page_slice(kept, page_token, page_size)
         return page, next_token, len(kept), len(summaries) - len(kept)
+
+    def _prefetch_independent_owner_reads(
+        *,
+        norm_state: Optional[str],
+        norm_exclude_state: Optional[str],
+        persona_id: Optional[str],
+        hide_retired_personas: bool,
+        page_token: Optional[str],
+        page_size: int,
+    ) -> None:
+        """Overlap the independent owner reads with the Persona directory read.
+
+        The Persona directory, the registry summary page and the ranking
+        snapshot do not depend on each other, yet were awaited one after
+        another. Each prefetch runs in a copy of the request context and lands
+        in the per-request read cache, so the handler's own call below joins
+        the in-flight read (value or failure, under the request deadline). It
+        is only done when a request cache exists; without one a prefetch would
+        be a second, uncoordinated read.
+        """
+        service = ctx.service
+        if service is None or request_read_cache.get() is None:
+            return
+        from services.control_plane.bff.personas.service import _PERSONA_FLEET_READ_EXECUTOR
+
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            service.get_latest_ranking_snapshot,
+            warm_key="strategy_list_ranking_snapshot",
+        )
+        if not hide_retired_personas:
+            submit_owner_read(
+                _PERSONA_FLEET_READ_EXECUTOR,
+                lambda: service.list_strategy_summaries_page(
+                    state=norm_state,
+                    exclude_state=norm_exclude_state,
+                    persona_id=persona_id,
+                    page_token=page_token,
+                    page_size=page_size,
+                ),
+                warm_key="strategy_list_owner_page",
+            )
 
     @router.get("/bff/strategies")
     def bff_list_strategies(
@@ -73,6 +120,14 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         state_counts: Optional[Dict[str, int]] = None
         # One Persona directory read for the whole request: every row's
         # personaStates, operationalStatus and the hide filter come from it.
+        _prefetch_independent_owner_reads(
+            norm_state=norm_state,
+            norm_exclude_state=norm_exclude_state,
+            persona_id=persona_id,
+            hide_retired_personas=hide_retired_personas,
+            page_token=page_token,
+            page_size=page_size,
+        )
         persona_lookup = ctx.read_persona_state_lookup(identity, snapshot_at)
         # Full candidate set selected by state / exclude_state / persona_id,
         # before the hide filter. None until a path has loaded it.

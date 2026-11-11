@@ -867,3 +867,47 @@ def test_detail_failed_directory_read_is_unknown_but_detail_is_200(
     assert body["data"]["operationalStatus"] == "unknown"
     assert body["meta"]["surfaces"]["persona_states"]["status"] == "unavailable"
     assert world.directory_reads == [TENANT]
+
+
+def test_default_list_overlaps_persona_directory_and_registry_page_reads(
+    monkeypatch: pytest.MonkeyPatch, world: _World
+) -> None:
+    """The Persona directory and the registry summary page are independent
+    owner reads. They must overlap, each be read exactly once, and the page
+    must be unchanged."""
+    import threading
+    import time
+
+    delay = 0.4
+    persona_directory = world.persona_directory
+    spans: Dict[str, Tuple[float, float]] = {}
+    lock = threading.Lock()
+
+    def _slow_owner(url: str, **kwargs: Any) -> Any:
+        start = time.monotonic()
+        time.sleep(delay)
+        out = owner_http(url, **kwargs)
+        with lock:
+            spans.setdefault("registry", (start, time.monotonic()))
+        return out
+
+    def _slow_directory(*args: Any, **kwargs: Any) -> Any:
+        start = time.monotonic()
+        time.sleep(delay)
+        out = persona_directory(*args, **kwargs)
+        with lock:
+            spans["directory"] = (start, time.monotonic())
+        return out
+
+    monkeypatch.setattr(world, "persona_directory", _slow_directory)
+    app, _ = _build_app(monkeypatch, world)
+    owner_http = adapter_base.http_request_json
+    monkeypatch.setattr(adapter_base, "http_request_json", _slow_owner)
+    with TestClient(app) as c:
+        resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    first_page_reads = [c for c in world.owner_summary_calls if "page_size=20" in c[0] and "page_size=200" not in c[0]]
+    assert len(first_page_reads) == 1
+    assert len(world.directory_reads) == 1
+    (r0, r1), (d0, d1) = spans["registry"], spans["directory"]
+    assert max(r0, d0) < min(r1, d1), "registry page and persona directory reads did not overlap"
