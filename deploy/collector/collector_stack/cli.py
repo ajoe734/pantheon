@@ -162,12 +162,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.start_date or args.end_date or args.trading_days:
             if args.source not in BACKFILL_SOURCES:
                 parser.error(f"date range options are only supported for {sorted(BACKFILL_SOURCES)}")
-            collect_kwargs = {
-                "dates": resolve_dates(
+            try:
+                run_dates = resolve_dates(
                     start_date=args.start_date, end_date=args.end_date,
                     trading_days=args.trading_days, now_iso=utc_iso(),
                 )
-            }
+            except ValueError as exc:
+                parser.error(str(exc))
+            cap = config.get_source(args.source).max_requests_per_run
+            if len(run_dates) > cap:
+                parser.error(
+                    f"{len(run_dates)} trading dates exceed max_requests_per_run={cap} for a single run; "
+                    "no request was made. Use the resumable `backfill` command (per-date bundles, "
+                    "ledger-based resume) for large ranges."
+                )
+            collect_kwargs = {"dates": run_dates}
         outcome = runner.run_source(args.source, run_id=run_id, collect_kwargs=collect_kwargs)
         print(
             json.dumps(

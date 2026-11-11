@@ -13,7 +13,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 from .fetchers import FetchAccessBlockedError, FetchBackendUnavailableError
 from .runner import CollectorRunner, SourcePausedError
-from .spiders import EXCHANGE_TRADING_DAYS_PER_YEAR, latest_published_trading_date
+from .spiders import EXCHANGE_TRADING_DAYS_PER_YEAR, TW_EXCHANGE_HOLIDAYS, latest_published_trading_date
 
 BACKFILL_SOURCES = frozenset(
     {
@@ -23,15 +23,6 @@ BACKFILL_SOURCES = frozenset(
     }
 )
 TWO_YEARS_DAYS = 731
-
-def _load_builtin_holidays() -> frozenset[str]:
-    raw = json.loads((Path(__file__).with_name("tw_exchange_holidays.json")).read_text(encoding="utf-8"))
-    return frozenset(raw["holidays"])
-
-
-# Only certain closures are listed (see the JSON note); unlisted ones are handled by the "no data" response.
-TW_EXCHANGE_HOLIDAYS: frozenset[str] = _load_builtin_holidays()
-
 
 def load_extra_holidays(path: str | Path | None) -> frozenset[str]:
     """Extra closure dates from a JSON list file (typhoon days, newly announced holidays)."""

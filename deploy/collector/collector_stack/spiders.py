@@ -6,7 +6,8 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Any, Callable, Collection, Mapping, Sequence
 from urllib.parse import parse_qs, quote, urlparse
 
 from .real_parsers import (
@@ -543,12 +544,23 @@ def estimate_two_year_backfill_requests(
     }
 
 
-def recent_weekday_dates(reference_iso: str, *, count: int) -> list[str]:
-    """Most recent `count` weekday dates (YYYY-MM-DD), newest first, derived from the run time."""
+def _load_builtin_holidays() -> frozenset[str]:
+    raw = json.loads((Path(__file__).with_name("tw_exchange_holidays.json")).read_text(encoding="utf-8"))
+    return frozenset(raw["holidays"])
+
+
+# Only certain closures are listed (see the JSON note); unlisted ones are handled by the "no data" response.
+TW_EXCHANGE_HOLIDAYS: frozenset[str] = _load_builtin_holidays()
+
+
+def recent_weekday_dates(
+    reference_iso: str, *, count: int, holidays: Collection[str] = TW_EXCHANGE_HOLIDAYS
+) -> list[str]:
+    """Most recent `count` trading dates (weekdays minus built-in closures), newest first."""
     day = datetime.strptime(reference_iso[:10], "%Y-%m-%d").date()
     out: list[str] = []
     while len(out) < count:
-        if day.weekday() < 5:
+        if day.weekday() < 5 and day.isoformat() not in holidays:
             out.append(day.isoformat())
         day -= timedelta(days=1)
     return out
@@ -558,8 +570,8 @@ TAIWAN_UTC_OFFSET_HOURS = 8
 T86_PUBLISH_HOUR_TW = 15
 
 
-def latest_published_trading_date(reference_iso: str) -> str:
-    """Latest weekday whose TWSE daily data is published: before 15:00 Taiwan time that is the previous weekday."""
+def latest_published_trading_date(reference_iso: str, *, holidays: Collection[str] = TW_EXCHANGE_HOLIDAYS) -> str:
+    """Latest non-holiday weekday whose TWSE daily data is published: before 15:00 Taiwan time that is the previous weekday."""
     ref = datetime.fromisoformat(reference_iso.replace("Z", "+00:00"))
     if ref.tzinfo is None:
         ref = ref.replace(tzinfo=timezone.utc)
@@ -567,7 +579,7 @@ def latest_published_trading_date(reference_iso: str) -> str:
     day = local.date()
     if local.hour < T86_PUBLISH_HOUR_TW:
         day -= timedelta(days=1)
-    while day.weekday() >= 5:
+    while day.weekday() >= 5 or day.isoformat() in holidays:
         day -= timedelta(days=1)
     return day.isoformat()
 

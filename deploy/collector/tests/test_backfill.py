@@ -124,3 +124,32 @@ def test_daily_run_fetches_only_newest_published_trading_day(fixtures_dir: Path)
     )
     spider.collect(fetched_at="2026-11-11T02:00:00Z")  # 10:00 Taipei, 11-10 is newest published
     assert len(transport.calls) == 1 and "date=20261110" in transport.calls[0]["url"]
+
+
+def test_daily_default_date_skips_exchange_closures_for_all_sources(fixtures_dir: Path) -> None:
+    from collector_stack.spiders import latest_published_trading_date
+
+    # 2026-02-23 10:00 Taipei: Fri 02-20 .. Thu 02-12 are closures, so newest published day is 02-11.
+    assert latest_published_trading_date("2026-02-23T02:00:00Z") == "2026-02-11"
+    transport = _transport(
+        fixtures_dir, "twse_mi_index_20261110.json",
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX", compact=True,
+    )
+    spider = TwseDailyPriceHistorySpider(
+        load_collector_config(DEFAULT_POLICY_PATH).get_source(TWSE), transport=transport,
+        sleep_fn=lambda _s: None,
+    )
+    spider.collect(fetched_at="2026-02-23T02:00:00Z")
+    assert len(transport.calls) == 1 and "date=20260211" in transport.calls[0]["url"]
+
+
+def test_run_rejects_oversized_range_before_any_request(tmp_path: Path, capsys) -> None:
+    salt = tmp_path / "salt"
+    salt.write_text("x" * 64, encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cli_main([
+            "--root-dir", str(tmp_path), "--salt-file", str(salt), "run", "--source", TWSE,
+            "--start-date", "2024-11-10", "--end-date", "2026-11-10",
+        ])
+    err = capsys.readouterr().err
+    assert "backfill" in err and "no request was made" in err
