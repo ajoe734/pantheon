@@ -65,6 +65,26 @@ class TestGovernedVectorbtInputAdapter(unittest.TestCase):
         self.assertIn("BBB", ds.instruments)
         self.assertEqual(ds.total_bars, 35 * 2)
 
+    def test_mixed_dated_undated_feature_sequences_rejected(self) -> None:
+        n = 35
+        mixed = [{"value": 0, "event_time": "2022-12-01"}] + [float(i % 4) for i in range(1, n)]
+        for feats in (
+            {"rev_yoy": mixed},
+            {"rev": {"yoy": mixed}},
+            {"rev_yoy": [{"value": 0, "event_time": "2022-12-01"}, {"value": 1}]},
+        ):
+            bad = copy.deepcopy(MINIMAL_DATASET)
+            bad["features_by_instrument"] = {"AAA": feats}
+            with self.assertRaisesRegex(VectorbtWorkflowError, "mixes dated and undated"):
+                GovernedVectorbtInputAdapter().prepare(bad)
+
+    def test_fully_dated_feature_sequences_accepted(self) -> None:
+        ok = copy.deepcopy(MINIMAL_DATASET)
+        ok["features_by_instrument"] = {
+            "AAA": {"rev_yoy": [{"value": 1, "event_time": "2022-12-01"}]}
+        }
+        GovernedVectorbtInputAdapter().prepare(ok)
+
     def test_bars_per_instrument_counted_correctly(self) -> None:
         ds = GovernedVectorbtInputAdapter().prepare(MINIMAL_DATASET)
         self.assertEqual(ds.bars_per_instrument["AAA"], 35)

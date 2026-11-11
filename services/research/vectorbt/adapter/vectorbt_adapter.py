@@ -233,10 +233,12 @@ class GovernedVectorbtInputAdapter:
             if isinstance(raw_dataset_features, Mapping):
                 if inst in raw_dataset_features and isinstance(raw_dataset_features[inst], Mapping):
                     for fk, fv in raw_dataset_features[inst].items():
+                        _reject_mixed_dated_undated(fv, str(fk))
                         inst_features[str(fk)] = fv
                 else:
                     for fk, fv in raw_dataset_features.items():
                         if fk not in instruments:
+                            _reject_mixed_dated_undated(fv, str(fk))
                             inst_features[str(fk)] = fv
             features_by_instrument[inst] = inst_features
 
@@ -697,6 +699,27 @@ def _is_undated_aligned_observation(obs: Any) -> bool:
             obs.get(k) is not None for k in ("event_time", "date", "as_of", "available_time")
         )
     return False
+
+
+def _is_dated_observation(obs: Any) -> bool:
+    return isinstance(obs, Mapping) and any(
+        obs.get(k) is not None for k in ("event_time", "date", "as_of", "available_time")
+    )
+
+
+def _reject_mixed_dated_undated(value: Any, path: str) -> None:
+    """Reject sequences mixing dated and undated observations (availability is ambiguous)."""
+    if isinstance(value, Mapping):
+        for k, v in value.items():
+            _reject_mixed_dated_undated(v, f"{path}.{k}")
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        if any(_is_dated_observation(x) for x in value) and any(
+            _is_undated_aligned_observation(x) for x in value
+        ):
+            raise VectorbtWorkflowError(
+                f"feature {path} mixes dated and undated observations; "
+                "point-in-time availability is ambiguous"
+            )
 
 
 def _slice_aligned_feature(value: Any, total_len: int, start: int, end: int) -> Any:
