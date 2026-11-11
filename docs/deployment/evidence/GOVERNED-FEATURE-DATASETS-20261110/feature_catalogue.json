@@ -1,0 +1,472 @@
+{
+  "datasets": [
+    {
+      "dataset": "tpex_institutional_flows",
+      "default_availability_lag_days": 0,
+      "description": "Daily three-institution net shares (TPEx only)",
+      "event_time_key": "date",
+      "fields": [
+        {
+          "availability_lag_days": 0,
+          "description": "Dealer net shares",
+          "dtype": "float",
+          "field": "dealer_net_shares",
+          "source_field": "dealer_net",
+          "unit": "shares"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Foreign investor net shares",
+          "dtype": "float",
+          "field": "foreign_net_shares",
+          "source_field": "foreign_net",
+          "unit": "shares"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "TPEx total 3-institution net shares",
+          "dtype": "float",
+          "field": "total_inst_net_shares",
+          "source_field": "total_net",
+          "unit": "shares"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Investment trust net shares",
+          "dtype": "float",
+          "field": "trust_net_shares",
+          "source_field": "investment_trust_net",
+          "unit": "shares"
+        }
+      ],
+      "granularity": "daily",
+      "key_kind": "symbol",
+      "normalized_dataset": "tw_institutional_flow",
+      "sources": [
+        "tpex:tpex_3insti_daily_trading"
+      ],
+      "venue": "TPEx"
+    },
+    {
+      "dataset": "tw_community_attention",
+      "default_availability_lag_days": 0,
+      "description": "Daily per-symbol community attention and bull/bear features",
+      "event_time_key": "event_time",
+      "fields": [
+        {
+          "availability_lag_days": 0,
+          "description": "Community attention volume z-score vs prior 20 days",
+          "dtype": "float",
+          "field": "attention_zscore",
+          "source_field": "attention_zscore",
+          "unit": "zscore"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Community (bull+1)/(bear+1) mention ratio",
+          "dtype": "float",
+          "field": "bull_bear_ratio",
+          "source_field": "bull_bear_ratio",
+          "unit": "ratio"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Aggregated community post volume",
+          "dtype": "float",
+          "field": "post_volume",
+          "source_field": "post_volume",
+          "unit": "posts"
+        }
+      ],
+      "granularity": "daily",
+      "key_kind": "symbol",
+      "normalized_dataset": "tw_community_daily",
+      "sources": [
+        "collector bundle: community forum posts (design §8.5)"
+      ]
+    },
+    {
+      "dataset": "tw_institutional_flows",
+      "default_availability_lag_days": 0,
+      "description": "Daily three-institution net shares (TWSE and TPEx)",
+      "event_time_key": "date",
+      "fields": [
+        {
+          "availability_lag_days": 0,
+          "description": "Dealer net shares",
+          "dtype": "float",
+          "field": "dealer_net_shares",
+          "source_field": "dealer_net",
+          "unit": "shares"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Foreign investor net shares",
+          "dtype": "float",
+          "field": "foreign_net_shares",
+          "source_field": "foreign_net",
+          "unit": "shares"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Investment trust net shares",
+          "dtype": "float",
+          "field": "trust_net_shares",
+          "source_field": "investment_trust_net",
+          "unit": "shares"
+        }
+      ],
+      "granularity": "daily",
+      "key_kind": "symbol",
+      "normalized_dataset": "tw_institutional_flow",
+      "sources": [
+        "twse:fund/T86 via collector bundle",
+        "tpex:tpex_3insti_daily_trading"
+      ]
+    },
+    {
+      "dataset": "tw_macro_cbc",
+      "default_availability_lag_days": 0,
+      "description": "Central bank policy rate and monetary aggregates",
+      "event_time_key": "event_time",
+      "fields": [
+        {
+          "availability_lag_days": 25,
+          "description": "CBC M1B money supply YoY",
+          "dtype": "float",
+          "field": "m1b_yoy",
+          "source_field": "m1b_yoy",
+          "unit": "percent"
+        },
+        {
+          "availability_lag_days": 25,
+          "description": "CBC M2 money supply YoY",
+          "dtype": "float",
+          "field": "m2_yoy",
+          "source_field": "m2_yoy",
+          "unit": "percent"
+        },
+        {
+          "availability_lag_days": 1,
+          "description": "CBC policy discount rate",
+          "dtype": "float",
+          "field": "policy_rate",
+          "source_field": "policy_rate",
+          "unit": "percent"
+        }
+      ],
+      "granularity": "monthly",
+      "key_kind": "series",
+      "normalized_dataset": "tw_macro_series",
+      "sources": [
+        "collector bundle: CBC (Central Bank of the Republic of China)"
+      ]
+    },
+    {
+      "dataset": "tw_macro_dgbas",
+      "default_availability_lag_days": 0,
+      "description": "CPI, GDP and export orders",
+      "event_time_key": "event_time",
+      "fields": [
+        {
+          "availability_lag_days": 10,
+          "description": "DGBAS consumer price index YoY",
+          "dtype": "float",
+          "field": "cpi_yoy",
+          "source_field": "cpi_yoy",
+          "unit": "percent"
+        },
+        {
+          "availability_lag_days": 20,
+          "description": "MOEA/DGBAS export orders YoY",
+          "dtype": "float",
+          "field": "export_orders_yoy",
+          "source_field": "export_orders_yoy",
+          "unit": "percent"
+        },
+        {
+          "availability_lag_days": 30,
+          "description": "DGBAS quarterly GDP YoY",
+          "dtype": "float",
+          "field": "gdp_yoy",
+          "source_field": "gdp_yoy",
+          "unit": "percent"
+        }
+      ],
+      "granularity": "monthly",
+      "key_kind": "series",
+      "normalized_dataset": "tw_macro_series",
+      "sources": [
+        "collector bundle: DGBAS / MOEA"
+      ]
+    },
+    {
+      "dataset": "tw_macro_ndc",
+      "default_availability_lag_days": 0,
+      "description": "Business-cycle monitoring score and composite indexes",
+      "event_time_key": "event_time",
+      "fields": [
+        {
+          "availability_lag_days": 28,
+          "description": "NDC composite coincident index",
+          "dtype": "float",
+          "field": "coincident_index",
+          "source_field": "coincident_index",
+          "unit": "index"
+        },
+        {
+          "availability_lag_days": 28,
+          "description": "NDC composite leading index",
+          "dtype": "float",
+          "field": "leading_index",
+          "source_field": "leading_index",
+          "unit": "index"
+        },
+        {
+          "availability_lag_days": 28,
+          "description": "NDC business cycle monitoring score",
+          "dtype": "float",
+          "field": "monitoring_score",
+          "source_field": "monitoring_score",
+          "unit": "score"
+        }
+      ],
+      "granularity": "monthly",
+      "key_kind": "series",
+      "normalized_dataset": "tw_macro_series",
+      "sources": [
+        "collector bundle: NDC (National Development Council)"
+      ]
+    },
+    {
+      "dataset": "tw_margin_transactions",
+      "default_availability_lag_days": 0,
+      "description": "Daily margin purchase and short sale balances",
+      "event_time_key": "date",
+      "fields": [
+        {
+          "availability_lag_days": 0,
+          "description": "Daily margin purchase balance",
+          "dtype": "float",
+          "field": "margin_balance",
+          "source_field": "margin_balance",
+          "unit": "shares"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Margin balance minus previous-day balance",
+          "dtype": "float",
+          "field": "margin_change",
+          "source_field": "margin_change",
+          "unit": "shares"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Daily short sale balance",
+          "dtype": "float",
+          "field": "short_balance",
+          "source_field": "short_balance",
+          "unit": "shares"
+        }
+      ],
+      "granularity": "daily",
+      "key_kind": "symbol",
+      "normalized_dataset": "tw_margin_short_balance",
+      "sources": [
+        "twse:exchangeReport/MI_MARGN",
+        "tpex:tpex_mainboard_margin_balance"
+      ]
+    },
+    {
+      "dataset": "tw_monthly_revenue",
+      "default_availability_lag_days": 10,
+      "description": "Listed/OTC company monthly revenue (MOPS filing deadline: day 10 of next month)",
+      "event_time_key": "event_time",
+      "fields": [
+        {
+          "availability_lag_days": 10,
+          "description": "Monthly revenue MoM (%)",
+          "dtype": "float",
+          "field": "mom",
+          "source_field": "mom",
+          "unit": "percent"
+        },
+        {
+          "availability_lag_days": 10,
+          "description": "Monthly revenue",
+          "dtype": "float",
+          "field": "revenue",
+          "source_field": "revenue",
+          "unit": "TWD_thousand"
+        },
+        {
+          "availability_lag_days": 10,
+          "description": "Monthly revenue YoY (%)",
+          "dtype": "float",
+          "field": "yoy",
+          "source_field": "yoy",
+          "unit": "percent"
+        }
+      ],
+      "granularity": "monthly",
+      "key_kind": "symbol",
+      "normalized_dataset": "tw_monthly_revenue",
+      "sources": [
+        "twse:opendata/t187ap05_L",
+        "tpex:mopsfin_t187ap05_O"
+      ]
+    },
+    {
+      "dataset": "tw_price_daily",
+      "default_availability_lag_days": 0,
+      "description": "Daily OHLCV bars for TWSE/TPEx equities",
+      "event_time_key": "date",
+      "fields": [
+        {
+          "availability_lag_days": 0,
+          "description": "Daily close",
+          "dtype": "float",
+          "field": "close",
+          "source_field": "close",
+          "unit": "TWD"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Daily high",
+          "dtype": "float",
+          "field": "high",
+          "source_field": "high",
+          "unit": "TWD"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Daily low",
+          "dtype": "float",
+          "field": "low",
+          "source_field": "low",
+          "unit": "TWD"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Daily open",
+          "dtype": "float",
+          "field": "open",
+          "source_field": "open",
+          "unit": "TWD"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Daily volume",
+          "dtype": "float",
+          "field": "volume",
+          "source_field": "volume",
+          "unit": "shares"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Daily volume weighted average price",
+          "dtype": "float",
+          "field": "vwap",
+          "source_field": "vwap",
+          "unit": "TWD"
+        }
+      ],
+      "granularity": "daily",
+      "key_kind": "symbol",
+      "normalized_dataset": "tw_price_daily",
+      "sources": [
+        "twse:exchangeReport/STOCK_DAY_ALL",
+        "tpex:tpex_mainboard_daily_close_quotes"
+      ]
+    },
+    {
+      "dataset": "tw_quarterly_statements",
+      "default_availability_lag_days": 45,
+      "description": "Quarterly income statement and balance sheet ratios (Q1-Q3 deadline +45d, Q4 +90d)",
+      "event_time_key": "event_time",
+      "fields": [
+        {
+          "availability_lag_days": 45,
+          "description": "Quarterly basic EPS",
+          "dtype": "float",
+          "field": "eps",
+          "source_field": "eps",
+          "unit": "TWD"
+        },
+        {
+          "availability_lag_days": 45,
+          "description": "Quarterly gross profit / revenue",
+          "dtype": "float",
+          "field": "gross_margin",
+          "source_field": "gross_margin",
+          "unit": "ratio"
+        },
+        {
+          "availability_lag_days": 45,
+          "description": "Quarterly operating income / revenue",
+          "dtype": "float",
+          "field": "operating_margin",
+          "source_field": "operating_margin",
+          "unit": "ratio"
+        },
+        {
+          "availability_lag_days": 45,
+          "description": "Quarterly net income attributable to parent / parent equity (not annualised)",
+          "dtype": "float",
+          "field": "roe",
+          "source_field": "roe",
+          "unit": "ratio"
+        }
+      ],
+      "granularity": "quarterly",
+      "key_kind": "symbol",
+      "normalized_dataset": "tw_financial_statement",
+      "sources": [
+        "twse:opendata/t187ap06_L_ci",
+        "twse:opendata/t187ap07_L_ci",
+        "tpex:mopsfin_t187ap06_O_ci",
+        "tpex:mopsfin_t187ap07_O_ci"
+      ]
+    },
+    {
+      "dataset": "tw_valuation_bwibbu",
+      "default_availability_lag_days": 0,
+      "description": "Daily P/E, P/B and dividend yield",
+      "event_time_key": "event_time",
+      "fields": [
+        {
+          "availability_lag_days": 0,
+          "description": "Daily dividend yield (%)",
+          "dtype": "float",
+          "field": "dividend_yield",
+          "source_field": "dividend_yield",
+          "unit": "percent"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Daily P/B ratio",
+          "dtype": "float",
+          "field": "pb_ratio",
+          "source_field": "pb_ratio",
+          "unit": "ratio"
+        },
+        {
+          "availability_lag_days": 0,
+          "description": "Daily P/E ratio",
+          "dtype": "float",
+          "field": "pe_ratio",
+          "source_field": "pe_ratio",
+          "unit": "ratio"
+        }
+      ],
+      "granularity": "daily",
+      "key_kind": "symbol",
+      "normalized_dataset": "tw_valuation_bwibbu",
+      "sources": [
+        "twse:exchangeReport/BWIBBU_ALL",
+        "tpex:tpex_mainboard_peratio_analysis"
+      ]
+    }
+  ],
+  "schema_version": "feature_catalogue.v1"
+}

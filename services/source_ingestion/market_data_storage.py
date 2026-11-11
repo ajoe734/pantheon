@@ -387,3 +387,14 @@ def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _
         "daily_bar_symbol_count": len(bar_symbols),
         "datasets": datasets,
     }
+
+
+if __name__ == "__main__":  # pragma: no cover - operator CLI
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Measure stored feature history depth for a market data store root.")
+    parser.add_argument("root", help="market_data_store root containing normalized/<dataset>/date=*/")
+    args = parser.parse_args()
+    json.dump(measure_stored_history_depth(args.root), sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+    sys.stdout.write("\n")

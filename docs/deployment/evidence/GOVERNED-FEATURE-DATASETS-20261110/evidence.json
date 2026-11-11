@@ -1,0 +1,106 @@
+{
+  "acceptance": {
+    "1_twse_openapi_fundamentals": {
+      "datasets": [
+        "tw_monthly_revenue",
+        "tw_financial_statement",
+        "tw_valuation_bwibbu",
+        "tw_margin_short_balance (pre-existing)"
+      ],
+      "endpoints": "OpenAPI only (openapi.twse.com.tw/v1, www.tpex.org.tw/openapi/v1); website endpoints rejected by _assert_twse_tpex_openapi_only_url",
+      "entrypoints": [
+        "normalize_monthly_revenue_rows",
+        "normalize_financial_statement_rows",
+        "normalize_valuation_rows",
+        "fetch_fundamental_rows",
+        "fundamental_rows_to_records"
+      ],
+      "live_pull": "not executed from this worktree (no egress/storage run); verified with fixture payloads",
+      "status": "implemented_unit_verified",
+      "times": "event_time, available_time (declared-lag deadline at 18:00 Asia/Taipei), ingest_time, availability_lag_days on every row"
+    },
+    "2_macro_and_community": {
+      "community": "community_daily_feature_rows (post_volume, attention_zscore, bull_bear_ratio; available after Taipei day close)",
+      "macro": "macro_feature_rows (CBC/NDC/DGBAS series via collector bundles, unknown series rejected)",
+      "status": "implemented_unit_verified",
+      "training_path": "services/training-session/source_dataset_authority.py::feature_observations_from_wrappers"
+    },
+    "3_feature_catalogue": {
+      "catalogue": "services/source_ingestion/feature_catalogue.py",
+      "dataset_count": 11,
+      "document": "feature_catalogue.json",
+      "evaluator": "factor_rule lag floors pinned to catalogue by test_factor_rule_catalogue_lags_match_source_ingestion_catalogue",
+      "field_count": 38,
+      "paper_producer": "paper_signal_producer rejects factor-rule inputs outside the catalogue (feature_not_in_catalogue)",
+      "schema": "docs/contracts/feature_catalogue.v1.schema.json",
+      "status": "implemented_unit_verified"
+    },
+    "4_history_depth": {
+      "fixture_demonstration": {
+        "daily_bar_dataset": "tw_price_daily",
+        "daily_bar_symbol_count": 2,
+        "datasets": {
+          "tw_monthly_revenue": {
+            "daily_bar_symbols_without_history": 1,
+            "distinct_event_dates": 3,
+            "entity_count": 1,
+            "first_event_date": "2026-08-31",
+            "last_event_date": "2026-10-31",
+            "per_daily_bar_symbol": {
+              "1101.TWSE": {
+                "distinct_event_dates": 0,
+                "first_event_date": null,
+                "last_event_date": null,
+                "span_days": 0
+              },
+              "2330.TWSE": {
+                "distinct_event_dates": 3,
+                "first_event_date": "2026-08-31",
+                "last_event_date": "2026-10-31",
+                "span_days": 62
+              }
+            },
+            "row_count": 3,
+            "rows_without_entity_or_event_time": 0,
+            "span_days": 62
+          },
+          "tw_price_daily": {
+            "distinct_event_dates": 1,
+            "entity_count": 2,
+            "first_event_date": "2026-11-04",
+            "last_event_date": "2026-11-04",
+            "per_entity": {
+              "1101.TWSE": {
+                "distinct_event_dates": 1,
+                "first_event_date": "2026-11-04",
+                "last_event_date": "2026-11-04",
+                "span_days": 1
+              },
+              "2330.TWSE": {
+                "distinct_event_dates": 1,
+                "first_event_date": "2026-11-04",
+                "last_event_date": "2026-11-04",
+                "span_days": 1
+              }
+            },
+            "row_count": 2,
+            "rows_without_entity_or_event_time": 0,
+            "span_days": 1
+          }
+        },
+        "schema_version": "feature_history_depth.v1",
+        "storage_root": "<fixture>"
+      },
+      "note": "No hosted market_data_store was reachable from this worker worktree, so no real per-dataset/per-symbol depth is reported here. The block below is a fixture demonstration of the report shape only and is not product data.",
+      "status": "tooling_done_real_measurement_pending",
+      "tool": "python3 -m services.source_ingestion.market_data_storage <market_data_store root>"
+    },
+    "5_release_calendar": {
+      "file": "services/source_ingestion/calendars/tw_macro_release_calendar_2026.json",
+      "note": "Sources cited (CBC, NDC, DGBAS). Exact dates are confirmed only where agency-announced (CBC board meetings, two NDC releases); other entries are rule-only and must be promoted to confirmed from the DGBAS advance release calendar by the yearly manual review.",
+      "status": "implemented_partial_dates"
+    }
+  },
+  "schema_version": "governed_feature_datasets_evidence.v1",
+  "task_id": "GOVERNED-FEATURE-DATASETS-20261110"
+}
