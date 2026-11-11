@@ -133,14 +133,14 @@ class TestPromotionGate(unittest.TestCase):
         )
         from services.research.replication.gate_schema import ReplicationRequest
         # Recorded output of run_replication_backtest_protocol (real vectorbt
-        # run, kept with the task evidence); the registry suite must not
+        # run, kept as a test fixture); the registry suite must not
         # require the vectorbt backend.
         fixture = (
             Path(__file__).resolve().parents[3]
-            / "docs"
-            / "deployment"
-            / "evidence"
-            / "REPLICATION-GATE-REAL-BACKTEST-20261110"
+            / "services"
+            / "registry"
+            / "promotion"
+            / "fixtures"
             / "recorded_backtest_tw_2330.json"
         )
         bt_eval = json.loads(fixture.read_text(encoding="utf-8"))
