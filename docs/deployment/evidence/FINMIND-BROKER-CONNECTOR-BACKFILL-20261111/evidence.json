@@ -22,8 +22,8 @@
     "validated_source_head": "see handoff commit (parquet fix commit)"
   },
   "dependency": {
-    "file": "services/source_ingestion/requirements-finmind-backfill.txt",
-    "install": "pip install -r services/source_ingestion/requirements-finmind-backfill.txt",
+    "file": "docs/deployment/evidence/FINMIND-BROKER-CONNECTOR-BACKFILL-20261111/requirements-finmind-backfill.txt",
+    "install": "pip install -r docs/deployment/evidence/FINMIND-BROKER-CONNECTOR-BACKFILL-20261111/requirements-finmind-backfill.txt",
     "preflight": "run_backfill returns status=dependency_unavailable before any fetch if pyarrow missing (test_missing_pyarrow_fails_before_any_fetch)"
   }
 }

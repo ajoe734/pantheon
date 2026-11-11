@@ -47,7 +47,7 @@ RowsLoader = Callable[[Sequence[Mapping[str, Any]]], Sequence[Mapping[str, Any]]
 
 
 PARQUET_MAGIC = b"PAR1"
-PYARROW_REQUIREMENTS = "services/source_ingestion/requirements-finmind-backfill.txt"
+PYARROW_REQUIREMENTS = "docs/deployment/evidence/FINMIND-BROKER-CONNECTOR-BACKFILL-20261111/requirements-finmind-backfill.txt"
 
 
 class ParquetDependencyError(RuntimeError):
