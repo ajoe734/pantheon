@@ -169,3 +169,25 @@ All spiders, pollers, manifest hashers, HMAC scrubbers, start-up safety checks, 
 PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
 "$PANTHEON_PY" -m pytest -q deploy/collector
 ```
+
+## Price-history backfill (TWSE / TPEx / T86)
+
+Daily timers fetch only the newest published trading day. History is loaded once with the
+`backfill` command: one request per trading day (per-date all-stock page, one connection,
+>= `min_interval_seconds` = 5 s apart), one bundle per date (`run_id=backfill-<date>`), each row's
+`published_at` is its own trade date so the bundle connector ingests it as point-in-time history.
+
+```
+docker compose run --rm collector-worker --policy-file /app/fetch-policy.json --root-dir /data \
+  backfill --source collector-tw-twse-price-history --two-years --dry-run   # request count + wall-clock
+docker compose run --rm collector-worker ... backfill --source collector-tw-twse-price-history --two-years
+# also: collector-tw-tpex-price-history, collector-tw-twse-t86
+# ranges: --start-date YYYY-MM-DD [--end-date YYYY-MM-DD] | --trading-days N
+```
+
+- Known closures (`collector_stack/tw_exchange_holidays.json`, extend with `--holidays-file`) are never requested.
+  An unlisted closure costs one request; the exchange's "no data" answer is recorded as a holiday.
+- Resume: completed dates are recorded in `/data/state/backfill/<source>.json`; re-running the same command
+  skips them. A block (429/403) or fetch failure stops the run (exit 2) and the date is retried next time.
+- `run --source ... --start-date/--end-date/--trading-days` passes the same dates to one ordinary run bundle.
+- Two years ≈ 487 requests per source ≈ 41 minutes; all three sources ≈ 123 minutes (run sequentially).

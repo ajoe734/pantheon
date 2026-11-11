@@ -6,7 +6,8 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Any, Callable, Collection, Mapping, Sequence
 from urllib.parse import parse_qs, quote, urlparse
 
 from .real_parsers import (
@@ -543,12 +544,23 @@ def estimate_two_year_backfill_requests(
     }
 
 
-def recent_weekday_dates(reference_iso: str, *, count: int) -> list[str]:
-    """Most recent `count` weekday dates (YYYY-MM-DD), newest first, derived from the run time."""
+def _load_builtin_holidays() -> frozenset[str]:
+    raw = json.loads((Path(__file__).with_name("tw_exchange_holidays.json")).read_text(encoding="utf-8"))
+    return frozenset(raw["holidays"])
+
+
+# Only certain closures are listed (see the JSON note); unlisted ones are handled by the "no data" response.
+TW_EXCHANGE_HOLIDAYS: frozenset[str] = _load_builtin_holidays()
+
+
+def recent_weekday_dates(
+    reference_iso: str, *, count: int, holidays: Collection[str] = TW_EXCHANGE_HOLIDAYS
+) -> list[str]:
+    """Most recent `count` trading dates (weekdays minus built-in closures), newest first."""
     day = datetime.strptime(reference_iso[:10], "%Y-%m-%d").date()
     out: list[str] = []
     while len(out) < count:
-        if day.weekday() < 5:
+        if day.weekday() < 5 and day.isoformat() not in holidays:
             out.append(day.isoformat())
         day -= timedelta(days=1)
     return out
@@ -558,8 +570,8 @@ TAIWAN_UTC_OFFSET_HOURS = 8
 T86_PUBLISH_HOUR_TW = 15
 
 
-def latest_published_trading_date(reference_iso: str) -> str:
-    """Latest weekday whose TWSE daily data is published: before 15:00 Taiwan time that is the previous weekday."""
+def latest_published_trading_date(reference_iso: str, *, holidays: Collection[str] = TW_EXCHANGE_HOLIDAYS) -> str:
+    """Latest non-holiday weekday whose TWSE daily data is published: before 15:00 Taiwan time that is the previous weekday."""
     ref = datetime.fromisoformat(reference_iso.replace("Z", "+00:00"))
     if ref.tzinfo is None:
         ref = ref.replace(tzinfo=timezone.utc)
@@ -567,9 +579,22 @@ def latest_published_trading_date(reference_iso: str) -> str:
     day = local.date()
     if local.hour < T86_PUBLISH_HOUR_TW:
         day -= timedelta(days=1)
-    while day.weekday() >= 5:
+    while day.weekday() >= 5 or day.isoformat() in holidays:
         day -= timedelta(days=1)
     return day.isoformat()
+
+
+def _payload_confirms_no_data(payload: Mapping[str, Any]) -> bool:
+    """True when an exchange page positively says there is no data for the date (holiday / closure)."""
+    stat = str(payload.get("stat") or "")
+    if "沒有符合條件" in stat or "no data" in stat.lower():
+        return True
+    if stat.lower() != "ok":
+        return False
+    tables = payload.get("tables")
+    if isinstance(tables, list):
+        return not any(isinstance(t, Mapping) and t.get("data") for t in tables)
+    return not payload.get("data")
 
 
 def _normalize_iso_date(raw_value: Any) -> str:
@@ -679,10 +704,14 @@ class TwseT86DailySpider:
         items: list[CollectedItem] = []
         seen_ids: set[str] = set()
 
+        empty_pages = 0
+        self.no_data_confirmed = False
         for target_url in target_urls:
             self.validate_all_stock_url(target_url)
             response = self.fetcher.fetch(target_url)
             payload = json.loads(response.text)
+            if isinstance(payload, Mapping) and _payload_confirms_no_data(payload):
+                empty_pages += 1
             if not isinstance(payload, Mapping):
                 continue
             query_dates = parse_qs(urlparse(target_url).query).get("date") or []
@@ -816,6 +845,7 @@ class TwseT86DailySpider:
                         },
                     )
                 )
+        self.no_data_confirmed = bool(target_urls) and empty_pages == len(target_urls) and not items
         return items
 
 
@@ -823,7 +853,7 @@ class TwseDailyPriceHistorySpider:
     """Scrapling HTTP spider for TWSE daily price history using per-date all-stock MI_INDEX pages (SD §5.1, O-1)."""
 
     source_id = "collector-tw-twse-price-history"
-    DEFAULT_RECENT_DATES = 2
+    DEFAULT_RECENT_DATES = 1
 
     def __init__(
         self,
@@ -871,7 +901,8 @@ class TwseDailyPriceHistorySpider:
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
         if dates is None:
-            dates = recent_weekday_dates(fetched_iso, count=self.DEFAULT_RECENT_DATES)
+            latest = latest_published_trading_date(fetched_iso)
+            dates = recent_weekday_dates(latest, count=self.DEFAULT_RECENT_DATES)
         target_urls = list(urls) if urls is not None else [self.build_date_url(d) for d in dates]
         allowed_symbols = (
             {str(s).strip() for s in symbols_filter if str(s).strip()}
@@ -881,10 +912,14 @@ class TwseDailyPriceHistorySpider:
         items: list[CollectedItem] = []
         seen_ids: set[str] = set()
 
+        empty_pages = 0
+        self.no_data_confirmed = False
         for target_url in target_urls:
             self.validate_all_stock_url(target_url)
             response = self.fetcher.fetch(target_url)
             payload = json.loads(response.text)
+            if isinstance(payload, Mapping) and _payload_confirms_no_data(payload):
+                empty_pages += 1
             if not isinstance(payload, Mapping):
                 continue
             query_dates = parse_qs(urlparse(target_url).query).get("date") or []
@@ -1065,6 +1100,7 @@ class TwseDailyPriceHistorySpider:
                             },
                         )
                     )
+        self.no_data_confirmed = bool(target_urls) and empty_pages == len(target_urls) and not items
         return items
 
 
@@ -1072,7 +1108,7 @@ class TpexDailyPriceHistorySpider:
     """Scrapling HTTP spider for TPEx daily price history using per-date all-stock dailyQuotes pages (SD §5.1, O-1)."""
 
     source_id = "collector-tw-tpex-price-history"
-    DEFAULT_RECENT_DATES = 2
+    DEFAULT_RECENT_DATES = 1
 
     def __init__(
         self,
@@ -1120,7 +1156,8 @@ class TpexDailyPriceHistorySpider:
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
         if dates is None:
-            dates = recent_weekday_dates(fetched_iso, count=self.DEFAULT_RECENT_DATES)
+            latest = latest_published_trading_date(fetched_iso)
+            dates = recent_weekday_dates(latest, count=self.DEFAULT_RECENT_DATES)
         target_urls = list(urls) if urls is not None else [self.build_date_url(d) for d in dates]
         allowed_symbols = (
             {str(s).strip() for s in symbols_filter if str(s).strip()}
@@ -1130,10 +1167,14 @@ class TpexDailyPriceHistorySpider:
         items: list[CollectedItem] = []
         seen_ids: set[str] = set()
 
+        empty_pages = 0
+        self.no_data_confirmed = False
         for target_url in target_urls:
             self.validate_all_stock_url(target_url)
             response = self.fetcher.fetch(target_url)
             payload = json.loads(response.text)
+            if isinstance(payload, Mapping) and _payload_confirms_no_data(payload):
+                empty_pages += 1
             if not isinstance(payload, Mapping):
                 continue
             query_dates = parse_qs(urlparse(target_url).query).get("date") or []
@@ -1323,4 +1364,5 @@ class TpexDailyPriceHistorySpider:
                             },
                         )
                     )
+        self.no_data_confirmed = bool(target_urls) and empty_pages == len(target_urls) and not items
         return items
