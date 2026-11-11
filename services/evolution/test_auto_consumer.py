@@ -82,7 +82,13 @@ class Personas:
     def verify_freeze(self, did, pid, tenant):
         return self.own_freeze
 
-    def advance(self, pid, tenant, target, gov):
+    before_advance = None  # hook: simulate an external change between reads
+
+    def advance(self, pid, tenant, target, gov, expected_source=None):
+        if self.before_advance:
+            self.before_advance(self)
+        if expected_source is not None and self.state != expected_source:
+            raise RuntimeError(f"source changed to {self.state!r}")
         self.log.append((pid, target, gov))
         self.state = target
         return target
@@ -388,3 +394,18 @@ def test_missing_execution_approval_port_never_approves_research_work():
 def test_reviewed_research_decision_with_synthetic_binding_stays_with_the_operator():
     consumer, _ = _consumer([_decision(decision_state="reviewed", approval_decision_id="auto-gate-evo-auto-1")])
     assert not consumer.tick().approved and not consumer.decisions.calls
+
+
+def test_external_freeze_between_reads_is_not_retired_without_own_proof():
+    personas = Personas("paper_owner")
+    personas.own_freeze = False  # the freeze that appears is not this decision's
+
+    def external_freeze(p):
+        p.before_advance = None
+        p.state = "frozen"
+
+    personas.before_advance = external_freeze
+    consumer, sink = _consumer([_decision(action_type="retire", metadata={"discovery_auto_scope": True})], personas=personas)
+    report = consumer.tick()
+    assert not report.retired and "evo-auto-1" in report.errors
+    assert personas.log == [] and personas.state == "frozen"

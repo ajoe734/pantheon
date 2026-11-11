@@ -23,6 +23,7 @@ class FakeWorld:
                     or sub.get("to_state") != body["target_state"]:
                 return 403, {"detail": "approval does not verify"}
             self.persona["lifecycle_state"] = body["target_state"]
+            self.persona.setdefault("metadata", {})["last_lifecycle_governance_decision_id"] = body["governance_decision_id"]
             return 200, dict(self.persona)
         if path == "governance/approvals":
             if body["decision_id"] in self.approvals:
@@ -79,3 +80,11 @@ def test_wrong_tenant_and_same_identity_are_refused():
     with pytest.raises(ValueError):
         GovernedPersonaLifecycle(governance_url="g", persona_url="p", proposer_token=str, proposer_id="a",
                                  gate_token=str, gate_id="a", persona_token=str, evolution_decision_id=str)
+
+
+def test_changed_source_between_reads_refuses_to_mint_approval():
+    w = FakeWorld()
+    w.persona["lifecycle_state"] = "frozen"
+    with pytest.raises(GovernedLifecycleError):
+        _port(w).advance("p1", "t1", "retired", "x", expected_source="paper_owner")
+    assert not w.approvals

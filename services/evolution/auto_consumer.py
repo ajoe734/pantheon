@@ -75,7 +75,8 @@ class DecisionPort(Protocol):
 class PersonaLifecyclePort(Protocol):
     def get_state(self, persona_id: str, tenant_id: str) -> str: ...
 
-    def advance(self, persona_id: str, tenant_id: str, target_state: str, governance_decision_id: str) -> str: ...
+    def advance(self, persona_id: str, tenant_id: str, target_state: str, governance_decision_id: str,
+                expected_source: str | None = None) -> str: ...
 
     def verify_freeze(self, evolution_decision_id: str, persona_id: str, tenant_id: str) -> bool: ...
 
@@ -350,12 +351,16 @@ class AutoConsumer:
         if state not in ("paper_owner", "frozen", "retired"):
             raise RuntimeError(f"persona {persona_id} is {state!r}; only a paper-stage persona is retired automatically")
         if state == "paper_owner":
-            state = self.personas.advance(persona_id, tenant, "frozen", approval_id)
+            state = self.personas.advance(persona_id, tenant, "frozen", approval_id,
+                                          expected_source="paper_owner")
             steps.append("frozen")
         if state == "frozen":
-            if not steps and not self.personas.verify_freeze(_text(decision.get("decision_id")), persona_id, tenant):
+            # Every frozen->retired needs this decision's own decided paper_owner->frozen proof,
+            # including the same-tick path: a re-read may show a freeze someone else made.
+            if not self.personas.verify_freeze(_text(decision.get("decision_id")), persona_id, tenant):
                 raise RuntimeError(f"persona {persona_id} is frozen without proof this decision froze it")
-            state = self.personas.advance(persona_id, tenant, "retired", approval_id)
+            state = self.personas.advance(persona_id, tenant, "retired", approval_id,
+                                      expected_source="frozen")
             steps.append("retired")
         if state != "retired":
             raise RuntimeError(f"persona {persona_id} ended {state!r}, expected 'retired'")

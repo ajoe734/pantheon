@@ -98,10 +98,14 @@ class GovernedPersonaLifecycle:
             raise GovernedLifecycleError(f"persona {persona_id} is not owned by tenant {tenant_id}")
         return str(persona.get("lifecycle_state") or "")
 
-    def advance(self, persona_id: str, tenant_id: str, target_state: str, governance_decision_id: str) -> str:
+    def advance(self, persona_id: str, tenant_id: str, target_state: str, governance_decision_id: str,
+                expected_source: str | None = None) -> str:
         source = self.get_state(persona_id, tenant_id)
         if source == target_state:
-            return source
+            return source  # caller must still prove this decision made the transition (verify_freeze)
+        if expected_source is not None and source != expected_source:
+            raise GovernedLifecycleError(
+                f"persona {persona_id} is {source!r}, expected {expected_source!r}: refusing to mint an approval for a changed source")
         key = _digest(self._decision_id(), persona_id, source, target_state)
         approval_id = f"apv-evo-{key}"
         base = f"{self._gov}/api/governance/approvals"
