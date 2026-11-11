@@ -13,17 +13,20 @@
         "normalize_financial_statement_rows",
         "normalize_valuation_rows",
         "fetch_fundamental_rows",
-        "fundamental_rows_to_records"
+        "fundamental_rows_to_records",
+        "TaiwanOfficialMarketDatasetAdapter.fetch_payload (tw_financial_statement fetches and joins income+balance) via provider_adapters._taiwan_official"
       ],
       "live_pull": "not executed from this worktree (no egress/storage run); verified with fixture payloads",
+      "review_fix": "Rework 20261111: provider path fetches both statement endpoints; test_provider_entrypoint_fetches_and_joins_income_and_balance_statements uses no prewrapped payload",
       "status": "implemented_unit_verified",
       "times": "event_time, available_time (declared-lag deadline at 18:00 Asia/Taipei), ingest_time, availability_lag_days on every row"
     },
     "2_macro_and_community": {
       "community": "community_daily_feature_rows (post_volume, attention_zscore, bull_bear_ratio; available after Taipei day close)",
       "macro": "macro_feature_rows (CBC/NDC/DGBAS series via collector bundles, unknown series rejected)",
+      "review_fix": "Rework 20261111: CollectorBundleAdapter.pull emits governed macro/community records (macro by source_type, community by social source_type) through provider_adapters._collector_bundle; test_collector_definition_pull_to_storage_to_training_authority covers real definition datasets pull -> storage -> authority; test_storage_manifest_keeps_tw_price_daily_on_ohlcv_path covers OHLCV",
       "status": "implemented_unit_verified",
-      "training_path": "services/training-session/source_dataset_authority.py::feature_observations_from_wrappers"
+      "training_path": "services/training-session/source_dataset_authority.py::feature_observations_from_wrappers (tw_price_daily stays on the OHLCV path)"
     },
     "3_feature_catalogue": {
       "catalogue": "services/source_ingestion/feature_catalogue.py",
