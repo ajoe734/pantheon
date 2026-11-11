@@ -1,6 +1,7 @@
 """Strategy collection routes (list, create)."""
 from __future__ import annotations
 
+from concurrent.futures import Future
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
@@ -21,12 +22,17 @@ from .common import (
 try:
     from services.control_plane.bff.models import ErrorCode
     from services.control_plane.bff.core.owner_reads import (
+        remaining_management_read_budget,
         request_read_cache,
         submit_owner_read,
     )
 except (ImportError, ValueError):
     from models import ErrorCode
-    from core.owner_reads import request_read_cache, submit_owner_read
+    from core.owner_reads import (
+        remaining_management_read_budget,
+        request_read_cache,
+        submit_owner_read,
+    )
 
 
 def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
@@ -82,16 +88,21 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             )
         if hide_retired_personas:
             return None
-        return submit_owner_read(
-            _PERSONA_FLEET_READ_EXECUTOR,
-            lambda: service.list_strategy_summaries_page(
-                state=norm_state,
-                exclude_state=norm_exclude_state,
-                persona_id=persona_id,
-                page_token=page_token,
-                page_size=page_size,
-            ),
-        )
+        try:
+            return submit_owner_read(
+                _PERSONA_FLEET_READ_EXECUTOR,
+                lambda: service.list_strategy_summaries_page(
+                    state=norm_state,
+                    exclude_state=norm_exclude_state,
+                    persona_id=persona_id,
+                    page_token=page_token,
+                    page_size=page_size,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - submission failure is an owner failure
+            failed: Future = Future()
+            failed.set_exception(exc)
+            return failed
 
     @router.get("/bff/strategies")
     def bff_list_strategies(
@@ -175,7 +186,18 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         if not (ctx.service and bounded_hide is None and owner_walk is None):
             owner_page = None
         elif page_future is not None:
-            owner_page = page_future.result()
+            def _join_page() -> Any:
+                # Bounded by the request deadline; a timeout is translated by
+                # the owner-error envelope and the owner read is not retried.
+                try:
+                    return page_future.result(
+                        timeout=remaining_management_read_budget()
+                    )
+                except BaseException:
+                    page_future.cancel()
+                    raise
+
+            owner_page = ctx.service._invoke_read_owner(_join_page)
         else:
             owner_page = ctx.service.list_strategy_summaries_page(
                 state=norm_state,

@@ -936,3 +936,56 @@ def test_default_list_owner_page_failure_is_read_once_and_not_retried(
         resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
     assert resp.status_code == 503, resp.text
     assert len(calls) == 1
+
+
+def test_default_list_pool_contention_fails_truthfully_within_request_deadline(
+    monkeypatch: pytest.MonkeyPatch, world: _World
+) -> None:
+    """With the shared read pool saturated past the request deadline, the page
+    join must stop at the deadline and answer the dependency envelope, not wait
+    for the pool or surface a raw 500."""
+    import threading
+    import time
+
+    from services.control_plane.bff.core.owner_reads import management_read_deadline
+    from services.control_plane.bff.personas.service import (
+        _PERSONA_FLEET_READ_EXECUTOR as pool,
+    )
+
+    class _Deadline:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            tok = management_read_deadline.set(time.monotonic() + 0.1)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                management_read_deadline.reset(tok)
+
+    app, _ = _build_app(monkeypatch, world)
+    app.add_middleware(_Deadline)
+    release = threading.Event()
+    ready = [threading.Event() for _ in range(pool._max_workers)]
+
+    def _occupy(event: threading.Event) -> None:
+        event.set()
+        release.wait(3)
+
+    blockers = [pool.submit(_occupy, e) for e in ready]
+    try:
+        assert all(e.wait(1) for e in ready)
+        timer = threading.Timer(0.8, release.set)
+        timer.start()
+        with TestClient(app, raise_server_exceptions=False) as c:
+            started = time.monotonic()
+            resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+            elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        timer.cancel()
+        for f in blockers:
+            f.result(timeout=2)
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+    assert elapsed < 0.6
