@@ -154,48 +154,55 @@
   },
   "worker_reassignment": {
     "enabled": true,
-    "review_only_agents": [
-      "Codex",
-      "Codex2"
-    ],
+    "review_only_agents": [],
     "owner_fallbacks": {
       "Claude": [
         "Claude2",
         "Antigravity",
         "Antigravity2",
+        "Codex",
+        "Codex2",
         "PiAstra"
       ],
       "Claude2": [
         "Claude",
         "Antigravity",
         "Antigravity2",
+        "Codex",
+        "Codex2",
         "PiAstra"
       ],
       "Antigravity": [
         "Antigravity2",
         "Claude",
         "Claude2",
+        "Codex",
+        "Codex2",
         "PiAstra"
       ],
       "Antigravity2": [
         "Antigravity",
         "Claude",
         "Claude2",
+        "Codex",
+        "Codex2",
         "PiAstra"
       ],
       "Codex": [
-        "PiAstra",
+        "Codex2",
         "Claude",
         "Claude2",
         "Antigravity",
-        "Antigravity2"
+        "Antigravity2",
+        "PiAstra"
       ],
       "Codex2": [
-        "PiAstra",
+        "Codex",
         "Claude",
         "Claude2",
         "Antigravity",
-        "Antigravity2"
+        "Antigravity2",
+        "PiAstra"
       ],
       "PiAstra": [
         "Claude",
@@ -285,7 +292,7 @@
     "claude2": {
       "display_name": "Claude2",
       "provider": "claude2",
-      "max_parallel": 0,
+      "max_parallel": 3,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
@@ -306,7 +313,7 @@
     "codex": {
       "display_name": "Codex",
       "provider": "codex",
-      "max_parallel": 1,
+      "max_parallel": 4,
       "adapter": "codex",
       "worker_slots": [
         "codex1_1",
@@ -319,7 +326,7 @@
     "codex2": {
       "display_name": "Codex2",
       "provider": "codex2",
-      "max_parallel": 1,
+      "max_parallel": 4,
       "adapter": "codex",
       "worker_slots": [
         "codex2_1",
@@ -822,15 +829,15 @@
     "max_dispatches_per_tick": 10,
     "max_active_workers_per_task": 1,
     "max_concurrent_per_account": {
-      "claude1": 3,
+      "claude1": 6,
       "claude2": 1,
       "antigravity": 4,
       "antigravity2": 4,
-      "codex1": 4,
+      "codex1": 7,
       "lupinchen": 1,
       "copilot": 0
     },
-    "max_concurrent_workers": 13
+    "max_concurrent_workers": 18
   },
   "branch_workflow": {
     "enabled": true,

@@ -13,6 +13,7 @@ try:
 except (ImportError, ValueError):
     from models import ErrorCode
 from services.control_plane.bff.ports.research_knowledge_source import ResearchWriteOwnerUnavailableError
+from services.control_plane.bff.research import discovery_projection
 
 
 def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
@@ -50,6 +51,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         # leaves the detail at 200 with rules null and the surface unavailable.
         rules, rules_status = ctx.service.get_strategy_rules(strategy_id)
         dto["rules"] = rules
+        dto["discovery"] = discovery_projection.project_discovery_block(detail or summary)
         meta = dict(
             ctx.read_surface_meta(
                 "strategy_specs", "strategy_detail",

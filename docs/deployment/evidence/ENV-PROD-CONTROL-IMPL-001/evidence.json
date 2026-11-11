@@ -4,6 +4,41 @@
     "evidence_sha256": "sha256:08029feda84a4c2a7f2c800bb0d4a3f8b807d1b055a757ef4491e299ea8ab8c9",
     "post_delete_readback_verified": true
   },
+  "actual_stage_evidence_20261111": {
+    "files": [
+      {
+        "canonical_manifest_sha256": "sha256:d4f07346d2bf5d17bb42caf370ba0d218cde72d794a66694e5703945d02c9e00",
+        "file_sha256": "d38744cd81211ede05db6cf8684ac28293e45bf8f1b388761e9c9fa0577724d6",
+        "path": "deploy/staging/releases/pantheon-20261108-111.staging-evidence.json",
+        "release_id": "pantheon-20261108-111",
+        "rollback_duration_seconds": 36.245,
+        "teardown": "4 owned resources deleted, post-delete readback verified",
+        "workflow_run_id": "42821143652"
+      },
+      {
+        "canonical_manifest_sha256": "sha256:c3b2c83a0e308e29075fb40505f1ac568ce31ffcc85acda5c9d875eb3325a5bc",
+        "file_sha256": "154bc59b120d0247729c0b95ce34a6b384a3470be0f9c5f6af3535ff1d6b340b",
+        "path": "deploy/staging/releases/pantheon-20261108-112.staging-evidence.json",
+        "release_id": "pantheon-20261108-112",
+        "rollback_duration_seconds": 101.076,
+        "teardown": "4 owned resources deleted, post-delete readback verified",
+        "workflow_run_id": "42823965318"
+      }
+    ],
+    "hosted_acceptance": "external_wait",
+    "limits": [
+      "Full browser JSON and screenshots were lost on reboot and are NOT reconstructed; these are stdout summaries, not restored browser artifacts.",
+      "Stage rollback timings (36.245s, 101.076s) are Stage only and must never be counted as Production timings.",
+      "Not Production evidence: no first healthy Prod baseline, no protected human Prod Environment approval, no Prod backup/restore RPO3600/RTO1800/fresh-boot, no two Prod deploy/rollback drills <120s, no 30-minute observation.",
+      "Production workflow has no runs; release flag absent; no cloud resource changed."
+    ],
+    "operator_posture": "Operator chose 2026-11-10T13:03:18Z 'Stage uses Prod settings for acceptance': read-only on 111/112, no draft save; Alpha bug separately owned, not a gate of this release. No Prod writes enabled.",
+    "provenance": "Original GitHub ZIPs recovered; extracted verification JSON SHA256 matches GitHub artifact. Capture root: ~/pantheon-acceptance-captures/ENV-PROD-CONTROL-IMPL-001/Root01a11-20261111-stage111112 (outside repo).",
+    "purpose": "Repository-relative staging_evidence_path inputs for the 111/112 manifests (byte-for-byte copies of the original GitHub run verification artifacts).",
+    "release_complete_claimed": false,
+    "ui_evidence_actual_stdout_only": "Original tool stdout shows three UI roles PASS (operator/viewer 200 incl. logout 200; other-tenant /bff/me 403), owner read probe PASS exit 0 for 111 (operator+viewer x 5 paths = 200). 112 owner probe reported PASS/exit 0 over the fixed two-role/five-path script, but its complete per-case stdout was truncated.",
+    "validation": "release_manifest load/compute + prod_preflight.check_staging_evidence passed for each unchanged manifest and its evidence file (run 2026-11-11, local, no cloud operation)."
+  },
   "additional_release_declarations_20261107": {
     "accepted_cohort": {
       "backend_commit": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c",
@@ -423,5 +458,21 @@
     "result": "test_production_release (101 tests OK including test_prod_rollback_rto_fast_stop_and_healthcheck_parity); test_staging_release focused compose + collector lifecycle + rollback rehearsal tests (5 tests OK); py_compile and bash -n clean; git diff --check clean; diff_budget passed (compose/collector-only rollback RTO optimization, no owner image or release declaration changes, 120s RTO gate unchanged)",
     "scope": "deploy/staging/docker-compose.staging.yml, deploy/production/docker-compose.prod-control.yml, deploy/staging/pantheon-staging-collect-gates, tests/deployment/test_staging_release.py, tests/deployment/test_production_release.py, and docs/deployment/evidence/ENV-PROD-CONTROL-IMPL-001/evidence.json"
   },
-  "workflow_run_id": "41581135775"
+  "workflow_run_id": "41581135775",
+  "prod_bootstrap_stateful_default_repair_20261111": {
+    "diagnosis": "Production run 43018535862/job130518202763 passed Environment approval/config/WIF/VM/FE transport/snapshot/SSH, then bootstrap failed IMAGE_PULL_FAILED: stale fresh-default postgres digest (postgres:16-alpine@sha256:6b2025...) not found by Docker on the VM; nats default was equally stale.",
+    "repair": "deploy/production/bootstrap.sh fresh defaults replaced with the exact pair used by successful Stage111 (job129846698262) and Stage112 (job129856271185).",
+    "postgres_image": "postgres:16@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "nats_image": "nats:2.11@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00",
+    "not_changed": "Existing compose.env is preserved (no silent migration); explicit/pinned values keep precedence; unpinned input still fails closed.",
+    "validation": "Local focused unit test only; not hosted/product acceptance.",
+    "hosted_status": "pending: root updates VM image keys after merge and resumes the approved run; no Prod baseline, rollback drills or RPO/RTO claimed."
+  },
+  "prod_bootstrap_sudo_env_repair_20261111": {
+    "diagnosis": "Run 43018535862 attempt2/job130572149054 failed STATEFUL_START: x-core-env.PANTHEON_RELEASE_ID missing. Outer sudo -E bootstrap exported release_id/owner images, but run_priv's nested sudo reset the environment before the first stateful docker compose.",
+    "repair": "deploy/production/bootstrap.sh adds run_priv_env (sudo -E in the sudo/OSLogin path) used only for the stateful compose up; required variables not weakened, nothing written to persistent compose.env.",
+    "validation": "test_bootstrap_sudo_env_reset_still_delivers_release_and_images_to_first_stateful_compose uses a fake sudo that resets env unless -E; confirmed failing without the fix, passing with it; focused bootstrap tests pass locally. Local only, not hosted acceptance.",
+    "hosted_status": "pending: root publishes a new controller after review/CI/merge; no healthy Prod baseline, drills or RPO/RTO claimed.",
+    "release_complete_claimed": false
+  }
 }

@@ -1,0 +1,15 @@
+{
+  "task_id": "OPS-FIFO-UPGRADE-RETIRE-20261111",
+  "live_inventory": "/tmp/pantheon-compat-residual-20261111/local-writer-inventory.json (captured 2026-11-11T11:43:44Z)",
+  "live_findings": {
+    "entrypoint_runtime": "command-runtimes/872f9eb20e7fa68113bbcf1d4365e08506cd00b6 (supervisor + worker_runner)",
+    "retired_state_file": "absent",
+    "retired_approval_queue": "absent",
+    "retired_journal_lock": "directory",
+    "retired_journal_head": "directory"
+  },
+  "removed": ["_upgrade_retired_fifo_fences", "FIFO renameat2 exchange branch in _create_retired_path_fence", "upgraded_fences result key", "ctypes/tempfile imports"],
+  "retained": ["directory fences 0700", "_is_retired_path_fence (FIFO still a fence)", "fail-closed fence creation", "writer drain checks", "storage rollback"],
+  "tests": "scripts/test_promote_supervisor_runtime.py: 102 passed",
+  "not_done": ["live promotion", "watchdog restart", "old-data deletion"]
+}

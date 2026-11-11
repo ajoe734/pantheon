@@ -288,3 +288,44 @@ def test_http_store_list_and_generic_route_rejection():
         assert again.status_code == 200
         assert len(client.get("/api/registry/alpha-templates").json()) == 183
     reset_store()
+
+
+def test_point_in_time_decision_time_filtering_and_record_evaluation(library):
+    from services.registry.storage import get_store, reset_store
+
+    reset_store()
+    svc = RegistryService(get_store())
+    at.ensure_builtin_alpha_templates(svc)
+
+    tpl = library["qlib_alpha158:KMID"]
+    pit_env = {
+        "open": [
+            {"value": 100.0, "event_time": "2025-01-02T00:00:00Z", "available_time": "2025-01-02T00:00:00Z"},
+            {"value": 100.0, "event_time": "2025-01-03T00:00:00Z", "available_time": "2025-01-03T00:00:00Z"},
+            {"value": 100.0, "event_time": "2025-01-06T00:00:00Z", "available_time": "2025-01-06T00:00:00Z"},
+        ],
+        "close": [
+            {"value": 102.0, "event_time": "2025-01-02T00:00:00Z", "available_time": "2025-01-02T00:00:00Z"},
+            {"value": 105.0, "event_time": "2025-01-03T00:00:00Z", "available_time": "2025-01-03T00:00:00Z"},
+            {"value": 250.0, "event_time": "2025-01-06T00:00:00Z", "available_time": "2025-01-06T00:00:00Z"},
+        ],
+    }
+    val_day2 = at.evaluate_alpha_template(
+        tpl, pit_env, decision_time="2025-01-03T00:00:00Z"
+    )
+    assert val_day2 == pytest.approx((105.0 - 100.0) / 100.0)
+
+    view = at.record_alpha_template_evaluation(
+        svc,
+        "qlib_alpha158:KMID",
+        evaluation_ref="rrun-alpha-eval-test01",
+        evaluation_summary={"pooled_ic": {"1d": 0.04, "5d": 0.03, "20d": 0.01}, "hit_rate": 0.54, "turnover": 0.22},
+        duplicate_of="qlib_alpha158:KMID2",
+    )
+    stored_tpl = view.entry.metadata["alpha_template"]
+    assert stored_tpl["evaluation_ref"] == "rrun-alpha-eval-test01"
+    assert stored_tpl["status"] == "evaluated"
+    assert stored_tpl["duplicate_of"] == "qlib_alpha158:KMID2"
+    assert view.entry.evaluation_summary["evaluation_ref"] == "rrun-alpha-eval-test01"
+    assert view.entry.evaluation_summary["duplicate_of"] == "qlib_alpha158:KMID2"
+    reset_store()

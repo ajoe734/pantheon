@@ -35,6 +35,7 @@ from services.research.alpha_replication.test_revalidation_worker import (
     FakeGateResponse,
     _queue_payload,
     _registry_entry,
+    _tw_registry_entry,
 )
 
 
@@ -165,7 +166,7 @@ def test_controller_discovers_canonical_id_and_reads_authority_before_success(
     authority = FakeAuthority()
     state, state_store = _state(tmp_path / "state.json")
     payload = _queue_payload()
-    entry = _registry_entry(payload)
+    entry = _tw_registry_entry(payload)
     admission_store = ReplicationAdmissionStore(tmp_path)
     admission_store.create_admission(
         {

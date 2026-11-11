@@ -1487,6 +1487,7 @@ _EXECUTE_EVO_REQUIRED = {"evolution_decision_id", "action_type"}
 _VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "revalidate", "mutate", "retire"}
 _APPROVE_MUTATION_REQUIRED = {"decision_id"}
 _REJECT_MUTATION_REQUIRED = {"decision_id"}
+_CANCEL_MUTATION_REQUIRED = {"decision_id", "note"}
 _REVIEW_MUTATION_REQUIRED = {"decision_id", "approval_decision_id"}
 _EXECUTE_MUTATION_REQUIRED = {"decision_id"}
 _RECORD_SPONSOR_DECISION_REQUIRED = {"committee_id", "sponsor_decision", "rationale_ref"}
@@ -2318,6 +2319,51 @@ def _validate_reject_mutation(
         )
 
 
+def _validate_cancel_mutation(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    bff_error_fn: Optional[Callable[..., Any]] = None,
+    read_surface: Optional[Any] = None,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> None:
+    """CancelMutation preconditions.
+
+    The Evolution owner is authoritative for state, role and tenant; the BFF
+    only requires decision_id + note and, when the read projection knows the
+    decision, refuses a terminal state early. An absent or unavailable
+    projection never blocks (cancel is the cleanup path for stale proposals).
+    """
+    _err = bff_error_fn or _resolve_bff_error()
+    now_fn = utc_now_fn or _resolve_utc_now
+    missing = _CANCEL_MUTATION_REQUIRED - {k for k, v in params.items() if str(v or "").strip()}
+    if missing:
+        raise _err(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for CancelMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    try:
+        projection = _mutation_review_projection(
+            decision_id, identity=identity, snapshot_at=now_fn(), read_surface=read_surface, utc_now_fn=now_fn
+        )
+    except Exception:
+        projection = None
+    if projection is None:
+        return
+    state = str(projection.get("decision_state") or "").strip().lower()
+    if state and state not in {"proposed", "reviewed", "approved"}:
+        raise _err(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "CancelMutation is not allowed for this decision state",
+            f"Decision {decision_id} is {state}; only proposed/reviewed/approved can be canceled",
+            precondition_failed="decision_state",
+        )
+
+
 def _validate_review_mutation(
     params: Dict[str, Any],
     identity: OperatorIdentity,
@@ -2783,6 +2829,7 @@ def build_default_validators(
         CommandType.EXECUTE_EVOLUTION_ACTION: lambda p, i: _validate_execute_evolution_action(p, i, bff_error_fn=bff_error_fn),
         CommandType.APPROVE_MUTATION: lambda p, i: _validate_approve_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
         CommandType.REJECT_MUTATION: lambda p, i: _validate_reject_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
+        CommandType.CANCEL_MUTATION: lambda p, i: _validate_cancel_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
         CommandType.REVIEW_MUTATION: lambda p, i: _validate_review_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
         CommandType.EXECUTE_MUTATION: lambda p, i: _validate_execute_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
         CommandType.RECORD_SPONSOR_DECISION: lambda p, i: _validate_record_sponsor_decision(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),

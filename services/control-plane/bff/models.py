@@ -33,6 +33,7 @@ class CommandType(str, Enum):
     EXECUTE_EVOLUTION_ACTION = "ExecuteEvolutionAction"
     APPROVE_MUTATION = "ApproveMutation"
     REJECT_MUTATION = "RejectMutation"
+    CANCEL_MUTATION = "CancelMutation"
     REVIEW_MUTATION = "ReviewMutation"
     EXECUTE_MUTATION = "ExecuteMutation"
     RECORD_SPONSOR_DECISION = "RecordSponsorDecision"
@@ -221,6 +222,12 @@ class RejectMutationCommandPayload(BaseModel):
     command_type: Literal["RejectMutation"]
     decision_id: str
     note: Optional[str] = None
+
+
+class CancelMutationCommandPayload(BaseModel):
+    command_type: Literal["CancelMutation"]
+    decision_id: str
+    note: str = Field(min_length=1)
 
 
 class ReviewMutationCommandPayload(BaseModel):

@@ -763,9 +763,6 @@ class StagePlanner:
                     else plan.rollback.action_type
                 ),
             }
-        legacy_alias = _legacy_promotion_state(plan.target_stage)
-        if legacy_alias:
-            metadata["promotion_state"] = legacy_alias
 
         metadata_key, artifact_key = self.build_object_store_keys(
             strategy_id=normalized_entry["strategy_id"],
@@ -826,13 +823,6 @@ class StagePlanner:
             raise DeploymentPlanError("approval_decision.capital_pool_id must match DeploymentPlan.capital_pool_id")
         if sponsor_persona_id and approval_decision.get("persona_id") not in (None, "", sponsor_persona_id):
             raise DeploymentPlanError("approval_decision.persona_id must match sponsor_persona_id")
-
-
-def _legacy_promotion_state(target_stage: DeploymentStage | str) -> str | None:
-    stage = DeploymentStage(target_stage)
-    if stage in {DeploymentStage.PAPER, DeploymentStage.LIVE}:
-        return stage.value
-    return None
 
 
 def _enum_value(value: Any) -> Any:

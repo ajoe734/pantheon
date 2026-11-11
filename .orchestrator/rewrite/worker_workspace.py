@@ -400,6 +400,34 @@ def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root:
     return None
 
 
+def _prune_missing_worktree_registrations(
+    repo_root: Path, worktree_path: Path, branch: str
+) -> bool:
+    """Run ``git worktree prune`` when this task's registration lost its directory.
+
+    Only Git's own ``prunable`` marker (gitdir points to a non-existent
+    location) triggers the prune, and only when it concerns this task's path or
+    branch. Branch refs and commits are untouched; only stale admin entries go.
+    """
+    target = worktree_path.resolve()
+    for record in _git_worktree_records(repo_root):
+        if "prunable" not in record or not record.get("worktree"):
+            continue
+        if (
+            Path(record["worktree"]).resolve() == target
+            or _worktree_record_branch(record) == branch
+        ):
+            proc = subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return proc.returncode == 0
+    return False
+
+
 def _branch_checked_out_in_root(repo_root: Path, branch: str) -> bool:
     for record in _git_worktree_records(repo_root):
         path_value = record.get("worktree")
@@ -1439,6 +1467,12 @@ def prepare_worker_workspace(
     if not isinstance(leases, dict):
         leases = {}
         state["worker_worktrees"]["leases"] = leases
+
+    # A registration whose directory vanished (for example /tmp cleared by a
+    # host reboot) is not a reusable workspace. Let Git drop such records so
+    # the task branch, which Git keeps, is checked out again at the canonical
+    # path instead of being "reused" from a missing directory.
+    _prune_missing_worktree_registrations(repo_root, worktree_path, branch)
 
     # Prefer the registered task workspace: a worker may have continued its
     # published changes on -vN while the original branch still exists elsewhere.

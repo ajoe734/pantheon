@@ -19,6 +19,7 @@ class ReplicationStatus(str, Enum):
     PASSED = "passed"
     FAILED = "failed"
     BLOCKED = "blocked"
+    INSUFFICIENT_HISTORY = "insufficient_history"
 
 
 class CandidateAdmissionStatus(str, Enum):
@@ -26,6 +27,7 @@ class CandidateAdmissionStatus(str, Enum):
     ADMITTED = "admitted"
     REJECTED = "rejected"
     NEEDS_CLARIFICATION = "needs_clarification"
+    INSUFFICIENT_HISTORY = "insufficient_history"
 
 
 @dataclass
@@ -73,11 +75,12 @@ class ReplicationRequest:
     source_task_id: str  # e.g., "RS-002"
     research_handoff: Dict[str, Any]
     proposed_strategy_spec: Dict[str, Any]
+    backtest_evaluation: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "candidate_id": self.candidate_id,
             "source_task_id": self.source_task_id,
             "research_handoff": self.research_handoff,
@@ -85,6 +88,9 @@ class ReplicationRequest:
             "metadata": self.metadata or {},
             "timestamp": self.timestamp,
         }
+        if self.backtest_evaluation is not None:
+            payload["backtest_evaluation"] = self.backtest_evaluation
+        return payload
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2)
@@ -96,6 +102,7 @@ class ReplicationRequest:
             source_task_id=data["source_task_id"],
             research_handoff=data["research_handoff"],
             proposed_strategy_spec=data["proposed_strategy_spec"],
+            backtest_evaluation=data.get("backtest_evaluation"),
             metadata=data.get("metadata"),
             timestamp=data.get("timestamp", datetime.utcnow().isoformat() + "Z"),
         )

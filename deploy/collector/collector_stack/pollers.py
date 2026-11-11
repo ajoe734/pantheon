@@ -5,11 +5,13 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote, urlencode
 from typing import Any, Mapping, Sequence
 
 from .bundle import CollectedItem, utc_iso
@@ -24,6 +26,22 @@ from .privacy import AuthorHasher, scrub_raw_html_or_json
 from .state import CollectorStateStore
 
 
+def read_secret(env_name: str) -> str | None:
+    """Read a secret from $<env_name> or from the file named by $<env_name>_FILE (compose secrets)."""
+    direct = os.environ.get(env_name)
+    if direct:
+        return direct.strip()
+    path = os.environ.get(f"{env_name}_FILE")
+    if path and Path(path).is_file():
+        return Path(path).read_text(encoding="utf-8").strip() or None
+    return None
+
+
+def _api_key_headers(env_name: str) -> dict[str, str]:
+    key = read_secret(env_name)
+    return {"x-goog-api-key": key} if key else {}
+
+
 def _detect_tw_symbols(text: str) -> list[str]:
     return sorted(set(re.findall(r"\b(?:00\d{2,3}|[1-9]\d{3})\b", text or "")))
 
@@ -32,6 +50,8 @@ class CbcMacroPoller:
     """Central Bank (CBC) Open Data API poller (SD §5.1)."""
 
     source_id = "collector-tw-macro-cbc"
+    MAX_ROWS_PER_SERIES = 30
+    skipped_count = 0
 
     def __init__(
         self,
@@ -55,38 +75,86 @@ class CbcMacroPoller:
         items: list[CollectedItem] = []
 
         for code in series_codes:
-            url = f"https://cpx.cbc.gov.tw/API/DataAPI/Get?FileName={code}"
+            url = f"https://cpx.cbc.gov.tw/API/DataAPI/Get?FileName={quote(code, safe='')}"
             response = self.fetcher.fetch(url)
-            payload = json.loads(response.text)
-            rows = payload.get("data") or payload.get("records") or []
-            unit = str(payload.get("unit") or "NTD/USD")
-            for row in rows:
-                period = str(row.get("period") or row.get("date") or "2026-11-10")
-                val = float(row.get("value") or 0.0)
-                pub_at = str(row.get("published_at") or f"{period}T08:30:00Z")
-                raw_row = json.dumps(row, sort_keys=True, ensure_ascii=False).encode("utf-8")
-                items.append(
-                    CollectedItem(
-                        item_id=f"cbc-{code.lower()}-{period}",
-                        url=url,
-                        fetched_at=fetched_iso,
-                        published_at=pub_at,
-                        text=f"CBC {code} {period}: {val} {unit}",
-                        lang="zh-TW",
-                        hashed_author=None,
-                        metrics={"value": val, "series_code": code, "period": period},
-                        raw_bytes=raw_row,
-                        raw_extension="json",
-                        http_status=response.http_status,
-                        extra_fields={
-                            "title": f"CBC {code} {period}",
-                            "series_id": f"CBC:{code}",
-                            "value": val,
-                            "unit": unit,
-                        },
+            # The CBC API answers JSON with content-type text/plain; parse the body ourselves.
+            try:
+                payload = json.loads(response.text)
+            except ValueError:
+                self.skipped_count += 1
+                continue
+            if not isinstance(payload, dict):
+                self.skipped_count += 1
+                continue
+            data = payload.get("data")
+            data_sets = data.get("dataSets") if isinstance(data, dict) else None
+            if not isinstance(data_sets, list):
+                self.skipped_count += 1
+                continue
+            columns = _cbc_columns(data)
+            meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+            for row in data_sets[-self.MAX_ROWS_PER_SERIES :]:
+                if not isinstance(row, list) or not row:
+                    self.skipped_count += 1
+                    continue
+                period = _cbc_period(row[0])
+                if period is None:
+                    self.skipped_count += 1
+                    continue
+                for idx, cell in enumerate(row[1:]):
+                    try:
+                        val = float(str(cell).replace(",", ""))
+                    except ValueError:
+                        continue  # "-" means not published for this currency/period
+                    name = columns[idx] if idx < len(columns) else f"col{idx + 1}"
+                    raw_row = json.dumps(
+                        {"series": code, "column": name, "period": period, "value": val},
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    items.append(
+                        CollectedItem(
+                            item_id=f"cbc-{code.lower()}-{idx + 1:02d}-{period}",
+                            url=url,
+                            fetched_at=fetched_iso,
+                            published_at=f"{period}T08:30:00Z",
+                            text=f"CBC {code} {name} {period}: {val}",
+                            lang="zh-TW",
+                            hashed_author=None,
+                            metrics={"value": val, "series_code": code, "period": period},
+                            raw_bytes=raw_row,
+                            raw_extension="json",
+                            http_status=response.http_status,
+                            extra_fields={
+                                "title": f"CBC {code} {name} {period}",
+                                "series_id": f"CBC:{code}:{idx + 1:02d}",
+                                "value": val,
+                                "unit": str(meta.get("units") or ""),
+                            },
+                        )
                     )
-                )
         return items
+
+
+def _cbc_columns(data: Mapping[str, Any]) -> list[str]:
+    structure = data.get("structure")
+    if isinstance(structure, dict):
+        for cols in structure.values():
+            if isinstance(cols, list):
+                return [str(c.get("data", "")).strip() if isinstance(c, dict) else str(c) for c in cols]
+    return []
+
+
+def _cbc_period(raw: Any) -> str | None:
+    """CBC row keys are YYYYMMDD (daily), YYYYMM (monthly) or YYYY (yearly)."""
+    text = str(raw).strip()
+    if re.fullmatch(r"\d{8}", text):
+        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    if re.fullmatch(r"\d{6}", text):
+        return f"{text[:4]}-{text[4:]}-01"
+    if re.fullmatch(r"\d{4}", text):
+        return f"{text}-01-01"
+    return None
 
 
 class NdcIndicatorsPoller:
@@ -106,42 +174,78 @@ class NdcIndicatorsPoller:
             policy, transport=transport, contact_user_agent=contact_user_agent
         )
 
+    DATASET_URL = "https://data.gov.tw/api/v2/rest/dataset/6099"
+    INDICATOR_MEMBER = "景氣指標與燈號.csv"
+    MAX_ROWS = 24
+    skipped_count = 0
+
+    def _resolve_zip_url(self) -> str:
+        meta = self.fetcher.fetch(self.DATASET_URL)
+        payload = json.loads(meta.text)
+        for dist in (payload.get("result") or {}).get("distribution") or []:
+            url = str(dist.get("resourceDownloadUrl") or "")
+            if str(dist.get("resourceFormat") or "").upper() == "ZIP" and url:
+                return url
+        raise CollectorConfigError("data.gov.tw dataset 6099 lists no ZIP distribution")
+
+    @staticmethod
+    def _num(raw: Any) -> float | None:
+        try:
+            return float(str(raw).strip())
+        except ValueError:
+            return None
+
     def collect(
         self,
         *,
-        zip_url: str = "https://ws.ndc.gov.tw/Download.ashx?icon=6099&file=ndc_indicators.zip",
+        zip_url: str | None = None,
         fetched_at: datetime | str | None = None,
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        zip_url = zip_url or self._resolve_zip_url()
         response = self.fetcher.fetch(zip_url)
 
         csv_text = ""
         if zipfile.is_zipfile(io.BytesIO(response.body)):
             with zipfile.ZipFile(io.BytesIO(response.body), "r") as zf:
-                for member in sorted(zf.namelist()):
-                    if member.lower().endswith(".csv"):
-                        csv_text = zf.read(member).decode("utf-8-sig", errors="replace")
-                        break
+                names = zf.namelist()
+                # Exact basename: "schema-景氣指標與燈號.csv" also ends with the member name and must not match.
+                member = next((n for n in names if n.rsplit("/", 1)[-1] == self.INDICATOR_MEMBER), None)
+                if member is None:
+                    member = next(
+                        (n for n in sorted(names) if n.lower().endswith(".csv") and not n.startswith(("manifest", "schema"))),
+                        None,
+                    )
+                if member is not None:
+                    csv_text = zf.read(member).decode("utf-8-sig", errors="replace")
         else:
             csv_text = response.text
 
-        reader = csv.DictReader(io.StringIO(csv_text))
+        rows = list(csv.DictReader(io.StringIO(csv_text)))[-self.MAX_ROWS :]
         items: list[CollectedItem] = []
-        for row in reader:
-            period = (row.get("Date") or row.get("期間") or "").strip()
-            if not period:
+        for row in rows:
+            raw_period = (row.get("Date") or row.get("期間") or "").strip()
+            if re.fullmatch(r"\d{6}", raw_period):
+                period = f"{raw_period[:4]}-{raw_period[4:]}"
+            elif re.fullmatch(r"\d{4}-\d{2}", raw_period):
+                period = raw_period
+            else:
+                self.skipped_count += 1
                 continue
-            score = float(row.get("Monitoring_Score") or row.get("景氣對策信號綜合分數") or 0.0)
-            leading = float(row.get("Leading_Index") or row.get("領先指標綜合指數") or 0.0)
-            coincident = float(row.get("Coincident_Index") or row.get("同時指標綜合指數") or 0.0)
-            light = (row.get("Signal_Light") or row.get("燈號") or "").strip()
-            pub_at = (row.get("Published_At") or f"{period}-27T08:00:00Z").strip()
+            score = self._num(row.get("景氣對策信號綜合分數") or row.get("Monitoring_Score") or "")
+            leading = self._num(row.get("領先指標綜合指數") or row.get("Leading_Index") or "")
+            coincident = self._num(row.get("同時指標綜合指數") or row.get("Coincident_Index") or "")
+            light = (row.get("景氣對策信號") or row.get("Signal_Light") or "").strip()
+            if score is None:
+                self.skipped_count += 1  # older rows carry no signal score
+                continue
+            pub_at = f"{period}-01T00:00:00Z"
 
             raw_row = json.dumps(row, sort_keys=True, ensure_ascii=False).encode("utf-8")
             items.append(
                 CollectedItem(
                     item_id=f"ndc-6099-{period}",
-                    url=zip_url,
+                    url=self.DATASET_URL,
                     fetched_at=fetched_iso,
                     published_at=pub_at,
                     text=(
@@ -235,6 +339,7 @@ class GdeltDocPoller:
     """GDELT DOC 2.0 API poller (SD §5.1: max 250 records/call, 3-month default window)."""
 
     source_id = "collector-gdelt"
+    skipped_count = 0
     MAX_RECORDS_PER_CALL = 250
 
     def __init__(
@@ -264,11 +369,29 @@ class GdeltDocPoller:
             )
         target_url = (
             url
-            or f"https://api.gdeltproject.org/api/v2/doc/doc?query={query.replace(' ', '+')}&mode=ArtList&maxrecords={max_records}&timespan={timespan}&format=json"
+            or "https://api.gdeltproject.org/api/v2/doc/doc?"
+            + urlencode(
+                {
+                    "query": query,
+                    "mode": "ArtList",
+                    "maxrecords": max_records,
+                    "timespan": timespan,
+                    "format": "json",
+                }
+            )
         )
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
         response = self.fetcher.fetch(target_url)
-        payload = json.loads(response.text)
+        if response.http_status == 429:
+            raise CollectorConfigError(
+                "GDELT answered 429; requests must be spaced at least 5 seconds apart"
+            )
+        try:
+            payload = json.loads(response.text)
+        except ValueError:
+            # GDELT answers plain text (not JSON) for bad queries and rate limits.
+            self.skipped_count += 1
+            return []
         articles = (payload.get("articles") or [])[: self.MAX_RECORDS_PER_CALL]
 
         items: list[CollectedItem] = []
@@ -322,33 +445,72 @@ class DbnomicsMacroPoller:
             policy, transport=transport, contact_user_agent=contact_user_agent
         )
 
+    MAX_OBSERVATIONS_PER_SERIES = 60
+    skipped_count = 0
+
     def collect(
         self,
         *,
-        series_id: str = "FED/H15/RIFSPFF_N.D",
-        url: str | None = None,
+        series_ids: Sequence[str] | None = None,
         fetched_at: datetime | str | None = None,
     ) -> list[CollectedItem]:
-        if series_id.upper().startswith(("TW/", "TAIWAN/", "CBC/", "DGBAS/")):
-            raise CollectorConfigError(
-                "DBnomics has almost no Taiwan series (SD §5.1); use DBnomics only for US/EU/JP/CN context"
-            )
-        target_url = url or f"https://api.db.nomics.world/v22/series/{series_id}?observations=1"
+        ids = list(series_ids or self.policy.raw_config.get("series_ids") or ())
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
-        response = self.fetcher.fetch(target_url)
-        payload = json.loads(response.text)
-        docs = (payload.get("series") or {}).get("docs") or []
+        items: list[CollectedItem] = []
+        seen_ids: set[str] = set()
+        for series_id in ids:
+            if series_id.upper().startswith(("TW/", "TAIWAN/", "CBC/", "DGBAS/")):
+                raise CollectorConfigError(
+                    "DBnomics has almost no Taiwan series (SD §5.1); use DBnomics only for US/EU/JP/CN context"
+                )
+            # Documented form: /v22/series/{provider}/{dataset}/{series}?observations=1
+            target_url = (
+                f"https://api.db.nomics.world/v22/series/{quote(series_id, safe='/.')}"
+                "?observations=1&metadata=0"
+            )
+            response = self.fetcher.fetch(target_url)
+            try:
+                payload = json.loads(response.text)
+            except ValueError:
+                self.skipped_count += 1
+                continue
+            docs = (payload.get("series") or {}).get("docs") or []
+            if response.http_status >= 400 or not docs:
+                self.skipped_count += 1
+                continue
+            for item in self._items_from_docs(docs, series_id, target_url, fetched_iso, response.http_status):
+                if item.item_id in seen_ids:
+                    self.skipped_count += 1
+                    continue
+                seen_ids.add(item.item_id)
+                items.append(item)
+        return items
 
+    def _items_from_docs(
+        self,
+        docs: Sequence[Mapping[str, Any]],
+        series_id: str,
+        target_url: str,
+        fetched_iso: str,
+        http_status: int,
+    ) -> list[CollectedItem]:
         items: list[CollectedItem] = []
         for doc in docs:
-            sid = str(doc.get("series_code") or series_id)
-            periods = doc.get("period") or []
-            values = doc.get("value") or []
-            unit = str(doc.get("unit") or "percent")
+            sid = "/".join(
+                str(doc.get(k) or "") for k in ("provider_code", "dataset_code", "series_code")
+            ).strip("/") or series_id
+            periods = list(doc.get("period") or [])[-self.MAX_OBSERVATIONS_PER_SERIES :]
+            values = list(doc.get("value") or [])[-self.MAX_OBSERVATIONS_PER_SERIES :]
+            unit = str(doc.get("unit") or "")
             for period, val in zip(periods, values):
                 if val is None or val == "NA":
+                    self.skipped_count += 1
                     continue
-                fval = float(val)
+                try:
+                    fval = float(val)
+                except (TypeError, ValueError):
+                    self.skipped_count += 1
+                    continue
                 obs_obj = {"series_id": sid, "period": period, "value": fval, "unit": unit}
                 items.append(
                     CollectedItem(
@@ -356,13 +518,13 @@ class DbnomicsMacroPoller:
                         url=target_url,
                         fetched_at=fetched_iso,
                         published_at=f"{period}T00:00:00Z" if len(str(period)) == 10 else fetched_iso,
-                        text=f"DBnomics {sid} ({period}): {fval} {unit}",
+                        text=f"DBnomics {sid} ({period}): {fval} {unit}".rstrip(),
                         lang="en",
                         hashed_author=None,
                         metrics={"value": fval, "period": str(period)},
                         raw_bytes=json.dumps(obs_obj, sort_keys=True).encode("utf-8"),
                         raw_extension="json",
-                        http_status=response.http_status,
+                        http_status=http_status,
                         extra_fields={
                             "title": f"DBnomics {sid} {period}",
                             "series_id": f"DBNOMICS:{sid}",
@@ -508,8 +670,11 @@ class OpenAlexPaperPoller:
             abstract = str(work.get("abstract") or "") or self._reconstruct_abstract(
                 work.get("abstract_inverted_index")
             )
-            pub_date = str(work.get("publication_date") or "2026-11-01")
-            pub_iso = f"{pub_date}T00:00:00Z" if "T" not in pub_date else pub_date
+            pub_date = str(work.get("publication_date") or "")
+            if not pub_date:
+                pub_iso = fetched_iso
+            else:
+                pub_iso = f"{pub_date}T00:00:00Z" if "T" not in pub_date else pub_date
             doi = str(work.get("doi") or "")
             cited_by = int(work.get("cited_by_count") or 0)
 
@@ -597,7 +762,7 @@ class RssHubNewsPoller:
     source_id = "collector-news-rss"
     VERIFIED_ROUTES = frozenset(
         {
-            "/cna/realtime",
+            "/cna/aall",
             "/udn/news/breakingnews/2",
             "/ltn/news/business",
             "/chinatimes/realtimenews/260410",
@@ -633,7 +798,7 @@ class RssHubNewsPoller:
     def collect(
         self,
         *,
-        routes: Sequence[str] = ("/cna/realtime",),
+        routes: Sequence[str] = ("/cna/aall",),
         fetched_at: datetime | str | None = None,
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
@@ -732,10 +897,11 @@ class YouTubeDataApiPoller:
 
         s_url = (
             search_url
-            or f"https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q={query.replace(' ', '+')}&maxResults=5"
+            or "https://www.googleapis.com/youtube/v3/search?"
+            + urlencode({"part": "snippet", "type": "video", "q": query, "maxResults": 5})
         )
         self._charge_quota(date_str, self.SEARCH_COST_UNITS)
-        search_resp = self.fetcher.fetch(s_url)
+        search_resp = self.fetcher.fetch(s_url, headers=_api_key_headers("YOUTUBE_DATA_API_KEY"))
         search_data = json.loads(search_resp.text)
         video_ids = [
             str((it.get("id") or {}).get("videoId") or "")
@@ -748,7 +914,7 @@ class YouTubeDataApiPoller:
             or f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id={','.join(video_ids)}"
         )
         self._charge_quota(date_str, self.VIDEOS_COST_UNITS)
-        videos_resp = self.fetcher.fetch(v_url)
+        videos_resp = self.fetcher.fetch(v_url, headers=_api_key_headers("YOUTUBE_DATA_API_KEY"))
         videos_data = json.loads(videos_resp.text)
 
         items: list[CollectedItem] = []
@@ -815,6 +981,18 @@ class YouTubeDataApiPoller:
         return items
 
 
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL_ENV = "COLLECTOR_GEMINI_MODEL"
+
+
+def gemini_endpoint_url(model: str | None = None) -> str:
+    """Model comes from the argument, then $COLLECTOR_GEMINI_MODEL, then the default."""
+    name = (model or os.environ.get(GEMINI_MODEL_ENV) or DEFAULT_GEMINI_MODEL).strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        raise CollectorConfigError(f"invalid Gemini model name: {name!r}")
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{name}:generateContent"
+
+
 class GeminiVideoNotesPoller:
     """Gemini API video understanding poller for public YouTube finance URLs (SD §5.3: <= 8h/day)."""
 
@@ -838,13 +1016,20 @@ class GeminiVideoNotesPoller:
     def collect(
         self,
         *,
-        video_id: str = "tw_quant_001",
+        video_id: str | None = None,
         youtube_url: str | None = None,
         duration_seconds: int = 900,
-        endpoint_url: str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        endpoint_url: str | None = None,
+        model: str | None = None,
         fetched_at: datetime | str | None = None,
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        if endpoint_url is None:
+            endpoint_url = gemini_endpoint_url(model)
+        if not video_id and not youtube_url:
+            # Nothing queued: never invent a video. Videos are supplied by the caller.
+            return []
+        video_id = video_id or "unknown"
         date_str = fetched_iso[:10]
         yt_url = youtube_url or f"https://www.youtube.com/watch?v={video_id}"
 
@@ -875,7 +1060,7 @@ class GeminiVideoNotesPoller:
         response = self.fetcher.fetch(
             endpoint_url,
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **_api_key_headers("GEMINI_API_KEY")},
             body=request_body,
         )
         payload = json.loads(response.text)

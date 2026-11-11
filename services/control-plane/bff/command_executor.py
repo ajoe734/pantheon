@@ -1064,6 +1064,57 @@ def _execute_reject_mutation(
     }
 
 
+_CANCEL_ACTOR_ROLES = ("governance_committee", "risk_owner", "operator")
+_CANCELABLE_STATES = {"proposed", "reviewed", "approved"}
+
+
+def _execute_cancel_mutation(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch CancelMutation to the Evolution owner cancel route."""
+    decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
+    if not decision_id:
+        raise ValueError("CancelMutation requires decision_id.")
+    note = str(params.get("note") or params.get("rationale") or "").strip()
+    if not note:
+        raise ValueError("CancelMutation requires a note.")
+
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
+    claimed_role = str(params.get("actor_role") or "").strip()
+    admission_derived = bool(params.get("request_hash")) and claimed_role in {
+        "admin", "approver", "reviewer", "operator"
+    }
+    if actor_role not in _CANCEL_ACTOR_ROLES and (not claimed_role or admission_derived):
+        # Preference order may pick a role the owner does not allow to cancel
+        # (e.g. admin/approver); re-resolve onto a held cancel-capable role.
+        for candidate in _CANCEL_ACTOR_ROLES:
+            try:
+                actor_id, actor_role = _actor_context(
+                    {**{k: v for k, v in params.items() if k != "request_hash"},
+                     "actor_role": candidate}, auth_token=auth_token, mfa_token=mfa_token
+                )
+                break
+            except (HTTPException, ActionUnavailableError):
+                continue
+    payload: Dict[str, Any] = {"actor_id": actor_id, "actor_role": actor_role, "note": note}
+
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/cancel")
+    body = _post_evolution_owner(url, payload, auth_token=auth_token)
+    committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
+    return {
+        "authoritative_readback": body,
+        "command_id": command_id,
+        "command_accepted": True,
+        "decision_id": body.get("decision_id", decision_id),
+        "new_state": body.get("decision_state", "canceled"),
+        "decision_state": body.get("decision_state", "canceled"),
+        "approval_decision_id": body.get("approval_decision_id"),
+        "risk_level": body.get("risk_level"),
+        "committed_at": committed_at,
+    }
+
+
 def _execute_review_mutation(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -1321,6 +1372,7 @@ _EXECUTORS = {
     CommandType.EXECUTE_EVOLUTION_ACTION: _execute_evolution_action,
     CommandType.APPROVE_MUTATION: _execute_approve_mutation,
     CommandType.REJECT_MUTATION: _execute_reject_mutation,
+    CommandType.CANCEL_MUTATION: _execute_cancel_mutation,
     CommandType.REVIEW_MUTATION: _execute_review_mutation,
     CommandType.EXECUTE_MUTATION: _execute_execute_mutation,
     CommandType.CAPITAL_POOL_ACTION: _make_adapter_executor(CommandType.CAPITAL_POOL_ACTION),

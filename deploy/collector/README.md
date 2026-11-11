@@ -51,7 +51,8 @@ sudo ufw --force enable
 ```bash
 # Data directories for bundles, per-source state, and operator-owned book library
 sudo mkdir -p /var/lib/pantheon-collector/{bundles,state,library/books}
-sudo chown -R 10001:10001 /var/lib/pantheon-collector/{bundles,state}
+# The data root itself must be owned by uid 10001 too: the worker writes status.json at its top level
+sudo chown -R 10001:10001 /var/lib/pantheon-collector
 sudo chmod 0755 /var/lib/pantheon-collector /var/lib/pantheon-collector/bundles
 
 # Secret directory (root-owned; salt never leaves this host)
@@ -88,13 +89,24 @@ sudo sed -i "s/REPLACE_WITH_OPENSSL_RAND_HEX_32_ON_HOST/${BUNDLE_TOKEN}/" /opt/p
 ```bash
 cd /opt/pantheon-collector
 
-# Build the worker image and verify start-up policy checks
+# Build the worker image (installs from the committed requirements.lock: CPU-only torch, no resolver run)
+# and verify start-up policy checks
 sudo docker compose build collector-worker
 sudo docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config
 
 # Start the unmodified RSSHub container and the HTTPS Caddy bundle server
 sudo docker compose up -d rsshub bundle-server
 ```
+
+> **Changing the Caddyfile:** `bundle-server` bind-mounts `Caddyfile` as a single file, which pins the old inode.
+> After any edit (including `git pull`), run `sudo docker compose up -d --force-recreate bundle-server`; a plain
+> `restart` or `caddy reload` keeps serving the old file. The token check must stay inside `route { }` because Caddy
+> otherwise orders `handle` (file_server) before `respond`, which once served files without a token.
+
+The data root is mounted whole at `/data` in the worker (`docker-compose.yml`) and read-only at `/srv/collector`
+in Caddy, so `status.json` and `bundles/` written by the worker are what the bundle server serves. Set
+`COLLECTOR_GEMINI_MODEL` in `.env` to a model your key can list (default `gemini-2.5-flash`). Source runs are
+rate-limited for real (GDELT waits 5 s between requests).
 
 ### Step 2.5 — Install and Enable Systemd Timers
 
@@ -106,11 +118,11 @@ sudo systemctl daemon-reload
 # Enable the daily 90-day bundle pruner
 sudo systemctl enable --now pantheon-collector-prune.timer
 
-# Enable timers for enabled sources (CMoney and PTT mirrors remain disabled by default per O-4 / O-11)
+# Enable timers for enabled sources (PTT mirrors stay disabled per O-11; collector-tw-macro-dgbas is disabled
+# because www.stat.gov.tw serves a Cloudflare challenge, see `disabled_reason` in fetch-policy.json)
 for src in \
   collector-tw-macro-cbc \
   collector-tw-macro-ndc \
-  collector-tw-macro-dgbas \
   collector-gdelt \
   collector-macro-dbnomics \
   collector-papers \
@@ -119,6 +131,7 @@ for src in \
   collector-paper-nber-rss \
   collector-tw-threads \
   collector-tw-instagram-popular \
+  collector-tw-cmoney-forum \
   collector-tw-ptt-stock \
   collector-youtube-finance \
   collector-youtube-gemini-notes \
@@ -152,6 +165,29 @@ curl -fsSL \
 All spiders, pollers, manifest hashers, HMAC scrubbers, start-up safety checks, and auto-pause state transitions run offline against captured fixtures in `deploy/collector/tests/fixtures/` with socket connections blocked:
 
 ```bash
+# requirements.lock is regenerated with the `uv pip compile` command in its header
 PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
 "$PANTHEON_PY" -m pytest -q deploy/collector
 ```
+
+## Price-history backfill (TWSE / TPEx / T86)
+
+Daily timers fetch only the newest published trading day. History is loaded once with the
+`backfill` command: one request per trading day (per-date all-stock page, one connection,
+>= `min_interval_seconds` = 5 s apart), one bundle per date (`run_id=backfill-<date>`), each row's
+`published_at` is its own trade date so the bundle connector ingests it as point-in-time history.
+
+```
+docker compose run --rm collector-worker --policy-file /app/fetch-policy.json --root-dir /data \
+  backfill --source collector-tw-twse-price-history --two-years --dry-run   # request count + wall-clock
+docker compose run --rm collector-worker ... backfill --source collector-tw-twse-price-history --two-years
+# also: collector-tw-tpex-price-history, collector-tw-twse-t86
+# ranges: --start-date YYYY-MM-DD [--end-date YYYY-MM-DD] | --trading-days N
+```
+
+- Known closures (`collector_stack/tw_exchange_holidays.json`, extend with `--holidays-file`) are never requested.
+  An unlisted closure costs one request; the exchange's "no data" answer is recorded as a holiday.
+- Resume: completed dates are recorded in `/data/state/backfill/<source>.json`; re-running the same command
+  skips them. A block (429/403) or fetch failure stops the run (exit 2) and the date is retried next time.
+- `run --source ... --start-date/--end-date/--trading-days` passes the same dates to one ordinary run bundle.
+- Two years ≈ 487 requests per source ≈ 41 minutes; all three sources ≈ 123 minutes (run sequentially).

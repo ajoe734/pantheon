@@ -2813,7 +2813,13 @@ def _refresh_runtime_python() -> str:
     return body.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
 
 
-def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: str = "bounded"):
+def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: str = "bounded",
+                         local_ids: tuple[str, ...] | None = None, up_lands_on: str | None = None):
+    """Fake docker where the plain tag pantheon-source-ingest resolves to tag_id.
+
+    Compose config honours a pin override file (-f *pin.json); "up" starts whatever
+    image the effective config names (or up_lands_on to simulate a wrong container).
+    """
     fake = tmp_path / "bin"
     fake.mkdir()
     log = tmp_path / "docker.log"
@@ -2821,13 +2827,18 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
     docker.write_text(
         "#!/usr/bin/env bash\n"
         'echo "$*" >> "$DOCKER_LOG"\n'
+        'pin=""; for a in "$@"; do case "$a" in *pin.json) pin="$a";; esac; done\n'
+        'eff=pantheon-source-ingest\n'
+        '[ -n "$pin" ] && eff="$(python3 -c \'import json,sys;print(json.load(open(sys.argv[1]))["services"]["source-ingest"]["image"])\' "$pin")"\n'
         'case "$*" in\n'
-        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"pantheon-source-ingest"}}}\' ;;\n'
+        '  *" config --format json source-ingest"*) echo "{\\"services\\":{\\"source-ingest\\":{\\"image\\":\\"$eff\\"}}}" ;;\n'
         '  *" config --format json"*) echo \'{"services":{}}\' ;;\n'
         '  "image inspect --format {{.Id}} pantheon-source-ingest") echo "$TAG_ID" ;;\n'
-        '  *" up "*) echo "$TAG_ID" > "$STATE" ;;\n'
+        '  "image inspect --format {{.Id}} "*) i="${5}"; case " $LOCAL_IDS " in *" $i "*) echo "$i";; *) exit 1;; esac ;;\n'
+        '  *" up "*) echo "${UP_LANDS_ON:-$eff}" > "$STATE" ;;\n'
         '  *" ps -q source-ingest"*) echo cid1 ;;\n'
         '  "inspect --format {{.Image}} cid1") cat "$STATE" ;;\n'
+        '  "inspect --format {{json .Config.Env}} cid1") python3 -c \'import json,os;print(json.dumps(json.load(open(os.environ["ENV_FILE"]))+["PANTHEON_EXTERNAL_EGRESS=deny","PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=","SOURCE_INGEST_CONTROLLER_MODE=reconcile_only"]))\' ;;\n'
         '  *) : ;;\n'
         'esac\n'
     )
@@ -2835,35 +2846,51 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
     env_file = tmp_path / "env.json"
     state = tmp_path / "state"
     # The runtime builds the docker env from this file, so the fake's inputs go here.
-    env_file.write_text(json.dumps(["A=1", f"DOCKER_LOG={log}", f"TAG_ID={tag_id}", f"STATE={state}"]))
+    env_file.write_text(json.dumps([
+        "A=1", f"DOCKER_LOG={log}", f"TAG_ID={tag_id}", f"STATE={state}",
+        f"LOCAL_IDS={' '.join(local_ids if local_ids is not None else (running,))}",
+        f"UP_LANDS_ON={up_lands_on or ''}", f"ENV_FILE={env_file}"]))
     script = tmp_path / "refresh.py"
     script.write_text(_refresh_runtime_python())
     state.write_text(running + "\n")
     result = subprocess.run(
         ["python3", str(script), str(env_file), action, running, ""],
         capture_output=True, text=True,
-        env={"PATH": f"{fake}:{os.environ['PATH']}", "DOCKER_LOG": str(log), "TAG_ID": tag_id, "STATE": str(state)},
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "DOCKER_LOG": str(log), "TAG_ID": tag_id, "STATE": str(state),
+             "LOCAL_IDS": " ".join(local_ids if local_ids is not None else (running,)),
+             "UP_LANDS_ON": up_lands_on or "", "ENV_FILE": str(env_file)},
     )
     return result, log.read_text().splitlines() if log.exists() else [], state.read_text().strip()
 
 
 @pytest.mark.parametrize("action", ["bounded", "restore"])
-def test_source_refresh_stops_before_recreating_when_compose_tag_points_elsewhere(tmp_path, action):
+def test_source_refresh_ignores_stale_plain_tag_and_recreates_from_running_image_id(tmp_path, action):
+    # A failed earlier deploy left pantheon-source-ingest:latest on a candidate image.
     baseline, candidate = "sha256:" + "9" * 64, "sha256:" + "4" * 64
     result, calls, state = _run_refresh_runtime(tmp_path, tag_id=candidate, running=baseline, action=action)
-    assert result.returncode != 0
-    assert baseline in result.stderr and candidate in result.stderr and "not recreating" in result.stderr
-    assert not any(" up " in f" {call} " for call in calls)
-    assert state == baseline  # the running image was never replaced
+    assert result.returncode == 0, result.stderr
+    ups = [call for call in calls if " up " in f" {call} "]
+    assert len(ups) == 1 and "pin.json" in ups[0]
+    assert state == baseline
+    # The candidate tag was never consulted to decide what to start.
+    assert not any(call == "image inspect --format {{.Id}} pantheon-source-ingest" for call in calls)
 
 
 @pytest.mark.parametrize("action", ["bounded", "restore"])
-def test_source_refresh_recreates_when_compose_tag_matches_running_image(tmp_path, action):
+def test_source_refresh_stops_when_recorded_running_image_is_not_available(tmp_path, action):
     baseline = "sha256:" + "9" * 64
-    result, calls, state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action)
-    assert any(" up " in f" {call} " for call in calls)
+    result, calls, state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action, local_ids=())
+    assert result.returncode != 0 and "not recreating" in result.stderr
+    assert not any(" up " in f" {call} " for call in calls)
     assert state == baseline
-    assert "image ID" not in result.stderr
+
+
+@pytest.mark.parametrize("action", ["bounded", "restore"])
+def test_source_refresh_still_fails_when_started_container_image_differs(tmp_path, action):
+    baseline, other = "sha256:" + "9" * 64, "sha256:" + "4" * 64
+    result, _calls, _state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action, up_lands_on=other)
+    assert result.returncode != 0
+    assert baseline in result.stderr and other in result.stderr
 
 
 def test_bff_adoption_gate_requires_root_deploy_for_paper_capital_reader_services() -> None:
@@ -2916,3 +2943,146 @@ def test_official_connector_bounded_refresh_host_set_excludes_www_twse_com_tw() 
         == "openapi.twse.com.tw,www.tpex.org.tw"
     )
 
+
+
+def test_collector_host_gate_steady_restore_and_refresh_guard() -> None:
+    """DEV-EGRESS-COLLECTOR-HOST-GATE-20261110: steady egress is exactly the collector host."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent / "deploy_nonprod_vm.sh").read_text()
+    assert "steady source egress allowlist must be exactly PANTHEON_COLLECTOR_HOST" in text
+    assert 'sys.argv[2].startswith("collector-")' in text
+    assert "if hosts != {collector}" in text
+    assert '"allowlist" if steady_host else "deny"' in text
+    assert 'PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}"' in text
+    # Official bounded refresh host sets are unchanged.
+    assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in text
+    assert 'required = {"openapi.taifex.com.tw", "www.taifex.com.tw"}' in text
+
+
+_COLLECTOR_ENV_REPO = Path(__file__).resolve().parents[1]
+
+
+def _collector_env_steps(workflow: str) -> list[tuple[str, dict[str, Any]]]:
+    doc = yaml.safe_load((_COLLECTOR_ENV_REPO / ".github/workflows" / workflow).read_text())
+    return [
+        (step.get("name", ""), step.get("env") or {})
+        for job in doc["jobs"].values()
+        for step in job.get("steps", [])
+    ]
+
+
+def test_workflows_pass_collector_host_and_token_names() -> None:
+    expected = {
+        "PANTHEON_COLLECTOR_HOST": "${{ vars.PANTHEON_COLLECTOR_HOST }}",
+        "PANTHEON_COLLECTOR_BUNDLE_TOKEN": "${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}",
+    }
+    deploy = _collector_env_steps("nonprod-deploy.yml")
+    assert any(
+        all(env.get(k) == v for k, v in expected.items()) for name, env in deploy
+        if name == "Deploy dev VM stack under lease"
+    )
+    assert any(
+        all(env.get(k) == v for k, v in expected.items())
+        for name, env in deploy
+        if name == "Enforce dev auth deployment floor"
+    )
+    refresh = _collector_env_steps("dev-tw-market-refresh.yml")
+    bounded = [
+        (n, e) for n, e in refresh if n.startswith("Execute bounded")
+    ]
+    assert len(bounded) == 2
+    for name, env in bounded:
+        for key, value in expected.items():
+            assert env.get(key) == value, (name, key)
+
+
+def test_deploy_script_forwards_collector_env_without_echo() -> None:
+    text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
+    for name in ("PANTHEON_COLLECTOR_HOST", "PANTHEON_COLLECTOR_BUNDLE_TOKEN"):
+        assert text.count(f'command_prefix+=" {name}=$(shell_quote') == 2
+    assert not re.search(r"(echo|info|printf)[^\n]*PANTHEON_COLLECTOR_BUNDLE_TOKEN", text)
+
+
+def test_steady_deploy_defaults_to_collector_host_allowlist_even_with_explicit_deny() -> None:
+    lines = DEPLOY_SCRIPT.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("SOURCE_REFRESH_EGRESS_MODE="))
+    end = next(i for i, l in enumerate(lines) if i > start and l.startswith("if [[ \"${SOURCE_REFRESH_SELECTED}\" == \"true\" ]]"))
+    block = "\n".join(lines[start:end])
+    script = "DEV_COMPOSE_PROFILES=${PROFILES:-}\n" + block + '\nprintf "%s|%s" "$SOURCE_REFRESH_EGRESS_MODE" "$SOURCE_REFRESH_ALLOWED_HOSTS"\n'
+
+    def run(**env):
+        full = {"PATH": os.environ["PATH"], **env}
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=full).stdout
+
+    assert run(PANTHEON_COLLECTOR_HOST="collector.example") == "allowlist|collector.example"
+    assert run(PANTHEON_COLLECTOR_HOST="collector.example", PANTHEON_EXTERNAL_EGRESS="deny") == "allowlist|collector.example"
+    assert run() == "deny|"
+    # Bounded refresh keeps its own explicit host set.
+    assert run(
+        PROFILES="source-ingest-scheduler", PANTHEON_COLLECTOR_HOST="collector.example",
+        PANTHEON_EXTERNAL_EGRESS="allowlist", PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.tpex.org.tw",
+    ) == "allowlist|openapi.twse.com.tw,www.tpex.org.tw"
+    wf = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text()
+    assert "vars.PANTHEON_COLLECTOR_HOST != ''" in wf
+    assert "|| vars.PANTHEON_COLLECTOR_HOST }}" in wf
+
+
+@pytest.mark.parametrize("initial", [["deny", ""], ["allowlist", "collector.example"]])
+def test_restore_from_deny_or_allowlist_reaches_collector_allowlist(tmp_path, initial):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    docker = fake / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"img"}}}\' ;;\n'
+        '  "image inspect --format {{.Id}} img") echo sha256:aa ;;\n'
+        '  *" up "*) python3 -c "import json,os;print(json.dumps([\'A=1\',\'PANTHEON_COLLECTOR_HOST=collector.example\',\'PANTHEON_EXTERNAL_EGRESS=\'+os.environ[\'PANTHEON_EXTERNAL_EGRESS\'],\'PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=\'+os.environ[\'PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS\'],\'SOURCE_INGEST_CONTROLLER_MODE=\'+os.environ[\'SOURCE_INGEST_CONTROLLER_MODE\'],\'STATE_ENV=\'+os.environ[\'STATE_ENV\']]))" > "$STATE_ENV" ;;\n'
+        '  *" ps -q source-ingest"*) echo cid1 ;;\n'
+        '  "inspect --format {{.Image}} cid1") echo sha256:aa ;;\n'
+        '  "inspect --format {{json .Config.Env}} cid1") cat "$STATE_ENV" ;;\n'
+        'esac\n'
+    )
+    docker.chmod(0o755)
+    env_file = tmp_path / "env.json"
+    env_file.write_text(json.dumps([
+        "A=1", "PANTHEON_COLLECTOR_HOST=collector.example",
+        f"PANTHEON_EXTERNAL_EGRESS={initial[0]}", f"PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS={initial[1]}",
+        "SOURCE_INGEST_CONTROLLER_MODE=reconcile_only", f"STATE_ENV={tmp_path / 'state'}",
+    ]))
+    script = tmp_path / "refresh.py"
+    script.write_text(_refresh_runtime_python())
+    result = subprocess.run(
+        ["python3", str(script), str(env_file), "restore", "sha256:aa", ""],
+        capture_output=True, text=True,
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "STATE_ENV": str(tmp_path / "state")},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "PANTHEON_EXTERNAL_EGRESS=allowlist" in (tmp_path / "state").read_text()
+
+
+def test_collector_host_gate_rejects_non_single_hostname() -> None:
+    """Comma lists / malformed values must be rejected before any Docker mutation."""
+    import subprocess
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent / "deploy_nonprod_vm.sh").read_text()
+    # Executable check of the guard regex used by the steady guard.
+    start = text.index('[[ ${#PANTHEON_COLLECTOR_HOST} -le 253')
+    rx = text[start:].split("=~ ", 1)[1].split(" ]]", 1)[0]
+    for host, ok in (("collector.example", True), ("a.b-c.example", True),
+                     ("collector.example,extra.example", False), ("collector.example:443", False),
+                     ("https://collector.example", False), ("-bad.example", False),
+                     ("bad host", False), ("a..b", False), ("x" * 64 + ".example", False)):
+        proc = subprocess.run(["bash", "-c", f'[[ "$1" =~ {rx} ]]', "_", host], check=False)
+        assert (proc.returncode == 0) is ok, host
+    assert "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring" in text
+    assert "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname" in text.split("# Steady state", 1)[0]
+    # Early guard really exits non-zero for a comma list.
+    head = text.split("# Steady state", 1)[0]
+    block = head[head.rindex("# PANTHEON_COLLECTOR_HOST must be exactly one"):]
+    proc = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block],
+                          env={"PANTHEON_COLLECTOR_HOST": "collector.example,extra.example", "PATH": "/usr/bin:/bin"},
+                          capture_output=True, text=True, check=False)
+    assert proc.returncode == 1 and "exactly one valid hostname" in proc.stderr
