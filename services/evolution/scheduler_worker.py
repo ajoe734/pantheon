@@ -131,6 +131,10 @@ def main() -> int:
             )
             raise
 
+        if os.getenv("EVOLUTION_AUTO_CONSUMER_ENABLED", "").strip().lower() in {"1", "true", "yes"}:
+            from services.evolution.auto_consumer_runtime import run_consumer_tick
+
+            result["auto_consumer"] = run_consumer_tick()
         health["ticks"] = tick
         health["status"] = "ok"
         health["last_tick_at"] = _utc_now()

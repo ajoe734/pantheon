@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '0 7 * * 1-5'
     - cron: '0 8 * * 1-5'
+    # FinMind broker reports publish at 18:00 Taipei (10:00 UTC); poll after publication.
+    - cron: '30 10 * * 1-5'
+    - cron: '30 12 * * 1-5'
   workflow_dispatch:
     inputs:
       force:
@@ -112,6 +115,7 @@ jobs:
             --initial-visibility-poll-seconds 1 >/dev/null
 
       - name: Execute bounded TAIFEX contract refresh
+        if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: taifex_refresh
         continue-on-error: true
         env:
@@ -156,7 +160,42 @@ jobs:
           print(f"TAIFEX contract refresh outcome recorded: status={status} reason={reason}")
           PY
 
+      - name: Execute bounded FinMind broker branch refresh
+        # Broker data publishes 18:00 Taipei (10:00 UTC): never run on the 07:00/08:00 UTC crons.
+        if: ${{ github.event.schedule != '0 7 * * 1-5' && github.event.schedule != '0 8 * * 1-5' }}
+        id: finmind_refresh
+        continue-on-error: true
+        env:
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
+          TARGET_ENV: dev
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.ld }}/state.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.ld }}/heartbeat.pid
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-identity.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-failure.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.ld }}/heartbeat.log
+          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: api.finmindtrade.com,storage.googleapis.com
+          SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-finmind-broker-daily-report
+          SOURCE_INGEST_BOUNDED_DATASET: tw_broker_top
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
+          REFRESH_OUTPUT_PATH: ${{ runner.temp }}/finmind-broker-refresh-outcome.json
+          FORCE_REFRESH: ${{ inputs.force || false }}
+        run: |
+          force_arg=()
+          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+          refresh_rc=0
+          if [[ -z "${FINMIND_API_TOKEN}" ]]; then
+            printf '%s\n' '{"connector_id":"tw-finmind-broker-daily-report","dataset":"tw_broker_top","log":"","reason":"missing_credential","status":"skipped"}' > "${REFRESH_OUTPUT_PATH}"
+            echo "FinMind broker refresh skipped: missing_credential"
+            exit 0
+          fi
+          echo "FINMIND_API_TOKEN present (length ${#FINMIND_API_TOKEN})"
+          .lease-controller/scripts/run_with_dev_environment_lease.sh \
+            ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" --connector-id tw-finmind-broker-daily-report --allowed-hosts api.finmindtrade.com,storage.googleapis.com --dataset tw_broker_top --output "${REFRESH_OUTPUT_PATH}" || refresh_rc=$?
+          echo "FinMind broker refresh rc=${refresh_rc}"
+
       - name: Execute bounded Taiwan market refresh
+        if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: refresh
         env:
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
@@ -188,6 +227,7 @@ jobs:
           path: |
             ${{ runner.temp }}/tw-refresh-outcome.json
             ${{ runner.temp }}/taifex-ssf-refresh-outcome.json
+            ${{ runner.temp }}/finmind-broker-refresh-outcome.json
 
       - name: Stop heartbeat and release lease
         if: ${{ always() && steps.lease.outcome == 'success' }}
@@ -205,7 +245,7 @@ jobs:
             kill -0 "${heartbeat_pid}" 2>/dev/null || break
             sleep 0.25
           done
-          [[ "${REFRESH_OUTCOME}" == "success" && "${TAIFEX_REFRESH_OUTCOME}" == "success" && ! -e "${LD}/heartbeat-failure.json" ]] || exit 0
+          [[ "${REFRESH_OUTCOME}" =~ ^(success|skipped)$ && "${TAIFEX_REFRESH_OUTCOME}" =~ ^(success|skipped)$ && ! -e "${LD}/heartbeat-failure.json" ]] || exit 0
           [[ -s "${LD}/heartbeat-stop.json" ]] || { echo "No graceful heartbeat stop; refusing release." >&2; exit 75; }
           python3 "${CONTROLLER}/scripts/dev_environment_lease.py" release \
             --repository ajoe734/execute-plans \
