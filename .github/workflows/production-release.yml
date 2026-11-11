@@ -240,24 +240,24 @@ jobs:
             sudo install -m 0644 \$B/migration/migration-spec.json \$B/migration/db_migrate.sh \"\$PROD_ROOT/migration/\$RELEASE_ID/\"
             sudo install -m 0644 \$B/migration/migrations/*.sql \"\$PROD_ROOT/migration/\$RELEASE_ID/migrations/\"
             sudo install -m 0644 \$B/snapshot.json \"\$PROD_ROOT/state/snapshots/\$RELEASE_ID.json\"
-            sudo -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true PROD_REQUIRE_FULL_SECRET_KEYS=true \
+            sudo -H -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true PROD_REQUIRE_FULL_SECRET_KEYS=true \
               PROD_SECRETS_ENV_FILE=\"\${PROD_SECRETS_ENV_FILE:-\$PROD_ROOT/secrets/prod.secrets.env}\" \
               PROD_POSTGRES_PASSWORD_FILE=\"\${PROD_POSTGRES_PASSWORD_FILE:-\$PROD_ROOT/secrets/postgres_password}\" \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
               RELEASE_MANIFEST_PATH=\$B/manifest.json \
               \"\$PROD_ROOT/bin/bootstrap.sh\"
-            sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
+            sudo -H -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
               PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
               RELEASE_MANIFEST_PATH=\$B/manifest.json STAGING_EVIDENCE_PATH=\$B/staging_evidence.json \
               APPROVALS_PATH=\$B/approvals.json ENV_POLICY_PATH=\$B/env-policy.json \
               FE_ARTIFACT_PATH=\$B/fe.tar.gz \"\$PROD_ROOT/bin/prod_ops.sh\" prepull_images \"\$RELEASE_ID\"
-            sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
+            sudo -H -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
               PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
               RELEASE_MANIFEST_PATH=\$B/manifest.json STAGING_EVIDENCE_PATH=\$B/staging_evidence.json \
               FE_ARTIFACT_PATH=\$B/fe.tar.gz \"\$PROD_ROOT/bin/prod_ops.sh\" migrate \"\$RELEASE_ID\"
-            sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
+            sudo -H -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
               PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
               RELEASE_MANIFEST_PATH=\$B/manifest.json STAGING_EVIDENCE_PATH=\$B/staging_evidence.json \
