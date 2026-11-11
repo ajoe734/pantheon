@@ -40,6 +40,9 @@ use `services.registry.promotion.gate`; the installed module CLI is
 `python3 -m services.registry.promotion.cli`. Direct execution of this directory's
 `cli.py` remains supported and resolves its adjacent gate, not a root alias.
 
+From the repository root, run the local and Stage 0 smoke with
+`python3 -m services.registry.promotion.smoke_test_gate`.
+
 `services/research/alpha_replication/revalidation_worker.py` uses the canonical
 `PromotionGate`, including `build_draft_entry_from_replication_request()` and
 candidate requirements. This is retained business logic.
