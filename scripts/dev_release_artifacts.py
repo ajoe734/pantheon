@@ -75,12 +75,19 @@ STACK_ENV_FORMAT = _env_format(STACK_ENV_KEYS)
 # caller's variables; a bounded refresh would then pull externally and exit after one
 # tick. Only these nonsecret names and the restart policy are recorded; no tokens.
 CONTROL_SERVICE = "source-ingest-scheduler"
+API_SERVICE = "source-ingest"
 CONTROL_ENV_KEYS = (
     "SOURCE_INGEST_CONTROLLER_MODE", "SOURCE_INGEST_CONTROLLER_MAX_TICKS",
     "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS",
     "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL",
 )
 CONTROL_ENV_FORMAT = _env_format(CONTROL_ENV_KEYS)
+# The restored source-ingest API likewise inherits the caller's external egress posture
+# (allowed hosts); record only those two nonsecret names.
+API_ENV_KEYS = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS")
+API_ENV_FORMAT = _env_format(API_ENV_KEYS)
+CONTROL_POSTURE = {CONTROL_SERVICE: (CONTROL_ENV_KEYS, CONTROL_ENV_FORMAT),
+                   API_SERVICE: (API_ENV_KEYS, API_ENV_FORMAT)}
 RESTART_FORMAT = "{{json .HostConfig.RestartPolicy.Name}}"
 RESTART_POLICIES = ("no", "always", "unless-stopped", "on-failure")
 
@@ -233,6 +240,9 @@ def _json(raw):
         return json.loads(raw, object_pairs_hook=_no_duplicates)
     except (ValueError, UnicodeError) as exc:
         raise ArtifactError("invalid JSON") from exc
+
+
+RESET = "\x00reset"
 
 
 def manifest_bytes(value: dict) -> bytes:
@@ -447,10 +457,11 @@ def _stack_env(docker: Docker, container_id: str, keys=STACK_ENV_KEYS, fmt=STACK
     return found
 
 
-def _stack_control(docker: Docker, container_id: str) -> dict:
-    """Source controller posture: nonsecret env (absent stays None, empty stays "") + restart policy."""
+def _stack_control(docker: Docker, service: str, container_id: str) -> dict:
+    """Source posture: nonsecret env (absent stays None, empty stays "") + restart policy."""
+    keys, fmt = CONTROL_POSTURE[service]
     policy = _json(docker.call("inspect", "--format", RESTART_FORMAT, container_id)) or "no"
-    return {"env": _stack_env(docker, container_id, CONTROL_ENV_KEYS, CONTROL_ENV_FORMAT), "restart": policy}
+    return {"env": _stack_env(docker, container_id, keys, fmt), "restart": policy}
 
 
 def _protect_tag(service: str, image_id: str) -> str:
@@ -485,8 +496,8 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
         services[service] = {"image_id": row["image_id"], "state": "running" if row["status"] == "running" else "completed",
                              "has_healthcheck": _has_healthcheck(row),
                              "env": _stack_env(docker, row["container_id"])}
-        if service == CONTROL_SERVICE and row["status"] == "running":
-            services[service]["control"] = _stack_control(docker, row["container_id"])
+        if service in CONTROL_POSTURE and row["status"] == "running":
+            services[service]["control"] = _stack_control(docker, service, row["container_id"])
     if missing:
         raise StackImageMissing("recorded stack image is missing", missing)
     if not services or len(services) > STACK_MAX_SERVICES:
@@ -521,15 +532,14 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
         raise ArtifactError("invalid stack baseline services")
     for service, row in services.items():
         _match(service, SERVICE_NAME, "stack service name")
-        # "control" exists only on captures made after source posture was recorded.
-        _keys(row, ("image_id", "state", "has_healthcheck", "env") + (("control",) if "control" in row else ()),
+        # A running source controller/API must carry its recorded posture; nothing else may.
+        controlled = service in CONTROL_POSTURE and row.get("state") == "running"
+        _keys(row, ("image_id", "state", "has_healthcheck", "env") + (("control",) if controlled else ()),
               "stack service")
-        if "control" in row:
+        if controlled:
             control = row["control"]
-            if service != CONTROL_SERVICE or row.get("state") != "running":
-                raise ArtifactError("unexpected stack service control posture")
             _keys(control, ("env", "restart"), "stack control posture")
-            _keys(control["env"], CONTROL_ENV_KEYS, "stack control environment")
+            _keys(control["env"], CONTROL_POSTURE[service][0], "stack control environment")
             if control["restart"] not in RESTART_POLICIES or any(
                     item is not None and (not isinstance(item, str) or len(item) > 512 or "\0" in item)
                     for item in control["env"].values()):
@@ -657,7 +667,7 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
     for service, expected in sorted(stack["services"].items()):
         if "control" in expected:
             check_lease()
-            if _stack_control(docker, current[service][0]["container_id"]) != expected["control"]:
+            if _stack_control(docker, service, current[service][0]["container_id"]) != expected["control"]:
                 drift[service] = "source-control-posture-mismatch"
     if drift:
         raise _mixed(drift)
@@ -728,14 +738,17 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
         row = stack["services"][service]
         out = {"environment": env} if env else {}
         if "control" in row:
-            # None -> null removes the key, so a caller variable cannot fill an absent baseline value.
-            out["environment"] = {**env, **row["control"]["env"]}
+            # Absent -> "!reset" removes the key from the merged service (a plain null would
+            # let Compose resolve it from the caller's environment); empty stays empty.
+            out["environment"] = {**env, **{k: (RESET if v is None else v) for k, v in row["control"]["env"].items()}}
             out["restart"] = row["control"]["restart"]
         return out
 
     def compose_up(stage: str, services: dict[str, dict], tail: tuple[str, ...], names: list[str]) -> None:
         override = Path(stage) / "images.json"
-        override.write_bytes(manifest_bytes({"services": services}))
+        # JSON is valid YAML; the sentinel becomes Compose's "!reset null" tag.
+        text = manifest_bytes({"services": services}).decode().replace(json.dumps(RESET), "!reset null")
+        override.write_bytes(text.encode())
         command = ["compose", "-p", "pantheon"]
         for path, digest in compose_files:
             if _file_digest(path)[0] != digest:
@@ -776,7 +789,7 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
                 containers = current.get(service, [])
                 if len(containers) == 1 and containers[0]["image_id"] == expected["image_id"] and \
                         ("control" not in expected or
-                         _stack_control(docker, containers[0]["container_id"]) == expected["control"]):
+                         _stack_control(docker, service, containers[0]["container_id"]) == expected["control"]):
                     if expected["state"] == "running" and containers[0]["status"] != "running":
                         check_lease()
                         docker.call("start", containers[0]["container_id"])
