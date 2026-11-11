@@ -298,9 +298,60 @@
     "templates_all_horizons_insufficient": 30,
     "duplicates_detected": {},
     "duplicate_note": "No template was active in the registry for this run, so no duplicate_of marks were produced here; the >0.9 duplicate logic is covered by tests.",
-    "metrics_file": "docs/deployment/evidence/ALPHA-TEMPLATE-EVALUATION-20261110/real_snapshot_template_metrics.json",
+    "metrics_file": "docs/deployment/evidence/ALPHA-TEMPLATE-EVALUATION-20261110/real_snapshot_template_metrics.jsonl",
     "pooled_ic_note": "Pooled IC pools only 3 symbols over <=60 days with overlapping forward windows; observations are not independent, treat as exploratory.",
     "new_tests": "services/research/tests/test_alpha_template_snapshot_loader.py (6)",
-    "verification": "pytest snapshot_loader + test_alpha_template_evaluation + registry test_alpha_template: 41 passed"
+    "verification": "pytest snapshot_loader + test_alpha_template_evaluation + registry test_alpha_template: 41 passed",
+    "metrics_file_format": "JSON Lines, one compact line per template (template_id, run_id, snapshot_id, per-symbol and pooled IC at 1/5/20d, hit_rate, turnover, decay, observations, insufficient flags, duplicate_of)",
+    "metrics_file_sha256": "d43d89f95e2dd31a8e966434209d4a4748d21a21920c85b8e624fc954af8f453",
+    "metrics_file_lines": 171,
+    "metrics_summary": {
+      "templates_evaluated": 171,
+      "templates_with_any_insufficient_horizon": 32,
+      "templates_all_horizons_insufficient": 30,
+      "duplicate_templates": 0,
+      "top_templates_by_pooled_5d_ic": [
+        {
+          "template_id": "alpha101:#43",
+          "pooled_ic_5d": 0.350222
+        },
+        {
+          "template_id": "qlib_alpha158:CORR10",
+          "pooled_ic_5d": 0.345984
+        },
+        {
+          "template_id": "qlib_alpha158:SUMN30",
+          "pooled_ic_5d": 0.234135
+        },
+        {
+          "template_id": "qlib_alpha158:CNTN30",
+          "pooled_ic_5d": 0.234012
+        },
+        {
+          "template_id": "qlib_alpha158:IMAX30",
+          "pooled_ic_5d": 0.228902
+        },
+        {
+          "template_id": "alpha101:#46",
+          "pooled_ic_5d": 0.226856
+        },
+        {
+          "template_id": "qlib_alpha158:RSQR30",
+          "pooled_ic_5d": 0.222075
+        },
+        {
+          "template_id": "qlib_alpha158:SUMN5",
+          "pooled_ic_5d": 0.213372
+        },
+        {
+          "template_id": "qlib_alpha158:ROC5",
+          "pooled_ic_5d": 0.211988
+        },
+        {
+          "template_id": "qlib_alpha158:IMAX20",
+          "pooled_ic_5d": 0.207101
+        }
+      ]
+    }
   }
 }
