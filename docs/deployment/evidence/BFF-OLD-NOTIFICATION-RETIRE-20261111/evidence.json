@@ -12,7 +12,7 @@
     "POST /bff/mcp/tools/{tool_id}/actions/{action_id}"
   ],
   "kept": {
-    "POST /bff/personas/{persona_id}/actions/{action_id}": "live AdvanceLifecycle/Promote/PromoteCandidate/Demote; other actions 410 ACTION_RETIRED (HTTPException error shape)",
+    "POST /bff/personas/{persona_id}/actions/{action_id}": "live AdvanceLifecycle/Promote/PromoteCandidate/Demote; other actions 404 RESOURCE_NOT_FOUND via existing ctx.bff_error",
     "POST /bff/mcp/servers": "live create",
     "POST /bff/mcp/servers/{server_id}/actions/{action_id}": "live",
     "GET /bff/mcp/servers/{server_id}/tools": "live",
