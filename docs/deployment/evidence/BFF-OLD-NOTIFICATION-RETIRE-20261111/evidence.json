@@ -28,13 +28,50 @@
   "fe_caller_audit": "/tmp/pantheon-compat-residual-20261111/fe-retired-route-consumers.json: no current UI caller; matches only in mocks/tests/probe. Literal source search only.",
   "traffic_claim": "bounded BFF container-log window: 7720 HTTP entries, zero target notification matches; no global-zero claim",
   "tests": {
-    "passed": "after review fix (persona unknown action asserts 404 RESOURCE_NOT_FOUND, no replacement): test_bff_path_dedupe.py 4 passed; write_gap, pkt001/004/007, dep004, wave4, router_isolation passed; route/capability/manifest/dedupe/deployment/runtime/tools/strategies/action-catalog suites",
-    "preexisting_failures_on_dev_unchanged": [
+    "rejection_correction": "Unsupported nested persona archive returns 404 RESOURCE_NOT_FOUND, with no replacement/deprecation body or headers and no command admission calls. Four live lifecycle aliases and authenticated business ACTION_RETIRED guards remain unchanged.",
+    "verified_source_head": "6a9984eff42862636a0a9f024564de668747b6d7",
+    "lifecycle": "timeout 420 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_lifecycle_forward.py: 192 passed, exit 0, 139.74s",
+    "dedupe": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_path_dedupe.py: 4 passed, exit 0, 7.48s (same test source as verified_source_head)",
+    "exact_head_recheck": {
+      "binding": "Rerun lifecycle192 and the same prior contract217 selection below at the final committed PR head. Terminal results and full head SHA belong to the governed handoff; prior-head 409-pass review is not current-head validation.",
+      "command_prefix": "timeout 600 .venv-pantheon/bin/python3 -m pytest -q",
+      "contract217_files": [
+        "services/control-plane/bff/tests/test_bff_path_dedupe.py",
+        "services/control-plane/bff/tests/test_persona_case_retire_command.py",
+        "services/control-plane/bff/tests/test_tools_integrations_router.py",
+        "services/control-plane/bff/tests/test_deployment_router.py",
+        "services/control-plane/bff/tests/test_runtime_router.py",
+        "services/control-plane/bff/tests/test_bff_b2_003_capabilities.py",
+        "services/control-plane/bff/test_action_catalog.py",
+        "services/control-plane/bff/strategies/test_router_isolation.py",
+        "services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "scripts/test_bff_route_diff.py",
+        "services/control-plane/bff/tests/test_bff_main_composition.py",
+        "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py",
+        "services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py",
+        "services/control-plane/bff/test_action_catalog_safety_invariants.py"
+      ],
+      "additional_rejection_assertions": "services/control-plane/bff/test_bff_write_gap_2026_05_28.py (including unregistered persona action 404 and authenticated deployment-plan ACTION_RETIRED without side effects)"
+    },
+    "historical_baseline_comparisons": [
       "tests/test_strategy_ranking_router.py::test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation",
       "tests/test_read_surface_caller_migration.py::test_main_py_all_read_store_attributes_are_inventoried_and_mapped",
       "test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos",
       "test_bff_strategy_persona_contract.py (3), tests/test_receipt_only_retirement.py (2), tests/test_bff_emergency_containment.py (2)"
-    ]
+    ],
+    "baseline_limit": "The listed failures were compared against dev during earlier implementation; they are historical evidence, not a new-head whole-suite pass or a claim that these files were rerun in the final focused selection. Interrupted or timed-out review batches are excluded."
+  },
+  "fe_audit_recheck": {
+    "remote_dev": "7123ea41b6ed11e0e197d64ec308ae0b7eba0ae2",
+    "verification": "Read-only git ls-remote confirmed maintained remote dev still equals the audited commit. Repeated literal route and paths.*Action caller searches in src/scripts/e2e; callers of removed builders are test-only, MCP read clients use /bff/mcp-servers and /bff/mcp-tools.",
+    "limits": "Unused path builders, mock adapters and the separately owned onboarding probe are not independent supported UI consumers. Source search is not a traffic measurement."
+  },
+  "caddy_inventory": {
+    "source": "/tmp/pantheon-compat-residual-20261111/remote_inventory-result.json",
+    "captured_at_utc": "2026-11-11T11:42:37.400322+00:00",
+    "has_access_log_directive": false,
+    "access_log_files": [],
+    "limits": "No Caddy traffic measurement is available; no global-zero claim or logging prerequisite is introduced."
   },
   "bff_access_window": {
     "source": "remote_bff_access_inventory-result.json",
