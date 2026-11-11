@@ -147,3 +147,116 @@ class DiscoveryAllocator:
             slots -= 1
             capital_left -= self.per_persona_capital
         return result
+
+
+# ---------------------------------------------------------------------------
+# Scheduled production run (design §11: once a day, paper only, cap 5).
+# ---------------------------------------------------------------------------
+import json as _json  # noqa: E402
+import threading as _threading  # noqa: E402
+from datetime import datetime as _datetime, timezone as _timezone  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+DAILY_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+def _env_true(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def allocator_enabled(env: Mapping[str, str]) -> bool:
+    return _env_true(env.get("DISCOVERY_ALLOCATOR_ENABLED"))
+
+
+def run_scheduled_allocation(
+    *,
+    enabled: bool,
+    allocator_factory: Callable[[], DiscoveryAllocator] | None,
+    list_admitted: Callable[[], Sequence[Mapping[str, Any]]],
+    list_personas: Callable[[], Sequence[Mapping[str, Any]]],
+    list_active_bindings: Callable[[], Sequence[Mapping[str, Any]]] = lambda: (),
+    tenant_id: str,
+    record_path: _Path | None = None,
+    now: _datetime | None = None,
+) -> dict[str, Any]:
+    """Run one allocation pass and return (and persist) the run record.
+
+    The record always states what was seen and either which personas were
+    bound or why none were (``disabled``, ``no_admitted_candidates``,
+    ``no_discovery_personas``, ``no_eligible_match``, ...).
+    """
+
+    now = now or _datetime.now(_timezone.utc)
+    record: dict[str, Any] = {
+        "ran_at": now.isoformat(),
+        "tenant_id": tenant_id,
+        "execution_context": EXECUTION_CONTEXT,
+        "max_personas": MAX_DISCOVERY_PERSONAS,
+        "enabled": bool(enabled),
+        "admitted_candidates_seen": 0,
+        "admitted_candidate_refs": [],
+        "bound": [],
+        "skipped": [],
+        "reason": None,
+    }
+    try:
+        if not enabled:
+            record["reason"] = "disabled"
+        else:
+            admitted = list(list_admitted())
+            record["admitted_candidates_seen"] = len(admitted)
+            record["admitted_candidate_refs"] = [
+                str(a.get("registry_id") or a.get("artifact_id") or a.get("strategy_spec_id"))
+                for a in admitted
+            ]
+            personas = list(list_personas())
+            if not admitted:
+                record["reason"] = "no_admitted_candidates"
+            elif not personas:
+                record["reason"] = "no_discovery_personas"
+            elif allocator_factory is None:
+                record["reason"] = "allocator_not_configured"
+            else:
+                result = allocator_factory().allocate(
+                    admitted_artifacts=admitted,
+                    discovery_personas=personas,
+                    active_bindings=list(list_active_bindings()),
+                    tenant_id=tenant_id,
+                    date=now.date().isoformat(),
+                )
+                record["bound"] = [b.to_dict() for b in result.bindings]
+                record["skipped"] = result.skipped
+                if not result.bindings:
+                    record["reason"] = "no_eligible_match"
+    except Exception as exc:  # noqa: BLE001 - a failed run must be recorded, not crash the loop
+        record["reason"] = f"error:{type(exc).__name__}:{exc}"
+    if record_path is not None:
+        record_path = _Path(record_path)
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        with record_path.open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(record, sort_keys=True) + "\n")
+    return record
+
+
+def start_daily_scheduler(
+    run_once: Callable[[], Any],
+    *,
+    interval_seconds: float = DAILY_INTERVAL_SECONDS,
+    stop_event: _threading.Event | None = None,
+) -> _threading.Thread:
+    """Run ``run_once`` immediately, then every ``interval_seconds`` (daemon thread)."""
+
+    stop = stop_event or _threading.Event()
+
+    def _loop() -> None:
+        while not stop.is_set():
+            try:
+                run_once()
+            except Exception:  # noqa: BLE001
+                pass
+            if stop.wait(interval_seconds):
+                break
+
+    thread = _threading.Thread(target=_loop, name="discovery-allocator-daily", daemon=True)
+    thread.start()
+    return thread

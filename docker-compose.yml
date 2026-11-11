@@ -749,6 +749,7 @@ services:
       RESEARCH_ORCHESTRATOR_DATA_DIR: /data/research-orchestrator
       RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS: ${RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS:-8}
       RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS: "false"
+      DISCOVERY_ALLOCATOR_ENABLED: ${DISCOVERY_ALLOCATOR_ENABLED:-true}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       # Third-party fetches are denied outside production. Set to `allowlist`
       # with PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS for a scoped live pull.

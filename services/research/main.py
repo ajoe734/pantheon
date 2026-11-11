@@ -2125,6 +2125,44 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
     threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
 
 
+# --- Discovery allocator: daily paper-only run inside this orchestrator ---
+DISCOVERY_ALLOCATOR_TENANT = os.getenv("DISCOVERY_ALLOCATOR_TENANT_ID", "default")
+# Ports are module-level so deployments/tests can inject the persona source,
+# scorer and provisioner; unset personas => run records no_discovery_personas.
+discovery_allocator_ports: Dict[str, Any] = {
+    "list_personas": lambda: [],
+    "list_active_bindings": lambda: [],
+    "allocator_factory": None,
+}
+
+
+def run_discovery_allocator_once() -> Dict[str, Any]:
+    from services.research import discovery_allocator as _da
+
+    return _da.run_scheduled_allocation(
+        enabled=_da.allocator_enabled(os.environ),
+        allocator_factory=discovery_allocator_ports["allocator_factory"],
+        list_admitted=lambda: [
+            e for e in alpha_replication_admission_store.list_admissions(DISCOVERY_ALLOCATOR_TENANT)
+            if e.get("status") == "admitted"
+        ],
+        list_personas=discovery_allocator_ports["list_personas"],
+        list_active_bindings=discovery_allocator_ports["list_active_bindings"],
+        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
+        record_path=store.data_dir / "discovery_allocator_runs.jsonl",
+    )
+
+
+@app.on_event("startup")
+def start_discovery_allocator_schedule() -> None:
+    from services.research import discovery_allocator as _da
+
+    _da.start_daily_scheduler(
+        run_discovery_allocator_once,
+        interval_seconds=float(os.getenv("DISCOVERY_ALLOCATOR_INTERVAL_SECONDS", str(_da.DAILY_INTERVAL_SECONDS))),
+    )
+
+
 @app.on_event("startup")
 def resume_retrain_runs() -> None:
     """Resume in place every retrain run a restart left queued or running.
