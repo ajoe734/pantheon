@@ -2070,7 +2070,7 @@ services:
       CAPITAL_JWT_AUDIENCE: ${CAPITAL_JWT_AUDIENCE:-}
       CAPITAL_ROLE_CLAIMS: ${CAPITAL_ROLE_CLAIMS:-roles,role}
       CAPITAL_PERMISSIVE_ALLOWED_TENANTS: ${CAPITAL_PERMISSIVE_ALLOWED_TENANTS:-${PANTHEON_BFF_TENANT_ID:-default}}
-      CAPITAL_ALLOWED_READER_SERVICES: ${CAPITAL_ALLOWED_READER_SERVICES:-control-plane-bff,runtime-manager}
+      CAPITAL_ALLOWED_READER_SERVICES: ${CAPITAL_ALLOWED_READER_SERVICES:-control-plane-bff,runtime-manager,research-orchestrator}
     volumes:
       - capital-data:/data/capital
       - dev-paper-capital-tokens:/run/pantheon-principals:ro

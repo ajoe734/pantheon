@@ -4,6 +4,10 @@
     {
       "cmd": "pytest services/research/tests/test_discovery_allocator_schedule.py services/research/test_discovery_allocator.py scripts/test_issue_dev_paper_principals.py services/research/tests/test_research_orchestrator_http_service.py",
       "result": "104 passed (exit 0)"
+    },
+    {
+      "cmd": "pytest services/research/test_discovery_allocator.py services/research/tests/test_discovery_allocator_schedule.py scripts/test_issue_dev_paper_principals.py services/capital/test_reader_authority.py",
+      "result": "81 passed (exit 0)"
     }
   ],
   "acceptance": {
@@ -30,5 +34,9 @@
     "durable_bindings": "test_active_bindings_come_from_capital_not_persona_labels",
     "credentials_tenant": "RESEARCH_PERSONA_SERVICE_TOKEN (viewer) and RESEARCH_CAPITAL_SERVICE_TOKEN (capital-reader) issued read-only, tenant-dev, mounted; compose tenant default tenant-dev; test_compose_mounts_credentials_and_sets_dev_tenant, test_default_boot_uses_production_ports_and_compose_tenant_credentials",
     "partial_failure": "test_partial_provision_failure_retains_earlier_bindings, test_owner_unreachable_mid_run_keeps_bound_and_records_reason"
+  },
+  "review_fixes_round2": {
+    "capital_reader_allowlist": "docker-compose.yml CAPITAL_ALLOWED_READER_SERVICES default now control-plane-bff,runtime-manager,research-orchestrator; CAPITAL_ALLOWED_CALLER_SERVICES (writes) untouched. test_production_binding_read_passes_real_capital_auth drives the real Capital app in strict auth with a valid capital-reader JWT and the compose default allowlist: GET /api/bindings 200, mutation still 403 ACTOR_SERVICE_FORBIDDEN; negative control with the old allowlist fails the test.",
+    "persona_eligibility": "is_discovery_eligible_persona: tenant-bound, status=active, lifecycle_state not frozen/retired, strategy_family and metadata not baseline (PersonaBody has no top-level persona_class/labels). test_persona_eligibility_uses_real_owner_record_shape covers baseline, suspended, archived, frozen, retired, foreign/no-tenant."
   }
 }

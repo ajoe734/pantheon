@@ -101,7 +101,7 @@ def _ports(calls, *, bindings=(), personas=None, specs=None):
     def call(service, method, url, body):
         calls.append((service, method, url, body))
         if service == "persona":
-            return personas if personas is not None else [{"persona_id": "p1", "tenant_id": "tenant-x"}]
+            return personas if personas is not None else [{"persona_id": "p1", "tenant_id": "tenant-x", "status": "active", "lifecycle_state": "paper_owner"}]
         if service == "capital":
             return list(bindings)
         if service == "registry":
@@ -251,7 +251,8 @@ def test_default_boot_uses_production_ports_and_compose_tenant_credentials() -> 
     alloc = ports["allocator_factory"]()
     assert isinstance(alloc, da.DiscoveryAllocator) and alloc.max_personas == 5
     with mock.patch.object(module, "_retrain_call", return_value=[
-        {"persona_id": "p1", "tenant_id": module.DISCOVERY_ALLOCATOR_TENANT},
+        {"persona_id": "p1", "tenant_id": module.DISCOVERY_ALLOCATOR_TENANT, "status": "active",
+         "lifecycle_state": "paper_owner", "strategy_family": "momentum"},
     ]) as owner:
         assert [p["persona_id"] for p in ports["list_personas"]()] == ["p1"]
     assert owner.call_args.kwargs["url"].endswith("/api/personas")
@@ -308,3 +309,78 @@ def test_allocator_body_is_accepted_by_real_coordinator_for_new_pool() -> None:
     assert posted["/api/capital-pools"]["currency"] == "USD"
     assert posted["/api/bindings"]["metadata"]["strategy_spec_registry_id"] == "reg-spec-frozen"
     assert posted["/api/bindings"]["binding_id"].startswith("pcb-discovery-")
+
+
+def _compose_capital_reader_default() -> str:
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[3] / "docker-compose.yml").read_text()
+    m = re.search(r"CAPITAL_ALLOWED_READER_SERVICES: \$\{CAPITAL_ALLOWED_READER_SERVICES:-([^}]*)\}", text)
+    assert m, "compose must declare the Capital reader allowlist"
+    return m.group(1)
+
+
+def test_production_binding_read_passes_real_capital_auth(monkeypatch) -> None:
+    from services.capital.test_reader_authority import (  # noqa: F401
+        _auth_headers,
+        capital_reader_env,
+    )
+
+    gen = capital_reader_env.__wrapped__() if hasattr(capital_reader_env, "__wrapped__") else None
+    assert gen is not None
+    client, _module, _ = next(gen)
+    try:
+        # Real strict auth with the deployed (compose) reader allowlist, not a hand-set one.
+        allowed = _compose_capital_reader_default()
+        monkeypatch.setenv("CAPITAL_ALLOWED_READER_SERVICES", allowed)
+        assert "research-orchestrator" in allowed.split(",")
+        headers = _auth_headers(
+            "tenant-alpha", service="research-orchestrator", roles=["capital-reader"], actor_id="ro",
+        )
+
+        def call(service, method, url, body):
+            assert service == "capital" and method == "GET"
+            res = client.get(url.replace("http://c", ""), headers=headers)
+            assert res.status_code == 200, res.text  # was 403 ACTOR_SERVICE_FORBIDDEN
+            return res.json()
+
+        ports = da.make_production_ports(
+            call=call, persona_url="http://p", provisioning_url="http://v", registry_url="http://r",
+            capital_url="http://c", tenant_id="tenant-alpha", paper_capital_cap=1.0, per_persona_capital=1.0,
+        )
+        assert ports["list_active_bindings"]() == []
+
+        # Write restriction preserved: research-orchestrator may not mutate Capital.
+        denied = client.post(
+            "/api/capital-pools",
+            json={"actor_id": "ro", "actor_role": "capital.admin", "pool_id": "x", "name": "x",
+                  "owner_id": "f", "owner_type": "fund", "approval_decision_id": "a"},
+            headers=_auth_headers("tenant-alpha", service="research-orchestrator",
+                                  roles=["capital-reader", "capital.admin"]),
+        )
+        assert denied.status_code == 403
+        assert denied.json()["error"]["code"] == "ACTOR_SERVICE_FORBIDDEN"
+    finally:
+        gen.close()
+
+
+def test_persona_eligibility_uses_real_owner_record_shape() -> None:
+    base = {"tenant_id": "tenant-x", "status": "active", "lifecycle_state": "paper_owner"}
+    rows = [
+        {**base, "persona_id": "ok", "strategy_family": "momentum"},
+        {**base, "persona_id": "baseline", "strategy_family": "dev_paper_baseline"},
+        {**base, "persona_id": "meta-baseline", "metadata": {"strategy_family": "dev_paper_baseline"}},
+        {**base, "persona_id": "suspended", "status": "suspended"},
+        {**base, "persona_id": "archived", "status": "archived"},
+        {**base, "persona_id": "frozen", "lifecycle_state": "frozen"},
+        {**base, "persona_id": "retired", "lifecycle_state": "retired"},
+        {**base, "persona_id": "other-tenant", "tenant_id": "tenant-y"},
+        {"persona_id": "no-tenant", "status": "active", "lifecycle_state": "paper_owner"},
+    ]
+    ports = da.make_production_ports(
+        call=lambda service, method, url, body: rows,
+        persona_url="http://p", provisioning_url="http://v", registry_url="http://r",
+        capital_url="http://c", tenant_id="tenant-x", paper_capital_cap=1.0, per_persona_capital=1.0,
+    )
+    assert [p["persona_id"] for p in ports["list_personas"]()] == ["ok"]

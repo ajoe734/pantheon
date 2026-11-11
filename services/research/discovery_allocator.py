@@ -240,6 +240,35 @@ def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+BASELINE_STRATEGY_FAMILIES = frozenset({"dev_paper_baseline"})
+INELIGIBLE_LIFECYCLE_STATES = frozenset({"frozen", "retired"})
+
+
+def is_discovery_eligible_persona(persona: Mapping[str, Any], *, tenant_id: str) -> bool:
+    """Eligible = real Persona owner record (PersonaBody) that is tenant-bound,
+    administratively ``active``, not frozen/retired, and not a baseline persona
+    (``strategy_family`` / ``metadata`` markers; PersonaBody has no top-level
+    ``persona_class`` or ``labels``)."""
+
+    # tenant_id may be None on legacy records: no provable tenant binding -> not eligible.
+    if str(persona.get("tenant_id") or "") != tenant_id:
+        return False
+    if str(persona.get("status") or "") != "active":
+        return False
+    if str(persona.get("lifecycle_state") or "") in INELIGIBLE_LIFECYCLE_STATES:
+        return False
+    if str(persona.get("strategy_family") or "") in BASELINE_STRATEGY_FAMILIES:
+        return False
+    meta = _mapping(persona.get("metadata"))
+    if (
+        str(meta.get("strategy_family") or "") in BASELINE_STRATEGY_FAMILIES
+        or str(meta.get("persona_class") or "") == "baseline"
+        or meta.get("baseline")
+    ):
+        return False
+    return True
+
+
 def normalize_admitted_spec(admission: Mapping[str, Any], view: Any, *, tenant_id: str) -> dict[str, Any]:
     """Resolve one ReplicationAdmission to its approved registry StrategySpec.
 
@@ -295,12 +324,7 @@ def make_production_ports(
 
     def list_personas() -> list[dict[str, Any]]:
         rows = _persona_rows(call("persona", "GET", f"{persona_url}/api/personas", None))
-        return [
-            p for p in rows
-            if str(p.get("tenant_id") or tenant_id) == tenant_id
-            and str(p.get("persona_class") or "") != "baseline"
-            and not (isinstance(p.get("labels"), Mapping) and p["labels"].get("baseline"))
-        ]
+        return [p for p in rows if is_discovery_eligible_persona(p, tenant_id=tenant_id)]
 
     def list_active_bindings() -> list[dict[str, Any]]:
         """Durable discovery bindings, read from the Capital owner (not labels)."""
