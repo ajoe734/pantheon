@@ -34,17 +34,17 @@ ScoreFn = Callable[[Mapping[str, Any]], float]
 def shared_family_trial_counter(path: Any) -> Any:
     """Durable family counter shared with the §10 gate / OOS admission worker.
 
-    ``FamilyTrialCounterStore`` itself locks, reloads and atomically replaces the
-    file, so the gate, the revalidation worker and this search all accumulate
+    ``SharedFamilyTrialCounterStore`` locks, reloads and atomically replaces the
+    file, and ``SharedReplicationGate`` uses the same store, so the gate, the revalidation worker and this search all accumulate
     into the same counts across decisions, processes and restarts.
     """
     from pathlib import Path
 
-    from services.research.replication.gate import FamilyTrialCounterStore
+    from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
 
     if path is None:
         raise EvolutionSearchError("a durable family trial counter path is required")
-    return FamilyTrialCounterStore(Path(path))
+    return SharedFamilyTrialCounterStore(Path(path))
 
 
 class EvolutionSearchError(ValueError):

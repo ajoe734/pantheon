@@ -24,7 +24,7 @@
     },
     "4_oos_and_trials": {
       "implementation": "evolution_search.judge_child_out_of_sample / run_mutation_decision; search_in_sample increments FamilyTrialCounterStore once per evaluated variant",
-      "behaviour": "every child goes through the section-10 ReplicationGate (real OOS backtest, deflated Sharpe) and only passers are registered; the gate adds to the family trial count, and search variants are counted too, so counts accumulate per family across decisions. FamilyTrialCounterStore and BacktestRunStore (services/research/replication/gate.py) now reload under an exclusive flock and write atomically, so the gate, revalidation worker and search can never lose each other's trials.",
+      "behaviour": "every child goes through the section-10 ReplicationGate (real OOS backtest, deflated Sharpe) and only passers are registered; the gate adds to the family trial count, and search variants are counted too, so counts accumulate per family across decisions. services/research/alpha_replication/shared_stores.py: SharedFamilyTrialCounterStore, SharedBacktestRunStore and SharedReplicationGate reload under an exclusive flock and write atomically; the revalidation worker (gate + run store), the retrain search and the mutate/revalidate executor all use them (gate.py itself is outside this task's artifact contract and unchanged), so the gate, revalidation worker and search can never lose each other's trials.",
       "tests": "test_evolution_search.py (trial counts 50 -> 60; judged children register only on pass); test_gate_and_search_writers_interleave_without_losing_trials, test_trial_counter_concurrent_processes_do_not_lose_updates"
     },
     "5_retire_on_decay": {
@@ -38,7 +38,7 @@
   "validation": {
     "interpreter": "/tmp/gfd-venv/bin/python",
     "reviewer_set_plus_new": "119 passed (test_auto_consumer, runtime, governed lifecycle, evolution_decision/controller, factor_rule, test_evolution_search, retrain_search_update, evolution_gate_executor)",
-    "replication+retrain real-auth": "104 passed (services/research/replication, test_revalidation_worker, test_retrain_executor_real_auth)"
+    "replication+retrain real-auth": "130 passed (services/research/alpha_replication incl. revalidation worker, replication/test_gate.py); earlier 104 passed incl. test_retrain_executor_real_auth (unchanged by the store swap)"
   },
   "not_done_here": [
     "GovernedPersonaLifecycle is tested against a faithful fake of Governance+persona owner, not a live Governance PG store (approval commands require PostgreSQL).",

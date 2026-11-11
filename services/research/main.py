@@ -2185,7 +2185,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     """
     from services.registry.strategy_artifact import strategy_artifact_checksum
     from services.research.alpha_replication import evolution_executor as executor
-    from services.research.replication.gate import BacktestRunStore, ReplicationGate
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
 
     action = _evolution_action(params)
     decision_id = str(params["decision_id"])
@@ -2247,8 +2247,8 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
         raise _RetrainFinished("evaluation_rejected", "governed_dataset_unavailable")
 
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
-    backtests = BacktestRunStore(data_dir / "backtest_runs.json")
-    gate = ReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
+    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
     factory = executor.build_gate_request_factory(
         spec=spec, dataset=dataset, decision_id=decision_id, tenant_id=tenant_id,
         record_backtest=backtests.record, family_id=family_id, timestamp=utc_now(),

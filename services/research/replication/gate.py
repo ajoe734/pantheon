@@ -39,68 +39,33 @@ CONFLICT = object()
 
 
 class FamilyTrialCounterStore:
-    """Tracks multiple-testing trial counts per strategy family.
-
-    The file may be shared by several writers (the gate, the revalidation worker
-    and the evolution search, possibly in different processes). Every read
-    reloads the file and every increment runs under an exclusive file lock as
-    reload -> add -> atomic replace, so concurrent or restarted writers never
-    lose each other's trials.
-    """
+    """Tracks multiple-testing trial counts per strategy family."""
 
     def __init__(self, path: Optional[Path] = None):
         self._path = Path(path) if path is not None else None
         self._counts: Dict[str, int] = {}
-        self._lock_path = Path(str(self._path) + ".lock") if self._path is not None else None
-        self._reload(strict=False)
-
-    def _reload(self, strict: bool = True) -> None:
-        if self._path is None or not self._path.exists():
-            if self._path is not None:
+        if self._path is not None and self._path.exists():
+            try:
+                loaded = json.loads(self._path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    self._counts = {str(k): int(v) for k, v in loaded.items()}
+            except Exception:
                 self._counts = {}
-            return
-        try:
-            loaded = json.loads(self._path.read_text(encoding="utf-8"))
-            if not isinstance(loaded, dict):
-                raise ValueError("counter file is not an object")
-            self._counts = {str(k): int(v) for k, v in loaded.items()}
-        except Exception:
-            if strict:
-                # A shared counter that cannot be read must not be silently reset to zero.
-                raise
-            self._counts = {}
 
     def get(self, family_id: str) -> int:
-        self._reload(strict=False)
         return int(self._counts.get(family_id, 0))
 
     def increment(self, family_id: str, preset_count: Optional[int] = None) -> int:
-        if self._path is None:
-            next_val = int(self._counts.get(family_id, 0)) + 1
-            if preset_count is not None and int(preset_count) > next_val:
-                next_val = int(preset_count)
-            self._counts[family_id] = next_val
-            return next_val
-        import fcntl
-        import os
-
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock_path.open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            try:
-                self._reload(strict=True)
-                next_val = int(self._counts.get(family_id, 0)) + 1
-                if preset_count is not None and int(preset_count) > next_val:
-                    next_val = int(preset_count)
-                self._counts[family_id] = next_val
-                tmp = self._path.with_name(self._path.name + f".tmp{os.getpid()}")
-                with tmp.open("w", encoding="utf-8") as handle:
-                    handle.write(json.dumps(self._counts, indent=2, sort_keys=True) + "\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(tmp, self._path)
-            finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+        next_val = self.get(family_id) + 1
+        if preset_count is not None and int(preset_count) > next_val:
+            next_val = int(preset_count)
+        self._counts[family_id] = next_val
+        if self._path is not None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps(self._counts, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         return next_val
 
 
@@ -135,7 +100,7 @@ class BacktestRunStore:
             return None
         identity = evaluation.get("strategy_artifact")
         identity = identity if isinstance(identity, dict) else {}
-        entry = {
+        self._runs[run_id] = {
             "backtest_run_id": run_id,
             "status": evaluation.get("status"),
             "artifact_checksum": identity.get("checksum"),
@@ -144,31 +109,11 @@ class BacktestRunStore:
             "artifact_ref": evaluation.get("artifact_ref"),
             "evaluation_digest": self.evaluation_digest(evaluation),
         }
-        if self._path is None:
-            self._runs[run_id] = entry
-        else:
-            import fcntl
-            import os
-
+        if self._path is not None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            with Path(str(self._path) + ".lock").open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
-                try:
-                    merged: Dict[str, Dict[str, Any]] = {}
-                    if self._path.exists():
-                        loaded = json.loads(self._path.read_text(encoding="utf-8"))
-                        if isinstance(loaded, dict):
-                            merged = {str(k): dict(v) for k, v in loaded.items() if isinstance(v, dict)}
-                    merged[run_id] = entry
-                    self._runs = merged
-                    tmp = self._path.with_name(self._path.name + f".tmp{os.getpid()}")
-                    with tmp.open("w", encoding="utf-8") as handle:
-                        handle.write(json.dumps(merged, indent=2, sort_keys=True) + "\n")
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                    os.replace(tmp, self._path)
-                finally:
-                    fcntl.flock(lock, fcntl.LOCK_UN)
+            self._path.write_text(
+                json.dumps(self._runs, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
         return run_id
 
     def get(self, run_id: str) -> Optional[Dict[str, Any]]:

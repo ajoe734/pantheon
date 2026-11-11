@@ -48,6 +48,7 @@ class World:
 def world(research, monkeypatch):
     from services.registry.test_factor_rule import _sample_factor_rule_artifact
     from services.research.alpha_replication import evolution_executor as executor
+    from services.research.alpha_replication import shared_stores
     from services.research.replication import gate as gate_module
 
     parent = _sample_factor_rule_artifact()
@@ -95,7 +96,7 @@ def world(research, monkeypatch):
 
     monkeypatch.setattr(research, "_retrain_call", call)
     monkeypatch.setattr(research, "_RETRAIN_DATASET_LOADER", lambda parent, params: {"dataset_id": "ds-1"})
-    monkeypatch.setattr(gate_module, "ReplicationGate", FakeGate)
+    monkeypatch.setattr(shared_stores, "SharedReplicationGate", FakeGate)
     monkeypatch.setattr(
         executor, "build_gate_request_factory",
         lambda **kw: (lambda artifact: {"family": kw["family_id"]}),

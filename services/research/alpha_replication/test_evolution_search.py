@@ -199,7 +199,7 @@ def test_mutation_decision_judges_every_child_oos_registers_only_passers_and_acc
 
 def test_gate_and_search_writers_interleave_without_losing_trials(tmp_path):
     from services.research.alpha_replication.evolution_search import shared_family_trial_counter
-    from services.research.replication.gate import ReplicationGate
+    from services.research.alpha_replication.shared_stores import SharedReplicationGate as ReplicationGate
 
     path = tmp_path / "family_trial_counts.json"
     gate = ReplicationGate(trial_counter_path=path)  # constructed BEFORE the search
@@ -223,14 +223,33 @@ def test_trial_counter_concurrent_processes_do_not_lose_updates(tmp_path):
         p.start()
     for p in procs:
         p.join()
-    from services.research.replication.gate import FamilyTrialCounterStore
+    from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
 
-    assert FamilyTrialCounterStore(path).get("fam") == 100
+    assert SharedFamilyTrialCounterStore(path).get("fam") == 100
+
+
+def test_revalidation_worker_gate_and_run_store_are_the_shared_variants():
+    import inspect
+
+    from services.research.alpha_replication import revalidation_worker as rw
+
+    source = inspect.getsource(rw.AlphaRevalidationWorker)
+    assert "SharedReplicationGate as ReplicationGate" in source and "SharedBacktestRunStore" in source
+
+
+def test_backtest_run_store_writers_do_not_drop_each_others_runs(tmp_path):
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore
+
+    path = tmp_path / "runs.json"
+    a, b = SharedBacktestRunStore(path), SharedBacktestRunStore(path)
+    a.record({"backtest_run_id": "bt-a", "status": "completed"})
+    b.record({"backtest_run_id": "bt-b", "status": "completed"})
+    assert SharedBacktestRunStore(path).get("bt-a") and SharedBacktestRunStore(path).get("bt-b")
 
 
 def _bump(path, n):
-    from services.research.replication.gate import FamilyTrialCounterStore
+    from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
 
-    store = FamilyTrialCounterStore(path)
+    store = SharedFamilyTrialCounterStore(path)
     for _ in range(n):
         store.increment("fam")

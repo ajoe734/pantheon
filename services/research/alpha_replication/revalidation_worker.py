@@ -707,9 +707,9 @@ class AlphaRevalidationWorker:
         )
 
     def _new_backtest_run_store(self) -> Any:
-        from services.research.replication.gate import BacktestRunStore
+        from services.research.alpha_replication.shared_stores import SharedBacktestRunStore
 
-        return BacktestRunStore(self._backtest_run_store_path)
+        return SharedBacktestRunStore(self._backtest_run_store_path)
 
     def _resolve_backtest_evaluation(
         self,
@@ -867,10 +867,10 @@ class AlphaRevalidationWorker:
     ) -> ExperimentRun:
         from services.registry.promotion.gate import PromotionGate, PromotionState
         from services.registry.strategy_artifact import strategy_artifact_checksum
-        from services.research.replication.gate import (
-            ReplicationGate,
-            create_promotion_request,
+        from services.research.alpha_replication.shared_stores import (
+            SharedReplicationGate as ReplicationGate,
         )
+        from services.research.replication.gate import create_promotion_request
         from services.research.replication.gate_schema import (
             CandidateAdmissionStatus,
             ReplicationRequest,
