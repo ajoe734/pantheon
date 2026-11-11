@@ -2268,7 +2268,11 @@ if action == "restore":
     # restore-controlled keys replaced; image/other env invariants stay strict.
     controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
     intended = {x for x in pre_list if x.split("=", 1)[0] not in controlled}
-    intended |= {f"{k}={env[k]}" for k in controlled}
+    # SOURCE_INGEST_CONTROLLER_MODE is only passed to the scheduler service in
+    # docker-compose.yml, never the source-ingest container, so it is expected
+    # only when the recorded pre-environment carried it. Egress keys stay strict.
+    pre_keys = {x.split("=", 1)[0] for x in pre_list}
+    intended |= {f"{k}={env[k]}" for k in controlled if k != "SOURCE_INGEST_CONTROLLER_MODE" or k in pre_keys}
     if set(intended) != set(post_list):
         raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - intended)}, removed={sorted(intended - set(post_list))}")
 PY

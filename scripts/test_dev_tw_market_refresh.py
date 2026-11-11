@@ -441,7 +441,10 @@ if args[0] == "compose":
             controlled_keys = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
             if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
                 kept = [e for e in state["container_env"] if e.split("=", 1)[0] not in controlled_keys]
-                state["container_env"] = kept + [f"{{k}}={{os.environ[k]}}" for k in controlled_keys if k in os.environ]
+                # Real compose passes SOURCE_INGEST_CONTROLLER_MODE only to the scheduler,
+                # so the source-ingest container carries it only if it did before.
+                had_mode = any(e.startswith("SOURCE_INGEST_CONTROLLER_MODE=") for e in state["container_env"])
+                state["container_env"] = kept + [f"{{k}}={{os.environ[k]}}" for k in controlled_keys if k in os.environ and (k != "SOURCE_INGEST_CONTROLLER_MODE" or had_mode)]
             if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist":
                 state["source_ingest_cid"] = state.get("recreated_source_ingest_cid", "cid-source-ingest-recreated")
             elif os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
