@@ -119,6 +119,13 @@ SOURCE_REFRESH_SELECTED="false"
 case ",${DEV_COMPOSE_PROFILES}," in
   *,source-ingest-scheduler,*) SOURCE_REFRESH_SELECTED="true" ;;
 esac
+# Steady state (outside bounded refresh): deny falls through to an allowlist
+# of exactly PANTHEON_COLLECTOR_HOST when that named variable is configured.
+if [[ "${SOURCE_REFRESH_SELECTED}" != "true" && "${SOURCE_REFRESH_EGRESS_MODE}" == "deny" \
+  && -z "${SOURCE_REFRESH_ALLOWED_HOSTS}" && -n "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+  SOURCE_REFRESH_EGRESS_MODE="allowlist"
+  SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST}"
+fi
 if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_CONTROLLER_MODE="reconcile_and_pull"
   SOURCE_REFRESH_TRUTH_LEVEL="reconciled_live_proof"
@@ -2234,8 +2241,13 @@ if current_img != expected_img:
     raise SystemExit(f"source-ingest container image ID {current_img} != expected {expected_img}")
 if action == "restore":
     post_list = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .Config.Env}}", cid], text=True).strip())
-    if set(pre_list) != set(post_list):
-        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - set(pre_list))}, removed={sorted(set(pre_list) - set(post_list))}")
+    # Compare against the intended restored environment: pre env with only the
+    # restore-controlled keys replaced; image/other env invariants stay strict.
+    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
+    intended = {x for x in pre_list if x.split("=", 1)[0] not in controlled}
+    intended |= {f"{k}={env[k]}" for k in controlled}
+    if set(intended) != set(post_list):
+        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - intended)}, removed={sorted(intended - set(post_list))}")
 PY
 }
 
