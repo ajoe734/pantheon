@@ -7,7 +7,7 @@
     "4_official_hosts_unchanged": "TWSE/TPEx and TAIFEX required host sets untouched",
     "5_other_services_deny": "research-orchestrator-svc hardcoded deny; test_only_source_ingest_may_use_collector_host_steady_egress asserts"
   },
-  "verification": "pytest scripts/test_deploy_nonprod_vm.py services/test_external_egress.py services/source_ingestion/test_compose_activation.py: 121 passed, 2 skipped; bash -n ok",
+  "verification": "pytest scripts/test_deploy_nonprod_vm.py services/test_external_egress.py services/source_ingestion/test_compose_activation.py: 122 passed, 2 skipped; bash -n ok",
   "workflow_env_wiring": {
     "nonprod-deploy.yml": "PANTHEON_COLLECTOR_HOST (vars) + PANTHEON_COLLECTOR_BUNDLE_TOKEN (secrets) added to every DEV_BFF_JWT_SECRET env block and both bounded TAIFEX refresh steps",
     "dev-tw-market-refresh.yml": "both bounded refresh steps",
@@ -27,6 +27,7 @@
   },
   "review_fixes": {
     "P1_AC1": "deploy_nonprod_vm.sh normalizes unset/deny to allowlist+PANTHEON_COLLECTOR_HOST outside bounded refresh; nonprod-deploy.yml steady PANTHEON_EXTERNAL_EGRESS(_ALLOWED_HOSTS) select collector host when var set; bounded sets unchanged. Test: test_steady_deploy_defaults_to_collector_host_allowlist_even_with_explicit_deny",
-    "P2_AC2": "restore post-check compares against intended env (pre env with egress/controller-mode keys replaced). Test: test_restore_from_deny_or_allowlist_reaches_collector_allowlist (both transitions)"
+    "P2_AC2": "restore post-check compares against intended env (pre env with egress/controller-mode keys replaced). Test: test_restore_from_deny_or_allowlist_reaches_collector_allowlist (both transitions)",
+    "P2_single_host_invariant": "PANTHEON_COLLECTOR_HOST validated as exactly one valid hostname (RFC-style labels, <=253, no comma/port/scheme) at deploy init (before any Docker mutation), in the remote steady guard, and in restore (python). Test: scripts/test_deploy_nonprod_vm.py::test_collector_host_gate_rejects_non_single_hostname (executable regex matrix + early-guard exit 1 for comma list)"
   }
 }

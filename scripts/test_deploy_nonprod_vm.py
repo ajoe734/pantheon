@@ -3033,3 +3033,29 @@ def test_restore_from_deny_or_allowlist_reaches_collector_allowlist(tmp_path, in
     )
     assert result.returncode == 0, result.stderr
     assert "PANTHEON_EXTERNAL_EGRESS=allowlist" in (tmp_path / "state").read_text()
+
+
+def test_collector_host_gate_rejects_non_single_hostname() -> None:
+    """Comma lists / malformed values must be rejected before any Docker mutation."""
+    import subprocess
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent / "deploy_nonprod_vm.sh").read_text()
+    # Executable check of the guard regex used by the steady guard.
+    start = text.index('[[ ${#PANTHEON_COLLECTOR_HOST} -le 253')
+    rx = text[start:].split("=~ ", 1)[1].split(" ]]", 1)[0]
+    for host, ok in (("collector.example", True), ("a.b-c.example", True),
+                     ("collector.example,extra.example", False), ("collector.example:443", False),
+                     ("https://collector.example", False), ("-bad.example", False),
+                     ("bad host", False), ("a..b", False), ("x" * 64 + ".example", False)):
+        proc = subprocess.run(["bash", "-c", f'[[ "$1" =~ {rx} ]]', "_", host], check=False)
+        assert (proc.returncode == 0) is ok, host
+    assert "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring" in text
+    assert "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname" in text.split("# Steady state", 1)[0]
+    # Early guard really exits non-zero for a comma list.
+    head = text.split("# Steady state", 1)[0]
+    block = head[head.rindex("# PANTHEON_COLLECTOR_HOST must be exactly one"):]
+    proc = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block],
+                          env={"PANTHEON_COLLECTOR_HOST": "collector.example,extra.example", "PATH": "/usr/bin:/bin"},
+                          capture_output=True, text=True, check=False)
+    assert proc.returncode == 1 and "exactly one valid hostname" in proc.stderr
