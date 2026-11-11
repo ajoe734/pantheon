@@ -2721,6 +2721,31 @@ def test_finmind_prepare_bounds_batches_to_fetch_guard_without_truncation(symbol
     assert sorted(sym for job in jobs for sym in job["symbols"]) == sorted(m["symbol"] for m in schedule["members"])
 
 
+def test_finmind_prepared_connector_passes_real_reconciler_approval_gate(tmp_path: Path) -> None:
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+    from services.source_ingestion.connectors.base import SourceConnector
+    from services.source_ingestion.ingest_manager import IngestManager
+    from services.source_ingestion.persona_source_reconciler import SourceProvisioningReconciler
+
+    desired, posted = _prepare_finmind_dataset(3)
+    registration = next(item for item in posted if item["path"].endswith("/connectors"))
+    connector_payload = registration.get("connector") or {k: v for k, v in registration.items() if k not in {"path", "fetch"}}
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    store.upsert_config(SourceConnector.from_dict(connector_payload), registration["fetch"])
+    reconciler = SourceProvisioningReconciler(
+        manager=IngestManager(),
+        connector_store=store,
+        schedule_store=JsonlConnectorScheduleStore(tmp_path / "schedule.jsonl"),
+    )
+    assert "tw-finmind-broker-daily-report" not in reconciler.provider_factories
+    for persona in desired["personas"]:
+        result = reconciler.reconcile_persona(persona)
+        for action in result.actions:
+            if action.connector_id == "tw-finmind-broker-daily-report":
+                assert action.status != "conflict", action
+                assert "require_connector_approved" not in (getattr(action, "failed_policy_gates", None) or ())
+
+
 def test_nonprod_deploy_workflow_dev_paper_expression_layer_default_and_steps() -> None:
     deploy_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8"))
     expected_expr = "${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}"
