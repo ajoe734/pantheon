@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 import time
 import urllib.error
@@ -16,6 +17,8 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .config import CollectorConfigError, EXCHANGE_WEBSITE_SOURCE_IDS, SourceFetchPolicy
 from .state import classify_access_block
+
+logger = logging.getLogger("collector_stack.fetch")
 
 
 class FetchAccessBlockedError(RuntimeError):
@@ -126,8 +129,42 @@ class FixtureTransport(FetchTransport):
         return FetchResponse(requested_url=url, final_url=url, http_status=200, body=raw)
 
 
+class FetchBackendUnavailableError(RuntimeError):
+    """Raised when a Scrapling fetcher class cannot be imported or its browser cannot launch.
+
+    There is deliberately no fallback to urllib: a plain HTTP fetch of a JavaScript page returns an
+    empty shell that looks like "no data", which hides the real cause of the failure.
+    """
+
+    def __init__(self, backend: str, detail: str) -> None:
+        super().__init__(f"fetch backend unavailable ({backend}): {detail}")
+        self.backend = backend
+        self.detail = detail
+
+
+def _page_to_response(url: str, page: Any) -> FetchResponse:
+    body = getattr(page, "body", None)
+    if isinstance(body, str):
+        body = body.encode("utf-8")
+    if not isinstance(body, (bytes, bytearray)):
+        body = str(getattr(page, "html_content", "")).encode("utf-8")
+    headers = getattr(page, "headers", None) or {}
+    return FetchResponse(
+        requested_url=url,
+        final_url=str(getattr(page, "url", url)),
+        http_status=int(getattr(page, "status", 200)),
+        body=bytes(body),
+        headers={str(k).lower(): str(v) for k, v in dict(headers).items()},
+    )
+
+
 class LiveScraplingTransport(FetchTransport):
-    """Production transport using Scrapling (Fetcher / DynamicFetcher) and urllib for APIs."""
+    """Production transport: Scrapling ``Fetcher`` (http) and ``PlayWrightFetcher`` (browser).
+
+    Pinned to scrapling==0.2.99, whose browser class is ``PlayWrightFetcher`` (there is no
+    ``DynamicFetcher``). A missing/broken import raises FetchBackendUnavailableError instead of
+    silently degrading to urllib. Non-GET API calls (POST bodies) still use urllib.
+    """
 
     def request(
         self,
@@ -137,52 +174,36 @@ class LiveScraplingTransport(FetchTransport):
         headers: Mapping[str, str] | None = None,
         body: bytes | None = None,
         fetcher_kind: str = "http",
-    ) -> FetchResponse:  # pragma: no cover - never called in unit tests
+    ) -> FetchResponse:  # pragma: no cover - network path; covered by the in-image/offline-browser tests
         req_headers = dict(headers or {})
-        if fetcher_kind == "browser" and method == "GET":
+        if fetcher_kind == "browser":
+            if method != "GET":
+                raise CollectorConfigError("browser fetcher supports GET only")
             try:
-                from scrapling.fetchers import DynamicFetcher  # type: ignore[import-not-found]
-
-                page = DynamicFetcher.fetch(
+                from scrapling.fetchers import PlayWrightFetcher  # type: ignore[import-not-found]
+            except ImportError as exc:
+                raise FetchBackendUnavailableError("scrapling.PlayWrightFetcher", repr(exc)) from exc
+            user_agent = next((v for k, v in req_headers.items() if k.lower() == "user-agent"), None)
+            try:
+                page = PlayWrightFetcher.fetch(
                     url,
                     headless=True,
                     stealth=False,
                     disable_resources=True,
                     network_idle=True,
+                    useragent=user_agent,
+                    google_search=False,
                 )
-                raw = (
-                    page.body
-                    if isinstance(getattr(page, "body", None), bytes)
-                    else str(getattr(page, "html_content", "")).encode("utf-8")
-                )
-                return FetchResponse(
-                    requested_url=url,
-                    final_url=str(getattr(page, "url", url)),
-                    http_status=int(getattr(page, "status", 200)),
-                    body=raw,
-                    headers={},
-                )
-            except ImportError:
-                pass
-        elif fetcher_kind == "http" and method == "GET":
+            except Exception as exc:
+                raise FetchBackendUnavailableError("playwright-browser", repr(exc)) from exc
+            return _page_to_response(url, page)
+        if fetcher_kind == "http" and method == "GET":
             try:
                 from scrapling.fetchers import Fetcher  # type: ignore[import-not-found]
-
-                page = Fetcher(auto_match=False).get(url, headers=req_headers, stealthy_headers=False)
-                raw = (
-                    page.body
-                    if isinstance(getattr(page, "body", None), bytes)
-                    else str(getattr(page, "html_content", "")).encode("utf-8")
-                )
-                return FetchResponse(
-                    requested_url=url,
-                    final_url=str(getattr(page, "url", url)),
-                    http_status=int(getattr(page, "status", 200)),
-                    body=raw,
-                    headers={},
-                )
-            except ImportError:
-                pass
+            except ImportError as exc:
+                raise FetchBackendUnavailableError("scrapling.Fetcher", repr(exc)) from exc
+            page = Fetcher(auto_match=False).get(url, headers=req_headers, stealthy_headers=False)
+            return _page_to_response(url, page)
 
         req = urllib.request.Request(url, data=body, headers=req_headers, method=method)
         try:
@@ -247,6 +268,7 @@ class PolicyEnforcedFetcher:
         self.max_connections = policy.max_connections
         self._active_connections = 0
         self.sleep_calls: list[float] = []
+        self.request_log: list[dict[str, Any]] = []  # url/status/bytes per request, for zero-item diagnosis
 
     def fetch(
         self,
@@ -288,6 +310,9 @@ class PolicyEnforcedFetcher:
 
         self.request_count += 1
         self._active_connections += 1
+        logger.info("collector request source=%s kind=%s %s %s", self.policy.source_id, self.policy.fetcher, method, url)
+        entry: dict[str, Any] = {"url": url, "status": None, "bytes": 0}
+        self.request_log.append(entry)
         try:
             response = self.transport.request(
                 url,
@@ -296,8 +321,18 @@ class PolicyEnforcedFetcher:
                 body=body,
                 fetcher_kind=self.policy.fetcher,
             )
+        except Exception as exc:
+            entry["error"] = repr(exc)
+            logger.error("collector request failed source=%s url=%s error=%r", self.policy.source_id, url, exc)
+            raise
         finally:
             self._active_connections -= 1
+        entry["status"] = response.http_status
+        entry["bytes"] = len(response.body)
+        logger.info(
+            "collector response source=%s url=%s status=%s bytes=%d final_url=%s",
+            self.policy.source_id, url, response.http_status, len(response.body), response.final_url,
+        )
 
         block_reason = classify_access_block(
             http_status=response.http_status,

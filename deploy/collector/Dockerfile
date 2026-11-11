@@ -8,7 +8,6 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    chromium \
     libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
@@ -29,6 +28,13 @@ COPY requirements.txt requirements.lock /app/
 RUN pip install --no-cache-dir --no-deps \
     --extra-index-url https://download.pytorch.org/whl/cpu \
     -r /app/requirements.lock
+
+# Scrapling 0.2.99's browser class (PlayWrightFetcher) drives a Playwright-managed Chromium; install it
+# (plus its OS libraries) at build time into a path the unprivileged runtime user can read.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /ms-playwright \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY collector_stack /app/collector_stack
 COPY fetch-policy.json /app/fetch-policy.json

@@ -89,5 +89,22 @@
     "gemini-2.5-flash being listed for the configured key could not be checked (no key available); coordinator should confirm with GET /v1beta/models or set COLLECTOR_GEMINI_MODEL",
     "acceptance 1 (every enabled source completes a run on the host) and the replacement of live temporary repairs are for the coordinator re-run after merge",
     "Threads, Instagram and CMoney pages show relative times only; published_at falls back to fetched_at"
-  ]
+  ],
+  "followup_20261111": {
+    "root_cause": "scrapling 0.2.99 imports browserforge/apify-fingerprint-datapoints (via camoufox); lock lacked them so 'import scrapling.fetchers' raised and LiveScraplingTransport silently fell back to urllib. 0.2.99 has PlayWrightFetcher, not DynamicFetcher.",
+    "fixes": [
+      "fetchers.py: ImportError/browser-launch failure now raises FetchBackendUnavailableError (no urllib fallback); runner writes a partial bundle with reason=fetch_failed and re-raises",
+      "requirements.lock/.txt: added browserforge==1.2.4, apify-fingerprint-datapoints==0.16.0 (+ explicit camoufox, playwright pins); browser class is PlayWrightFetcher",
+      "Dockerfile: playwright install --with-deps chromium into /ms-playwright (apt chromium removed)",
+      "runner: zero-item reasons are no_targets / fetch_failed (non-2xx or request error) / parse_zero; no_data_for_date only when collector sets no_data_confirmed",
+      "NDC: ZIP member was matched with endswith so schema-景氣指標與燈號.csv was parsed instead of 景氣指標與燈號.csv (0 items in 4s); now exact basename match. All requests are logged (logger collector_stack.fetch) and kept in fetcher.request_log"
+    ],
+    "verification": {
+      "unit_tests": "106 passed, 1 skipped (pytest deploy/collector/tests, local venv with chromium)",
+      "offline_browser_render": "tests/test_scrapling_backend.py::test_browser_path_renders_script_inserted_element passed (local http page, script-inserted text present)",
+      "built_image": "COLLECTOR_IMAGE_TEST=1 test_built_image_imports_scrapling_fetchers passed: docker build + python -c imports of Fetcher, PlayWrightFetcher, browserforge, camoufox, playwright and chromium executable exists",
+      "ndc_real_zip": "real ZIP downloaded from ws.ndc.gov.tw on 2026-11-11 contains manifest.csv, schema-*.csv and 景氣指標與燈號.csv (538 lines, Date=202609 latest)"
+    },
+    "not_verified_here": "live run of Threads/Instagram/CMoney on the collector host (sites may still block headless Chromium; that would now surface as fetch_failed/blocked or parse_zero, not no_data_for_date)"
+  }
 }

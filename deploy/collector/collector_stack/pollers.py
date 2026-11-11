@@ -209,7 +209,8 @@ class NdcIndicatorsPoller:
         if zipfile.is_zipfile(io.BytesIO(response.body)):
             with zipfile.ZipFile(io.BytesIO(response.body), "r") as zf:
                 names = zf.namelist()
-                member = next((n for n in names if n.endswith(self.INDICATOR_MEMBER)), None)
+                # Exact basename: "schema-景氣指標與燈號.csv" also ends with the member name and must not match.
+                member = next((n for n in names if n.rsplit("/", 1)[-1] == self.INDICATOR_MEMBER), None)
                 if member is None:
                     member = next(
                         (n for n in sorted(names) if n.lower().endswith(".csv") and not n.startswith(("manifest", "schema"))),

@@ -261,9 +261,9 @@ def test_zero_items_is_not_complete_and_records_reason(tmp_path: Path, test_hash
     runner = CollectorRunner(_config(), root_dir=tmp_path, hasher=test_hasher, transport=transport)
     outcome = runner.run_source("collector-tw-ptt-stock", run_id="empty")
     assert outcome.status == "partial"
-    assert outcome.bundle.manifest["reason"] == "no_data_for_date"
+    assert outcome.bundle.manifest["reason"] == "parse_zero"
     status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
-    assert status["sources"]["collector-tw-ptt-stock"]["reason"] == "no_data_for_date"
+    assert status["sources"]["collector-tw-ptt-stock"]["reason"] == "parse_zero"
 
 
 def test_zero_requests_is_not_complete_and_records_no_targets(tmp_path: Path, test_hasher) -> None:
