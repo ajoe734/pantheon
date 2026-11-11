@@ -1,7 +1,7 @@
 {
   "task_id": "CI-SANDBOX-APT-DNS-20261111",
-  "owner": "Claude",
-  "reviewer": "Codex2",
+  "owner": "Codex2",
+  "reviewer": "Claude",
   "status": "hosted_smoke_failed_dns_persists",
   "failed_attempts": [
     {
@@ -43,8 +43,27 @@
   },
   "validation": {
     "local": "python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection; bash -n helper",
-    "local_result": "22 tests OK; bash -n helper OK; git diff --check OK (re-run on follow-up head)",
+    "local_result": "24 tests OK on 8f434dced using checkout-scoped .venv-pantheon/bin/python3; bash -n helper OK; git diff --check OK",
     "local_note": "fixture tests only; development-host DNS is not proof of GitHub runner DNS",
     "hosted": "exact head 3e3982afb Branch CI run 43043688209: Python packaging provision success; Service suites (postgres/runtime/misc/heavy) success; Runtime mirror guard and Commit trailers success; Smoke acceptance FAILURE in 'Provision real worker sandbox' - primary azure mirror apt update exit 124, fallback archive/security.ubuntu.com exit 124 ('Temporary failure resolving security.ubuntu.com'), helper fail-closed exit 10 (primary=10 fallback=10). Runner DNS to Ubuntu hosts was down for the whole ~90s window; the bounded fallback did not help in that case. No hosted pass claimed."
+  },
+  "recovery": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/7183",
+    "diagnostic_head": "8f434dced6913cf27c77b9ed6bdccffd7b7070c4",
+    "diagnostic_run": "https://github.com/ajoe734/pantheon/actions/runs/43050526399",
+    "diagnostic_status": "queued; no runner diagnostic result claimed",
+    "previous_runner_failure": {
+      "head": "ee941531f975b1ce2e714066dfe663e19a619a89",
+      "run": "43048261505",
+      "job": "130618844557",
+      "result": "primary update timeout 124; fallback update timeout 124; security.ubuntu.com temporary resolution failure; helper exit 10"
+    },
+    "context_correction": "Advisory PR983 is a different historical merged task; source180ae1a46 is unavailable locally. Actual task PR7183 and GitHub evidence above control this recovery.",
+    "candidate_only": {
+      "mirror": "https://mirrors.mit.edu/ubuntu/",
+      "registration": "https://launchpad.net/ubuntu/+archivemirrors (MIT SIPB)",
+      "development_host_check": "HTTPS curl and gpgv with installed ubuntu-archive-keyring succeeded for noble, noble-updates, noble-security; signed Origin Ubuntu and Codename noble. Updates Date 2026-11-11 05:14:56 UTC; security Date 2026-11-11 07:35:28 UTC.",
+      "limitation": "Development-host evidence only. Mirror transport not implemented or proven on GitHub runner. No extra acceptance gate or public resolver override introduced."
+    }
   }
 }
