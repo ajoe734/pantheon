@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import math
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
@@ -478,9 +479,9 @@ def test_availability_lag_days_enforced_even_when_available_time_is_earlier() ->
     closes = [100.0, 101.0, 102.0, 103.0]
     # 4th observation has event_time 2026-04-30; lag is 10 days -> effective available 2026-05-10
     obs = [
-        {"event_time": "2026-01-31", "value": 10.0},
-        {"event_time": "2026-02-28", "value": 12.0},
-        {"event_time": "2026-03-31", "value": 11.0},
+        {"event_time": "2026-01-31", "available_time": "2026-01-31", "value": 10.0},
+        {"event_time": "2026-02-28", "available_time": "2026-02-28", "value": 12.0},
+        {"event_time": "2026-03-31", "available_time": "2026-03-31", "value": 11.0},
         {"event_time": "2026-04-30", "available_time": "2026-05-02T00:00:00Z", "value": 20.0},
     ]
     # On 2026-05-05, only 3 observations are visible, which is less than z_window=4
@@ -553,11 +554,21 @@ def test_max_holding_bars_triggers_exit_after_hold_window() -> None:
     series = [10.0, 10.0, 10.0, 20.0, 15.0, 15.0, 15.0]
     closes = [100.0] * len(series)
 
+    base = date(2026, 1, 1)
+    observations = [
+        {
+            "event_time": (base + timedelta(days=30 * i)).isoformat(),
+            "available_time": (base + timedelta(days=30 * i)).isoformat(),
+            "value": v,
+        }
+        for i, v in enumerate(series)
+    ]
     actions = [
         evaluate_factor_rule_action(
             artifact,
             closes[: i + 1],
-            features={"rev_yoy": series[: i + 1]},
+            features={"rev_yoy": observations[: i + 1]},
+            decision_time=(base + timedelta(days=30 * i + 15)).isoformat(),
         )
         for i in range(3, len(series))
     ]
@@ -596,3 +607,26 @@ def test_vwap_derivation_and_feature_catalogue() -> None:
     )
     assert env["vwap"] == (100.0, 100.0)
     assert required_history_bars(logic, {"th": 1.0}) == 1
+
+
+def test_shared_evaluator_rejects_timestamp_free_catalogued_feature() -> None:
+    artifact = _sample_factor_rule_artifact()
+    with pytest.raises(FactorRuleValidationError, match="event_time and available_time"):
+        evaluate_factor_rule_view(
+            artifact,
+            [100.0] * 4,
+            features={"rev_yoy": [10.0, 12.0, 11.0, 19.0]},
+            decision_time="2026-01-01",
+        )
+
+
+def test_shared_evaluator_rejects_uncatalogued_dataset() -> None:
+    artifact = _sample_factor_rule_artifact()
+    artifact["strategy_logic"]["inputs"][0]["dataset"] = "tw_not_in_catalogue"
+    with pytest.raises(FactorRuleValidationError, match="governed feature catalogue"):
+        evaluate_factor_rule_view(
+            artifact,
+            [100.0] * 4,
+            features={"rev_yoy": [10.0, 12.0, 11.0, 19.0]},
+            decision_time="2026-01-01",
+        )

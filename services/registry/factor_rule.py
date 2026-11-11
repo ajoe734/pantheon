@@ -1512,6 +1512,11 @@ def evaluate_factor_rule_view(
         mutation_surface if isinstance(mutation_surface, Mapping) else None,
     )
 
+    # Shared evaluator (research/vectorbt + paper): features may only enter through
+    # the governed catalogue with timestamped point-in-time observations.
+    assert_governed_feature_inputs(validated_logic)
+    assert_governed_feature_observations(validated_logic, features, decision_time)
+
     env = resolve_point_in_time_inputs(
         validated_logic,
         closes,
