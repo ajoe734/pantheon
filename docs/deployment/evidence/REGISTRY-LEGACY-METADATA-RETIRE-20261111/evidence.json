@@ -1,6 +1,9 @@
 {
   "task_id": "REGISTRY-LEGACY-METADATA-RETIRE-20261111",
-  "captured_at_utc": ["2026-11-11T11:42Z", "2026-11-11T11:51Z"],
+  "captured_at_utc": [
+    "2026-11-11T11:42Z",
+    "2026-11-11T11:51Z"
+  ],
   "host": "current dev deployment host (read-only; credentials not recorded)",
   "runtime_binding_metadata": {
     "source": "existing authorized runtime-manager GET list_all (no pagination)",
@@ -13,7 +16,10 @@
     "client": "mc inside pantheon-minio-1",
     "buckets": 1,
     "listed_rows": 0,
-    "local_fleet_metadata_paths": {"/tmp/pantheon_storage": "absent", "/data/runtime": "exists, 0 metadata files"}
+    "local_fleet_metadata_paths": {
+      "/tmp/pantheon_storage": "absent",
+      "/data/runtime": "exists, 0 metadata files"
+    }
   },
   "limits": [
     "Zero listed S3 rows and absent local directories are not proof that no archived legacy object exists anywhere.",
@@ -30,5 +36,6 @@
     "services/registry/experiments test_adapter": "16 tests OK",
     "smoke_test_artifact_loader": "fails identically at unmodified HEAD (PromotionError paper -> live); pre-existing, not caused by this change"
   },
-  "hosted_acceptance": "not performed; source outcome only"
+  "hosted_acceptance": "not performed; source outcome only",
+  "follow_up": "services/execution/artifact-loader/contract.md still describes the retired promotion_state fallback; it is outside this task's artifact contract and needs a Human/Ops contract revision or follow-up task."
 }
