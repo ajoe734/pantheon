@@ -1,0 +1,13 @@
+{
+  "task_id": "FINMIND-BROKER-CONNECTOR-BACKFILL-20261111",
+  "command": "python -m services.source_ingestion.finmind_broker_backfill --output-dir DIR [--start D --end D]",
+  "acceptance": {
+    "1_backfill_resumable": "run_backfill walks weekdays over 2y, fetches bulk storage-object manifest per date, state file skips completed dates (test_resume_does_not_refetch_completed_dates)",
+    "2_governed_datasets": "tw_broker_top + tw_broker_branch_detail partitions with event_time/available_time, license_scope=vendor_research, redistribution_allowed=false",
+    "3_missing_credential": "status=credential_unavailable, zero fetches (test_no_token_records_reason_and_fetches_nothing)",
+    "4_no_tw_price_daily": "FinMind TaiwanStockPrice emits no normalized_row, targets finmind_tw_price_reference; catalog no longer routes to normalized/tw_price_daily",
+    "5_tests": "252 passed, 2 skipped across focused source_ingestion suites; fixtures only, no live API, token never emitted"
+  },
+  "throttle": "default 1.5s/request (<=2400/h) under SponsorYear 6000/h",
+  "live_run": "not performed (no token in worker env); no deploy files touched"
+}

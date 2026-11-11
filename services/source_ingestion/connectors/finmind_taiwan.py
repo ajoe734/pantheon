@@ -42,11 +42,16 @@ FINMIND_BROKER_REPORT_HISTORY_START = "2021-06-30"
 BROKER_TOP_SCHEMA_HASH = "tw_broker_top.v1"
 FINMIND_DATASET_SCHEMA_HASH = "finmind_taiwan_dataset.v1"
 FINMIND_STORAGE_OBJECT_SCHEMA_HASH = "finmind_storage_object_manifest.v1"
+BROKER_BRANCH_DETAIL_DATASET = "tw_broker_branch_detail"
+BROKER_BRANCH_DETAIL_SCHEMA_HASH = "tw_broker_branch_detail.v1"
+# Taiwan daily OHLCV truth is TWSE/TPEx official; FinMind price rows are a
+# research reference only and must never land in normalized/tw_price_daily.
+FINMIND_PRICE_REFERENCE_DATASET = "finmind_tw_price_reference"
 
 FINMIND_TAIWAN_DATASETS: tuple[dict[str, Any], ...] = (
     {
         "dataset": "TaiwanStockPrice",
-        "normalized_dataset": "tw_price_daily",
+        "normalized_dataset": FINMIND_PRICE_REFERENCE_DATASET,
         "minimum_tier": "free_by_symbol_backer_all_market",
         "history_start": "1994-10-01",
         "cadence": "daily_after_close",
@@ -223,7 +228,6 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
                 "source_plan": "finmind_first_low_cost_paid_layer",
                 "does_not_replace_official_reference_truth": True,
                 "primary_for": [
-                    "tw_price_daily",
                     "tw_institutional_flow",
                     "tw_margin_short_balance",
                     "tw_securities_lending",
@@ -281,22 +285,6 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
         for row in _rows_from_payload(payload)[: self.max_records]:
             symbol = _text(_first(row, "stock_id", "data_id", "coid", "symbol", "stock_code"))
             as_of_date = _text(_first(row, "date", "mdate", "資料日", "published_at"))
-            normalized_price_row: dict[str, Any] | None = None
-            if dataset == "TaiwanStockPrice":
-                close = _number(_first(row, "close", "Close", "收盤價"))
-                if symbol and as_of_date and close is not None and close > 0:
-                    normalized_price_row = {
-                        "schema_version": "tw_price_daily.v1",
-                        "target_table": "tw_price_daily",
-                        "provider": "FinMind",
-                        "market": "TW",
-                        "symbol": symbol,
-                        "symbol_canonical": f"{symbol}.TW",
-                        "dataset": "tw_price_daily",
-                        "source_dataset": dataset,
-                        "trade_date": as_of_date,
-                        "close": close,
-                    }
             row_hash = _stable_hash({"dataset": dataset, "row": row})
             content_ref = f"finmind://data/{dataset}/{symbol or 'market'}/{as_of_date or row_hash}/{row_hash}"
             records.append(
@@ -318,11 +306,10 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
                         "available_time": as_of_date or _utc_now(),
                         "api_endpoint": endpoint,
                         "raw_row": dict(row),
-                        **(
-                            {"normalized_row": normalized_price_row}
-                            if normalized_price_row is not None
-                            else {}
+                        "normalized_target": (
+                            FINMIND_PRICE_REFERENCE_DATASET if dataset == "TaiwanStockPrice" else None
                         ),
+                        "redistribution_allowed": False,
                         "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
                         "access_scope": ["research"],
                         "license_scope": "vendor_research",
@@ -551,9 +538,68 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                         "body": json.dumps(row, ensure_ascii=False, sort_keys=True),
                         "access_scope": ["research"],
                         "license_scope": "vendor_research",
+                        "redistribution_allowed": False,
                         "entitlement_tier": self.entitlement_tier,
                         "active_universe_tiers": ["core_universe", "candidate_universe"],
                         "schema_hash": BROKER_TOP_SCHEMA_HASH,
+                    },
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(records)
+
+    def branch_detail_records_from_payload(
+        self,
+        payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        available_time: str | None = None,
+        trace_id: str = "",
+    ) -> tuple[SourceRecord, ...]:
+        """Emit one governed ``tw_broker_branch_detail`` record per branch/symbol/date."""
+        grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for row in _rows_from_payload(payload):
+            symbol = _text(_first(row, "stock_id", "data_id", "symbol", "stock_code")).upper()
+            date = _text(_first(row, "date", "mdate"))
+            broker = _text(_first(row, "securities_trader", "broker", "券商"))
+            broker_id = _text(_first(row, "securities_trader_id", "broker_id", "券商代號"))
+            if not symbol or not date or not (broker or broker_id):
+                continue
+            bucket = grouped.setdefault(
+                (date, symbol, broker_id, broker),
+                {"date": date, "symbol": symbol, "broker": broker, "broker_id": broker_id or None,
+                 "buy_qty": 0, "sell_qty": 0, "price_levels": 0},
+            )
+            bucket["buy_qty"] += _int(_first(row, "buy", "buy_qty", "買進"))
+            bucket["sell_qty"] += _int(_first(row, "sell", "sell_qty", "賣出"))
+            bucket["price_levels"] += 1
+        stamp = available_time or _utc_now()
+        records: list[SourceRecord] = []
+        for (date, symbol, broker_id, broker), row in sorted(grouped.items()):
+            row["net_qty"] = row["buy_qty"] - row["sell_qty"]
+            row_hash = _stable_hash({"symbol": symbol, "date": date, "broker_id": broker_id, "broker": broker})
+            records.append(
+                SourceRecord(
+                    source_id=f"finmind-broker-branch:{symbol}:{date}:{row_hash}",
+                    connector_id=self.connector_id,
+                    source_type="market",
+                    title=f"FinMind broker branch {symbol} {date} {broker or broker_id}",
+                    content_ref=f"finmind://broker-branch/{symbol}/{date}/{row_hash}",
+                    metadata={
+                        "source_class": "research_grade",
+                        "provider": "FinMind",
+                        "dataset": BROKER_BRANCH_DETAIL_DATASET,
+                        "source_dataset": FINMIND_BROKER_REPORT_DATASET,
+                        "symbol": symbol,
+                        "trade_date": date,
+                        "event_time": date,
+                        "available_time": stamp,
+                        **row,
+                        "body": json.dumps(row, ensure_ascii=False, sort_keys=True),
+                        "access_scope": ["research"],
+                        "license_scope": "vendor_research",
+                        "redistribution_allowed": False,
+                        "entitlement_tier": self.entitlement_tier,
+                        "schema_hash": BROKER_BRANCH_DETAIL_SCHEMA_HASH,
                     },
                     trace_id=trace_id,
                 )

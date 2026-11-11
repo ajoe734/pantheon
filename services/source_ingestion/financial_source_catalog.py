@@ -125,13 +125,14 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
         connector_id="tw-finmind-datasets",
         datasets=(
             _dataset(
-                "tw_price_daily",
+                "finmind_tw_price_reference",
                 "market_daily",
-                storage_tier="normalized/features",
+                storage_tier="raw/reference",
                 update_profile="daily_after_close",
-                storage_targets=("normalized/tw_price_daily", "features/returns"),
+                storage_targets=("raw/finmind/TaiwanStockPrice",),
                 universe_tiers=("core_universe", "candidate_universe", "archive_universe"),
                 backup_source="TWSE/TPEx official market data",
+                notes="Reference only; Taiwan daily OHLCV truth stays TWSE/TPEx official.",
             ),
             _dataset(
                 "tw_daily_price_and_chip",
@@ -155,6 +156,15 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
                 storage_targets=("normalized/tw_broker_top", "features/broker_top_concentration"),
                 backup_source="Yahoo Taiwan broker top15 public-web fallback; TEJ AMTOP1/ABSR20 for paid backfill",
                 metadata={"max_rank": 20, "source_dataset": "TaiwanStockTradingDailyReport"},
+            ),
+            _dataset(
+                "tw_broker_branch_detail",
+                "taiwan_chip",
+                storage_tier="normalized",
+                update_profile="daily_after_close",
+                storage_targets=("normalized/tw_broker_branch_detail",),
+                notes="Per-branch daily buy/sell detail; FinMind licence is not redistributable.",
+                metadata={"source_dataset": "TaiwanStockTradingDailyReport", "redistribution_allowed": False},
             ),
             _dataset(
                 "tw_news_metadata",

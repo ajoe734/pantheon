@@ -458,7 +458,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         source_types=("market",),
         source_classes=("market_daily", "taiwan_chip", "financial_fundamental"),
         datasets=(
-            "tw_price_daily",
+            "finmind_tw_price_reference",
             "tw_institutional_investors",
             "tw_margin_purchase_short_sale",
             "tw_shareholding",
@@ -490,7 +490,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         source_kinds=("data_source",),
         source_types=("market",),
         source_classes=("taiwan_chip",),
-        datasets=("tw_broker_daily_report", "tw_broker_top"),
+        datasets=("tw_broker_daily_report", "tw_broker_top", "tw_broker_branch_detail"),
         auth_modes=("api_key",),
         fetch_modes=("provider_owned_adapter",),
         cursor_modes=("time_watermark",),
