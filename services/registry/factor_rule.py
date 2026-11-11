@@ -1002,6 +1002,49 @@ def _derive_vwap_series(
     return close_series
 
 
+def _latest_visible_versions(
+    raw_series: Any,
+    *,
+    availability_lag_days: int,
+    decision_time: str | datetime | date | None,
+) -> Any:
+    """Governed read for catalogued non-price features.
+
+    Keeps exactly the latest *visible* version per (entity, event_time) so a late
+    revision replaces, rather than adds, a daily observation and replayed rows collapse.
+    Catalogue lag and any row-level ``availability_lag_days`` are applied; ordering is
+    by event time. Series without timestamped mapping rows pass through unchanged.
+    """
+    if (
+        not isinstance(raw_series, Sequence)
+        or isinstance(raw_series, (str, bytes))
+        or decision_time is None
+        or not all(
+            isinstance(o, Mapping) and o.get("event_time") and o.get("available_time")
+            for o in raw_series
+        )
+    ):
+        return raw_series
+    decision_dt = _parse_timestamp_utc(decision_time, is_decision_time=True)
+    latest: dict[tuple[Any, datetime], tuple[tuple[datetime, str], Mapping[str, Any]]] = {}
+    for obs in raw_series:
+        event_dt = _parse_timestamp_utc(obs["event_time"])
+        avail_dt = _parse_timestamp_utc(obs["available_time"])
+        row_lag = obs.get("availability_lag_days")
+        lag = max(
+            int(availability_lag_days),
+            row_lag if isinstance(row_lag, int) and not isinstance(row_lag, bool) else 0,
+        )
+        if avail_dt > decision_dt or event_dt + timedelta(days=lag) > decision_dt:
+            continue
+        key = (obs.get("entity"), event_dt)
+        rank = (avail_dt, str(obs.get("ingest_time") or ""))
+        if key not in latest or rank >= latest[key][0]:
+            latest[key] = (rank, obs)
+    ordered = sorted(latest.items(), key=lambda kv: (kv[0][1], str(kv[0][0] or "")))
+    return [entry[1][1] for entry in ordered]
+
+
 def resolve_point_in_time_inputs(
     strategy_logic: Mapping[str, Any],
     closes: Sequence[float] | None,
@@ -1075,6 +1118,10 @@ def resolve_point_in_time_inputs(
                 f"missing required feature input '{name}' ({dataset}.{field})"
             )
 
+        if dataset not in PRICE_VOLUME_DATASETS:
+            raw_series = _latest_visible_versions(
+                raw_series, availability_lag_days=lag_days, decision_time=decision_time
+            )
         filtered = _filter_point_in_time_series(
             raw_series,
             input_name=name,

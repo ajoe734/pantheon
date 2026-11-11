@@ -575,3 +575,57 @@ def test_late_revision_replaces_daily_observation_through_shared_evaluator(tmp_p
         return evaluate_factor_rule_action(artifact, [100.0] * 2, features=feats, decision_time=at)
 
     assert action("2026-11-11T02:00:00Z") == "HOLD"  # mean([1, 3]) = 2.0 < 2.25, not [1, 2, 3] -> 2.5
+
+
+def _revision_artifact():
+    import copy
+
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+    artifact = copy.deepcopy(_sample_factor_rule_artifact())
+    artifact["strategy_logic"]["inputs"] = [
+        {"name": "vol", "dataset": "tw_community_attention", "field": "post_volume", "availability_lag_days": 0}
+    ]
+    artifact["strategy_logic"]["signal"] = {"op": "ts_mean", "args": [{"ref": "vol"}, {"const_param": "z_window"}]}
+    artifact["parameters"].update({"z_window": 2, "entry_z": 2.2})
+    for control in artifact["mutation_surface"]["controls"]:
+        if control.get("parameter_key") in artifact["parameters"]:
+            control["current_value"] = artifact["parameters"][control["parameter_key"]]
+    return artifact
+
+
+_RAW_REVISIONS = [
+    {"entity": "2330.TWSE", "event_time": "2026-11-09", "available_time": "2026-11-10T01:00:00Z", "ingest_time": "a", "value": 1.0},
+    {"entity": "2330.TWSE", "event_time": "2026-11-10", "available_time": "2026-11-11T01:00:00Z", "ingest_time": "b", "value": 2.0},
+    {"entity": "2330.TWSE", "event_time": "2026-11-10", "available_time": "2026-11-11T01:30:00Z", "ingest_time": "c", "value": 3.0},
+]
+
+
+def test_public_evaluator_collapses_raw_revisions_without_helper() -> None:
+    from services.registry.factor_rule import evaluate_factor_rule_action
+
+    action = evaluate_factor_rule_action(
+        _revision_artifact(), [100.0] * 2, features={"vol": list(_RAW_REVISIONS)},
+        decision_time="2026-11-11T02:00:00Z",
+    )
+    assert action == "HOLD"  # mean([1, 3]) = 2.0 < 2.2, not mean([2, 3]) over raw revisions
+    early = evaluate_factor_rule_action(
+        _revision_artifact(), [100.0] * 2, features={"vol": list(_RAW_REVISIONS)},
+        decision_time="2026-11-11T01:10:00Z",
+    )
+    assert early == "HOLD"  # late revision invisible: mean([1, 2]) = 1.5
+
+
+def test_paper_strategy_collapses_raw_revisions_without_helper() -> None:
+    from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+    from services.execution.lean_runtime.test_current_artifact_signal import _binding
+
+    binding = _binding(_revision_artifact(), binding_id="rb-rev", include_market_input=False)
+    binding["symbol"] = "2330.TW"
+    binding["market_input"] = {
+        "symbol": "2330.TW", "closes": [100.0, 100.0], "features": {"vol": list(_RAW_REVISIONS)},
+        "source_ref": "source-ingest://normalized/tw-price/2330",
+        "observed_at": "2026-11-11T02:00:00Z", "event_time": "2026-11-11T02:00:00Z",
+    }
+    decision = CurrentArtifactStrategy(expression_layer=False)(binding, "2026-11-11T02:05:00Z")
+    assert decision["action"] == "HOLD"
