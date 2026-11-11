@@ -65,6 +65,8 @@
     "gate": "ReplicationGate verifies evaluation against a persisted BacktestRunStore record (digest, completed status, artifact checksum, dataset version, source refs) and requires a PIT history_check proof; unbound/forged/edited evaluations are rejected.",
     "regression_tests": [
       "test_gate: fabricated run id, edited evaluation, other artifact, other dataset, missing binding, missing history proof",
+      "test_gate: supplied artifact or dataset conflicting with metadata binding refused (candidate_binding_conflict)",
+      "test_adapter: _measure_pit_history resolves ref graph across signal/entry/exit/strength/filters; short or missing PIT feature history yields insufficient_history",
       "test_revalidation_worker: absent inputs, wrong dataset, wrong checksum, no cache"
     ],
     "validation": "pytest alpha_replication + replication + registry/promotion + loop_closure_r2 with vectorbt 1.2.0: all passed; smoke_test 5/5"
