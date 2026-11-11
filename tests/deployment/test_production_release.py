@@ -904,6 +904,13 @@ class BootstrapTests(OpsHarness):
             if line.startswith(("PANTHEON_POSTGRES_IMAGE=", "PANTHEON_NATS_IMAGE=")):
                 self.assertIn(line.split("=", 1)[1], pulled)
         self.assertTrue(any(i.startswith("postgres:") for i in pulled) and any(i.startswith("nats:") for i in pulled))
+        # Fresh defaults are the exact Stage111/112-qualified pair, never the stale alpine refs or mutable tags.
+        qpg = "postgres:16@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+        qnats = "nats:2.11@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00"
+        self.assertIn(f"PANTHEON_POSTGRES_IMAGE={qpg}", written.splitlines())
+        self.assertIn(f"PANTHEON_NATS_IMAGE={qnats}", written.splitlines())
+        self.assertIn(qpg, pulled); self.assertIn(qnats, pulled)
+        self.assertNotIn("6b202572e5a9", written); self.assertNotIn("d3eb053c882d", written)
         # Existing compose.env with operator-pinned refs and no shell variables: those exact refs are pulled.
         (self.state / "pulled_images").unlink()
         env_file.write_text(env_file.read_text() + f"PANTHEON_POSTGRES_IMAGE={pg}\nPANTHEON_NATS_IMAGE={nats}\n")

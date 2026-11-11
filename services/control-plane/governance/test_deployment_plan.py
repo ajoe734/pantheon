@@ -490,7 +490,7 @@ class TestExecutionProjection(unittest.TestCase):
         self.assertEqual(projection.metadata["deployment_plan_id"], "plan-paper-002")
         self.assertEqual(projection.metadata["approval_decision_id"], "approval-001")
         self.assertEqual(projection.metadata["rollback"]["target_registry_id"], "reg-strat-001-1.1.0")
-        self.assertEqual(projection.metadata["promotion_state"], "paper")
+        self.assertNotIn("promotion_state", projection.metadata)
 
     def test_projection_omits_null_lineage_fields(self):
         entry = approved_registry_entry()
@@ -509,7 +509,7 @@ class TestExecutionProjection(unittest.TestCase):
         lineage = self.planner.build_execution_projection(plan, entry).metadata["lineage"]
         self.assertEqual(lineage, {"source_run_ids": ["r1"], "parent_registry_ids": []})
 
-    def test_canary_projection_keeps_deployment_stage_without_legacy_alias(self):
+    def test_canary_projection_keeps_deployment_stage(self):
         plan = self.planner.create_plan(
             plan_id="plan-canary-002",
             approval_decision_id="approval-001",
