@@ -25,5 +25,6 @@
     "scripts/test_dev_environment_lease_deploy_contract.py": "market_refresh tests pass; 7 other failures are unrelated stale assertions (provider-gate summary string, retire action, restart admission, post-up paper_bootstrap condition text) in code this task does not touch"
   },
   "scope_note": "Also edited scripts/auto_deploy_dev_pair.py, scripts/test_auto_deploy_dev_pair.py and scripts/test_dev_environment_lease_deploy_contract.py, outside the listed artifacts, because they hard-code the old step name/order and would otherwise fail.",
-  "not_claimed": "No hosted dev run was executed; no new source acceptance is claimed."
+  "not_claimed": "No hosted dev run was executed; no new source acceptance is claimed.",
+  "restore_env_followup": "Hosted run 43011035366 failed restore with removed=[SOURCE_INGEST_CONTROLLER_MODE=reconcile_only]: docker-compose.yml passes that key only to source-ingest-scheduler, so the source-ingest container never carries it. manage_source_ingest_refresh_runtime restore now expects it only when the recorded pre-env had it; egress keys stay strict, allowlist not widened. Stub in test_dev_tw_market_refresh.py models this. Remaining local test errors are missing libpq/psycopg_binary only."
 }
