@@ -1074,7 +1074,7 @@ def _slice_prepared_dataset(
                 isinstance(fv, Sequence)
                 and not isinstance(fv, (str, bytes))
                 and len(fv) == total_len
-                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in fv)
+                and all(_is_undated_aligned_observation(x) for x in fv)
             ):
                 inst_features[fk] = list(fv[start_idx:end_idx])
             else:

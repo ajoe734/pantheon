@@ -992,6 +992,38 @@ class TestReplicationGateRealBacktestProtocol(unittest.TestCase):
         feats_last, _t = _bar_features_for_index(dataset, "2330", n - 1)
         self.assertEqual(len(feats_last["rev_yoy"]), n)
 
+    def test_undated_mapping_observations_sliced_in_windows_no_future_leak(self) -> None:
+        from types import SimpleNamespace
+        from adapter.vectorbt_adapter import _bar_features_for_index, _slice_prepared_dataset
+
+        n = 756
+        start = date(2023, 1, 1)
+        bars = tuple((1.0, 1.0, 1.0, 1.0, 1.0) for _ in range(n))
+        dates = tuple((start + timedelta(days=i)).isoformat() for i in range(n))
+
+        def make(last: float) -> SimpleNamespace:
+            obs = [{"value": 0.0} for _ in range(n)]
+            obs[-1] = {"value": last}
+            return SimpleNamespace(
+                dataset_id="d", strategy_id="s", source_dataset_refs=(),
+                source_strategy_spec_id=None, instruments=("2330",),
+                bars_per_instrument={"2330": n}, ohlcv_by_instrument={"2330": bars},
+                data_frequency="1d", num_instruments=1, total_bars=n,
+                dates_by_instrument={"2330": dates},
+                features_by_instrument={"2330": {"rev_yoy": obs}},
+            )
+
+        for lo, hi in ((0, 529), (529, n), (100, 300)):
+            a = _slice_prepared_dataset(make(0.0), lo, hi, "w")
+            b = _slice_prepared_dataset(make(2.0), lo, hi, "w")
+            self.assertEqual(len(a.features_by_instrument["2330"]["rev_yoy"]), hi - lo)
+            for idx in range(min(3, hi - lo)):
+                fa, _ = _bar_features_for_index(a, "2330", idx)
+                fb, _ = _bar_features_for_index(b, "2330", idx)
+                self.assertEqual(len(fa["rev_yoy"]), idx + 1)
+                if hi < n:
+                    self.assertEqual(fa["rev_yoy"], fb["rev_yoy"])
+
     def test_replication_backtest_protocol_insufficient_history_under_two_years(self) -> None:
         from adapter.vectorbt_adapter import (
             INSUFFICIENT_HISTORY_STATUS,
