@@ -1,6 +1,6 @@
 {
   "task": "COMPAT-RESIDUAL-HOSTED-ACCEPT-20261111",
-  "as_of": "2026-11-11T18:15Z",
+  "as_of": "2026-11-11T20:12Z",
   "status": "source_merged_hosted_acceptance_pending",
   "source_merges": {
     "FE#982": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
@@ -12,9 +12,11 @@
   },
   "hosted_acceptance": {
     "performed": false,
-    "reason": "Latest Pantheon Nonprod Deploy run (43011035366, 2026-11-11T11:19Z) failed and predates the source merges; no deploy of a candidate containing them exists. Sole publisher STRAT-DATASRC-HOSTED-ACCEPT-20261110 is still in_progress.",
+    "reason": "Original publisher's Pantheon Nonprod Deploy run 43093653611 (head 5c6afce7cd68ff88b6a21106da29e02172fe4f34, created 20:08:16Z) was still in_progress at 20:12Z (deploy job running; L1-L12 gate and all-12 chain segments skipped so far). No final success, served FE/BFF identity or authenticated read-only acceptance exists yet; green CI or manifest label alone is not acceptance.",
     "authenticated_readonly_navigation": "not_performed",
-    "served_manifest_identity": "not_verified"
+    "served_manifest_identity": "not_verified",
+    "tracked_run": "43093653611",
+    "expected_fe_head": "acf3efaeb9141e1abd80375c9c2a357328c02c79"
   },
   "claims_not_made": [
     "hosted delivery accepted",
