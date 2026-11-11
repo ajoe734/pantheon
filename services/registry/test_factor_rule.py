@@ -630,3 +630,21 @@ def test_shared_evaluator_rejects_uncatalogued_dataset() -> None:
             features={"rev_yoy": [10.0, 12.0, 11.0, 19.0]},
             decision_time="2026-01-01",
         )
+
+
+def test_price_only_factor_rule_does_not_require_decision_time() -> None:
+    artifact = _sample_factor_rule_artifact()
+    inp = artifact["strategy_logic"]["inputs"][0]
+    inp.update({"name": "close", "dataset": "tw_price_daily", "field": "close"})
+    inp["availability_lag_days"] = 0
+    artifact["strategy_logic"]["signal"]["args"][0] = {"ref": "close"}
+    view = evaluate_factor_rule_view(artifact, [10.0, 11.0, 10.5, 18.0])
+    assert view is not None
+    # Non-price inputs still require a decision_time.
+    artifact2 = _sample_factor_rule_artifact()
+    with pytest.raises(FactorRuleValidationError):
+        evaluate_factor_rule_view(
+            artifact2,
+            [100.0] * 4,
+            features={"rev_yoy": [{"value": 1.0, "event_time": "2026-01-01", "available_time": "2026-01-02"}]},
+        )

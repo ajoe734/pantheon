@@ -189,13 +189,18 @@ def assert_governed_feature_observations(
     if not isinstance(strategy_logic, Mapping) or strategy_logic.get("kind") != "factor_rule_v1":
         return
     feature_map: Mapping[str, Any] = features if isinstance(features, Mapping) else {}
-    _parse_timestamp_utc(decision_time, is_decision_time=True)
+    decision_checked = False
     for item in strategy_logic.get("inputs") or ():
         if not isinstance(item, Mapping):
             continue
         name, dataset, field = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
         if dataset in PRICE_VOLUME_DATASETS:
             continue
+        if not decision_checked:
+            # decision_time stays optional for timestamp-free built-in price inputs;
+            # any non-price (point-in-time) input requires a valid one.
+            _parse_timestamp_utc(decision_time, is_decision_time=True)
+            decision_checked = True
         cat_def = get_feature_definition(dataset, field)
         if cat_def is None:
             raise FactorRuleValidationError(f"{dataset}.{field} is not in the governed feature catalogue")
