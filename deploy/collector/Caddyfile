@@ -15,21 +15,25 @@
         max_size 4KB
     }
 
-    @write_methods not method GET HEAD
-    respond @write_methods "{\"error\":\"method_not_allowed_read_only\"}" 405
+    # Caddy sorts bare directives (handle before respond), which let file_server answer before the
+    # 401 check. route{} keeps the literal order: method gate -> token gate -> file serving.
+    route {
+        @write_methods not method GET HEAD
+        respond @write_methods "{\"error\":\"method_not_allowed_read_only\"}" 405
 
-    @missing_or_bad_token not header Authorization "Bearer {$COLLECTOR_BUNDLE_TOKEN}"
-    respond @missing_or_bad_token "{\"error\":\"unauthorized\"}" 401
+        @missing_or_bad_token not header Authorization "Bearer {$COLLECTOR_BUNDLE_TOKEN}"
+        respond @missing_or_bad_token "{\"error\":\"unauthorized\"}" 401
 
-    @allowed_paths path /status.json /bundles/*
-    handle @allowed_paths {
-        root * /srv/collector
-        file_server {
-            hide .*
+        @allowed_paths path /status.json /bundles/*
+        handle @allowed_paths {
+            root * /srv/collector
+            file_server {
+                hide .*
+            }
         }
-    }
 
-    handle {
-        respond "{\"error\":\"not_found\"}" 404
+        handle {
+            respond "{\"error\":\"not_found\"}" 404
+        }
     }
 }
