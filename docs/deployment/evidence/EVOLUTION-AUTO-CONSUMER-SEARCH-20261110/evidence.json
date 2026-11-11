@@ -8,7 +8,8 @@
       "implementation": "services/evolution/auto_consumer.py (evaluate_gate, AutoConsumer.tick)",
       "behaviour": "proposed retrain/mutate/revalidate/retire decisions whose target resolves through the persona/registry owners to a paper-only, tenant-owned discovery persona artifact are reviewed then approved as automated_gate; each check is written to the review/approve note and to an append-only evidence sink before state moves. Any other action, risk, proposer, stage, tenant or an owner outage is left proposed for the operator.",
       "decision_model": "evolution_decision.py: new MUTATE action (low risk); a paper-stage retire of a discovery target is low risk only with metadata.discovery_auto_scope=true, otherwise retire stays high (committee). validate() recomputes risk so a forged low retire fails.",
-      "tests": "services/evolution/test_auto_consumer.py (25, incl. end-to-end against the real evolution FastAPI app), services/control-plane/governance/test_evolution_decision.py TestDiscoveryAutoScopeRisk"
+      "tests": "services/evolution/test_auto_consumer.py (25, incl. end-to-end against the real evolution FastAPI app), services/control-plane/governance/test_evolution_decision.py TestDiscoveryAutoScopeRisk",
+      "startup": "services/evolution/auto_consumer_runtime.py (HttpDecisionPort, PersonaOwnerScope, build_consumer) hooked into the existing services/evolution/scheduler_worker.py after each daily-sweep tick, behind EVOLUTION_AUTO_CONSUMER_ENABLED; fails closed on missing config/owner outage."
     },
     "2_random_search": {
       "implementation": "services/research/alpha_replication/evolution_search.py (sample_variants, search_in_sample, make_in_sample_walk_forward_scorer); services/research/main.py _retrain_search_update",
@@ -28,19 +29,19 @@
     "5_retire_on_decay": {
       "implementation": "auto_consumer.evaluate_paper_decay, build_retire_proposal, AutoConsumer.retire_persona",
       "behaviour": "persistent paper decay (3 under-baseline windows plus Sharpe<50% baseline or drawdown>1.25x) produces a discovery-scoped retire proposal; the gate approves it and the persona goes paper_owner -> frozen -> retired through the persona lifecycle port using the approval id as governance decision; idempotent; live/other states refused.",
-      "tests": "test_auto_consumer.py decay tests and test_decayed_strategy_is_retired_end_to_end_through_the_real_evolution_service"
+      "tests": "test_auto_consumer.py decay tests and test_decayed_strategy_is_retired_end_to_end_through_the_real_evolution_service",
+      "governed_path": "services/evolution/governed_persona_lifecycle.py: each exact persona/from/to retire step is proposed (proposer token), reviewed and decided (distinct automated_gate token, low risk) through the existing /api/governance/approvals persona_lifecycle_transition API with deterministic ids and Idempotency-Keys, then the persona owner PATCH /lifecycle cites that real governance decision id; tenant read-back checked. No issuer/grant/MFA added; Governance unchanged."
     }
   },
   "validation": {
-    "interpreter": "/tmp/gfd-venv/bin/python (pytest)",
-    "services/evolution": "497 passed, 3 skipped, 5 errors (all ModuleNotFoundError: flask in strict-telemetry tests; environment, untouched code)",
-    "services/control-plane/governance + alpha_replication + test_factor_rule": "414 passed, 5 failed (all environmental: vectorbt not installed x4, engine_bridge heartbeat metadata x1; none touch changed code)",
-    "services/research/tests": "test_alpha_template_* not collectable here (numpy missing); test_retrain_executor_real_auth.py skips without real vectorbt (fixture updated to pin the search proposal)"
+    "interpreter": "/tmp/gfd-venv/bin/python; vectorbt 1.2.1 and flask installed into the task venv",
+    "services/research alpha_replication + test_retrain_executor_real_auth + test_retrain_search_update": "115 passed (alpha_replication+research, -x run) and 26 passed (real-auth uvicorn+vectorbt with actual _retrain_search_update, no skips under -rs)",
+    "governance decision/controller + factor_rule + evolution consumer/runtime/governed lifecycle": "94 passed"
   },
   "not_done_here": [
-    "evolution_controller.py (outside this task's artifact contract) does not yet route the new 'mutate' action: boundary_for raises, so an approved mutate decision gets no dispatch intent until a follow-up adds MUTATE to EvolutionController._RESEARCH_ACTIONS (one line) and a research executor calls evolution_search.run_mutation_decision.",
-    "Hosted wiring of approved mutate/revalidate decisions to a research executor, the discovery-scope resolver adapter over live persona/registry owners, and the consumer scheduler loop: ports are defined and tested; deployment/hosted acceptance owners retain these.",
-    "Real-vectorbt execution of the search/judge (no vectorbt in this environment); parameter_search stage mapping to ray_tune left unchanged (control-plane schema pins it).",
-    "Decisions are not moved to 'executed' by the consumer; the existing receipt-readback /execute path keeps that authority."
+    "evolution_controller MUTATE is now routed to research (test added), but no research executor yet calls evolution_search.run_mutation_decision for an approved mutate decision; revalidate/mutate execution wiring through the existing dispatch worker remains.",
+    "PersonaOwnerScope relies on persona.metadata.discovery_artifact_id / discovery_strategy_kind; no existing owner writes these keys yet, so in practice every decision stays with the operator until a provisioning task sets them (fail closed).",
+    "GovernedPersonaLifecycle is tested against a faithful fake of Governance+persona owner, not a live Governance PG store (approval commands require PostgreSQL).",
+    "Decisions are not moved to 'executed' by the consumer; no live provider/deploy performed."
   ]
 }
