@@ -1905,6 +1905,9 @@ class DistillationWorker:
             materialization_created_at = None
 
         is_refresh = mode == MaterializationMode.REFRESH
+        # Registry sync verifies the committed source version digest, so it must
+        # see the source as admitted, not with the extracted card merged in.
+        admitted_source = source
 
         if self._hypothesis_extractor is not None and source.source_type != SourceType.MARKET:
             origin = extraction_origin(source.source_type.value, source.metadata)
@@ -1984,7 +1987,7 @@ class DistillationWorker:
             try:
                 registry_result = self._registry_sync(
                     RegistrySyncRequest(
-                        source=source,
+                        source=admitted_source,
                         seed=result.seed,
                         job=job,
                         evidence_item=item,

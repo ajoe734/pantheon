@@ -1,0 +1,11 @@
+{
+  "task_id": "DISCOVERY-COMPILER-PRODUCTION-WIRING-20261111",
+  "acceptance": {
+    "1_controller_constructs_worker_with_compiler": "distillation_controller.run_controller_tick passes hypothesis_compiler=compiler_from_env(...) to make_distillation_worker",
+    "2_controller_tick_integration_test": "tests/test_hypothesis_compiler_wiring.py: compiled (factor_rule_v1 + rule_fingerprint in seed), not_expressible, needs_data outcomes via run_controller_tick",
+    "3_gated_by_extraction_enable": "compiler_from_env returns None unless PANTHEON_L2_EXTRACTION_ENABLED truthy; disabled test asserts zero extract/compile calls and no compiler/ledger sqlite created"
+  },
+  "additional_fix": "distillation_worker passed the card-merged source to registry sync, causing a source digest mismatch (retry_wait/DLQ) for every extracted card in the controller path; sync now receives the admitted source",
+  "verification": "pytest services/source_ingestion/tests -k 'distill or hypothesis or compiler or controller or extraction': 326 passed",
+  "not_verified": "no live model/provider call; proposer uses SemanticExtractionClient._dispatch_turn (private) against the existing OpenClaw transport"
+}
