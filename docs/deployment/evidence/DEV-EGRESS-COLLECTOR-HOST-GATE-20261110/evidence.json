@@ -1,0 +1,11 @@
+{
+  "task_id": "DEV-EGRESS-COLLECTOR-HOST-GATE-20261110",
+  "acceptance": {
+    "1_steady_allowlist_single_host": "docker-compose.yml source-ingest: allowlist + PANTHEON_COLLECTOR_HOST when set, else deny",
+    "2_restore_to_steady": "deploy_nonprod_vm.sh restore (python + fallback) returns to collector-host allowlist; deny only if host unset",
+    "3_refresh_guard": "collector-* connectors accepted only when hosts == {PANTHEON_COLLECTOR_HOST}",
+    "4_official_hosts_unchanged": "TWSE/TPEx and TAIFEX required host sets untouched",
+    "5_other_services_deny": "research-orchestrator-svc hardcoded deny; test_only_source_ingest_may_use_collector_host_steady_egress asserts"
+  },
+  "verification": "pytest services/test_external_egress.py scripts/test_deploy_nonprod_vm.py: 114 passed, 2 skipped; bash -n ok"
+}

@@ -2916,3 +2916,18 @@ def test_official_connector_bounded_refresh_host_set_excludes_www_twse_com_tw() 
         == "openapi.twse.com.tw,www.tpex.org.tw"
     )
 
+
+
+def test_collector_host_gate_steady_restore_and_refresh_guard() -> None:
+    """DEV-EGRESS-COLLECTOR-HOST-GATE-20261110: steady egress is exactly the collector host."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent / "deploy_nonprod_vm.sh").read_text()
+    assert "steady source egress allowlist must be exactly PANTHEON_COLLECTOR_HOST" in text
+    assert 'sys.argv[2].startswith("collector-")' in text
+    assert "if hosts != {collector}" in text
+    assert '"allowlist" if steady_host else "deny"' in text
+    assert 'PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}"' in text
+    # Official bounded refresh host sets are unchanged.
+    assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in text
+    assert 'required = {"openapi.taifex.com.tw", "www.taifex.com.tw"}' in text

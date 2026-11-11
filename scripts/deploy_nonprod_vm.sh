@@ -1246,10 +1246,18 @@ validate_source_refresh_profile() {
   esac
 
   if [[ "$selected" != "true" ]]; then
-    [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
-      || error "external egress must remain deny when source-ingest-scheduler is not selected"
-    [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
-      || error "external host allowlist requires the bounded source-ingest-scheduler profile"
+    # Steady state (DEV-EGRESS-COLLECTOR-HOST-GATE-20261110): deny, or allowlist
+    # with exactly the single collector host from PANTHEON_COLLECTOR_HOST.
+    if [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" ]]; then
+      [[ -n "${PANTHEON_COLLECTOR_HOST:-}" \
+        && "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" == "${PANTHEON_COLLECTOR_HOST}" ]] \
+        || error "steady source egress allowlist must be exactly PANTHEON_COLLECTOR_HOST"
+    else
+      [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
+        || error "external egress must remain deny when source-ingest-scheduler is not selected"
+      [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
+        || error "external host allowlist requires the bounded source-ingest-scheduler profile"
+    fi
     [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
       || error "default source-ingest owner must use reconcile_only mode"
     [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
@@ -1290,7 +1298,7 @@ validate_source_refresh_profile() {
     && (( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS >= 30 && SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600 )) \
     || error "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS must be between 30 and 3600"
 
-  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'PY'
+  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" "${PANTHEON_COLLECTOR_HOST:-}" <<'PY'
 import sys
 
 from services.external_egress import allowed_hosts
@@ -1320,6 +1328,12 @@ elif sys.argv[2] == "tw-taifex-futures-options-chip":
         )
     if dataset and dataset != "taifex_ssf_contracts":
         raise SystemExit(f"official TAIFEX refresh requires dataset taifex_ssf_contracts, got: {dataset}")
+elif sys.argv[2].startswith("collector-"):
+    collector = (sys.argv[4] if len(sys.argv) > 4 else "").strip().lower()
+    if not collector:
+        raise SystemExit("collector bundle refresh requires PANTHEON_COLLECTOR_HOST")
+    if hosts != {collector}:
+        raise SystemExit("collector bundle refresh requires exact host: " + collector)
 else:
     raise SystemExit(
         f"unsupported bounded source refresh connector: {sys.argv[2]}"
@@ -2185,7 +2199,14 @@ if action == "bounded":
     if bounded_dataset:
         env["SOURCE_INGEST_BOUNDED_DATASET"] = bounded_dataset
 elif action == "restore":
-    env.update({"PANTHEON_EXTERNAL_EGRESS": "deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "", "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only"})
+    # Restore the steady posture: allowlist with exactly the collector host
+    # (named deployment variable); deny only when no collector host is configured.
+    steady_host = (env.get("PANTHEON_COLLECTOR_HOST") or os.environ.get("PANTHEON_COLLECTOR_HOST") or "").strip().lower()
+    env.update({
+        "PANTHEON_EXTERNAL_EGRESS": "allowlist" if steady_host else "deny",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
+        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+    })
 # "compose up --no-build" starts whatever image the Compose name resolves to.
 # Never recreate source-ingest on any image other than the recorded running one
 # (a stale tag once started a rejected candidate here): stop before recreating.
@@ -2870,12 +2891,12 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
         [[ -z "${sched_log}" ]] || printf '%s\n' "${sched_log}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
       fi
     fi
-    info "restoring external egress to deny and source controller to reconcile_only"
+    info "restoring steady collector-host egress posture and source controller to reconcile_only"
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
-      PANTHEON_EXTERNAL_EGRESS=deny PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="" \
+      PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST:-}" \
       SOURCE_INGEST_CONTROLLER_MODE=reconcile_only SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
       SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
