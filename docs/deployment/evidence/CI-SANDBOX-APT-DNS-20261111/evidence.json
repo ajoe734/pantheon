@@ -11,6 +11,7 @@
       "url": "https://github.com/ajoe734/pantheon/actions/runs/43032317523/attempts/1",
       "pr": 7176,
       "source_head": "78813d453acde3db137b2521ddb5fd06a965d705",
+      "raw_log_sha256": "eb8a306699bb2683ef78b260f18d795472428362f6d68903b0c66eb8b972c1a6",
       "failure": "Temporary failure resolving 'azure.archive.ubuntu.com' via mirror+file:/etc/apt/apt-mirrors.txt; step timed out after 5 minutes"
     },
     {
@@ -20,6 +21,7 @@
       "url": "https://github.com/ajoe734/pantheon/actions/runs/43032317523/attempts/2",
       "pr": 7176,
       "source_head": "78813d453acde3db137b2521ddb5fd06a965d705",
+      "raw_log_sha256": "fbd183f8b63803330109998e2009587cfa1e1f9d0399155ef2086dc7c1388a0e",
       "failure": "same DNS failure on failed-only rerun of unchanged head"
     }
   ],
@@ -52,7 +54,8 @@
     "pr": "https://github.com/ajoe734/pantheon/pull/7183",
     "diagnostic_head": "8f434dced6913cf27c77b9ed6bdccffd7b7070c4",
     "diagnostic_run": "https://github.com/ajoe734/pantheon/actions/runs/43050526399",
-    "diagnostic_status": "queued; no runner diagnostic result claimed",
+    "diagnostic_status": "Smoke job130629176269 still queued at 15:46:44 UTC; candidate push may supersede it via existing concurrency. No runner diagnostic result or pass claimed. Canonical scope explicitly permits registered-mirror testing as an alternative, not an additional diagnostic gate.",
+    "candidate_code_commit": "a84750563",
     "previous_runner_failure": {
       "head": "ee941531f975b1ce2e714066dfe663e19a619a89",
       "run": "43048261505",
