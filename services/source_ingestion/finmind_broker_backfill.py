@@ -46,12 +46,38 @@ STATE_SCHEMA = "finmind_broker_backfill_state.v1"
 RowsLoader = Callable[[Sequence[Mapping[str, Any]]], Sequence[Mapping[str, Any]]]
 
 
+PARQUET_MAGIC = b"PAR1"
+PYARROW_REQUIREMENTS = "services/source_ingestion/requirements-finmind-backfill.txt"
+
+
+class ParquetDependencyError(RuntimeError):
+    pass
+
+
+def require_pyarrow() -> Any:
+    """Import pyarrow.parquet or raise with install instructions (before any fetch)."""
+    try:
+        import pyarrow.parquet as pq  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ParquetDependencyError(
+            f"pyarrow is required for FinMind parquet decoding; "
+            f"pip install -r {PYARROW_REQUIREMENTS}"
+        ) from exc
+    return pq
+
+
+def decode_parquet_bytes(raw: bytes) -> list[dict[str, Any]]:
+    import io
+
+    return require_pyarrow().read_table(io.BytesIO(raw)).to_pylist()
+
+
 def default_parquet_rows_loader(manifest_rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Download signed parquet objects and return rows (needs pyarrow at runtime)."""
     import io
     import urllib.request
 
-    import pyarrow.parquet as pq  # type: ignore[import-not-found]
+    pq = require_pyarrow()
 
     from services.external_egress import open_external_url
 
@@ -156,6 +182,11 @@ def run_backfill(
         result.status = "credential_unavailable"
         result.reason = f"missing credential at {cred.get('secret_ref_id')}"
         return result
+    try:
+        require_pyarrow()  # fail before spending any provider quota
+    except ParquetDependencyError as exc:
+        result.status, result.reason = "dependency_unavailable", str(exc)
+        return result
 
     output_dir.mkdir(parents=True, exist_ok=True)
     state_path = output_dir / "backfill_state.json"
@@ -175,13 +206,24 @@ def run_backfill(
                 sleep(wait)
         last_request = clock()
         try:
-            payload, _meta = fetcher.fetch_storage_objects(FINMIND_BROKER_REPORT_DATASET, day_s)
+            raw, meta = fetcher.fetch_storage_objects_raw(FINMIND_BROKER_REPORT_DATASET, day_s)
             result.requests_made += 1
-            manifest_records = bulk.records_from_storage_objects_payload(payload, date=day_s)
-            manifest_rows = [
-                row for row in (payload.get("data") or []) if isinstance(row, Mapping)
-            ]
-            rows = list(rows_loader(manifest_rows)) if manifest_rows else []
+            if raw[:4] == PARQUET_MAGIC:
+                # Official shape: response body is the parquet file itself.
+                rows = decode_parquet_bytes(raw)
+                manifest_records = bulk.records_from_storage_objects_payload(
+                    {"data": [{"object_name": f"{FINMIND_BROKER_REPORT_DATASET}/{day_s}.parquet",
+                               "row_count": len(rows)}]},
+                    date=day_s,
+                )
+            else:
+                # JSON: application error (raises) or a signed-URL manifest.
+                payload, _ = fetcher.parse_json_payload(raw, dict(meta))
+                manifest_records = bulk.records_from_storage_objects_payload(payload, date=day_s)
+                manifest_rows = [
+                    row for row in (payload.get("data") or []) if isinstance(row, Mapping)
+                ]
+                rows = list(rows_loader(manifest_rows)) if manifest_rows else []
         except FinMindCredentialError as exc:
             result.status, result.reason = "credential_unavailable", type(exc).__name__
             break

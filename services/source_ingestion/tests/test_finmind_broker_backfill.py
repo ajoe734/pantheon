@@ -10,6 +10,8 @@ from services.source_ingestion.connectors.finmind_taiwan import (
     FinMindQuotaError,
     FinMindTaiwanDatasetAdapter,
 )
+from services.source_ingestion import finmind_broker_backfill as fbb
+from services.source_ingestion.connectors import finmind_taiwan as ft
 from services.source_ingestion.finmind_broker_backfill import run_backfill, weekdays
 
 ROWS = [
@@ -34,12 +36,13 @@ class FakeFetcher(FinMindLiveFetcher):
             return {"available": True, "status": "credential_ok", "secret_ref_id": self.secret_ref_id}
         return {"available": False, "status": "credential_unavailable", "secret_ref_id": self.secret_ref_id}
 
-    def fetch_storage_objects(self, dataset, date):
+    def fetch_storage_objects_raw(self, dataset, date):
         if self.quota_after is not None and len(self.calls) >= self.quota_after:
             raise FinMindQuotaError("quota")
         self.calls.append(date)
-        return {"status": 200, "data": [{"object_name": f"{date}.parquet",
-                                         "url": "https://signed.example/x?sig=SECRET"}]}, {}
+        body = {"status": 200, "data": [{"object_name": f"{date}.parquet",
+                                         "url": "https://signed.example/x?sig=SECRET"}]}
+        return json.dumps(body).encode(), {}
 
 
 def loader(manifest):
@@ -120,3 +123,71 @@ def test_catalog_does_not_route_finmind_to_normalized_tw_price_daily() -> None:
 
     entry = next(e for e in INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES if e.provider == "FinMind")
     assert "normalized/tw_price_daily" not in json.dumps(entry.to_dict(), default=str)
+
+
+class _Resp:
+    status = 200
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+        self.headers = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self, n=-1):
+        return self._body
+
+
+def _parquet_bytes() -> bytes:
+    pa = pytest.importorskip("pyarrow")
+    import io
+
+    import pyarrow.parquet as pq
+
+    buf = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(ROWS), buf)
+    return buf.getvalue()
+
+
+def test_real_parquet_body_through_fetch_decode_path(tmp_path, monkeypatch) -> None:
+    body = _parquet_bytes()
+    assert body[:4] == b"PAR1"
+    seen: list[str] = []
+
+    def fake_open(request, **kw):
+        seen.append(request.full_url)
+        return _Resp(body)
+
+    monkeypatch.setattr(ft, "open_external_url", fake_open)
+    monkeypatch.setenv("FINMIND_API_TOKEN", "tok-SECRET-123")
+    result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
+                          sleep=lambda s: None)
+    assert result.status == "ok" and result.completed == ["2026-06-08"]
+    assert result.top_records > 0 and result.detail_records == 3
+    assert "tok-SECRET-123" not in "".join(seen)
+    assert "tok-SECRET-123" not in "".join(p.read_text() for p in tmp_path.rglob("*.jsonl"))
+
+
+def test_cli_main_with_parquet_body(tmp_path, monkeypatch, capsys) -> None:
+    body = _parquet_bytes()
+    monkeypatch.setattr(ft, "open_external_url", lambda request, **kw: _Resp(body))
+    monkeypatch.setenv("FINMIND_API_TOKEN", "tok-SECRET-123")
+    rc = fbb.main(["--output-dir", str(tmp_path), "--start", "2026-06-08", "--end", "2026-06-08",
+                   "--min-interval-seconds", "0"])
+    out = capsys.readouterr().out
+    assert rc == 0 and '"detail_records": 3' in out and "tok-SECRET" not in out
+
+
+def test_missing_pyarrow_fails_before_any_fetch(tmp_path, monkeypatch) -> None:
+    def boom():
+        raise fbb.ParquetDependencyError("pyarrow missing")
+
+    monkeypatch.setattr(fbb, "require_pyarrow", boom)
+    fetcher = FakeFetcher()
+    result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 9),
+                          fetcher=fetcher, rows_loader=loader, sleep=lambda s: None)
+    assert result.status == "dependency_unavailable" and fetcher.calls == []

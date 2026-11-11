@@ -2,7 +2,7 @@
   "task_id": "FINMIND-BROKER-CONNECTOR-BACKFILL-20261111",
   "command": "python -m services.source_ingestion.finmind_broker_backfill --output-dir DIR [--start D --end D]",
   "acceptance": {
-    "1_backfill_resumable": "run_backfill walks weekdays over 2y, fetches bulk storage-object manifest per date, state file skips completed dates (test_resume_does_not_refetch_completed_dates)",
+    "1_backfill_resumable": "run_backfill walks weekdays over 2y; fetch_storage_objects_raw consumes the official parquet body (PAR1) directly via pyarrow, with JSON signed-URL manifest fallback; state file skips completed dates. Tests: test_real_parquet_body_through_fetch_decode_path and test_cli_main_with_parquet_body use a real parquet fixture through the actual _get_raw/decode/CLI path (only open_external_url mocked)",
     "2_governed_datasets": "tw_broker_top + tw_broker_branch_detail partitions with event_time/available_time, license_scope=vendor_research, redistribution_allowed=false",
     "3_missing_credential": "status=credential_unavailable, zero fetches (test_no_token_records_reason_and_fetches_nothing)",
     "4_no_tw_price_daily": "FinMind TaiwanStockPrice emits no normalized_row, targets finmind_tw_price_reference; catalog no longer routes to normalized/tw_price_daily; persona reconciler tests aligned: tw_price_daily with FinMind candidates always routes to tw-twse-tpex-official-market, sole FinMind candidate is unsupported (test_keyed_finmind_preference_never_takes_tw_price_daily)",
@@ -18,7 +18,12 @@
       "test_market_data_foundation.py",
       "test_*finmind*.py"
     ],
-    "result": "195 passed (recorded fixtures only, no live provider call, no token logged)",
-    "validated_source_head": "fc86d0320b41c33e7584bc608db5aa291ab0b424"
+    "result": "211 passed (finmind, market_data_foundation, persona_source_reconciler, controller_worker; pyarrow present; recorded fixtures only, no live API, no token logged)",
+    "validated_source_head": "see handoff commit (parquet fix commit)"
+  },
+  "dependency": {
+    "file": "services/source_ingestion/requirements-finmind-backfill.txt",
+    "install": "pip install -r services/source_ingestion/requirements-finmind-backfill.txt",
+    "preflight": "run_backfill returns status=dependency_unavailable before any fetch if pyarrow missing (test_missing_pyarrow_fails_before_any_fetch)"
   }
 }

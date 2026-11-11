@@ -918,6 +918,21 @@ class FinMindLiveFetcher:
         url = _finmind_url(FINMIND_STORAGE_OBJECTS_ENDPOINT, params)
         return self._get(url, token=token)
 
+    def fetch_storage_objects_raw(
+        self,
+        dataset: str,
+        date: str,
+    ) -> tuple[bytes, dict[str, Any]]:
+        """Fetch storage_objects response bytes (parquet body or JSON), undecoded.
+
+        FinMind serves TaiwanStockTradingDailyReport storage_objects as a parquet
+        body; errors/manifests arrive as JSON. Same credential, quota, egress
+        and redaction handling as ``_get`` (token only in Authorization header).
+        """
+        token = self._require_token()
+        url = _finmind_url(FINMIND_STORAGE_OBJECTS_ENDPOINT, {"dataset": dataset, "date": date})
+        return self._get_raw(url, token=token)
+
     # ------------------------------------------------------------------
     # internal helpers
     # ------------------------------------------------------------------
@@ -938,10 +953,19 @@ class FinMindLiveFetcher:
         token: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """HTTP GET against FinMind API. Token is sent only as Authorization header."""
+        raw, quota_meta = self._get_raw(url, token=token)
+        return self.parse_json_payload(raw, quota_meta)
+
+    def _get_raw(
+        self,
+        url: str,
+        *,
+        token: str,
+    ) -> tuple[bytes, dict[str, Any]]:
         request = urllib.request.Request(
             url,
             headers={
-                "Accept": "application/json",
+                "Accept": "application/json, application/octet-stream",
                 "Authorization": f"Bearer {token}",
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
@@ -972,7 +996,13 @@ class FinMindLiveFetcher:
             raise FinMindFetchError(f"FinMind API error HTTP {exc.code}: {exc.reason}") from exc
         except urllib.error.URLError as exc:
             raise FinMindFetchError(f"FinMind connection error: {exc.reason}") from exc
+        return raw, quota_meta
 
+    def parse_json_payload(
+        self,
+        raw: bytes,
+        quota_meta: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
