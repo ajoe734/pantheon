@@ -6,6 +6,7 @@
     "3_gated_by_extraction_enable": "compiler_from_env returns None unless PANTHEON_L2_EXTRACTION_ENABLED truthy; disabled test asserts zero extract/compile calls and no compiler/ledger sqlite created"
   },
   "additional_fix": "distillation_worker passed the card-merged source to registry sync, causing a source digest mismatch (retry_wait/DLQ) for every extracted card in the controller path; sync now receives the admitted source",
-  "verification": "pytest services/source_ingestion/tests -k 'distill or hypothesis or compiler or controller or extraction': 326 passed",
-  "not_verified": "no live model/provider call; proposer uses SemanticExtractionClient._dispatch_turn (private) against the existing OpenClaw transport"
+  "verification": "pytest source_ingestion test_hypothesis_compiler_wiring/test_hypothesis_compiler/test_hypothesis_extraction/test_semantic_extraction/test_distillation_controller/test_distillation_worker: 136 passed",
+  "not_verified": "no live model/provider call; proposer uses SemanticExtractionClient._dispatch_turn (private) against the existing OpenClaw transport",
+  "review_fix_round_2": "Extraction/compiler transport now sends agent_id=structured-extraction (adapter policy preserved); compiler proposer_failed triggers queue retry/dead-letter instead of materializing an uncompiled seed. Regression tests added."
 }
