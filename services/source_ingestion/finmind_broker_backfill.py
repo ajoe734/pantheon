@@ -210,7 +210,12 @@ def run_backfill(
             result.requests_made += 1
             if raw[:4] == PARQUET_MAGIC:
                 # Official shape: response body is the parquet file itself.
-                rows = decode_parquet_bytes(raw)
+                try:
+                    rows = decode_parquet_bytes(raw)
+                except Exception as exc:  # corrupt/truncated body: fail this day only
+                    raise FinMindFetchError(
+                        f"parquet decode failed: {type(exc).__name__}"
+                    ) from exc
                 manifest_records = bulk.records_from_storage_objects_payload(
                     {"data": [{"object_name": f"{FINMIND_BROKER_REPORT_DATASET}/{day_s}.parquet",
                                "row_count": len(rows)}]},

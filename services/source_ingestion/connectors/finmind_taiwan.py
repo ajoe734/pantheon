@@ -809,6 +809,9 @@ def _extract_quota_meta(headers: Any) -> dict[str, Any]:
 
 _FINMIND_FETCH_TIMEOUT_SECONDS: float = 30.0
 _FINMIND_MAX_RESPONSE_BYTES: int = 20_000_000
+# Bulk storage_objects parquet bodies legitimately exceed the JSON cap.
+_FINMIND_MAX_BULK_RESPONSE_BYTES: int = 512_000_000
+_FINMIND_READ_CHUNK_BYTES: int = 1 << 20
 
 
 @dataclass
@@ -931,7 +934,7 @@ class FinMindLiveFetcher:
         """
         token = self._require_token()
         url = _finmind_url(FINMIND_STORAGE_OBJECTS_ENDPOINT, {"dataset": dataset, "date": date})
-        return self._get_raw(url, token=token)
+        return self._get_raw(url, token=token, max_bytes=_FINMIND_MAX_BULK_RESPONSE_BYTES)
 
     # ------------------------------------------------------------------
     # internal helpers
@@ -961,6 +964,7 @@ class FinMindLiveFetcher:
         url: str,
         *,
         token: str,
+        max_bytes: int = _FINMIND_MAX_RESPONSE_BYTES,
     ) -> tuple[bytes, dict[str, Any]]:
         request = urllib.request.Request(
             url,
@@ -979,7 +983,24 @@ class FinMindLiveFetcher:
             ) as response:
                 quota_meta.update(_extract_quota_meta(response.headers))
                 quota_meta["http_status"] = response.status
-                raw = response.read(_FINMIND_MAX_RESPONSE_BYTES)
+                if max_bytes <= _FINMIND_MAX_RESPONSE_BYTES:
+                    raw = response.read(max_bytes)
+                else:
+                    # read(n) may return short chunks; loop to the full body,
+                    # bounded by max_bytes (fail loudly instead of truncating).
+                    chunks: list[bytes] = []
+                    total = 0
+                    while True:
+                        chunk = response.read(_FINMIND_READ_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > max_bytes:
+                            raise FinMindFetchError(
+                                f"FinMind response exceeds {max_bytes} bytes bulk limit"
+                            )
+                        chunks.append(chunk)
+                    raw = b"".join(chunks)
         except urllib.error.HTTPError as exc:
             quota_meta.update(_extract_quota_meta(exc.headers))
             quota_meta["http_status"] = exc.code

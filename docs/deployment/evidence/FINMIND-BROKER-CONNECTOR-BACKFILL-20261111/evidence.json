@@ -6,6 +6,7 @@
     "2_governed_datasets": "tw_broker_top + tw_broker_branch_detail partitions with event_time/available_time, license_scope=vendor_research, redistribution_allowed=false",
     "3_missing_credential": "status=credential_unavailable, zero fetches (test_no_token_records_reason_and_fetches_nothing)",
     "4_no_tw_price_daily": "FinMind TaiwanStockPrice emits no normalized_row, targets finmind_tw_price_reference; catalog no longer routes to normalized/tw_price_daily; persona reconciler tests aligned: tw_price_daily with FinMind candidates always routes to tw-twse-tpex-official-market, sole FinMind candidate is unsupported (test_keyed_finmind_preference_never_takes_tw_price_daily)",
+    "1b_large_body": "fetch_storage_objects_raw reads the full bulk body in 1 MiB chunks bounded by _FINMIND_MAX_BULK_RESPONSE_BYTES=512MB (fails loudly, never truncates); JSON paths keep the 20MB cap; parquet decode failure fails that day only (status=partial). Tests: test_bulk_body_over_json_cap_is_read_in_full, test_bulk_body_over_bulk_cap_fails_loudly, test_large_parquet_body_decodes_end_to_end (>20MB real parquet), test_corrupt_parquet_fails_that_day_without_aborting; _Resp.read now honours n",
     "5_tests": "focused suites (finmind_broker_backfill, finmind_taiwan_connectors, market_data_foundation, persona_source_reconciler, controller_worker) pass: 198 passed with scoped requirements installed; without pyarrow, injected-rows_loader tests stub the preflight (injected_rows fixture) and real-parquet tests skip via importorskip, so standard CI (root requirements only) passes; missing-dependency preflight test retained. Fixtures only, no live API, token never emitted"
   },
   "throttle": "default 1.5s/request (<=2400/h) under SponsorYear 6000/h",
@@ -18,7 +19,7 @@
       "test_market_data_foundation.py",
       "test_*finmind*.py"
     ],
-    "result": "198 passed (finmind_broker_backfill, finmind_taiwan_connectors, market_data_foundation, persona_source_reconciler, controller_worker; scoped pyarrow present; recorded fixtures only, no live API, no token logged)",
+    "result": "215 passed (-k finmind|market_data_foundation|persona_source_reconciler|controller_worker; pyarrow present); earlier 198 passed (finmind_broker_backfill, finmind_taiwan_connectors, market_data_foundation, persona_source_reconciler, controller_worker; scoped pyarrow present; recorded fixtures only, no live API, no token logged)",
     "validated_source_head": "see handoff commit (parquet fix commit)"
   },
   "dependency": {

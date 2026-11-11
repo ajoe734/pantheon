@@ -135,7 +135,9 @@ class _Resp:
     status = 200
 
     def __init__(self, body: bytes) -> None:
-        self._body = body
+        import io
+
+        self._body = io.BytesIO(body)
         self.headers = {}
 
     def __enter__(self):
@@ -145,7 +147,7 @@ class _Resp:
         return False
 
     def read(self, n=-1):
-        return self._body
+        return self._body.read(n)  # honours n, like a real HTTP response
 
 
 def _parquet_bytes() -> bytes:
@@ -197,3 +199,56 @@ def test_missing_pyarrow_fails_before_any_fetch(tmp_path, monkeypatch) -> None:
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 9),
                           fetcher=fetcher, rows_loader=loader, sleep=lambda s: None)
     assert result.status == "dependency_unavailable" and fetcher.calls == []
+
+
+def test_bulk_body_over_json_cap_is_read_in_full(monkeypatch) -> None:
+    body = b"PAR1" + b"x" * 21_000_000
+    monkeypatch.setattr(ft, "open_external_url", lambda request, **kw: _Resp(body))
+    monkeypatch.setenv("FINMIND_API_TOKEN", "tok")
+    raw, _ = ft.FinMindLiveFetcher().fetch_storage_objects_raw("D", "2026-06-08")
+    assert len(raw) == len(body)
+
+
+def test_bulk_body_over_bulk_cap_fails_loudly(monkeypatch) -> None:
+    monkeypatch.setattr(ft, "_FINMIND_MAX_BULK_RESPONSE_BYTES", 21_000_000)
+    monkeypatch.setattr(ft, "open_external_url",
+                        lambda request, **kw: _Resp(b"x" * 22_000_000))
+    monkeypatch.setenv("FINMIND_API_TOKEN", "tok")
+    with pytest.raises(ft.FinMindFetchError):
+        ft.FinMindLiveFetcher().fetch_storage_objects_raw("D", "2026-06-08")
+
+
+def test_large_parquet_body_decodes_end_to_end(tmp_path, monkeypatch) -> None:
+    pa = pytest.importorskip("pyarrow")
+    import io
+
+    import pyarrow.parquet as pq
+
+    rows = [dict(ROWS[0], pad="x" * 100)]
+    buf = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(rows), buf)
+    # Pad the parquet footer-preserving file past 20 MB via key-value metadata.
+    table = pa.Table.from_pylist(rows).replace_schema_metadata({"pad": "y" * 21_000_000})
+    buf = io.BytesIO()
+    pq.write_table(table, buf)
+    body = buf.getvalue()
+    assert len(body) > 20_000_000
+    monkeypatch.setattr(ft, "open_external_url", lambda request, **kw: _Resp(body))
+    monkeypatch.setenv("FINMIND_API_TOKEN", "tok")
+    result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
+                          sleep=lambda s: None)
+    assert result.status == "ok" and result.completed == ["2026-06-08"]
+
+
+def test_corrupt_parquet_fails_that_day_without_aborting(tmp_path, monkeypatch) -> None:
+    import services.source_ingestion.finmind_broker_backfill as bb
+
+    monkeypatch.setattr(bb, "require_pyarrow", lambda: None)
+    monkeypatch.setattr(bb, "decode_parquet_bytes",
+                        lambda raw: (_ for _ in ()).throw(ValueError("bad")))
+    monkeypatch.setattr(ft, "open_external_url",
+                        lambda request, **kw: _Resp(b"PAR1" + b"x" * 100))
+    monkeypatch.setenv("FINMIND_API_TOKEN", "tok")
+    result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 9),
+                          sleep=lambda s: None)
+    assert result.status == "partial" and len(result.failed) == 2
