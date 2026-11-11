@@ -5,6 +5,7 @@ import json
 import json as _json
 import logging
 import os
+from pathlib import Path
 import re
 import sys
 import threading
@@ -1766,16 +1767,60 @@ def _retrain_finite(value: Any) -> Optional[float]:
     return number if number == number and number not in (float("inf"), float("-inf")) else None
 
 
-def _retrain_parameter_update(parent_artifact: Dict[str, Any]) -> Dict[str, Any]:
-    """The existing bounded rule: change exactly one declared parameter."""
-    current_params = parent_artifact.get("parameters") or {}
-    if "lookback_bars" in current_params:
-        current_lookback = int(current_params["lookback_bars"])
-        return {"lookback_bars": 3 if current_lookback == 2 else 2}
-    if "momentum_threshold" in current_params:
-        current_threshold = float(current_params["momentum_threshold"])
-        return {"momentum_threshold": 0.01 if current_threshold == 0.0 else 0.0}
-    return {"momentum_threshold": 0.01}
+# Governed in-sample dataset loader for the retrain search.  Deployment wires
+# this (or the decision carries ``parameters["dataset"]``); with neither, the
+# search fails closed instead of falling back to a fixed toggle.
+_RETRAIN_DATASET_LOADER: Optional[Any] = None
+_RETRAIN_SEARCH_BUDGET_ENV = "RESEARCH_RETRAIN_SEARCH_BUDGET"
+_RETRAIN_TRIAL_COUNTER_ENV = "RESEARCH_REPLICATION_TRIAL_COUNTER_PATH"
+
+
+def _retrain_search_update(
+    parent_artifact: Dict[str, Any], params: Dict[str, Any], run_id: str
+) -> Dict[str, Any]:
+    """Fixed-budget random search over the declared mutation ranges (design §12.2).
+
+    Scored by walk-forward folds on the in-sample window only (the out-of-sample
+    window is never loaded into the scorer) and counted per family.  Replaces the
+    former lookback 2<->3 / threshold 0<->0.01 toggle.  Returns the best
+    parameter update, or finishes the run ``no_candidate``.
+    """
+    from services.research.alpha_replication import evolution_search as search
+    from services.research.replication.gate import FamilyTrialCounterStore
+
+    dataset = params.get("dataset") if isinstance(params.get("dataset"), dict) else None
+    if dataset is None and callable(_RETRAIN_DATASET_LOADER):
+        dataset = _RETRAIN_DATASET_LOADER(parent_artifact, params)
+    if not isinstance(dataset, dict):
+        raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
+    budget = int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
+    counter_path = os.environ.get(_RETRAIN_TRIAL_COUNTER_ENV)
+    family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
+    from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
+
+    prev = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+    os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+    try:
+        scorer = search.make_in_sample_walk_forward_scorer(dataset, backend=VectorbtBackend())
+        outcome = search.search_in_sample(
+            parent_artifact,
+            score_fn=scorer,
+            decision_id=str(params.get("decision_id") or run_id),
+            family_id=family_id,
+            budget=budget,
+            trial_counter=FamilyTrialCounterStore(Path(counter_path) if counter_path else None),
+        )
+    except search.EvolutionSearchError as exc:
+        raise _RetrainFinished("no_candidate", f"search_unavailable: {exc}") from None
+    finally:
+        if prev is None:
+            os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+        else:
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = prev
+    _retrain_record(run_id, search=outcome.to_dict())
+    if outcome.best is None:
+        raise _RetrainFinished("no_candidate", "search_found_no_in_sample_improvement")
+    return dict(outcome.best.parameter_updates)
 
 
 def _retrain_evaluate(
@@ -1958,7 +2003,7 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
 
     # 3. Baseline of the original, before any control change.
     controls_url = f"{training_url}/api/training/sessions/{urllib.parse.quote(session_id, safe='')}/controls"
-    proposed = state.get("parameter_updates") or _retrain_parameter_update(parent_artifact)
+    proposed = state.get("parameter_updates") or _retrain_search_update(parent_artifact, params, run_id)
     if not state.get("baseline_metrics"):
         baseline_job = _retrain_evaluate(
             run_id=run_id, step="baseline", training_url=training_url, tenant_id=tenant_id, session_id=session_id,

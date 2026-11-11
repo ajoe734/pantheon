@@ -337,6 +337,13 @@ def world(tmp_path_factory):
         sys.modules.pop("store", None)
         sys.path.remove(str(service_dir))
     w.research = research
+    # The production retrain proposal is a bounded in-sample random search
+    # (covered in alpha_replication/test_evolution_search.py).  This hosted-auth
+    # fixture pins one deterministic in-range proposal so the executor's
+    # session/registry/auth flow stays comparable across runs.
+    research._retrain_search_update = lambda parent, params, run_id: {
+        "lookback_bars": 3 if int(parent["parameters"]["lookback_bars"]) == 2 else 2
+    }
 
     for persona_id, artifact in w.artifacts.items():
         status, body = _http(
