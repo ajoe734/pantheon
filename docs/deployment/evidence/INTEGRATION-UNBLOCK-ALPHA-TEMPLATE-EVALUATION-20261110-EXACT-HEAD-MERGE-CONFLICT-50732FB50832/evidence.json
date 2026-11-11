@@ -1,0 +1,27 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-ALPHA-TEMPLATE-EVALUATION-20261110-EXACT-HEAD-MERGE-CONFLICT-50732FB50832",
+  "title": "Unblock integration for ALPHA-TEMPLATE-EVALUATION-20261110: exact-head-merge-conflict",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "source_pr": 7144,
+  "source_head": "b444c3b4a8a9e29573418a48e8779534fa4ee355",
+  "supersedes": "PR #7144 (task/ALPHA-TEMPLATE-EVALUATION-20261110)",
+  "root_cause": {
+    "summary": "PR #7144 head conflicts with dev in services/research/main.py and services/research/tests/test_alpha_template_evaluation.py (add/add).",
+    "cause": "Earlier repair PR #7147 (CI-RED unblock, commit 433b21a13) already carried the full alpha template evaluation into dev, with two required fixes: lazy import of run_alpha_template_evaluation in main.py and an autouse REGISTRY_STORE_BACKEND=memory fixture in the test file. The original #7144 branch was left behind with the pre-fix versions of those files, so merging it conflicts with, and would regress, dev.",
+    "files_identical_to_dev": [
+      "services/registry/alpha_template.py",
+      "services/registry/test_alpha_template.py",
+      "services/research/alpha_templates/__init__.py",
+      "services/research/alpha_templates/evaluator.py",
+      "services/research/requirements.txt",
+      "docs/deployment/evidence/ALPHA-TEMPLATE-EVALUATION-20261110/evidence.json"
+    ],
+    "files_differing": "main.py and test_alpha_template_evaluation.py differ only by dev already having the #7147 fixes; no feature content from #7144 is missing from dev."
+  },
+  "resolution": "No code merge needed. #7144 is superseded by #7147 and should be closed rather than integrated; this repair branch records the evidence.",
+  "verification": {
+    "merge_tree": "git merge-tree HEAD origin/task/ALPHA-TEMPLATE-EVALUATION-20261110 reproduces the 2-file conflict",
+    "diff_check": "git diff origin/dev origin/task/ALPHA-TEMPLATE-EVALUATION-20261110 shows evaluator, registry, requirements identical; only the #7147 fixes differ"
+  }
+}
