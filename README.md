@@ -1,6 +1,6 @@
 # Promotion Gate (REG-002)
 
-This root-level file is a legacy compatibility note.
+The promotion gate implementation lives in the Registry service.
 
 Canonical REG-002 files now live under:
 
@@ -8,10 +8,9 @@ Canonical REG-002 files now live under:
 - `services/registry/promotion/gate.py`
 - `services/registry/promotion/cli.py`
 
-Legacy root wrappers remain:
-
-- `gate.py`
-- `cli.py`
+The root `gate.py` and `cli.py` forwarding aliases have been retired. Import
+`services.registry.promotion.gate` and run
+`python3 -m services.registry.promotion.cli --help` from a provisioned interpreter.
 
 ## 職責
 實作受治理的策略生命週期切換。確保任何進入 `paper` 或 `live` 狀態的 Artifact 都具備必要的審核元數據。
@@ -27,7 +26,7 @@ Legacy root wrappers remain:
 ## 使用範例 (Python)
 
 ```python
-from gate import PromotionGate, PromotionState
+from services.registry.promotion.gate import PromotionGate, PromotionState
 
 gate = PromotionGate()
 

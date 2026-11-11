@@ -132,7 +132,7 @@ created_at
 
 strategy_id
 registry_id
-promotion_state
+artifact_state
 
 runtime_binding_id
 deployment_plan_id
@@ -154,6 +154,11 @@ conflict_markers[]
 Notes:
 
 - this is a **projection record**, not a write-owned domain object
+- artifact projections supply `artifact_state` and `deployment_stage`; the retired
+  artifact `promotion_state` alias is not read or emitted by current producers/loader
+- telemetry-derived records may still carry `promotion_state` from
+  `TelemetryEvent.target.promotion_state`; this separate event/query field remains
+  supported and is not a requirement to dual-write artifact metadata
 - not every source object will populate every field
 - telemetry-derived records are allowed to emit a partial view as long as the
   missing fields are absent because the source object truly did not carry them,
