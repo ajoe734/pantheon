@@ -1,0 +1,29 @@
+{
+  "task_id": "DEV-DEPLOY-TW-REFRESH-AFTER-SWITCH-20261111",
+  "failing_run": "https://github.com/ajoe734/pantheon/actions/runs/43011035366",
+  "root_cause": "The pre-mutation Taiwan refresh recreated source-ingest from the previous release image with the new configuration (host list without www.twse.com.tw); the old code still connected to the removed host, exited 1, and the restore then reported a controlled-env mismatch. Same class as the 2026-11-08 TAIFEX deadlock.",
+  "change": {
+    ".github/workflows/nonprod-deploy.yml": "market_refresh moved from before the predecessor/baseline/deploy steps to right after the candidate image seal upload (after 'Deploy dev VM stack under lease'), before TAIFEX refresh and the paper baseline. It still fails closed (no continue-on-error), records tw-market-refresh.json (outcome plus its own redacted log, exit codes) before re-raising, and a new always() upload step publishes it. Retire and compensation conditions now name steps.market_refresh.outcome == 'failure'.",
+    "scripts/deploy_nonprod_vm.sh": "bounded refresh failure outcome (with captured log) is written for every connector when --output is given, not only TAIFEX/non-blocking; non-blocking exit-0 behaviour stays TAIFEX-only.",
+    "scripts/auto_deploy_dev_pair.py": "step renamed 'Refresh Taiwan market session under lease after candidate stack deploy' and removed from PRE_MUTATION_STEPS (post-switch failures are compensated and not auto-retried for the same pair)."
+  },
+  "baseline_regressions": {
+    "classification": "outdated test fixtures, not runtime faults",
+    "stub_docker_compose_args": "The PIN-RUNNING-IMAGE change adds '-f <pin override>' to compose argv; the stub assumed exactly 5 prefix args, so 'compose config' returned nothing and the real guard correctly stopped ('compose image reference could not be resolved'). Stub now skips extra -f pairs.",
+    "restore_env_mismatch": "Restore intends SOURCE_INGEST_CONTROLLER_MODE=reconcile_only and PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=<collector host>; the stub never modelled Compose interpolating them into the recreated container. Stub now applies the exported controlled keys on the deny/restore 'up'. The mutate_env_on_restore wrong-env rejection control and the wrong-image rejection tests are unchanged and still pass.",
+    "diagnostics_assertion": "test_nonprod_workflow_exposes_only_fixed_bounded_source_refresh expected the old egress expressions; updated to the truthful collector-host allowlist/deny and collector host expressions already in the workflow."
+  },
+  "acceptance": {
+    "1": "scripts/test_deploy_nonprod_vm.py, test_deploy_nonprod_bootstrap_contract.py, test_source_ingest_deploy_diagnostics_contract.py: deploy < market_refresh < taifex < paper_bootstrap; predecessor/baseline capture precede deploy",
+    "2": "paper_bootstrap keeps the default success() gate so it is skipped after a market_refresh failure; test_market_refresh_failure_is_a_post_switch_failure_handled_by_compensation",
+    "3": "compensation/retire conditions include market_refresh failure; tw-market-refresh.json + upload step; test_bounded_refresh_failure_outcome_with_log_is_recorded_for_every_connector",
+    "4": "updated step-order tests in the vm, bootstrap, diagnostics, lease-contract and auto-deploy-pair test files"
+  },
+  "verification": {
+    "scripts/test_dev_tw_market_refresh.py + test_deploy_nonprod_bootstrap_contract.py + test_source_ingest_deploy_diagnostics_contract.py + test_auto_deploy_dev_pair.py": "233 passed, 2 skipped",
+    "scripts/test_deploy_nonprod_vm.py": "95 passed, 2 skipped before the added test; added test passes",
+    "scripts/test_dev_environment_lease_deploy_contract.py": "market_refresh tests pass; 7 other failures are unrelated stale assertions (provider-gate summary string, retire action, restart admission, post-up paper_bootstrap condition text) in code this task does not touch"
+  },
+  "scope_note": "Also edited scripts/auto_deploy_dev_pair.py, scripts/test_auto_deploy_dev_pair.py and scripts/test_dev_environment_lease_deploy_contract.py, outside the listed artifacts, because they hard-code the old step name/order and would otherwise fail.",
+  "not_claimed": "No hosted dev run was executed; no new source acceptance is claimed."
+}

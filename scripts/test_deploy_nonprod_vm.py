@@ -2710,9 +2710,9 @@ def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_
 
     assert deploy_step["name"] == "Deploy dev VM stack under lease"
     assert (
-        market_idx
-        < deploy_idx
+        deploy_idx
         < candidate_upload_idx
+        < market_idx
         < taifex_idx
         < bounded_taifex_idx
         < taifex_upload_idx
@@ -2720,8 +2720,18 @@ def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_
         < retire_idx
         < comp_idx
     )
+    # The Taiwan refresh fails closed into the same compensation flow as other
+    # post-switch failures and keeps its own log in the run evidence.
+    assert market_step["name"] == "Refresh Taiwan market session under lease after candidate stack deploy"
     assert "continue-on-error" not in market_step
     assert "--non-blocking" not in market_step["run"]
+    assert "tw-market-refresh.json" in market_step["run"]
+    assert "if record[\"log\"]:\n    print(record[\"log\"])" in market_step["run"]
+    assert "steps.market_refresh.outcome == 'failure'" in retire_step["if"]
+    assert "steps.market_refresh.outcome == 'failure'" in comp_step["if"]
+    assert "always()" in by_id["market_refresh_upload"][1]["if"]
+    assert by_id["market_refresh_upload"][1]["with"]["path"] == "${{ steps.release_admission.outputs.evidence_dir }}/tw-market-refresh.json"
+    assert by_id["market_refresh"][0] < by_id["market_refresh_upload"][0] < taifex_idx
     assert taifex_step.get("continue-on-error") is True
     assert "--non-blocking" in taifex_step["run"]
     assert "taifex-market-refresh.json" in taifex_step["run"]
@@ -3086,3 +3096,12 @@ def test_collector_host_gate_rejects_non_single_hostname() -> None:
                           env={"PANTHEON_COLLECTOR_HOST": "collector.example,extra.example", "PATH": "/usr/bin:/bin"},
                           capture_output=True, text=True, check=False)
     assert proc.returncode == 1 and "exactly one valid hostname" in proc.stderr
+
+
+def test_bounded_refresh_failure_outcome_with_log_is_recorded_for_every_connector() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("execute_bounded_source_refresh_entrypoint() {")
+    body = script[start : script.index("\nrecover_bounded_source_refresh_dlq() {", start)] if "\nrecover_bounded_source_refresh_dlq() {" in script[start:] else script[start:]
+    # The failed outcome (carrying the captured redacted log) is no longer gated on TAIFEX/non-blocking,
+    # so a failed Taiwan refresh keeps its own logs in the requested output file.
+    assert body.count('write_bounded_refresh_outcome "failed" "${fail_reason}" || true') == 2

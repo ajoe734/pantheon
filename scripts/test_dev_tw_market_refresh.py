@@ -358,6 +358,10 @@ state = json.loads(state_file.read_text(encoding="utf-8"))
 
 if args[0] == "compose":
     sub = args[5:] if len(args) > 5 else []
+    # The deploy script may add further compose files (-f <override>), e.g. the
+    # source-ingest image pin override; skip them to reach the compose subcommand.
+    while len(sub) > 1 and sub[0] == "-f":
+        sub = sub[2:]
     if not sub:
         sys.exit(0)
     if sub[0] == "run":
@@ -432,6 +436,12 @@ if args[0] == "compose":
         if "source-ingest" in services:
             if state.get("mutate_image_on_up"):
                 state["image_id"] = state["mutate_image_on_up"]
+            # Model Compose interpolation: the recreated container carries the
+            # egress/controller-mode keys the deploy script exported for this up.
+            controlled_keys = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
+            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
+                kept = [e for e in state["container_env"] if e.split("=", 1)[0] not in controlled_keys]
+                state["container_env"] = kept + [f"{{k}}={{os.environ[k]}}" for k in controlled_keys if k in os.environ]
             if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist":
                 state["source_ingest_cid"] = state.get("recreated_source_ingest_cid", "cid-source-ingest-recreated")
             elif os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
