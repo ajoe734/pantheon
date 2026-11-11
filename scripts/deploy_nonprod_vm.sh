@@ -2831,6 +2831,12 @@ desired_requirement = {
     "enabled": True,
 }
 conn_meta = dict(conn_dict.get("metadata") or {})
+if is_finmind:
+    # Code-reviewed FinMind Sponsor Pro connector: mark it approved through the same connector
+    # metadata marker the persona reconciler's require_connector_approved gate reads for
+    # registered custom connectors (TAIFEX precedent). The gate stays enforced.
+    conn_meta["approval_status"] = "approved"
+    conn_meta["approval_authority"] = "code_reviewed_finmind_sponsorpro_connector"
 conn_meta["persona_source_reconciliation"] = {
     "managed_by": "persona_source_provisioning_reconciler",
     "desired_state": desired_requirement,

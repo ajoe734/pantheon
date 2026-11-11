@@ -370,11 +370,6 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                 tags=("taiwan", "finmind", "broker_top", "branch_trading", "chip"),
             ),
             metadata={
-                # Code-reviewed FinMind Sponsor Pro connector: satisfies the persona reconciler's
-                # require_connector_approved gate for registered custom connectors. The gate stays
-                # enforced; missing-credential handling and other gates are unaffected.
-                "approval_status": "approved",
-                "approval_authority": "code_reviewed_finmind_sponsorpro_connector",
                 "source_class": "research_grade",
                 "source_plan": "finmind_first_low_cost_paid_layer",
                 "dataset": "tw_broker_top",

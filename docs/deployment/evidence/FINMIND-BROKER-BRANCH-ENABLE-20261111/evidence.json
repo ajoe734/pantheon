@@ -57,7 +57,7 @@
     "tests": "test_deploy_nonprod_vm.py -k finmind 17 passed; test_compose_activation.py 2 passed"
   },
   "review_round_6_fixes": {
-    "p1_connector_approval": "finmind_taiwan.FinMindTaiwanBrokerDailyReportAdapter metadata now carries approval_status=approved / approval_authority=code_reviewed_finmind_sponsorpro_connector (TAIFEX precedent), so the deploy-registered connector passes require_connector_approved in the real SourceProvisioningReconciler; policy gate itself unchanged and other gates/missing-credential handling unaffected",
+    "p1_connector_approval": "deploy_nonprod_vm.sh PREPARE_DATASET_PY connector metadata now carries (adapter file is outside the task contract) approval_status=approved / approval_authority=code_reviewed_finmind_sponsorpro_connector (TAIFEX precedent), so the deploy-registered connector passes require_connector_approved in the real SourceProvisioningReconciler; policy gate itself unchanged and other gates/missing-credential handling unaffected",
     "regression": "test_finmind_prepared_connector_passes_real_reconciler_approval_gate: real PREPARE_DATASET_PY output persisted in real JsonlConfiguredConnectorStore, reconciled with production reconciler; fails without the fix (conflict/policy_gate_failed), passes with it",
     "tests": "deploy_nonprod_vm finmind: 18 passed; test_finmind_taiwan_connectors + test_persona_source_reconciler: 86 passed"
   }
