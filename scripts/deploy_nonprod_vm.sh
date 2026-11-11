@@ -2588,8 +2588,17 @@ if selected_rule is None:
 
 symbols = [str(s).strip() for s in (selected_job.get("symbols") or []) if str(s).strip()]
 if is_finmind:
-    # FinMind is keyed by the exact resolved active symbols, not by derivative contracts.
-    contracts = list(symbols)
+    # FinMind is keyed by the exact resolved active symbols across EVERY bounded batch
+    # (fanout splits >50 symbols into several jobs), not only the first one.
+    contracts = list(dict.fromkeys(
+        str(sym).strip()
+        for job in (fanout.get("jobs") or [])
+        if isinstance(job, dict)
+        and job.get("connector_id") == connector_id
+        and job.get("dataset") == dataset
+        for sym in (job.get("symbols") or [])
+        if str(sym).strip()
+    ))
 else:
     contracts = [str(c).strip() for c in (selected_job.get("contracts") or []) if str(c).strip()]
 if not contracts:
@@ -2611,7 +2620,14 @@ conn_dict.pop("schema_version", None)
 fetch_cfg = adapter.fetch_config()
 if is_finmind:
     # The adapter's own request is empty; bind the resolved symbols so the run is bounded.
-    fetch_cfg = {**fetch_cfg, "request": {"dataset": dataset, "symbols": list(contracts)}}
+    # max_records is sized to the full top-N buy+sell budget for every symbol so the
+    # generic fetch.max_records slice cannot truncate persisted sides.
+    rows_per_symbol = int(adapter.max_rank) * 2
+    fetch_cfg = {
+        **fetch_cfg,
+        "request": {"dataset": dataset, "symbols": list(contracts)},
+        "max_records": rows_per_symbol * len(contracts),
+    }
     conn_dict["secret_ref_id"] = "env://FINMIND_API_TOKEN"
 else:
     adapter_cfg = fetch_cfg.get("adapter_config") or {}
@@ -2705,6 +2721,24 @@ if enqueued_items:
         raise SystemExit(
             f"Active-universe schedule did not enqueue expected {dataset} job_parameters for {connector_id}: {schedule_resp}"
         )
+    if is_finmind:
+        enqueued_symbols = {
+            str(sym).strip()
+            for item in enqueued_items
+            if isinstance(item, dict)
+            and item.get("connector_id") == connector_id
+            and (item.get("job_parameters") or {}).get("dataset") == dataset
+            for sym in (
+                (item.get("job_parameters") or {}).get("symbols")
+                or (item.get("job_parameters") or {}).get("contracts")
+                or []
+            )
+        }
+        uncovered = [sym for sym in contracts if sym not in enqueued_symbols]
+        if enqueued_symbols and uncovered:
+            raise SystemExit(
+                f"Active-universe schedule did not cover full FinMind universe; missing={uncovered}"
+            )
 
 default_desired_path = (
     Path(os.environ.get("PANTHEON_REMOTE_DIR") or os.getcwd())

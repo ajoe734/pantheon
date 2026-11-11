@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '0 7 * * 1-5'
     - cron: '0 8 * * 1-5'
+    # FinMind broker reports publish at 18:00 Taipei (10:00 UTC); poll after publication.
+    - cron: '30 10 * * 1-5'
+    - cron: '30 12 * * 1-5'
   workflow_dispatch:
     inputs:
       force:
@@ -112,6 +115,7 @@ jobs:
             --initial-visibility-poll-seconds 1 >/dev/null
 
       - name: Execute bounded TAIFEX contract refresh
+        if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: taifex_refresh
         continue-on-error: true
         env:
@@ -189,6 +193,7 @@ jobs:
           echo "FinMind broker refresh rc=${refresh_rc}"
 
       - name: Execute bounded Taiwan market refresh
+        if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: refresh
         env:
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
@@ -238,7 +243,7 @@ jobs:
             kill -0 "${heartbeat_pid}" 2>/dev/null || break
             sleep 0.25
           done
-          [[ "${REFRESH_OUTCOME}" == "success" && "${TAIFEX_REFRESH_OUTCOME}" == "success" && ! -e "${LD}/heartbeat-failure.json" ]] || exit 0
+          [[ "${REFRESH_OUTCOME}" =~ ^(success|skipped)$ && "${TAIFEX_REFRESH_OUTCOME}" =~ ^(success|skipped)$ && ! -e "${LD}/heartbeat-failure.json" ]] || exit 0
           [[ -s "${LD}/heartbeat-stop.json" ]] || { echo "No graceful heartbeat stop; refusing release." >&2; exit 75; }
           python3 "${CONTROLLER}/scripts/dev_environment_lease.py" release \
             --repository ajoe734/execute-plans \

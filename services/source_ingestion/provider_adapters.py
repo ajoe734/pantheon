@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -234,6 +234,16 @@ def _finmind_dataset(adapter: FinMindTaiwanDatasetAdapter, request: Mapping[str,
 
 
 FINMIND_BROKER_REFRESH_MAX_SYMBOLS = 200
+_TW_SYMBOL_SUFFIXES = (".TWSE", ".TWO", ".TW", ".TPEX", ".TPEx")
+
+
+def _finmind_stock_code(symbol: str) -> str:
+    """Map resolver symbols (2330.TW / 2317.TWSE / 6488.TWO) to FinMind bare data_id."""
+    text = str(symbol).strip().upper()
+    for suffix in _TW_SYMBOL_SUFFIXES:
+        if text.endswith(suffix.upper()):
+            return text[: -len(suffix)]
+    return text
 
 
 def _finmind_broker(
@@ -253,10 +263,10 @@ def _finmind_broker(
         )
     # No payload: scheduled daily refresh. Fetch live per resolved active symbol
     # through FinMindLiveFetcher (token/egress/quota handling lives there).
-    symbols = [str(item).strip().upper() for item in _string_list(request.get("symbols"))]
+    symbols = [_finmind_stock_code(item) for item in _string_list(request.get("symbols"))]
     single = _single_symbol(request)
-    if single and single not in symbols:
-        symbols.append(single)
+    if single:
+        symbols.append(_finmind_stock_code(single))
     symbols = list(dict.fromkeys(item for item in symbols if item))
     if not symbols:
         raise SourceEvidenceError("provider-owned adapter request.symbols is required")
@@ -270,26 +280,45 @@ def _finmind_broker(
         # Missing credential: zero network, no records, nothing mutated.
         raise FinMindCredentialError(f"missing credential at {adapter.secret_ref_id}")
     records: list[SourceRecord] = []
+    covered: list[str] = []
+    missing: list[str] = []
     for symbol in symbols:
         try:
             payload, quota_meta = fetcher.fetch_broker_report(symbol, trade_date)
-            records.extend(
-                adapter.records_from_daily_report_payload(
-                    payload,
-                    symbol=symbol,
-                    trade_date=trade_date,
-                    source_url=quota_meta.get("request_url"),
-                    available_time=request.get("available_time"),
-                    trace_id=trace_id,
-                )
+            symbol_records = adapter.records_from_daily_report_payload(
+                payload,
+                symbol=symbol,
+                trade_date=trade_date,
+                source_url=quota_meta.get("request_url"),
+                available_time=request.get("available_time"),
+                trace_id=trace_id,
             )
+            if symbol_records:
+                records.extend(symbol_records)
+                covered.append(symbol)
+            else:
+                missing.append(symbol)
         except FinMindCredentialError:
             raise
         except FinMindFetchError as exc:
             raise SourceEvidenceError(f"FinMind broker fetch failed for {symbol}: {exc}") from exc
     if not records:
-        raise SourceEvidenceError("FinMind broker refresh returned no rows")
-    return tuple(records)
+        raise SourceEvidenceError(
+            f"FinMind broker refresh returned no rows for any requested symbol: {','.join(missing)}"
+        )
+    # Coverage-aware outcome: records carry the requested/covered/missing split so a
+    # symbol without rows is explicitly partial and never silently counted as fresh.
+    coverage = {
+        "status": "partial" if missing else "complete",
+        "trade_date": trade_date,
+        "requested_symbols": list(symbols),
+        "covered_symbols": covered,
+        "missing_symbols": missing,
+    }
+    return tuple(
+        replace(record, metadata={**dict(record.metadata), "refresh_coverage": coverage})
+        for record in records
+    )
 
 
 def _finmind_storage(

@@ -2170,7 +2170,10 @@ def test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_conne
     twse_idx, twse_step = by_id["refresh"]
     taifex_idx, taifex_step = by_id["taifex_refresh"]
     assert taifex_idx < twse_idx, "TAIFEX contract refresh must run before TWSE market refresh"
-    assert twse_step.get("if") in (None, ""), "TWSE market refresh must never be prevented by a TAIFEX failure"
+    twse_if = twse_step.get("if") or ""
+    # Only the post-publication FinMind polling crons may skip TWSE; never a prior-step outcome.
+    assert "steps." not in twse_if and "failure()" not in twse_if, "TWSE market refresh must never be prevented by a TAIFEX failure"
+    assert not twse_if or "github.event.schedule" in twse_if
 
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
@@ -2188,7 +2191,7 @@ def test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_conne
     stop_step = next(s for s in steps if s.get("name") == "Stop heartbeat and release lease")
     assert stop_step["env"]["REFRESH_OUTCOME"] == "${{ steps.refresh.outcome }}"
     assert stop_step["env"]["TAIFEX_REFRESH_OUTCOME"] == "${{ steps.taifex_refresh.outcome }}"
-    assert '"${REFRESH_OUTCOME}" == "success" && "${TAIFEX_REFRESH_OUTCOME}" == "success"' in stop_step["run"]
+    assert '"${REFRESH_OUTCOME}" =~ ^(success|skipped)$ && "${TAIFEX_REFRESH_OUTCOME}" =~ ^(success|skipped)$' in stop_step["run"]
 
 
 def test_refresh_entrypoint_taifex_connector_runs_bounded_pull_and_restores_egress_deny(tmp_path: Path):

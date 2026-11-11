@@ -3134,3 +3134,16 @@ def test_deploy_script_forwards_finmind_token_without_echo() -> None:
     text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
     assert text.count('FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")') == 2
     assert not re.search(r"(echo|info|printf)[^\n]*FINMIND_API_TOKEN", text)
+
+
+def test_finmind_bounded_refresh_covers_all_batches_and_sizes_max_records() -> None:
+    text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
+    assert 'for job in (fanout.get("jobs") or [])' in text
+    assert '"max_records": rows_per_symbol * len(contracts)' in text
+    assert "did not cover full FinMind universe" in text
+
+
+def test_finmind_refresh_workflow_polls_after_18_taipei_publication() -> None:
+    wf = (_COLLECTOR_ENV_REPO / ".github/workflows/dev-tw-market-refresh.yml").read_text()
+    assert "'30 10 * * 1-5'" in wf and "'30 12 * * 1-5'" in wf
+    assert "'0 7 * * 1-5'" in wf and "'0 8 * * 1-5'" in wf
