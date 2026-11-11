@@ -7,5 +7,11 @@
     "4_official_hosts_unchanged": "TWSE/TPEx and TAIFEX required host sets untouched",
     "5_other_services_deny": "research-orchestrator-svc hardcoded deny; test_only_source_ingest_may_use_collector_host_steady_egress asserts"
   },
-  "verification": "pytest services/test_external_egress.py scripts/test_deploy_nonprod_vm.py: 114 passed, 2 skipped; bash -n ok"
+  "verification": "pytest services/test_external_egress.py scripts/test_deploy_nonprod_vm.py: 114 passed, 2 skipped; bash -n ok",
+  "workflow_env_wiring": {
+    "nonprod-deploy.yml": "PANTHEON_COLLECTOR_HOST (vars) + PANTHEON_COLLECTOR_BUNDLE_TOKEN (secrets) added to every DEV_BFF_JWT_SECRET env block and both bounded TAIFEX refresh steps",
+    "dev-tw-market-refresh.yml": "both bounded refresh steps",
+    "deploy_nonprod_vm.sh": "both forwarded in refresh-only and deploy command_prefix via shell_quote, never echoed",
+    "tests": "scripts/test_deploy_nonprod_vm.py::test_workflows_pass_collector_host_and_token_names, test_deploy_script_forwards_collector_env_without_echo (11 passed with egress tests; services/test_external_egress.py 27 passed)"
+  }
 }
