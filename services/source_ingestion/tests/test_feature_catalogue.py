@@ -530,3 +530,48 @@ def test_bare_collector_symbol_matches_stored_bar_identity_via_catalogue(tmp_pat
     assert [o["value"] for o in seen] == [1.0]
     depth = measure_stored_history_depth(tmp_path)
     assert "2330.TWSE" in depth["datasets"]["tw_price_daily"]["per_entity"]
+
+
+def test_late_revision_replaces_daily_observation_through_shared_evaluator(tmp_path) -> None:
+    """Revisions are evidence, not extra days: rolling windows see one value per event day."""
+    import copy
+
+    from services.registry.factor_rule import evaluate_factor_rule_action
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+    adapter = _community_adapter(tmp_path, "2026-11-10T01:00:00Z", "2026-11-10T17:00:00Z", "2026-11-11T01:00:00Z")
+    rows: list[dict] = []
+    for recs, _ in (
+        adapter.governed_feature_records([_post(0, "2026-11-09", ["2330"])]),
+        adapter.governed_feature_records([_post(i, "2026-11-10", ["2330"], hour=2 + i) for i in range(2)]),
+        adapter.governed_feature_records([_post(2, "2026-11-10", ["2330"], hour=6)]),
+    ):
+        rows += [r.metadata["normalized_row"] for r in recs]
+    obs = [o for row in rows for o in fc.observations_from_row("tw_community_attention", row)
+           if o["field"] == "post_volume"]
+    obs += list(obs)  # replayed rows must collapse too
+
+    def series(at):
+        return [o["value"] for o in fc.read_feature_series(
+            obs, "tw_community_attention", "post_volume", decision_time=at, entity="2330.TWSE")]
+
+    assert series("2026-11-11T00:30:00Z") == [1.0, 2.0]
+    assert series("2026-11-11T02:00:00Z") == [1.0, 3.0]  # revision replaces Nov10, history count stays 2
+    assert len(fc.read_feature_series(obs, "tw_community_attention", "post_volume",
+                                      decision_time="2026-11-11T02:00:00Z", entity="2330.TWSE",
+                                      include_revisions=True)) == 3  # evidence preserved, replays collapsed
+
+    artifact = copy.deepcopy(_sample_factor_rule_artifact())
+    artifact["strategy_logic"]["inputs"] = [
+        {"name": "vol", "dataset": "tw_community_attention", "field": "post_volume", "availability_lag_days": 0}
+    ]
+    artifact["strategy_logic"]["signal"] = {"op": "ts_mean", "args": [{"ref": "vol"}, {"const_param": "z_window"}]}
+    artifact["parameters"].update({"z_window": 2, "entry_z": 2.25})
+    artifact["mutation_surface"]["controls"][0]["current_value"] = 2
+
+    def action(at):
+        feats = fc.feature_inputs_for_factor_rule(
+            obs, artifact["strategy_logic"]["inputs"], decision_time=at, entity="2330.TWSE")
+        return evaluate_factor_rule_action(artifact, [100.0] * 2, features=feats, decision_time=at)
+
+    assert action("2026-11-11T02:00:00Z") == "HOLD"  # mean([1, 3]) = 2.0 < 2.25, not [1, 2, 3] -> 2.5

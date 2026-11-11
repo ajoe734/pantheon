@@ -430,8 +430,13 @@ def read_feature_series(
     *,
     decision_time: Any,
     entity: str | None = None,
+    include_revisions: bool = False,
 ) -> tuple[dict[str, Any], ...]:
     """Return observations of ``dataset.field`` visible at ``decision_time``.
+
+    Unless ``include_revisions`` is set (audit/evidence use), exactly the latest
+    visible version per entity/event_time is returned, so a late revision replaces
+    rather than adds a daily observation; replayed duplicates collapse too.
 
     This is the only governed reader: unknown fields raise, the declared lag is
     applied on top of any row-level lag, and observations are ordered by event time.
@@ -451,7 +456,19 @@ def read_feature_series(
         if event + timedelta(days=row_lag) > decision:
             continue
         visible.append(dict(obs))
-    visible.sort(key=lambda o: (parse_time(o["event_time"]), parse_time(o["available_time"])))
+    visible.sort(
+        key=lambda o: (parse_time(o["event_time"]), parse_time(o["available_time"]), str(o.get("ingest_time") or ""))
+    )
+    if include_revisions:
+        unique: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for o in visible:  # collapse replayed identical versions
+            unique[(o.get("entity"), parse_time(o["event_time"]), parse_time(o["available_time"]), o.get("value"))] = o
+        visible = list(unique.values())
+    else:
+        latest: dict[tuple[Any, Any], dict[str, Any]] = {}
+        for o in visible:  # ascending version order: later versions overwrite
+            latest[(o.get("entity"), parse_time(o["event_time"]))] = o
+        visible = sorted(latest.values(), key=lambda o: (parse_time(o["event_time"]), str(o.get("entity") or "")))
     return tuple(visible)
 
 
