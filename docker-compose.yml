@@ -1784,6 +1784,15 @@ services:
       dockerfile: services/control-plane/persona/Dockerfile
     restart: unless-stopped
     environment:
+      PERSONA_DAILY_CYCLE_ENABLED: ${PERSONA_DAILY_CYCLE_ENABLED:-true}
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
+      PERSONA_REGISTRY_BASE_URL: ${PERSONA_REGISTRY_BASE_URL:-http://registry:8087}
+      PERSONA_REGISTRY_SERVICE_TOKEN: ${PERSONA_REGISTRY_SERVICE_TOKEN:-}
+      PERSONA_REGISTRY_SERVICE_TOKEN_FILE: ${PERSONA_REGISTRY_SERVICE_TOKEN_FILE:-}
+      PANTHEON_BFF_OODA_PACKET_STORE: ${PANTHEON_BFF_OODA_PACKET_STORE:-/data/bff/ooda_packets.json}
+      OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL: ${PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL:-http://governance:8082}
       PERSONA_GOVERNANCE_SERVICE_TOKEN: ${PERSONA_GOVERNANCE_SERVICE_TOKEN:-}
       PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE: ${PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE:-}
@@ -1811,6 +1820,7 @@ services:
       PANTHEON_REGISTRY_URL: http://registry:8087
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
+      - bff-data:/data/bff
       - dev-paper-persona-tokens:/run/pantheon-principals:ro
     depends_on:
       postgres:
