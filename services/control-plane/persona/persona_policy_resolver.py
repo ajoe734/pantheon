@@ -60,6 +60,9 @@ class ConsultPolicy:
     """A consult policy entry controlling allowed consultation skills."""
     policy_id: str
     allowed_skills: List[str] = field(default_factory=list)
+    # Panel personas (risk, red team) are consultable but never trade; a
+    # consult policy with ``consultable=False`` keeps a persona off panels.
+    consultable: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +82,7 @@ class PolicyResolutionResult:
     effective_workflows: List[str] = field(default_factory=list)
     source_refs: List[str] = field(default_factory=list)
     denial_reasons: List[str] = field(default_factory=list)
+    consultable: bool = False
 
     @property
     def denied(self) -> bool:
@@ -153,6 +157,7 @@ class PersonaPolicyResolver:
         effective_skills: List[str] = []
         effective_workflows: List[str] = []
         source_refs: List[str] = []
+        consultable = False
 
         persona_id: str = str(getattr(persona, "persona_id", "") or "")
 
@@ -205,6 +210,7 @@ class PersonaPolicyResolver:
                     if skill not in effective_skills:
                         effective_skills.append(skill)
                 source_refs.append(f"consult_policy:{consult_policy_id}")
+                consultable = bool(consult_policy.consultable)
 
         # 5. Capital eligibility — only when both capital_pool_id and target_scope
         #    are provided and a binding_store is configured.
@@ -228,6 +234,7 @@ class PersonaPolicyResolver:
             effective_workflows=effective_workflows,
             source_refs=source_refs,
             denial_reasons=denial_reasons,
+            consultable=consultable,
         )
 
     def resolve_to_snapshot(

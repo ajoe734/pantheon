@@ -452,3 +452,26 @@ class TestPolicyResolutionResult(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_consultable_flag_follows_consult_policy_and_fails_closed():
+    from persona_policy_resolver import ConsultPolicy, PersonaPolicyResolver
+    from types import SimpleNamespace
+
+    resolver = PersonaPolicyResolver(
+        consult_policies={
+            "cp-panel": ConsultPolicy("cp-panel"),
+            "cp-off": ConsultPolicy("cp-off", consultable=False),
+        }
+    )
+
+    def persona(policy_id, status="active"):
+        return SimpleNamespace(
+            persona_id="p", status=status, tool_profile_id=None,
+            route_policy_id=None, consult_policy_id=policy_id,
+        )
+
+    assert resolver.resolve(persona("cp-panel")).consultable is True
+    assert resolver.resolve(persona("cp-off")).consultable is False
+    assert resolver.resolve(persona("cp-unknown")).consultable is False
+    assert resolver.resolve(persona("cp-panel", status="suspended")).consultable is False

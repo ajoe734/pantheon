@@ -1,0 +1,329 @@
+"""Consult policy trigger engine, risk veto gate, and panel persona bootstrap.
+
+Design: SD_PERSONA_CYCLE_RECONNECT §6.4 / D6 / D7 / D8.
+
+Three pure, dependency-free pieces:
+
+* ``required_consultation`` – given a gated decision, returns the consultation
+  the v1 policy demands (risk persona for trial admission, envelope publication
+  and every harness patch; plus the red team persona when a patch touches
+  guardrails or the consult policy itself).
+* ``evaluate_gate`` – applies the risk veto. An oppose (or a missing/ambiguous
+  risk answer) never auto-adopts the decision, in paper either; it becomes an
+  operator decision. Consultation stays advisory, so the best outcome is
+  ``adopt_eligible`` – never a grant of authority.
+* ``bootstrap_consult_personas`` – idempotently provisions the two non-trading
+  panel personas through the normal ``POST /api/personas`` create path.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable, Mapping, Sequence
+
+POLICY_ID = "consult-policy-v1"
+
+RISK_PERSONA_ID = "persona-risk-officer"
+RED_TEAM_PERSONA_ID = "persona-red-team"
+
+DECISION_TRIAL_ADMISSION = "trial_admission"
+DECISION_ENVELOPE_PUBLICATION = "envelope_publication"
+DECISION_HARNESS_PATCH = "harness_patch"
+GATED_DECISION_TYPES = frozenset(
+    {DECISION_TRIAL_ADMISSION, DECISION_ENVELOPE_PUBLICATION, DECISION_HARNESS_PATCH}
+)
+
+# Patch scopes that additionally pull in the red team persona.
+RED_TEAM_SCOPES = frozenset({"guardrails", "consult_policy"})
+
+ROLE_INITIATOR = "primary_reviewer"
+ROLE_RISK = "risk_reviewer"
+ROLE_RED_TEAM = "red_team"
+
+OUTCOME_ADOPT_ELIGIBLE = "adopt_eligible"
+OUTCOME_OPERATOR_DECISION = "operator_decision"
+
+# Recommendations that count as an oppose by the risk persona.
+OPPOSE_RECOMMENDATIONS = frozenset({"reject", "freeze", "rollback"})
+SUPPORT_RECOMMENDATIONS = frozenset({"approve", "approve_with_conditions"})
+
+
+@dataclass(frozen=True)
+class PanelParticipant:
+    persona_id: str
+    role: str
+    may_veto: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "persona_id": self.persona_id,
+            "role": self.role,
+            "may_veto": self.may_veto,
+        }
+
+
+@dataclass(frozen=True)
+class ConsultRequirement:
+    decision_type: str
+    decision_id: str
+    policy_id: str
+    initiator_persona_id: str
+    participants: tuple[PanelParticipant, ...]
+    reasons: tuple[str, ...] = ()
+    touches: tuple[str, ...] = ()
+
+    @property
+    def risk_persona_id(self) -> str | None:
+        for item in self.participants:
+            if item.role == ROLE_RISK:
+                return item.persona_id
+        return None
+
+    def to_panel_metadata(self) -> dict[str, Any]:
+        """Shape stored under ``ConsultRequest.metadata['panel']``."""
+
+        return {
+            "policy_id": self.policy_id,
+            "gated_decision": {
+                "type": self.decision_type,
+                "id": self.decision_id,
+            },
+            "initiator_persona_id": self.initiator_persona_id,
+            "participants": [item.to_dict() for item in self.participants],
+            "reasons": list(self.reasons),
+            "touches": list(self.touches),
+        }
+
+
+def required_consultation(
+    decision_type: str,
+    decision_id: str,
+    *,
+    initiator_persona_id: str,
+    touches: Iterable[str] = (),
+    risk_persona_id: str = RISK_PERSONA_ID,
+    red_team_persona_id: str = RED_TEAM_PERSONA_ID,
+) -> ConsultRequirement | None:
+    """Return the consultation a decision requires, or ``None`` if ungated."""
+
+    if decision_type not in GATED_DECISION_TYPES:
+        return None
+    decision_id = str(decision_id or "").strip()
+    initiator = str(initiator_persona_id or "").strip()
+    if not decision_id or not initiator:
+        raise ValueError("decision_id and initiator_persona_id are required")
+
+    reasons = [f"{decision_type} requires the risk persona (v1 policy)"]
+    participants = [
+        PanelParticipant(initiator, ROLE_INITIATOR),
+        PanelParticipant(risk_persona_id, ROLE_RISK, may_veto=True),
+    ]
+    scopes = {str(item).strip() for item in touches}
+    hit = sorted(scopes & RED_TEAM_SCOPES)
+    if decision_type == DECISION_HARNESS_PATCH and hit:
+        participants.append(PanelParticipant(red_team_persona_id, ROLE_RED_TEAM))
+        reasons.append(
+            "harness patch touches " + ", ".join(hit) + "; red team required"
+        )
+    seen: set[str] = set()
+    unique: list[PanelParticipant] = []
+    for item in participants:
+        if item.persona_id in seen:
+            continue
+        seen.add(item.persona_id)
+        unique.append(item)
+    return ConsultRequirement(
+        decision_type=decision_type,
+        decision_id=decision_id,
+        policy_id=POLICY_ID,
+        initiator_persona_id=initiator,
+        participants=tuple(unique),
+        reasons=tuple(reasons),
+        touches=tuple(sorted(scopes)),
+    )
+
+
+@dataclass(frozen=True)
+class GateOutcome:
+    outcome: str
+    reasons: tuple[str, ...]
+    vetoed_by: str | None = None
+    agreements: tuple[str, ...] = field(default_factory=tuple)
+    disagreements: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def operator_decision_required(self) -> bool:
+        return self.outcome == OUTCOME_OPERATOR_DECISION
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "outcome": self.outcome,
+            "operator_decision_required": self.operator_decision_required,
+            "vetoed_by": self.vetoed_by,
+            "reasons": list(self.reasons),
+            "agreements": list(self.agreements),
+            "disagreements": list(self.disagreements),
+        }
+
+
+def evaluate_gate(
+    participants: Sequence[Mapping[str, Any]],
+    recommendations: Mapping[str, str],
+) -> GateOutcome:
+    """Apply the risk veto to per-persona recommendations (no voting).
+
+    ``participants`` is the ``panel.participants`` list; ``recommendations``
+    maps persona_id to that persona's own recommendation. Fail closed: a
+    required participant with no answer, or a risk answer that is not an
+    explicit support, yields an operator decision.
+    """
+
+    reasons: list[str] = []
+    vetoed_by: str | None = None
+    for item in participants:
+        persona_id = str(item.get("persona_id") or "")
+        if persona_id not in recommendations:
+            reasons.append(f"{persona_id}: no independent answer")
+            continue
+        if not item.get("may_veto"):
+            continue
+        rec = str(recommendations[persona_id])
+        if rec in OPPOSE_RECOMMENDATIONS:
+            vetoed_by = persona_id
+            reasons.append(f"{persona_id}: risk veto ({rec})")
+        elif rec not in SUPPORT_RECOMMENDATIONS:
+            reasons.append(f"{persona_id}: risk did not support ({rec})")
+    groups: dict[str, list[str]] = {}
+    for persona_id, rec in recommendations.items():
+        groups.setdefault("support" if rec in SUPPORT_RECOMMENDATIONS else rec, []).append(
+            persona_id
+        )
+    agreements = tuple(
+        f"{kind}: {', '.join(sorted(ids))}"
+        for kind, ids in sorted(groups.items())
+        if len(ids) > 1
+    )
+    disagreements = tuple(
+        f"{kind}: {', '.join(sorted(ids))}" for kind, ids in sorted(groups.items())
+    ) if len(groups) > 1 else ()
+    if reasons:
+        return GateOutcome(
+            OUTCOME_OPERATOR_DECISION,
+            tuple(reasons),
+            vetoed_by,
+            agreements,
+            disagreements,
+        )
+    return GateOutcome(
+        OUTCOME_ADOPT_ELIGIBLE,
+        ("risk persona supports; consultation remains advisory",),
+        None,
+        agreements,
+        disagreements,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Panel persona bootstrap (normal persona create path)
+# ---------------------------------------------------------------------------
+
+PANEL_PERSONA_SPECS: tuple[dict[str, str], ...] = (
+    {
+        "persona_id": RISK_PERSONA_ID,
+        "name": "Risk Officer",
+        "panel_role": ROLE_RISK,
+        "mandate": (
+            "Independent risk reviewer. Never trades. Reviews trial admission, "
+            "envelope publication and every harness patch; may veto."
+        ),
+    },
+    {
+        "persona_id": RED_TEAM_PERSONA_ID,
+        "name": "Red Team",
+        "panel_role": ROLE_RED_TEAM,
+        "mandate": (
+            "Adversarial reviewer. Never trades. Attacks patches that touch "
+            "guardrails or the consult policy."
+        ),
+    },
+)
+
+HttpFn = Callable[[str, str, "dict[str, Any] | None"], Any]
+
+
+def _default_http(token: str, timeout: float) -> HttpFn:
+    def call(method: str, url: str, body: dict[str, Any] | None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409:
+                return {"_conflict": True}
+            raise
+        return json.loads(raw) if raw else {}
+
+    return call
+
+
+def bootstrap_consult_personas(
+    *,
+    persona_url: str,
+    token: str = "",
+    actor_id: str | None = None,
+    tenant_id: str | None = None,
+    http: HttpFn | None = None,
+    timeout_seconds: float = 15.0,
+) -> dict[str, str]:
+    """Create the risk and red team personas when missing; idempotent.
+
+    Returns ``{persona_id: 'created' | 'exists'}``. Both personas are created
+    through ``POST /api/personas`` (the Persona owner's normal create path) in
+    ``draft`` with ``metadata.trading=false`` / ``consultable=true``; advancing
+    their lifecycle stays a governed step.
+    """
+
+    # The Persona owner binds the mutation actor to the authenticated service
+    # actor, so the default must be that actor, not a free-form label.
+    actor_id = actor_id or os.getenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID") or "operator-bff"
+    call = http or _default_http(token, timeout_seconds)
+    base = persona_url.rstrip("/")
+    listing = call("GET", f"{base}/api/personas", None)
+    if not isinstance(listing, list):
+        raise RuntimeError("persona list response must be an array")
+    existing = {str(item.get("persona_id")) for item in listing if isinstance(item, dict)}
+    result: dict[str, str] = {}
+    for spec in PANEL_PERSONA_SPECS:
+        persona_id = spec["persona_id"]
+        if persona_id in existing:
+            result[persona_id] = "exists"
+            continue
+        body = {
+            "actor_id": actor_id,
+            "persona_id": persona_id,
+            "name": spec["name"],
+            "mandate": spec["mandate"],
+            "lifecycle_state": "draft",
+            "owner": actor_id,
+            "tenant_id": tenant_id,
+            "metadata": {
+                "persona_class": "consult_panel",
+                "panel_role": spec["panel_role"],
+                "trading": False,
+                "consultable": True,
+            },
+        }
+        created = call("POST", f"{base}/api/personas", body)
+        if isinstance(created, dict) and created.get("_conflict"):
+            result[persona_id] = "exists"
+        else:
+            result[persona_id] = "created"
+    return result

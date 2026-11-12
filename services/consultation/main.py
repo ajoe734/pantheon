@@ -46,6 +46,7 @@ from .models import (
     ParticipantType,
     validate_consult_memo_against_request,
 )
+from services.persona import consult_triggers
 from .store import build_consultation_store
 from .auth import (
     ConsultationAuthError,
@@ -115,6 +116,57 @@ async def consultation_identity_boundary(
         return await call_next(request)
     finally:
         reset_identity(token)
+
+
+def _authorize_panel_open(create_payload: Dict[str, Any]) -> None:
+    """A persona opens a panel only as a service caller carrying its own id.
+
+    The requested panel must also satisfy the consult policy: the executor
+    re-derives the same requirement, so an under-staffed panel is refused here
+    rather than blocking later.
+    """
+
+    panel = (create_payload.get("metadata") or {}).get("panel")
+    if panel is None:
+        return
+    if not isinstance(panel, dict):
+        raise HTTPException(status_code=422, detail="metadata.panel must be an object")
+    identity = current_identity()
+    persona_id = str(create_payload.get("from_persona_id") or "")
+    requested_by = create_payload.get("requested_by") or {}
+    if (
+        identity.actor_type != "service"
+        or not persona_id
+        or identity.actor_id != f"persona:{persona_id}"
+        or requested_by.get("actor_type") != "persona"
+        or requested_by.get("actor_id") != persona_id
+        or str(panel.get("initiator_persona_id") or "") != persona_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "a consult panel is opened by a service caller acting as "
+                "persona:<persona_id> for that same persona"
+            ),
+        )
+    decision = panel.get("gated_decision") or {}
+    required = consult_triggers.required_consultation(
+        str(decision.get("type") or ""),
+        str(decision.get("id") or ""),
+        initiator_persona_id=persona_id,
+        touches=panel.get("touches") or (),
+    )
+    if required is None:
+        raise HTTPException(status_code=422, detail="panel gated_decision is not a gated decision type")
+    declared = {
+        str(item.get("persona_id")) for item in panel.get("participants") or [] if isinstance(item, dict)
+    }
+    missing = [item.persona_id for item in required.participants if item.persona_id not in declared]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail="panel is missing policy-required participants: " + ", ".join(missing),
+        )
 
 
 def _actor_to_data(actor_ref: ActorRef | Dict[str, str]) -> Dict[str, str]:
@@ -283,6 +335,7 @@ def create_request(req: CreateConsultRequest) -> ConsultRequest:
     if requested_tenant != identity.tenant_id:
         raise HTTPException(status_code=403, detail="ConsultRequest tenant scope denied")
     create_payload["tenant_id"] = identity.tenant_id
+    _authorize_panel_open(create_payload)
     fingerprint = _create_fingerprint(request_id, create_payload)
 
     with _REQUEST_COMMAND_LOCK:
