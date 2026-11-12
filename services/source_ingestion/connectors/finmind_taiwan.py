@@ -1533,12 +1533,15 @@ def measure_volume_unit(
     kbar_rows: Sequence[Mapping[str, Any]],
     official_daily_volume_shares: float,
     *,
-    tolerance: float = 0.02,
+    tolerance: float = 0.15,
 ) -> dict[str, Any]:
     """Compare summed KBar volume with official daily volume; infer the unit factor.
 
     ``unit_factor`` = kbar_sum * factor ≈ official shares; 1 = shares, 1000 = lots.
     Returns ``unit_factor=None`` (undetermined) when no candidate is within tolerance.
+    Real probe (2026-11-12): factor 1000 (lots) with a 1.7-8.5 % unexplained residual of
+    official volume absent from KBar, hence the 15 % tolerance (units differ by 1000x, so
+    this cannot confuse them); the residual is reported, never assumed explained.
     """
     total = sum(v for v in (_number(r.get("volume")) for r in kbar_rows) if v is not None)
     result: dict[str, Any] = {"kbar_volume_sum": total, "official_volume_shares": official_daily_volume_shares}
@@ -1551,7 +1554,10 @@ def measure_volume_unit(
             best = (err, factor)
     assert best is not None
     if best[0] <= tolerance:
-        return {**result, "unit_factor": best[1], "relative_error": best[0], "reason": "within_tolerance"}
+        return {
+            **result, "unit_factor": best[1], "relative_error": best[0],
+            "unexplained_residual_ratio": best[0], "reason": "within_tolerance",
+        }
     return {**result, "unit_factor": None, "relative_error": best[0], "reason": "outside_tolerance"}
 
 

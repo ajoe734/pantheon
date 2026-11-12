@@ -203,3 +203,18 @@ def test_dispatch_rejects_non_trading_day_default_and_calendar():
         pa._finmind_kbar(FinMindTaiwanKBarAdapter(), holiday, "t")
     ok = {**holiday, "is_trading_day": lambda d: True}
     assert len(pa._finmind_kbar(FinMindTaiwanKBarAdapter(), ok, "t")) == 1
+
+
+def test_volume_unit_real_probe_residual_still_lots():
+    # real 2026-11-12 probe: official/KBar-sum = 1069.4 (6.9 % residual) -> lots
+    r = measure_volume_unit([{"volume": 34201.0}], 36_575_797)
+    assert r["unit_factor"] == 1000 and 0.05 < r["unexplained_residual_ratio"] < 0.09
+
+
+def test_after_hours_1430_bar_excluded_and_counted():
+    rows = [_row("09:00:00"), _row("13:30:00"), _row("14:30:00")]
+    res = FinMindTaiwanKBarAdapter().normalize_kbar_payload(
+        {"data": rows}, symbol="2330", session_date=DAY, fetched_at="2026-11-10T08:30:00Z",
+    )
+    assert res.kept_bars == 2 and res.dropped_outside_session == 1
+    assert all("14:30" not in r.metadata["normalized_row"]["bar_start"] for r in res.records)

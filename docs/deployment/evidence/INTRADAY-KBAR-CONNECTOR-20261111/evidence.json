@@ -14,32 +14,60 @@
     "new": "test_finmind_kbar.py (19 incl. 2 provider-path tests exercising real fetch_kbar + shared budget + missing credential), test_finmind_kbar_availability.py; 85 passed with related regression suites",
     "regression": "test_finmind_taiwan_connectors, test_finmind_broker_backfill, test_provider_management_coverage, test_connector_framework, test_financial_source_catalog, test_registry_split passed with pyarrow/fastapi/jsonschema installed in a scratch venv",
     "preexisting_failures": "5 failures in test_controller_worker.py (persona schedule / projector truth) fail identically on the untouched base branch in this venv; not caused by this change",
-    "after_review_fix": "8 focused+related suites: 171 passed, 1 warning, exit 0 (scratch venv)"
+    "after_review_fix": "8 focused+related suites: 171 passed, 1 warning, exit 0 (scratch venv)",
+    "after_probe": "test_finmind_kbar + availability + taiwan connectors: 56 passed (scratch venv)"
   },
   "real_source_probes": {
-    "status": "NOT_RUN",
-    "reason": "FINMIND_API_TOKEN is not present in this worker environment (credential_unavailable); no live request was made and no data was fabricated",
+    "status": "run",
+    "run_at_utc": "2026-11-12T01:26:54Z",
+    "executed_by": "Human/Ops inside hosted pantheon-source-ingest-1 with configured FINMIND_API_TOKEN (token never printed)",
+    "raw_artifact": "/tmp/pantheon-kbar-probe-20261112/real-finmind-kbar-probe-run1.json",
+    "raw_sha256": "f0e74d5c9484fcfd2a1476a0a452b33264ea0002f8e6b325f33501747a25330b",
+    "account": {
+      "level": 3,
+      "level_title": "SponsorYear",
+      "api_request_limit": 6000,
+      "user_count": 410
+    },
     "range_request": {
-      "status": "not_run",
-      "tool": "classify_range_probe",
-      "note": "range support unverified; production fetch stays one (stock_id, date) per request"
+      "status": "run",
+      "result": "range_unsupported",
+      "http": 400,
+      "msg": "the dataset TaiwanStockKBar size is too large, we only send one day data, so end_date parameter need be none.",
+      "decision": "one (stock_id,date) per request"
     },
     "volume_unit": {
-      "status": "not_run",
-      "tool": "measure_volume_unit",
-      "note": "needs 2 symbols' KBar day vs official tw_price_daily volume; factor unverified"
+      "status": "run",
+      "unit": "lots (1000 shares)",
+      "official_over_kbar_sum": {
+        "2330@2026-11-10": 1069.44,
+        "2330@2026-11-11": 1085.35,
+        "2317@2026-11-10": 1016.6,
+        "2317@2026-11-11": 1027.6
+      },
+      "unexplained_residual": "1.7-8.5% of official volume absent from KBar bars (cause unknown; not assumed block/odd-lot)",
+      "ohlc_check": "KBar first open/max high/min low/last close equal official OHLC on all 4 symbol-days",
+      "code": "measure_volume_unit tolerance widened to 0.15 and reports unexplained_residual_ratio"
+    },
+    "session_shape": {
+      "status": "run",
+      "bars_per_day": 267,
+      "layout": "09:00-13:24 continuous, 13:30 closing-auction bar, 14:30 after-hours fixed-price bar; 13:25-13:29 absent; 0 duplicate minutes",
+      "decision": "14:30 bar is after-hours: excluded from regular-session bars and counted in dropped_outside_session (test_after_hours_1430_bar_excluded_and_counted)"
+    },
+    "quota_metadata": {
+      "status": "run",
+      "result": "responses carried no rate-limit headers; quota must come from /v2/user_info (api_request_limit, user_count)"
     },
     "publication_time": {
-      "status": "not_run",
-      "tool": "observe_publication_time",
-      "note": "documented ~15:50 Asia/Taipei is unconfirmed by real fetched_at observations"
-    },
-    "quota_metadata": "captured per response via _extract_quota_meta into record quota_meta; no real response observed",
-    "blocker": "Re-checked at this dispatch: FINMIND_API_TOKEN still absent in worker env (credential_unavailable). Range, two-symbol volume-unit, publication-time and real quota probes remain NOT_RUN; Human/Ops publisher must run them via existing authorized path. Nothing fabricated."
+      "status": "partial",
+      "observation": "same-day request 2026-11-12 09:26:55 Taipei returned 0 rows (no intraday availability)",
+      "gap": "actual publication time not yet observed; 13:35-17:30 Taipei polling collected by Human/Ops, owned by INTRADAY-1M-STORE-BACKFILL scheduling. Connector correctness does not depend on it: bar_availability_ts uses real fetched_at; ~15:50 remains unconfirmed."
+    }
   },
   "not_verified": [
-    "any real FinMind KBar response (range, volume unit, publication time, closing-auction bar, odd-lot separation, 2-year history per symbol)",
     "hosted behaviour; merged/hosted evidence is separate (K2/W5)",
-    "reviewer (Codex) review and CI not yet done"
+    "reviewer (Codex) review and CI not yet done",
+    "real publication time (only 09:26 empty observation); 2-year history per symbol; hosted behaviour (K2/W5); reviewer review and CI"
   ]
 }
