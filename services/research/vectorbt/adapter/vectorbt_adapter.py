@@ -1202,7 +1202,7 @@ def _slice_prepared_dataset(
         total_bars=sum(bars_per_inst.values()),
         dates_by_instrument=dates_by_inst,
         features_by_instrument=features_by_inst,
-        candidate_pool_market=copy.deepcopy(dataset.candidate_pool_market),
+        candidate_pool_market=copy.deepcopy(getattr(dataset, "candidate_pool_market", None)),
     )
 
 
@@ -1229,7 +1229,9 @@ def _measure_pit_history(
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
     parameters = strategy_artifact.get("parameters") or {}
-    wanted = {normalize_taiwan_symbol(s) for s in parameters.get("symbols", [])}
+    screened = "screen" in (strategy_artifact.get("strategy_logic") or {})
+    market_symbols = ((dataset.get("candidate_pool_market") or {}).get("symbols") or {})
+    wanted = {normalize_taiwan_symbol(s) for s in (market_symbols if screened else parameters.get("symbols", []))}
     records = dataset.get("records") or []
     dates_by_symbol: dict[str, list[str]] = {}
     for rec in records:
@@ -1247,6 +1249,8 @@ def _measure_pit_history(
             dates_by_symbol.setdefault(norm[0], []).append(dt_str[:10])
 
     per_symbol_span: dict[str, dict[str, Any]] = {}
+    if screened and {native for native, _ in wanted} - dates_by_symbol.keys():
+        return 0, 0, {"per_symbol": {}, "features": {}, "missing_market_symbols": True}
     min_calendar_days: int | None = None
     min_bars: int | None = None
     for code, raw_dates in dates_by_symbol.items():
@@ -1294,6 +1298,11 @@ def _measure_pit_history(
         roots: list[Any] = [logic.get("signal"), logic.get("strength")]
         for flt in logic.get("filters") or []:
             roots.append(flt)
+        for step in (logic.get("screen") or {}).get("steps", []):
+            roots.append(step.get("expression"))
+            group_input = (step.get("group_by") or {}).get("industry_input")
+            if group_input:
+                roots.append({"ref": group_input})
         for section in ("entry", "exit"):
             cfg = logic.get(section)
             if isinstance(cfg, Mapping):
@@ -1309,6 +1318,8 @@ def _measure_pit_history(
         }
         price_fields = set(BUILT_IN_PRICE_VOLUME_FIELDS) | {"open", "high", "low", "close", "volume"}
         raw_features = dataset.get("features_by_instrument") or dataset.get("features") or {}
+        if screened:
+            raw_features = {s: p.get("features", {}) for s, p in market_symbols.items()}
 
         def _present(value: Any) -> bool:
             if value is None:
@@ -1702,7 +1713,7 @@ def run_replication_backtest_protocol(
 
     wanted_norm = {
         normalize_taiwan_symbol(s)
-        for s in (strategy_artifact.get("parameters") or {}).get("symbols", [])
+        for s in (pool_market["symbols"] if screened else (strategy_artifact.get("parameters") or {}).get("symbols", []))
     }
     target_instruments = [
         inst

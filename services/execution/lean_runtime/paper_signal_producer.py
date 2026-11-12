@@ -533,7 +533,7 @@ class CurrentArtifactStrategy:
             # An exit may only reduce an actual held instrument. A stale feed
             # position must never turn removal from a pool into a fresh short.
             record = expression_policy.budget_unavailable_no_trade(
-                decision_view, ["held_position"], "candidate pool exit has no validated close leg",
+                decision_view, "held_position", "candidate pool exit has no validated close leg",
             )
         chosen_candidate = next(
             (c for c in candidates if c.get("instrument_id") == record.get("instrument_id")),

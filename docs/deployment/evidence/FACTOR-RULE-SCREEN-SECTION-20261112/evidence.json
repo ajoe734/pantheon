@@ -1,0 +1,20 @@
+{
+  "task_id": "FACTOR-RULE-SCREEN-SECTION-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "scope": "factor_rule_v1 optional screen, shared PIT candidate pools, paper/vectorbt integration",
+  "design": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_STRATEGY_SCREEN_ENTRY_EXIT_2026-11-12.md",
+  "implementation_notes": "docs/deployment/evidence/FACTOR-RULE-SCREEN-SECTION-20261112/README.md",
+  "fixture": "services/research/tests/fixtures/candidate_pool_tw_recorded.json",
+  "recorded_data": {
+    "source": "Official TWSE STOCK_DAY; four raw responses with hashes and rows retained in fixture",
+    "symbols": ["2330.TW", "2317.TW"],
+    "sessions": 39,
+    "bars": 78,
+    "period": "2026-09-01 through 2026-10-30",
+    "survivorship_limited": true
+  },
+  "validation": {"status": "pending_final_batch"},
+  "independent_review": {"status": "pending", "reviewer": "Claude"},
+  "hosted_claim": false
+}

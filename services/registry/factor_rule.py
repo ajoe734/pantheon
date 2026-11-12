@@ -220,6 +220,13 @@ def _seed_default_feature_catalogue() -> None:
         ("tw_community_attention", "unique_authors", 0, "Distinct hashed community authors"),
         ("tw_community_attention", "engagement_weighted_sentiment", 0, "Engagement-weighted community sentiment"),
     )
+    from services.source_ingestion.feature_catalogue import PROVIDER_SERIES_MAP, get_dataset_spec
+
+    period_cadences = {"day": "daily", "month": "monthly", "quarter": "quarterly"}
+    field_cadences = {
+        (item.dataset, item.field): period_cadences[item.period_kind]
+        for mappings in PROVIDER_SERIES_MAP.values() for item in mappings
+    }
     for dataset, field, lag_days, desc in seeded:
         register_feature_definition(
             FeatureDefinition(
@@ -227,14 +234,7 @@ def _seed_default_feature_catalogue() -> None:
                 field=field,
                 min_availability_lag_days=lag_days,
                 description=desc,
-                release_cadence=(
-                    "quarterly" if dataset == "tw_quarterly_statements" or field == "gdp_yoy"
-                    else "monthly" if dataset == "tw_monthly_revenue" or field in {
-                        "m1b_yoy", "m2_yoy", "monitoring_score", "leading_index",
-                        "coincident_index", "cpi_yoy", "export_orders_yoy",
-                    }
-                    else "daily"
-                ),
+                release_cadence=field_cadences.get((dataset, field), get_dataset_spec(dataset).granularity),
             )
         )
 

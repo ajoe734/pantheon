@@ -12,7 +12,6 @@ import copy
 from datetime import date, datetime, time, timedelta
 import hashlib
 import json
-import math
 import re
 from statistics import median
 from typing import Any, Mapping
@@ -203,15 +202,22 @@ def _features(payload: Mapping, cutoff: datetime) -> tuple[dict, list[float]]:
     return features, closes
 
 
-def _require_dated_inputs(inputs: list, features: Mapping) -> None:
+def _dated_input_features(inputs: list, features: Mapping, cutoff: datetime) -> dict:
     # Screen inputs must be dated even when legacy per-symbol price evaluation
     # admits aligned arrays. No price/vwap/close fallback is used here.
+    result = dict(features)
     for spec in inputs:
         rows = fr._lookup_raw_feature(features, name=spec["name"], dataset=spec["dataset"], field=spec["field"])
         if not isinstance(rows, list) or not rows or not all(
             isinstance(r, Mapping) and r.get("event_time") and r.get("available_time") for r in rows
         ):
             raise fr.FactorRuleValidationError(f"missing_dated_input:{spec['name']}")
+        # Hide future values before numeric validation, including malformed
+        # future rows and late revisions of prices used by a screen.
+        result[spec["name"]] = fr._latest_visible_versions(
+            rows, availability_lag_days=0, decision_time=cutoff,
+        )
+    return result
 
 
 def _step_value(step: Mapping, logic: Mapping, payload: Mapping, parameters: Mapping,
@@ -221,7 +227,7 @@ def _step_value(step: Mapping, logic: Mapping, payload: Mapping, parameters: Map
     needed = refs | ({group} if group else set())
     inputs = [i for i in logic["inputs"] if i["name"] in needed]
     features, closes = _features(payload, cutoff)
-    _require_dated_inputs(inputs, features)
+    features = _dated_input_features(inputs, features, cutoff)
     env = fr.resolve_point_in_time_inputs({"inputs": inputs}, closes, features=features, decision_time=cutoff)
     score = fr.evaluate_factor_expression(step["expression"], env, parameters)
     industry = env[group][-1] if group else None
@@ -309,7 +315,8 @@ def build_candidate_pool_snapshot(artifact: Mapping, market: Mapping, decision_t
                 if symbol not in selected:
                     excluded[symbol] = f"step_{index}:{step['kind']}"
         records = [*records, {"step": index, "refresh": step["refresh"],
-                              "as_of": anchor.isoformat(), "members": sorted(kept)}]
+                              "as_of": anchor.isoformat(), "members": sorted(kept),
+                              "scores": {s: score for values in groups.values() for s, score in values}}]
         memo[key] = (kept, excluded, records)
         return copy.deepcopy(memo[key])
 
@@ -362,10 +369,14 @@ def _member_view(artifact: Mapping, symbols: Mapping, snapshot: Mapping, symbol:
             if isinstance(node, Mapping):
                 refs.update(fr.collect_expression_refs_and_params(node)[0])
         logic["inputs"] = [i for i in logic["inputs"] if i["name"] in refs]
+        declared = {i["name"] for i in logic["inputs"]}
+        for field in sorted((refs & fr.BUILT_IN_PRICE_VOLUME_FIELDS) - declared):
+            logic["inputs"].append({"name": field, "dataset": symbols[key]["dataset"],
+                                     "field": field, "availability_lag_days": 0})
         cutoff = fr._parse_timestamp_utc(decision_time, is_decision_time=True)
         features, closes = _features(symbols[key], cutoff)
         try:
-            _require_dated_inputs(logic["inputs"], features)
+            features = _dated_input_features(logic["inputs"], features, cutoff)
             view = fr.evaluate_factor_rule_view(
                 member, closes, features=features, decision_time=cutoff,
                 current_direction=current_direction or "FLAT", holding_bars=holding_bars or 0,

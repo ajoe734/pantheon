@@ -181,3 +181,81 @@ def test_uncatalogued_industry_grouping_fails_closed():
     artifact["strategy_logic"]["screen"]["steps"][-1]["group_by"] = {"industry_input": "industry"}
     with pytest.raises(fr.FactorRuleValidationError, match="governed release cadence"):
         fr.validate_factor_rule_logic(artifact["strategy_logic"], artifact["parameters"])
+
+
+@pytest.mark.parametrize("cadence", ["monthly", "quarterly"])
+def test_slow_rank_freezes_the_entire_upstream_prefix(cadence):
+    artifact, market = screen_artifact(), recorded_market()
+    artifact["strategy_logic"]["screen"]["steps"][-1]["refresh"] = cadence
+    first = build_candidate_pool_snapshot(artifact, market, "2026-10-02")
+    later = build_candidate_pool_snapshot(artifact, market, "2026-10-21")
+    assert first["members"]
+    assert first["members"] == later["members"]
+    assert first["steps"] == later["steps"]
+    assert first["steps"][-1]["as_of"] == "2026-10-01"
+
+
+def test_declared_release_lag_and_late_publication_are_both_honored():
+    artifact, market = screen_artifact(), recorded_market()
+    artifact["strategy_logic"]["inputs"][0]["availability_lag_days"] = 3
+    artifact["strategy_logic"]["screen"]["steps"] = [{
+        "kind": "rank", "expression": {"ref": "price"}, "refresh": "daily",
+        "count": {"const_param": "pool_count"}, "side": "top",
+    }]
+    assert build_candidate_pool_snapshot(artifact, market, "2026-09-02")["members"] == []
+    assert build_candidate_pool_snapshot(artifact, market, "2026-09-05")["members"] == ["2330.TW"]
+    # Publication-delay fault only; the recorded market values are unchanged.
+    for row in market["symbols"]["2330.TW"]["bars"]:
+        row["available_time"] = "2026-10-31T18:00:00+08:00"
+    assert build_candidate_pool_snapshot(artifact, market, "2026-09-05")["members"] == ["2317.TW"]
+
+
+def test_industry_group_cuts_with_dated_catalogued_classification(monkeypatch):
+    artifact, market = screen_artifact(), recorded_market()
+    definition = fr.FeatureDefinition("tw_industry_classification", "industry_code", release_cadence="daily")
+    # Inject a catalogue and two classification groups solely to exercise the
+    # grouping contract. This is not a dataset registration or hosted proof.
+    monkeypatch.setitem(fr._FEATURE_CATALOGUE, (definition.dataset, definition.field), definition)
+    artifact["strategy_logic"]["inputs"].append({"name": "industry", "dataset": definition.dataset,
+                                                   "field": definition.field, "availability_lag_days": 0})
+    artifact["strategy_logic"]["screen"]["steps"][-1]["group_by"] = {"industry_input": "industry"}
+    for code, symbol in enumerate(sorted(market["symbols"]), start=1):
+        market["symbols"][symbol]["features"]["industry"] = [{
+            "event_time": "2026-09-01T13:30:00+08:00", "available_time": "2026-09-01T18:00:00+08:00",
+            "value": code,
+        }]
+    snapshot = build_candidate_pool_snapshot(artifact, market, "2026-09-02")
+    assert snapshot["members"] == ["2317.TW", "2330.TW"]
+    market["symbols"]["2330.TW"]["features"]["industry"][0]["available_time"] = "2026-09-03"
+    assert build_candidate_pool_snapshot(artifact, market, "2026-09-02")["members"] == ["2317.TW"]
+
+
+def test_future_malformed_price_feature_is_invisible_and_entry_vwap_is_never_synthesized():
+    artifact, market = screen_artifact(), recorded_market()
+    payload = market["symbols"]["2317.TW"]
+    payload["features"]["turnover"] = [{"event_time": row["event_time"],
+        "available_time": row["available_time"], "value": row["volume"]} for row in payload["bars"]]
+    before = build_candidate_pool_snapshot(artifact, market, "2026-09-02")
+    payload["features"]["turnover"][-1]["value"] = None
+    assert build_candidate_pool_snapshot(artifact, market, "2026-09-02") == before
+    artifact["strategy_logic"]["signal"] = {"ref": "vwap"}
+    view = evaluate_screened_views(artifact, market, "2026-09-02")["2317.TW"]
+    assert view["action"] == "HOLD"
+    assert "missing_dated_input:vwap" in view["hold_reason"]
+
+
+def test_calendar_catches_a_wholly_stale_feed():
+    artifact, market = screen_artifact(), recorded_market()
+    for payload in market["symbols"].values():
+        payload["bars"] = payload["bars"][:1]
+    snapshot = build_candidate_pool_snapshot(artifact, market, "2026-09-04")
+    assert snapshot["members"] == []
+    assert all(row["reason"] == "missing_prior_session" for row in snapshot["excluded"])
+
+
+def test_screen_constants_must_remain_governed_mutable_controls():
+    artifact = screen_artifact()
+    artifact["mutation_surface"]["controls"] = [c for c in artifact["mutation_surface"]["controls"]
+                                                  if c["parameter_key"] != "pool_count"]
+    with pytest.raises(fr.FactorRuleValidationError, match="pool_count.*mutation_surface.controls"):
+        fr.validate_factor_rule_logic(artifact["strategy_logic"], artifact["parameters"], artifact["mutation_surface"])
