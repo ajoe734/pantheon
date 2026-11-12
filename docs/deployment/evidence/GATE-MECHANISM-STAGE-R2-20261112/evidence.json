@@ -6,14 +6,15 @@
   "acceptance": {
     "1": "mechanism_tests.run_mechanism_stage, called first in ReplicationGate.evaluate_candidate; tests test_event_window_on_recorded_ex_dividend_events_is_measured, test_regime_split_on_recorded_0050_200_day_mean_is_measured, test_default_alpha_is_five_percent_and_holm_is_within_the_card",
     "2": "test_contradicted_prediction_refuses_admission_with_recorded_reason (primary criteria compared with a baseline run)",
-    "3": "test_supported_prediction_is_admitted_and_support_is_recorded_on_the_admission; persona test_mechanism_support_feeds_evidence_quality_and_untested_ranks_lower",
+    "3": "test_supported_prediction_is_admitted_and_support_is_recorded_on_the_admission; persona test_mechanism_support_feeds_evidence_quality_and_untested_ranks_lower; persona test_gate_to_registry_to_persona_ranks_supported_above_untested_without_injection (no manual injection)",
     "4": "test_baseline_without_predictions_is_admitted_as_mechanism_untested; test_predictions_without_data_are_admitted_as_mechanism_untested; persona ranking test",
     "5": "test_mechanism_stage_reads_no_out_of_sample_bar and test_no_out_of_sample_bar_with_unequal_lengths_and_staggered_starts: poison boundaries derived from the protocol rule (split_idx=int(min target bars*ratio), every instrument sliced by that index, as vectorbt_adapter) not from InSampleMarket; InSampleMarket now shares that window rule incl. target universe; plus test_mechanism_stage_runs_before_the_backtest_and_the_backtest_is_not_used_by_it; R3: test_screened_unequal_pool_histories_read_no_out_of_sample_bar_at_gate_entry (gate entry, screened artifact, shorter pool member; fails without the fix)",
     "6": "fixtures/recorded_mechanism_tw.json: recorded TWSE STOCK_DAY (2330, 2317, 0050, 2024-01..2026-10) and TWT49U ex-dividend rows with URLs and response sha256; test_production_module_synthesizes_no_data"
   },
   "production_path": "ReplicationGate.evaluate_candidate (gate.py) <- AlphaRevalidationWorker (revalidation_worker.py forwards hypothesis_predictions/mechanism_inputs/dataset); integration tests in tests/test_gate_mechanism.py and test_revalidation_worker.py::test_real_gate_records_mechanism_status_on_the_run",
   "verification": [
-    "pytest services/research/replication services/control-plane/persona/test_persona_strategy_discovery.py services/research/alpha_replication/test_revalidation_worker.py -q -> 130 passed in 241.10s, exit 0 (R3 fix)",
+    "pytest services/research/replication services/control-plane/persona/test_persona_strategy_discovery.py services/research/alpha_replication/test_revalidation_worker.py -q -> 131 passed in 270.00s, exit 0 (R4 fix)",
+    "pytest services/registry/promotion -q -> 8 passed",
     "git diff --check exit 0"
   ],
   "known_limits": [
@@ -24,5 +25,6 @@
     "Hosted acceptance is DISCOVERY-W5-HOSTED-ACCEPTANCE."
   ],
   "r2_fix": "Reopen P1: per-instrument earliest-date cutoff leaked protocol-OOS bars of longer instruments (65 0050 bars, 69 2317 bars on the reproduction). Fixed by sharing the protocol window; pinned event-window stats re-measured (t=-0.9711, p=0.3492).",
-  "r3_fix": "Reopen P1 (PR #7257): gate._run_mechanism_stage derived targets from artifact.parameters.symbols even for screened artifacts, while vectorbt_adapter uses the whole candidate_pool_market.symbols universe, so a shorter pool member shifted the protocol split and the stage read protocol-OOS bars. Fixed: screened artifacts (strategy_logic has 'screen') use the pool symbols as target universe; unscreened path unchanged."
+  "r3_fix": "Reopen P1 (PR #7257): gate._run_mechanism_stage derived targets from artifact.parameters.symbols even for screened artifacts, while vectorbt_adapter uses the whole candidate_pool_market.symbols universe, so a shorter pool member shifted the protocol split and the stage read protocol-OOS bars. Fixed: screened artifacts (strategy_logic has 'screen') use the pool symbols as target universe; unscreened path unchanged.",
+  "r4_fix": "Reopen P1 (PR #7257 acceptance 3/4): the admission mechanism record never reached the persona read path. PromotionGate.build_draft_entry_from_replication_request now persists mechanism/mechanism_status/mechanism_support in entry metadata; DefaultResearchKnowledgeSourcePort._fetch_canonical_strategy_specs_uncached projects them (metadata, entry, replication_proof) into the candidate metadata. Regression: persona test_gate_to_registry_to_persona_ranks_supported_above_untested_without_injection (real gate -> promotion/draft builders -> actual read projection -> scorer; fails without the fix, supported evidence_quality = untested + 3.0)."
 }
