@@ -1,0 +1,40 @@
+{
+  "task": "INTRADAY-BACKTEST-ENGINE-20261111",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "plan_ref": "DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10 §4 K5; SD_INTRADAY_MINUTE_BARS_2026-11-11 §6-§7, §9 K5",
+  "base_commit": "18a68758c4aeba7c350f5defd66750a4a82e1813",
+  "tracks": {
+    "source": {
+      "status": "implemented_pending_independent_review",
+      "artifacts": [
+        "services/research/vectorbt/adapter/vectorbt_adapter.py",
+        "services/research/alpha_templates/evaluator.py",
+        "services/research/tests/test_vectorbt_intraday.py"
+      ],
+      "summary": [
+        "Intraday datasets (1m/5m/15m/30m/60m) are keyed by real tz-aware bar_start per (instrument, bar_start); several bars per date no longer collide; duplicates rejected.",
+        "Annualisation uses bars_per_year = 252 x bars_per_session(frequency) (5m=13608, 60m=1260; daily stays 252); benchmark Sharpe uses the same factor.",
+        "Fills are at the NEXT bar's open (plan_intraday_orders / from_orders price=open); a signal on the last bar of a session never fills overnight unless holding=overnight; positions are forced flat at the last bar opening at or before 13:25.",
+        "Lookbacks reset at the session open by default and cross sessions only when cross_session=true is declared (recipe parameters or feature definition).",
+        "Every intraday run is labelled evidence_mode=replay (aggregate, bundle, registry metadata, dataset summary) with live_or_paper_evidence=false and the source snapshot (content sha256, sessions, bars per symbol). Replay requires an explicit availability_ceiling and clock=bar_end declaration.",
+        "build_intraday_replay_dataset reads only reconciled tw_price_1m days via the K4 loader; missing/quarantined/waived/not-yet-available data raises IntradayDataUnavailable (reason code). No daily or synthetic fallback; screen strategies fail closed on intraday.",
+        "Gross and net returns are both reported for intraday runs (costs dominate).",
+        "Alpha evaluator: INTRADAY_EVALUATION_HORIZONS=(1,5,15,30) bars; compute_intraday_ic_metrics uses open[t+1]->close[t+h] within session, labelled replay; attach_intraday_metrics reports it next to the unchanged daily 1d/5d/20d set. Unavailable data raises IntradayEvaluationUnavailable."
+      ]
+    },
+    "tests": {
+      "command": "python -m pytest services/research/tests/test_vectorbt_intraday.py services/research/vectorbt/test_adapter.py services/research/tests/test_alpha_template_evaluation.py services/research/tests/test_intraday_bars.py services/research/tests/test_portfolio_envelope_parity.py services/research/tests/test_candidate_pool_parity.py services/research/tests/test_backtest_owner_readback.py services/research/tests/test_retrain_search_update.py services/research/tests/test_alpha_template_snapshot_loader.py services/research/replication/test_gate.py -q",
+      "result": "test_vectorbt_intraday.py 22 passed; test_adapter.py + intraday 79 passed; test_alpha_template_evaluation.py 21 passed; test_intraday_bars.py passed; parity/readback/retrain/snapshot/replication-gate group 63 passed. Run in a pre-existing venv with numpy/pandas (/tmp/persona-portfolio-venv).",
+      "covers": ["no-look-ahead positive/negative (availability ceiling, bar_end clock, future-bar perturbation)", "next-bar-open sensitivity", "session lookback reset", "flat by 13:25", "replay label + snapshot", "unavailable not substituted", "daily behaviour unchanged"]
+    },
+    "merged": {"status": "not_yet_merged"},
+    "hosted": {"status": "not_applicable_source_only", "note": "Historical replay only. Not live/paper hosted acceptance; no provider probe, backfill or production action was performed."}
+  },
+  "gaps": [
+    "vectorbt is not installed in the verification environment: the real VectorbtBackend intraday branch (from_orders price=open, gross rerun, returns-based Sharpe) is source-only and was NOT executed; the stub engine, order planning, annualisation and PIT paths are tested.",
+    "Real backend intraday supports canonical strategy artifacts only; the unbound MA-crossover path on the real backend raises for intraday.",
+    "Replication protocol (run_replication_backtest_protocol) windows remain day-based; session/trade-count thresholds belong to K6 (INTRADAY-REPLICATION-GATE-20261111).",
+    "No replay was run on real reconciled KBar data in this task; tests use synthetic bars through the real reconcile store."
+  ]
+}

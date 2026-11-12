@@ -51,6 +51,9 @@ from services.registry.split_api import RegistryService  # noqa: E402
 
 EVALUATION_HORIZONS: tuple[int, ...] = (1, 5, 20)
 HORIZON_KEYS: tuple[str, ...] = ("1d", "5d", "20d")
+# SD_INTRADAY_MINUTE_BARS §7 (K5): intraday templates add bar horizons next to (never instead of) the daily set.
+INTRADAY_EVALUATION_HORIZONS: tuple[int, ...] = (1, 5, 15, 30)
+INTRADAY_HORIZON_KEYS: tuple[str, ...] = tuple(f"{h}b" for h in INTRADAY_EVALUATION_HORIZONS)
 REDUNDANCY_CORRELATION_THRESHOLD: float = 0.9
 DEFAULT_TAIWAN_SYMBOLS: tuple[str, ...] = ("2330", "2317", "2454", "2308", "2881")
 DEFAULT_TAIWAN_BAR_COUNT: int = 160
@@ -1077,6 +1080,121 @@ def compute_template_evaluation_metrics(
         "ic_decay": decay_summary,
         "valid_observations": total_valid_bars,
     }
+
+
+class IntradayEvaluationUnavailable(TaiwanEvaluationDataError):
+    """Intraday IC cannot be computed from governed minute bars (reported, never substituted)."""
+
+
+def _compute_forward_returns_in_session(
+    opens: Sequence[float],
+    closes: Sequence[float],
+    sessions: Sequence[str],
+    horizon: int,
+    *,
+    cross_session: bool = False,
+) -> list[float]:
+    """Return realised after the decision bar ``t``: ``open[t+1] -> close[t+horizon]``.
+
+    The factor at bar ``t`` only uses data through bar ``t``'s close, so the entry is the NEXT
+    bar's open (same rule as the backtest) and the exit is the close of the ``horizon``-th bar
+    after ``t``.  A window that would cross the session boundary is NaN unless ``cross_session``.
+    """
+    n = len(closes)
+    out = [math.nan] * n
+    for t in range(n - horizon):
+        if not cross_session and sessions[t] != sessions[t + horizon]:
+            continue
+        entry, exit_ = opens[t + 1], closes[t + horizon]
+        if math.isfinite(entry) and math.isfinite(exit_) and abs(entry) > 1e-12:
+            out[t] = (exit_ - entry) / entry
+    return out
+
+
+def compute_intraday_ic_metrics(
+    panel: Mapping[str, Mapping[str, Any]],
+    *,
+    bar_frequency: str,
+    horizons: Sequence[int] = INTRADAY_EVALUATION_HORIZONS,
+    cross_session: bool = False,
+) -> dict[str, Any]:
+    """Pooled/per-symbol Spearman IC at minute-bar horizons (1, 5, 15, 30 bars) for an intraday template.
+
+    ``panel[symbol]`` carries parallel ``factor_values``, ``opens``, ``closes`` and the real
+    ``bar_starts`` timestamps (several bars per date are fine; the session is derived from the
+    timestamp).  Output is labelled ``replay``; it is historical evidence only.
+    """
+    from services.research.vectorbt.adapter.vectorbt_adapter import (
+        _session_of,
+        bars_per_session,
+        bars_per_year,
+        is_intraday_frequency,
+    )
+
+    if not is_intraday_frequency(bar_frequency):
+        raise IntradayEvaluationUnavailable(f"bar_frequency {bar_frequency!r} is not an intraday frequency")
+    if not panel:
+        raise IntradayEvaluationUnavailable("no governed minute bars supplied; no daily/synthetic substitute")
+    per_symbol_ic: dict[str, dict[str, float | None]] = {}
+    pooled_f: dict[int, list[float]] = {h: [] for h in horizons}
+    pooled_r: dict[int, list[float]] = {h: [] for h in horizons}
+    for symbol in sorted(panel):
+        entry = panel[symbol]
+        starts = [str(x) for x in entry.get("bar_starts") or ()]
+        factors = [float(x) for x in entry.get("factor_values") or ()]
+        opens = [float(x) for x in entry.get("opens") or ()]
+        closes = [float(x) for x in entry.get("closes") or ()]
+        if not starts or not (len(starts) == len(factors) == len(opens) == len(closes)):
+            raise IntradayEvaluationUnavailable(
+                f"{symbol}: bar_starts/factor_values/opens/closes must be non-empty and equal length"
+            )
+        if len(set(starts)) != len(starts) or starts != sorted(starts):
+            raise IntradayEvaluationUnavailable(f"{symbol}: bar_starts must be unique and ordered")
+        sessions = [_session_of(x) for x in starts]
+        f_ser = pd.Series(factors, dtype="float64").replace([np.inf, -np.inf], np.nan)
+        norm = (
+            (f_ser.rank(pct=True, method="average") * 2.0 - 1.0).tolist()
+            if int(f_ser.notna().sum()) >= 3 and float(f_ser.std(ddof=0)) > 1e-12
+            else factors
+        )
+        sym_ic: dict[str, float | None] = {}
+        for h in horizons:
+            fwd = _compute_forward_returns_in_session(opens, closes, sessions, h, cross_session=cross_session)
+            pairs = [(f, r) for f, r in zip(factors, fwd) if math.isfinite(f) and math.isfinite(r)]
+            sym_ic[f"{h}b"] = _spearman_ic_pandas(*zip(*pairs)) if len(pairs) >= MIN_IC_OBSERVATIONS else None
+            for f_norm, f_raw, r in zip(norm, factors, fwd):
+                if math.isfinite(f_raw) and math.isfinite(r):
+                    pooled_f[h].append(float(f_norm) if math.isfinite(f_norm) else f_raw)
+                    pooled_r[h].append(float(r))
+        per_symbol_ic[symbol] = sym_ic
+    pooled_ic = {
+        f"{h}b": (_spearman_ic_pandas(pooled_f[h], pooled_r[h]) if len(pooled_r[h]) >= MIN_IC_OBSERVATIONS else None)
+        for h in horizons
+    }
+    obs = {f"{h}b": len(pooled_r[h]) for h in horizons}
+    return {
+        "evidence_mode": "replay",
+        "live_or_paper_evidence": False,
+        "bar_frequency": bar_frequency,
+        "bars_per_session": bars_per_session(bar_frequency),
+        "bars_per_year": bars_per_year(bar_frequency),
+        "horizons": list(horizons),
+        "horizon_unit": "bars",
+        "return_definition": "open[t+1] -> close[t+h], within session" if not cross_session else "open[t+1] -> close[t+h]",
+        "cross_session": cross_session,
+        "pooled_ic": pooled_ic,
+        "per_symbol_ic": per_symbol_ic,
+        "observations_by_horizon": obs,
+        "insufficient_by_horizon": {k: v < MIN_IC_OBSERVATIONS for k, v in obs.items()},
+        "min_ic_observations": MIN_IC_OBSERVATIONS,
+    }
+
+
+def attach_intraday_metrics(daily_metrics: Mapping[str, Any], intraday_metrics: Mapping[str, Any]) -> dict[str, Any]:
+    """Report the intraday horizon set NEXT TO the unchanged daily metrics (never replacing them)."""
+    merged = dict(daily_metrics)
+    merged["intraday"] = dict(intraday_metrics)
+    return merged
 
 
 def _panel_correlation(
