@@ -4,7 +4,7 @@
   "read_date": "2026-11-12",
   "document": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md",
   "hosted_behavior_claimed": false,
-  "repo_base": "97308364387bd613382cbad4550eb6682a539932",
+  "repo_base": "a41eb0b5f5b6fe7712081acdd5faec3858cc941a",
   "operator_statements_2026_11_12": [
     "persona的記憶跟各persona的討論會議機制是怎樣進行? 這些你詳細跟現在的L1-L12怎麼協作",
     "跟這些到底互動關係是什麼?你詳細思考整理出來",
@@ -48,7 +48,7 @@
     "limitation": "Historical context only; fresh exact-version hosted evidence belongs to PERSONA-CYCLE-RECONNECT-HOSTED-ACCEPTANCE-20261112."
   },
   "source_verification": {
-    "base_sha": "97308364387bd613382cbad4550eb6682a539932",
+    "base_sha": "a41eb0b5f5b6fe7712081acdd5faec3858cc941a",
     "citations": [
       {"reference": "CANONICAL_DOCUMENT_MAP.md:28-50", "base_blob": "9db69da031359b1a15f225a205733e1393e8ee49"},
       {"reference": "Pantheon_總索引版系統分析文件.md", "base_blob": "0bba94a189c2e035b7476c1601b41d80701db451"},
@@ -205,9 +205,13 @@
       }
     },
     "base_refresh": {
-      "previous_base": "4042386ef7b11cee46343ba2cad53033239c1ced",
-      "current_base": "97308364387bd613382cbad4550eb6682a539932",
-      "result": "Merged current dev; all cited line ranges remain identical, source blobs refreshed, document and evidence remain the only PR changes."
+      "previous_base": "97308364387bd613382cbad4550eb6682a539932",
+      "current_base": "a41eb0b5f5b6fe7712081acdd5faec3858cc941a",
+      "result": "Normal merge of repaired dev from PR #7256; all 71 cited source blobs and line ranges are unchanged. Only the design and evidence differ from this base.",
+      "ci_repair_pr": 7256,
+      "source_blob_comparison": "All 71 citation entries match their previously checked base blobs; no moved references.",
+      "prior_failed_head": "06dcfc50bdb2dbf268356bce4333f206cb11b4b9",
+      "prior_failed_head_status": "Historical failures remain failures; this delivery requires fresh CI on its new head."
     }
   }
 }
