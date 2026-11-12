@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Collection, Mapping, Sequence
 
 from services.execution.lean_runtime.instrument_candidates import (
@@ -163,7 +163,9 @@ def plan_next_session_decision(
         opened, closed = session_bounds(day, holidays)
     except ValueError as exc:
         raise IntradayWindowError(REASON_BAR_INVALID, str(exc)) from exc
-    if ended > closed or ended <= opened:
+    # The governed 1m contract carries a real 13:30 closing-auction bar whose bar_end is 13:31;
+    # it is the only bar end allowed past the close, and availability is still never backdated.
+    if ended > closed + timedelta(minutes=1) or ended <= opened:
         raise IntradayWindowError(REASON_BAR_INVALID, "bar end lies outside the regular session")
     if available <= closed:
         raise IntradayWindowError(

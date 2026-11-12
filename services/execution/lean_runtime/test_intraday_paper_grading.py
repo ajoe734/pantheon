@@ -463,31 +463,96 @@ def test_default_reader_is_reconciled_only_and_empty_without_reconciled_rows(tmp
     assert reconciled_intraday_bar_reader("2330.TW", "2026-06-15", "5m", _at("2026-06-15T17:00:00+08:00")) == []
 
 
-def test_source_snapshot_without_inline_features_reaches_settlement_and_grade():
-    """The public snapshot carries closes only; PIT feature tags are projected from it."""
+def test_snapshot_only_history_fails_closed_without_invented_event_times():
+    """The public snapshot has no per-observation timestamps: no history is fabricated."""
     binding = _intraday_binding()
     del binding["market_input"]["features"]
+    with pytest.raises(SignalDecisionUnavailable) as err:
+        _produce(binding, D_DECISION)  # the 4-bar window needs history the snapshot cannot date
+    assert err.value.code == "market_input_invalid"
+
+
+def test_projection_emits_only_the_last_real_observation():
+    from services.execution.lean_runtime.paper_signal_producer import _project_snapshot_closes_as_features
+
+    feature_map: dict = {}
+    raw = {"event_time": D_EVENT, "observed_at": D_AVAILABLE}
+    _project_snapshot_closes_as_features(feature_map, _minute_artifact("60m"), "60m", [1.0, 2.0, 3.0], raw)
+    [obs] = feature_map["px"]
+    assert obs["event_time"] == D_EVENT and obs["available_time"] == D_AVAILABLE and obs["value"] == 3.0
+
+
+def _reconciled_projection(tmp_path):
+    from services.source_ingestion.intraday_reconcile import OfficialDaily, load_config, reconcile_day
+    from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
+    from services.source_ingestion.tests.test_intraday_reconcile import DAY, NOW, _bars, _official, _store
+
+    istore = _store(tmp_path / "intraday")
+    istore.put_symbol_day("2330", DAY, _bars())
+    snap = LatestMarketSnapshotStore(tmp_path / "snapshots.jsonl")
+    results = reconcile_day(istore, OfficialDaily([_official()], [DAY]), DAY, load_config(),
+                            symbols=["2330"], clock=lambda: NOW, snapshot_store=snap)
+    assert [r.outcome for r in results] == ["pass"]
+    return istore, snap, results[0]
+
+
+def test_real_reconciled_projection_with_closing_auction_bar_is_admitted(tmp_path):
+    """K3/K4 1m snapshot: last bar_end is 13:31 (closing auction); availability is the reconcile stamp."""
+    from services.execution.lean_runtime.paper_signal_producer import _market_input_for_binding
+
+    _, snap, res = _reconciled_projection(tmp_path)
+    public = snap.get("2330", "tw_price_1m").to_public_dict()
+    assert public["event_time"] == "2026-11-10T05:31:00Z"  # 13:31 +08
+    assert public["observed_at"] == res.bar_availability_ts
+    binding = _binding(_minute_artifact("1m"), binding_id="rb-real", include_market_input=False)
+    binding["symbol"] = "2330"
+    binding["market_input"] = public
+    out = _market_input_for_binding(binding, {}, strategy_artifact=_minute_artifact("1m"),
+                                    now_iso="2026-11-10T18:00:00+08:00")
+    assert out["intraday_plan"]["bar_event_time"].startswith("2026-11-10T13:31:00")
+    assert out["intraday_plan"]["target_day"] == "2026-11-11"
+    assert out["bar_availability_ts"] == res.bar_availability_ts
+    [obs] = out["features"]["px"]
+    assert obs["event_time"].startswith("2026-11-10T13:31:00") and obs["value"] == 104.0
+    # a bar ending after the closing auction minute is still refused
+    with pytest.raises(isl.IntradayWindowError):
+        isl.plan_next_session_decision(event_time="2026-11-10T13:32:00+08:00",
+                                       bar_availability_ts="2026-11-10T17:00:00+08:00",
+                                       decision_time="2026-11-10T18:00:00+08:00", bar_frequency="1m")
+
+
+def test_default_reader_reads_native_shard_for_execution_symbols(tmp_path, monkeypatch):
+    from services.execution.lean_runtime.paper_signal_producer import reconciled_intraday_bar_reader
+
+    istore, _, _ = _reconciled_projection(tmp_path)
+    monkeypatch.setenv("INTRADAY_STORE_ROOT", str(istore.root))
+    now = _at("2026-11-12T00:00:00+08:00")
+    for symbol in ("2330", "2330.TW", "2330.TWSE"):
+        bars = reconciled_intraday_bar_reader(symbol, "2026-11-10", "1m", now)
+        assert len(bars) == 271, symbol
+        assert {b["symbol"] for b in bars} == {symbol}  # execution identity is preserved
+
+
+def test_deferred_grading_continues_after_the_decision_was_enqueued():
+    """First open settles and enqueues once; the horizon bar arrives later -> grade on tick two."""
     store = InMemoryPendingSignalStore()
-    producer = _producer(store, _reader({"2026-06-15": _bars("5m", opens={0: 99.5})}))
-    assert producer.produce(binding, D_DECISION) == 0
-    assert "rb-intraday" not in producer.degraded_bindings
-    [decision_id] = _decision_ids(store)
-    pend = store.get_decision_record(decision_id + isl.PENDING_RECORD_SUFFIX)
-    assert pend["decision_out"]["metadata"]["market_input_feature_keys"]
-    assert producer.settle_pending_intraday(binding, "2026-06-15T17:00:00+08:00") == 1
-    grade = store.get_decision_record(decision_id + isl.GRADE_RECORD_SUFFIX)
-    assert grade["status"] == isl.GRADE_DONE and grade["entry_open"] == 99.5
+    full = _bars("5m")
+    available = {"bars": [b for b in full if b["bar_start"] < "2026-06-15T09:10:00+08:00"]}  # horizon (3rd) bar absent
 
+    def read(symbol, day, freq, now):
+        return available["bars"] if day == "2026-06-15" else []
 
-def test_projected_features_are_available_only_from_the_reconcile_stamp():
+    producer = _producer(store, read)
     binding = _intraday_binding()
-    del binding["market_input"]["features"]
-    out = _produce(binding, D_DECISION)
-    keys = out["metadata"]["market_input_feature_keys"]
-    assert "px" in keys
-    binding["market_input"]["observed_at"] = D_AVAILABLE
-    with pytest.raises(SignalDecisionUnavailable):
-        _produce(binding, "2026-06-12T16:00:00+08:00")  # before the reconcile stamp
+    assert producer.produce(binding, D_DECISION) == 0
+    [decision_id] = _decision_ids(store)
+    assert producer.settle_pending_intraday(binding, "2026-06-15T17:00:00+08:00") == 1
+    assert store.get_decision_record(decision_id + isl.GRADE_RECORD_SUFFIX) is None
+    available["bars"] = full
+    assert producer.settle_pending_intraday(binding, "2026-06-15T17:30:00+08:00") == 0  # no re-enqueue
+    grade = store.get_decision_record(decision_id + isl.GRADE_RECORD_SUFFIX)
+    assert grade is not None and grade["status"] == isl.GRADE_DONE
+    assert len(store.get_pending()) == 1
 
 
 def test_missing_intraday_bar_is_signal_decision_unavailable(monkeypatch):

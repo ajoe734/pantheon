@@ -1421,27 +1421,6 @@ def _market_input_for_binding(
     }
 
 
-def _bar_end_grid(event_time: datetime, frequency: str, count: int) -> list[datetime]:
-    """Bar-end times of the last ``count`` regular-session buckets ending at ``event_time``."""
-    from services.execution.lean_runtime.instrument_candidates import previous_trading_day, session_bounds
-    from services.execution.lean_runtime.intraday_settlement import bars_per_session, frequency_minutes
-
-    width = timedelta(minutes=frequency_minutes(frequency))
-    ends = [event_time]
-    day = event_time.astimezone(TAIPEI_TZ).date()
-    opened, closed = session_bounds(day)
-    cursor = event_time
-    while len(ends) < count:
-        cursor = cursor - width if cursor - width > opened else None
-        if cursor is None:
-            day = previous_trading_day(day)
-            opened, closed = session_bounds(day)
-            # the last bucket of a session ends at the close (may be a flagged half bucket)
-            cursor = closed
-        ends.append(cursor)
-    return list(reversed(ends[:count]))
-
-
 def _project_snapshot_closes_as_features(
     feature_map: dict[str, Any],
     strategy_artifact: Mapping[str, Any] | None,
@@ -1452,11 +1431,12 @@ def _project_snapshot_closes_as_features(
     """Tag the stored snapshot closes as PIT observations for minute ``close`` inputs.
 
     The public snapshot carries only ordered closes plus the real ``event_time`` (the
-    last bar end) and ``observed_at`` (the reconciled availability stamp).  Every
-    observation is therefore available only from ``observed_at`` -- never earlier than
-    the reconcile -- while its event time is its bucket end on the governed session grid.
-    Inputs the snapshot cannot supply (non-close fields, other datasets) are left absent
-    and fail closed in the evaluator.
+    last bar end) and ``observed_at`` (the reconciled availability stamp); it does not
+    carry per-observation timestamps.  Only the last close, whose event time is real, is
+    projected -- available from ``observed_at``, never earlier than the reconcile.  No
+    earlier event time or session identity is invented, so inputs needing a longer
+    history (and non-close fields / other datasets) stay absent and fail closed in the
+    evaluator; such strategies must supply inline point-in-time features.
     """
     logic = (strategy_artifact or {}).get("strategy_logic") if isinstance(strategy_artifact, Mapping) else None
     inputs = logic.get("inputs") if isinstance(logic, Mapping) else None
@@ -1464,7 +1444,7 @@ def _project_snapshot_closes_as_features(
     if not isinstance(inputs, Sequence) or not closes:
         return
     try:
-        ends = _bar_end_grid(parse_ts(raw.get("event_time"), field="event_time"), frequency, len(closes))
+        last_end = parse_ts(raw.get("event_time"), field="event_time")
         available = parse_ts(raw.get("observed_at"), field="observed_at").astimezone(TAIPEI_TZ).isoformat()
     except (IntradayWindowError, ValueError):
         return
@@ -1476,13 +1456,12 @@ def _project_snapshot_closes_as_features(
             continue
         feature_map[name] = [
             {
-                "event_time": end.astimezone(TAIPEI_TZ).isoformat(),
+                "event_time": last_end.astimezone(TAIPEI_TZ).isoformat(),
                 "available_time": available,
-                "value": float(value),
+                "value": float(closes[-1]),
                 "dataset": dataset,
                 "field": "close",
             }
-            for end, value in zip(ends, closes)
         ]
 
 
@@ -2045,12 +2024,17 @@ def reconciled_intraday_bar_reader(
     from services.research.intraday_bars import InsufficientCleanHistory, load_bars
     from services.source_ingestion.intraday_store import IntradayStore
 
+    from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
+
     store = IntradayStore.from_env()
+    # The store is keyed by the native code (2330); the execution identity (2330.TW) is
+    # normalised for the read and restored on every returned bar.
+    native = normalize_underlying_code(symbol)
     try:
-        bars = load_bars(store, symbol, [session_date], bar_frequency, decision_time=now)
+        bars = load_bars(store, native, [session_date], bar_frequency, decision_time=now)
     except InsufficientCleanHistory:
         return []
-    return [bar.to_dict() for bar in bars]
+    return [{**bar.to_dict(), "symbol": symbol} for bar in bars]
 
 
 class PaperSignalProducer:
@@ -2140,12 +2124,14 @@ class PaperSignalProducer:
                 if entry is None:
                     break
                 decision_id = str(entry["decision_id"])
-                if getter(decision_id + ENQUEUED_RECORD_SUFFIX) is not None:
-                    continue
+                already_enqueued = getter(decision_id + ENQUEUED_RECORD_SUFFIX) is not None
                 try:
                     advance_decision(store, decision_id, reader, now=now)
                 except Exception as exc:  # noqa: BLE001 - a reader fault leaves the decision pending
                     self._degraded_by_binding[binding_id] = f"intraday_settlement_unavailable: {exc}"
+                    continue
+                if already_enqueued:
+                    # Order already admitted; advance_decision above still graded it (deferred grading).
                     continue
                 settled = getter(decision_id + SETTLEMENT_RECORD_SUFFIX)
                 if not isinstance(settled, Mapping) or settled.get("status") != STATUS_SETTLED:

@@ -21,14 +21,17 @@
         "The grading horizon is the artifact's hold_bars (the only existing, mutation-classified holding parameter); 1 bar if absent.",
         "Review fix (P1 early execution): an intraday decision is parked as pending_settlement (record + per-binding first-write index slots) and is NOT enqueued; the consumer sees nothing before settlement.",
         "Review fix (P1 no caller): PaperSignalProducer.produce/tick now runs settle_pending_intraday first: it reads the pending index, calls advance_decision with a reconciled-only reader (default: intraday_bars.load_bars over IntradayStore; missing/quarantined/unreconciled -> [] so the decision reaches expired_no_price at D+2 08:55; a reader fault leaves it pending), and only a settled decision is released into the ordinary queue with market_price/market_data = real D+1 first-bar open, delayed_simulated, price_observed_at, is_live_fill_evidence=false. Release is marked once (#intraday-enqueued).",
-        "Review fix (P1 source contract): the public snapshot carries closes/event_time/observed_at only; minute close inputs are projected as dataset-tagged PIT observations (event_time on the governed session grid ending at event_time, available_time = the reconcile stamp observed_at), non-close fields stay absent and fail closed."
+        "Review fix 2 (P1 closing auction): plan_next_session_decision accepts the governed K3/K4 closing-auction bar_end 13:31 (only one minute past close); availability is still required to be after the session close and never backdated. Tested through real IntradayStore -> reconcile_day -> LatestMarketSnapshotStore -> to_public_dict -> _market_input_for_binding.",
+        "Review fix 2 (P1 symbol): reconciled_intraday_bar_reader normalises the execution symbol with normalize_underlying_code for the native shard read (2330/2330.TW/2330.TWSE all return 271 bars) and restores the validated execution symbol on every bar.",
+        "Review fix 2 (P2 deferred grading): settle_pending_intraday no longer skips already-enqueued decisions before advance_decision; grading proceeds independently, the order is never re-enqueued. Two-tick test: first-open settles+enqueues once, horizon bar added, tick two writes #intraday-grade.",
+        "Review fix 2 (P2 no invented grid): _bar_end_grid removed. The snapshot only has the last real event_time, so only the last close is projected as a PIT observation; longer-history inputs fail closed (market_input_invalid) unless inline PIT features are supplied."
       ],
       "verification": {
-        "command": "pytest test_intraday_paper_grading test_paper_signal_producer test_instrument_candidates test_current_artifact_signal test_signal_isolation (+ consumer/-k wide lean_runtime selection)",
-        "result": "314 passed, 13 skipped in lean_runtime -k selection; test_intraday_paper_grading.py 39 passed"
+        "command": "/tmp/bffvenv/bin/python -m pytest test_intraday_paper_grading test_current_artifact_signal test_paper_signal_producer test_intraday_snapshot_projection (PYTHONPATH=/tmp/agy-venv/lib/python3.12/site-packages)",
+        "result": "185 passed, 15 subtests passed; test_intraday_paper_grading.py 42 passed"
       },
       "known_limits": [
-        "Older closes' event_time labels assume a contiguous session grid (the snapshot has no per-point time); availability is conservative (reconcile stamp).",
+        "Snapshot-only (no inline features) minute strategies needing more than one observation fail closed: the public snapshot carries no per-observation timestamps.",
         "Intraday expression-layer decisions are degraded (intraday_expression_unsupported), not parked."
       ]
     },
