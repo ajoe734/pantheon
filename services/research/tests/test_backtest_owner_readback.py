@@ -108,7 +108,8 @@ def test_producer_registration_carries_real_proof_and_owner_authenticates_verdic
     evaluation = json.loads(FIXTURE.read_text(encoding="utf-8"))
     child = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-replication-001", symbols=("2330.TW",))
     store = SharedBacktestRunStore(data_dir / "backtest_runs.json")
-    gate = SharedReplicationGate(trial_counter_path=tmp_path / "trials.json", backtest_run_store=store)
+    gate = module._ProofCapturingGate(
+        SharedReplicationGate(trial_counter_path=tmp_path / "trials.json", backtest_run_store=store))
     spec = {"name": "tw_momentum", "description": "d", "signals": ["momentum"], "parameters": {"lookback": 2},
             "governance": {"approval_required": True, "policy_id": "oc-001-research-normalization"}}
 
@@ -131,7 +132,6 @@ def test_producer_registration_carries_real_proof_and_owner_authenticates_verdic
     assert verdict["passed"] is True
     fields = module._producer_proof_registration(
         data_dir=data_dir, child=child, verdict=verdict, decision_id="dec-1", run_id="research-run-1")
-    assert "replication_proof" not in fields["evaluation_summary"]["out_of_sample_gate"]
     assert fields["producer_run_id"] == verdict["backtest_run_id"]
 
     # The Registry owner verifies the producer-built fields without any prebuilt verified entry.

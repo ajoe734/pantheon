@@ -395,8 +395,6 @@ def judge_child_out_of_sample(
         "deflated_sharpe_threshold": detail.get("deflated_sharpe_threshold"),
         "failed_checks": list(detail.get("failed_checks") or []),
         "backtest_run_id": detail.get("backtest_run_id"),
-        # Producer-side full gate response, handed to the registration caller; never persisted as a summary.
-        "replication_proof": response.to_dict() if hasattr(response, "to_dict") else None,
     }
 
 
@@ -446,7 +444,6 @@ def run_mutation_decision(
                     taken.append(str(child["version"]))  # lost the revision race: re-allocate, rebuild, rejudge
                     continue
             taken.append(str(child["version"]))
-            verdict = {k: v for k, v in verdict.items() if k != "replication_proof"}  # proof goes only to register_child
             result = {"index": index, "built": True, "mutation": descriptor, "verdict": verdict,
                       "registered": registered is not None, "version": child["version"]}
             break

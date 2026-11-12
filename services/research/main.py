@@ -2253,7 +2253,9 @@ def _evolution_oos_context(
 
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
     backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
-    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    gate = _ProofCapturingGate(
+        SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    )
 
     def _record_owned(evaluation: Dict[str, Any]) -> Optional[str]:
         run_id = backtests.record(evaluation)
@@ -2270,6 +2272,28 @@ def _evolution_oos_context(
     return gate, factory
 
 
+_PRODUCER_PROOFS: Dict[str, Dict[str, Any]] = {}  # backtest run_id -> real gate response, consumed by the registration
+
+
+class _ProofCapturingGate:
+    """Delegates to the real gate and keeps each response so registration can send the real proof."""
+
+    def __init__(self, gate: Any) -> None:
+        self._gate = gate
+
+    def get_family_trial_count(self, family_id: str) -> int:
+        return self._gate.get_family_trial_count(family_id)
+
+    def evaluate_candidate(self, request: Any) -> Any:
+        response = self._gate.evaluate_candidate(request)
+        for result in getattr(response, "results", []) or []:
+            if getattr(result, "criterion_id", "") == "real_backtest_validation":
+                run_id = str((getattr(result, "details", None) or {}).get("backtest_run_id") or "")
+                if run_id and callable(getattr(response, "to_dict", None)):
+                    _PRODUCER_PROOFS[run_id] = response.to_dict()
+        return response
+
+
 _PRODUCER_EVALUATIONS: Dict[str, Dict[str, Any]] = {}  # run_id -> evaluation, consumed by the registration
 
 
@@ -2282,15 +2306,15 @@ def _producer_proof_registration(
     record so the Registry can authenticate it through the owner-binding readback.
     """
     from services.registry.promotion.gate import real_backtest_verdict_digest
-    proof = verdict.get("replication_proof")
     backtest_run_id = str(verdict.get("backtest_run_id") or "")
+    proof = _PRODUCER_PROOFS.pop(backtest_run_id, None)
     results = (proof or {}).get("results") if isinstance(proof, dict) else None
     details = next(
         (r.get("details") for r in results or [] if r.get("criterion_id") == "real_backtest_validation"), None
     )
     evaluation = _PRODUCER_EVALUATIONS.pop(backtest_run_id, None)
     summary = {
-        "out_of_sample_gate": {k: v for k, v in verdict.items() if k != "replication_proof"},
+        "out_of_sample_gate": dict(verdict),
         "decision_id": decision_id,
     }
     if not isinstance(details, dict) or not evaluation:
