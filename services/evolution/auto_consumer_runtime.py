@@ -59,19 +59,22 @@ class HttpDecisionPort:
         return self._call("POST", f"/api/evolution/proposals/{decision_id}/approve", body, body.get("tenant_id"))
 
 
-DISCOVERY_BINDING_PREFIX = "pcb-discovery-"  # services/research/discovery_allocator.py: durable Capital binding ids
+# The persona create saga's PersonaCapitalBinding id prefix
+# (control-plane/bff/persona_provisioning_coordinator.py deterministic_provisioning_ids).
+DISCOVERY_BINDING_PREFIX = "pcb-persona-paper-"
 
 
 class DiscoveryBindingScope:
-    """Owner-verified discovery scope resolved from the allocator's real records.
+    """Owner-verified discovery scope resolved from the identifiers the saga writes.
 
-    The discovery allocator provisions a persona by creating a Capital binding
-    ``pcb-discovery-*`` (paper only) whose ``metadata.strategy_spec_registry_id``
-    names the admitted StrategySpec.  A decision target is in scope when it is
-    that spec, or a Registry StrategyArtifact whose lineage names it, and exactly
-    one active/pending tenant-owned discovery binding exists for it.  The persona
-    is then read from the Persona owner (tenant, lifecycle).  No persona metadata
-    marker is needed or trusted; any gap fails closed (``None``) or raises.
+    The discovery allocator creates each persona through ``POST /bff/personas``;
+    the saga writes a paper PersonaCapitalBinding ``pcb-persona-paper-*`` whose
+    metadata carries the allocator's explicit ``discovery_allocator`` marker, the
+    saga's own ``registry_id`` (the persona's StrategyArtifact) and
+    ``source_strategy_artifact_ref`` (the admitted artifact).  A decision target is
+    in scope when it names one of those and exactly one active/pending tenant-owned
+    marked binding matches.  The persona is then read from the Persona owner
+    (tenant, lifecycle).  Any gap fails closed (``None``) or raises.
     """
 
     def __init__(
@@ -107,6 +110,9 @@ class DiscoveryBindingScope:
             meta = b.get("metadata") or {}
             if not str(b.get("binding_id") or "").startswith(DISCOVERY_BINDING_PREFIX):
                 continue
+            marker = meta.get("discovery_allocator")
+            if not (isinstance(marker, dict) and marker.get("marker") is True):
+                continue
             if str(b.get("tenant_id") or meta.get("tenant_id") or "") != tenant:
                 continue
             if str(b.get("status") or "") not in {"pending", "active"}:
@@ -127,19 +133,24 @@ class DiscoveryBindingScope:
         if not tenant or not target:
             return None
         entry = self.artifact_view(target, tenant)
-        kind, spec_ids = "", {target}
+        kind = ""
+        persona_hint = ""
         if entry is not None:
             if str(entry.get("owner_tenant") or (entry.get("metadata") or {}).get("tenant_id") or tenant) != tenant:
                 return None
             artifact = (entry.get("metadata") or {}).get("strategy_artifact") or {}
             kind = str((artifact.get("strategy_logic") or {}).get("kind") or "")
-            source = (artifact.get("lineage") or {}).get("source_strategy_spec_id")
-            spec_ids = {str(source)} if source else set()
             persona_hint = str((entry.get("metadata") or {}).get("persona_id") or "")
-        else:
-            persona_hint = ""
-        matches = [b for b in self.discovery_bindings(tenant)
-                   if str((b.get("metadata") or {}).get("strategy_spec_registry_id") or "") in spec_ids]
+
+        def names_target(b: Mapping[str, Any]) -> bool:
+            m = b.get("metadata") or {}
+            return target in {
+                str(m.get("registry_id") or ""),
+                str(m.get("source_strategy_artifact_ref") or ""),
+                str(m.get("strategy_spec_registry_id") or ""),
+            }
+
+        matches = [b for b in self.discovery_bindings(tenant) if names_target(b)]
         if persona_hint:
             matches = [b for b in matches if str(b.get("persona_id")) == persona_hint]
         decision_persona = str(decision.get("persona_id") or (decision.get("metadata") or {}).get("persona_id") or "")

@@ -1,7 +1,7 @@
 """Paper-decay monitor: real telemetry -> governed discovery retire proposal (design §12.2, acceptance 5).
 
 Each scheduler tick it reads the telemetry owner's runtime summaries for the
-tenant's paper discovery bindings (Capital ``pcb-discovery-*`` bindings), appends
+tenant's paper discovery bindings (Capital ``pcb-persona-paper-*`` bindings carrying the allocator's discovery marker), appends
 every new paper observation (one per distinct ``sharpe_ratio_at``) to a durable
 window ledger, and evaluates persistent decay against the governed baselines
 (``expected_sharpe_ratio`` / ``expected_drawdown`` in the approved baseline

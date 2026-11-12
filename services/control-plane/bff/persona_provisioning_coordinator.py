@@ -151,6 +151,20 @@ def deterministic_provisioning_ids(record: ProvisioningRecord) -> ProvisioningId
     )
 
 
+def _discovery_marker(record: ProvisioningRecord) -> dict[str, Any]:
+    """The allocator's explicit discovery marker from the create payload, or {}.
+
+    Only a mapping with ``marker is True`` counts; it is copied verbatim to the
+    owner records the saga writes so slot counting and the evolution scope read
+    the same identifiers from owner data.
+    """
+
+    raw = record.request_payload.get("discovery_allocator")
+    if isinstance(raw, Mapping) and raw.get("marker") is True:
+        return {"discovery_allocator": deepcopy(dict(raw))}
+    return {}
+
+
 def _path_id(value: str) -> str:
     return quote(value, safe="")
 
@@ -2377,6 +2391,7 @@ class PersonaProvisioningCoordinator:
                     if admitted_ref is not None
                     else {}
                 ),
+                **({} if baseline else _discovery_marker(record)),
                 **({"market": explicit_market} if explicit_market is not None else {}),
             },
         }
@@ -2983,6 +2998,12 @@ class PersonaProvisioningCoordinator:
                 "strategy_spec_registry_id": ids.registry_id,
                 "requested_by": self._requested_by(record),
                 "provisioning_request_hash": record.request_hash,
+                **(
+                    {"source_strategy_artifact_ref": admitted_ref}
+                    if (admitted_ref := self._strategy_artifact_ref(record)) is not None
+                    else {}
+                ),
+                **_discovery_marker(record),
                 **({"market": explicit_market} if explicit_market is not None else {}),
             },
         }

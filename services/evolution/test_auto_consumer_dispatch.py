@@ -179,8 +179,9 @@ def world(tmp_path, monkeypatch):
                                headers={k: v for k, v in headers.items() if k.lower() == "x-tenant-id"})
             return r.status_code, (r.json() if r.content else {})
         if url == "http://cap/api/bindings":
-            return 200, [{"binding_id": "pcb-discovery-1", "tenant_id": TENANT, "persona_id": "p1", "status": "active",
-                          "metadata": {"strategy_spec_registry_id": SPEC_ID, "tenant_id": TENANT}}]
+            return 200, [{"binding_id": "pcb-persona-paper-1", "tenant_id": TENANT, "persona_id": "p1", "status": "active",
+                          "metadata": {"registry_id": ARTIFACT_ID, "source_strategy_artifact_ref": SPEC_ID, "tenant_id": TENANT,
+                                       "discovery_allocator": {"marker": True}}}]
         if url == f"http://reg/api/registry/strategy-artifacts/{ARTIFACT_ID}":
             return 200, {"entry": {"registry_id": ARTIFACT_ID, "owner_tenant": TENANT, "metadata": {"strategy_artifact": {
                 "strategy_logic": {"kind": "factor_rule_v1"}, "lineage": {"source_strategy_spec_id": SPEC_ID}}}}}

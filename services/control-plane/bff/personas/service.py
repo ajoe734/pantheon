@@ -12562,6 +12562,14 @@ def _persona_provisioning_metadata(
     declared_scope = _persona_create_declared_data_scope(payload)
     if declared_scope is not None:
         metadata["data_scope"] = declared_scope
+    discovery = payload.get("discovery_allocator")
+    if isinstance(discovery, Mapping) and discovery.get("marker") is True:
+        # Explicit allocator marker (match id/score, artifact, run); copied
+        # verbatim so the allocator and evolution read it from the Persona owner.
+        metadata["discovery_allocator"] = deepcopy(dict(discovery))
+        admitted_ref = str(payload.get("strategy_artifact_ref") or "").strip()
+        if admitted_ref:
+            metadata["source_strategy_artifact_ref"] = admitted_ref
     metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
         {
             "id": record.persona_id,

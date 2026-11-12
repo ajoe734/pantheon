@@ -20,13 +20,17 @@ ENV = {
 
 SPEC_ID = "spec-disc-1"
 ARTIFACT_ID = "art-disc-1"
-BINDING_ID = "pcb-discovery-abc123"
+BINDING_ID = "pcb-persona-paper-abc123"
+SAGA_SPEC_ID = "reg-strategy-spec-persona-abc123"
 
 
 def _binding(**over):
-    # Exactly the shape the discovery allocator's provision() creates: no persona metadata markers.
+    # Exactly the shape the persona create saga writes for an allocator-created persona
+    # (_coordinate_binding_create): its own registry ids plus the explicit discovery marker.
     row = {"binding_id": BINDING_ID, "tenant_id": TENANT, "persona_id": "p1", "status": "active", "budget": 10000,
-           "metadata": {"strategy_spec_registry_id": SPEC_ID, "tenant_id": TENANT}}
+           "metadata": {"registry_id": ARTIFACT_ID, "strategy_spec_registry_id": SAGA_SPEC_ID,
+                        "source_strategy_artifact_ref": SPEC_ID, "tenant_id": TENANT,
+                        "discovery_allocator": {"marker": True, "match_id": "m1"}}}
     row.update(over)
     return row
 
@@ -42,7 +46,7 @@ def _owners(bindings=None, persona_state="paper_owner", kind="factor_rule_v1", p
         if url == f"http://reg/api/registry/strategy-artifacts/{ARTIFACT_ID}":
             meta = {"persona_id": artifact_persona} if artifact_persona else {}
             return 200, {"entry": {"registry_id": ARTIFACT_ID, "owner_tenant": TENANT, "metadata": {
-                **meta, "strategy_artifact": {"strategy_logic": {"kind": kind}, "lineage": {"source_strategy_spec_id": SPEC_ID}}}}}
+                **meta, "strategy_artifact": {"strategy_logic": {"kind": kind}, "lineage": {"source_strategy_spec_id": SAGA_SPEC_ID}}}}}
         if url.startswith("http://reg/"):
             return 404, {"detail": "nf"}
         if url == "http://per/api/personas/p1":
@@ -74,7 +78,8 @@ def test_scope_fails_closed():
     for kw in ({"bindings": []},
                {"bindings": [_binding(status="retired")]},
                {"bindings": [_binding(binding_id="pcb-manual-1")]},
-               {"bindings": [_binding(), _binding(binding_id="pcb-discovery-zzz", persona_id="p2")]},
+               {"bindings": [_binding(metadata={"registry_id": ARTIFACT_ID, "tenant_id": TENANT})]},  # no discovery marker
+               {"bindings": [_binding(), _binding(binding_id="pcb-persona-paper-zzz", persona_id="p2")]},
                {"persona_tenant": "other"}):
         call, _ = _owners(**kw)
         assert _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID}) is None, kw
