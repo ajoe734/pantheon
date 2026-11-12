@@ -1,0 +1,98 @@
+{
+  "task_id": "DEV-AGORA-RESTART-ASYNC-CONSUMER-SMOKE-20261112",
+  "owner": "Codex2",
+  "assigned_independent_reviewer": "Claude",
+  "evidence_class": "controlled_local_source_and_memory_owner_tests",
+  "source_base": "6618ddd56354dff60f5c979a1850000ba2c39496",
+  "anchor_commit": "b4a190fcf",
+  "scope": [
+    "scripts/agora_workshop_restart_persistence_smoke.py",
+    "scripts/test_agora_workshop_restart_persistence_smoke.py",
+    "docs/deployment/evidence/DEV-AGORA-RESTART-ASYNC-CONSUMER-SMOKE-20261112/evidence.json"
+  ],
+  "original_hosted_failure": {
+    "run_id": 43321446675,
+    "source_sha": "c733c0b99d47d7efec4f789b8fadeda66b355d50",
+    "evidence_id": "evidence-deploy-restart-43321446675-1",
+    "tenant_id": "pantheon-dev",
+    "user_id": "pantheon-dev-browser",
+    "seed_succeeded_at": "2026-11-12T23:01:15.1081825Z",
+    "container_started_at": "2026-11-12T23:01:17.9319369Z",
+    "verify_failed_at": "2026-11-12T23:01:39.2402287Z",
+    "failure": "verify line 373: evidence was not found in backlog during verify",
+    "actual_same_id_processed_state": "unverified by this task; original publisher owns readonly readback",
+    "interpretation": "Missing pending is ambiguous. The existing lifespan consumer can move the seed to processing, processed or failed; neither success nor data loss follows from an empty pending backlog.",
+    "sanitized_primary_inputs": [
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/goal2314-Root433214-completed-original-Agora-and-compensation-primary.json",
+        "sha256": "3cf4df6e45bbb90f0a020e8acd03548b2633fb2151ce17e0f4b682defc21446d"
+      },
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/goal-Root433214-Agora-actual-caller-and-existing-owner-readonly-audit-20261112.json",
+        "sha256": "d3d35bf734f219be908d11fef7e40b6564e99f8c9eb29ec53d7e2b2b5fd7f162"
+      }
+    ]
+  },
+  "existing_integration_contract": {
+    "caller": ".github/workflows/nonprod-deploy.yml deploy-dev step agora invokes main(seed), restarts BFF, waits for lifecycle readiness, invokes main(verify) in a fresh container process",
+    "natural_owner": "core/app_factory.py installs agora/evidence/worker.py on app.state.dataset_store; run_extraction_batch discovers pending scopes through services/agora/store.py AgoraEvidenceStore",
+    "extraction_owner": "agora/dataset_extraction/extractor.py AgoraDatasetStore owns claim_inbox, process_inbox, get_inbox_entry, get, list_handoffs and atomic completion",
+    "completed_consumer_task": "AGORA-LEARNING-EVIDENCE-RESTORE-20261112 remains DONE; PR7261 supplies the existing consumer",
+    "unchanged": "Production app, router, store, worker, workflow, authority, configuration and service/deployment state"
+  },
+  "verification_behavior": {
+    "recovery": "At most one existing process_inbox recovery call scoped to the exact evidence ID, tenant and user, batch_size=1; no synthetic DTO and no second product consumer",
+    "wait": "Read the exact durable inbox until processed within a 30-second monotonic polling budget, at most 0.25 seconds between reads; missing/failed/unknown state fails immediately; live leases are not stolen",
+    "durable_proof": "Require seed digest/idempotency key/admission receipt and scope on inbox; require processed timestamp and actual persisted dataset record with matching evidence/scope/receipt/persona/kind/content/times/consent; require exactly one correlated durable Observe/Learn handoff for that same evidence and dataset version",
+    "acknowledgement": "An existing handoff may be pending or acknowledged; this smoke does not create downstream acknowledgements or claim business consumption",
+    "replay": "One targeted terminal replay must claim/process/fail/lose/create zero items and preserve the durable record, handoff identity and single-effect count",
+    "preserved": "Workshop identity/open status; proposal revisions 1,2,3 and create/modify/validate audit; validated state; durable idempotent create; completed outbox exactly-once; pending outbox recovery and exactly-once completion",
+    "bounds_limit": "Polling has a fixed deadline; individual owner operations retain their existing database connection/query behavior. No hosted latency or PostgreSQL restart claim is made by memory tests."
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_status": 0,
+      "result": "Checkout-scoped interpreter provisioned and foreign-cwd imports verified; no shared editable mapping changed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_agora_workshop_restart_persistence_smoke.py -k 'natural_consumption_before or winning_pending'",
+      "source": "original helper before repair",
+      "exit_status": 1,
+      "result": "2 failed as expected: real run_extraction_batch consumption triggered original line 373 backlog assertion and line 381 processed-count assertion through main(verify)"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q scripts/test_agora_workshop_restart_persistence_smoke.py",
+      "exit_status": 0,
+      "result": "43 passed",
+      "coverage": "Real memory store and natural run_extraction_batch before verify and between pending read/claim; Event-synchronized processing leases before verify and before claim; pending and expired-lease recovery; unrelated same-scope evidence remains pending; acknowledged handoff; controlled-clock deadline failures; real consent-revoked extraction failures; missing and mismatched inbox/record/handoff and duplicate handoff negatives; existing proposal/outbox/workflow/import regressions"
+    },
+    {
+      "command": "env -u TEST_DATABASE_URL -u AGORA_EVIDENCE_TEST_DSN AGORA_DATASET_STORE_BACKEND=memory timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/dataset_extraction/test_extractor.py services/control-plane/bff/agora/dataset_extraction/test_router.py services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py services/control-plane/bff/tests/test_agora_human_evidence.py",
+      "exit_status": 0,
+      "result": "89 passed, 5 skipped, 3 dependency deprecation warnings",
+      "limits": "Database-dependent cases deliberately skipped with both test DSNs removed; all executed owner and HTTP integration fixtures local and in memory"
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0,
+      "result": "clean"
+    }
+  ],
+  "delivery": {
+    "target": "dev",
+    "review": "Await assigned Claude exact-head independent review through the native task handoff; this manifest is not review approval",
+    "integration": "Required CI and canonical supervisor MERGE remain required; the owner does not self-approve or self-merge",
+    "identity_binding": "Native handoff freezes the exact pushed PR head and this committed manifest blob; no circular self-referencing commit SHA is embedded here"
+  },
+  "remaining_hosted_proof": {
+    "owner": "Original sole publisher of Root433214 and compensation",
+    "required": [
+      "Readonly actual original same-ID scoped inbox, dataset record and handoff/admission receipt evidence",
+      "Formal deployment of an accepted exact source version and fresh-process restart persistence smoke",
+      "Current exact hosted FE/BFF identity and scenario acceptance",
+      "Actual compensation and rollback health proof, separately from the original failed run"
+    ],
+    "restrictions_observed": "No VM, SSH, real database, credentials, provider/model calls, service control, deployment dispatch, business/capital operations, or replay of the original mutating seed/verify"
+  }
+}

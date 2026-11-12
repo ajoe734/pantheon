@@ -425,6 +425,9 @@ def verify_evidence(
     expected_record = {
         "evidence_id": evidence_id, **scope, "status": "processed",
         "persona_id": "persona-smoke", "interaction_kind": "ask", "dataset_kind": "observe",
+        "content": evidence_for(workshop_id).content,
+        "captured_at": "2026-07-14T00:00:00Z", "extracted_at": "2026-07-14T00:01:00Z",
+        "consent_verified": True,
         "admission_receipt_id": entry["admission_receipt_id"],
     }
     if (not entry.get("processed_at") or not record.dataset_version_id
@@ -450,7 +453,7 @@ def verify_evidence(
     replay = dataset_store.process_inbox(
         **scope, evidence_id=evidence_id, batch_size=1, worker_id="restart-persistence-smoke",
     )
-    if any(replay[key] != 0 for key in ("claimed", "processed", "failed", "handoffs_created")):
+    if any(replay[key] != 0 for key in ("claimed", "processed", "failed", "lost_claims", "handoffs_created")):
         raise RuntimeError(f"evidence {evidence_id!r} extraction replay was not exactly-once")
     replay_record = dataset_store.get(evidence_id, **scope)
     if replay_record != record or matching_handoff() != handoff_id:
