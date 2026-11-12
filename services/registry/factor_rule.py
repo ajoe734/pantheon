@@ -37,6 +37,12 @@ MAX_FACTOR_WINDOW_BARS = 504
 BUILT_IN_PRICE_VOLUME_FIELDS: frozenset[str] = frozenset(
     {"open", "high", "low", "close", "volume", "vwap"}
 )
+# SD_INTRADAY_MINUTE_BARS §6.1: governed minute datasets (1m stored, coarser derived).
+INTRADAY_PRICE_VOLUME_DATASETS: frozenset[str] = frozenset(
+    {"tw_price_1m", "tw_price_5m", "tw_price_15m", "tw_price_30m", "tw_price_60m"}
+)
+AVAILABILITY_LAG_UNITS: tuple[str, ...] = ("days", "minutes")
+
 PRICE_VOLUME_DATASETS: frozenset[str] = frozenset(
     {
         "tw_price_volume",
@@ -47,7 +53,7 @@ PRICE_VOLUME_DATASETS: frozenset[str] = frozenset(
         "STOCK_DAY_ALL",
         "tpex_mainboard_daily_close_quotes",
     }
-)
+) | INTRADAY_PRICE_VOLUME_DATASETS
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,37 @@ class FeatureDefinition:
     field: str
     min_availability_lag_days: int = 0
     description: str = ""
+    # SD §6.3: ``min_availability_lag`` carries a unit.  Minute features are lagged
+    # in minutes beyond bar close; every other feature keeps its day-denominated lag.
+    availability_lag_unit: str = "days"
+    min_availability_lag: int | None = None
+    # Indicator windows reset at the 09:00 session start unless declared otherwise.
+    cross_session: bool = False
+
+    def __post_init__(self) -> None:
+        if self.availability_lag_unit not in AVAILABILITY_LAG_UNITS:
+            raise FactorRuleValidationError(
+                "feature definition availability_lag_unit must be one of "
+                + "/".join(AVAILABILITY_LAG_UNITS)
+            )
+        if self.min_availability_lag is None:
+            lag = self.min_availability_lag_days if self.availability_lag_unit == "days" else 0
+            object.__setattr__(self, "min_availability_lag", lag)
+        lag = self.min_availability_lag
+        if isinstance(lag, bool) or not isinstance(lag, int) or lag < 0:
+            raise FactorRuleValidationError(
+                "feature definition min_availability_lag must be a non-negative integer"
+            )
+        if self.availability_lag_unit == "minutes" and self.min_availability_lag_days != 0:
+            raise FactorRuleValidationError(
+                "minute-unit feature definitions must not carry a day lag"
+            )
+        if self.availability_lag_unit == "days" and lag != self.min_availability_lag_days:
+            raise FactorRuleValidationError(
+                "day-unit min_availability_lag must equal min_availability_lag_days"
+            )
+        if not isinstance(self.cross_session, bool):
+            raise FactorRuleValidationError("feature definition cross_session must be a boolean")
 
 
 # Seeded governed feature catalogue (Design §5, §8.5, §9.2 and Plan §3.4).
@@ -96,13 +133,19 @@ def list_feature_definitions() -> tuple[FeatureDefinition, ...]:
 
 def _seed_default_feature_catalogue() -> None:
     for ds in PRICE_VOLUME_DATASETS:
+        intraday = ds in INTRADAY_PRICE_VOLUME_DATASETS
         for fld in BUILT_IN_PRICE_VOLUME_FIELDS:
             register_feature_definition(
                 FeatureDefinition(
                     dataset=ds,
                     field=fld,
                     min_availability_lag_days=0,
-                    description=f"Daily price-volume {fld} ({ds})",
+                    description=(
+                        f"Intraday price-volume {fld} ({ds}), 0 minutes beyond bar close"
+                        if intraday
+                        else f"Daily price-volume {fld} ({ds})"
+                    ),
+                    availability_lag_unit="minutes" if intraday else "days",
                 )
             )
     seeded: tuple[tuple[str, str, int, str], ...] = (

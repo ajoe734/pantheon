@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from jsonschema import Draft7Validator, FormatChecker
@@ -1315,6 +1316,29 @@ _EXECUTION_RECIPE_KEYS: frozenset[str] = frozenset({
     "order_quantity",
     "quantity_type",
 })
+# SD_INTRADAY_MINUTE_BARS §6.1: the only governed bar frequencies and the
+# dataset each one reads.  No other value is accepted and no fallback exists.
+BAR_FREQUENCY_DATASETS: Mapping[str, str] = MappingProxyType({
+    "1d": "tw_price_daily",
+    "1m": "tw_price_1m",
+    "5m": "tw_price_5m",
+    "15m": "tw_price_15m",
+    "30m": "tw_price_30m",
+    "60m": "tw_price_60m",
+})
+ALLOWED_BAR_FREQUENCIES: tuple[str, ...] = tuple(BAR_FREQUENCY_DATASETS)
+
+
+def dataset_for_bar_frequency(bar_frequency: Any) -> str:
+    """Map a declared ``bar_frequency`` to its governed dataset or fail closed."""
+    if not isinstance(bar_frequency, str) or bar_frequency not in BAR_FREQUENCY_DATASETS:
+        raise StrategyArtifactValidationError(
+            f"bar_frequency {bar_frequency!r} is not allowed; "
+            f"allowed: {', '.join(ALLOWED_BAR_FREQUENCIES)}"
+        )
+    return BAR_FREQUENCY_DATASETS[bar_frequency]
+
+
 _EXECUTION_RECIPE_ACTIONS = ("BUY", "SELL", "HOLD")
 _EXECUTION_RECIPE_QUANTITY_TYPES = ("SHARES", "CASH_VALUE", "PERCENT_PORTFOLIO")
 
@@ -1360,6 +1384,7 @@ def validate_execution_recipe(recipe: Any) -> dict[str, Any]:
             raise StrategyArtifactValidationError(
                 f"execution_recipe.{field} must be a canonical non-blank string"
             )
+    dataset_for_bar_frequency(recipe["bar_frequency"])
     lookback = recipe["lookback_bars"]
     if not _is_integer(lookback) or lookback < 2:
         raise StrategyArtifactValidationError(

@@ -566,11 +566,25 @@ def _quarantine(store: IntradayStore, res: ReconciliationResult, write: bool, no
 def reconcile_day(
     store: IntradayStore, official: OfficialDaily, session_date: str, cfg: ReconcileConfig, *,
     symbols: Sequence[str] | None = None, clock: Callable[[], datetime] = _utc_now, write: bool = True,
+    snapshot_store: Any | None = None, projection_report: dict[str, Any] | None = None,
 ) -> list[ReconciliationResult]:
+    """Reconcile one session.
+
+    With ``snapshot_store`` (a ``LatestMarketSnapshotStore``) and ``write=True``, the run ends by
+    projecting this run's ``pass`` days via ``project_reconciled_minute_snapshots`` (SD §9 K4);
+    the projection summary is copied into ``projection_report`` when given.
+    """
     day = _safe_date(session_date)
     manifest = store.read_manifest(day) or {"symbols": {}}
     names = sorted(symbols if symbols is not None else manifest["symbols"])
-    return [reconcile_symbol_day(store, official, s, day, cfg, clock=clock, write=write) for s in names]
+    results = [reconcile_symbol_day(store, official, s, day, cfg, clock=clock, write=write) for s in names]
+    if snapshot_store is not None and write:
+        from .intraday_snapshot_projection import project_reconciled_minute_snapshots  # lazy: it imports this module
+
+        report = project_reconciled_minute_snapshots(snapshot_store, results, intraday_store=store)
+        if projection_report is not None:
+            projection_report.update(report)
+    return results
 
 
 # ---------------------------------------------------------------- recovery paths
