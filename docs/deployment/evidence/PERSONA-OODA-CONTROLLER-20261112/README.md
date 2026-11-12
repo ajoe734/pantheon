@@ -3,6 +3,9 @@
 Source implementation for design §6.1 / D1 / D2 / D13 in
 `docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md`.
 Owner: Codex. Assigned independent reviewer: Claude. Hosted acceptance is pending.
+PR #7274 is published. Exact-head review admission is currently blocked by the
+canonical artifact contract; `delivery-hold.md` records the gate rejection and
+the nine necessary paths requiring governed Human/Ops revision.
 
 The existing Persona service lifespan reconciles active, tenant-bound
 `paper_running`, `paper_owner` and `consultable` personas. OpenClaw remains the

@@ -90,6 +90,14 @@
     "packet_store": "Existing JSON or JSONL envelopes, shared with BFF; one logical packet can have claim and terminal snapshots",
     "credentials": "Reuse configured existing gateway, adapter, telemetry, database and registry read credentials; none issued or rotated"
   },
+  "delivery_admission": {
+    "status": "blocked",
+    "pr": "https://github.com/ajoe734/pantheon/pull/7274",
+    "reason": "Canonical handoff rejected necessary integration files outside the declared artifact contract",
+    "required_actor": "Human/Ops",
+    "record": "delivery-hold.md",
+    "review_or_merge_claimed": false
+  },
   "remaining_hosted_obligation": {
     "status": "pending",
     "required": [
