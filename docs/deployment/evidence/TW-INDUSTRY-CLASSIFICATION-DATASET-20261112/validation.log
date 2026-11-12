@@ -16,4 +16,4 @@ services/research/tests/test_candidate_pool_parity.py: 14 warnings
     df.rename(columns=new_columns, inplace=True)
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-458 passed, 1 skipped, 15 warnings, 15 subtests passed in 84.27s (0:01:24)
+458 passed, 1 skipped, 15 warnings, 15 subtests passed in 93.82s (0:01:33)

@@ -1,5 +1,24 @@
 # Review admission hold
 
+## Scope correction received on 2026-11-12
+
+The governed Codex2 `show` read after redispatch confirms that Human/Ops added
+all eight paths below to this existing task's artifact contract and reopened
+the task at `2026-11-12T15:00:49Z`. The task is `in_progress`, with original
+owner Codex2, reviewer Claude, all six acceptance items and all three satisfied
+dependencies preserved. The supervisor's refreshed task brief records no active
+source-writer overlap. The original rejection below is retained as history;
+its corrective scope action is complete.
+
+Fresh `git fetch origin dev` found `421c13abc87a44e2b05d1bf638d9a5866e4d8400`
+as the current base, already contained in the task branch. No rebase, merge,
+replacement task or replacement PR was needed. The owner resumes the same
+PR #7245 with a new committed manifest and exact-head handoff. Independent
+review, required CI and supervisor integration remain necessary. Scope repair
+does not establish hosted ingestion or rights acceptance.
+
+## Original rejection
+
 The owner attempted governed handoff of PR #7245 at
 `c6240b813852bfae150b62f99ff624dcfd3f1d45` using the committed `evidence.json`.
 Admission rejected the delivery before entering review because necessary

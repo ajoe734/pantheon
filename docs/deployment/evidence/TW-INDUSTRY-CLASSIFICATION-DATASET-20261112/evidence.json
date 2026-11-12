@@ -106,11 +106,13 @@
     "exit_status": 0,
     "passed": 458,
     "skipped": 1,
-    "summary": "458 passed, 1 skipped, 15 warnings, 15 subtests passed in 84.27s (0:01:24)",
+    "summary": "458 passed, 1 skipped, 15 warnings, 15 subtests passed in 93.82s (0:01:33)",
     "skip_reason": "Existing opt-in read-only network smoke requires PANTHEON_TW_OFFICIAL_LIVE_SMOKE=1",
     "log": "validation.log",
-    "log_sha256": "bb53de69855835dfd0685c73da157f20a8a6588d3e5a63f0dfe794c9bd0cde45",
-    "whitespace_check": "git diff --check (exit 0)"
+    "log_sha256": "db73432bc48c12932c493078553b99744171a38fd1ef3af98783a79431ad80c7",
+    "whitespace_check": "git diff --check (exit 0)",
+    "implementation_anchor": "78bceca76d6d5ae69b97f41b7bda47fc443e2900",
+    "acquisition_boundary": "Recorded TWSE and TPEx provider/storage paths: invisible one microsecond before acquisition; visible at acquisition"
   },
   "limits": [
     "First local acquisition is 2026-11-12; hosted first ingestion/deployment is not established",
@@ -120,12 +122,21 @@
     "A prospective company profile does not establish delisted-company history; survivorship admission remains unchanged"
   ],
   "review": {
-    "status": "handoff rejected: canonical artifact contract lacks required production integration paths",
+    "status": "ready for fresh independent exact-head handoff after artifact-contract correction",
     "manifest_committed_before_handoff": true,
-    "required_next_actor": "Human/Ops",
+    "assigned_reviewer": "Claude",
     "merge_authority": "canonical supervisor integrator",
-    "admission_attempt_head": "c6240b813852bfae150b62f99ff624dcfd3f1d45",
-    "admission_attempt_pr": 7245,
-    "corrective_evidence": "review-admission-hold.md"
+    "pr": 7245,
+    "independent_review_asserted": false,
+    "scope_correction": {
+      "actor": "Human/Ops",
+      "canonical_reopened_at": "2026-11-12T15:00:49Z",
+      "added_integration_paths": 8,
+      "verified_via": "AI_NAME=Codex2 \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show TW-INDUSTRY-CLASSIFICATION-DATASET-20261112",
+      "preserved_acceptance_items": 6,
+      "satisfied_declared_dependencies": 3,
+      "record": "review-admission-hold.md"
+    },
+    "base_refresh": "git fetch origin dev: current dev already contained; no rebase/merge required"
   }
 }

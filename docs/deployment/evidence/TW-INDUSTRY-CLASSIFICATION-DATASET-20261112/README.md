@@ -23,7 +23,10 @@ date becomes historical classification evidence. The normal storage writer
 appends runs and dates, so successive acquisitions accumulate forward history.
 Readers select the latest classification visible at their decision cutoff, with
 no classification before the first acquisition. Subsecond acquisition precision
-survives both the catalogue reader and training source-storage wrapper reader.
+is captured by the production normalizer and survives both the catalogue reader
+and training source-storage wrapper reader. The recorded provider/storage tests
+check that nothing is visible one microsecond before acquisition and the
+classification is visible at acquisition itself.
 The timestamps above establish the first observations **in this local recording**;
 this PR does not assert a first hosted ingestion or deploy a dataset.
 
@@ -84,3 +87,8 @@ endpoints are never added as an alternative.
 Validation commands and acceptance-test mappings are recorded in `evidence.json`.
 Independent review and the supervisor's exact-head merge are required before
 owner closeout; this manifest does not claim either has happened.
+
+The prior artifact-contract admission hold is resolved by the operator's scoped
+correction and redispatch. `review-admission-hold.md` retains the original
+rejection alongside the canonical resolution. This remains the same task and
+PR #7245; its refreshed head must pass a fresh independent review.
