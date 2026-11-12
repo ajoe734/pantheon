@@ -1,0 +1,7 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-FINMIND-BROKER-PUBLISHED-DATE-20261112-CI-RED-7CAFD4D6AA29",
+  "source_pr": 7203,
+  "root_cause": "Flaky race in scripts/test_dev_remote_guarded_exec.py::test_watchdog_death_closes_pipe_and_fake_driver_drains_queued_pulses_before_mutation: wait_until(result.exists) can observe the file after open('w') but before write(), so read_text() returns ''. Unrelated to the source PR diff; 2110 other tests passed.",
+  "failed_run": "https://github.com/ajoe734/pantheon/actions/runs/43141251271",
+  "remediation": "Re-ran failed job (gh run rerun --failed) on PR #7203; no source change needed. Test-file hardening is outside this task's artifact contract and should be a separate task."
+}
