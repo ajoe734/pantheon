@@ -4,7 +4,7 @@
 | --- | --- |
 | Status | Design for implementation; the operator asked on 2026-11-12 to write it, open the tasks and let the supervisor and auto workers deliver them |
 | Date | 2026-11-12 |
-| Repo base | `origin/dev` 5183cbf91; code facts were read on a7ff97105 and must be re-checked by the delivering task (§2, §3) |
+| Repo base | `origin/dev` `5183cbf9171bba4b85ec0a9ee5f2543f5d211967`; repository references re-checked on this base on 2026-11-12; inherited hosted observations are qualified in §3 |
 | Extends | `docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_PERSONA_STRATEGY_POOL_AUTONOMY_2026-11-12.md` (target model §4, persona cycle §5.5) and its capital addendum; nothing in the pool model is replaced |
 | Restores | the per-persona OODA of `Pantheon_總索引版系統分析文件.md` §6.4; the persona memory plan (BG-004, OCLAW-PMEM); the consult policy of `PERSONA_RUNTIME_MODEL.md` §6/§13; the seven-stage discussion loop; the Agora learning surfaces deleted by `AGORA-DEAD-SURFACES-REMOVAL-001` |
 | Adds | evidence-driven self-optimisation of the persona harness (operator direction of 2026-11-12) |
@@ -89,69 +89,71 @@ Decisions recorded on 2026-11-12 by an earlier session and kept here: the canary
 Authority order (`CANONICAL_DOCUMENT_MAP.md:28-50`):
 - L1 outranks L2; inside L1 the narrower document wins.
 - `Pantheon_總索引版系統分析文件.md` is L3 background (`:36`).
-- An operator decision outranks a team design.
-- After that, the newest document that has not been superseded wins.
+- Execution records do not redefine blueprint truth; conflicting documents must cite the narrower policy rather than invent another interpretation.
+- The operator directions quoted in §1 motivate the explicitly marked amendments below; this design does not itself activate those amendments.
 
 ### 2.1 Persona cycle
 
-| Planned | Source | Built at a7ff97105 |
+| Planned | Source | Repository baseline / inherited hosted context (§3) |
 | --- | --- | --- |
-| Each persona runs its own Observe/Orient/Decide/Act/Learn. Personas may consult and red-team each other; their loops are never merged into one. | 總索引 axiom 11 `:112`, §6.4 `:389-409` | no persona-level controller |
-| Observe includes Agora, trainer and trader feedback. Act produces proposals, evidence, ConsultMemo, candidate and allocation artifacts, never orders. Learn includes postmortem, evolution and teaching history. | 總索引 `:116`, `:389-409` | only the evidence-packet contract exists |
-| Each cycle run leaves one OodaLoopPacket. | `docs/04/pantheon_sa_supplemental_2026-05-15/SA_management_console_multi_persona_ooda.md` FR-11; SD §3.2 | packet store built; one empty packet at persona create |
+| Each persona runs its own Observe/Orient/Decide/Act/Learn. Personas may consult and red-team each other; their loops are never merged into one. | `Pantheon_總索引版系統分析文件.md:112-114`, §6.4 `Pantheon_總索引版系統分析文件.md:389-409` | no persona-level controller |
+| Observe includes Agora, trainer and trader feedback. Act produces proposals, evidence, ConsultMemo, candidate and allocation artifacts, never orders. Learn includes postmortem, evolution and teaching history. | `Pantheon_總索引版系統分析文件.md:116-121`, `Pantheon_總索引版系統分析文件.md:389-409` | only the evidence-packet contract exists |
+| Each cycle run leaves one OodaLoopPacket. | `docs/04/pantheon_sa_supplemental_2026-05-15/SA_management_console_multi_persona_ooda.md` FR-11; `docs/04/pantheon_sa_supplemental_2026-05-15/SD_management_console_multi_persona_ooda.md` §3.2 | packet store built; one empty packet at persona create |
 | Creating a persona registers its cron jobs, and the cron wakes the persona's own agent to produce proposals. Operator: 「建人格就該完成第三步」. | `.orchestrator/task-briefs/openclaw_persona_ooda_loop_wiring.md:13` | today only one `*/15` first-evaluation job (`services/control-plane/cron/workflows.py:75`, `services/control-plane/bff/personas/service.py:4414`) |
-| One cron run = one real agent turn = one packet or one explicit terminal failure; Act is proposal-only; a controller reconciles the eligible persona set. | `LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md:362-381` (`:376`); `docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-OODA-001.md` | `services/persona/cron_ooda_closure.py` is called only by a manual script |
-| The per-persona OODA is a composite overlay of L1–L8, L10 and L11. | `docs/deployment/loop-catalog.registry.json:724,782` `composite_overlays.per_persona_ooda`; `docs/05/system-verification-rounds/INDEX.md:21-25` | `controller_contract.status: not_implemented` |
-| Fate of that task. | false closure `docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.md:28`; security hold `archive/SECURITY_PREFLIGHT_AND_HOLD_MATRIX_2026-07-18.md:22-31`; removed from loop health 2026-08-28 | no cancellation recorded |
+| One cron run = one real agent turn = one packet or one explicit terminal failure; Act is proposal-only; a controller reconciles the eligible persona set. | `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md:362-381` (one-run contract at `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md:376-377`); `docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-OODA-001.md` | `services/persona/cron_ooda_closure.py` is called only by a manual script |
+| The per-persona OODA is a composite overlay of L1–L8, L10 and L11. | `docs/deployment/loop-catalog.registry.json:724-736`, `docs/deployment/loop-catalog.registry.json:781-783` `composite_overlays.per_persona_ooda`; `docs/05/system-verification-rounds/INDEX.md:21-25` | `controller_contract.status: not_implemented` |
+| Fate of that task. | false closure `docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.md:28`; security hold `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/SECURITY_PREFLIGHT_AND_HOLD_MATRIX_2026-07-18.md:22-31`; removed from loop health 2026-08-28 | no cancellation recorded |
 
 ### 2.2 Memory
 
-| Planned | Source | Built |
+| Planned | Source | Repository baseline / inherited hosted context (§3) |
 | --- | --- | --- |
-| Private PersonaMemory and shared InstitutionalMemory. 「No session (interactive or research) may write directly」; whitelisted owner services write when a lifecycle event ends. | `services/memory/MEMORY_LAYER_DESIGN_NOTE.md:77-89`; triggers §4.1 `:108-118`; readers §5.2 `:180-189` | service deployed; no writer runs |
-| The OpenClaw MEMORY.md is a cache built from the Memory Plane. 「canonical memory feed OpenClaw, not the reverse」; the agent may only propose writebacks. | `OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md:83-95`, `:127-133` | bridge built; only a manual script materialises the cache |
+| Private PersonaMemory and shared InstitutionalMemory. 「No session (interactive or research) may write directly」; whitelisted owner services write when a lifecycle event ends. | `services/memory/MEMORY_LAYER_DESIGN_NOTE.md:77-89`; triggers §4.1 `services/memory/MEMORY_LAYER_DESIGN_NOTE.md:108-118`; readers §5.2 `services/memory/MEMORY_LAYER_DESIGN_NOTE.md:180-189` | service deployed; no writer runs |
+| The OpenClaw MEMORY.md is a cache built from the Memory Plane. 「canonical memory feed OpenClaw, not the reverse」; the agent may only propose writebacks. | `docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md:83-95`, `docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md:127-133` | bridge built; only a manual script materialises the cache |
 | Trade lessons are candidates: proposed → pending_review → endorsed → merged. | `docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md:110` | review routes deployed; nothing creates candidates in the memory service |
-| Negative memory: a seed that resembles rejected or retired work is blocked. | `EPIC_INTERACTION_DERIVED_SEEDS.md` IDS-007 | running in the seed store |
+| Negative memory: a seed that resembles rejected or retired work is blocked. | `docs/04/pantheon_data_strategy_source_design_2026-06-09/EPIC_INTERACTION_DERIVED_SEEDS.md` IDS-007 | running in the seed store |
 
 ### 2.3 Consultation and meetings
 
-| Planned | Source | Built |
+| Planned | Source | Repository baseline / inherited hosted context (§3) |
 | --- | --- | --- |
-| Each persona has a Consult Policy: required reviewers, committees, trigger rules and forbidden solo actions. Examples: 「上 paper 前必須 consult risk persona」, 「高風險 patch 不得 solo 推進」. | `PERSONA_RUNTIME_MODEL.md` §6 (`:177`); 總索引 `:785` | stored and displayed only |
-| A persona can be requester, responder or committee participant. 「researcher / persona 建立 consult request」. | `PERSONA_RUNTIME_MODEL.md` §13 (`:297`); 總索引 §9.4.4 `:752`; `services/control-plane/persona/contract.md:134-142` | no persona-started consult |
-| Seven stages 討論→建議→模擬→決策→執行→回顧→學習. A sponsor persona certifies the suggestion; an operator or a reviewer persona signs the decision; Learning goes into persona memory. | `SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md:61`, `:71`, `:86`; adapters `:124-149` | committee adapter only; its dispatch falls back to localhost (`services/consultation/main.py:1237`) |
-| Multi-persona arbitration: hard veto, weighted fusion, committee override. | `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md:78-85`, `:215-227` | implemented; no caller |
+| Each persona has a Consult Policy: required reviewers, committees, trigger rules and forbidden solo actions. Examples: 「上 paper 前必須 consult risk persona」, 「高風險 patch 不得 solo 推進」. | `PERSONA_RUNTIME_MODEL.md:164-179` §6; `Pantheon_總索引版系統分析文件.md:783-787` | stored and displayed only |
+| A persona can be requester, responder or committee participant. 「researcher / persona 建立 consult request」. | `PERSONA_RUNTIME_MODEL.md:297-307` §13; `Pantheon_總索引版系統分析文件.md:752-757` §9.4.4; `services/control-plane/persona/contract.md:134-142` | no persona-started consult |
+| Seven stages 討論→建議→模擬→決策→執行→回顧→學習. A sponsor persona certifies the suggestion; an operator or a reviewer persona signs the decision; Learning goes into persona memory. | `docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md:61`, `docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md:71-74`, `docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md:86-89`; adapters `docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md:124-149` | committee adapter only; its dispatch falls back to localhost (`services/consultation/main.py:1237`) |
+| Multi-persona arbitration: hard veto, weighted fusion, committee override. | `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md:184-227` | implemented; no caller |
 | A high-risk allocation approval needs a committee memo plus a fresh handoff. | MPOS-P1-CONSULT-001; `services/control-plane/governance/approval_decision.py:169` | enforced; no flow creates such approvals |
 | Committee voting and quorum are deferred; the consultation session protocol was never written. | `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md:205-214`; `OPENCLAW_RUNTIME_CONTRACT.md:509-517` | — |
 
 ### 2.4 Human learning and recommendations
 
-| Planned | Source | Built |
+| Planned | Source | Repository baseline / inherited hosted context (§3) |
 | --- | --- | --- |
-| Agora interaction becomes `persona memory / strategy lesson / imitation dataset`. A persona-lab commit becomes a `trainer_feedback_to_persona_update` handoff to management review. | 總索引 `:415-432`, `:747` | surfaces deleted 2026-10-01 |
-| Typed proposals from conversation include a research request, a memory update candidate and a policy or mutation review. They must 「never silently update」 memory. | `docs/product/persona-interaction-and-governed-action-plan.md:218-231`, `:305`; narrowed by the 2026-07-17 plan `:41` | stored; no consumer |
+| Agora interaction becomes `persona memory / strategy lesson / imitation dataset`. A persona-lab commit becomes a `trainer_feedback_to_persona_update` handoff to management review. | `Pantheon_總索引版系統分析文件.md:415-432`, `Pantheon_總索引版系統分析文件.md:747-749` | surfaces deleted 2026-10-01 |
+| Typed proposals from conversation include a research request, a memory update candidate and a policy or mutation review. They must 「never silently update」 memory. | `docs/product/persona-interaction-and-governed-action-plan.md:218-231`, `docs/product/persona-interaction-and-governed-action-plan.md:304-305`; narrowed by `docs/product/persona-interaction-daily-strict-operator-delivery-plan.md:21-23` | stored; no consumer |
 | A teaching result must pass evaluation before it changes a persona. | `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md` §3.4 | training target stored, read by nothing |
-| The Agora servant keeps an evidence-cited change log with Accept / Undo / Never do this again, evaluates 「AI 改 dashboard 後有沒有變好」 and tracks 「改了之後變好還是變差」. Shadow arms: base_strategy / private_servant / human_actual / committee_variant. | UI spec 2026-05-20 `:137`, `:1020`; V5 `:694`; A4 `:41`, `:193` | never built; surfaces deleted |
+| The Agora servant keeps an evidence-cited change log with Accept / Undo / Never do this again, evaluates 「AI 改 dashboard 後有沒有變好」 and tracks 「改了之後變好還是變差」. Shadow arms: base_strategy / private_servant / human_actual / committee_variant. | `docs/design/agora-trading-desk-design/uploads/Pantheon_Agora_ClaudeDesign_UI_Spec_2026-05-20.md:137`, `docs/design/agora-trading-desk-design/uploads/Pantheon_Agora_ClaudeDesign_UI_Spec_2026-05-20.md:1019-1022`; `docs/design/agora-trading-desk-design/uploads/Pathreon_Agora_ClaudeDesign_UI_Requirement_V5_Final_2026-05-20.md:694`; `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/A4_shadow_human_actual_sourcing.md:189-193` | never built; surfaces deleted |
 
 ### 2.5 Evolution and the persona's own policy
 
-| Planned | Source | Built |
+| Planned | Source | Repository baseline / inherited hosted context (§3) |
 | --- | --- | --- |
-| `mutate` changes a persona's route policy, consult policy, risk tolerance and allowed tools. It is medium risk and approved by the Risk Owner; split and merge go to the Governance Committee. The proposer is the Evolution Controller; v1 sets `auto_approve_allowed: false`. | `EVOLUTION_REVIEW_AND_THRESHOLDS.md:46`, `:221`, `:266-271` | enums only; `services/control-plane/governance/evolution_controller_contract.md:70` has no persona-mutation route |
+| `mutate` changes a persona's route policy, consult policy, risk tolerance and allowed tools. It is medium risk and approved by the Risk Owner; split and merge go to the Governance Committee. The proposer is the Evolution Controller; v1 sets `auto_approve_allowed: false`. | `EVOLUTION_REVIEW_AND_THRESHOLDS.md:46-47`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md:135-145`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md:221-227`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md:266-271` | enums only; `services/control-plane/governance/evolution_controller_contract.md:70` has no persona-mutation route |
 | DSPy optimises the persona's chat and tool-routing prompts. Operator feedback is the only signal. draft→candidate passes an automated gate that must not become 「materially more permissive」; paper and live need the operator. | `services/control-plane/persona/lp001/contract.md` | adapter runs on fixtures only |
-| PersonaPatch (`route_policy|consult_policy|memory|behavior|tool_profile`) goes draft → previewed → committed. | `docs/03/SD-02_persona_governance.md:214-235` | not built |
+| PersonaPatch (`route_policy|consult_policy|memory|behavior|tool_profile`) goes draft → previewed → committed. | `docs/03/SD-02_persona_governance.md:224-235` | not built |
 | Never let a persona 「mutate live behavior directly from short-term market feedback」. | `TARGET_ARCHITECTURE.md:14` | — |
-| Agents read data and propose; a human approves; the owner service executes. 「不新增通用 harness」 is scoped to the research single-owner boundary. | `docs/02-architecture/phase4-bff-thinning.md:11`, `:86` | — |
+| Agents read data and propose; a human approves; the owner service executes. 「不新增通用 harness」 is scoped to the research single-owner boundary. | `docs/02-architecture/phase4-bff-thinning.md:11`, `docs/02-architecture/phase4-bff-thinning.md:86` | — |
 | Paper capital operations skip owner approval and separation of duties; low-risk approvals may be decided by `automated_gate`. | operator decision 2026-10-06/08, `services/governance/contract.md:406` | enforced |
 
 ### 2.6 Steps ①② and ⑩
 
-| Planned | Source | Built |
+| Planned | Source | Repository baseline / inherited hosted context (§3) |
 | --- | --- | --- |
-| Persona Strategy Discovery: 「讓 Persona 依照自己的初始設定，查找相似策略種子或策略規格」. Recommended actions are `create_research_ticket`, `promote_seed_candidate`, `run_rapid_eval`, `request_data_backfill`, `ignore`. | `DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md:35-38`, `:527`; closeout `CLOSEOUT_DATASTRAT_PERSONA_005.md` | scorer and BFF route built; operator-triggered only |
-| Promotion governance: lifecycle `paper_running → canary_candidate → …`. A deterministic score-to-recommendation mapping includes `promote_to_canary_candidate`, increase research and tool access, `require retraining`, reduce capital, freeze, suspend and retire. Flow: recommendation → submit → promotion review → human decision → receipt → governed command. | `PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md:21`, `:115-124` | submit and decision commands retired (`services/control-plane/bff/command_adapters/retired.py:5-22`); an LLM picks recommendations |
+| Persona Strategy Discovery: 「讓 Persona 依照自己的初始設定，查找相似策略種子或策略規格」. Recommended actions are `create_research_ticket`, `promote_seed_candidate`, `run_rapid_eval`, `request_data_backfill`, `ignore`. | `docs/04/pantheon_data_strategy_source_design_2026-06-09/DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md:35-38`, `docs/04/pantheon_data_strategy_source_design_2026-06-09/DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md:526-528`; closeout `docs/04/pantheon_data_strategy_source_design_2026-06-09/CLOSEOUT_DATASTRAT_PERSONA_005.md` | scorer and BFF route built; operator-triggered only |
+| Promotion governance: lifecycle `paper_running → canary_candidate → …`. A deterministic score-to-recommendation mapping includes `promote_to_canary_candidate`, increase research and tool access, `require retraining`, reduce capital, freeze, suspend and retire. Flow: recommendation → submit → promotion review → human decision → receipt → governed command. | `docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md:64-85`, `docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md:115-127` | submit and decision commands retired (`services/control-plane/bff/command_adapters/retired.py:5-22`); an LLM picks recommendations |
 
-## 3. What runs on hosted dev (read only, 2026-11-12 13:00–15:00Z)
+## 3. Inherited hosted-dev observations (read only, 2026-11-12 13:00–15:00Z)
+
+These observations were supplied by the coordinator. This task re-checks repository references, not hosted behaviour; no raw hosted capture or exact deployed identity accompanies this design. Counts and configuration observations below are historical context requiring fresh evidence in the hosted-acceptance task, not independently verified delivery claims. `hosted_behavior_claimed` remains `false`.
 
 | Area | Observed |
 | --- | --- |
@@ -167,23 +169,23 @@ Authority order (`CANONICAL_DOCUMENT_MAP.md:28-50`):
 
 ## 4. Decisions in this design
 
-Each decision follows the cited original plan unless marked **change**. Numeric values are coordinator starting values, configurable and recorded in policy, not operator decisions.
+Each decision follows the cited original plan unless marked **change**. Numeric values are coordinator starting values, configurable and recorded in policy, not operator decisions. D5 and D10 are proposed policy amendments motivated by the quoted paper-autonomy and harness directions; existing approval rules remain effective until their owner tasks deliver the required policy amendments and gates.
 
 | # | Decision | Follows |
 | --- | --- | --- |
-| D1 | The daily cycle is the per-persona OODA overlay driven by a controller. A persona cron job of a new workflow `pantheon.persona.daily-cycle` wakes the persona's own agent; one run gives one turn and one packet or one terminal failure. Start value: weekdays 10:00Z, after the Taiwan refresh. It replaces the four 2026-06 workflows for trading personas; first-evaluation stays for provisioning. | 2026-06-16 brief; LOOP-PROD-OODA-001; pool SD 「不另外做一套排程」 |
-| D2 | Mixed cycle. The agent writes Orient and proposals; deterministic rules and gates decide. Risk rules (weight halving, removal on drawdown) run every cycle even when the agent fails. No model call on the trade path. | 總索引 §6.4 Act; operator 2026-11-07 |
+| D1 | The daily cycle is the per-persona OODA overlay driven by a controller. A persona cron job of a new workflow `pantheon.persona.daily-cycle` wakes the persona's own agent; one run gives one turn and one packet or one terminal failure. Start value: weekdays 10:00Z, after the Taiwan refresh. It replaces the four 2026-06 workflows for trading personas; first-evaluation stays for provisioning. | `.orchestrator/task-briefs/openclaw_persona_ooda_loop_wiring.md:13`; `docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-OODA-001.md`; `docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_PERSONA_STRATEGY_POOL_AUTONOMY_2026-11-12.md` §5.5 |
+| D2 | Mixed cycle. The agent writes Orient and proposals; deterministic rules and gates decide. Risk rules (weight halving, removal on drawdown) run every cycle even when the agent fails. No model call on the trade path. | `Pantheon_總索引版系統分析文件.md:403-409`; no-trade-path-model direction retained in §1 and the pool design |
 | D3 | Every trading persona gets its own OpenClaw agent at provisioning through the existing reconciler. SOUL is rendered from the registry and the harness version. Memory is materialised before every cycle turn. The SOUL line telling the agent to update MEMORY.md is replaced by "stage candidates". | OCLAW-PMEM; `integrations/openclaw/persona_agent_sync.py:202` contradiction |
-| D4 | Memory writers are the owning services when an event ends: learning bridge for postmortem and evolution, research for findings, persona service for pool outcomes and harness experiences, consultation service for consult outcomes. The agent stages candidates only. Execution never reads memory. | BG-004; OCLAW-PMEM; L1 axiom 13 |
+| D4 | Memory writers are the owning services when an event ends: learning bridge for postmortem and evolution, research for findings, persona service for pool outcomes and harness experiences, consultation service for consult outcomes. The agent stages candidates only. Execution never reads memory. | `services/memory/MEMORY_LAYER_DESIGN_NOTE.md` §3/§4; `docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md` §Correct Source-Of-Truth Boundary; `TARGET_ARCHITECTURE.md` execution boundary |
 | D5 | **Change.** Lesson candidates that affect paper behaviour only are endorsed by the existing evaluation gates (minimum sample, cross-regime) plus a risk-persona review. Lessons touching risk, capital, policy or live keep human endorsement. | extends `docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md:110` under paper autonomy (P-4, 2026-10-06 decision) |
 | D6 | The Consult Policy gets a trigger engine evaluated at Decide. v1 rules: trial admission or envelope publication → risk persona; any harness patch → risk persona; a patch touching guardrails or consult policy → also red team. A macro-regime rule is defined but stays off until a governed regime signal exists. | `PERSONA_RUNTIME_MODEL.md` §6 |
-| D7 | Panel (fills the deferred quorum and protocol). Initiator plus risk persona plus red-team persona, each answering independently from its own agent with its committee-visible memory, then one synthesis of agreements and disagreements. No vote; the initiator certifies as sponsor. A risk-persona `oppose` blocks automatic adoption and turns the item into an operator decision. | L1 axiom 3 「風控有否決權」; seven-stage Stage 2/4; `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md:213` |
-| D8 | Two non-trading consultable personas are provisioned through the normal create path: a risk persona and a red-team persona. | 總索引 §7.2 「有些永遠只是 research / risk / red-team persona」 |
-| D9 | Approved conversation measures get consumers. `research_request` → discovery research ticket; `memory_candidate` → memory candidate review; `persona_mutation_review` → harness patch proposal. | seven-stage adapters 4.2/4.3; 2026-07-12 plan |
-| D10 | **Change (operator direction 2026-11-12).** Harness self-optimisation, §6.8. Inside paper, adoption is automatic after the pre-check, the shadow comparison and risk-persona sign-off. Outside paper, the operator approves through governance. Risk and capital limits, environment ceiling and execution authority are outside the mutable surface. | amends `EVOLUTION_REVIEW_AND_THRESHOLDS.md:266-271` for paper; LP-001 gate; SD-02 PersonaPatch; A4 arms; UI spec change log |
-| D11 | The deleted Agora learning surfaces return as thin BFF forwarding over real owners. Their earlier failure was data with no owner, not the idea. | 總索引 axiom 12, §9.4.3; operator 2026-11-12 |
-| D12 | ⑩ uses the deterministic 2026-07-05 mapping for every recommendation; the agent writes rationale only. Each recommendation goes to its owner. A canary candidacy carries a risk-plus-red-team memo before it reaches the operator. | promotion governance spec; operator 2026-11-12 |
-| D13 | The persona cycle is shown in Management as its own health surface, not as a thirteenth canonical loop row. The catalog overlay's controller contract becomes implemented. | ACG-LOOP-PROJECTION 2026-08-28; loop catalog |
+| D7 | Panel (fills the deferred quorum and protocol). Initiator plus risk persona plus red-team persona, each answering independently from its own agent with its committee-visible memory, then one synthesis of agreements and disagreements. No vote; the initiator certifies as sponsor. A risk-persona `oppose` blocks automatic adoption and turns the item into an operator decision. | `Pantheon_總索引版系統分析文件.md:91-92` axiom 3 (L3 background); `docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md` Stage 2/4; `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md:213`. Panel composition and no-vote protocol are coordinator proposals filling the deferred specification under the §1 consultation direction |
+| D8 | Two non-trading consultable personas are provisioned through the normal create path: a risk persona and a red-team persona. | `Pantheon_總索引版系統分析文件.md` §7.2 「有些永遠只是 research / risk / red-team persona」 |
+| D9 | Approved conversation measures get consumers. `research_request` → discovery research ticket; `memory_candidate` → memory candidate review; `persona_mutation_review` → harness patch proposal. | `docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md` §4.2/§4.3; `docs/product/persona-interaction-and-governed-action-plan.md` |
+| D10 | **Change (operator direction 2026-11-12).** Harness self-optimisation, §6.8. Inside paper, adoption is automatic after the pre-check, the shadow comparison and risk-persona sign-off. Outside paper, the operator approves through governance. Risk and capital limits, environment ceiling and execution authority are outside the mutable surface. | amends `EVOLUTION_REVIEW_AND_THRESHOLDS.md:266-271` for paper; `services/control-plane/persona/lp001/contract.md` §6; `docs/03/SD-02_persona_governance.md` §4.8; A4 arms and UI change log cited in §2.4 |
+| D11 | The deleted Agora learning surfaces return as thin BFF forwarding over real owners. Their earlier failure was data with no owner, not the idea. | `Pantheon_總索引版系統分析文件.md` axiom 12, §9.4.3; operator quotes in §1 |
+| D12 | ⑩ uses the deterministic 2026-07-05 mapping for every recommendation; the agent writes rationale only. Each recommendation goes to its owner. A canary candidacy carries a risk-plus-red-team memo before it reaches the operator. | `docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md` §4; operator decision retained in §1 |
+| D13 | The persona cycle is shown in Management as its own health surface, not as a thirteenth canonical loop row. The catalog overlay's controller contract becomes implemented. | `docs/05/system-verification-rounds/INDEX.md:21-25`; `docs/deployment/loop-catalog.registry.json:724-736` |
 
 ## 5. Target model against the operator's diagram
 
@@ -220,7 +222,7 @@ persona（長期存在：條件、資金、記憶、策略池；一個帳戶）
   4. Act through owner routes.
   5. Learn references.
   The packet carries `harness_version` and all references. Agent failure stops the packet at `observing` with the reason; deterministic risk rules still run.
-- Runs inside an existing deployed process; it adds no controller framework. It publishes a loop-controller record for `per_persona_ooda` and per-persona health (last packet, stage reached, failure reason).
+- Runs in the existing persona service (`services/control-plane/persona/main.py`, using `services/persona/` controller modules). OpenClaw cron remains the sole schedule executor; `services/control-plane/cron/` owns workflow definitions and registration. Reconciliation repairs those registrations and consumes their run identities; it creates no independent timer, queue or scheduler. C1 persists packets through the existing `services/control-plane/ooda/jsonl_store.py`; it adds no controller framework. It publishes a loop-controller record for `per_persona_ooda` and per-persona health (last packet, stage reached, failure reason).
 - Security boundary of the July hold: no new privileged route, no credential change. It uses the existing adapter and persona service tokens. Anything credential-related is a separate task.
 
 ### 6.2 Persona agent per trading persona (C2)
@@ -259,7 +261,7 @@ One renderer is shared by the library and the ops script.
 
 ### 6.5 Consumers for approved conversation measures (C5)
 
-D9. Each consumer calls the owner's existing route. An approval that has no consumer is refused at approval time rather than stored silently.
+D9. The existing persona service owns dispatch of the approved measure; research requests execute in the research owner, memory candidates in `services/memory/`, and harness proposals in the persona owner. Each consumer calls the owner's existing route. An approval that has no consumer is refused at approval time rather than stored silently.
 
 ### 6.6 ①② sync: demand drives the existing persona strategy discovery (C6)
 
@@ -269,7 +271,7 @@ D9. Each consumer calls the owner's existing route. An approval that has no cons
   - `promote_seed_candidate` → seed store and L2;
   - `run_rapid_eval`;
   - `request_data_backfill` → L1 desired state.
-- The operator route stays. The collector query plan, L2 priority and template search tasks keep reading the demand unchanged.
+- The scorer is `services/control-plane/persona/persona_strategy_discovery.py`, called from the persona owner; research and seed actions remain with their existing owners. The operator route stays. The collector query plan, L2 priority and template search tasks keep reading the demand unchanged.
 
 ### 6.7 Restored Agora learning surfaces (C7)
 
@@ -383,4 +385,4 @@ Document amendments are delivered inside the tasks that need them:
 
 ## 10. Sources
 
-All repository paths are relative to the repository root. The original planning was recovered on 2026-11-12 from the dev tree at a7ff97105 by ten readers with one adversarial verifier each and a final document sweep. Hosted facts are read-only observations from the same day.
+All repository paths are relative to the repository root. Section 2 repository references were checked against the delivered base; the evidence manifest records the base, cited source blobs and verification results. The original planning was recovered on 2026-11-12 from the dev tree at a7ff97105 by ten readers with one adversarial verifier each and a final document sweep. Hosted observations are inherited coordinator context with the limitations stated in §3.
