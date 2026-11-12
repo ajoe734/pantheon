@@ -66,13 +66,26 @@ def test_public_dispatch_default_without_fetch_limit_preserves_complete_symbol_d
 def test_public_dispatch_explicit_limit_never_silently_truncates(limit, location):
     from services.source_ingestion.connectors.base import SourceEvidenceError
 
-    fetch_changes = {"max_records": limit if location == "fetch" else None}
+    fetch_changes = {"max_records": limit} if location == "fetch" else {}
     parameters = {"max_records": limit} if location == "request" else {}
     if limit < 271:
         with pytest.raises(SourceEvidenceError, match=r"complete symbol-day.*required=271.*allowed=" + str(limit)):
             _public_dispatch(_full_session(), parameters=parameters, fetch_changes=fetch_changes)
     else:
         assert len(_public_dispatch(_full_session(), parameters=parameters, fetch_changes=fetch_changes)) == 271
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+@pytest.mark.parametrize("location", ["fetch", "request"])
+def test_public_dispatch_nonpositive_limit_is_rejected(limit, location):
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    with pytest.raises(SourceEvidenceError, match="max_records must be > 0"):
+        _public_dispatch(
+            _full_session(),
+            fetch_changes={"max_records": limit} if location == "fetch" else {},
+            parameters={"max_records": limit} if location == "request" else {},
+        )
 
 
 @pytest.mark.parametrize("day", ["2026-10-09", "2026-02-16", "2026-11-08"])

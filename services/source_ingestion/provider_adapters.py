@@ -116,8 +116,13 @@ def execute_provider_owned_adapter(
         **_mapping(fetch.get("request")),
         **_mapping(job_parameters),
     }
-    default_max_records = adapter.max_records if isinstance(adapter, FinMindTaiwanKBarAdapter) else 100
-    max_records = int(fetch.get("max_records") or request.get("max_records") or default_max_records)
+    if isinstance(adapter, FinMindTaiwanKBarAdapter):
+        # Honor both configured and caller caps without inheriting the generic
+        # 100-row default or hiding an explicit zero behind a truthy fallback.
+        limits = [int(value) for value in (fetch.get("max_records"), request.get("max_records")) if value is not None]
+        max_records = min(limits, default=adapter.max_records)
+    else:
+        max_records = int(fetch.get("max_records") or request.get("max_records") or 100)
     if max_records < 1:
         raise SourceEvidenceError("fetch.max_records must be > 0 for provider_owned_adapter")
     request[EFFECTIVE_MAX_RECORDS_KEY] = max_records

@@ -5,12 +5,17 @@
     "adapter": "services/source_ingestion/connectors/finmind_taiwan.py: FinMindTaiwanKBarAdapter, FinMindLiveFetcher.fetch_kbar, fetch_kbar (budgeted), KBarHourlyBudget (4500/h, 402 stops until next hour, no retry), compute_bar_availability_ts, classify_range_probe, measure_volume_unit, observe_publication_time",
     "registry": "connector_definitions.py: tw-finmind-kbar-1m (datasets=tw_price_1m only); connectors/__init__.py export",
     "pit_contract": "normalized row carries provider_published_at (only if supplied, never invented), fetched_at, reconciled_at, bar_availability_ts = max(bar_end, fetched_at, reconciled_at), None (pending_reconciliation) until reconciled; raw row, request id, source hash and quota_meta (request_url stripped) are kept per record",
-    "session_rules": "Only exact local minute starts in 09:00..13:30 Asia/Taipei are normalized. Outside-session and malformed rows are counted; identical duplicates are counted. Conflicting duplicates, non-trading days and unsupported 13:31..13:39 closing shapes fail closed at records_from_kbar_payload/provider dispatch. 14:30 is excluded and counted. No new calendar or session tolerance is introduced.",
+    "session_rules": "Only exact local minute starts in 09:00..13:30 Asia/Taipei are normalized. Outside-session and malformed rows are counted; identical duplicates are counted. Conflicting duplicates, non-trading days and unsupported 13:31..13:39 closing shapes fail closed. Public dispatch uses the existing governed is_trading_day calendar; caller callable, closed_dates and holidays can add closures and cannot reopen governed closures. No new calendar or session tolerance is introduced.",
     "production_path": "provider_adapters._finmind_kbar: when request has no caller payload it performs a real FinMindLiveFetcher.fetch_kbar via fetch_kbar() with the process-wide shared KBarHourlyBudget (4500/h); missing credential -> FinMindCredentialError with zero network; budget exhausted / 402 -> SourceEvidenceError (stop, no retry in window). fetched_at comes from the real response. Caller-supplied payload still accepted for replay.",
-    "review_fixes_20261111": "records_from_kbar_payload now raises SourceEvidenceError on conflicting duplicate minutes (symbol-day fail closed, no first-wins record) and on non-trading day; provider_adapters._finmind_kbar passes a governed calendar gate (request is_trading_day callable, else closed_dates/holidays + Mon-Fri rule). Dispatch-path regression tests added (conflict, Sunday, closed-calendar callback).",
+    "review_fixes_20261111": "Initial conflict/non-trading-day fail-closed guards and handler tests. The initial weekday/caller-only calendar fallback and generic public 100-row limit were rejected by Codex2 at head 6a98de691e1f43890451208cc07c50d9a8b7c1c0 and are superseded by the public-dispatch fixes below.",
     "raw_preservation": "KBarNormalization exposes complete raw_rows plus response_content_hash even for excluded, malformed, duplicate and non-trading-day rows. Each emitted regular bar retains raw_row, row hash and full-response hash plus normalization_summary. K2 must persist the original fetched payload/raw_rows before projecting regular records; K1 does not claim that hosted storage already persists this envelope.",
     "adapter_registration": "services/source_ingestion/provider_adapters.py: registered FinMindTaiwanKBarAdapter token + _finmind_kbar handler. This path is now in the canonical artifact contract. Required because ConnectorDefinition rejects adapter tokens missing from the provider allowlist (module import fails otherwise). No behaviour change for other adapters.",
-    "unit_inference": "measure_volume_unit reports sample_only and reconciliation_status=not_evaluated. The 15% tolerance selects a candidate factor only. It does not replace or widen SD section 5 daily volume <=2%, OHLC <=max(0.1%,1 tick), coverage >=95% and quarantine/no-imputation. Four stock-days on two stocks do not establish universal units."
+    "unit_inference": "measure_volume_unit reports sample_only and reconciliation_status=not_evaluated. The 15% tolerance selects a candidate factor only. It does not replace or widen SD section 5 daily volume <=2%, OHLC <=max(0.1%,1 tick), coverage >=95% and quarantine/no-imputation. Four stock-days on two stocks do not establish universal units.",
+    "review_fixes_20261112": {
+      "complete_symbol_day": "KBar fetch_config advertises 271 records (09:00..13:30 inclusive), and public dispatch without a fetch limit defaults to the same capacity. Both configured and caller caps are honored using their minimum. Nonpositive caps fail before the handler; positive caps below actual normalized symbol-day size raise SourceEvidenceError before the generic slice, emitting no partial day. Other adapters retain their prior limit behavior.",
+      "governed_calendar": "provider_adapters._kbar_trading_day_gate delegates to existing services.execution.lean_runtime.instrument_candidates.is_trading_day. AND-composition preserves governed closures with a caller callable and unions both closed_dates and holidays; no calendar replacement or provider requests.",
+      "public_regressions": "execute_provider_owned_adapter tested with a complete 271-bar fixture ending at 13:30; absent fetch limit; fetch/request caps 100,270,271,300; nonpositive caps 0,-1; default 2026-10-09 and 2026-02-16 holidays plus Sunday; caller true cannot reopen closures; caller false and either/both holiday lists add closures."
+    }
   },
   "tests": {
     "environment": "Checkout-scoped .venv-pantheon provisioned with scripts/dev/provision_python_distribution.py using supervisor PANTHEON_DEPENDENCY_PYTHON. Added pyarrow 19.0.1 only to the checkout venv, within services/source_ingestion/requirements.txt declared >=15,<30.",
@@ -25,12 +30,17 @@
     },
     "regression_after_source_changes": {
       "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_kbar.py services/source_ingestion/tests/test_finmind_kbar_availability.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_provider_management_coverage.py services/source_ingestion/tests/test_connector_framework.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_registry_split.py",
-      "result": "185 passed, 1 warning in 30.55s",
+      "result": "213 passed, 1 warning in 25.23s",
       "exit_status": 0,
       "warning": "Existing Starlette/httpx deprecation warning in provider-management test."
     },
-    "regression_scope": "PIT max timestamp/pending reconciliation; generic adapter exclusion; provider budget/402 stop/missing credentials; raw hashes and excluded rows; unsupported delayed close; invalid minute precision; sample volume inference; current-dev broker published-date and parquet decode regressions.",
-    "evidence_class": "Local source/fixture tests only; no provider request, hosted deployment, backfill, live publication or clean-day proof."
+    "regression_scope": "PIT max timestamp/pending reconciliation; generic adapter exclusion; provider budget/402 stop/missing credentials; raw hashes and excluded rows; unsupported delayed close; invalid minute precision; sample volume inference; current-dev broker published-date and parquet decode regressions. Public dispatch full symbol-day preservation, configured/caller limit rejection and governed holiday composition regressions included.",
+    "evidence_class": "Local source/fixture tests only; no provider request, hosted deployment, backfill, live publication or clean-day proof.",
+    "review_defect_reproduction": {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_kbar.py services/source_ingestion/tests/test_finmind_kbar_availability.py",
+      "result": "15 failed, 43 passed in 3.50s before production fixes; exit 1. Reproduced truncation, default governed holidays and caller reopening of closures.",
+      "exit_status": 1
+    }
   },
   "real_source_probes": {
     "status": "run",
@@ -141,8 +151,8 @@
   "delivery": {
     "pr": "https://github.com/ajoe734/pantheon/pull/7195",
     "base_composition": "Includes current dev ffb30d7b9f2e55948bd9e44383af007e950ce1ec and both native-done code prerequisites; broker published-session helper and KBar generic-adapter exclusion preserved.",
-    "source_anchor": "928bf90b9",
-    "review_status": "Awaiting genuine assigned Codex2 independent exact-head review after owner handoff; no approval claimed by owner.",
+    "source_anchor": "aae690583",
+    "review_status": "Previous head 6a98de691e1f43890451208cc07c50d9a8b7c1c0 rejected by assigned Codex2. Both P1 fixes committed for fresh exact-head handoff; no owner approval claimed.",
     "ci_status": "Required CI for this new head must be checked on GitHub; local pytest is not CI.",
     "merge_status": "Open PR; only the existing canonical supervisor integrator may merge the approved exact head.",
     "hosted_status": "external_wait; preserved canonical completion track; whole K1 remains incomplete."
