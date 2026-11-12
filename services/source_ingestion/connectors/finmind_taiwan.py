@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import date, date as _date_cls, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from services.external_egress import open_external_url
 
@@ -229,6 +229,22 @@ def _finmind_url(endpoint: str, params: Mapping[str, Any] | None = None) -> str:
         return base
     query = urlencode(params)
     return f"{base}?{query}"
+
+
+_UNSAFE_URL_PARAMS = ("token", "api_key", "apikey", "authorization", "access_token", "secret", "password")
+
+
+def _safe_request_endpoint(url: str | None) -> str | None:
+    """Return the actual request URL if it is a clean http(s) URL without secrets."""
+    text = _text(url)
+    if not text:
+        return None
+    parts = urlsplit(text)
+    if parts.scheme not in {"http", "https"} or not parts.netloc or parts.username or parts.password:
+        return None
+    if any(key.lower() in _UNSAFE_URL_PARAMS for key, _ in parse_qsl(parts.query, keep_blank_values=True)):
+        return None
+    return text
 
 
 @dataclass(frozen=True)
@@ -547,6 +563,13 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
         records: list[SourceRecord] = []
+        # api_endpoint is only the actual transport request URL supplied by the caller;
+        # never the derived fallback, and never a URL carrying secrets.
+        request_endpoint = _safe_request_endpoint(source_url)
+        if _text(source_url) and request_endpoint is None:
+            # Reject before any record is built so a secret-bearing URL is never
+            # retained in source_url, api_endpoint, body or readback.
+            raise FinMindFetchError("FinMind broker request URL carries credentials or is not a clean http(s) URL")
         for row in self.top_rows_from_payload(
             payload,
             symbol=symbol,
@@ -595,6 +618,7 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                         "sell_qty": row["sell_qty"],
                         "net_qty": row["net_qty"],
                         "source_url": row["source_url"],
+                        **({"api_endpoint": request_endpoint} if request_endpoint else {}),
                         "raw_rows": [dict(raw) for raw in row.get("raw_rows", [])],
                         "body": json.dumps(row, ensure_ascii=False, sort_keys=True),
                         "access_scope": ["research"],
