@@ -71,6 +71,7 @@
     }
   ],
   "additional_check": "git diff --check",
+  "log_normalization": "Captured stdout/stderr with trailing whitespace removed; result text preserved.",
   "acceptance_evidence": {
     "1": [
       "test_contract_file_matches_code",
