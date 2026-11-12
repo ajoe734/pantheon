@@ -12,6 +12,7 @@ import copy
 from datetime import date, datetime, time, timedelta
 import hashlib
 import json
+import math
 import re
 from statistics import median
 from typing import Any, Mapping
@@ -327,10 +328,9 @@ def build_candidate_pool_snapshot(artifact: Mapping, market: Mapping, decision_t
                 excluded[symbol] = f"step_{index}:needs_data:incomplete_industry_cross_section"
             groups = {}
         if neutralize:
-            import math
-
-            groups = {group: [(symbol, score - math.fsum(v for _, v in values) / len(values))
-                              for symbol, score in values] for group, values in groups.items()}
+            for group, values in groups.items():
+                mean = math.fsum(score for _, score in values) / len(values)
+                groups[group] = [(symbol, score - mean) for symbol, score in values]
         kept = set()
         for values in groups.values():
             if step["kind"] == "filter":

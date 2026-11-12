@@ -7,7 +7,7 @@ import pytest
 
 from services.registry import factor_rule as fr
 from services.registry.candidate_pool import MARKET_FEATURE_KEY
-from services.registry.sector_features import classification_at, sector_flow_observations
+from services.registry.sector_features import classification_at, sector_flow_observations as derive_sector_flows
 from services.registry.strategy_artifact import evaluate_strategy_view, validate_strategy_artifact
 from services.registry.test_candidate_pool import screen_artifact
 from services.source_ingestion import feature_catalogue as fc
@@ -16,6 +16,11 @@ from services.source_ingestion.connectors import taiwan_official as tw
 REPO = Path(__file__).resolve().parents[2]
 EVIDENCE = REPO / "docs/deployment/evidence/TW-INDUSTRY-CLASSIFICATION-DATASET-20261112"
 FIXTURE = REPO / "services/source_ingestion/tests/fixtures/tpex_company_profile_recorded.json"
+ENTITIES = ("3105.TPEX", "6488.TPEX", "8069.TPEX")
+
+
+def sector_flow_observations(observations, *, decision_time):
+    return derive_sector_flows(observations, decision_time=decision_time, required_entities=ENTITIES)
 
 
 def recorded_observations():
@@ -98,7 +103,7 @@ def test_sector_sum_uses_real_flows_and_latest_known_industry():
         assert row["event_time"] == "2026-11-12"
     assert by_entity["3105.TPEX"]["value"] == by_entity["6488.TPEX"]["value"]
     features = fc.feature_inputs_for_factor_rule(obs, [{"name": "sector", "dataset": "tw_sector_flows", "field": "net_shares"}],
-        entity="3105.TPEX", decision_time="2026-11-13")
+        entity="3105.TPEX", decision_time="2026-11-13", sector_entities=ENTITIES)
     assert features["sector"][0]["value"] == by_entity["3105.TPEX"]["value"]
 
 
@@ -205,3 +210,12 @@ def test_forward_observations_keep_original_history_and_do_not_remap_prior_flows
     assert classification_at(combined, decision_time="2026-11-13") == first
     assert classification_at(combined, decision_time="2026-11-15")["3105.TPEX"]["value"] == 26
     assert sector_flow_observations(combined, decision_time="2026-11-15") == before
+
+
+def test_sector_aggregation_requires_explicit_complete_market_boundary():
+    obs, _ = recorded_observations()
+    assert derive_sector_flows(obs, decision_time="2026-11-13") == []
+    assert derive_sector_flows(obs, decision_time="2026-11-13", required_entities=[*ENTITIES, "1240.TPEX"]) == []
+    features = fc.feature_inputs_for_factor_rule(obs, [{"name": "sector", "dataset": "tw_sector_flows", "field": "net_shares"}],
+        entity="3105.TPEX", decision_time="2026-11-13")
+    assert features == {"sector": []}

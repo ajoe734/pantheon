@@ -493,13 +493,17 @@ def feature_inputs_for_factor_rule(
     *,
     decision_time: Any,
     entity: str | None = None,
+    sector_entities: Sequence[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Build the ``features`` mapping for a factor rule from governed observations."""
     obs_list = list(observations)
     if any(item.get("dataset") == "tw_sector_flows" for item in inputs):
         from services.registry.sector_features import sector_flow_observations
 
-        obs_list.extend(sector_flow_observations(obs_list, decision_time=decision_time))
+        obs_list = [o for o in obs_list if o.get("dataset") != "tw_sector_flows"]
+        obs_list.extend(sector_flow_observations(
+            obs_list, decision_time=decision_time, required_entities=sector_entities,
+        ))
     features: dict[str, list[dict[str, Any]]] = {}
     for item in inputs:
         series = read_feature_series(

@@ -560,6 +560,8 @@ def parse_factor_expression(
     When ``allow_cross_sectional=True`` (used when storing cross-sectional
     ``AlphaTemplate`` definitions), cross-sectional operators are accepted in
     the AST.
+    ``allow_industry_neutralize`` is used only by the market screen validator;
+    per-symbol evaluation still rejects it because it has no cross-section.
     """
     if _depth > MAX_FACTOR_AST_DEPTH:
         raise FactorRuleValidationError(

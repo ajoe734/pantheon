@@ -36,15 +36,13 @@ def sector_flow_observations(
 ) -> list[dict[str, Any]]:
     """Latest complete same-session sector totals, projected onto each member.
 
-    The caller supplies the complete governed market. Without an explicit entity
-    set we require every entity present in either classification or flow inputs.
+    The caller supplies the complete governed market entity set. Without that
+    boundary no aggregate is emitted: a partial observation list cannot prove it.
     Every member needs all three flows on the same day and classification known
     by that day's end. Today’s profile cannot classify any prior day's flow.
     """
     rows = list(observations)
-    entities = set(required_entities) if required_entities is not None else {
-        str(o["entity"]) for o in rows if o.get("dataset") in {INDUSTRY, FLOW} and o.get("entity")
-    }
+    entities = set(required_entities or ())
     if not entities:
         return []
     by_field = {
