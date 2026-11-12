@@ -99,7 +99,8 @@
       "test_wrong_current_binding_refused",
       "test_unapproved_envelope_never_reaches_deployment",
       "test_dispatch_failure_records_reason_and_old_envelope_keeps_running",
-      "test_older_pool_version_refused_after_newer_published"
+      "test_older_pool_version_refused_after_newer_published",
+      "test_pre_dispatch_owner_read_failure_is_503_and_recorded[runtime_bindings,envelope_registry,member_registry]"
     ],
     "5": [
       "test_duplicate_publish_is_idempotent",

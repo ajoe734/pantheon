@@ -558,3 +558,35 @@ def test_real_pool_factory_translates_owner_errors(
     record = personas_lifecycle._POOL_PUBLISH_RECORDS.get("tenant-a:persona-a")
     assert record is not None and record["refusals"]
     assert record["refusals"][-1]["step"] in {"pool", "owner_unavailable"}
+
+
+@pytest.mark.parametrize("owner_read", ["runtime_bindings", "envelope_registry", "member_registry"])
+def test_pre_dispatch_owner_read_failure_is_503_and_recorded(world, monkeypatch, tmp_path, owner_read):
+    """Every authoritative pre-dispatch owner read fails closed with 503."""
+    import urllib.error
+
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 0.5)], 0)
+    error = urllib.error.HTTPError("http://owner.invalid/read", 503, "unavailable", None, None)
+    if owner_read == "runtime_bindings":
+        def fail_binding_read(*args):
+            raise error
+
+        world.coordinator.runtime_binding_reader = fail_binding_read
+    else:
+        original = world.transport.get
+
+        def get(owner, path):
+            if owner == "registry" and (
+                owner_read == "envelope_registry" or path.endswith("/artifact-a")
+            ):
+                raise error
+            return original(owner, path)
+
+        world.transport.get = get
+    calls_before = list(world.runtime.calls)
+    response = TestClient(client.app, raise_server_exceptions=False).post(PATH, json={}, headers=H)
+    assert response.status_code == 503, response.text
+    refusals = world.publisher.history(TENANT, PERSONA)["refusals"]
+    assert refusals and refusals[-1]["step"] == "owner_unavailable"
+    assert world.runtime.calls == calls_before

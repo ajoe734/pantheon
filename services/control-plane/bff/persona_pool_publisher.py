@@ -164,9 +164,15 @@ class PersonaPoolPublisher:
 
     # -- member snapshot ---------------------------------------------------
     def _member_entry(self, tenant_id: str, ref: str, checksum: str) -> Mapping[str, Any]:
-        receipt = self.coordinator.transport.get(
-            "registry", f"/api/registry/strategy-artifacts/{_path_id(ref)}"
-        )
+        try:
+            receipt = self.coordinator.transport.get(
+                "registry", f"/api/registry/strategy-artifacts/{_path_id(ref)}"
+            )
+        except Exception as exc:  # owner HTTP/transport failure while reading a member
+            raise PoolPublishRefused(
+                f"member registry read unavailable: {type(exc).__name__}: {exc}",
+                status_code=503, step="owner_unavailable",
+            ) from exc
         if receipt is None:
             raise PoolPublishRefused(f"member {ref!r} is not a registry entry", step="member")
         entry = _registry_entry(receipt)
@@ -190,10 +196,32 @@ class PersonaPoolPublisher:
     def _registry_view(self, artifact_id: str) -> "Mapping[str, Any] | None":
         if not artifact_id:
             return None
-        receipt = self.coordinator.transport.get(
-            "registry", f"/api/registry/strategy-artifacts/{_path_id(artifact_id)}"
-        )
+        try:
+            receipt = self.coordinator.transport.get(
+                "registry", f"/api/registry/strategy-artifacts/{_path_id(artifact_id)}"
+            )
+        except Exception as exc:  # owner HTTP/transport failure: nothing moved
+            raise PoolPublishRefused(
+                f"envelope registry read unavailable: {type(exc).__name__}: {exc}",
+                status_code=503, step="owner_unavailable",
+            ) from exc
         return _registry_entry(receipt) if receipt is not None else None
+
+    def _guarded(self, tenant_id, persona_id, number, fn):
+        """Run an authoritative pre-dispatch owner read; fail closed on error."""
+        try:
+            return fn()
+        except PoolPublishRefused as exc:
+            if exc.step != "owner_unavailable":
+                raise
+            self._refuse(tenant_id, persona_id, number, exc.reason,
+                         status_code=exc.status_code, step=exc.step)
+        except Exception as exc:
+            self._refuse(
+                tenant_id, persona_id, number,
+                f"owner read unavailable: {type(exc).__name__}: {exc}",
+                status_code=503, step="owner_unavailable",
+            )
 
     # -- publish -----------------------------------------------------------
     def publish(
@@ -243,8 +271,12 @@ class PersonaPoolPublisher:
         # Authoritative owner state, never the local record: the live binding
         # says what runs now and the Registry says what each envelope is.
         reader = self.coordinator.runtime_binding_reader
+        bindings = self._guarded(
+            tenant_id, persona_id, number,
+            lambda: reader(ids.deployment_plan_id, ids.capital_pool_id) if reader else [],
+        )
         live = [
-            b for b in (reader(ids.deployment_plan_id, ids.capital_pool_id) if reader else [])
+            b for b in bindings
             if b.get("capital_pool_id") == ids.capital_pool_id
             and b.get("status") not in TERMINAL_RUNTIME_BINDING_STATUSES
         ]
@@ -255,7 +287,9 @@ class PersonaPoolPublisher:
                 status_code=409, step="binding",
             )
         live_binding = live[0]
-        existing = self._registry_view(artifact_id)
+        existing = self._guarded(
+            tenant_id, persona_id, number, lambda: self._registry_view(artifact_id)
+        )
         if existing is not None:
             meta = existing.get("metadata") or {}
             if meta.get("pool_digest") != digest:
@@ -269,7 +303,10 @@ class PersonaPoolPublisher:
                 "version": meta.get("previous_envelope_version"),
             }
         else:
-            live_entry = self._registry_view(live_binding.get("artifact_id") or "")
+            live_entry = self._guarded(
+                tenant_id, persona_id, number,
+                lambda: self._registry_view(live_binding.get("artifact_id") or ""),
+            )
             live_pool = int(((live_entry or {}).get("metadata") or {}).get("pool_version") or 0)
             if number <= live_pool:
                 self._refuse(
@@ -320,7 +357,10 @@ class PersonaPoolPublisher:
                 f"owner path unavailable: {exc}", status_code=503, step="owner_unavailable",
             )
 
-        moved = self._binding_moved(ids, receipt)
+        try:
+            moved = self._binding_moved(ids, receipt)
+        except Exception:  # readback failed after dispatch: report truthfully as unconfirmed
+            moved = False
         entry = {
             "pool_version": number,
             "pool_digest": digest,
