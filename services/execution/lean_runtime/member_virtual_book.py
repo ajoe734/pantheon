@@ -26,7 +26,8 @@ def virtual_book_metrics(returns, *, periods_per_year=252):
             if deviation > 0 else None,
             "sharpe_undefined_reason": None if deviation > 0 else "insufficient_or_constant_returns",
             "max_drawdown": drawdown, "observation_count": len(returns),
-            "basis": "underlying_gross_virtual", "is_real_order": False}
+            "basis": "underlying_gross_virtual", "periods_per_year": periods_per_year,
+            "is_real_order": False}
 
 
 class MemberVirtualBooks:
@@ -99,7 +100,8 @@ class MemberVirtualBooks:
         self.books = candidate
         return self.snapshot(binding_id=binding_id, envelope_checksum=envelope_checksum)
 
-    def snapshot(self, *, binding_id=None, envelope_checksum=None):
+    def snapshot(self, *, binding_id=None, envelope_checksum=None, baseline_resolver=None):
+        """``baseline_resolver(artifact_id, checksum, symbols)`` returns the member's own baseline."""
         groups = {}
         for book in self.books.values():
             if binding_id and book["binding_id"] != binding_id:
@@ -134,4 +136,11 @@ class MemberVirtualBooks:
                            "aggregation": "equal_notional_per_underlying",
                            "marks_complete": complete,
                            "as_of": dates[-1][1] if dates else None})
+            if baseline_resolver is not None:
+                from services.evolution.approved_baselines import compare_member_book
+                member = result[-1]
+                baseline = baseline_resolver(member["artifact_id"], member["checksum"],
+                                             [u["symbol"] for u in member["underlyings"]])
+                member["baseline"] = baseline
+                member["baseline_comparison"] = compare_member_book(baseline, member)
         return result

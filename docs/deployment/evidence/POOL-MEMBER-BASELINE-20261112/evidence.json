@@ -1,0 +1,21 @@
+{
+  "task_id": "POOL-MEMBER-BASELINE-20261112",
+  "scope": "source delivery only; no hosted activation, no autonomous action, no natural-event acceptance claim",
+  "implemented": {
+    "resolver": "services/evolution/approved_baselines.py (resolve_member_baseline, compare_member_book)",
+    "virtual_book": "member_virtual_book.py: periods_per_year recorded; snapshot(baseline_resolver=) adds baseline and baseline_comparison per member",
+    "runtime_entry_point": "paper_runtime.py _member_book_snapshot used by snapshot, heartbeat and signal_generation metadata",
+    "pool_entry_point": "persona_strategy_pool.py PersonaStrategyPoolStore.member_baselines (read-only, keyed by pool_version, artifact_ref, checksum)",
+    "telemetry": "runtime_summary already passes member_virtual_books through; verified unchanged by test_portfolio_envelope_parity"
+  },
+  "validation": {
+    "command": "pytest: test_persona_strategy_pool, test_approved_baselines, test_member_virtual_book, test_portfolio_envelope_parity, test_paper_runtime, test_runtime_summary_projection, test_performance_telemetry",
+    "result": "23 passed + 266 passed, 0 failed"
+  },
+  "remaining_gaps": [
+    "The replication gate does not yet emit tenant_id, artifact_checksum, validated_universe, return_basis or periods_per_year in its verdict, and nothing persists the verdict to registry entry metadata.replication_gate_verdict; until it does every member resolves to explicit no_approved_baseline (fail-closed, no defaults).",
+    "The runtime has no production registry reader injected (_member_entry_reader is unset), so hosted runtimes report registry_entry_missing; wiring is an owner-contract follow-up outside this scope.",
+    "Tests use local fixtures, not recorded Taiwan gate output; no hosted market-day claim.",
+    "Autonomous member actions remain with EVOLUTION-POOL-MEMBER-ACTIONS and POOL-ADMISSION-AND-WEIGHTS."
+  ]
+}

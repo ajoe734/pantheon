@@ -302,3 +302,23 @@ def test_concurrent_refusals_are_all_recorded(env):
     [t.start() for t in ts]; [t.join() for t in ts]
     assert sorted(results) == ["x-1", "x-2"]
     assert sorted(r["artifact_ref"] for r in store.refusals("persona-1", "tenant-a")) == ["x-1", "x-2"]
+
+
+def test_member_baselines_resolve_each_member_from_its_own_gate_proof(env, tmp_path):
+    client, reg, owner = env
+    from persona_strategy_pool import PersonaStrategyPoolStore
+    from services.evolution.test_approved_baselines import entry
+
+    reg.add("art-1"); reg.add("art-2")
+    assert _post(client, [_member("art-1", risk_weight=0.5), _member("art-2", stage="trial", risk_weight=0.1,
+                                                                    baseline_ref=None, parent_ref="art-1")], 0).status_code == 201
+    good = entry("art-1", CHECKSUM, tenant_id="tenant-a")
+    good["owner_tenant"] = "tenant-a"
+    reg.entries["art-1"]["metadata"].update(good["metadata"])
+    store = PersonaStrategyPoolStore(AtomicJsonRecordStore(tmp_path / "pools.json"), registry_reader=reg.read)
+    rows = store.member_baselines("persona-1", "tenant-a")
+    by_ref = {r["baseline"]["baseline_key"].split("/")[2]: r for r in rows}
+    assert by_ref["art-1"]["baseline"]["status"] == "approved"
+    # the trial child has no pass of its own: it never inherits the parent's proof
+    assert by_ref["art-2"]["baseline"]["reason"] == "gate_verdict_missing"
+    assert by_ref["art-2"]["stage"] == "trial" and by_ref["art-2"]["pool_version"] == 1

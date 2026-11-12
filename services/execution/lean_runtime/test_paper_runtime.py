@@ -6135,5 +6135,66 @@ class TestPaperFuturesFillEpisode(unittest.TestCase):
         self.assertEqual(algo.open_episodes, {})
 
 
+class PoolMemberBaselineRuntimeTest(unittest.TestCase):
+    """Production snapshot path: each member carries its own baseline/comparison."""
+
+    _identity = PaperRuntimeServiceTest._identity
+
+    def _outbox(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        return Path(directory.name) / "lifecycle.json"
+
+    def test_snapshot_attributes_baseline_per_member_not_combined_account(self):
+        from services.evolution.test_approved_baselines import entry
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        entries = {"decay": entry("decay", "sha256:m-decay", tenant_id="default"),
+                   "good": entry("good", "sha256:m-good", tenant_id="default",
+                                 out_of_sample_sharpe_ratio=-5.0)}
+        for e in entries.values():
+            e["owner_tenant"] = "default"
+        service._member_entry_reader = lambda ref, tenant: entries.get(ref)
+
+        def member(ref, checksum, direction):
+            return {ref: {"artifact_id": ref, "version": "1", "checksum": checksum, "virtual_only": False,
+                          "underlying_count": 1, "view": {"direction": direction, "strength": 1}}}
+        for day, price in ((1, 100), (2, 90), (3, 99), (4, 90), (5, 100)):
+            members = {**member("decay", "sha256:m-decay", "LONG"),
+                       **member("good", "sha256:m-good", "SHORT" if day < 4 else "LONG")}
+            service._member_virtual_books.observe(
+                binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="recorded-twse",
+                members=members, bar_frequency="1d")
+        books = {b["member_id"]: b for b in service.snapshot()["paper_state"]["member_virtual_books"]}
+        self.assertEqual(set(books), {"decay", "good"})
+        self.assertEqual(books["decay"]["baseline"]["oos_sharpe"], 1.2)
+        self.assertEqual(books["good"]["baseline"]["oos_sharpe"], -5.0)
+        self.assertEqual(books["decay"]["baseline"]["checksum"], books["decay"]["checksum"])
+        self.assertTrue(books["decay"]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertFalse(books["good"]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertTrue(all(not b["is_real_order"] for b in books.values()))
+
+    def test_without_registry_reader_each_member_reports_missing_reason(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        for day, price in ((1, 100), (2, 110)):
+            service._member_virtual_books.observe(
+                binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                members={"m": {"artifact_id": "m", "version": "1", "checksum": "sha256:m",
+                               "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
+                bar_frequency="1d")
+        [book] = service.snapshot()["paper_state"]["member_virtual_books"]
+        self.assertEqual(book["baseline"]["reason"], "registry_entry_missing")
+        self.assertEqual(book["baseline_comparison"]["status"], "no_approved_baseline")
+
+
 if __name__ == "__main__":
     unittest.main()
