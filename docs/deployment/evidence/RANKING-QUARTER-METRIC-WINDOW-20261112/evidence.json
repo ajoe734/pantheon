@@ -3,8 +3,8 @@
   "task_id": "RANKING-QUARTER-METRIC-WINDOW-20261112",
   "owner": "Codex2",
   "assigned_reviewer": "Claude",
-  "review_state": "blocked_before_independent_review_on_artifact_scope",
-  "base_commit": "ac4fd811d",
+  "review_state": "owner_ready_for_independent_exact_head_review",
+  "base_commit": "ac4fd811db2c2c48a2e3cb870b3ec1fb15406d9d",
   "source_anchor_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
   "formula_version": "pm12-return-on-capital-v2",
   "formula_weights_and_sample_thresholds_changed": false,
@@ -61,9 +61,84 @@
     {
       "command": "git diff --check",
       "exit_code": 0
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 0,
+      "result": "5 passed, 3 warnings in 8.13s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture-contract-repaired.log",
+      "sha256": "18f4a404b74739600f86f78aaa2e1ec99335751844899fc6851f3cb5067c1ca1",
+      "raw_output_sha256": "18f4a404b74739600f86f78aaa2e1ec99335751844899fc6851f3cb5067c1ca1",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/execution/lean_runtime/test_performance_telemetry.py services/telemetry/test_runtime_summary_projection.py services/rankings/test_store.py services/capital/test_allocation_lineage_integrity.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+      "exit_code": 0,
+      "result": "292 passed, 6 warnings, 28 subtests passed in 87.28s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/refreshed-scoped.log",
+      "sha256": "393297b8e8f5e122697f3490010f820ebd2ebb28cad9806164c0584c2b581c48",
+      "raw_output_sha256": "393297b8e8f5e122697f3490010f820ebd2ebb28cad9806164c0584c2b581c48",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_persona_evaluator_projection.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_persona_governance_owner_readback.py services/control-plane/bff/tests/test_persona_archived_lifecycle.py services/control-plane/bff/tests/test_promotion_review_production_defects.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+      "exit_code": 1,
+      "result": "8 failed, 162 passed, 3 warnings in 137.52s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture-callers.log",
+      "sha256": "1dc4066e54b16d7685c83d0763777d723f56408d71018bc23e7ed871c2f2fc5b",
+      "raw_output_sha256": "18dca5988c591b3a020e9f9abaead117f23f143ee6871e4c166e041b5a8181f7",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_uses_narrow_port_without_delaying_health services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_returns_narrow_port_records_without_legacy_reader services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_health_stays_fast_while_alerts_read_is_slow services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_alerts_timeout_returns_degraded_envelope_without_hanging",
+      "exit_code": 1,
+      "result": "4 failed, 14 passed, 3 warnings in 33.26s",
+      "tested_source_commit": "ac4fd811db2c2c48a2e3cb870b3ec1fb15406d9d",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/dev-baseline.log",
+      "sha256": "e247f5833ca7847d7923d3ffccae918a60286aa5cb6eeaa024c17c202a22f52c",
+      "raw_output_sha256": "d0f74ae87916f71093b527b2e43800f520f9e21f204ad183ec3d00eaef12f7ee",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged.",
+      "working_directory": "/tmp/pantheon-quarter-baseline-20261112",
+      "baseline_setup": "git archive ac4fd811db2c2c48a2e3cb870b3ec1fb15406d9d | tar -x -C /tmp/pantheon-quarter-baseline-20261112; python3 scripts/dev/provision_python_distribution.py"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied services/control-plane/bff/test_bff_promotion_review_governance.py::test_cockpit_timeout_degrades_without_blocking_health services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_uses_narrow_port_without_delaying_health services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_returns_narrow_port_records_without_legacy_reader services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_health_stays_fast_while_alerts_read_is_slow services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_alerts_timeout_returns_degraded_envelope_without_hanging",
+      "exit_code": 1,
+      "result": "3 failed, 5 passed, 3 warnings in 14.07s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/failed-callers-recheck.log",
+      "sha256": "caf0e09b3941a74dcf6456a57ac34e60176f568da67ec7b331ec9098886981e2",
+      "raw_output_sha256": "e4c8e52be6a71abeca9b8433041b6174fbdba44105674c6cd12d07ac2df02683",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q services/rankings services/telemetry",
+      "exit_code": 0,
+      "result": "592 passed, 1 skipped, 47 warnings, 54 subtests passed in 197.58s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/expanded-owners.log",
+      "sha256": "f36cb51e1b330a38daf004e80c3a7f583d338ff6c2d66d7c2fb9993553410d43",
+      "raw_output_sha256": "bd2eb84905a224a2b131829a3bdbc6b5db7c5d16f13bf418457cab63c870c9ef",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
     }
   ],
-  "scope_hold": {
+  "limitations": [
+    "No hosted deployment, allocation, capital mutation or hosted acceptance.",
+    "Existing latest-only summaries remain unknown; historical equity/marks are never reconstructed.",
+    "Maximum drawdown is over retained observed equity, not proof of complete intraday coverage.",
+    "Older ledgers require a real quarter-opening observation; external cash flows, currency mismatch and unsynchronized runtime grids fail closed.",
+    "Owner observations are retained without silent truncation; the projection JSON grows with actual valuation history.",
+    "Broader caller suite is not wholly green: baseline-reproduced Inbox/Cockpit and portfolio failures plus timing-sensitive first-run failures are recorded without waiving assertions.",
+    "Original expanded whole-service invocation remains exit 124 / NOT passed. Fresh bounded scoped and Rankings/Telemetry batches completed separately; their totals overlap and must not be added.",
+    "Expanded owner suites report one existing skip; no tests or skip conditions were added or changed by the fixture repair.",
+    "Independent Claude approval, required CI, native supervisor integration and owner done remain pending."
+  ],
+  "fixture_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+  "pull_request": "https://github.com/ajoe734/pantheon/pull/7240",
+  "prior_scope_hold": {
     "required_actor": "Human/Ops",
     "required_artifact": "services/control-plane/bff/test_bff_promotion_review_governance.py",
     "reason": "Shared eligible-fixture builder lacks retained owner quarter series and per-metric timestamps; three real contract tests now correctly fail closed. Artifact is absent from this task contract.",
@@ -74,15 +149,27 @@
       "scripts/ai_status.py::command_artifact_contract (Human/Ops only; todo/blocked)",
       ".orchestrator/rewrite/task_contract.py::validate_task_artifact_diff_scope"
     ],
-    "dependency_blocker": false
+    "dependency_blocker": false,
+    "status": "resolved",
+    "resolved_by": "Human/Ops",
+    "canonical_artifact_contract_updated_at": "2026-11-12T14:02:08Z",
+    "canonical_reopened_at": "2026-11-12T14:02:15Z",
+    "resolution": "Authorized exact shared fixture file; prepared 23-line patch applied and committed as 7e7380efa; unchanged fixture contract 5/5 passes."
   },
-  "limitations": [
-    "No hosted deployment, allocation, capital mutation or hosted acceptance.",
-    "Existing latest-only summaries remain unknown; historical equity/marks are never reconstructed.",
-    "Maximum drawdown is over retained observed equity, not proof of complete intraday coverage.",
-    "Older ledgers require a real quarter-opening observation; external cash flows, currency mismatch and unsynchronized runtime grids fail closed.",
-    "Owner observations are retained without silent truncation; the projection JSON grows with actual valuation history.",
-    "Proposed shared-fixture repair is only a committed patch artifact, not applied repository source.",
-    "Review, integration, and owner done are pending; expanded whole-service timeout is not a passing result."
-  ]
+  "caller_baseline_comparison": {
+    "baseline_commit": "ac4fd811db2c2c48a2e3cb870b3ec1fb15406d9d",
+    "persistent_failures_on_both_base_and_head": [
+      "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks",
+      "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied",
+      "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary"
+    ],
+    "variable_failure_on_base_and_initial_head_but_passed_head_recheck": "services/control-plane/bff/test_bff_promotion_review_governance.py::test_cockpit_timeout_degrades_without_blocking_health",
+    "four_timing_failures_passed_base_and_head_recheck": [
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_uses_narrow_port_without_delaying_health",
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_returns_narrow_port_records_without_legacy_reader",
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_health_stays_fast_while_alerts_read_is_slow",
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_alerts_timeout_returns_degraded_envelope_without_hanging"
+    ],
+    "conclusion": "All four persistent or variable non-timing failure identities reproduced on unchanged dev. No caller assertions, skips, production rules or out-of-contract sources changed. Initial failed runs remain failed evidence."
+  }
 }
