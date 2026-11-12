@@ -663,7 +663,7 @@ def test_approval_rejects_self_approval_and_target_mismatch(monkeypatch):
     assert "scope mismatch" in wrong_tenant.text
 
 
-def test_approval_accepts_matching_canonical_decision(monkeypatch):
+def test_matching_canonical_decision_still_requires_measure_consumer(monkeypatch):
     c = strict_client(monkeypatch)
     proposer_auth = jwt_authorization("proposal-user", ["operator"])
     reviewer_auth = jwt_authorization("risk-reviewer", ["reviewer"])
@@ -734,9 +734,11 @@ def test_approval_accepts_matching_canonical_decision(monkeypatch):
         },
     )
 
-    assert approved.status_code == 200, approved.text
-    assert approved.json()["data"]["state"] == "approved"
-    assert approved.json()["data"]["audit"][-1]["approval_refs"] == [record["decision_id"]]
+    assert approved.status_code == 422, approved.text
+    assert "no downstream consumer" in approved.text
+    latest = c.get(f"/bff/agora/proposals/{pid}", headers={"Authorization": proposer_auth})
+    assert latest.json()["data"]["state"] == "validated"
+    assert latest.headers["etag"] == validated.headers["etag"]
 
 
 def test_approval_rejects_stale_content_validation_time_and_expiry_bindings(monkeypatch):

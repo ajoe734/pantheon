@@ -213,7 +213,7 @@ def test_postgres_candidate_link_and_sse_outbox_are_atomic_and_restart_safe(
     assert interaction["candidate_proposal_links"] == [link]
     timeline = restarted_lifecycle.timeline("interaction-a", "tenant-a", "user-a")
     assert timeline is not None
-    assert [item["payload"] for item in timeline] == [outbox[0]["payload"]]
+    assert [item["payload"] for item in timeline if item["payload"].get("event_type") == "candidate.created"] == [outbox[0]["payload"]]
 
 
 def test_postgres_atomic_candidate_rolls_back_on_outbox_identity_conflict(

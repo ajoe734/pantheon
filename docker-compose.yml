@@ -756,6 +756,11 @@ services:
     environment:
       PORT: "8101"
       RESEARCH_ORCHESTRATOR_DATA_DIR: /data/research-orchestrator
+      MEMORY_SVC_URL: http://memory:8086
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      RESEARCH_MEMORY_WORKER_ENABLED: "true"
+      RESEARCH_MEMORY_POLL_SECONDS: "30"
       RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS: ${RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS:-8}
       RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS: "false"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -1913,6 +1918,29 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+
+  learning-feedback-bridge:
+    profiles: ["core", "root"]
+    build:
+      context: .
+      dockerfile: services/memory/Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "services.persona.learning_feedback_bridge", "--poll", "30", "--skip-openclaw-sync"]
+    environment:
+      EVOLUTION_API_URL: http://evolution:8093
+      POSTMORTEMS_API_URL: http://postmortems:8091
+      MEMORY_API_URL: http://memory:8086
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
+      EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+    depends_on:
+      memory:
+        condition: service_healthy
+      evolution:
+        condition: service_healthy
+      postmortems:
+        condition: service_healthy
 
   memory:
     profiles: ["core", "root"]
