@@ -787,6 +787,8 @@ services:
       # Daily paper-only allocator (cap 5); set DISCOVERY_ALLOCATOR_ENABLED=false to disable.
       DISCOVERY_ALLOCATOR_ENABLED: ${DISCOVERY_ALLOCATOR_ENABLED:-true}
       DISCOVERY_ALLOCATOR_TENANT_ID: ${DISCOVERY_ALLOCATOR_TENANT_ID:-tenant-dev}
+      # Discovery mandate profile (JSON object scored by persona_strategy_match); unset = allocator records mandate_profile_missing and binds nothing.
+      DISCOVERY_ALLOCATOR_MANDATE_PROFILE: ${DISCOVERY_ALLOCATOR_MANDATE_PROFILE:-}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
       - dev-paper-research-tokens:/run/pantheon-principals:ro

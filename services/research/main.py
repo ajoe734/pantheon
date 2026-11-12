@@ -2444,24 +2444,52 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
 
 # --- Discovery allocator: daily paper-only run inside this orchestrator ---
 DISCOVERY_ALLOCATOR_TENANT = os.getenv("DISCOVERY_ALLOCATOR_TENANT_ID", "default")
-def _discovery_owner_call(service: str, method: str, url: str, body: Optional[Dict[str, Any]]) -> Any:
+def _discovery_owner_call(
+    service: str, method: str, url: str, body: Optional[Dict[str, Any]], headers: Optional[Dict[str, str]] = None,
+) -> Any:
     from services.research import discovery_allocator as _da
 
     token_variable = {
         "persona": "RESEARCH_PERSONA_SERVICE_TOKEN",
         "provisioning": "RESEARCH_BFF_SERVICE_TOKEN",
         "registry": "RESEARCH_REGISTRY_SERVICE_TOKEN",
-        "capital": "RESEARCH_CAPITAL_SERVICE_TOKEN",
     }[service]
     try:
         return _retrain_call(
             step=f"discovery_allocator_{service}", service=service, method=method, url=url,
             tenant_id=DISCOVERY_ALLOCATOR_TENANT, token_variable=token_variable, body=body,
+            extra_headers=headers,
         )
     except _OwnerRejection as exc:
         raise _da.OwnerRejected(service, int(getattr(exc, "status", None) or getattr(exc, "code", 0) or 0), str(getattr(exc, "detail", exc))) from None
     except _RetrainFailure as exc:
         raise _da.OwnerUnreachable(service, str(exc)) from None
+
+
+def _discovery_mandate_profile() -> Optional[Dict[str, Any]]:
+    """Discovery mandate profile from allocator settings (JSON object); absent/invalid -> None (fail closed)."""
+    raw = os.getenv("DISCOVERY_ALLOCATOR_MANDATE_PROFILE", "").strip()
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) and value else None
+
+
+def _discovery_gate_evidence() -> Any:
+    """Gate results: published research findings plus the persisted backtest runs they cite."""
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore
+    from services.research.research_memory_outbox import ResearchMemoryOutboxStore
+
+    findings = [
+        r.to_dict()
+        for r in ResearchMemoryOutboxStore(ALPHA_REPLICATION_DATA_DIR).list_records()
+        if r.source_event_type == "research_finding_published"
+    ]
+    runs = SharedBacktestRunStore(Path(ALPHA_REPLICATION_DATA_DIR) / "backtest_runs.json")
+    return findings, runs.get
 
 
 def _build_discovery_allocator_ports() -> Dict[str, Any]:
@@ -2472,10 +2500,10 @@ def _build_discovery_allocator_ports() -> Dict[str, Any]:
         persona_url=os.getenv("DISCOVERY_ALLOCATOR_PERSONA_URL", "http://persona:8002"),
         provisioning_url=os.getenv("DISCOVERY_ALLOCATOR_BFF_URL", "http://operator-bff:8001"),
         registry_url=os.getenv("REGISTRY_URL", "http://registry:8087"),
-        capital_url=os.getenv("DISCOVERY_ALLOCATOR_CAPITAL_URL", "http://capital:8092"),
         tenant_id=DISCOVERY_ALLOCATOR_TENANT,
         paper_capital_cap=float(os.getenv("DISCOVERY_ALLOCATOR_PAPER_CAPITAL_CAP", "50000")),
         per_persona_capital=float(os.getenv("DISCOVERY_ALLOCATOR_PER_PERSONA_CAPITAL", "10000")),
+        mandate_profile=_discovery_mandate_profile(),
     )
 
 
@@ -2494,9 +2522,10 @@ def run_discovery_allocator_once() -> Dict[str, Any]:
             e for e in alpha_replication_admission_store.list_admissions(DISCOVERY_ALLOCATOR_TENANT)
             if e.get("status") == "admitted"
         ],
-        list_personas=discovery_allocator_ports["list_personas"],
-        list_active_bindings=discovery_allocator_ports["list_active_bindings"],
-        resolve_admitted=discovery_allocator_ports.get("resolve_admitted"),
+        list_gate_evidence=discovery_allocator_ports.get("list_gate_evidence") or _discovery_gate_evidence,
+        read_marked=discovery_allocator_ports["read_marked"],
+        resolve_candidates=discovery_allocator_ports.get("resolve_candidates"),
+        mandate_profile=discovery_allocator_ports.get("mandate_profile"),
         tenant_id=DISCOVERY_ALLOCATOR_TENANT,
         record_path=store.data_dir / "discovery_allocator_runs.jsonl",
     )
