@@ -68,7 +68,8 @@ governance handoff (`consultation.panel.<decision_type>.reviewed`, evidence refs
   answer → `operator_decision` (fail closed).
 * `approve` / `approve_with_conditions` → `adopt_eligible`.
 
-The gate handoff (the hold) is persisted and dispatched before the memory writeback, and the
+The gate handoff (the hold) is persisted and dispatched and acknowledged before the memory
+writeback (memory follows the acknowledged handoff), and the
 hold is bound to the gated decision's mapped approval target type, id and (when bound) version.
 
 The veto holds in paper too: an oppose is never auto-adopted anywhere; it is routed to an
@@ -76,7 +77,7 @@ operator. Red team opposition is reported as a disagreement but does not veto.
 
 ## 6. Memory writeback
 
-After the memo is published (and before handoff dispatch) the executor posts one
+After the memo is published and the gate handoff is acknowledged the executor posts one
 idempotent Learn-feedback writeback (`source_event_type=consultation_closed`,
 `write_authority=consultation-svc`, `source_event_id=consultation:<request_id>`) to the
 memory service. It writes a `consultation_outcome` to the **initiator's** persona memory and
@@ -85,11 +86,13 @@ blocks; it never skips silently.
 
 ## 7. Sponsor certification
 
-A published panel memo is evidence, not a sponsor decision. Sponsor certification of a
-consultation (committee sponsor decision) remains the existing
-`POST /api/consult/committees/{committee_id}/sponsor-decision` flow
-(`sponsor_decision_bridge.py`). An `operator_decision` gate result is resolved only by an
-operator through that path; the panel, its memo and its memory entries never stand in for it.
+A published panel memo is evidence, not a sponsor decision. A risk-persona veto
+(`operator_decision` gate result) holds the gated approval at governance and is resolved only
+through the governance approvals `decide` command by a human operator whose approval target
+type, id, `target_version` and `candidate_digest` match the bound decision; the panel, its
+memo and its memory entries never stand in for it. Committee sponsor decisions
+(`POST /api/consult/committees/{committee_id}/sponsor-decision`) are a separate flow and do
+not resolve this veto.
 
 ## 8. Deployed addresses
 

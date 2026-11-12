@@ -61,6 +61,7 @@
     "target_binding": "panel.gated_decision type/id must equal request target_type/target_id at consultation entry (422) and in executor (WorkflowBlocked)"
   },
   "rework_20261112_r2": {
+    "veto_version_digest_binding": "governance intake persists gated_decision.target_version/candidate_digest; v1 operator approval cannot clear a v2/digest-b veto (services/consultation/tests/test_panel_veto_version_binding.py, test_intake_persists_version_and_digest_bindings)",
     "memory_outage_hold": "workflow_executor persists + dispatches + acknowledges the gate handoff (installing the operator-decision hold at governance) BEFORE the memory writeback; panel claims no longer short-circuit on an acknowledged handoff, so a retry after memory failure still writes memory",
     "veto_binding": "governance CONSULT_GATED_APPROVAL_TARGETS maps trial_admission->{registry_entry,paper_canary_candidacy}, envelope_publication->{allocation_policy,registry_entry}, harness_patch->{persona_training_target,evolution_proposal,evolution_execute}; veto lookup/resolution requires mapped target_type, same id, and the panel-bound target_version/candidate_digest when present (required_consultation accepts them). Mapping is an explicit owner-boundary choice for reviewer confirmation.",
     "bootstrap_provisioning": "bootstrap creates personas with consult_policy_id=consult-panel.non-trading (built into PersonaPolicyResolver: consultable, no skills; no tool/route policy so no trading authority) and repairs existing ones via the owner PATCH path; lifecycle stays draft (governed)."

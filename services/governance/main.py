@@ -349,8 +349,19 @@ def _validated_panel_gate(body: Dict[str, Any]) -> Dict[str, Any]:
         )
     if operator_required != (outcome == "operator_decision"):
         raise HTTPException(status_code=422, detail="gate outcome is inconsistent")
+    gated: Dict[str, Any] = {"type": decision_type, "id": decision_id}
+    for key in ("target_version", "candidate_digest"):
+        raw = decision.get(key)
+        if raw is None or raw == "":
+            continue
+        if not isinstance(raw, str) or not raw.strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"gated_decision.{key} must be a non-empty string",
+            )
+        gated[key] = raw.strip()
     return {
-        "gated_decision": {"type": decision_type, "id": decision_id},
+        "gated_decision": gated,
         "gate": dict(gate),
         "operator_decision": {
             "status": "pending" if operator_required else "not_required",

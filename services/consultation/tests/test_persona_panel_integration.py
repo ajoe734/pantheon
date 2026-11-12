@@ -740,3 +740,25 @@ def test_bootstrap_personas_resolve_consultable_and_non_trading_and_idempotent(
         assert resolved.effective_tools == [] and resolved.effective_workflows == []
         assert row["metadata"]["trading"] is False
         assert row["lifecycle_state"] == "draft"
+
+
+def test_intake_persists_version_and_digest_bindings(stack: dict[str, Any]) -> None:
+    from services.governance import main as gov
+
+    body = {
+        "gated_decision": {
+            "type": "trial_admission", "id": "t-9",
+            "target_version": "2", "candidate_digest": "b" * 64,
+        },
+        "gate": {"outcome": "operator_decision", "operator_decision_required": True},
+    }
+    stored = gov._validated_panel_gate(body)["gated_decision"]
+    assert stored["target_version"] == "2" and stored["candidate_digest"] == "b" * 64
+    stack["handoffs"].put({
+        "tenant_id": TENANT, "gated_decision": stored,
+        "gate": body["gate"], "operator_decision": {"status": "pending"},
+        "handoff_id": "h-9",
+    })
+    assert gov._consultation_veto_block(TENANT, "t-9", "registry_entry", "2", "b" * 64)
+    assert gov._consultation_veto_block(TENANT, "t-9", "registry_entry", "1", "b" * 64) is None
+    assert gov._consultation_veto_block(TENANT, "t-9", "registry_entry", "2", "a" * 64) is None
