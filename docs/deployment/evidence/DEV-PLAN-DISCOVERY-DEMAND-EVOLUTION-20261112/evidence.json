@@ -1,0 +1,26 @@
+{
+ "task_id": "DEV-PLAN-DISCOVERY-DEMAND-EVOLUTION-20261112",
+ "kind": "plan_document_evidence",
+ "read_date": "2026-11-12",
+ "document": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/DEV_PLAN_DISCOVERY_DEMAND_EVOLUTION_2026-11-12.md",
+ "hosted_behavior_claimed": false,
+ "operator_decision": "都依照你的建議處理 (2026-11-12) adopting O-13..O-20 recommendations",
+ "repo_base": "origin/dev e28bef7e4",
+ "tasks_created": [
+  "HYPOTHESIS-CARD-PREDICTIONS-20261112",
+  "RESEARCH-DEMAND-RECORD-20261112",
+  "L2-DEMAND-PRIORITY-20261112",
+  "COLLECTOR-DEMAND-QUERY-PLAN-20261112",
+  "DISCOVERY-EVOLUTION-SCHEDULER-20261112",
+  "GATE-MECHANISM-STAGE-20261112",
+  "TEMPLATE-DEMAND-SEARCH-20261112",
+  "FINDING-SPONSOR-PERSONA-20261112",
+  "FE-RESEARCH-DEMAND-VIEW-20261112",
+  "DISCOVERY-W5-HOSTED-ACCEPTANCE-20261112"
+ ],
+ "dependency_contracts": [
+  "INTRADAY-REPLICATION-GATE-20261111 += GATE-MECHANISM-STAGE-20261112",
+  "INTRADAY-EVOLUTION-SEARCH-20261111 += GATE-MECHANISM-STAGE-20261112"
+ ],
+ "allocator_switch": "not added; DISCOVERY_ALLOCATOR_ENABLED only has the compose default (docker-compose.yml:788) and its files are held by DISCOVERY-ALLOCATOR-RUNS-ADMITTED-STRATEGY-20261112"
+}
