@@ -17,8 +17,9 @@
     "no_new": ["registry", "reader", "cache", "service", "index", "compat fallback"]
   },
   "tests": {
-    "file": "services/control-plane/bff/tests/test_management_read_budget.py",
-    "result": "7 passed",
+    "file": "services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py",
+    "moved_from": "services/control-plane/bff/tests/test_management_read_budget.py (migrated suite; importing main violated test_bff_test_architecture; required CI Smoke 130880359989 failed at head 26d54094)",
+    "result": "test_bff_test_architecture.py + test_management_read_budget.py + budget cases pass; one unrelated pre-existing failure test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals fails identically without this change",
     "covers": [
       "env-specific defaults and override",
       "dev 1.0s healthy slow registry completes as service_client",
