@@ -101,7 +101,8 @@ def fetcher(data=BASELINE):
 
 
 class Cli:
-    def __init__(self, code=0, ready=0, write_artifacts=True, raise_on_run=None):
+    def __init__(self, code=0, ready=0, write_artifacts=True, raise_on_run=None, result=None, skip=()):
+        self.result, self.skip = result, skip
         self.code, self.ready, self.write_artifacts, self.raise_on_run = code, ready, write_artifacts, raise_on_run
         self.stdin = self.argv = None
         self.calls = []
@@ -117,10 +118,12 @@ class Cli:
         if self.write_artifacts:
             d = Path(argv[argv.index("--out-dir") + 1]) / "paired-readonly-x"
             d.mkdir(parents=True)
-            (d / "result.json").write_text(json.dumps({"pass": False, "perf": {"p50": 1.0}, "note": "SECRET-VIEWER"}))
+            (d / "result.json").write_text(json.dumps(self.result or {"pass": self.code == 0, "perf": {"p50": 1.0}, "note": "SECRET-VIEWER"}))
             (d / "full-baseline-differences.json").write_text(json.dumps(
                 {"/bff/a": [{"path": "/x", "before": "PRIVATE-BASE", "after": "PRIVATE-CUR"}], "/bff/b": []}))
             (d / "current-responses.json").write_text('{"BUSINESS":"secret-data"}')
+            for name in self.skip:
+                (d / name).unlink(missing_ok=True)
         return self.code, "ok SECRET-VIEWER", "err"
 
 
@@ -154,7 +157,7 @@ def test_pass_and_credentials_only_on_stdin(tmp_path):
 def test_child_failure_preserved_not_pass(tmp_path):
     rc, ev, _, _ = run(tmp_path, cli=Cli(3))
     assert rc == 1 and ev["outcome"] == "failed" and ev["cli_result"]["exit_code"] == 3
-    assert ev["cli_artifacts"]["result"]["pass"] is False
+    assert ev["cli_artifacts"]["result_verdict"] is False
 
 
 def test_wrong_origin(tmp_path):
@@ -270,7 +273,7 @@ def test_child_failure_then_identity_failure_retains_child_result(tmp_path):
             return super().__call__(url, method, headers, body, timeout)
     rc, ev, _, _ = run(tmp_path, cli=Cli(3), net=Flaky())
     assert ev["outcome"] == "unproven" and ev["cli_result"]["exit_code"] == 3
-    assert ev["cli_artifacts"]["result"]["pass"] is False
+    assert ev["cli_artifacts"]["result_verdict"] is False
 
 
 def test_default_runner_missing_node_returns_127(tmp_path):
@@ -391,3 +394,52 @@ def test_failed_private_retention_is_unproven_and_keeps_local_tree(tmp_path, ret
 def test_missing_cli_artifacts_is_unproven_not_pass(tmp_path):
     rc, ev, _, _ = run(tmp_path, cli=Cli(write_artifacts=False))
     assert rc == 1 and ev["outcome"] == "unproven" and ev["cli_result"]["exit_code"] == 0
+
+
+def test_real_fe_parity_shape_private_values_never_published(tmp_path):
+    result = {"pass": True, "perf": {"p50": 1.0}, "strategy": {"parity": {
+        "unreconciled_differences": [{"path": "/a", "baseline": "PRIVATE_BASELINE_VALUE_FIXTURE",
+                                      "current": "PRIVATE_CURRENT_VALUE_FIXTURE"}],
+        "documented_reconciliations": [{"path": "/b", "before": "PRIVATE_BASELINE_VALUE_FIXTURE",
+                                        "after": "PRIVATE_CURRENT_VALUE_FIXTURE"}],
+        "note": "PRIVATE_BASELINE_VALUE_FIXTURE"}}}
+    retain = Retain()
+    rc, ev, _, _ = run(tmp_path, cli=Cli(0, result=result), retain=retain)
+    text = (tmp_path / "ev.json").read_text()
+    assert "PRIVATE_BASELINE_VALUE_FIXTURE" not in text and "PRIVATE_CURRENT_VALUE_FIXTURE" not in text
+    parity = ev["cli_artifacts"]["result"]["strategy"]["parity"]
+    assert parity["unreconciled_differences"] == {"count": 1}
+    assert b"PRIVATE_CURRENT_VALUE_FIXTURE" in retain.files[("42-1", "result.json")]  # complete, private
+    assert rc == 0 and ev["outcome"] == "pass"
+
+
+def test_exit0_with_negative_verdict_is_not_pass(tmp_path):
+    rc, ev, _, _ = run(tmp_path, cli=Cli(0, result={"pass": False}))
+    assert rc == 1 and ev["outcome"] == "failed" and ev["cli_result"]["exit_code"] == 0
+    assert ev["reason_code"] == "cli_verdict_negative"
+
+
+@pytest.mark.parametrize("skip,code", [(("result.json",), "witness_missing"),
+                                       (("full-baseline-differences.json",), "witness_missing")])
+def test_missing_required_witness_is_unproven(tmp_path, skip, code):
+    rc, ev, _, _ = run(tmp_path, cli=Cli(0, skip=skip))
+    assert rc == 1 and ev["outcome"] == "unproven" and ev["reason_code"] == code
+
+
+def test_empty_result_directory_is_unproven(tmp_path):
+    rc, ev, _, _ = run(tmp_path, cli=Cli(0, skip=("result.json", "full-baseline-differences.json", "current-responses.json")))
+    assert rc == 1 and ev["outcome"] == "unproven" and ev["cli_result"]["exit_code"] == 0
+
+
+@pytest.mark.parametrize("body,code", [("not json", "result_malformed"), ("[1]", "result_malformed"),
+                                       ('{"perf": {}}', "result_verdict_missing"),
+                                       ('{"pass": "yes"}', "result_verdict_missing")])
+def test_malformed_or_verdictless_result_is_unproven(tmp_path, body, code):
+    class Bad(Cli):
+        def __call__(self, argv, stdin, timeout, cwd=None):
+            r = super().__call__(argv, stdin, timeout, cwd)
+            if "--input-type=module" not in argv:
+                (Path(argv[argv.index("--out-dir") + 1]) / "paired-readonly-x" / "result.json").write_text(body)
+            return r
+    rc, ev, _, _ = run(tmp_path, cli=Bad(0))
+    assert rc == 1 and ev["outcome"] == "unproven" and ev["reason_code"] == code

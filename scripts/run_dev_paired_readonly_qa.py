@@ -63,7 +63,7 @@ TRANSPORT_ENV_KEYS = (
     "DEV_DEPLOY_SSH_KEY_FILE", "DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE",
 )
 READY_TIMEOUT_SECONDS = 120
-RESULT_EMBED_MAX_BYTES = 2_000_000
+REQUIRED_WITNESSES = ("result.json", "full-baseline-differences.json")
 DIFF_POINTER_CAP = 500
 READY_SCRIPT = (
     "for (const p of ['playwright','@playwright/test']) {"
@@ -208,6 +208,33 @@ def _ident(row: Any) -> "tuple[str, str]":
     if not conn:
         raise Unproven("owner_inventory_invalid", "owner inventory row has no identifier")
     return inst, conn
+
+
+_PRIVATE_KEYS = re.compile(r"before|after|baseline|current|value|difference|reconcil|response|sample", re.I)
+
+
+def _safe_summary(node: Any, depth: int = 0) -> Any:
+    """Public-safe projection of the FE result: bool/number leaves and list/dict counts only.
+
+    Strings and any business before/after style content never leave the private witness.
+    """
+    if isinstance(node, bool) or isinstance(node, (int, float)):
+        return node
+    if isinstance(node, list):
+        return {"count": len(node)}
+    if isinstance(node, dict):
+        if depth >= 4:
+            return {"count": len(node)}
+        out: dict[str, Any] = {}
+        for k, v in node.items():
+            key = str(k)[:80]
+            if _PRIVATE_KEYS.search(key) and isinstance(v, (list, dict)):
+                out[key] = {"count": len(v)}
+            elif isinstance(v, (bool, int, float, list, dict)) and not (
+                    _PRIVATE_KEYS.search(key) and not isinstance(v, bool)):
+                out[key] = _safe_summary(v, depth + 1)
+        return out
+    return None
 
 
 class Caller:
@@ -376,13 +403,16 @@ class Caller:
             raw = result.read_bytes()
             art["result_sha256"] = hashlib.sha256(raw).hexdigest()
             art["result_bytes"] = len(raw)
-            if len(raw) <= RESULT_EMBED_MAX_BYTES:
-                try:
-                    art["result"] = json.loads(self._redact(raw.decode("utf-8")))
-                except ValueError:
-                    art["result_parse_error"] = True
-            else:
-                art["result_truncated"] = True
+            try:
+                parsed = json.loads(self._redact(raw.decode("utf-8")))
+            except ValueError:
+                parsed = None
+                art["result_parse_error"] = True
+            if isinstance(parsed, dict):
+                art["result_verdict"] = parsed.get("pass") if isinstance(parsed.get("pass"), bool) else None
+                art["result"] = _safe_summary(parsed)  # complete result stays private only
+            elif parsed is not None:
+                art["result_parse_error"] = True
         diff = d / "full-baseline-differences.json"
         if diff.is_file() and not diff.is_symlink():
             try:
@@ -530,7 +560,30 @@ class Caller:
             raise Unproven("private_retention_failed", "CLI produced no private result directory to retain")
         if failure is not None:
             raise failure
-        evidence["outcome"] = "pass" if code == 0 else "failed"
+        evidence["outcome"] = "failed" if code != 0 else self._verdict(evidence, artifacts)
+
+    @staticmethod
+    def _verdict(evidence: dict, art: dict) -> str:
+        """Exit 0 alone is never PASS: a structured positive verdict and complete witnesses are required."""
+        files = (art.get("private_witness") or {}).get("files") or {}
+        for req in REQUIRED_WITNESSES:
+            if not files.get(req, {}).get("retained") or not files[req].get("bytes"):
+                evidence["reason_code"] = "witness_missing"
+                evidence["reason"] = f"required private witness {req} is missing or empty"
+                return "unproven"
+        if art.get("result_parse_error") or "result_verdict" not in art:
+            evidence["reason_code"] = "result_malformed"
+            evidence["reason"] = "CLI result.json is missing or malformed"
+            return "unproven"
+        if art["result_verdict"] is None:
+            evidence["reason_code"] = "result_verdict_missing"
+            evidence["reason"] = "CLI result.json has no boolean pass verdict"
+            return "unproven"
+        if art["result_verdict"] is not True:
+            evidence["reason_code"] = "cli_verdict_negative"
+            evidence["reason"] = "CLI exited 0 but its result verdict is not pass"
+            return "failed"
+        return "pass"
 
 
 def build_parser() -> argparse.ArgumentParser:
