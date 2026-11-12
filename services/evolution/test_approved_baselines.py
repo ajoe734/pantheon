@@ -55,6 +55,8 @@ def genuine_entry(fixture="recorded_backtest_tw_2330", symbols=("2330.TW",), ten
     verified = PromotionGate.verify_admitted_replication_proof(
         promotion.replication_proof, summary, promotion.lineage,
         backtest_evaluation=evaluation, artifact_checksum=checksum)
+    # Set by the registry service only after the Research owner readback confirms the run.
+    verified["owner_verified_binding"]["producer_verified"] = True
     return {"registry_id": "reg-" + fixture, "artifact_state": "approved", "checksum": checksum,
             "owner_tenant": tenant, "approval_decision_id": "dec-" + fixture,
             "evaluation_summary": summary, "lineage": promotion.lineage,
@@ -165,6 +167,10 @@ class ApprovedBaselineTests(unittest.TestCase):
             "gate_not_passed/rejected": mutate(lambda e: e["replication_proof"].update(admission_status="rejected")),
             "gate_not_passed/verdict": mutate(fail_gate),
             "gate_binding_not_owner_verified": mutate(lambda e: e["replication_proof"].pop("owner_verified_binding")),
+            "gate_binding_not_producer_verified/absent": mutate(
+                lambda e: e["replication_proof"]["owner_verified_binding"].pop("producer_verified")),
+            "gate_binding_not_producer_verified/false": mutate(
+                lambda e: e["replication_proof"]["owner_verified_binding"].update(producer_verified=False)),
         }
         for name, e in cases.items():
             with self.subTest(name):
@@ -213,6 +219,22 @@ class ApprovedBaselineTests(unittest.TestCase):
         weak["out_of_sample"]["sharpe_ratio"] = -1.0
         with self.assertRaises(PromotionError):
             verify(ev=weak)
+        # a required criterion that did not pass (or is absent) is refused despite genuine metrics
+        for mode in ("fail", "drop"):
+            tampered = copy.deepcopy(entry["replication_proof"])
+            if mode == "fail":
+                next(r for r in tampered["replication_results"] if r["criterion_id"] == "schema_validity")["passed"] = False
+            else:
+                tampered["replication_results"] = [r for r in tampered["replication_results"]
+                                                   if r["criterion_id"] != "lineage_complete"]
+            with self.subTest(mode), self.assertRaises(PromotionError):
+                verify(tampered)
+        # caller-controlled policy context may not loosen the gate
+        loose = copy.deepcopy(entry["replication_proof"])
+        next(r for r in loose["replication_results"]
+             if r["criterion_id"] == "real_backtest_validation")["details"]["mandate_max_drawdown"] = 0.99
+        with self.assertRaises(PromotionError):
+            verify(loose)
         # evaluation for another artifact / another run, and missing evaluation
         with self.assertRaises(PromotionError):
             verify(checksum=self.two["checksum"])

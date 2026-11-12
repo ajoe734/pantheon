@@ -158,8 +158,20 @@ class PromotionGate:
             raise PromotionError("replication_proof evaluation_summary differs from the entry summary.")
         if run_id != producer_run_id and run_id not in (_normalize_lineage(lineage).get("source_run_ids") or []):
             raise PromotionError("replication_proof backtest run is neither the producer run nor in entry lineage.")
-        verdicts = [r for r in proof.get("replication_results") or []
-                    if isinstance(r, Mapping) and r.get("criterion_id") == "real_backtest_validation"]
+        from services.research.replication.gate_config import GateConfig as _GC
+
+        _gc = _GC()
+        results = [r for r in proof.get("replication_results") or [] if isinstance(r, Mapping)]
+        for criterion in _gc.get_required_criteria():
+            matching = [r for r in results if r.get("criterion_id") == criterion.criterion_id]
+            if len(matching) != 1 or matching[0].get("passed") is not True:
+                raise PromotionError(
+                    f"replication_proof required criterion {criterion.criterion_id} is missing or did not pass."
+                )
+        optional = [r for r in results if r.get("criterion_id") in {c.criterion_id for c in _gc.get_optional_criteria()}]
+        if optional and sum(1 for r in optional if r.get("passed") is True) / len(optional) < _GC.ADMISSION_THRESHOLD_OPTIONAL:
+            raise PromotionError("replication_proof optional criteria pass rate is below the admission threshold.")
+        verdicts = [r for r in results if r.get("criterion_id") == "real_backtest_validation"]
         details = verdicts[0].get("details") if len(verdicts) == 1 else None
         details = details if isinstance(details, Mapping) else {}
         checks = details.get("checks")
@@ -220,6 +232,12 @@ class PromotionGate:
             trial_count = int(details["trial_count"])
             deflation = cfg.compute_deflated_sharpe_threshold(trial_count)
             mandate = float(details["mandate_max_drawdown"])
+            # Policy context is caller-supplied in the verdict: it may tighten but never loosen
+            # the gate's mandate, and the trial count may never undercut the producer-recorded one.
+            preset_trials = ev.get("trial_count")
+            if (mandate > cfg.max_oos_drawdown + 1e-12 or trial_count < 1
+                    or (isinstance(preset_trials, int) and trial_count < preset_trials)):
+                raise PromotionError("replication_proof policy context is looser than the authoritative gate policy.")
             threshold = float(deflation["deflated_sharpe_threshold"])
             positive = [r for r in fold_returns if r > 0.0]
             share = max(positive) / sum(positive) if positive and sum(positive) > 0.0 else 1.0

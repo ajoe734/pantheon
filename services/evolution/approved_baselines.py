@@ -75,6 +75,8 @@ def _gate_proof_failure(entry: Mapping[str, Any], summary: Mapping[str, Any], ru
     binding = proof.get("owner_verified_binding")
     if not isinstance(binding, Mapping) or not str(binding.get("evaluation_digest") or "").startswith("sha256:"):
         return "gate_binding_not_owner_verified"
+    if binding.get("producer_verified") is not True:
+        return "gate_binding_not_producer_verified"
     if (str(binding.get("backtest_run_id") or "") != run_id or binding.get("status") != "completed"
             or str(binding.get("artifact_checksum") or "") != checksum
             or binding.get("out_of_sample_sharpe_ratio") != summary.get("out_of_sample_sharpe_ratio")
