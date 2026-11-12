@@ -1825,3 +1825,74 @@ def test_steady_controller_calls_exclude_disabled_collector(steady_stack) -> Non
     selected, schedule = _steady_step(_steady_reconcile([cid]))
     assert selected == [] and schedule is None
     assert reads == []
+
+
+def _full_tick_setup(steady_stack, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.tests import test_controller_worker as tcw
+
+    http, module, reads = steady_stack
+    cid = "conn-collector-ptt"
+    assert http.post("/api/source-ingest/connectors", json=_steady_collector_config(cid)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{cid}/schedule", json={"interval_seconds": 6, "enabled": True}).status_code == 200
+    personas = ({"persona_id": "steady-persona", "required_data_sources": [{
+        "dataset": "collector_social_posts", "market": "TW", "cadence": "daily",
+        "source_class": "live_pull", "connector_candidates": [cid], "policy_gates": [],
+    }]},)
+    digest = module.runtime._desired_state_digest(list(personas))
+    config = replace(
+        tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
+        state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, max_concurrency=1,
+    )
+    metadata = {**tcw._desired_meta(), "sha256": digest}
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kwargs: (personas, metadata))
+
+    def tick():
+        return cw.run_controller_tick(
+            config=config, state=tcw._state(), store=cw.ControllerStateStore(config.state_path),
+            writer=tcw.RecordingWriter([]),
+        )
+
+    return http, reads, tick
+
+
+def test_full_controller_tick_completes_real_collector_pull_and_suppresses_next_in_cadence(
+    steady_stack, tmp_path, monkeypatch
+) -> None:
+    http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
+    assert tick()["status"] == "ok"
+    pulled = len(reads)
+    assert pulled > 0
+    # Second tick is inside the (reconciled, daily) cadence: still accepted, no adapter read.
+    assert tick()["status"] == "ok"
+    assert len(reads) == pulled
+
+
+@pytest.mark.parametrize("corruption", ["tenant", "future_pit", "bundle_incomplete"])
+def test_full_controller_tick_fails_closed_on_collector_readback_violation(
+    steady_stack, tmp_path, monkeypatch, corruption
+) -> None:
+    from services.source_ingestion import controller_worker as cw
+
+    http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
+    original = cw.read_actual_state
+
+    def corrupted(**kwargs):
+        actual = original(**kwargs)
+        for connector in actual.get("connectors") or []:
+            record = connector.get("latest_source_record")
+            if not isinstance(record, dict):
+                continue
+            if corruption == "tenant":
+                record["provenance"]["tenant_id"] = "tenant-other"
+            elif corruption == "future_pit":
+                record["provenance"]["available_time"] = "2999-01-01T00:00:00Z"
+            else:
+                record["metadata"]["collector"]["bundle_status"] = "partial"
+        return actual
+
+    monkeypatch.setattr(cw, "read_actual_state", corrupted)
+    with pytest.raises(cw.ControllerTickError, match="terminal source readback failed closed"):
+        tick()

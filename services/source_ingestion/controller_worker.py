@@ -671,8 +671,10 @@ def _validate_terminal_readback(
     expected_sequence_no: int,
     expected_deployment: Mapping[str, Any],
     expected_exclusive_connector_ids: Sequence[str] = (),
+    collector_connector_ids: Sequence[str] = (),
     now: datetime | None = None,
 ) -> int:
+    collector_ids = {str(item).strip() for item in collector_connector_ids if str(item).strip()}
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
         raise ControllerTickError(
             "actual_readback",
@@ -936,9 +938,13 @@ def _validate_terminal_readback(
             else {}
         )
         expected_datasets = {str(action.get("dataset") or "") for action in wanted_requirements[connector_id]}
+        # A registered Collector bundle connector is a pre-existing custom connector: it carries
+        # no persona-derived desired_state and its records carry bundle (not direct-provider)
+        # provenance, so it is validated against its own run/PIT/tenant truth below.
+        is_collector = connector_id in collector_ids
         if not item.get("configured"):
             invalid.append(f"{connector_id}:connector_missing")
-        if str(desired_state.get("dataset") or "") not in expected_datasets:
+        if not is_collector and str(desired_state.get("dataset") or "") not in expected_datasets:
             invalid.append(f"{connector_id}:desired_dataset_mismatch")
         for gate in sorted(policy_gates):
             result = gate_results.get(gate) if isinstance(gate_results, Mapping) else None
@@ -950,7 +956,7 @@ def _validate_terminal_readback(
             record = item.get("latest_source_record")
             health = item.get("source_health")
             freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
-            if freshness.get("status") != "fresh":
+            if freshness.get("status") != "fresh" and not is_collector:
                 invalid.append(f"{connector_id}:freshness_not_accepted")
             staleness_seconds = freshness.get("staleness_seconds")
             interval_seconds = int(schedule_readback.get("interval_seconds") or 0)
@@ -964,20 +970,41 @@ def _validate_terminal_readback(
                 if not record.get("source_id") or not record.get("content_ref") or not record.get("trace_id"):
                     invalid.append(f"{connector_id}:record_identity_incomplete")
                 provenance = record.get("provenance") if isinstance(record.get("provenance"), Mapping) else {}
-                required_provenance = {
-                    "provider",
-                    "dataset",
-                    "available_time",
-                    "api_endpoint",
-                    "access_scope",
-                    "license_scope",
-                    "schema_hash",
-                    "source_ingest_run_id",
-                }
+                required_provenance = (
+                    {"available_time", "event_time", "access_scope", "license_scope", "source_ingest_run_id", "tenant_id"}
+                    if is_collector
+                    else {
+                        "provider",
+                        "dataset",
+                        "available_time",
+                        "api_endpoint",
+                        "access_scope",
+                        "license_scope",
+                        "schema_hash",
+                        "source_ingest_run_id",
+                    }
+                )
                 missing_provenance = sorted(key for key in required_provenance if provenance.get(key) in (None, "", []))
                 if missing_provenance:
                     invalid.append(f"{connector_id}:provenance_missing[{','.join(missing_provenance)}]")
-                if str(provenance.get("dataset") or "") not in expected_datasets:
+                if is_collector:
+                    connector_meta = (
+                        item.get("connector", {}).get("metadata")
+                        if isinstance(item.get("connector"), Mapping)
+                        else None
+                    )
+                    connector_meta = connector_meta if isinstance(connector_meta, Mapping) else {}
+                    record_meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+                    collector_meta = (
+                        record_meta.get("collector") if isinstance(record_meta.get("collector"), Mapping) else {}
+                    )
+                    if not connector_meta.get("tenant_id") or provenance.get("tenant_id") != connector_meta.get("tenant_id"):
+                        invalid.append(f"{connector_id}:record_tenant_mismatch")
+                    if collector_meta.get("source_id") != connector_meta.get("definition_id"):
+                        invalid.append(f"{connector_id}:record_collector_definition_mismatch")
+                    if collector_meta.get("bundle_status") != "complete":
+                        invalid.append(f"{connector_id}:collector_bundle_incomplete")
+                elif str(provenance.get("dataset") or "") not in expected_datasets:
                     invalid.append(f"{connector_id}:record_dataset_mismatch")
                 available_at = None
                 try:
@@ -991,7 +1018,12 @@ def _validate_terminal_readback(
                     else CADENCE_SOURCE_AGE_LIMIT_SECONDS.get(cadence)
                 )
                 is_tw = connector_id == "tw-twse-tpex-official-market"
-                if is_tw:
+                if is_collector:
+                    # PIT: availability must be valid and not in the future; run freshness is
+                    # enforced by the cadence/run/health checks (bundle age is host-defined).
+                    if available_at is None or (available_at - now_dt).total_seconds() > 300:
+                        invalid.append(f"{connector_id}:source_data_stale[collector_pit_invalid]")
+                elif is_tw:
                     eval_now_dt = now or captured_at or now_dt
                     source_id_str = str(record.get("source_id") or "")
                     if not source_id_str.startswith("tw-official:"):
@@ -1083,6 +1115,7 @@ def _validate_due_state_readback(
     expected_controller_id: str,
     expected_sequence_no: int,
     expected_deployment: Mapping[str, Any],
+    collector_connector_ids: Sequence[str] = (),
 ) -> None:
     """Accept connector/schedule convergence without claiming provider proof.
 
@@ -1169,6 +1202,7 @@ def _validate_due_state_readback(
         if isinstance(item, Mapping) and item.get("connector_id")
     }
     invalid: list[str] = []
+    collector_ids = {str(item).strip() for item in collector_connector_ids if str(item).strip()}
     for connector_id, requirements in sorted(wanted_requirements.items()):
         item = actual_connectors.get(connector_id)
         if item is None:
@@ -1179,7 +1213,7 @@ def _validate_due_state_readback(
         expected_datasets = {str(action.get("dataset") or "") for action in requirements}
         if item.get("configured") is not True:
             invalid.append(f"{connector_id}:connector_unconfigured")
-        if str(desired_state.get("dataset") or "") not in expected_datasets:
+        if connector_id not in collector_ids and str(desired_state.get("dataset") or "") not in expected_datasets:
             invalid.append(f"{connector_id}:desired_dataset_mismatch")
         source_class = str(desired_state.get("source_class") or "")
         if source_class != "live_push" and (
@@ -1202,6 +1236,30 @@ def _validate_due_state_readback(
             reconcile=reconcile,
             actual_readback=actual,
         )
+
+
+def registered_collector_connector_ids(actual: Mapping[str, Any], reconcile: Mapping[str, Any]) -> list[str]:
+    """Reconciled, configured connectors whose registered definition is the Collector bundle adapter."""
+
+    from .connector_definitions import deployed_connector_definitions
+    from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
+    collector_definitions = {
+        definition_id
+        for definition_id, definition in deployed_connector_definitions().items()
+        if definition.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+    }
+    reconciled = set(_connector_ids(reconcile))
+    found: list[str] = []
+    for item in actual.get("connectors") or []:
+        if not isinstance(item, Mapping) or item.get("configured") is not True:
+            continue
+        connector_id = str(item.get("connector_id") or "")
+        connector = item.get("connector") if isinstance(item.get("connector"), Mapping) else {}
+        metadata = connector.get("metadata") if isinstance(connector.get("metadata"), Mapping) else {}
+        if connector_id in reconciled and str(metadata.get("definition_id") or "") in collector_definitions:
+            found.append(connector_id)
+    return sorted(found)
 
 
 def select_collector_pull_connectors(
@@ -1765,6 +1823,11 @@ def run_controller_tick(
                 expected_controller_id=state.controller_id,
                 expected_sequence_no=state.sequence_no,
                 expected_deployment=state.deployment,
+                collector_connector_ids=(
+                    registered_collector_connector_ids(actual, reconcile)
+                    if config.mode == COLLECTOR_STEADY_PULL_MODE
+                    else ()
+                ),
             )
         else:
             steady = config.mode == COLLECTOR_STEADY_PULL_MODE
@@ -1800,6 +1863,7 @@ def run_controller_tick(
                 expected_sequence_no=state.sequence_no,
                 expected_deployment=state.deployment,
                 expected_exclusive_connector_ids=exclusive_connector_ids,
+                collector_connector_ids=steady_pull_ids if steady else (),
             )
         wanted_connector_ids = set(_connector_ids(reconcile))
         evidence_refs = [

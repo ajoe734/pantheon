@@ -3024,7 +3024,17 @@ def _collector_actual(
     actual = json.loads(json.dumps(_actual_readback()).replace(CONNECTOR_ID, connector_id))
     actual["controller_state"]["sequence_no"] = sequence_no
     item = actual["connectors"][0]
-    item["connector"].update({"status": status, "metadata": {"definition_id": definition_id}})
+    item["connector"].update({"status": status, "metadata": {"definition_id": definition_id, "tenant_id": "tenant-a"}})
+    # Registered Collector records carry bundle provenance (tenant/PIT), not direct-provider provenance.
+    record = item["latest_source_record"]
+    record["provenance"] = {
+        key: value
+        for key, value in record["provenance"].items()
+        if key not in {"provider", "dataset", "api_endpoint", "schema_hash"}
+    }
+    record["provenance"].setdefault("event_time", record["provenance"]["available_time"])
+    record["provenance"]["tenant_id"] = "tenant-a"
+    record["metadata"] = {**(record.get("metadata") or {}), "collector": {"source_id": definition_id, "bundle_status": "complete"}}
     item["schedule"]["enabled"] = schedule_enabled
     item["freshness"]["is_due"] = is_due
     if extra_direct_connector:
