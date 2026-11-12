@@ -1,0 +1,14 @@
+{
+  "task_id": "OPS-REOPEN-DISPATCH-IDENTITY-20261112",
+  "scope": "source-only dev tooling repair",
+  "changes": {
+    "removed": "task_review_reopen_revision and review_reopen_revision fields in supervisor.py dispatch signature/event/payload",
+    "identity": "canonical review_requeue_intent (pending and materialized)",
+    "workspace": "worker_workspace._same_owner_reopen_wip_may_resume + _resume_owner_wip_worktree"
+  },
+  "verification": {
+    "test_supervisor": "417 tests; only cwd-dependent test_ignored_build_artifacts_do_not_dirty_worktree errors when run from .orchestrator, passes from repo root with PYTHONPATH=.orchestrator",
+    "rewrite.test_worker_workspace": "57 tests OK"
+  },
+  "not_claimed": ["runtime promotion", "original-task worker receipts", "product acceptance"]
+}

@@ -15640,48 +15640,6 @@ def reconcile_review_requeue_materializations(
     return changed
 
 
-def task_review_reopen_revision(
-    task: Mapping[str, Any] | None,
-    activity_events: list[dict[str, Any]] | None = None,
-    *,
-    config: dict[str, Any] | None = None,
-) -> int:
-    """Return the bounded review-reopen revision for a task's dispatch identity.
-
-    A rejected review returns work to the unchanged owner. To prevent an
-    in-progress polling loop, the dispatch signature must distinguish a fresh
-    reopen from ordinary in-progress polling without mutating the assignment
-    generation.
-    """
-    raw_explicit: int | None = None
-    if isinstance(task, Mapping):
-        raw = task.get("review_reopen_revision")
-        if raw is None:
-            raw = task.get("reopen_revision")
-        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
-            raw_explicit = raw
-        elif isinstance(raw, str) and raw.strip().isdigit():
-            raw_explicit = int(raw.strip())
-
-    counted = 0
-    if activity_events is None and config is not None:
-        activity_events = recent_governance_activity_events(config)
-    if isinstance(activity_events, (list, tuple)) and isinstance(task, Mapping):
-        task_id = str(task.get("id") or "").strip()
-        if task_id:
-            for event in activity_events:
-                if not isinstance(event, Mapping):
-                    continue
-                if str(event.get("task_id") or "").strip() != task_id:
-                    continue
-                if str(event.get("type") or "").strip().lower() == "reopen":
-                    counted += 1
-
-    if raw_explicit is not None:
-        return max(raw_explicit, counted)
-    return counted
-
-
 def task_integration_resume_revision(
     task: Mapping[str, Any] | None,
     activity_events: list[dict[str, Any]] | None = None,
@@ -15740,9 +15698,6 @@ def ready_dispatch_signature(
             "depends_on": list(task.get("depends_on", []) or []),
             "owner": task.get("owner"),
             "reason": reason,
-            "review_reopen_revision": task_review_reopen_revision(
-                task, activity_events=activity_events, config=config
-            ),
             "review_requeue_intent_id": (
                 requeue_intent.get("intent_id") if requeue_intent else None
             ),
@@ -15776,9 +15731,6 @@ def build_dispatch_event(
         for item in (task.get("depends_on") or [])
         if str(item or "").strip()
     ]
-    reopen_revision = task_review_reopen_revision(
-        task, activity_events=activity_events, config=config
-    )
     resume_revision = (
         task_integration_resume_revision(
             task, activity_events=activity_events, config=config
@@ -15858,8 +15810,6 @@ def build_dispatch_event(
     ):
         if key in task:
             task_payload[key] = task.get(key)
-    if reopen_revision > 0:
-        task_payload["review_reopen_revision"] = reopen_revision
     if resume_revision > 0:
         task_payload["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:
@@ -15885,8 +15835,6 @@ def build_dispatch_event(
         "reason": reason,
         "task": task_payload,
     }
-    if reopen_revision > 0:
-        event["review_reopen_revision"] = reopen_revision
     if resume_revision > 0:
         event["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:

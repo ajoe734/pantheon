@@ -1419,5 +1419,140 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         )
 
 
+    # -- same-owner reopen WIP resumption -------------------------------------
+
+    def _resume_fixture(self, *, owner: str = "Claude2", reviewer: str = "Codex"):
+        config = {
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "activity_log": str(self.root / "ai-activity-log.jsonl"),
+            },
+            "worker_worktrees": {"path": str(self.root / "worktrees")},
+            "coordination": {"repositories": {"pantheon": {"local_path": str(self.repo), "default_branch": "dev"}}},
+        }
+        (self.root / "ai-status.json").write_text("{}", encoding="utf-8")
+        # No network fetch in this unit test: pin the remote-tracking base locally.
+        self._git(self.repo, "update-ref", "refs/remotes/origin/dev", self.current_dev_sha)
+        intent = {
+            "schema_version": 1,
+            "intent_id": "review-requeue-" + "a" * 64,
+            "status": "pending",
+            "task_id": self.task_id,
+            "task_generation": 1,
+            "owner": owner,
+            "reviewer": reviewer,
+            "reopened_at": "2026-11-12T14:37:57Z",
+            "reopened_by": "Human/Ops",
+            "reason": "resume",
+        }
+        task = {
+            "id": self.task_id,
+            "status": "in_progress",
+            "owner": owner,
+            "reviewer": reviewer,
+            "generation": 1,
+            "artifacts": ["scoped_service.py", "docs/evidence/"],
+            "review_requeue_intent": intent,
+        }
+        return config, task
+
+    def _prepare(self, config, task, agent, *, state=None):
+        request = worker_workspace.DeliveryRequest(
+            agent_id=agent, provider="test", delivery_mode="auto", message="launch",
+            task_id=self.task_id, reason=worker_workspace.REASON_OWNED_IN_PROGRESS,
+            metadata={
+                "workspace_path": str(self.worktree),
+                "task_generation": 1,
+                "task": {"review_requeue_intent": task.get("review_requeue_intent")},
+            },
+        )
+        state = state if state is not None else {"worker_worktrees": {"leases": {}}}
+        sup = worker_workspace._supervisor_module()
+        with (
+            mock.patch.object(worker_workspace, "load_status", return_value={}),
+            mock.patch.object(worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)),
+            mock.patch.object(sup, "task_index_from_status", return_value={self.task_id: task}),
+            mock.patch.object(sup, "canonical_agent_name", side_effect=lambda c, v: str(v or "")),
+            mock.patch.object(sup, "task_current_dispatch_responsibility", return_value="owner"),
+            mock.patch.object(worker_workspace, "validate_task_repository_scope", return_value="pantheon"),
+        ):
+            return worker_workspace.prepare_worker_workspace(
+                config, state, request, queue_event_id="evt-1", target_agent=agent,
+            ), state
+
+    def _snapshot(self):
+        return {
+            "head": self._git(self.worktree, "rev-parse", "HEAD"),
+            "status": self._git(self.worktree, "status", "--porcelain", "--untracked-files=all"),
+            "files": {
+                name: (self.worktree / name).read_bytes()
+                for name in ("scoped_service.py", "docs/evidence/new.json")
+                if (self.worktree / name).exists()
+            },
+        }
+
+    def _dirty_owned_wip(self):
+        (self.worktree / "scoped_service.py").write_text("def run():\n    return 'wip'\n", encoding="utf-8")
+        (self.worktree / "docs" / "evidence" / "new.json").write_text('{"wip": 1}\n', encoding="utf-8")
+
+    def test_same_owner_resumes_own_dirty_artifact_wip_byte_for_byte(self) -> None:
+        config, task = self._resume_fixture()
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        (ok, error), state = self._prepare(config, task, "Claude2")
+        self.assertTrue(ok, error)
+        after = self._snapshot()
+        self.assertEqual(after["files"], before["files"])
+        self.assertEqual(after["status"], before["status"])
+        self.assertEqual(self._git(self.worktree, "stash", "list"), "")
+        self.assertEqual(self._git(self.repo, "rev-parse", self.source_branch), self.source_head)
+        self.assertEqual(state["worker_worktrees"]["leases"][self.task_id]["last_target_agent"], "Claude2")
+
+    def test_reviewer_and_other_agents_never_inherit_dirty_wip(self) -> None:
+        config, task = self._resume_fixture()
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        for agent in ("Codex", "Claude"):
+            (ok, error), _ = self._prepare(config, task, agent)
+            self.assertFalse(ok)
+            self.assertIn("refresh failed (skipped_dirty_worktree)", error)
+        self.assertEqual(self._snapshot(), before)
+
+    def test_unrelated_file_or_missing_reopen_intent_or_wrong_state_refused(self) -> None:
+        config, task = self._resume_fixture()
+        self._dirty_owned_wip()
+        (self.worktree / "unrelated.py").write_text("# stray\n", encoding="utf-8")
+        (ok, error), _ = self._prepare(config, task, "Claude2")
+        self.assertFalse(ok)
+        self.assertIn("skipped_dirty_worktree", error)
+        self._git(self.worktree, "checkout", "--", "unrelated.py")
+
+        no_intent = {k: v for k, v in task.items() if k != "review_requeue_intent"}
+        (ok, error), _ = self._prepare(config, no_intent, "Claude2")
+        self.assertFalse(ok)
+
+        stale_generation = {**task, "generation": 2}
+        (ok, error), _ = self._prepare(config, stale_generation, "Claude2")
+        self.assertFalse(ok)
+
+        reviewing = {**task, "status": "review"}
+        (ok, error), _ = self._prepare(config, reviewing, "Claude2")
+        self.assertFalse(ok)
+
+        (ok, error), _ = self._prepare(
+            config, task, "Claude2",
+            state={"worker_worktrees": {"leases": {self.task_id: {
+                "path": str(self.worktree), "branch": self.source_branch,
+                "last_target_agent": "Codex",
+            }}}},
+        )
+        self.assertFalse(ok)
+        self.assertEqual(
+            (self.worktree / "scoped_service.py").read_text(encoding="utf-8"),
+            "def run():\n    return 'wip'\n",
+        )
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), self.source_head)
+
+
 if __name__ == "__main__":
     unittest.main()
