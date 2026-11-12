@@ -3690,7 +3690,17 @@ def test_forward_replace_runtime_load_reaches_completed_projection(worker):
 
 @pytest.mark.parametrize(
     "tamper",
-    ["parent_runtime", "parent_mode", "parent_pool", "child_lineage", "parent_missing"],
+    [
+        "parent_runtime",
+        "parent_mode",
+        "parent_pool",
+        "child_lineage",
+        "parent_missing",
+        "child_parent_absent",
+        "child_parent_null",
+        "child_parent_empty",
+        "child_parent_self",
+    ],
 )
 def test_forward_replace_runtime_load_rejects_tampered_parent(worker, tamper):
     def mutate(client):
@@ -3715,6 +3725,18 @@ def test_forward_replace_runtime_load_rejects_tampered_parent(worker, tamper):
                     **b["metadata"],
                     "replacement_parent_binding_id": "rb-forged",
                 }
+            elif tamper.startswith("child_parent_"):
+                md = dict(b["metadata"])
+                kind = tamper.removeprefix("child_parent_")
+                if kind == "absent":
+                    md.pop("replacement_parent_binding_id", None)
+                else:
+                    md["replacement_parent_binding_id"] = {
+                        "null": None,
+                        "empty": "",
+                        "self": binding_id,
+                    }[kind]
+                b["metadata"] = md
             return b
 
         client.get = get

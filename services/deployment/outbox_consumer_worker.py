@@ -2619,6 +2619,7 @@ def run_poll(
                         persona_capital_binding_id=binding.get(
                             "persona_capital_binding_id"
                         ),
+                        require_parent=True,
                     )
                     if lineage_error is not None:
                         if lineage_error[0] == DispatchOutcome.RETRYABLE_ERROR:

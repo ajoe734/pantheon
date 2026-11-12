@@ -223,6 +223,7 @@ def verify_forward_replace_parent(
     saga: Mapping[str, Any],
     binding: Mapping[str, Any],
     persona_capital_binding_id: Any,
+    require_parent: bool = False,
 ) -> tuple[str, tuple[Any, str, str] | None]:
     """Independently verify the immutable admitted parent of a forward replace.
 
@@ -232,12 +233,18 @@ def verify_forward_replace_parent(
     when there is no distinct parent to verify, else ``("", (outcome, message,
     code))`` (fail closed).
     """
+    missing_parent = (
+        DispatchOutcome.TERMINAL_ERROR,
+        "RuntimeBinding authoritative readback mismatch: "
+        "replacement parent lineage is absent, empty, or self-referential",
+        "BINDING_READBACK_MISMATCH",
+    )
     metadata = binding.get("metadata")
     if not isinstance(metadata, Mapping):
-        return "", None
+        return ("", missing_parent) if require_parent else ("", None)
     parent_id = str(metadata.get("replacement_parent_binding_id") or "").strip()
     if not parent_id or parent_id == binding.get("binding_id"):
-        return "", None
+        return ("", missing_parent) if require_parent else ("", None)
     try:
         parent = client.get(parent_id)
     except Exception as exc:  # noqa: BLE001
