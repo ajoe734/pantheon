@@ -352,5 +352,18 @@
     "C4 uses the existing consultation service; C5/C6/C7/C8/C9 retain explicit owner routes.",
     "D5/D10 are proposed amendments, not active approval authority; D7 composition and numeric starting values are coordinator proposals.",
     "Hosted observations are inherited and not independently verified by this design task."
-  ]
+  ],
+  "delivery_validation": {
+    "commit_trailers": {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --task-id SD-PERSONA-CYCLE-RECONNECT-20261112",
+      "exit_status": 1,
+      "result": "failed",
+      "offending_commit": "d1d854a31da2f1c685823ce096f60726777f0d3e",
+      "reason": "subject exceeds 72 chars (77)",
+      "inherited_commit": true
+    },
+    "review_admitted": false,
+    "remaining_action": "Human/Ops must authorize a one-time published-history repair, or provide a compliant replacement delivery under the existing task. Re-run validation and exact-head handoff afterward.",
+    "policy_reference": "docs/conventions/GIT_WORKFLOW.md section 5.5 forbids amend on a pushed commit and routine force pushes."
+  }
 }
