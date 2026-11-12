@@ -2032,3 +2032,16 @@ def test_guarded_seal_rejects_wrong_candidate_source_blob(case, tmp_path):
     case.docker.source_codecs[candidate] = "70a5bb860e855beacd14445c29bff64ccfa7e8f2"
     with pytest.raises(d.a.StackError, match="not the admitted candidate source"):
         admit(case)
+
+
+def test_bff_only_candidate_does_not_rebind_unchanged_source_to_bff_sha(case, tmp_path):
+    _attach_real_source_codec(case, tmp_path, frozen_bee=True)
+    case.docker.tags["pantheon-source-ingest"] = case.docker.source_row["image_id"]
+    # Its actual Bee codec intentionally differs from the BFF candidate blob;
+    # no Source writer image is changing in this build.
+    captured = seal(case, admit_candidate=False)
+    before = case.docker.source_journal.read_bytes()
+    admit(case)
+    assert case.args.candidate_image_manifest.exists()
+    assert case.docker.source_journal.read_bytes() == before
+    assert captured["manifest"]["stack_baseline"]["services"]["source-ingest"]["source_snapshot"]["journal_sha256"] == hashlib.sha256(before).hexdigest()

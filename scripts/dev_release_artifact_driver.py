@@ -769,6 +769,11 @@ def _qualify_source_candidate(args, outer, docker, barrier):
         raise a.StackError("Source candidate does not own the fixed Compose build tag", [a.API_SERVICE])
     image = a._resolved_image_id(docker, "pantheon-source-ingest")
     a._match(image, a.IMAGE, "built Source image")
+    if image == baseline["image_id"]:
+        # A BFF-only build leaves the Source image untouched. Still validate
+        # its journal, but do not demand that an unchanged Source use BFF's SHA.
+        return a.qualify_source_writer(docker=docker, retained_image=image,
+                                       writer_image=image, check_lease=barrier.check)
     codec = a.source_probe(docker=docker, image_id=image, mode="codec", check_lease=barrier.check)
     try:
         raw = subprocess.run(["git", "-C", str(args.compose_file.parent), "show",

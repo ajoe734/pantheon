@@ -613,14 +613,16 @@ def qualify_source_writer(*, docker, retained_image, writer_image, check_lease):
 
     This is a bounded Source protocol contract, not a generic compatibility
     service. Equal codec bytes still require both real readers to replay the
-    current complete journal. Different bytes additionally require every
+    current complete journal. Different images additionally require every
     supported writer form through the retained decoder without projection loss.
     """
     retained = qualify_source_reader(docker=docker, image_id=retained_image, check_lease=check_lease)
     writer = qualify_source_reader(docker=docker, image_id=writer_image, check_lease=check_lease)
     if retained != writer and any(retained[k] != writer[k] for k in ("journal_sha256", "journal_size", "projection_sha256")):
         raise StackError("Source readers disagree on journal identity", [API_SERVICE])
-    if retained["codec_sha256"] != writer["codec_sha256"]:
+    # Equal module bytes alone do not cover changed codec dependencies in a
+    # different image. Only an identical immutable image may omit witnesses.
+    if retained_image != writer_image:
         witness = source_probe(docker=docker, image_id=writer_image, mode="writer", check_lease=check_lease)
         samples, expected = witness.get("samples"), witness.get("projections")
         _keys(samples, SOURCE_SAMPLE_NAMES, "Source writer forms")

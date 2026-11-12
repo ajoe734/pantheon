@@ -856,13 +856,14 @@ def test_unhealthy_service_fails_only_after_the_stated_budget(stack_case):
 
 
 def test_slow_service_that_becomes_healthy_within_budget_passes(stack_case):
-    _, docker, _, _, _, _, _ = stack_case
+    _, docker, _, _, stack, _, _ = stack_case
     docker.mutate_to_candidate()
     original = docker.call
     state = {"polls": 0}
 
     def slow(*args):
-        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT and docker.by_cid(args[-1])[0] == "source-ingest":
+        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT and docker.by_cid(args[-1])[0] == "source-ingest" and \
+                docker.containers["source-ingest"]["image_id"] == stack["services"]["source-ingest"]["image_id"]:
             state["polls"] += 1
             if state["polls"] < 20:      # ~110 s at the 5 s poll interval
                 docker.containers["source-ingest"]["health"] = "starting"

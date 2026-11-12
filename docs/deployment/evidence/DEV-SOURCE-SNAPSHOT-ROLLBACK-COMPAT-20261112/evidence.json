@@ -1,0 +1,152 @@
+{
+  "task_id": "DEV-SOURCE-SNAPSHOT-ROLLBACK-COMPAT-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "scope": "Source codec and existing retained-artifact qualification; isolated local validation only",
+  "source_delivery": "local implementation and validation complete; assigned independent review, required CI and native integration pending",
+  "hosted_recovery": "not executed; original sole product publisher retains authority",
+  "sanitized_inputs": [
+    {
+      "file": "goal-current-Source-selected-service-log-diagnostic-readonly-20261112.json",
+      "sha256": "4e619c7f7b5fda1d9f47b141b3e27bf5662e7f27c8319a0ed8b03e80bc5dafdd"
+    },
+    {
+      "file": "goal-Source-rollback-offending-4883-schema-shape-metadata-only-20261112.json",
+      "sha256": "6deb79e4ecada8e07d7b48ef2e27c4043ad951e18e6bc0f6d2df1c7b707b1285"
+    },
+    {
+      "file": "goal-Source-rollback-format-owner-reader-writer-audit-20261112.json",
+      "sha256": "782e7c1a24c52537a56d15fad77c2cee2f2aca1ce4c04d02cc246a468d166131"
+    },
+    {
+      "file": "goal-root432880-primary-compensation-INCOMPLETE-despite-step-conclusion-20261112.json",
+      "sha256": "80b9ecbac37c2984949decaa89f7f7f1b62b082600820e2c505d900873ab8576"
+    }
+  ],
+  "primary_incident": {
+    "root_run": "43288069362",
+    "job": "131441152382",
+    "compensation_step14_conclusion": "success due to continue-on-error",
+    "compensation_step14_actual_outcome": "failure, exit 75",
+    "terminal_step20_exit": 75,
+    "original_failure": {
+      "error_code": "DEV_ARTIFACT_OPERATION_FAILED",
+      "failure_stage": "restore",
+      "failure_kind": "subprocess",
+      "failure_location": "dev_release_artifact_driver.py:150",
+      "subprocess_exit": 1
+    },
+    "result_artifact": "13978794397",
+    "result_artifact_zip_sha256": "45d7408a2bfbb4a0f75c0b74b9732870fd2897ed0cc674bc21a0e72c042d4153",
+    "successful_full_restore_receipt_present": false,
+    "public_pair_restored": true,
+    "whole_stack_compensation_proven": false,
+    "candidate_pair_accepted": false,
+    "exact_stack_service_count": 57,
+    "wrong_image_services": [
+      "source-ingest-controller-migrate"
+    ],
+    "bad_state_or_health_count": 22,
+    "initializer_observed_image": "sha256:ed9935346920f6eee55fad7f31566fa851c90e02799afde01ade33c5a4ebf126",
+    "initializer_observed_state": "exited 0; this does not excuse image mismatch or establish causation",
+    "source_observed_image": "sha256:238782113a721db91a65486ad79652510e3857fa44ab4ad4375a714208b0d5ef",
+    "source_observed_state": "restarting, exit 1, unhealthy",
+    "first_decoder_failure_line": 4883,
+    "actual_added_point_field": "collector_close object",
+    "journal_schema_before_and_after": "source_ingest_latest_market_snapshot.v1",
+    "journal_bytes_at_sanitized_inspection": 30304528,
+    "preceding_line_sha256": "3855b91d89f52c0834e2a7544de27cad92b7754b362ac098cea3c90f714f0036",
+    "offending_line_sha256": "8cc7db1cd8aa60b352b7de2d5f272253c0a84d2e687b7506cbcf7621f1394ccc",
+    "first_writer_process_identity": "not proved; no claim that a particular ingest worker wrote line 4883"
+  },
+  "persistent_contract": {
+    "bee_commit": "bee62bc2978618539984aff9db136b064adc14a0",
+    "bee_codec_git_blob": "5c52524ec58fb555b7af101a495bce825fc10595",
+    "new70a_commit": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
+    "new70a_codec_git_blob": "16f31f4e38bcd39e10d2a3a8e82a96b18fa59f44",
+    "old_reader": "Strict v1 state/point allowlists, SHA256 envelope, derived lineage and snapshot ID checks; startup replays every historical line",
+    "new_writer": "Same v1 name extends collector point lineage, reconciliation, intraday dataset identity and withdrawal tombstones",
+    "bee_compatible_roundtrip": "ordinary official daily through current writer, exact Bee decoder and serializer, then current decoder with identical bytes",
+    "bee_incompatible_forms": [
+      "collector_close",
+      "close_reconciliation",
+      "tw_price_1m and withdrawal",
+      "tw_price_5m and withdrawal",
+      "tw_price_15m and withdrawal",
+      "tw_price_30m and withdrawal",
+      "tw_price_60m and withdrawal"
+    ],
+    "local_extended_roundtrip": "exact frozen 70a writer and reader plus current writer and reader preserve every supported form and checksum/lineage/snapshot/PIT/receipt identity",
+    "immutable_reader_boundary": "Bee cannot represent extended-v1. Neither changing a schema label nor stripping collector fields is an honest exact rollback. No downgrade serializer or fallback is introduced."
+  },
+  "implementation": {
+    "source_witnesses": "market_snapshot_writer_samples uses the real SourceRecord, append_normalized_records and withdraw_sessions in scratch state, without providers",
+    "capture": "Before sealing a Source baseline, run its exact image codec against the complete current journal; seal only digest/size/codec/projection proof in existing stack baseline",
+    "candidate": "Existing seal-candidate qualifies the actual Source Compose build image, binds its codec bytes to the candidate Git blob and checks every changed writer form through the retained reader before owner rollout; an unchanged immutable Source image in a BFF-only build retains its own source identity",
+    "restore": "Before compose up, owner stop/start or tag switching, re-read the complete current journal with the target reader and check the currently active writer protocol against that reader; capture-time hashes alone never qualify restore",
+    "probe_isolation": "Exact image ID, pull never, network none, read-only root, dropped capabilities, no-new-privileges, bounded memory/CPU/pids, private scratch tmpfs; only journal mode mounts existing Source volumes read-only",
+    "probe_data_boundary": "Live journal rows and exception text never leave the reader. Writer samples are synthetic and have no owner volume. Missing/invalid/unknown journal data fails closed; qualification does not create a missing journal.",
+    "bounded_source_contract": "Only Source latest_market_snapshots protocol; no generic compatibility service, authority, queue, grant or lock framework",
+    "diagnostics": "Original parent failure is retained above; new Source failures expose only an enumerated reason and bounded line number through existing artifact failure records",
+    "codec_strictness": "Reject null/unknown collector lineage, malformed reconciliation containers and invalid withdrawal observation time; no provisional-to-official metadata stripping",
+    "stack_truth": "All recorded running and completed initializer images remain part of existing exact-stack readback; successful initializer exit never substitutes for exact image identity"
+  },
+  "existing_owner_recovery_procedure": {
+    "execution_status": "PREPARED ONLY; no VM, SSH, service control, owner-data or provider operation performed by this worker",
+    "authority": "Original sole product publisher using its already governed dev recovery channel; preserve the original Root quarantine and incomplete verdict",
+    "selected_mode": "Operator-selected compatible retained-image FORWARD RECOVERY, if explicitly selected; never exact Bee rollback",
+    "steps": [
+      "Retain the original failed command/result artifact and exact 57-service sealed baseline. Inventory current images, nonsecret configuration and states, including source-ingest-controller-migrate; do not infer that initializer caused the point decoder failure.",
+      "Through the existing publisher control path, quiesce all Source writers and scheduler activity before the recovery cut. Record owner identities and the configured SOURCE_INGEST_DATA_DIR and SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH, including any separately mounted normalized records/receipts. Keep provider egress disabled during recovery validation.",
+      "Take an owner-controlled protected byte-for-byte filesystem backup of the current Source journal and all canonical Source records, normalized storage and receipts on their actual mounts. Inventory file lengths and SHA256 digests before and after backup; preserve originals and permissions. This is a current-state backup, not a claimed pre-write Bee projection backup. Do not export private payloads into this evidence manifest.",
+      "Explicitly select a retained immutable Source image with the full extended-v1 reader (70a is locally demonstrated, but its actual retained image ID and availability must be proved by the publisher). Bind its codec and image to retained source/build evidence. Do not select a moving tag or silently substitute it for the failed Bee image.",
+      "Before replacing any owner, use existing scripts/dev_release_artifacts.py qualify_source_reader with Docker(), the explicitly selected sha256 image ID and the publisher's existing guard check. It executes the actual selected codec with the current Source container's volumes mounted read-only. Require checksum, lineage, snapshot identity and complete historical replay success; archive only the bounded digest/size/projection proof. Reject any unknown or malformed line without changing it.",
+      "For a maintained candidate carrying this repair, also use the existing seal-candidate path: qualify_source_writer verifies the candidate's complete supported write forms against its explicitly required retained reader. A Bee rollback requirement rejects the new extended writer. Do not waive that rejection by rewriting data, clearing a file, deleting a prefix, replaying providers, relabelling provisional rows or inventing a rebuild endpoint.",
+      "Only after explicit forward-recovery selection and successful reader proof, the original publisher applies its existing controlled Compose recovery with the selected immutable Source image, the same owner mounts and sealed tenant/control/configuration posture. Preserve all journal bytes and canonical records. Keep writers quiescent until read-only startup replay and snapshot/PIT/receipt identity readback have been compared to the pre-switch proof. This procedure is a deliberate compatible-image forward recovery, never automatic fallback or exact Bee compensation.",
+      "Re-read complete state and exact image/configuration/health for all 57 baseline services. Restore the initializer's recorded exact image through the original owner path where required and verify its terminal state separately. A recovered Source API or restored public FE/BFF pair alone does not close full-stack compensation. Resume original publisher-controlled normal writers only after its real accepted readback, then retain genuine hosted evidence separately from this source PR."
+    ],
+    "exact_bee_rollback": "Unavailable for the already-written extended journal under the supplied evidence. No proven pre-write projection backup or provenance-safe rebuild/reset surface exists. Leave this verdict explicit."
+  },
+  "validation": [
+    {
+      "command": "timeout 360 .venv/bin/python -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_state.py scripts/test_dev_release_artifacts.py",
+      "exit_status": 0,
+      "summary": "153 passed, 1 skipped in 177.75s",
+      "output_sha256": "42d4e91fad905da10e2870369ef463eac3ff26e873ce9cf23fb17d2d98ab8cb2"
+    },
+    {
+      "command": "timeout 360 .venv/bin/python -m pytest -q scripts/test_dev_release_artifact_driver.py",
+      "exit_status": 0,
+      "summary": "290 passed in 82.29s",
+      "output_sha256": "c94e39f32afb0d34f2390481c941f7848123ad7dfb4a4d69dc690dd45134dfeb"
+    },
+    {
+      "command": "timeout 240 .venv/bin/python -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_requirement_state.py services/source_ingestion/tests/test_tw_close_reconcile.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_snapshot_frequency_isolation.py services/source_ingestion/tests/test_pipeline_snapshot_dataset_isolation.py",
+      "exit_status": 0,
+      "summary": "82 passed in 26.46s",
+      "output_sha256": "6d375cefa69945d09f3eecda98ee6472a67cd25df7b52a90dace48b617c3a3ab"
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0,
+      "summary": "no whitespace errors"
+    },
+    {
+      "command": "git fetch --no-tags origin '+refs/heads/dev:refs/remotes/origin/dev'",
+      "exit_status": 0,
+      "summary": "origin/dev remains 452eb1a6a973863ef26492ab99efce0a36de79ab; task branch contains this base"
+    }
+  ],
+  "limits": [
+    "Local protocol tests use real exact Git codecs and actual lifecycle entrypoints; Docker/HTTP/owner transports in guarded-path tests are fixtures.",
+    "No hosted recovery, Docker-isolation execution, 57-service recovery or hosted product acceptance is claimed.",
+    "No runtime.py or catalog_controller.py edit; active registry receipt work and completed producer tasks remain separate.",
+    "Source qualification must be shipped through the existing pinned publisher/controller delivery before it can protect real operations; local source changes do not activate a live controller."
+  ],
+  "validation_interpreter": "CPython 3.11.16 in task-local .venv; required repository CI uses Python 3.12",
+  "validation_failures_corrected": [
+    "Initial system python3 pytest invocation exited 1 because pytest was absent; installed dependencies in a task-local venv and reran.",
+    "First guarded-seal regression run: 1 failed, 2 passed due to missing copy import in test; fixed.",
+    "Intermediate complete focused run: 1 failed, 441 passed, 1 skipped. Existing slow-start test incorrectly counted preflight inspect calls as startup polls. Simulator now starts its slow-health sequence after the recorded Source image is recreated; original bounded health-wait assertion retained."
+  ]
+}
