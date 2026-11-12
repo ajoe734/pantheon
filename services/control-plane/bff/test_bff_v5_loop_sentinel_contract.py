@@ -1261,7 +1261,7 @@ def test_l12_bff_incident_mapping_survives_failure_restart_and_recovery(
         if url.endswith("/api/v1/telemetry/infrastructure-health"):
             return True, 202
         if url.endswith("/api/incidents/consume-infrastructure-health"):
-            return False, 400
+            return False, 503
         return True, 200
 
     with patch.object(
