@@ -125,7 +125,155 @@ from services.source_ingestion.semantic_extraction_client import SemanticExtract
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore  # noqa: E402
 from services.source_ingestion.tests.test_hypothesis_extraction import (  # noqa: E402
     _Transport, _card as _ext_card, _run, _source, _RecordedTransport, _prediction_recording, _card_with_origin,
+    _screen_entry_recording,
 )
+
+
+def test_split_compiles_ordered_screen_and_entry_and_fingerprints():
+    r = _screen_entry_recording()
+    card = r["response"]["output"]["structured_data"]["hypothesis_card"]
+    out = _compiler(r["proposal"]).compile(card)
+    assert out.status == COMPILED, out.reason
+    logic = out.artifact["strategy_logic"]
+    assert [s["kind"] for s in logic["screen"]["steps"]] == ["filter", "rank"]
+    assert logic["entry"] == r["proposal"]["strategy_logic"]["entry"]
+    assert out.artifact["default_pairing"] == {}
+    assert out.artifact["screen_fingerprint"].startswith("sha256:")
+    assert out.artifact["entry_fingerprint"].startswith("sha256:")
+
+
+def test_entry_only_and_legacy_get_declared_boundary_default():
+    r = _screen_entry_recording()
+    card = r["response"]["output"]["structured_data"]["hypothesis_card"]
+    del card["screen_idea"]
+    proposal = r["proposal"]
+    proposal["strategy_logic"].pop("screen")
+    out = _compiler(proposal).compile(card)
+    assert out.status == COMPILED, out.reason
+    a = out.artifact
+    assert a["default_pairing"] == {"screen": "whole_governed_tw_boundary.v1"}
+    assert a["parameters"]["hc_default_min_size"] == 3
+    assert a["parameters"]["hc_default_history"] == 60
+    assert a["strategy_logic"]["entry"] == proposal["strategy_logic"]["entry"]
+    assert _compiler(_proposal()).compile(_card()).artifact["default_pairing"]["entry"] == "legacy_rule_sketch"
+
+
+def test_screen_only_default_holds_in_pool_and_exits_removed_member_on_recorded_tw_data():
+    from services.registry.test_candidate_pool import recorded_market
+    from services.registry.candidate_pool import evaluate_screened_views
+
+    r = _screen_entry_recording()
+    card = r["response"]["output"]["structured_data"]["hypothesis_card"]
+    del card["entry_idea"]
+    proposal = r["proposal"]
+    # No timing expression supplied: the default must be produced by code.
+    for key in ("signal", "entry", "exit", "strength"):
+        proposal["strategy_logic"].pop(key)
+    out = _compiler(proposal).compile(card)
+    assert out.status == COMPILED, out.reason
+    assert out.artifact["default_pairing"] == {"entry": "long_hold_while_in_pool.v1"}
+    views = evaluate_screened_views(out.artifact, recorded_market(), "2026-09-02")
+    assert views["2317.TW"]["action"] == "BUY"
+    assert views["2330.TW"]["hold_reason"] == "outside_candidate_pool"
+    views = evaluate_screened_views(out.artifact, recorded_market(), "2026-09-02", positions={
+        "2317.TW": {"current_direction": "LONG", "holding_bars": 999},
+        "2330.TW": {"current_direction": "LONG", "holding_bars": 3},
+    })
+    assert views["2317.TW"]["target_direction"] == "LONG"
+    assert views["2317.TW"]["holding_bars"] == 999  # no timed exit or position reset
+    assert views["2330.TW"]["action"] == "SELL"
+    assert views["2330.TW"]["exit_reason"] == "left_candidate_pool"
+    with_missing = recorded_market()
+    del with_missing["symbols"]["2317.TW"]["bars"][0]["volume"]
+    views = evaluate_screened_views(out.artifact, with_missing, "2026-09-02")
+    assert "2317.TW" not in views["2317.TW"]["candidate_pool_snapshot"]["members"]
+
+
+def test_fingerprints_and_support_separate_screen_and_entry_changes():
+    from services.source_ingestion.hypothesis_compiler import card_key
+
+    r = _screen_entry_recording()
+    card = r["response"]["output"]["structured_data"]["hypothesis_card"]
+    proposal = r["proposal"]
+    c = HypothesisCompiler(lambda *_: copy.deepcopy(proposal), CompilerStore())
+    original = c.compile(card)
+    another = copy.deepcopy(card)
+    another["cited_spans"][0]["source_record_id"] = "src-another"
+    assert c.compile(another).support_count == 2
+    assert c.compile(another).support_count == 2
+    screen_changed = copy.deepcopy(card)
+    screen_changed["screen_idea"]["statement"] += " Bottom turnover instead."
+    assert card_key(screen_changed) != card_key(card)
+    proposal["strategy_logic"]["screen"]["steps"][1]["side"] = "bottom"
+    changed = c.compile(screen_changed)
+    assert changed.status == COMPILED and changed.support_count == 1
+    assert original.artifact["screen_fingerprint"] != changed.artifact["screen_fingerprint"]
+    assert original.artifact["entry_fingerprint"] == changed.artifact["entry_fingerprint"]
+    entry_changed = copy.deepcopy(screen_changed)
+    entry_changed["entry_idea"]["statement"] += " Below threshold instead."
+    proposal["strategy_logic"]["entry"]["long_when"]["op"] = "lt"
+    changed_entry = c.compile(entry_changed)
+    assert changed_entry.status == COMPILED and changed_entry.support_count == 1
+    assert changed_entry.artifact["screen_fingerprint"] == changed.artifact["screen_fingerprint"]
+    assert changed_entry.artifact["entry_fingerprint"] != changed.artifact["entry_fingerprint"]
+    assert len(c.store.drafts()) == 3
+
+
+def test_unknown_screen_requirements_count_all_datasets_without_proposer():
+    r = _screen_entry_recording()
+    seen = []
+    c = HypothesisCompiler(lambda *_: seen.append(True), CompilerStore())
+    card = r["sector_card"]
+    out = c.compile(card)
+    assert out.status == NEEDS_DATA and seen == [] and c.store.drafts() == []
+    c.compile(card)
+    assert c.store.needs_data_report() == [
+        {"dataset": "tw_industry_classification", "count": 1}, {"dataset": "tw_sector_flows", "count": 1}]
+    card["screen_idea"]["signal_inputs"] = [{"dataset": "tw_price_daily", "field": "unlisted"}]
+    assert c.compile(card).status == NEEDS_DATA
+    assert {d["dataset"] for d in c.store.needs_data_report()} == {"tw_industry_classification", "tw_sector_flows", "tw_price_daily"}
+
+
+def test_missing_screen_keeps_prediction_demand_accounting_and_non_testable_skip():
+    r = _screen_entry_recording()
+    card = r["sector_card"]
+    card["predictions"] = _prediction_recording()["response"]["output"]["structured_data"]["hypothesis_card"]["predictions"]
+    c = _compiler(r["proposal"])
+    assert c.compile(card).status == NEEDS_DATA
+    assert {d["dataset"] for d in c.store.needs_data_report()} == {
+        "tw_industry_classification", "tw_sector_flows", "unlisted_orders", "tw_monthly_revenue"}
+    card["testability"] = "not_testable"
+    assert c.compile(card).status == "skipped"
+    assert all(d["count"] == 1 for d in c.store.needs_data_report())
+
+
+def test_declared_idea_cannot_be_silently_omitted_or_replaced():
+    r = _screen_entry_recording()
+    card = r["response"]["output"]["structured_data"]["hypothesis_card"]
+    proposal = copy.deepcopy(r["proposal"])
+    proposal["strategy_logic"].pop("screen")
+    assert _compiler(proposal).compile(card).status == NOT_EXPRESSIBLE
+    proposal = copy.deepcopy(r["proposal"])
+    proposal["strategy_logic"]["screen"]["steps"] = proposal["strategy_logic"]["screen"]["steps"][:1]
+    out = _compiler(proposal).compile(card)
+    assert out.status == NOT_EXPRESSIBLE and "omitted_screen_idea_input" in out.reason
+    proposal = copy.deepcopy(r["proposal"])
+    proposal["strategy_logic"]["inputs"].append({"name": "missing", "dataset": "tw_price_daily", "field": "unlisted", "availability_lag_days": 0})
+    c = _compiler(proposal)
+    assert c.compile(card).status == NEEDS_DATA
+    assert c.store.needs_data_report() == [{"dataset": "tw_price_daily", "count": 1}]
+
+
+def test_malformed_pairing_and_unsafe_default_direction_fail_closed():
+    for controls in (None, "injected", {}):
+        proposal = _proposal()
+        proposal["mutation_surface"]["controls"] = controls
+        assert _compiler(proposal).compile(_card()).status == NOT_EXPRESSIBLE
+    r = _screen_entry_recording()
+    card = r["response"]["output"]["structured_data"]["hypothesis_card"]
+    del card["entry_idea"]
+    card["direction"] = "short"
+    assert _compiler(r["proposal"]).compile(card).status == NOT_EXPRESSIBLE
 
 
 def _wired(tmp_path, proposal, testability="testable"):
