@@ -34,7 +34,7 @@ http_request_json = _base_http_request_json
 log = logging.getLogger(__name__)
 
 _PROPOSAL_COMMANDS = frozenset({
-    "ApproveEvolutionDecision", "ApproveMutation", "RejectMutation", "ReviewMutation",
+    "ApproveEvolutionDecision", "ApproveMutation", "RejectMutation", "CancelMutation", "ReviewMutation",
     "ExecuteEvolutionAction", "ExecuteMutation",
 })
 
@@ -254,6 +254,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         "ExecuteEvolutionAction",
         "ApproveMutation",
         "RejectMutation",
+        "CancelMutation",
         "ReviewMutation",
         "ExecuteMutation",
     }

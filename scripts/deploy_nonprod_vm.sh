@@ -119,6 +119,20 @@ SOURCE_REFRESH_SELECTED="false"
 case ",${DEV_COMPOSE_PROFILES}," in
   *,source-ingest-scheduler,*) SOURCE_REFRESH_SELECTED="true" ;;
 esac
+# PANTHEON_COLLECTOR_HOST must be exactly one valid hostname (no list, port, scheme).
+if [[ -n "${PANTHEON_COLLECTOR_HOST:-}" ]] \
+  && { [[ ${#PANTHEON_COLLECTOR_HOST} -gt 253 ]] \
+    || ! [[ "${PANTHEON_COLLECTOR_HOST}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]]; }; then
+  echo "[nonprod-deploy] ERROR: PANTHEON_COLLECTOR_HOST must be exactly one valid hostname" >&2
+  exit 1
+fi
+# Steady state (outside bounded refresh): deny falls through to an allowlist
+# of exactly PANTHEON_COLLECTOR_HOST when that named variable is configured.
+if [[ "${SOURCE_REFRESH_SELECTED}" != "true" && "${SOURCE_REFRESH_EGRESS_MODE}" == "deny" \
+  && -z "${SOURCE_REFRESH_ALLOWED_HOSTS}" && -n "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+  SOURCE_REFRESH_EGRESS_MODE="allowlist"
+  SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST}"
+fi
 if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_CONTROLLER_MODE="reconcile_and_pull"
   SOURCE_REFRESH_TRUTH_LEVEL="reconciled_live_proof"
@@ -412,6 +426,7 @@ Environment overrides:
   DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED
   PANTHEON_DEV_PAPER_EXPRESSION_LAYER DEV_PAPER_EXPRESSION_LAYER
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
+  PANTHEON_COLLECTOR_HOST PANTHEON_COLLECTOR_BUNDLE_TOKEN FINMIND_API_TOKEN
   DEV_PAPER_PRINCIPALS_AUTHORIZED
   DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
   DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
@@ -913,6 +928,9 @@ ssh_bash() {
     command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")"
     command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")"
+    command_prefix+=" PANTHEON_COLLECTOR_HOST=$(shell_quote "${PANTHEON_COLLECTOR_HOST:-}")"
+    command_prefix+=" PANTHEON_COLLECTOR_BUNDLE_TOKEN=$(shell_quote "${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}")"
+    command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
     command_prefix+=" bash -s"
   else
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
@@ -920,6 +938,7 @@ ssh_bash() {
     command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
     command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
+  command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
   command_prefix+=" PANTHEON_DEPLOY_RECEIPT_ROOT=$(shell_quote "${PANTHEON_DEPLOY_RECEIPT_ROOT:-}")"
   command_prefix+=" PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH=$(shell_quote "${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-}")"
@@ -1021,6 +1040,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN=$(shell_quote "${PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN:-false}")"
   command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}")"
   command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
+  command_prefix+=" PANTHEON_COLLECTOR_HOST=$(shell_quote "${PANTHEON_COLLECTOR_HOST:-}")"
+  command_prefix+=" PANTHEON_COLLECTOR_BUNDLE_TOKEN=$(shell_quote "${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${SOURCE_REFRESH_ALLOWED_HOSTS}")"
   command_prefix+=" SOURCE_INGEST_CONTROLLER_MODE=$(shell_quote "${SOURCE_REFRESH_CONTROLLER_MODE}")"
@@ -1141,9 +1162,9 @@ with os.fdopen(fd, "wb") as stream:
         "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
         "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
       fi
-      if [[ "${remote_component}" == "refresh-only" && "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+      if [[ "${remote_component}" == "refresh-only" && "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
         if [[ -n "${REFRESH_OUTPUT_PATH:-}" && ! -s "${REFRESH_OUTPUT_PATH}" ]]; then
-          printf '%s\n' '{"connector_id":"tw-taifex-futures-options-chip","dataset":"taifex_ssf_contracts","log":"","reason":"transport_failed","status":"failed"}' > "${REFRESH_OUTPUT_PATH}"
+          printf '{"connector_id":"%s","dataset":"%s","log":"","reason":"transport_failed","status":"failed"}\n' "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" > "${REFRESH_OUTPUT_PATH}"
         fi
         transport_status=0
       fi
@@ -1246,10 +1267,23 @@ validate_source_refresh_profile() {
   esac
 
   if [[ "$selected" != "true" ]]; then
-    [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
-      || error "external egress must remain deny when source-ingest-scheduler is not selected"
-    [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
-      || error "external host allowlist requires the bounded source-ingest-scheduler profile"
+    # Steady state (DEV-EGRESS-COLLECTOR-HOST-GATE-20261110): deny, or allowlist
+    # with exactly the single collector host from PANTHEON_COLLECTOR_HOST.
+    if [[ -n "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+      [[ ${#PANTHEON_COLLECTOR_HOST} -le 253 \
+        && "${PANTHEON_COLLECTOR_HOST}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]] \
+        || error "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname"
+    fi
+    if [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" ]]; then
+      [[ -n "${PANTHEON_COLLECTOR_HOST:-}" \
+        && "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" == "${PANTHEON_COLLECTOR_HOST}" ]] \
+        || error "steady source egress allowlist must be exactly PANTHEON_COLLECTOR_HOST"
+    else
+      [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
+        || error "external egress must remain deny when source-ingest-scheduler is not selected"
+      [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
+        || error "external host allowlist requires the bounded source-ingest-scheduler profile"
+    fi
     [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
       || error "default source-ingest owner must use reconcile_only mode"
     [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
@@ -1290,7 +1324,7 @@ validate_source_refresh_profile() {
     && (( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS >= 30 && SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600 )) \
     || error "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS must be between 30 and 3600"
 
-  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'PY'
+  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" "${PANTHEON_COLLECTOR_HOST:-}" <<'PY'
 import sys
 
 from services.external_egress import allowed_hosts
@@ -1320,6 +1354,20 @@ elif sys.argv[2] == "tw-taifex-futures-options-chip":
         )
     if dataset and dataset != "taifex_ssf_contracts":
         raise SystemExit(f"official TAIFEX refresh requires dataset taifex_ssf_contracts, got: {dataset}")
+elif sys.argv[2] == "tw-finmind-broker-daily-report":
+    required = {"api.finmindtrade.com", "storage.googleapis.com"}
+    if hosts != required:
+        raise SystemExit(
+            "FinMind broker refresh requires exact hosts: " + ",".join(sorted(required))
+        )
+    if dataset and dataset != "tw_broker_top":
+        raise SystemExit(f"FinMind broker refresh requires dataset tw_broker_top, got: {dataset}")
+elif sys.argv[2].startswith("collector-"):
+    collector = (sys.argv[4] if len(sys.argv) > 4 else "").strip().lower()
+    if not collector:
+        raise SystemExit("collector bundle refresh requires PANTHEON_COLLECTOR_HOST")
+    if hosts != {collector}:
+        raise SystemExit("collector bundle refresh requires exact host: " + collector)
 else:
     raise SystemExit(
         f"unsupported bounded source refresh connector: {sys.argv[2]}"
@@ -1651,7 +1699,12 @@ verify_bounded_source_refresh_readback() {
     "${evidence_dir}/agora_watchlist.json" \
     || { rm -rf "${evidence_dir}"; return 1; }
 
-  if ! python3 - \
+  local finmind_records_file=""
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-finmind-broker-daily-report" ]]; then
+    finmind_records_file="$(mktemp)"
+    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
+  fi
+  if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - \
     "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     "${deploy_started_at}" \
     "${evidence_dir}/receipts.json" \
@@ -1782,6 +1835,63 @@ else:
     projected_freshness = {"status": str(freshness.get("status") or "fresh")}
 
 
+def finmind_bare_symbol(value):
+    text = str(value).strip().upper()
+    for suffix in (".TWSE", ".TPEX", ".TWO", ".TW"):
+        if text.endswith(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def finmind_coverage(records, expected, *, accept):
+    """Union refresh_coverage across every accepted batch record against the current symbols."""
+    covered = set()
+    partial_missing = set()
+    seen = False
+    for record in records:
+        if not isinstance(record, dict) or not accept(record):
+            continue
+        meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        cov = meta.get("refresh_coverage")
+        if not isinstance(cov, dict):
+            continue
+        seen = True
+        covered.update(finmind_bare_symbol(item) for item in (cov.get("covered_symbols") or []))
+        partial_missing.update(finmind_bare_symbol(item) for item in (cov.get("missing_symbols") or []))
+    wanted = [finmind_bare_symbol(item) for item in expected]
+    missing = [item for item in dict.fromkeys(wanted) if item not in covered]
+    return seen, missing, sorted(covered), sorted(partial_missing)
+
+
+if connector_id == "tw-finmind-broker-daily-report":
+    run_ids = {
+        str(item["ingest_run_id"])
+        for item in candidates
+        if item.get("ingest_run_id")
+    }
+    expected_symbols = [item for item in priority_csv.split(",") if item.strip()]
+    if not expected_symbols:
+        raise SystemExit("FinMind coverage check requires the resolved active symbols")
+    records_path = os.environ.get("FINMIND_SOURCE_RECORDS_PATH", "").strip()
+    try:
+        if not records_path:
+            raise RuntimeError("authenticated source-records readback unavailable")
+        all_records = json.loads(Path(records_path).read_text(encoding="utf-8")).get("source_records") or []
+    except Exception as exc:
+        raise SystemExit(f"FinMind coverage readback failed: {exc}") from exc
+    seen, missing_syms, covered_syms, _ = finmind_coverage(
+        all_records,
+        expected_symbols,
+        accept=lambda rec: rec.get("connector_id") == connector_id
+        and str((rec.get("provenance") or {}).get("source_ingest_run_id") or "") in run_ids,
+    )
+    if not seen or missing_syms:
+        raise SystemExit(
+            "FinMind bounded refresh status=partial: "
+            f"covered={covered_syms} missing={missing_syms}; not accepted as fresh"
+        )
+
+
 def canonical_taiwan_symbol(value):
     symbol, suffix = value.upper().rsplit(".", 1)
     if suffix in {"TW", "TWSE"}:
@@ -1885,10 +1995,12 @@ print(
 PY
   then
     rm -rf "${evidence_dir}"
+    [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
     LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed"
     return 1
   fi
   rm -rf "${evidence_dir}"
+  [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
   info "bounded source refresh services exited zero and receipt/projection readback advanced"
 }
 
@@ -1934,9 +2046,43 @@ ensure_dev_caddy_ingress() (
   info "dev Caddy HTTPS ingress verified: ${bff_host}"
 )
 
+# Reads /api/source-ingest/source-records through the real strict JWT/tenant
+# boundary. A short-lived HS256 token is minted inside the source-ingest
+# container from its own runtime verifier env, so no secret reaches the host
+# command line, logs or this script's stdout. Writes the JSON body to $1.
+fetch_finmind_source_records() {
+  local out_path="$1" cid=""
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+  [[ -n "${cid}" ]] || return 1
+  docker exec -i "${cid}" python3 - >"${out_path}" 2>/dev/null <<'FINMIND_RECORDS_PY' || return 1
+import json, os, time, urllib.request
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "").strip()
+tenant = (os.environ.get("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.environ.get("PANTHEON_TENANT_ID") or "").strip()
+if not secret or not tenant:
+    raise SystemExit(2)
+now = int(time.time())
+claims = {"sub": "deploy-finmind-coverage-readback", "roles": ["source_ingest_reader"], "tenant_id": tenant, "iat": now, "exp": now + 120}
+if os.environ.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip():
+    claims["iss"] = os.environ["PANTHEON_RUNTIME_JWT_ISSUER"].strip()
+if os.environ.get("PANTHEON_RUNTIME_JWT_AUDIENCE", "").strip():
+    claims["aud"] = os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"].strip()
+headers = {"Accept": "application/json", "Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret), "X-Tenant-Id": tenant}
+port = os.environ.get("PORT", "8097")
+req = urllib.request.Request(f"http://127.0.0.1:{port}/api/source-ingest/source-records", headers=headers)
+with urllib.request.urlopen(req, timeout=30) as resp:
+    print(resp.read().decode("utf-8"))
+FINMIND_RECORDS_PY
+}
+
 check_taiwan_refresh_preflight() {
-  local force="${1:-false}"
-  python3 - "${force}" <<'PREFLIGHT_PY'
+  local force="${1:-false}" finmind_records_file=""
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
+    finmind_records_file="$(mktemp)"
+    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
+  fi
+  FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - "${force}" <<'PREFLIGHT_PY'
 import json, os, sys, urllib.error, urllib.parse, urllib.request
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -1952,13 +2098,44 @@ def emit(status, **kw):
 
 from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
 
+def finmind_bare_symbol(value):
+    text = str(value).strip().upper()
+    for suffix in (".TWSE", ".TPEX", ".TWO", ".TW"):
+        if text.endswith(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def finmind_coverage(records, expected, *, accept):
+    """Union refresh_coverage across every accepted batch record against the current symbols."""
+    covered = set()
+    partial_missing = set()
+    seen = False
+    for record in records:
+        if not isinstance(record, dict) or not accept(record):
+            continue
+        meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        cov = meta.get("refresh_coverage")
+        if not isinstance(cov, dict):
+            continue
+        seen = True
+        covered.update(finmind_bare_symbol(item) for item in (cov.get("covered_symbols") or []))
+        partial_missing.update(finmind_bare_symbol(item) for item in (cov.get("missing_symbols") or []))
+    wanted = [finmind_bare_symbol(item) for item in expected]
+    missing = [item for item in dict.fromkeys(wanted) if item not in covered]
+    return seen, missing, sorted(covered), sorted(partial_missing)
+
+
 raw_connector = os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", "").strip()
 raw_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET", "").strip()
 connector_id = raw_connector or (
     "tw-taifex-futures-options-chip" if raw_dataset == "taifex_ssf_contracts" else "tw-twse-tpex-official-market"
 )
+CHIP_CONNECTORS = {"tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report"}
 bounded_dataset = raw_dataset or (
-    "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip" else "tw_price_daily"
+    "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip"
+    else "tw_broker_top" if connector_id == "tw-finmind-broker-daily-report"
+    else "tw_price_daily"
 )
 
 symbols = list(dict.fromkeys(s.strip().upper() for s in os.environ.get("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").split(",") if s.strip()))
@@ -1990,14 +2167,14 @@ for symbol in symbols:
     except Exception as exc:
         emit("error", reason="preflight_failed", detail=str(exc))
 
-if connector_id != "tw-taifex-futures-options-chip" and any(snap is None for _, snap in snaps):
+if connector_id not in CHIP_CONNECTORS and any(snap is None for _, snap in snaps):
     if force:
         emit("proceed")
     emit("proceed", reason="snapshot_missing", symbols=[sym for sym, snap in snaps if snap is None])
 
 holidays = {}
 calendars = {}
-if connector_id == "tw-taifex-futures-options-chip" and all(snap is None for _, snap in snaps):
+if connector_id in CHIP_CONNECTORS and all(snap is None for _, snap in snaps):
     from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
     cal = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=d_str, fetched_at=now_u.isoformat().replace("+00:00", "Z"))
     c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
@@ -2034,7 +2211,7 @@ for _ in range(20):
 session_date = cursor
 session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
 
-if connector_id == "tw-taifex-futures-options-chip":
+if connector_id in CHIP_CONNECTORS:
     if now_t.weekday() >= 5:
         emit("skipped", reason="weekend", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
     if d_str in holidays:
@@ -2078,7 +2255,7 @@ if connector_id == "tw-taifex-futures-options-chip":
     if (
         not latest_record
         or latest_record.get("status") not in (None, "", "normalized", "valid")
-        or not source_id.startswith(f"tw-taifex:{bounded_dataset}:")
+        or (connector_id == "tw-taifex-futures-options-chip" and not source_id.startswith(f"tw-taifex:{bounded_dataset}:"))
         or record_dataset != bounded_dataset
         or (bounded_dataset == "taifex_ssf_contracts" and schema_hash not in ("", "tw_taifex_ssf_contracts.v1"))
     ):
@@ -2119,6 +2296,35 @@ if connector_id == "tw-taifex-futures-options-chip":
             obs_dt = None
     if record_session_date is None or record_session_date < session_date or obs_dt is None or obs_dt < session_close:
         emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
+    if connector_id == "tw-finmind-broker-daily-report":
+        records_path = os.environ.get("FINMIND_SOURCE_RECORDS_PATH", "").strip()
+        try:
+            if not records_path:
+                raise RuntimeError("authenticated source-records readback unavailable")
+            with open(records_path, encoding="utf-8") as rec_file:
+                all_records = json.load(rec_file).get("source_records") or []
+        except Exception:
+            emit("proceed", reason="coverage_readback_unavailable", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
+
+        def current_session_batch(rec):
+            rec_meta = rec.get("metadata") if isinstance(rec.get("metadata"), dict) else {}
+            rec_cov = rec_meta.get("refresh_coverage") if isinstance(rec_meta.get("refresh_coverage"), dict) else {}
+            return (
+                rec.get("connector_id") == connector_id
+                and str(rec_cov.get("trade_date") or rec_meta.get("trade_date") or "")[:10] == str(session_date)
+            )
+
+        _seen, missing_syms, covered_syms, _pm = finmind_coverage(all_records, symbols, accept=current_session_batch)
+        if not _seen or missing_syms:
+            emit(
+                "proceed",
+                reason="coverage_incomplete",
+                connector_id=connector_id,
+                dataset=bounded_dataset,
+                session_date=str(session_date),
+                covered_symbols=covered_syms,
+                missing_symbols=missing_syms,
+            )
     emit(
         "noop",
         reason="already_fresh",
@@ -2160,12 +2366,15 @@ if now_t.time() < time(13, 30):
     emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
 emit("noop", reason="already_fresh", session_date=str(session_date), snapshot_id=snaps[0][1].get("snapshot_id"), checked_at=now_u.isoformat())
 PREFLIGHT_PY
+  local preflight_rc=$?
+  [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
+  return "${preflight_rc}"
 }
 
 manage_source_ingest_refresh_runtime() {
   local env_path="$1" action="$2" img_id="$3" arg="${4:-}"
   python3 - "${env_path}" "${action}" "${img_id}" "${arg}" <<'PY'
-import json, os, subprocess, sys
+import json, os, re, subprocess, sys
 path, action, expected_img, arg = sys.argv[1:5]
 with open(path, "r", encoding="utf-8") as f:
     pre_list = json.load(f)
@@ -2184,12 +2393,38 @@ if action == "bounded":
     bounded_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET") or ""
     if bounded_dataset:
         env["SOURCE_INGEST_BOUNDED_DATASET"] = bounded_dataset
+    # FinMind reads env://FINMIND_API_TOKEN; the recorded container env may carry
+    # an old or empty value, so the supplied secret overrides it for this window only.
+    # Restore rebuilds env from the recorded pre-environment, so the old value returns.
+    if os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID") == "tw-finmind-broker-daily-report":
+        finmind_token = os.environ.get("FINMIND_API_TOKEN") or ""
+        if not finmind_token:
+            raise SystemExit("FINMIND_API_TOKEN is required for the FinMind bounded refresh")
+        env["FINMIND_API_TOKEN"] = finmind_token
 elif action == "restore":
-    env.update({"PANTHEON_EXTERNAL_EGRESS": "deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "", "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only"})
-# "compose up --no-build" starts whatever image the Compose name resolves to.
-# Never recreate source-ingest on any image other than the recorded running one
-# (a stale tag once started a rejected candidate here): stop before recreating.
+    # Restore the steady posture: allowlist with exactly the collector host
+    # (named deployment variable); deny only when no collector host is configured.
+    steady_host = (env.get("PANTHEON_COLLECTOR_HOST") or os.environ.get("PANTHEON_COLLECTOR_HOST") or "").strip().lower()
+    if steady_host and not (len(steady_host) <= 253 and re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*", steady_host)):
+        raise SystemExit("PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring")
+    env.update({
+        "PANTHEON_EXTERNAL_EGRESS": "allowlist" if steady_host else "deny",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
+        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+    })
+# "compose up --no-build" starts whatever image the Compose name resolves to, and
+# a stale plain tag left by an earlier failed deploy once pointed at a rejected
+# candidate. Pin source-ingest to the recorded running image ID with a Compose
+# override so neither the bounded refresh nor its restore depends on any tag, and
+# stop before recreating unless the pinned image exists locally under that exact ID.
 if expected_img:
+    import atexit, shutil, tempfile
+    pin_dir = tempfile.mkdtemp(prefix="source-ingest-pin-")
+    atexit.register(shutil.rmtree, pin_dir, ignore_errors=True)
+    pin_file = os.path.join(pin_dir, "source-ingest-pin.json")
+    with open(pin_file, "w", encoding="utf-8") as f:
+        json.dump({"services": {"source-ingest": {"image": expected_img, "pull_policy": "never"}}}, f)
+    cmd += ["-f", pin_file]
     try:
         model = json.loads(subprocess.check_output(cmd + ["config", "--format", "json", "source-ingest"], env=env, text=True))
         ref = (model["services"]["source-ingest"].get("image") or "pantheon-source-ingest")
@@ -2208,8 +2443,17 @@ if current_img != expected_img:
     raise SystemExit(f"source-ingest container image ID {current_img} != expected {expected_img}")
 if action == "restore":
     post_list = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .Config.Env}}", cid], text=True).strip())
-    if set(pre_list) != set(post_list):
-        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - set(pre_list))}, removed={sorted(set(pre_list) - set(post_list))}")
+    # Compare against the intended restored environment: pre env with only the
+    # restore-controlled keys replaced; image/other env invariants stay strict.
+    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
+    intended = {x for x in pre_list if x.split("=", 1)[0] not in controlled}
+    # SOURCE_INGEST_CONTROLLER_MODE is only passed to the scheduler service in
+    # docker-compose.yml, never the source-ingest container, so it is expected
+    # only when the recorded pre-environment carried it. Egress keys stay strict.
+    pre_keys = {x.split("=", 1)[0] for x in pre_list}
+    intended |= {f"{k}={env[k]}" for k in controlled if k != "SOURCE_INGEST_CONTROLLER_MODE" or k in pre_keys}
+    if set(intended) != set(post_list):
+        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - intended)}, removed={sorted(intended - set(post_list))}")
 PY
 }
 
@@ -2399,10 +2643,11 @@ RECOVER_DLQ_PY
 
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
-  if [[ "${connector_id}" != "tw-taifex-futures-options-chip" ]]; then
+  if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then
+    [[ "${dataset}" == "tw_broker_top" ]] || error "FinMind bounded refresh requires dataset tw_broker_top, got '${dataset:-missing}'"
+  elif [[ "${connector_id}" != "tw-taifex-futures-options-chip" ]]; then
     return 0
-  fi
-  if [[ "${dataset}" != "taifex_ssf_contracts" ]]; then
+  elif [[ "${dataset}" != "taifex_ssf_contracts" ]]; then
     error "TAIFEX bounded refresh requires dataset taifex_ssf_contracts, got '${dataset:-missing}'"
   fi
 
@@ -2439,6 +2684,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from dataclasses import replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -2446,6 +2692,7 @@ from services.source_ingestion.active_universe import (
     DEFAULT_SOURCE_UPDATE_RULES,
     build_active_universe_job_fanout,
 )
+from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
 from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
 
 api_url = (os.environ.get("SOURCE_INGEST_API_URL") or "http://127.0.0.1:18097").rstrip("/")
@@ -2454,14 +2701,15 @@ dataset = (sys.argv[2] if len(sys.argv) > 2 else "").strip()
 active_symbols_csv = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
 controller_token = (os.environ.get("SOURCE_INGEST_CONTROLLER_TOKEN") or "").strip()
 
-if connector_id != "tw-taifex-futures-options-chip" or dataset != "taifex_ssf_contracts":
+is_finmind = connector_id == "tw-finmind-broker-daily-report" and dataset == "tw_broker_top"
+if not is_finmind and (connector_id != "tw-taifex-futures-options-chip" or dataset != "taifex_ssf_contracts"):
     raise SystemExit(f"Unsupported bounded dataset profile: connector_id={connector_id!r} dataset={dataset!r}")
 if not controller_token:
     raise SystemExit("Missing SOURCE_INGEST_CONTROLLER_TOKEN for bounded source refresh dataset preparation")
 
 raw_symbols = [s.strip() for s in active_symbols_csv.split(",") if s.strip()]
 if not raw_symbols:
-    raise SystemExit("No active Taiwan paper symbols available for TAIFEX SSF bounded refresh")
+    raise SystemExit("No active Taiwan paper symbols available for the bounded refresh")
 
 run_date = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
 members = [
@@ -2474,7 +2722,18 @@ members = [
     }
     for sym in raw_symbols
 ]
-fanout = build_active_universe_job_fanout(members=members, run_date=run_date)
+# provider_owned_adapter caps fetch.max_records at 1000 (configured.py); FinMind emits at most
+# max_rank buy + max_rank sell rows per symbol, so bound each job to 25 symbols and let the
+# fanout produce as many batches as the universe needs instead of relaxing the generic guard.
+FINMIND_MAX_SYMBOLS_PER_JOB = 25
+FINMIND_FETCH_MAX_RECORDS_CAP = 1000
+fanout_rules = [
+    dataclass_replace(rule, max_symbols_per_run=FINMIND_MAX_SYMBOLS_PER_JOB)
+    if is_finmind and rule.connector_id == connector_id and rule.dataset == dataset
+    else rule
+    for rule in DEFAULT_SOURCE_UPDATE_RULES
+]
+fanout = build_active_universe_job_fanout(members=members, rules=fanout_rules, run_date=run_date)
 selected_job = next(
     (
         job
@@ -2491,46 +2750,93 @@ if not selected_job:
     )
 
 selected_rule = next(
-    (r for r in DEFAULT_SOURCE_UPDATE_RULES if r.connector_id == connector_id and r.dataset == dataset),
+    (r for r in fanout_rules if r.connector_id == connector_id and r.dataset == dataset),
     None,
 )
 if selected_rule is None:
     raise SystemExit(f"Missing DEFAULT_SOURCE_UPDATE_RULES entry for {connector_id}:{dataset}")
 
-contracts = [str(c).strip() for c in (selected_job.get("contracts") or []) if str(c).strip()]
 symbols = [str(s).strip() for s in (selected_job.get("symbols") or []) if str(s).strip()]
+if is_finmind:
+    # FinMind is keyed by the exact resolved active symbols across EVERY bounded batch
+    # (fanout splits >50 symbols into several jobs), not only the first one.
+    contracts = list(dict.fromkeys(
+        str(sym).strip()
+        for job in (fanout.get("jobs") or [])
+        if isinstance(job, dict)
+        and job.get("connector_id") == connector_id
+        and job.get("dataset") == dataset
+        for sym in (job.get("symbols") or [])
+        if str(sym).strip()
+    ))
+else:
+    contracts = [str(c).strip() for c in (selected_job.get("contracts") or []) if str(c).strip()]
 if not contracts:
     raise SystemExit(f"Active-universe {dataset} job has empty contracts list for symbols {raw_symbols}")
 
 interval_seconds = 86400
 priority = int(selected_rule.priority)
 
-adapter = TaifexDerivativesChipAdapter(
-    connector_id=connector_id,
-    dataset=dataset,
-    contracts=tuple(contracts),
-)
+if is_finmind:
+    adapter = FinMindTaiwanBrokerDailyReportAdapter(connector_id=connector_id)
+else:
+    adapter = TaifexDerivativesChipAdapter(
+        connector_id=connector_id,
+        dataset=dataset,
+        contracts=tuple(contracts),
+    )
 conn_dict = adapter.connector().to_dict()
 conn_dict.pop("schema_version", None)
 fetch_cfg = adapter.fetch_config()
-adapter_cfg = fetch_cfg.get("adapter_config") or {}
-req_cfg = fetch_cfg.get("request") or {}
-if adapter_cfg.get("dataset") != dataset or req_cfg.get("dataset") != dataset:
-    raise SystemExit(f"Adapter fetch_config dataset mismatch: adapter_config={adapter_cfg!r} request={req_cfg!r}")
-if list(adapter_cfg.get("contracts") or []) != contracts:
-    raise SystemExit(f"Adapter fetch_config contracts mismatch: {adapter_cfg.get('contracts')!r} != {contracts!r}")
+if is_finmind:
+    # The adapter's own request is empty; bind the first bounded batch here. Every scheduled
+    # batch job carries its own symbols in job_parameters, which override request.symbols, so
+    # all batches are processed. max_records is the per-job top-N buy+sell budget and must stay
+    # within the generic provider_owned_adapter guard.
+    rows_per_symbol = int(adapter.max_rank) * 2
+    per_job_budget = rows_per_symbol * FINMIND_MAX_SYMBOLS_PER_JOB
+    if per_job_budget > FINMIND_FETCH_MAX_RECORDS_CAP:
+        raise SystemExit(
+            f"FinMind per-job row budget {per_job_budget} exceeds provider_owned_adapter cap {FINMIND_FETCH_MAX_RECORDS_CAP}"
+        )
+    finmind_batches = [
+        [str(sym).strip() for sym in (job.get("symbols") or []) if str(sym).strip()]
+        for job in (fanout.get("jobs") or [])
+        if isinstance(job, dict) and job.get("connector_id") == connector_id and job.get("dataset") == dataset
+    ]
+    if any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
+        raise SystemExit("FinMind fanout produced a batch exceeding the fetch.max_records guard")
+    fetch_cfg = {
+        **fetch_cfg,
+        "request": {"dataset": dataset, "symbols": list(finmind_batches[0])},
+        "max_records": per_job_budget,
+    }
+    conn_dict["secret_ref_id"] = "env://FINMIND_API_TOKEN"
+else:
+    adapter_cfg = fetch_cfg.get("adapter_config") or {}
+    req_cfg = fetch_cfg.get("request") or {}
+    if adapter_cfg.get("dataset") != dataset or req_cfg.get("dataset") != dataset:
+        raise SystemExit(f"Adapter fetch_config dataset mismatch: adapter_config={adapter_cfg!r} request={req_cfg!r}")
+    if list(adapter_cfg.get("contracts") or []) != contracts:
+        raise SystemExit(f"Adapter fetch_config contracts mismatch: {adapter_cfg.get('contracts')!r} != {contracts!r}")
 
 desired_requirement = {
     "connector_id": connector_id,
-    "provider": "TAIFEX",
+    "provider": "FinMind" if is_finmind else "TAIFEX",
     "dataset": dataset,
-    "source_class": "derivatives_chip",
+    "source_class": "taiwan_chip" if is_finmind else "derivatives_chip",
     "cadence": "daily",
     "schedule_interval_seconds": interval_seconds,
     "priority": priority,
     "enabled": True,
 }
 conn_meta = dict(conn_dict.get("metadata") or {})
+if is_finmind:
+    # Code-reviewed FinMind Sponsor Pro connector: mark it approved through the same connector
+    # metadata marker the persona reconciler's require_connector_approved gate reads for
+    # registered custom connectors (TAIFEX precedent). The gate stays enforced.
+    conn_meta["approval_status"] = "approved"
+    conn_meta["approval_authority"] = "code_reviewed_finmind_sponsorpro_connector"
 conn_meta["persona_source_reconciliation"] = {
     "managed_by": "persona_source_provisioning_reconciler",
     "desired_state": desired_requirement,
@@ -2587,7 +2893,7 @@ schedule_resp = request_json(
         "enqueue": True,
     },
 )
-enqueued_items = schedule_resp.get("enqueued_items") or []
+enqueued_items = schedule_resp.get("enqueued_items") or schedule_resp.get("enqueued") or []
 if enqueued_items:
     matched_item = next(
         (
@@ -2596,7 +2902,7 @@ if enqueued_items:
             if isinstance(item, dict)
             and item.get("connector_id") == connector_id
             and (item.get("job_parameters") or {}).get("dataset") == dataset
-            and list((item.get("job_parameters") or {}).get("contracts") or []) == contracts
+            and (is_finmind or list((item.get("job_parameters") or {}).get("contracts") or []) == contracts)
         ),
         None,
     )
@@ -2604,6 +2910,24 @@ if enqueued_items:
         raise SystemExit(
             f"Active-universe schedule did not enqueue expected {dataset} job_parameters for {connector_id}: {schedule_resp}"
         )
+    if is_finmind:
+        enqueued_symbols = {
+            str(sym).strip()
+            for item in enqueued_items
+            if isinstance(item, dict)
+            and item.get("connector_id") == connector_id
+            and (item.get("job_parameters") or {}).get("dataset") == dataset
+            for sym in (
+                (item.get("job_parameters") or {}).get("symbols")
+                or (item.get("job_parameters") or {}).get("contracts")
+                or []
+            )
+        }
+        uncovered = [sym for sym in contracts if sym not in enqueued_symbols]
+        if uncovered:
+            raise SystemExit(
+                f"Active-universe schedule did not cover full FinMind universe; missing={uncovered}"
+            )
 
 default_desired_path = (
     Path(os.environ.get("PANTHEON_REMOTE_DIR") or os.getcwd())
@@ -2698,6 +3022,9 @@ execute_bounded_source_refresh_entrypoint() {
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}" == "tw-taifex-futures-options-chip" ]]; then
     default_allowed_hosts="openapi.taifex.com.tw,www.taifex.com.tw"
     default_bounded_dataset="taifex_ssf_contracts"
+  elif [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
+    default_allowed_hosts="api.finmindtrade.com,storage.googleapis.com"
+    default_bounded_dataset="tw_broker_top"
   fi
   # Resolve active Taiwan paper symbols first so the preflight checks the same symbols as the refresh.
   PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler" \
@@ -2747,11 +3074,12 @@ OUTCOME_PY
     trap - EXIT INT TERM
     if (( rc != 0 )); then
       local fail_reason="${LAST_REMOTE_DEPLOY_ERROR:-bounded_refresh_preflight_failed}"
-      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
-        write_bounded_refresh_outcome "failed" "${fail_reason}" || true
-      fi
+      # Every connector records its failure outcome and captured log in the
+      # requested output file (a no-op without --output), so a failed Taiwan
+      # refresh keeps its own logs instead of an empty block.
+      write_bounded_refresh_outcome "failed" "${fail_reason}" || true
       rm -f "${steady_env:-}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
-      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
         info "non-blocking TAIFEX refresh failed before container mutation (rc=${rc}, reason=${fail_reason}); continuing without failing release"
         exit 0
       fi
@@ -2760,6 +3088,14 @@ OUTCOME_PY
     rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
   }
   trap handle_pre_mutation_refresh_exit EXIT INT TERM
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}" ]]; then
+    # No credential: record the reason and leave the stack untouched.
+    write_bounded_refresh_outcome "skipped" "missing_credential" '{"status": "skipped", "reason": "missing_credential"}'
+    info "FinMind broker refresh skipped: missing_credential (no container mutation)"
+    trap - EXIT INT TERM
+    rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+    return 0
+  fi
   resolve_bounded_source_refresh_active_symbols
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
   preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"
@@ -2777,7 +3113,7 @@ OUTCOME_PY
     error)
       local err_reason
       err_reason="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("detail") or d.get("reason") or "preflight_error")' "${preflight_output}")"
-      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
+      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
         write_bounded_refresh_outcome "failed" "${err_reason}" "${preflight_output}"
       else
         [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
@@ -2785,7 +3121,7 @@ OUTCOME_PY
       info "bounded source refresh preflight error: ${preflight_output}" >&2
       trap - EXIT INT TERM
       rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
-      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+      if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
         info "non-blocking TAIFEX refresh preflight error (${err_reason}); continuing without failing release"
         return 0
       fi
@@ -2870,12 +3206,12 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
         [[ -z "${sched_log}" ]] || printf '%s\n' "${sched_log}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
       fi
     fi
-    info "restoring external egress to deny and source controller to reconcile_only"
+    info "restoring steady collector-host egress posture and source controller to reconcile_only"
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
-      PANTHEON_EXTERNAL_EGRESS=deny PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="" \
+      PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST:-}" \
       SOURCE_INGEST_CONTROLLER_MODE=reconcile_only SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
       SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
@@ -2888,14 +3224,15 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     (( restore_rc == 0 )) || rc="${restore_rc}"
     if (( rc != 0 )); then
       local fail_reason="${LAST_REMOTE_DEPLOY_ERROR:-bounded_refresh_failed}"
-      if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
-        write_bounded_refresh_outcome "failed" "${fail_reason}" || true
-      fi
+      # Every connector records its failure outcome and captured log in the
+      # requested output file (a no-op without --output), so a failed Taiwan
+      # refresh keeps its own logs instead of an empty block.
+      write_bounded_refresh_outcome "failed" "${fail_reason}" || true
     fi
     rm -f "${steady_env:-}"
     if (( rc != 0 )); then
       rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
-      if (( restore_rc == 0 )) && [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-taifex-futures-options-chip" ]]; then
+      if (( restore_rc == 0 )) && [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
         info "non-blocking TAIFEX refresh failed (rc=${rc}); continuing without failing release"
         [[ "${invoked_from_trap}" == "true" ]] && exit 0
         return 0
@@ -2933,8 +3270,29 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   [[ -n "${projector_img_id}" && "${projector_img_sha}" == "${GIT_SHA}" ]] || error "source-ingest-agora-projector image revision ${projector_img_sha:-missing} != expected ${GIT_SHA} (stale_projector_image)"
 
   local extra_bounded_env_args=()
-  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-taifex-futures-options-chip" ]]; then
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
     extra_bounded_env_args+=(-e SOURCE_INGEST_DESIRED_STATE_PATH=/data/source-ingest/bounded-refresh/desired_state.json)
+  fi
+
+  # Every FinMind symbol batch (25 symbols each) is its own frontier item and one tick claims at
+  # most max_concurrency items, while the controller rejects any remaining backlog. Size the
+  # concurrency and the bounded tick count so every batch drains: batches up to the API cap finish in a
+  # single tick; more need ceil(batches/cap) ticks (hard cap 24 ticks).
+  local bounded_max_ticks=1 bounded_concurrency=1
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-finmind-broker-daily-report" ]]; then
+    local finmind_symbol_count finmind_batch_count
+    finmind_symbol_count="$(printf '%s' "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sort -u | wc -l | tr -d ' ')"
+    finmind_batch_count=$(( (finmind_symbol_count + 24) / 25 ))
+    (( finmind_batch_count >= 1 )) || finmind_batch_count=1
+    # Stay within the recreated source-ingest API cap or the API rejects the run with HTTP 400;
+    # read the real cap from the running container (Compose default 2).
+    local api_cap
+    api_cap="$(docker exec "${cid}" printenv SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY 2>/dev/null | tr -d '[:space:]' || true)"
+    [[ "${api_cap}" =~ ^[0-9]+$ ]] && (( api_cap >= 1 )) || api_cap=2
+    bounded_concurrency=$(( finmind_batch_count < api_cap ? finmind_batch_count : api_cap ))
+    bounded_max_ticks=$(( (finmind_batch_count + bounded_concurrency - 1) / bounded_concurrency ))
+    (( bounded_max_ticks <= 24 )) || error "FinMind bounded refresh needs ${bounded_max_ticks} ticks for ${finmind_symbol_count} symbols; exceeds the 24 tick bound"
+    info "FinMind bounded refresh draining ${finmind_batch_count} batch(es) with concurrency=${bounded_concurrency} ticks=${bounded_max_ticks}"
   fi
 
   # A ten second interval keeps the one-shot lease (twice the interval) short,
@@ -2943,13 +3301,13 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     COMPOSE_PROFILES="source-ingest-scheduler,workers" \
     SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
     SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
-    SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
+    SOURCE_INGEST_CONTROLLER_MAX_TICKS="${bounded_max_ticks}" \
     SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=10 \
     SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no \
     SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
-    SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
+    SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${bounded_concurrency}" \
     SOURCE_INGEST_MAX_RECORDS=100 \
     SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \

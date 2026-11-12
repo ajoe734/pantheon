@@ -319,7 +319,6 @@ def build_consolidated_cross_cutting_app(read_surface: Any) -> FastAPI:
             sse_buffers={},
             sse_subscribers={},
             gov_bff_action_command=lambda *a, **k: {},
-            deprecated_bff_path_response=lambda *a, **k: None,
             sem_command_response=lambda *a, **k: None,
             stream_generic_events=lambda *a, **k: None,
             surface_degradation_reason=_surface_degradation_reason,

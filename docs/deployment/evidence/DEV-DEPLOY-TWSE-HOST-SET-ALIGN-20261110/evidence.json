@@ -1,0 +1,161 @@
+{
+  "task_id": "DEV-DEPLOY-TWSE-HOST-SET-ALIGN-20261110",
+  "official_connector_hosts": [
+    "openapi.twse.com.tw",
+    "www.tpex.org.tw"
+  ],
+  "changes": {
+    ".github/workflows/nonprod-deploy.yml": "market_refresh step PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS now exactly openapi.twse.com.tw,www.tpex.org.tw",
+    "scripts/run_isolated_l12_runtime_e2e.py": "official pull env mirrors the same two hosts",
+    "scripts/test_run_isolated_l12_runtime_e2e.py": "asserts the two hosts",
+    "scripts/test_dev_tw_market_refresh.py": "workflow/env host-set assertions updated to two hosts",
+    "scripts/test_deploy_nonprod_bootstrap_contract.py": "valid TWSE/TPEx host set updated to two hosts; three-host set kept as rejected case",
+    "scripts/test_source_ingest_deploy_diagnostics_contract.py": "host-set assertions updated to two hosts; three-host set now a rejected case"
+  },
+  "unchanged_per_acceptance_6": [
+    "scripts/deploy_nonprod_vm.sh",
+    "services/source_ingestion/connectors/taiwan_official.py host guard",
+    "TAIFEX host guard",
+    ".github/workflows/dev-tw-market-refresh.yml"
+  ],
+  "assertion_change_justifications": [
+    "Every changed host-set assertion moves from the removed three-host set to the two-host set that deploy_nonprod_vm.sh (required = {openapi.twse.com.tw, www.tpex.org.tw}) and the connector guard enforce; no assertion was deleted and the three-host set is now asserted as rejected.",
+    "test_bounded_source_refresh_profile_is_fail_closed: two stale deploy-script string pins were rewritten to match the unchanged script. 'SOURCE_REFRESH_ALLOWED_HOSTS:+...www.twse.com.tw' (no longer present in the script) became assert 'www.twse.com.tw' not in deploy; the connector id pin now matches the existing default-form 'SOURCE_REFRESH_CONNECTOR_ID=\"${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}\"'. Intent (default connector, no www.twse append) is preserved."
+  ],
+  "tests_after_fix": {
+    "command": "pytest scripts/test_dev_tw_market_refresh.py scripts/test_deploy_nonprod_bootstrap_contract.py scripts/test_run_isolated_l12_runtime_e2e.py scripts/test_deploy_nonprod_vm.py",
+    "result": "292 passed, 4 skipped in 373.11s",
+    "diagnostics_contract": "scripts/test_source_ingest_deploy_diagnostics_contract.py: 21 passed in 27.46s"
+  },
+  "tests_on_c132c3246_baseline": {
+    "note": "Observed on the anchored branch before the diagnostics-test fix (host-set assertions in the test files were the only differences from c132c3246 besides the anchor). Failing assertions on the old host set, in scripts/test_source_ingest_deploy_diagnostics_contract.py: test_bounded_source_refresh_profile_is_fail_closed, test_validate_source_refresh_profile_taifex_and_twse_exact_host_contract, test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse. A fourth failure (test_prepare_bounded_source_refresh_dataset_wires_ssf_through_scheduler_and_adapter) and three others (test_bounded_refresh_controller_writes_the_authoritative_readback_state, test_runtime_evolution_fixture_uses_selected_tenant_against_real_evolution_auth, test_paper_signal_producer_binding_recovery_and_health_lifecycle) were missing-package failures (jsonschema/fastapi) in a bare venv and pass once installed. A literal checkout of c132c3246 was not re-run; the task's list of 13 test names was not available in the worker context, so per-test baseline for those is not enumerated."
+  },
+  "repo_search": {
+    "command": "git grep -n www.twse.com.tw -- . ':!docs' ':!.orchestrator'",
+    "allowed_host_list_hits": [],
+    "non_allowlist_hits": [
+      "deploy/collector/** (collector fetch targets, not connector allowlist)",
+      "services/source_ingestion/connectors/taiwan_official.py (TWSE_LEGACY_BASE_URL and source_url metadata; guard rejects non-openapi twse hosts)",
+      "services/execution/market_snapshot_admission.py:43 (excluded non-connector reference)",
+      "scripts/test_*.py and services/**/tests (negative/rejected cases and fixtures)"
+    ]
+  },
+  "source_delivery_provenance": {
+    "pr": 7161,
+    "approved_head": "312904a4cb2877a40468646f654f0111abc21ed3",
+    "merge_commit": "54d5a88fb",
+    "base_branch": "dev",
+    "original_authored_trailer": "Antigravity",
+    "original_finalizer": "Antigravity2",
+    "original_review": "native Claude approve + same-account GitHub COMMENTED bridge 5854794672 (history, labelled as the original source review; not a new self-approval); independent run 227 passed, 2 skipped; 60 GitHub checks non-failing",
+    "original_review_disclosed_gap": "per-test c132c3246 baseline for the 13 tests was missing from the original evidence (non-blocking in review); closed by baseline_replay below",
+    "closeout_note": "Evidence-only closeout. This update changes only this JSON; no workflow/script/test/product source is touched."
+  },
+  "baseline_replay": {
+    "executed_at_utc_c132c3246": "2026-11-11T11:41:11Z",
+    "executed_at_utc_approved_head": "2026-11-11T11:41:35Z",
+    "note": "Live replay performed for this closeout, NOT historical execution. Each commit exported with git archive to a clean dir, re-initialised as a throwaway git repo (deploy_nonprod_vm.sh needs one; without it the refresh-entrypoint test fails for an environmental reason), run with /tmp/twse-venv python. The 13 IDs are the failing cases named in the original task description: 2 in test_dev_tw_market_refresh.py plus 5+2+4 parametrised cases in test_deploy_nonprod_bootstrap_contract.py. The run selects the 5 test functions = 26 cases; the 13 not failing on c132c3246 are other parametrised cases (e.g. non-TWSE connectors).",
+    "command": "python -m pytest <5 test function node ids> -v -p no:cacheprovider",
+    "c132c3246": {
+      "summary": "13 failed, 13 passed",
+      "output_sha256": "e1132620b0d834bdba3b533dad6bafe8c01cf506c6cb3a957ea9146daceff7d6",
+      "failed_case_ids": [
+        "scripts/test_dev_tw_market_refresh.py::test_refresh_entrypoint_restores_egress_deny_and_preserves_env",
+        "scripts/test_dev_tw_market_refresh.py::test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[30-30]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[90-90]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[120-120]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[1800-120]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[3600-120]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors[tw-twse-tpex-official-market-openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw-]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors[tw-twse-tpex-official-market-www.tpex.org.tw,www.twse.com.tw,openapi.twse.com.tw-tw_price_daily]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market-openapi.twse.com.tw,www.tpex.org.tw--official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw,www.twse.com.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market-openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw--official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw,www.twse.com.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market-openapi.taifex.com.tw,www.taifex.com.tw--official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw,www.twse.com.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market-openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw-taifex_ssf_contracts-official TWSE/TPEx refresh does not admit dataset: taifex_ssf_contracts]"
+      ]
+    },
+    "approved_head_312904a4c": {
+      "summary": "26 passed",
+      "output_sha256": "4c487d097bd558a9f23f272f0cf234ab3806c7e2d6ffb73d94834983b5982888",
+      "case_ids": [
+        "scripts/test_dev_tw_market_refresh.py::test_refresh_entrypoint_restores_egress_deny_and_preserves_env",
+        "scripts/test_dev_tw_market_refresh.py::test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[30-30]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[90-90]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[120-120]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[1800-120]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[3600-120]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors[tw-taifex-futures-options-chip-openapi.taifex.com.tw,www.taifex.com.tw-]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors[tw-taifex-futures-options-chip-www.taifex.com.tw,openapi.taifex.com.tw-taifex_ssf_contracts]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors[tw-twse-tpex-official-market-openapi.twse.com.tw,www.tpex.org.tw-]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors[tw-twse-tpex-official-market-www.tpex.org.tw,openapi.twse.com.tw-tw_price_daily]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-taifex-futures-options-chip-openapi.taifex.com.tw--official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-taifex-futures-options-chip-www.taifex.com.tw--official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-taifex-futures-options-chip-openapi.taifex.com.tw,www.taifex.com.tw,extra.taifex.com.tw--official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-taifex-futures-options-chip-openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw--official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-taifex-futures-options-chip-openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw--official TAIFEX refresh requires exact hosts: openapi.taifex.com.tw,www.taifex.com.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-taifex-futures-options-chip-*.taifex.com.tw,www.taifex.com.tw--PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS entries must be exact host names]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-taifex-futures-options-chip-*--PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS entries must be exact host names]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-taifex-futures-options-chip-openapi.taifex.com.tw,www.taifex.com.tw-tw_price_daily-official TAIFEX refresh requires dataset taifex_ssf_contracts]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market-openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw--official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market-openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw--official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market-openapi.taifex.com.tw,www.taifex.com.tw--official TWSE/TPEx refresh requires exact hosts: openapi.twse.com.tw,www.tpex.org.tw]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market-*.twse.com.tw,www.tpex.org.tw--PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS entries must be exact host names]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market-openapi.twse.com.tw,www.tpex.org.tw-taifex_ssf_contracts-official TWSE/TPEx refresh does not admit dataset: taifex_ssf_contracts]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-unknown-connector-openapi.taifex.com.tw,www.taifex.com.tw--unsupported bounded source refresh connector]",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors[tw-twse-tpex-official-market,tw-taifex-futures-options-chip-openapi.taifex.com.tw,www.taifex.com.tw--SOURCE_INGEST_BOUNDED_CONNECTOR_ID must contain one exact connector id]"
+      ]
+    },
+    "per_function": [
+      {
+        "test": "scripts/test_dev_tw_market_refresh.py::test_refresh_entrypoint_restores_egress_deny_and_preserves_env",
+        "on_c132c3246": {
+          "failed": 1
+        },
+        "on_approved_head_312904a4c": {
+          "passed": 1
+        }
+      },
+      {
+        "test": "scripts/test_dev_tw_market_refresh.py::test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+        "on_c132c3246": {
+          "failed": 1
+        },
+        "on_approved_head_312904a4c": {
+          "passed": 1
+        }
+      },
+      {
+        "test": "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped",
+        "on_c132c3246": {
+          "failed": 5
+        },
+        "on_approved_head_312904a4c": {
+          "passed": 5
+        }
+      },
+      {
+        "test": "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_accepts_exact_hosts_for_both_connectors",
+        "on_c132c3246": {
+          "passed": 2,
+          "failed": 2
+        },
+        "on_approved_head_312904a4c": {
+          "passed": 4
+        }
+      },
+      {
+        "test": "scripts/test_deploy_nonprod_bootstrap_contract.py::test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_connectors",
+        "on_c132c3246": {
+          "passed": 11,
+          "failed": 4
+        },
+        "on_approved_head_312904a4c": {
+          "passed": 15
+        }
+      }
+    ],
+    "gap": "Parametrised case IDs embed the host string, which this task changed, so the 13 failing c132c3246 IDs and the head IDs cannot be paired 1:1; they are paired per test function with counts, and both full ID lists are recorded."
+  }
+}

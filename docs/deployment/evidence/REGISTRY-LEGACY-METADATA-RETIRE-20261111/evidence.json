@@ -1,0 +1,88 @@
+{
+  "task_id": "REGISTRY-LEGACY-METADATA-RETIRE-20261111",
+  "captured_at_utc": [
+    "2026-11-11T11:42Z",
+    "2026-11-11T11:51:37Z",
+    "2026-11-11T11:56:56.142031Z"
+  ],
+  "host": "current dev deployment host (read-only; credentials not recorded)",
+  "runtime_binding_metadata": {
+    "source": "existing authorized runtime-manager GET list_all (no pagination)",
+    "binding_count": 159,
+    "metadata_projections": 158,
+    "with_deployment_stage_and_promotion_state": 158,
+    "legacy_only": 0
+  },
+  "object_store": {
+    "client": "mc inside pantheon-minio-1",
+    "buckets": 1,
+    "listed_rows": 0,
+    "local_fleet_metadata_paths": {
+      "/tmp/pantheon_storage": "absent",
+      "/data/runtime": "exists, 0 metadata files"
+    },
+    "inventory_captured_at_utc": "2026-11-11T11:51:37Z"
+  },
+  "limits": [
+    "Arbitrary historical archives outside the measured primary/.bak snapshots and MinIO inventory are not globally proven absent.",
+    "Supported loader/recovery paths (ArtifactLoader exact canonical key; RuntimeManager rollback from prior binding) do not execute such archives.",
+    "Zero MinIO rows (one bucket, 11:51:37) is kept separate from the snapshot measurements.",
+    "No data migration or archive deletion performed."
+  ],
+  "source_changes": [
+    "artifact_loader: removed promotion_state fallback; require artifact_state=approved and deployment_stage",
+    "experiments adapter: removed redundant promotion_state from artifact handoff and promoted metadata",
+    "telemetry/event target.promotion_state unchanged",
+    "governance DeploymentPlanner.build_execution_projection: removed promotion_state alias and _legacy_promotion_state helper",
+    "artifact-loader/contract.md: updated to canonical-only",
+    "smoke_test_artifact_loader: promote PAPER->CANARY->LIVE instead of forbidden paper->live"
+  ],
+  "verification": {
+    "services.execution.test_artifact_loader": "23 tests OK",
+    "services/registry/experiments test_adapter": "16 tests OK",
+    "smoke_test_artifact_loader": "python3 services/execution/smoke_test_artifact_loader.py exit 0; smoke now traverses PAPER->CANARY->LIVE via existing PromotionGate (same approver/rollback fixture, no gate checks relaxed)",
+    "services/control-plane/governance test_deployment_plan": "35 tests OK",
+    "callers": "current_artifact_signal and paper_signal_producer pytest: 130 passed plus 9 subtests"
+  },
+  "hosted_acceptance": "not performed; source outcome only",
+  "rollback_resolution": "RuntimeManager._rollback_once derives replacement from proven prior_binding fields plus request replacement_metadata (compensation ids); outbox_consumer_worker builds that payload without promotion_state. Source-supported; no legacy metadata needed.",
+  "canonical_coverage_note": "Primary and supported .bak were each measured directly (159 bindings; 158 canonical+legacy metadata; zero legacy-only, zero non-approved; one tenant). ArtifactLoader has no .bak path; it reads only the exact canonical openclaw/registry/<strategy>/<version>/metadata.json key.",
+  "persistent_snapshot_inventory": {
+    "source": "/tmp/pantheon-compat-residual-20261111/remote_binding_recovery_inventory-result.json (direct read of snapshot files, no service initialization)",
+    "captured_at_utc": "2026-11-11T11:56:56.142031+00:00",
+    "note": "Absent Counter keys mean zero. Primary and backup measured separately, not inferred from list_all.",
+    "primary": {
+      "binding_count": 159,
+      "status_counts": {
+        "retired": 152,
+        "failed": 3,
+        "paused": 4
+      },
+      "distinct_tenant_count": 1,
+      "metadata_objects": 158,
+      "canonical_with_legacy_metadata": 158,
+      "legacy_only": 0,
+      "non_approved": 0,
+      "path": "/data/runtime/runtime_bindings.json"
+    },
+    "supported_backup": {
+      "binding_count": 159,
+      "status_counts": {
+        "retired": 152,
+        "failed": 3,
+        "paused": 4
+      },
+      "distinct_tenant_count": 1,
+      "metadata_objects": 158,
+      "canonical_with_legacy_metadata": 158,
+      "legacy_only": 0,
+      "non_approved": 0,
+      "path": "/data/runtime/runtime_bindings.json.bak"
+    }
+  },
+  "missing_projection_binding": {
+    "source": "/tmp/pantheon-compat-residual-20261111/remote_binding_missing_projection-result.json",
+    "captured_at_utc": "2026-11-11T12:14:06.394625+00:00",
+    "explanation": "The 159th binding (159 bindings vs 158 metadata projections) is anonymized: status retired, deployment_mode paper, execution_mode paper, zero object-store keys, no strategy artifact. It has no metadata object, so no legacy-only consumer exists for it."
+  }
+}

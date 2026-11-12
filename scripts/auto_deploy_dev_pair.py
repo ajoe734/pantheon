@@ -21,9 +21,10 @@ DEPLOY = "nonprod-deploy.yml"
 ACTIVE = ("in_progress", "queued", "waiting", "pending", "requested")
 FAILED = ("failure", "timed_out")
 LEASE_STEP = "Acquire shared dev environment lease"
-# Runs under the held lease but before the artifact baseline, so a failure leaves the stack untouched.
-MARKET_REFRESH_STEP = "Refresh Taiwan market session under lease before stack mutation"
-PRE_MUTATION_STEPS = frozenset({LEASE_STEP, MARKET_REFRESH_STEP})
+# Runs after the candidate stack is up (post-switch), so its failure is compensated like
+# any other post-switch failure and is deliberately not a pre-mutation step.
+MARKET_REFRESH_STEP = "Refresh Taiwan market session under lease after candidate stack deploy"
+PRE_MUTATION_STEPS = frozenset({LEASE_STEP})
 CLOSEOUT_REPORT_PATHS = frozenset({
     "docs/deployment/latest-dev-six-area-closure.md",
     "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",

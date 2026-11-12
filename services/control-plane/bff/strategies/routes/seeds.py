@@ -19,6 +19,8 @@ from services.source_ingestion.strategy_seed_store import (
     StrategySpecSeedStoreError,
 )
 
+from services.control_plane.bff.research import discovery_projection
+
 from .common import StrategyRouteContext
 
 try:
@@ -504,6 +506,15 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                 "execution_route": lineage.get("execution_route") or "none",
             },
             "created_at": getattr(seed, "created_at", None),
+            "hypothesis_card": discovery_projection.project_hypothesis_card(
+                metadata.get("hypothesis_card")
+            ),
+            "lineage": discovery_projection.project_lineage(
+                lineage, source_ids=list(getattr(seed, "source_ids", []) or [])
+            ),
+            "attribution": discovery_projection.attribution_block(
+                metadata, lineage, list(getattr(seed, "source_ids", []) or [])
+            ),
         }
         if include_audit:
             card["review_decisions"] = list(lineage.get("review_decisions") or [])

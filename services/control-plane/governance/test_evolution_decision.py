@@ -144,6 +144,55 @@ class TestRiskNormalization(unittest.TestCase):
         )
 
 
+class TestDiscoveryAutoScopeRisk(unittest.TestCase):
+    """EVOLUTION-AUTO-CONSUMER-SEARCH: discovery paper scope is the only LOW-risk retire."""
+
+    def _retire(self, **overrides):
+        return make_decision(
+            action_type=EvolutionActionType.RETIRE,
+            target_stage="paper",
+            target_type=EvolutionTargetType.PERSONA,
+            **overrides,
+        )
+
+    def test_mutate_is_low_risk(self):
+        self.assertEqual(infer_risk_level(EvolutionActionType.MUTATE), RiskLevel.LOW)
+
+    def test_plain_retire_stays_high_risk_and_needs_committee(self):
+        decision = self._retire()
+        self.assertEqual(decision.risk_level, RiskLevel.HIGH)
+        decision.mark_reviewed(EvolutionActorRole.GOVERNANCE_COMMITTEE, "gc", "apr-1")
+        with self.assertRaises(EvolutionDecisionError):
+            decision.approve(EvolutionActorRole.AUTOMATED_GATE, "gate")
+
+    def test_discovery_paper_retire_is_low_and_automated_gate_may_own_it(self):
+        decision = self._retire(metadata={"discovery_auto_scope": True})
+        self.assertEqual(decision.risk_level, RiskLevel.LOW)
+        self.assertEqual(validate_evolution_decision(decision), [])
+        decision.mark_reviewed(EvolutionActorRole.AUTOMATED_GATE, "gate", "apr-1")
+        decision.approve(EvolutionActorRole.AUTOMATED_GATE, "gate")
+        self.assertEqual(decision.decision_state, EvolutionDecisionState.APPROVED)
+
+    def test_marker_does_not_lower_risk_outside_paper_or_for_other_actions(self):
+        live = make_decision(
+            action_type=EvolutionActionType.RETIRE,
+            target_stage="live",
+            metadata={"discovery_auto_scope": True},
+        )
+        self.assertEqual(live.risk_level, RiskLevel.HIGH)
+        freeze = make_decision(
+            action_type=EvolutionActionType.FREEZE,
+            target_stage="paper",
+            metadata={"discovery_auto_scope": True},
+        )
+        self.assertEqual(freeze.risk_level, RiskLevel.MEDIUM)
+
+    def test_forged_low_risk_on_unmarked_retire_fails_validation(self):
+        decision = self._retire()
+        decision.risk_level = RiskLevel.LOW
+        self.assertTrue(any("risk_level mismatch" in e for e in validate_evolution_decision(decision)))
+
+
 class TestEvolutionDecisionLifecycle(unittest.TestCase):
     def test_create_proposed(self):
         decision = make_decision()

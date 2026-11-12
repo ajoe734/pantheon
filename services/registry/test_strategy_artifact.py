@@ -1577,9 +1577,21 @@ def test_factor_rule_v1_artifact_validates_mutates_and_evaluates() -> None:
     assert payload.checksum == strategy_artifact_checksum(artifact)
 
     closes = [500.0, 505.0, 510.0, 515.0]
-    features = {"rev_yoy": [10.0, 11.0, 10.5, 18.0]}
-    action = evaluate_strategy_action(artifact, closes, features=features)
-    view = evaluate_strategy_view(artifact, closes, features=features)
+    features = {
+        "rev_yoy": [
+            {"event_time": "2026-01-31", "available_time": "2026-02-10T09:00:00Z", "value": 10.0},
+            {"event_time": "2026-02-28", "available_time": "2026-03-10T09:00:00Z", "value": 11.0},
+            {"event_time": "2026-03-31", "available_time": "2026-04-10T09:00:00Z", "value": 10.5},
+            {"event_time": "2026-04-30", "available_time": "2026-05-10T09:00:00Z", "value": 18.0},
+        ]
+    }
+    decision_time = "2026-05-15T13:30:00Z"
+    action = evaluate_strategy_action(
+        artifact, closes, features=features, decision_time=decision_time
+    )
+    view = evaluate_strategy_view(
+        artifact, closes, features=features, decision_time=decision_time
+    )
     assert action == "BUY"
     assert view["action"] == "BUY"
     assert view["direction"] == "LONG"

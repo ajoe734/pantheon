@@ -102,6 +102,9 @@ def default_state() -> dict[str, Any]:
         },
         "supervisor": {
             "pid": None,
+            # Namespace of the recorded supervisor and worker PIDs; status
+            # readers in another namespace (worker sandboxes) cannot use /proc.
+            "pid_namespace": None,
             "started_at": None,
             "last_heartbeat_at": None,
             "lifecycle": "idle",

@@ -16,6 +16,7 @@ import os
 import re
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from services.control_plane.bff.research import discovery_projection
 from services.evolution.program_qualification import (
     EXPRESSION_REPLAY_POLICY_CONTROLS,
     expression_replay_gate,
@@ -688,6 +689,7 @@ def evolution_journal_decision_item(decision: Dict[str, Any]) -> Optional[Dict[s
     item["decision"] = json.loads(json.dumps(decision))
     item["decision"]["evidence_class"] = ev_class
     item["record"] = item["decision"]
+    item["discovery"] = discovery_projection.project_discovery_block(decision)
     return item
 
 

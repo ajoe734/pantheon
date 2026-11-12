@@ -45,7 +45,6 @@ from .service import (
     IntegrationsService,
     REQUEST_DRY_RUN_CONTEXT,
     default_bff_error,
-    deprecated_bff_path_response,
     dry_run_success_response,
     is_dry_run_requested,
     page_slice,
@@ -693,31 +692,6 @@ def create_integrations_router(
             x_tenant_id=x_tenant_id,
         )
 
-    @router.post("/bff/tools/{tool_id}/actions/{action_id}", status_code=202)
-    def bff_tool_action(
-        tool_id: str,
-        action_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    ) -> JSONResponse:
-        return deprecated_bff_path_response(
-            route="/bff/tools/{tool_id}/actions/{action_id}",
-            replacement="/bff/v1/commands",
-        )
-
-    @router.get("/bff/mcp/servers")
-    def bff_list_mcp_servers(
-        status: Optional[str] = None,
-        page_token: Optional[str] = None,
-        page_size: int = Query(default=20, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> JSONResponse:
-        return deprecated_bff_path_response(
-            route="/bff/mcp/servers",
-            replacement="/bff/mcp-servers",
-        )
-
     @router.post("/bff/mcp/servers", status_code=201)
     def bff_create_mcp_server(
         payload: Dict[str, Any] = Body(...),
@@ -767,16 +741,6 @@ def create_integrations_router(
         }
         return result
 
-    @router.get("/bff/mcp/servers/{server_id}")
-    def bff_get_mcp_server(
-        server_id: str,
-        authorization: Optional[str] = Header(default=None),
-    ) -> JSONResponse:
-        return deprecated_bff_path_response(
-            route="/bff/mcp/servers/{server_id}",
-            replacement="/bff/mcp-servers/{server_id}",
-        )
-
     @router.post("/bff/mcp/servers/{server_id}/actions/{action_id}", status_code=202)
     def bff_mcp_server_action(
         server_id: str,
@@ -820,19 +784,6 @@ def create_integrations_router(
             "page_info": {"next_page_token": next_page_token, "total": total},
             "meta": _read_meta("mcp_tools", "mcp_server_tool_list", snapshot_at=snapshot_at, total=total),
         }
-
-    @router.post("/bff/mcp/tools/{tool_id}/actions/{action_id}", status_code=202)
-    def bff_mcp_tool_action_compat(
-        tool_id: str,
-        action_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    ) -> JSONResponse:
-        return deprecated_bff_path_response(
-            route="/bff/mcp/tools/{tool_id}/actions/{action_id}",
-            replacement="/bff/mcp-tools/{tool_id}/{action_id}",
-        )
 
     @router.get("/bff/skills")
     def bff_list_skills(
@@ -986,19 +937,6 @@ def create_integrations_router(
             resolved_key=resolved_key,
             entity_id=clean_id,
             x_tenant_id=x_tenant_id,
-        )
-
-    @router.post("/bff/skills/{skill_id}/actions/{action_id}", status_code=202)
-    def bff_skill_action(
-        skill_id: str,
-        action_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    ) -> JSONResponse:
-        return deprecated_bff_path_response(
-            route="/bff/skills/{skill_id}/actions/{action_id}",
-            replacement="/bff/v1/commands",
         )
 
     @router.post("/bff/skills/{skill_id}/sandbox-eval", status_code=202)

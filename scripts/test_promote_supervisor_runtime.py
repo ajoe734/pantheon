@@ -2622,12 +2622,14 @@ def test_create_retired_path_fence_never_uses_mkfifo(
     assert fence.is_dir()
 
 
-def test_create_retired_path_fence_upgrades_existing_fifo_fence(tmp_path: Path) -> None:
+def test_create_retired_path_fence_refuses_existing_fifo_untouched(tmp_path: Path) -> None:
     fence = tmp_path / "state.json"
     os.mkfifo(str(fence), 0o600)
-    promotion._create_retired_path_fence(fence)
-    assert fence.is_dir()
-    assert not fence.is_fifo()
+    inode = fence.lstat().st_ino
+    with pytest.raises(RuntimeError, match="cannot establish retired-path fence"):
+        promotion._create_retired_path_fence(fence)
+    assert fence.is_fifo() and fence.lstat().st_ino == inode
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["state.json"]
 
 
 @pytest.mark.parametrize("kind", ["file", "symlink", "parent_symlink", "nonempty_dir"])
@@ -2654,52 +2656,6 @@ def test_fence_refuses_unrelated_paths(tmp_path, kind):
         assert fence.read_text() == "preserve"
     elif kind == "symlink":
         assert fence.is_symlink()
-
-
-@pytest.mark.parametrize("failure", ["mkdir", "exchange", "fsync"])
-def test_fifo_upgrade_failure_never_removes_the_fence(tmp_path, monkeypatch, failure):
-    fence = tmp_path / "state.json"
-    os.mkfifo(fence, 0o600)
-    inode = fence.lstat().st_ino
-    if failure == "mkdir":
-        monkeypatch.setattr(promotion.tempfile, "mkdtemp", mock.Mock(side_effect=OSError(errno.ENOSPC, "full")))
-    elif failure == "exchange":
-        exchange = mock.Mock(return_value=-1)
-        monkeypatch.setattr(promotion.ctypes, "CDLL", lambda *a, **k: SimpleNamespace(renameat2=exchange))
-        monkeypatch.setattr(promotion.ctypes, "get_errno", lambda: errno.EIO)
-    else:
-        monkeypatch.setattr(promotion, "_fsync_dir", mock.Mock(side_effect=OSError(errno.EIO, "fsync")))
-    with pytest.raises(OSError):
-        promotion._create_retired_path_fence(fence)
-    if failure == "fsync":
-        assert fence.is_dir()  # The stronger fence remains safe for a retry.
-    else:
-        assert fence.is_fifo()
-        assert fence.lstat().st_ino == inode
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["state.json"]
-
-
-def test_fifo_upgrade_releases_actual_blocked_reader_and_future_opens_fail(tmp_path):
-    fence = tmp_path / "state.json"
-    os.mkfifo(fence, 0o600)
-    reader = subprocess.Popen([sys.executable, "-c", "import sys; open(sys.argv[1], 'rb').read()", str(fence)])
-    try:
-        deadline = time.monotonic() + 5
-        while "wait_for_partner" not in Path(f"/proc/{reader.pid}/wchan").read_text():
-            assert reader.poll() is None
-            assert time.monotonic() < deadline, "reader did not block on temporary FIFO"
-            time.sleep(.01)
-        promotion._create_retired_path_fence(fence)
-        assert reader.wait(timeout=5) == 0
-    finally:
-        if reader.poll() is None:
-            reader.kill()
-        reader.wait(timeout=5)
-    assert stat.S_IMODE(fence.stat().st_mode) == 0o700
-    probe = subprocess.run([sys.executable, "-c", "import sys; open(sys.argv[1], 'rb')", str(fence)],
-                           capture_output=True, timeout=5)
-    assert probe.returncode != 0
-    assert b"IsADirectoryError" in probe.stderr
 
 
 def test_common_json_read_of_actual_fifo_is_bounded(tmp_path):
@@ -2746,7 +2702,7 @@ def test_dashboard_reads_current_layout_and_refuses_actual_retired_fifo(tmp_path
 
 
 @pytest.mark.parametrize("launch_fails", [False, True])
-def test_ordinary_promotion_upgrades_all_four_fences_without_moving_store(tmp_path, monkeypatch, launch_fails):
+def test_ordinary_promotion_leaves_directory_fences_and_store_unchanged(tmp_path, monkeypatch, launch_fails):
     candidate, status_root = _candidate(tmp_path)
     live = tmp_path / "runtime/live.json"
     incumbent, identity = promotion.render_v2_config(candidate, status_root=status_root,
@@ -2760,7 +2716,7 @@ def test_ordinary_promotion_upgrades_all_four_fences_without_moving_store(tmp_pa
     fences = [status_root / ".orchestrator" / name for name in ("state.json", "approval-queue.json")]
     fences += [retired_log.with_name(retired_log.name + suffix) for suffix in (".lock", ".head.json")]
     for fence in fences:
-        os.mkfifo(fence, 0o600)
+        fence.mkdir(mode=0o700)
     monkeypatch.setattr(promotion, "qualify_incumbent_identity", lambda *a, **k: old_identity)
     monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
     monkeypatch.setattr(promotion, "qualify_and_drain_incumbent_writers", lambda *a, **k: {})
@@ -2774,7 +2730,7 @@ def test_ordinary_promotion_upgrades_all_four_fences_without_moving_store(tmp_pa
     result = promotion.replace_supervisor(candidate, status_root=status_root, live_config_path=live,
         python_executable=Path(sys.executable), termination_timeout=1)
     assert result["outcome"] == ("failed" if launch_fails else "launched"), result
-    assert set(result["storage_migration"]["upgraded_fences"]) == set(map(str, fences))
+    assert "upgraded_fences" not in result["storage_migration"]
     assert not result["storage_migration"]["migrated"]
     assert result["storage_migration"]["files"] == []
     assert log.read_bytes() == b"unchanged journal\n"
@@ -2785,7 +2741,7 @@ def test_ordinary_promotion_upgrades_all_four_fences_without_moving_store(tmp_pa
         assert json.loads(live.read_text()) == incumbent
 
 
-def test_migrate_storage_paths_upgrades_fifo_fences_and_ignores_fenced_old_paths(
+def test_migrate_storage_paths_ignores_directory_fenced_old_paths(
     tmp_path: Path,
 ) -> None:
     orch = tmp_path / "status" / ".orchestrator"
@@ -2795,15 +2751,15 @@ def test_migrate_storage_paths_upgrades_fifo_fences_and_ignores_fenced_old_paths
     (modern / "approval-queue.json").write_text("{}", encoding="utf-8")
     legacy_state = orch / "state.json"
     legacy_queue = orch / "approval-queue.json"
-    os.mkfifo(str(legacy_state), 0o600)
-    os.mkfifo(str(legacy_queue), 0o600)
+    legacy_state.mkdir(mode=0o700)
+    legacy_queue.mkdir(mode=0o700)
 
     old_log = tmp_path / "runtime" / "events.jsonl"
     old_lock = old_log.with_name("events.jsonl.lock")
     new_log = tmp_path / "runtime" / "task-state" / "events.jsonl"
     new_log.parent.mkdir(parents=True)
     new_log.write_text("", encoding="utf-8")
-    os.mkfifo(str(old_lock), 0o600)
+    old_lock.mkdir(mode=0o700)
 
     incumbent = {
         "paths": {"state_file": str(legacy_state), "approval_queue": str(legacy_queue)},
@@ -2822,9 +2778,7 @@ def test_migrate_storage_paths_upgrades_fifo_fences_and_ignores_fenced_old_paths
     record = promotion._migrate_storage_paths(incumbent, rendered)
 
     assert record["migrated"] is False
-    assert sorted(record["upgraded_fences"]) == sorted(
-        [str(legacy_state), str(legacy_queue), str(old_lock)]
-    )
+    assert "upgraded_fences" not in record
     for fence in (legacy_state, legacy_queue, old_lock):
         assert fence.is_dir(), fence
     assert (modern / "state.json").read_text(encoding="utf-8") == '{"workers": {}}'

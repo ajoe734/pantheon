@@ -59,7 +59,6 @@ def create_runtime_router(
     _composed_surface_status = service.dependency('_composed_surface_status')
     _dataset_surface_status = service.dependency('_dataset_surface_status')
     _deployment_review_href = service.dependency('_deployment_review_href')
-    _deprecated_bff_path_response = service.dependency('_deprecated_bff_path_response')
     _dry_run_success_response = service.dependency('_dry_run_success_response')
     _extract_identity = service.dependency('_extract_identity')
     _gov_bff_action_command = service.dependency('_gov_bff_action_command')
@@ -1179,21 +1178,6 @@ def create_runtime_router(
             "data": binding,
             "meta": meta,
         }
-
-    @router.post("/bff/runtimes/{runtime_id}/actions/{action_id}", status_code=202)
-    def bff_runtime_action(
-        runtime_id: str,
-        action_id: str,
-        request: Request,
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        authorization: Optional[str] = Header(default=None),
-    ):
-        """BFF: submit an action against a runtime binding."""
-        return _deprecated_bff_path_response(
-            route="/bff/runtimes/{runtime_id}/actions/{action_id}",
-            replacement="/bff/v1/commands",
-        )
-
 
     @router.get("/bff/v5/execution/persona-health")
     @request_read_scope()

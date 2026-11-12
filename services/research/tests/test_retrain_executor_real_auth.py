@@ -337,6 +337,43 @@ def world(tmp_path_factory):
         sys.modules.pop("store", None)
         sys.path.remove(str(service_dir))
     w.research = research
+    # The production retrain proposal is a bounded in-sample random search
+    # (covered in alpha_replication/test_evolution_search.py).  This hosted-auth
+    # fixture pins one deterministic in-range proposal so the executor's
+    # session/registry/auth flow stays comparable across runs.
+    research._retrain_search_update = lambda parent, params, run_id: {
+        "lookback_bars": 3 if int(parent["parameters"]["lookback_bars"]) == 2 else 2
+    }
+
+    # The hosted-auth flow under test is Training/Registry auth + session handling.  The §10 OOS gate over
+    # a governed dataset has its own end-to-end coverage (test_retrain_oos_gate.py); here a counting gate
+    # stands in, switchable per test, so a rejected out-of-sample verdict can prove the no-write path.
+    w.oos_passes = True
+    w.oos_judged = []
+
+    def oos_context(*, family_id, **_kw):
+        class Gate:
+            counts: dict = {}
+
+            def get_family_trial_count(self, fam):
+                return self.counts.get(fam, 0)
+
+            def evaluate_candidate(self, request):
+                self.counts[request["family"]] = self.counts.get(request["family"], 0) + 1
+                ok = w.oos_passes
+
+                class R:
+                    passed = ok
+                    results = []
+                return R
+
+        def factory(child):
+            w.oos_judged.append(child["artifact_id"])
+            return {"family": family_id}
+
+        return Gate(), factory
+
+    research._evolution_oos_context = oos_context
 
     for persona_id, artifact in w.artifacts.items():
         status, body = _http(
@@ -415,6 +452,8 @@ def test_better_candidate_creates_a_candidate_child_and_leaves_the_session_activ
     child_id = run["candidate_artifact_id"]
     assert child_id and child_id != "artifact-retrain-better-v1"
     assert run["parameter_updates"] == {"lookback_bars": 3}
+    assert run["out_of_sample_gate"]["passed"] is True and run["out_of_sample_gate"]["window"] == "out_of_sample"
+    assert child_id.startswith("artifact-retrain-better-v1-retrain-")
     for field in ("session_id", "baseline_job_id", "candidate_job_id", "baseline_eval_id", "candidate_eval_id"):
         assert run[field], field
 
@@ -438,6 +477,23 @@ def test_better_candidate_creates_a_candidate_child_and_leaves_the_session_activ
     assert candidate["status"] == "completed"
     assert candidate["preview"]["evaluation_proof"]["backend"]["run_id"].startswith("vbt-real-")
     assert candidate["governance_gate_state"] == "passed"
+
+
+def test_child_rejected_on_the_untouched_oos_window_is_never_registered(world):
+    world.oos_passes = False
+    try:
+        before = len(world.oos_judged)
+        run = _run(world, "artifact-retrain-better-v1", "dec-better-oos-rejected")
+    finally:
+        world.oos_passes = True
+    assert run["status"] == "completed" and run["outcome"] == "no_candidate", run
+    assert run["outcome_reason"] == "children_failed_out_of_sample_gate"
+    assert run["out_of_sample_gate"]["window"] == "out_of_sample" and run["out_of_sample_gate"]["passed"] is False
+    assert len(world.oos_judged) == before + 1  # Training said "better"; the OOS gate still judged it
+    assert not run.get("candidate_artifact_id") and not run.get("registry_writebacks")
+    suffix = __import__("hashlib").sha256(b"dec-better-oos-rejected").hexdigest()[:10]
+    status, _ = _registry_entry(world, f"artifact-retrain-better-v1-retrain-{suffix}")
+    assert status == 404
 
 
 def test_evaluation_started_after_the_fixture_date_has_passed_reaches_the_same_outcome(world):

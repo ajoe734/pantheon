@@ -1927,6 +1927,7 @@ def _run_pinned_taiwan_preflight(
     connector_id: str | None = None,
     dataset: str | None = None,
     readback_connectors: list[dict[str, Any]] | None = None,
+    source_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the real preflight heredoc at a pinned clock against per-symbol stub snapshots."""
     import http.server
@@ -1970,6 +1971,13 @@ def _run_pinned_taiwan_preflight(
         "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
         "PANTHEON_REFRESH_PREFLIGHT_NOW": now_utc,
     }
+    import tempfile
+
+    records_file = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    records_file.write(json.dumps({"source_records": source_records or []}))
+    records_file.close()
+    if source_records is not None:
+        env["FINMIND_SOURCE_RECORDS_PATH"] = records_file.name
     env.pop("PANTHEON_DEV_PAPER_BASELINE_SYMBOL", None)
     env.pop("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", None)
     env.pop("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", None)
@@ -1991,6 +1999,7 @@ def _run_pinned_taiwan_preflight(
         )
     finally:
         server.shutdown()
+        Path(records_file.name).unlink(missing_ok=True)
     result = json.loads(proc.stdout)
     result["_requested"] = requested
     result["_requested_paths"] = requested_paths
@@ -2530,6 +2539,213 @@ def test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh() -> None:
     assert fresh_res["dataset"] == "taifex_ssf_contracts"
 
 
+def _finmind_batch_record(covered: list[str], missing: list[str], trade_date: str = "2026-11-06") -> dict[str, Any]:
+    return {
+        "connector_id": "tw-finmind-broker-daily-report",
+        "source_id": "finmind-broker-top:2330:x",
+        "metadata": {
+            "trade_date": trade_date,
+            "refresh_coverage": {
+                "status": "partial" if missing else "complete",
+                "trade_date": trade_date,
+                "requested_symbols": covered + missing,
+                "covered_symbols": covered,
+                "missing_symbols": missing,
+            },
+        },
+    }
+
+
+def test_finmind_preflight_partial_coverage_is_not_already_fresh_and_retries_missing() -> None:
+    fresh_twse = _stored_tw_snapshot("2026-11-06", "2026-11-06T07:10:00Z")
+    latest = {
+        "connector_id": "tw-finmind-broker-daily-report",
+        "freshness": {"last_success_at": "2026-11-06T07:20:00Z"},
+        "latest_source_record": {
+            "source_id": "finmind-broker-top:2330:x",
+            "status": "normalized",
+            "metadata": {"date": "2026-11-06", "trade_date": "2026-11-06", "dataset": "tw_broker_top"},
+            "provenance": {"dataset": "tw_broker_top"},
+        },
+    }
+    kwargs = dict(
+        snapshots={"2330.TW": fresh_twse, "2317.TW": fresh_twse},
+        symbols="2330.TW,2317.TW",
+        connector_id="tw-finmind-broker-daily-report",
+        dataset="tw_broker_top",
+        readback_connectors=[latest],
+    )
+    partial = _run_pinned_taiwan_preflight(
+        "2026-11-06T12:30:00Z", source_records=[_finmind_batch_record(["2330"], ["2317"])], **kwargs
+    )
+    assert (partial["status"], partial["reason"]) == ("proceed", "coverage_incomplete")
+    assert partial["missing_symbols"] == ["2317"]
+    split_batches = _run_pinned_taiwan_preflight(
+        "2026-11-06T12:30:00Z",
+        source_records=[_finmind_batch_record(["2330"], []), _finmind_batch_record(["2317"], [])],
+        **kwargs,
+    )
+    assert (split_batches["status"], split_batches["reason"]) == ("noop", "already_fresh")
+    stale_session = _run_pinned_taiwan_preflight(
+        "2026-11-06T12:30:00Z",
+        source_records=[_finmind_batch_record(["2330", "2317"], [], trade_date="2026-11-05")],
+        **kwargs,
+    )
+    assert stale_session["status"] == "proceed"
+
+
+def _run_finmind_verifier(covered_batches: list[tuple[list[str], list[str]]], tmp_path: Path, *, with_records: bool = True) -> subprocess.CompletedProcess[str]:
+    import http.server
+    import os
+    import threading
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    fn = script.split("verify_bounded_source_refresh_readback() {", 1)[1]
+    body = fn.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    connector = "tw-finmind-broker-daily-report"
+    receipts = [
+        {
+            "connector_id": connector, "status": "completed", "typed_failure": None,
+            "source_timestamp": "2026-11-06T07:00:00Z", "source_timestamp_status": "valid",
+            "finished_at": "2026-11-06T12:40:00Z", "ingest_run_id": "run-1",
+        }
+    ]
+    records = []
+    for cov, miss in covered_batches:
+        rec = _finmind_batch_record(cov, miss)
+        rec["provenance"] = {"source_ingest_run_id": "run-1", "dataset": "tw_broker_top"}
+        records.append(rec)
+    (tmp_path / "receipts.json").write_text(json.dumps({"receipts": receipts}))
+    (tmp_path / "readback.json").write_text(json.dumps({"connectors": [{
+        "connector_id": connector,
+        "freshness": {"latest_receipt": {"ingest_run_id": "run-1"}, "source_timestamp_status": "valid", "status": "fresh"},
+        "latest_source_record": {"source_id": "s1", "provenance": {"source_ingest_run_id": "run-1", "dataset": "tw_broker_top"},
+                                  "metadata": {"dataset": "tw_broker_top"}},
+    }]}))
+    (tmp_path / "agora.json").write_text("{}")
+
+    (tmp_path / "records.json").write_text(json.dumps({"source_records": records}))
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    env.pop("FINMIND_SOURCE_RECORDS_PATH", None)
+    if with_records:
+        env["FINMIND_SOURCE_RECORDS_PATH"] = str(tmp_path / "records.json")
+    return subprocess.run(
+        ["python3", "-c", f"import sys\nexec(compile({body!r}, 'verify', 'exec'))\n", connector,
+         "2026-11-06T12:00:00Z", str(tmp_path / "receipts.json"), str(tmp_path / "readback.json"),
+         str(tmp_path / "agora.json"), "2330.TW,2317.TW", "tw_broker_top"],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+    )
+
+
+def test_finmind_readback_rejects_partial_coverage_and_accepts_union_of_batches(tmp_path: Path) -> None:
+    partial = _run_finmind_verifier([(["2330"], ["2317"])], tmp_path)
+    assert partial.returncode != 0
+    assert "status=partial" in partial.stderr and "2317" in partial.stderr
+    complete = _run_finmind_verifier([(["2330"], []), (["2317"], [])], tmp_path)
+    assert complete.returncode == 0, complete.stderr
+    assert "bounded source refresh accepted" in complete.stdout
+
+
+def _prepare_finmind_dataset(symbol_count: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Run the real PREPARE_DATASET_PY against a stub API that applies the real config validator."""
+    import http.server
+    import os
+    import threading
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'PREPARE_DATASET_PY'\n", 1)[1].split("\nPREPARE_DATASET_PY", 1)[0]
+    posted: list[dict[str, Any]] = []
+    symbols = [str(1101 + i) + ".TW" for i in range(symbol_count)]
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _reply(self, payload: dict[str, Any], code: int = 200) -> None:
+            raw = json.dumps(payload).encode()
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self) -> None:
+            data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            posted.append({"path": self.path, **data})
+            if self.path.endswith("/active-universe/schedule"):
+                from services.source_ingestion.active_universe import build_active_universe_job_fanout
+
+                rules = [r for r in data["rules"]]
+                fanout = build_active_universe_job_fanout(data["members"], rules=rules, run_date=data["run_date"])
+                self._reply({**fanout, "enqueued": [{"connector_id": j["connector_id"], "job_parameters": j} for j in fanout["jobs"]]})
+                return
+            self._reply({})
+
+        do_PUT = do_POST
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", f"import sys\nexec(compile({body!r}, 'prepare', 'exec'))\n",
+             "tw-finmind-broker-daily-report", "tw_broker_top", ",".join(symbols)],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
+                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t"},
+            capture_output=True, text=True, check=False,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout), posted
+
+
+@pytest.mark.parametrize("symbol_count", [25, 26, 51])
+def test_finmind_prepare_bounds_batches_to_fetch_guard_without_truncation(symbol_count: int) -> None:
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore  # noqa: F401
+    import tempfile
+
+    _, posted = _prepare_finmind_dataset(symbol_count)
+    registration = next(item for item in posted if item["path"].endswith("/connectors"))
+    fetch = registration["fetch"]
+    assert 0 < fetch["max_records"] <= 1000
+    with tempfile.TemporaryDirectory() as tmp:
+        store = JsonlConfiguredConnectorStore(Path(tmp) / "connectors.jsonl")
+        store._validate_fetch_config(fetch)  # real validator: rejects > 1000
+    schedule = next(item for item in posted if item["path"].endswith("/active-universe/schedule"))
+    from services.source_ingestion.active_universe import build_active_universe_job_fanout
+
+    fanout = build_active_universe_job_fanout(schedule["members"], rules=schedule["rules"], run_date=schedule["run_date"])
+    jobs = fanout["jobs"]
+    assert len(jobs) == -(-symbol_count // 25)
+    assert all(len(job["symbols"]) * 40 <= fetch["max_records"] for job in jobs)
+    assert sorted(sym for job in jobs for sym in job["symbols"]) == sorted(m["symbol"] for m in schedule["members"])
+
+
+def test_finmind_prepared_connector_passes_real_reconciler_approval_gate(tmp_path: Path) -> None:
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+    from services.source_ingestion.connectors.base import SourceConnector
+    from services.source_ingestion.ingest_manager import IngestManager
+    from services.source_ingestion.persona_source_reconciler import SourceProvisioningReconciler
+
+    desired, posted = _prepare_finmind_dataset(3)
+    registration = next(item for item in posted if item["path"].endswith("/connectors"))
+    connector_payload = registration.get("connector") or {k: v for k, v in registration.items() if k not in {"path", "fetch"}}
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    store.upsert_config(SourceConnector.from_dict(connector_payload), registration["fetch"])
+    reconciler = SourceProvisioningReconciler(
+        manager=IngestManager(),
+        connector_store=store,
+        schedule_store=JsonlConnectorScheduleStore(tmp_path / "schedule.jsonl"),
+    )
+    assert "tw-finmind-broker-daily-report" not in reconciler.provider_factories
+    for persona in desired["personas"]:
+        result = reconciler.reconcile_persona(persona)
+        for action in result.actions:
+            if action.connector_id == "tw-finmind-broker-daily-report":
+                assert action.status != "conflict", action
+                assert "require_connector_approved" not in (getattr(action, "failed_policy_gates", None) or ())
+
+
 def test_nonprod_deploy_workflow_dev_paper_expression_layer_default_and_steps() -> None:
     deploy_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8"))
     expected_expr = "${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}"
@@ -2710,9 +2926,9 @@ def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_
 
     assert deploy_step["name"] == "Deploy dev VM stack under lease"
     assert (
-        market_idx
-        < deploy_idx
+        deploy_idx
         < candidate_upload_idx
+        < market_idx
         < taifex_idx
         < bounded_taifex_idx
         < taifex_upload_idx
@@ -2720,8 +2936,18 @@ def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_
         < retire_idx
         < comp_idx
     )
+    # The Taiwan refresh fails closed into the same compensation flow as other
+    # post-switch failures and keeps its own log in the run evidence.
+    assert market_step["name"] == "Refresh Taiwan market session under lease after candidate stack deploy"
     assert "continue-on-error" not in market_step
     assert "--non-blocking" not in market_step["run"]
+    assert "tw-market-refresh.json" in market_step["run"]
+    assert "if record[\"log\"]:\n    print(record[\"log\"])" in market_step["run"]
+    assert "steps.market_refresh.outcome == 'failure'" in retire_step["if"]
+    assert "steps.market_refresh.outcome == 'failure'" in comp_step["if"]
+    assert "always()" in by_id["market_refresh_upload"][1]["if"]
+    assert by_id["market_refresh_upload"][1]["with"]["path"] == "${{ steps.release_admission.outputs.evidence_dir }}/tw-market-refresh.json"
+    assert by_id["market_refresh"][0] < by_id["market_refresh_upload"][0] < taifex_idx
     assert taifex_step.get("continue-on-error") is True
     assert "--non-blocking" in taifex_step["run"]
     assert "taifex-market-refresh.json" in taifex_step["run"]
@@ -2813,7 +3039,14 @@ def _refresh_runtime_python() -> str:
     return body.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
 
 
-def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: str = "bounded"):
+def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: str = "bounded",
+                         local_ids: tuple[str, ...] | None = None, up_lands_on: str | None = None,
+                         pre_has_mode: bool = False, post_extra: str = ""):
+    """Fake docker where the plain tag pantheon-source-ingest resolves to tag_id.
+
+    Compose config honours a pin override file (-f *pin.json); "up" starts whatever
+    image the effective config names (or up_lands_on to simulate a wrong container).
+    """
     fake = tmp_path / "bin"
     fake.mkdir()
     log = tmp_path / "docker.log"
@@ -2821,13 +3054,18 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
     docker.write_text(
         "#!/usr/bin/env bash\n"
         'echo "$*" >> "$DOCKER_LOG"\n'
+        'pin=""; for a in "$@"; do case "$a" in *pin.json) pin="$a";; esac; done\n'
+        'eff=pantheon-source-ingest\n'
+        '[ -n "$pin" ] && eff="$(python3 -c \'import json,sys;print(json.load(open(sys.argv[1]))["services"]["source-ingest"]["image"])\' "$pin")"\n'
         'case "$*" in\n'
-        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"pantheon-source-ingest"}}}\' ;;\n'
+        '  *" config --format json source-ingest"*) echo "{\\"services\\":{\\"source-ingest\\":{\\"image\\":\\"$eff\\"}}}" ;;\n'
         '  *" config --format json"*) echo \'{"services":{}}\' ;;\n'
         '  "image inspect --format {{.Id}} pantheon-source-ingest") echo "$TAG_ID" ;;\n'
-        '  *" up "*) echo "$TAG_ID" > "$STATE" ;;\n'
+        '  "image inspect --format {{.Id}} "*) i="${5}"; case " $LOCAL_IDS " in *" $i "*) echo "$i";; *) exit 1;; esac ;;\n'
+        '  *" up "*) echo "${UP_LANDS_ON:-$eff}" > "$STATE" ;;\n'
         '  *" ps -q source-ingest"*) echo cid1 ;;\n'
         '  "inspect --format {{.Image}} cid1") cat "$STATE" ;;\n'
+        '  "inspect --format {{json .Config.Env}} cid1") python3 -c \'import json,os;pre=json.load(open(os.environ["ENV_FILE"]));ctl=("PANTHEON_EXTERNAL_EGRESS","PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS","SOURCE_INGEST_CONTROLLER_MODE");post=[x for x in pre if x.split("=",1)[0] not in ctl]+["PANTHEON_EXTERNAL_EGRESS=deny","PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="];post+=["SOURCE_INGEST_CONTROLLER_MODE=reconcile_only"] if any(x.startswith("SOURCE_INGEST_CONTROLLER_MODE=") for x in pre) else [];post+=[x for x in os.environ.get("POST_EXTRA","").split() if x];print(json.dumps(post))\' ;;\n'
         '  *) : ;;\n'
         'esac\n'
     )
@@ -2835,35 +3073,73 @@ def _run_refresh_runtime(tmp_path: Path, *, tag_id: str, running: str, action: s
     env_file = tmp_path / "env.json"
     state = tmp_path / "state"
     # The runtime builds the docker env from this file, so the fake's inputs go here.
-    env_file.write_text(json.dumps(["A=1", f"DOCKER_LOG={log}", f"TAG_ID={tag_id}", f"STATE={state}"]))
+    env_file.write_text(json.dumps([
+        "A=1", *(["SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull"] if pre_has_mode else []),
+        f"DOCKER_LOG={log}", f"TAG_ID={tag_id}", f"STATE={state}",
+        f"LOCAL_IDS={' '.join(local_ids if local_ids is not None else (running,))}",
+        f"UP_LANDS_ON={up_lands_on or ''}", f"ENV_FILE={env_file}"]))
     script = tmp_path / "refresh.py"
     script.write_text(_refresh_runtime_python())
     state.write_text(running + "\n")
     result = subprocess.run(
         ["python3", str(script), str(env_file), action, running, ""],
         capture_output=True, text=True,
-        env={"PATH": f"{fake}:{os.environ['PATH']}", "DOCKER_LOG": str(log), "TAG_ID": tag_id, "STATE": str(state)},
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "DOCKER_LOG": str(log), "TAG_ID": tag_id, "STATE": str(state),
+             "LOCAL_IDS": " ".join(local_ids if local_ids is not None else (running,)),
+             "UP_LANDS_ON": up_lands_on or "", "ENV_FILE": str(env_file), "POST_EXTRA": post_extra},
     )
     return result, log.read_text().splitlines() if log.exists() else [], state.read_text().strip()
 
 
 @pytest.mark.parametrize("action", ["bounded", "restore"])
-def test_source_refresh_stops_before_recreating_when_compose_tag_points_elsewhere(tmp_path, action):
+def test_source_refresh_ignores_stale_plain_tag_and_recreates_from_running_image_id(tmp_path, action):
+    # A failed earlier deploy left pantheon-source-ingest:latest on a candidate image.
     baseline, candidate = "sha256:" + "9" * 64, "sha256:" + "4" * 64
     result, calls, state = _run_refresh_runtime(tmp_path, tag_id=candidate, running=baseline, action=action)
-    assert result.returncode != 0
-    assert baseline in result.stderr and candidate in result.stderr and "not recreating" in result.stderr
-    assert not any(" up " in f" {call} " for call in calls)
-    assert state == baseline  # the running image was never replaced
+    assert result.returncode == 0, result.stderr
+    ups = [call for call in calls if " up " in f" {call} "]
+    assert len(ups) == 1 and "pin.json" in ups[0]
+    assert state == baseline
+    # The candidate tag was never consulted to decide what to start.
+    assert not any(call == "image inspect --format {{.Id}} pantheon-source-ingest" for call in calls)
 
 
 @pytest.mark.parametrize("action", ["bounded", "restore"])
-def test_source_refresh_recreates_when_compose_tag_matches_running_image(tmp_path, action):
+def test_source_refresh_stops_when_recorded_running_image_is_not_available(tmp_path, action):
     baseline = "sha256:" + "9" * 64
-    result, calls, state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action)
-    assert any(" up " in f" {call} " for call in calls)
+    result, calls, state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action, local_ids=())
+    assert result.returncode != 0 and "not recreating" in result.stderr
+    assert not any(" up " in f" {call} " for call in calls)
     assert state == baseline
-    assert "image ID" not in result.stderr
+
+
+@pytest.mark.parametrize("action", ["bounded", "restore"])
+def test_source_refresh_still_fails_when_started_container_image_differs(tmp_path, action):
+    baseline, other = "sha256:" + "9" * 64, "sha256:" + "4" * 64
+    result, _calls, _state = _run_refresh_runtime(tmp_path, tag_id=baseline, running=baseline, action=action, up_lands_on=other)
+    assert result.returncode != 0
+    assert baseline in result.stderr and other in result.stderr
+
+
+def test_source_refresh_restore_env_mode_key_presence_and_wrong_env(tmp_path):
+    baseline = "sha256:" + "9" * 64
+    # MODE absent from the recorded env and absent after restore: accepted.
+    (tmp_path / "a").mkdir()
+    ok, _c, _s = _run_refresh_runtime(tmp_path / "a", tag_id=baseline, running=baseline, action="restore")
+    assert ok.returncode == 0, ok.stderr
+    # MODE present in the recorded env: restored env must carry reconcile_only.
+    (tmp_path / "b").mkdir()
+    present, _c, _s = _run_refresh_runtime(tmp_path / "b", tag_id=baseline, running=baseline, action="restore", pre_has_mode=True)
+    assert present.returncode == 0, present.stderr
+    # MODE added although it was not recorded: rejected.
+    (tmp_path / "c").mkdir()
+    added, _c, _s = _run_refresh_runtime(tmp_path / "c", tag_id=baseline, running=baseline, action="restore",
+                                         post_extra="SOURCE_INGEST_CONTROLLER_MODE=reconcile_only")
+    assert added.returncode != 0 and "added=['SOURCE_INGEST_CONTROLLER_MODE=reconcile_only']" in added.stderr
+    # Unrelated env drift is still rejected.
+    (tmp_path / "d").mkdir()
+    drift, _c, _s = _run_refresh_runtime(tmp_path / "d", tag_id=baseline, running=baseline, action="restore", post_extra="EVIL=1")
+    assert drift.returncode != 0 and "EVIL=1" in drift.stderr
 
 
 def test_bff_adoption_gate_requires_root_deploy_for_paper_capital_reader_services() -> None:
@@ -2916,3 +3192,270 @@ def test_official_connector_bounded_refresh_host_set_excludes_www_twse_com_tw() 
         == "openapi.twse.com.tw,www.tpex.org.tw"
     )
 
+
+
+def test_collector_host_gate_steady_restore_and_refresh_guard() -> None:
+    """DEV-EGRESS-COLLECTOR-HOST-GATE-20261110: steady egress is exactly the collector host."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent / "deploy_nonprod_vm.sh").read_text()
+    assert "steady source egress allowlist must be exactly PANTHEON_COLLECTOR_HOST" in text
+    assert 'sys.argv[2].startswith("collector-")' in text
+    assert "if hosts != {collector}" in text
+    assert '"allowlist" if steady_host else "deny"' in text
+    assert 'PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}"' in text
+    # Official bounded refresh host sets are unchanged.
+    assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in text
+    assert 'required = {"openapi.taifex.com.tw", "www.taifex.com.tw"}' in text
+
+
+_COLLECTOR_ENV_REPO = Path(__file__).resolve().parents[1]
+
+
+def _collector_env_steps(workflow: str) -> list[tuple[str, dict[str, Any]]]:
+    doc = yaml.safe_load((_COLLECTOR_ENV_REPO / ".github/workflows" / workflow).read_text())
+    return [
+        (step.get("name", ""), step.get("env") or {})
+        for job in doc["jobs"].values()
+        for step in job.get("steps", [])
+    ]
+
+
+def test_workflows_pass_collector_host_and_token_names() -> None:
+    expected = {
+        "PANTHEON_COLLECTOR_HOST": "${{ vars.PANTHEON_COLLECTOR_HOST }}",
+        "PANTHEON_COLLECTOR_BUNDLE_TOKEN": "${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}",
+    }
+    deploy = _collector_env_steps("nonprod-deploy.yml")
+    assert any(
+        all(env.get(k) == v for k, v in expected.items()) for name, env in deploy
+        if name == "Deploy dev VM stack under lease"
+    )
+    assert any(
+        all(env.get(k) == v for k, v in expected.items())
+        for name, env in deploy
+        if name == "Enforce dev auth deployment floor"
+    )
+    refresh = _collector_env_steps("dev-tw-market-refresh.yml")
+    bounded = [
+        (n, e) for n, e in refresh if n.startswith("Execute bounded") and "FinMind" not in n
+    ]
+    assert len(bounded) == 2
+    for name, env in bounded:
+        for key, value in expected.items():
+            assert env.get(key) == value, (name, key)
+
+
+def test_deploy_script_forwards_collector_env_without_echo() -> None:
+    text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
+    for name in ("PANTHEON_COLLECTOR_HOST", "PANTHEON_COLLECTOR_BUNDLE_TOKEN"):
+        assert text.count(f'command_prefix+=" {name}=$(shell_quote') == 2
+    assert not re.search(r"(echo|info|printf)[^\n]*PANTHEON_COLLECTOR_BUNDLE_TOKEN", text)
+
+
+def test_steady_deploy_defaults_to_collector_host_allowlist_even_with_explicit_deny() -> None:
+    lines = DEPLOY_SCRIPT.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("SOURCE_REFRESH_EGRESS_MODE="))
+    end = next(i for i, l in enumerate(lines) if i > start and l.startswith("if [[ \"${SOURCE_REFRESH_SELECTED}\" == \"true\" ]]"))
+    block = "\n".join(lines[start:end])
+    script = "DEV_COMPOSE_PROFILES=${PROFILES:-}\n" + block + '\nprintf "%s|%s" "$SOURCE_REFRESH_EGRESS_MODE" "$SOURCE_REFRESH_ALLOWED_HOSTS"\n'
+
+    def run(**env):
+        full = {"PATH": os.environ["PATH"], **env}
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=full).stdout
+
+    assert run(PANTHEON_COLLECTOR_HOST="collector.example") == "allowlist|collector.example"
+    assert run(PANTHEON_COLLECTOR_HOST="collector.example", PANTHEON_EXTERNAL_EGRESS="deny") == "allowlist|collector.example"
+    assert run() == "deny|"
+    # Bounded refresh keeps its own explicit host set.
+    assert run(
+        PROFILES="source-ingest-scheduler", PANTHEON_COLLECTOR_HOST="collector.example",
+        PANTHEON_EXTERNAL_EGRESS="allowlist", PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.tpex.org.tw",
+    ) == "allowlist|openapi.twse.com.tw,www.tpex.org.tw"
+    wf = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text()
+    assert "vars.PANTHEON_COLLECTOR_HOST != ''" in wf
+    assert "|| vars.PANTHEON_COLLECTOR_HOST }}" in wf
+
+
+@pytest.mark.parametrize("initial", [["deny", ""], ["allowlist", "collector.example"]])
+def test_restore_from_deny_or_allowlist_reaches_collector_allowlist(tmp_path, initial):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    docker = fake / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"img"}}}\' ;;\n'
+        '  "image inspect --format {{.Id}} img") echo sha256:aa ;;\n'
+        '  *" up "*) python3 -c "import json,os;print(json.dumps([\'A=1\',\'PANTHEON_COLLECTOR_HOST=collector.example\',\'PANTHEON_EXTERNAL_EGRESS=\'+os.environ[\'PANTHEON_EXTERNAL_EGRESS\'],\'PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=\'+os.environ[\'PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS\'],\'SOURCE_INGEST_CONTROLLER_MODE=\'+os.environ[\'SOURCE_INGEST_CONTROLLER_MODE\'],\'STATE_ENV=\'+os.environ[\'STATE_ENV\']]))" > "$STATE_ENV" ;;\n'
+        '  *" ps -q source-ingest"*) echo cid1 ;;\n'
+        '  "inspect --format {{.Image}} cid1") echo sha256:aa ;;\n'
+        '  "inspect --format {{json .Config.Env}} cid1") cat "$STATE_ENV" ;;\n'
+        'esac\n'
+    )
+    docker.chmod(0o755)
+    env_file = tmp_path / "env.json"
+    env_file.write_text(json.dumps([
+        "A=1", "PANTHEON_COLLECTOR_HOST=collector.example",
+        f"PANTHEON_EXTERNAL_EGRESS={initial[0]}", f"PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS={initial[1]}",
+        "SOURCE_INGEST_CONTROLLER_MODE=reconcile_only", f"STATE_ENV={tmp_path / 'state'}",
+    ]))
+    script = tmp_path / "refresh.py"
+    script.write_text(_refresh_runtime_python())
+    result = subprocess.run(
+        ["python3", str(script), str(env_file), "restore", "sha256:aa", ""],
+        capture_output=True, text=True,
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "STATE_ENV": str(tmp_path / "state")},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "PANTHEON_EXTERNAL_EGRESS=allowlist" in (tmp_path / "state").read_text()
+
+
+def test_collector_host_gate_rejects_non_single_hostname() -> None:
+    """Comma lists / malformed values must be rejected before any Docker mutation."""
+    import subprocess
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent / "deploy_nonprod_vm.sh").read_text()
+    # Executable check of the guard regex used by the steady guard.
+    start = text.index('[[ ${#PANTHEON_COLLECTOR_HOST} -le 253')
+    rx = text[start:].split("=~ ", 1)[1].split(" ]]", 1)[0]
+    for host, ok in (("collector.example", True), ("a.b-c.example", True),
+                     ("collector.example,extra.example", False), ("collector.example:443", False),
+                     ("https://collector.example", False), ("-bad.example", False),
+                     ("bad host", False), ("a..b", False), ("x" * 64 + ".example", False)):
+        proc = subprocess.run(["bash", "-c", f'[[ "$1" =~ {rx} ]]', "_", host], check=False)
+        assert (proc.returncode == 0) is ok, host
+    assert "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring" in text
+    assert "PANTHEON_COLLECTOR_HOST must be exactly one valid hostname" in text.split("# Steady state", 1)[0]
+    # Early guard really exits non-zero for a comma list.
+    head = text.split("# Steady state", 1)[0]
+    block = head[head.rindex("# PANTHEON_COLLECTOR_HOST must be exactly one"):]
+    proc = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block],
+                          env={"PANTHEON_COLLECTOR_HOST": "collector.example,extra.example", "PATH": "/usr/bin:/bin"},
+                          capture_output=True, text=True, check=False)
+    assert proc.returncode == 1 and "exactly one valid hostname" in proc.stderr
+
+
+def test_bounded_refresh_failure_outcome_with_log_is_recorded_for_every_connector() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("execute_bounded_source_refresh_entrypoint() {")
+    body = script[start : script.index("\nrecover_bounded_source_refresh_dlq() {", start)] if "\nrecover_bounded_source_refresh_dlq() {" in script[start:] else script[start:]
+    # The failed outcome (carrying the captured redacted log) is no longer gated on TAIFEX/non-blocking,
+    # so a failed Taiwan refresh keeps its own logs in the requested output file.
+    assert body.count('write_bounded_refresh_outcome "failed" "${fail_reason}" || true') == 2
+
+
+def test_deploy_script_forwards_finmind_token_without_echo() -> None:
+    text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
+    assert text.count('FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")') == 2
+    assert not re.search(r"(echo|info|printf)[^\n]*FINMIND_API_TOKEN", text)
+
+
+def test_finmind_bounded_refresh_covers_all_batches_and_sizes_max_records() -> None:
+    text = (_COLLECTOR_ENV_REPO / "scripts/deploy_nonprod_vm.sh").read_text()
+    assert 'for job in (fanout.get("jobs") or [])' in text
+    assert '"max_records": per_job_budget' in text
+    assert "did not cover full FinMind universe" in text
+
+
+def test_finmind_refresh_workflow_polls_after_18_taipei_publication() -> None:
+    wf = (_COLLECTOR_ENV_REPO / ".github/workflows/dev-tw-market-refresh.yml").read_text()
+    assert "'30 10 * * 1-5'" in wf and "'30 12 * * 1-5'" in wf
+    assert "'0 7 * * 1-5'" in wf and "'0 8 * * 1-5'" in wf
+
+
+def test_finmind_coverage_readback_fails_closed_without_authenticated_records(tmp_path: Path) -> None:
+    missing = _run_finmind_verifier([(["2330"], []), (["2317"], [])], tmp_path, with_records=False)
+    assert missing.returncode != 0
+    assert "FinMind coverage readback failed" in missing.stderr
+
+
+def test_finmind_coverage_readback_passes_the_real_strict_auth_boundary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The in-container fetcher must authenticate against the production _source_read_tenant guard."""
+    import http.server
+    import os
+    import threading
+
+    from fastapi import HTTPException
+
+    from services.source_ingestion.routers.ingest_operations import _source_read_tenant
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'FINMIND_RECORDS_PY' || return 1\n", 1)[1].split("\nFINMIND_RECORDS_PY", 1)[0]
+    auth_env = {
+        "PANTHEON_RUNTIME_JWT_SECRET": "s" * 40,
+        "PANTHEON_RUNTIME_JWT_ISSUER": "pantheon-dev",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": "bff-operators",
+        "PANTHEON_TENANT_ID": "tenant-dev",
+    }
+    for key, value in auth_env.items():
+        monkeypatch.setenv(key, value)
+    seen: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            try:
+                tenant = _source_read_tenant(self.headers.get("Authorization"), self.headers.get("X-Tenant-Id"))
+                raw, code = json.dumps({"source_records": [{"tenant": tenant}]}).encode(), 200
+            except HTTPException as exc:
+                raw, code = json.dumps({"detail": exc.detail}).encode(), exc.status_code
+            seen.append(str(code))
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        import urllib.error
+        import urllib.request
+
+        with pytest.raises(urllib.error.HTTPError) as unauth:
+            urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/api/source-ingest/source-records")
+        assert unauth.value.code == 401
+        proc = subprocess.run(
+            ["python3", "-c", f"exec(compile({body!r}, 'fetch', 'exec'))"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "PORT": str(server.server_port)},
+            capture_output=True, text=True, check=False,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {"source_records": [{"tenant": "tenant-dev"}]}
+    assert seen[-1] == "200"
+    assert "eyJ" not in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("symbols", "batches", "concurrency", "ticks"),
+    [(25, 1, 1, 1), (26, 2, 2, 1), (51, 3, 2, 2), (100, 4, 2, 2), (101, 5, 2, 3), (1200, 48, 2, 24)],
+)
+def test_finmind_bounded_refresh_sizes_controller_to_drain_every_batch(symbols: int, batches: int, concurrency: int, ticks: int) -> None:
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    start = script.index("  local bounded_max_ticks=1 bounded_concurrency=1")
+    end = script.index("  # A ten second interval keeps the one-shot lease")
+    snippet = script[start:end]
+    symbol_csv = ",".join(f"{1000 + i}.TW" for i in range(symbols))
+    proc = subprocess.run(
+        ["bash", "-c", "info(){ :; }; error(){ echo \"$*\" >&2; exit 9; }; cid=x; docker(){ echo 2; }\n"
+         f"SOURCE_INGEST_BOUNDED_CONNECTOR_ID=tw-finmind-broker-daily-report SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS={symbol_csv}\n"
+         f"f(){{\n{snippet}\necho $bounded_concurrency $bounded_max_ticks\n}}\nf"],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.split() == [str(concurrency), str(ticks)]
+    assert concurrency <= 2  # real source-ingest API cap (Compose default)
+    assert concurrency * ticks >= batches
+
+
+def test_source_ingest_compose_env_supplies_tenant_for_finmind_readback() -> None:
+    import yaml
+
+    env = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))["services"]["source-ingest"]["environment"]
+    assert env["PANTHEON_TENANT_ID"].startswith("${PANTHEON_TENANT_ID:-")

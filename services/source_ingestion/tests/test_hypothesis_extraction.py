@@ -95,7 +95,7 @@ def test_external_text_goes_through_deny_all_agent_and_merges_card(tmp_path, sty
     result = _run(worker, _source(stype=stype, **meta))
     assert result.created == 1 and len(t.calls) == 1
     payload = t.calls[0]
-    assert payload["agent_id"] == "main" and "tools" not in payload
+    assert payload["agent_id"] == "structured-extraction" and "tools" not in payload
     seeds = store.list_all() if hasattr(store, "list_all") else []
     seed = seeds[0]
     assert "Revenue momentum predicts next-month returns" in json.dumps(seed.to_dict())

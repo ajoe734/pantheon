@@ -297,11 +297,65 @@ class HypothesisCompiler:
         return CompileOutcome(status, fingerprint=fp, support_count=support, artifact=artifact)
 
 
+_PROPOSAL_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": True}
+_PROPOSE_TIMEOUT_SECONDS = 15.0
+
+
+def client_proposer(client: Any) -> Proposer:
+    """Proposer that asks the governed extraction client's transport for one JSON proposal."""
+
+    def propose(card: Mapping[str, Any], catalogue: Mapping[str, Any]) -> Mapping[str, Any]:
+        from services.source_ingestion.semantic_extraction import (
+            ExtractionTaskType,
+            SemanticExtractionRequest,
+        )
+
+        spans = card.get("cited_spans") or [{}]
+        request = SemanticExtractionRequest(
+            source_id=str(spans[0].get("source_record_id") or "hypothesis-compiler"),
+            text=str(card.get("claim") or ""),
+            task_type=ExtractionTaskType.HYPOTHESIS_CARD,
+        )
+        raw = client._dispatch_turn(
+            prompt=build_compile_prompt(card, catalogue),
+            schema=_PROPOSAL_SCHEMA,
+            request=request,
+            timeout_seconds=_PROPOSE_TIMEOUT_SECONDS,
+        )
+        out = raw.get("output") or raw.get("data") or raw
+        structured = out.get("structured_data") if isinstance(out, Mapping) else None
+        proposal = structured if isinstance(structured, Mapping) else out
+        if not isinstance(proposal, Mapping):
+            raise ValueError("compiler proposal is not an object")
+        return proposal
+
+    return propose
+
+
+def compiler_from_env(
+    client: Any | None = None, store_path: str | Path | None = None
+) -> Optional[HypothesisCompiler]:
+    """Build the compiler only when L2 extraction is enabled (same switch as the extractor)."""
+    from services.source_ingestion.hypothesis_card import ENABLED_ENV
+
+    import os
+
+    if str(os.environ.get(ENABLED_ENV, "")).strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    if client is None:
+        from services.source_ingestion.semantic_extraction_client import SemanticExtractionClient
+
+        client = SemanticExtractionClient()
+    return HypothesisCompiler(client_proposer(client), CompilerStore(store_path))
+
+
 __all__ = [
     "CompileOutcome",
     "CompilerStore",
     "HypothesisCompiler",
     "build_compile_prompt",
+    "client_proposer",
+    "compiler_from_env",
     "card_key",
     "catalogue_summary",
     "rule_fingerprint",
