@@ -22,6 +22,18 @@ MUTATE_OUTCOMES = ("candidate_created", "no_candidate")
 REVALIDATE_OUTCOMES = ("revalidation_passed", "revalidation_failed")
 
 
+def post_admission_dataset(dataset, joined_at, *, minimum_days=20):
+    """Revalidation cannot reuse the admission sample, including its admission day."""
+    from datetime import date
+    joined = date.fromisoformat(joined_at[:10])
+    if not dataset.get("source_dataset_refs"):
+        raise ExecutorRefusal("evaluation_rejected", "post_admission_dataset_source_missing")
+    records = [r for r in dataset.get("records", []) if date.fromisoformat(r["date"][:10]) > joined]
+    if len({r["date"][:10] for r in records}) < minimum_days:
+        raise ExecutorRefusal("evaluation_rejected", "insufficient_post_admission_trading_days")
+    return {**dataset, "records": records}
+
+
 class ExecutorRefusal(Exception):
     """A stated, non-transport refusal: the run ends completed with this outcome."""
 

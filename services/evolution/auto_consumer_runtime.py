@@ -9,11 +9,13 @@ scope, so the decision stays with the operator.
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 from typing import Any, Callable, Mapping
 
 from services.evolution.auto_consumer import AutoConsumer, ConsumerReport, JsonlEvidenceSink
 from services.evolution.governed_execution_approval import GovernedExecutionApproval
-from services.evolution.governed_persona_lifecycle import GovernedPersonaLifecycle, Transport, urllib_transport
+from services.evolution.governed_persona_lifecycle import Transport, urllib_transport
 
 class HttpDecisionPort:
     def __init__(self, base_url: str, token: Callable[[], str | None], transport: Transport | None = None,
@@ -166,86 +168,233 @@ def enabled(env: Mapping[str, str] | None = None) -> bool:
     return (env or os.environ).get("EVOLUTION_AUTO_CONSUMER_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 
 
+class PoolOwner:
+    """Authenticated reads/writes to the existing product owners. No lifecycle port."""
+
+    def __init__(self, env, transport=None):
+        self.env = env
+        self.send = transport or urllib_transport()
+        self.tenant = (env.get("EVOLUTION_SCHEDULER_TENANT_ID") or env.get("EVOLUTION_DEFAULT_TENANT_ID") or "pantheon-default").strip()
+
+    def call(self, owner, method, path, body=None, *, optional=False):
+        from urllib.parse import quote
+        base = self.env.get(f"AUTO_CONSUMER_{owner}_URL", "").rstrip("/")
+        token = self.env.get(f"AUTO_CONSUMER_{owner}_TOKEN", "")
+        if owner == "GOVERNANCE":
+            gate = method == "POST" and (path.endswith("/review") or path.endswith("/decide"))
+            token = self.env.get("AUTO_CONSUMER_GATE_TOKEN" if gate else "AUTO_CONSUMER_PROPOSER_TOKEN", "")
+        if not base or not token:
+            raise RuntimeError(f"AUTO_CONSUMER_{owner}_URL and TOKEN are required")
+        status, payload = self.send(method, base + path,
+            {"Authorization": f"Bearer {token}", "X-Tenant-Id": self.tenant,
+             "Accept": "application/json", "Content-Type": "application/json"}, body)
+        if optional and status == 404:
+            return None
+        if status >= 400:
+            raise RuntimeError(f"{owner} {method} {path} -> {status}")
+        return payload
+
+    def pool(self, pid):
+        from urllib.parse import quote
+        row = self.call("PERSONA", "GET", f"/api/personas/{quote(pid, safe='')}/strategy-pool")
+        if row.get("tenant_id") != self.tenant or row.get("persona_id") != pid:
+            raise RuntimeError("pool owner identity mismatch")
+        return row
+
+    def pools(self):
+        rows = self.call("PERSONA", "GET", "/api/personas?lifecycle_state=paper_owner")
+        for row in rows:
+            if row.get("tenant_id") != self.tenant or row.get("lifecycle_state") != "paper_owner":
+                continue
+            from urllib.parse import quote
+            pool = self.call("PERSONA", "GET", f"/api/personas/{quote(row['persona_id'], safe='')}/strategy-pool", optional=True)
+            if pool is not None:
+                if pool.get("tenant_id") != self.tenant or pool.get("persona_id") != row["persona_id"]:
+                    raise RuntimeError("pool owner identity mismatch")
+                yield pool
+
+    def entry(self, ref):
+        from urllib.parse import quote
+        view = self.call("REGISTRY", "GET", "/api/registry/strategy-artifacts/" + quote(ref, safe=""))
+        entry = view.get("entry") or {}
+        if entry.get("registry_id") != ref or entry.get("owner_tenant") != self.tenant:
+            raise RuntimeError("registry owner identity mismatch")
+        return entry
+
+    def resolve(self, decision):
+        from urllib.parse import quote
+        if decision.get("tenant_id") != self.tenant:
+            return None
+        ctx = (decision.get("metadata") or {}).get("pool_member") or {}
+        pid = ctx.get("persona_id") or decision.get("persona_id")
+        if not pid:
+            return None
+        persona = self.call("PERSONA", "GET", f"/api/personas/{quote(pid, safe='')}")
+        if persona.get("tenant_id") != self.tenant or persona.get("lifecycle_state") != "paper_owner":
+            return None
+        pool = self.pool(pid)
+        member = next((m for m in pool["members"] if m["artifact_ref"] == decision["target_id"]), None)
+        if member is None or (member["stage"] == "removed" and
+                             member.get("removal_reason") != "evolution:" + decision["decision_id"]):
+            return None
+        if ctx and any(ctx.get(k) != member.get(k) for k in ("artifact_ref", "checksum", "joined_at")):
+            return None
+        entry = self.entry(member["artifact_ref"])
+        if entry.get("checksum") != member["checksum"] or entry.get("version") != decision.get("target_version"):
+            return None
+        return {"tenant_id": self.tenant, "persona_id": pid, "artifact_id": member["artifact_ref"],
+                "stage": "paper", "strategy_kind": entry["metadata"]["strategy_artifact"]["strategy_logic"]["kind"],
+                "pool_member": member, "pool_version": pool["pool_version"]}
+
+    def books(self, pool):
+        payload = self.call("TELEMETRY", "GET", "/api/telemetry/runtime-summaries")
+        rows = payload if isinstance(payload, list) else payload.get("summaries", [])
+        rows = [r for r in rows if r.get("persona_id") == pool["persona_id"]
+                and r.get("deployment_stage") == "paper" and r.get("tenant_id") == self.tenant]
+        if len(rows) != 1:
+            raise RuntimeError("exactly one current paper runtime summary is required")
+        books = rows[0].get("member_virtual_books") or []
+        if len({b["artifact_id"] for b in books}) != len(books):
+            raise RuntimeError("ambiguous member virtual books")
+        return {b["artifact_id"]: {**b, **b.get("net_of_costs", {})} for b in books}
+
+    def family_state(self, family):
+        from urllib.parse import quote
+        return self.call("RESEARCH", "GET", "/api/research/evolution/families/" + quote(family, safe=""))
+
+    def publish(self, pool):
+        from urllib.parse import quote
+        result = self.call("BFF", "POST", f"/bff/personas/{quote(pool['persona_id'], safe='')}/strategy-pool/publish",
+                           {"pool_version": pool["pool_version"], "stage": "paper"})
+        receipt = result.get("data") or result
+        if receipt.get("status") != "published":
+            raise RuntimeError("pool envelope publication is not confirmed")
+        return receipt
+
+    def remove_member(self, pool, member, *, reason):
+        from datetime import datetime, timezone
+        from urllib.parse import quote
+        current = self.pool(pool["persona_id"])
+        members = [dict(m) for m in current["members"]]
+        found = next((m for m in members if m["artifact_ref"] == member["artifact_ref"]), None)
+        if found is None or found["checksum"] != member["checksum"] or found["joined_at"] != member["joined_at"]:
+            raise RuntimeError("pool member identity changed before removal")
+        already_removed = found["stage"] == "removed"
+        if already_removed and found.get("removal_reason") != reason:
+            raise RuntimeError("member was removed by another decision")
+        if not already_removed:
+            found.update(stage="removed", risk_weight=0, removal_reason=reason,
+                         removed_at=datetime.now(timezone.utc).isoformat())
+            current = self.call("PERSONA", "POST", f"/api/personas/{quote(pool['persona_id'], safe='')}/strategy-pool/versions",
+                {"expected_version": current["pool_version"], "members": members,
+                 "change_reason": reason})
+        receipt = self.publish(current)  # retry publication even when append already landed
+        return {**receipt, "already_removed": already_removed, "removed": member["artifact_ref"]}
+
+    def compete(self, pool, child, books):
+        from urllib.parse import quote
+        result = self.call("PERSONA", "POST", f"/api/personas/{quote(pool['persona_id'], safe='')}/strategy-pool/decisions",
+            {"expected_version": pool["pool_version"], "execution_context": "paper", "action": "evolution_compete",
+             "candidate": {"artifact_ref": child["artifact_ref"], "checksum": child["checksum"],
+                           "parent_ref": child["parent_ref"]}, "books": books})
+        if (result.get("decision") or {}).get("status") != "applied":
+            raise RuntimeError("pool competition refused: " + str(result.get("decision")))
+        return self.publish(result)
+
+    def admit_child(self, ctx, child_id, decision_id):
+        """Approve the exact gate-passed child, then append a zero-weight trial."""
+        from urllib.parse import quote
+        from datetime import datetime, timedelta, timezone
+        from services.evolution.approved_baselines import resolve_member_baseline
+        entry = self.entry(child_id)
+        if entry.get("replication_success") is not True or not entry.get("replication_proof"):
+            raise RuntimeError("child has no registry-owned gate proof")
+        approval_id = "pool-child-" + hashlib.sha256((self.tenant + decision_id + child_id).encode()).hexdigest()[:24]
+        digest = entry["checksum"]
+        if entry["artifact_state"] == "candidate":
+            path = "/api/governance/approvals/" + approval_id
+            approval = self.call("GOVERNANCE", "GET", path, optional=True)
+            if approval is None:
+                approval = self.call("GOVERNANCE", "POST", "/api/governance/approvals", {
+                    "decision_id": approval_id, "expected_version": 0, "tenant_id": self.tenant,
+                    "target_type": "registry_entry", "target_id": child_id, "target_version": entry["version"],
+                    "risk_level": "low", "persona_id": ctx["persona_id"],
+                    "owner_user_id": self.env.get("AUTO_CONSUMER_PROPOSER_ID"),
+                    "proposal_id": decision_id, "proposal_revision": 1,
+                    "proposal_content_digest": hashlib.sha256(json.dumps(ctx, sort_keys=True).encode()).hexdigest(),
+                    "validation_result_digest": digest, "candidate_digest": digest,
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(hours=72)).isoformat()})
+            if any(approval.get(k) != v for k, v in {"target_id": child_id, "target_version": entry["version"],
+                    "tenant_id": self.tenant, "candidate_digest": digest, "risk_level": "low"}.items()):
+                raise RuntimeError("child approval identity mismatch")
+            for step in ("review", "decide"):
+                if approval.get("decision_state") == "decided":
+                    break
+                if step == "review" and approval.get("decision_state") == "under_review":
+                    continue
+                body = {"actor_role": "automated_gate", "actor_id": self.env.get("AUTO_CONSUMER_GATE_ID"),
+                        "expected_version": approval["version"]}
+                if step == "decide":
+                    body.update(outcome="approved", candidate_digest=digest, expires_at=approval["expires_at"],
+                                rationale="Gate-passed child, paper virtual-only trial",
+                                evidence_refs=[{"ref_type": "registry_entry", "ref_id": child_id}])
+                approval = self.call("GOVERNANCE", "POST", path + "/" + step, body)
+            if approval.get("decision") != "approved" or approval.get("decision_state") != "decided":
+                raise RuntimeError("child approval is not decided approved")
+            self.call("REGISTRY", "POST", "/api/registry/strategy-artifacts/" + quote(child_id, safe="") + "/advance", {
+                "target_state": "approved", "approval_decision_id": approval_id,
+                "expected_artifact_state": "candidate", "expected_version": entry["version"],
+                "expected_updated_at": entry.get("updated_at"), "command_key": approval_id})
+            entry = self.entry(child_id)
+        baseline = resolve_member_baseline(tenant_id=self.tenant, persona_id=ctx["persona_id"],
+            artifact_ref=child_id, checksum=digest, entry=entry)
+        if baseline["status"] != "approved":
+            raise RuntimeError("child approved baseline unavailable: " + baseline["reason"])
+        pool = self.pool(ctx["persona_id"])
+        existing = next((m for m in pool["members"] if m["artifact_ref"] == child_id), None)
+        if existing is None:
+            result = self.call("PERSONA", "POST", f"/api/personas/{quote(ctx['persona_id'], safe='')}/strategy-pool/decisions", {
+                "expected_version": pool["pool_version"], "execution_context": "paper", "action": "evolution_trial",
+                "candidate": {"artifact_ref": child_id, "checksum": digest, "parent_ref": ctx["artifact_ref"]}})
+            if (result.get("decision") or {}).get("status") != "applied":
+                raise RuntimeError("child trial admission refused: " + str(result.get("decision")))
+            pool = result
+        elif existing["checksum"] != digest or existing.get("parent_ref") != ctx["artifact_ref"]:
+            raise RuntimeError("child trial identity mismatch")
+        return self.publish(pool)
+
+    def retire(self, decision, scope):
+        return self.remove_member(self.pool(scope["persona_id"]), scope["pool_member"],
+                                  reason="evolution:" + decision["decision_id"])
+
+
 def build_consumer(env: Mapping[str, str] | None = None, transport: Transport | None = None) -> AutoConsumer:
-    e = env or os.environ
-
-    def need(name: str) -> str:
-        value = e.get(name, "").strip()
-        if not value:
-            raise RuntimeError(f"{name} is required when EVOLUTION_AUTO_CONSUMER_ENABLED")
-        return value
-
-    def token(name: str) -> Callable[[], str]:
-        return lambda: need(name)
-
-    api = e.get("EVOLUTION_API_URL", "http://127.0.0.1:8093")
-    tenant = (e.get("EVOLUTION_SCHEDULER_TENANT_ID") or e.get("EVOLUTION_DEFAULT_TENANT_ID") or "pantheon-default").strip()
-    persona_url = need("AUTO_CONSUMER_PERSONA_URL")
-    personas = GovernedPersonaLifecycle(
-        governance_url=need("AUTO_CONSUMER_GOVERNANCE_URL"), persona_url=persona_url,
-        proposer_token=token("AUTO_CONSUMER_PROPOSER_TOKEN"), proposer_id=need("AUTO_CONSUMER_PROPOSER_ID"),
-        gate_token=token("AUTO_CONSUMER_GATE_TOKEN"), gate_id=need("AUTO_CONSUMER_GATE_ID"),
-        persona_token=token("AUTO_CONSUMER_PERSONA_TOKEN"),
-        evolution_decision_id=lambda: current_decision[0], transport=transport,
-    )
-    current_decision: list[str] = [""]
-    scope = DiscoveryBindingScope(
-        capital_url=need("AUTO_CONSUMER_CAPITAL_URL"), registry_url=need("AUTO_CONSUMER_REGISTRY_URL"),
-        persona_url=persona_url, capital_token=lambda: e.get("AUTO_CONSUMER_CAPITAL_TOKEN"),
-        registry_token=lambda: e.get("AUTO_CONSUMER_REGISTRY_TOKEN"),
-        persona_token=lambda: e.get("AUTO_CONSUMER_PERSONA_TOKEN"), transport=transport,
-    )
-    decisions = HttpDecisionPort(api, lambda: e.get("EVOLUTION_AUTH_TOKEN") or None, transport, tenant)
-    execution_approvals = GovernedExecutionApproval(
-        governance_url=need("AUTO_CONSUMER_GOVERNANCE_URL"), gate_token=token("AUTO_CONSUMER_GATE_TOKEN"),
-        gate_id=need("AUTO_CONSUMER_GATE_ID"), file_request=decisions.request_execution_approval,
-        transport=transport,
-    )
-    consumer = AutoConsumer(
-        decisions=decisions, execution_approvals=execution_approvals,
-        scope=scope,
-        evidence=JsonlEvidenceSink(e.get("AUTO_CONSUMER_EVIDENCE_PATH", "auto_consumer_evidence.jsonl")),
-        personas=personas,
-    )
-    original = consumer.retire_persona
-
-    def bound(decision, verdict, approval_id):
-        current_decision[0] = str(decision.get("decision_id") or "")
-        return original(decision, verdict, approval_id)
-
-    consumer.retire_persona = bound  # type: ignore[method-assign]
-    return consumer
-
-
-def build_decay_monitor(env: Mapping[str, str] | None = None, transport: Transport | None = None):
-    """Decay monitor over the same owners as the consumer plus the telemetry runtime summaries."""
-    from services.evolution.decay_monitor import DecayMonitor, WindowLedger
-    from services.evolution.threshold_sweep_worker import approved_baseline_value, default_fetch_summaries, load_baselines
-
-    e = env or os.environ
-    consumer = build_consumer(e, transport)
-    tenant = (e.get("EVOLUTION_SCHEDULER_TENANT_ID") or e.get("EVOLUTION_DEFAULT_TENANT_ID") or "pantheon-default").strip()
-    telemetry = e.get("EVOCHAIN_TELEMETRY_API_URL") or e.get("PANTHEON_TELEMETRY_URL", "http://telemetry:8083")
-    baselines = load_baselines()
-    return DecayMonitor(
-        tenant_id=tenant, scope=consumer.scope,
-        fetch_summaries=lambda: default_fetch_summaries(
-            telemetry, timeout=20.0, tenant_id=tenant, service_token=e.get("AUTO_CONSUMER_TELEMETRY_TOKEN")),
-        baseline=lambda artifact, key: approved_baseline_value(baselines, artifact, key),
-        ledger=WindowLedger(e.get("AUTO_CONSUMER_DECAY_LEDGER_PATH", "paper_decay_windows.jsonl")),
-        propose=consumer.decisions.propose, evidence=consumer.evidence,
-    ), consumer
+    e = os.environ if env is None else env
+    owner = PoolOwner(e, transport)
+    decisions = HttpDecisionPort(e.get("EVOLUTION_API_URL", "http://127.0.0.1:8093"),
+        lambda: e.get("EVOLUTION_AUTH_TOKEN") or None, transport, owner.tenant)
+    approvals = GovernedExecutionApproval(
+        governance_url=e.get("AUTO_CONSUMER_GOVERNANCE_URL", ""),
+        gate_token=lambda: e.get("AUTO_CONSUMER_GATE_TOKEN", ""),
+        gate_id=e.get("AUTO_CONSUMER_GATE_ID", ""), file_request=decisions.request_execution_approval,
+        transport=transport)
+    return AutoConsumer(decisions=decisions, scope=owner, pool_actions=owner,
+        execution_approvals=approvals,
+        evidence=JsonlEvidenceSink(e.get("AUTO_CONSUMER_EVIDENCE_PATH", "auto_consumer_evidence.jsonl")))
 
 
 def run_consumer_tick(env: Mapping[str, str] | None = None, transport: Transport | None = None) -> dict[str, Any]:
-    """One scheduler step: detect paper decay (proposes retires), then gate/approve/retire."""
-    monitor, consumer = build_decay_monitor(env, transport)
-    decay: dict[str, Any]
+    """The existing scheduler invokes this entry point; proposals precede approval."""
+    from dataclasses import asdict
+    from services.evolution.pool_evolution_scheduler import PoolEvolutionScheduler
+    from services.evolution.decay_monitor import WindowLedger
+    e = os.environ if env is None else env
+    consumer = build_consumer(e, transport)
     try:
-        d = monitor.tick()
-        decay = {"observed": d.observed, "proposed": d.proposed, "existing": d.existing, "errors": d.errors}
-    except Exception as exc:  # telemetry/capital outage must not stop the consumer tick; retried next tick
-        decay = {"errors": {"decay_monitor": f"{type(exc).__name__}: {exc}"}}
-    report: ConsumerReport = consumer.tick()
-    return {"approved": report.approved, "retired": report.retired,
-            "left_for_operator": report.left_for_operator, "errors": report.errors, "decay": decay}
+        schedule = asdict(PoolEvolutionScheduler(owner=consumer.scope, decisions=consumer.decisions,
+            evidence=consumer.evidence,
+            ledger=WindowLedger(e.get("AUTO_CONSUMER_DECAY_LEDGER_PATH", "paper_decay_windows.jsonl"))).tick())
+    except Exception as exc:
+        schedule = {"errors": {"pool_scheduler": f"{type(exc).__name__}: {exc}"}}
+    report = consumer.tick()
+    return {**asdict(report), "schedule": schedule}

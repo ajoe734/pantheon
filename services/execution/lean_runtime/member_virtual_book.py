@@ -220,7 +220,11 @@ class MemberVirtualBooks:
             result.append({**{k: v for k, v in book.items()
                               if k not in {"observations", "symbol", "underlying_count"}},
                            **virtual_book_metrics(returns), "underlyings": underlyings,
-                           "net_of_costs": virtual_book_metrics(net_returns, basis=NET_BASIS),
+                           "dates": [end[:10] for _, end in dates],
+                           "returns": returns,
+                           "source_ref": sorted({r["source_ref"] for b, _, _ in group for r in b["observations"]}),
+                           "net_of_costs": {**virtual_book_metrics(net_returns, basis=NET_BASIS),
+                               "returns": net_returns},
                            "aggregation": "equal_notional_per_underlying",
                            "marks_complete": complete,
                            "as_of": dates[-1][1] if dates else None})

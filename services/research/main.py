@@ -1794,6 +1794,40 @@ _RETRAIN_SEARCH_BUDGET_ENV = "RESEARCH_RETRAIN_SEARCH_BUDGET"
 _RETRAIN_TRIAL_COUNTER_ENV = "RESEARCH_REPLICATION_TRIAL_COUNTER_PATH"
 
 
+def _pool_owner(params):
+    if not params.get("pool_member"):
+        return None
+    from services.evolution.auto_consumer_runtime import PoolOwner
+    env = dict(os.environ, EVOLUTION_SCHEDULER_TENANT_ID=params["tenant_id"])
+    return PoolOwner(env)
+
+
+def _admit_evolution_child(params, child_id):
+    owner = _pool_owner(params)
+    if owner is not None:
+        ctx = params["pool_member"]
+        parent = next((m for m in owner.pool(ctx["persona_id"])["members"]
+                       if m["artifact_ref"] == ctx["artifact_ref"]), None)
+        if parent is None or parent["stage"] != "active" or any(
+                parent.get(k) != ctx.get(k) for k in ("checksum", "joined_at")):
+            raise _RetrainFailure("pool_trial", "approved parent membership changed")
+        owner.admit_child(ctx, child_id, params["decision_id"])
+
+
+@app.get("/api/research/evolution/families/{family_id}")
+def evolution_family_state(family_id: str, tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
+    from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
+    # The same family counter used by the real gate is durable across workers.
+    views = _retrain_call(step="family_state", service="registry", method="GET",
+        token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
+        url=os.getenv("REGISTRY_URL", "http://registry:8087").rstrip("/") +
+            "/api/registry/strategies/" + urllib.parse.quote(family_id, safe="") + "/strategy-artifacts")
+    if not any(((v or {}).get("entry") or {}).get("owner_tenant") == tenant_id for v in views or []):
+        raise HTTPException(status_code=404, detail="family not found")
+    trials = SharedFamilyTrialCounterStore(_retrain_trial_counter_path()).get(family_id)
+    return {"family_id": family_id, "trials": trials, "status": "tried" if trials >= 500 else "available"}
+
+
 def _retrain_trial_counter_path() -> Path:
     """Authoritative family counter: the file OOS admission's gate also uses."""
     explicit = os.environ.get(_RETRAIN_TRIAL_COUNTER_ENV)
@@ -1844,8 +1878,10 @@ def _retrain_search_update(
         dataset = _RETRAIN_DATASET_LOADER(parent_artifact, params)
     if not isinstance(dataset, dict):
         raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
-    budget = int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
+    budget = 50 if params.get("pool_member") else int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
     family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
+    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).get(family_id) >= 500:
+        raise _RetrainFinished("no_candidate", "family_tried")
     from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
 
     prev = os.environ.get("PANTHEON_VECTORBT_BACKEND")
@@ -1986,6 +2022,8 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
             "session_id", "baseline_job_id", "baseline_eval_id", "candidate_job_id", "candidate_eval_id",
             "baseline_metrics", "candidate_metrics", "candidate_artifact_id", "candidate_proof_ref", "persona_id"}}
         _retrain_record(run_id, **carried)
+        if state.get("candidate_artifact_id"):
+            _admit_evolution_child(params, state["candidate_artifact_id"])
         raise _RetrainFinished(
             str(state.get("outcome") or "candidate_created"),
             str(state.get("outcome_reason") or "resumed_from_recorded_outcome"),
@@ -2201,6 +2239,7 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     writebacks = list(run.get("registry_writebacks") or [])
     writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
     _retrain_record(run_id, candidate_artifact_id=child_id, registry_writebacks=writebacks)
+    _admit_evolution_child(params, child_id)
     raise _RetrainFinished("candidate_created", "candidate_passed_gate_and_beat_baseline")
 
 
@@ -2250,6 +2289,12 @@ def _evolution_oos_context(
         dataset = _RETRAIN_DATASET_LOADER(parent, params)
     if not isinstance(dataset, dict):
         raise _RetrainFinished("evaluation_rejected", "governed_dataset_unavailable")
+
+    if params.get("pool_member") and _evolution_action(params) == "revalidate":
+        try:
+            dataset = executor.post_admission_dataset(dataset, params["pool_member"]["joined_at"])
+        except executor.ExecutorRefusal as exc:
+            raise _RetrainFinished(exc.outcome, exc.reason) from None
 
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
     backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
@@ -2453,11 +2498,13 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                 else:
                     raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
         getattr(gate, "release", lambda _run: None)(verdict.get("backtest_run_id"))  # adopted/registered: release
-        if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") != "candidate":
+        if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") not in (
+                {"candidate", "approved"} if params.get("pool_member") else {"candidate"}):
             raise _RetrainFailure("register_candidate", "Registry did not report the child as a candidate")
         run = get_store().get_run(run_id) or {}
         writebacks = list(run.get("registry_writebacks") or [])
         writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
+        _admit_evolution_child(params, child_id)
         _retrain_record(run_id, registry_writebacks=writebacks, candidate_artifact_id=child_id)
         return existing
 
@@ -2469,6 +2516,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                 parent, decision_id=decision_id, family_id=family_id, gate=gate,
                 request_factory=factory, register_child=register_child,
                 family_versions=lambda: _registry_family_versions(registry_url, tenant_id, parent),
+                children=50 if params.get("pool_member") else 1,
             )
         else:
             result = executor.execute_revalidate(parent, family_id=family_id, gate=gate, request_factory=factory)
@@ -2481,6 +2529,15 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
             os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
         else:
             os.environ["PANTHEON_VECTORBT_BACKEND"] = prev
+    if params.get("pool_member") and result["outcome"] == "revalidation_failed":
+        owner = _pool_owner(params)
+        ctx = params["pool_member"]
+        pool = owner.pool(ctx["persona_id"])
+        member = next((m for m in pool["members"] if m["artifact_ref"] == ctx["artifact_ref"]
+                       and m["checksum"] == ctx["checksum"] and m["joined_at"] == ctx["joined_at"]), None)
+        if member is None:
+            raise _RetrainFailure("pool_revalidation", "approved member identity changed")
+        owner.remove_member(pool, member, reason="evolution:" + decision_id)
     _retrain_record(
         run_id, evolution_result=result.get("detail") or result.get("verdict"),
         parent_artifact_checksum=strategy_artifact_checksum(parent),

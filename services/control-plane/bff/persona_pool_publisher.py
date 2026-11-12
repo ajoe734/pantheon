@@ -570,14 +570,19 @@ class PersonaPoolPublisher:
                 {"artifact_ref": member["artifact_ref"], "version": entry["version"],
                  "checksum": member["checksum"], "risk_weight": weight, "virtual_only": virtual}
             )
+        empty_template = None
         if not members:
-            raise PoolPublishRefused("pool has no members to publish", step="members")
+            previous_entry = self._registry_view(previous["artifact_id"])
+            empty_template = ((previous_entry or {}).get("metadata") or {}).get("strategy_artifact")
+            if not empty_template:
+                raise PoolPublishRefused("empty pool requires the previous approved envelope", step="members")
         try:
             envelope = build_portfolio_envelope(
                 artifact_id=artifact_id,
                 strategy_id=ids.strategy_id,
                 version=version,
                 members=members,
+                empty_template=empty_template,
                 pool_snapshot={"pool_version": number, "pool_digest": digest},
                 parent_envelope_id=previous["artifact_id"],
             )

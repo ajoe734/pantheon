@@ -82,7 +82,7 @@ def validate_portfolio_envelope(artifact: Mapping[str, Any]) -> None:
     limits = logic["risk_limits"]
     if gross > limits["gross_weight_limit"] + 1e-12:
         raise Error("portfolio gross risk weight exceeds envelope limit")
-    if covered != {_symbol_key(s) for s in symbols}:
+    if members and covered != {_symbol_key(s) for s in symbols}:
         raise Error("envelope symbols must be covered by pinned members")
 
 
@@ -90,8 +90,8 @@ def required_portfolio_history(artifact: Mapping[str, Any]) -> int:
     from .factor_rule import required_history_bars
 
     if is_portfolio(artifact):
-        return max(required_portfolio_history(m["artifact"])
-                   for m in artifact["strategy_logic"]["members"])
+        return max((required_portfolio_history(m["artifact"])
+                    for m in artifact["strategy_logic"]["members"]), default=1)
     logic, params = artifact["strategy_logic"], artifact["parameters"]
     if logic["kind"] == "close_to_close_momentum":
         return int(params[logic["lookback_parameter"]])
@@ -154,7 +154,7 @@ def evaluate_portfolio_envelope(artifact, closes, *, features=None,
 
 def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
                              max_net_strength=1.0, gross_weight_limit=1.0,
-                             pool_snapshot=None, parent_envelope_id=None):
+                             pool_snapshot=None, parent_envelope_id=None, empty_template=None):
     """Build a new immutable revision; registration starts at draft/candidate.
 
     ``pool_snapshot`` (pool version + digest) is pinned inside the checksummed
@@ -163,9 +163,9 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
     """
     from .strategy_artifact import strategy_artifact_checksum, validate_strategy_artifact
 
-    if not members:
-        raise ValueError("portfolio requires members")
-    template = copy.deepcopy(members[0]["artifact"])
+    if not members and (not empty_template or not pool_snapshot or not parent_envelope_id):
+        raise ValueError("empty portfolio requires a prior envelope and pinned pool snapshot")
+    template = copy.deepcopy(members[0]["artifact"] if members else empty_template)
     template.update(artifact_id=artifact_id, strategy_id=strategy_id, version=version)
     template.pop("binding_intent", None)
     pinned = []
@@ -179,7 +179,8 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
     for member in pinned:
         for symbol in member["artifact"]["parameters"]["symbols"]:
             symbols_by_underlying.setdefault(_symbol_key(symbol), symbol)
-    template["parameters"]["symbols"] = sorted(symbols_by_underlying.values())
+    if members:
+        template["parameters"]["symbols"] = sorted(symbols_by_underlying.values())
     template["strategy_logic"] = {"kind": KIND, "combination_rule": "clipped_weighted_sum_v1",
                                   "members": pinned, "risk_limits": {
                                       "max_net_strength": max_net_strength,

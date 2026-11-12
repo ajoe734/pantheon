@@ -159,16 +159,6 @@ class PoolEvolutionScheduler:
         if parent is None:
             report.skipped[key] = "parent_not_active"
             return
-        # Compare identical post-child-admission dates on the same underlying
-        # book basis. The approved child baseline above proves original OOS.
-        from services.control_plane.persona.pool_policy import book_series, sharpe
-        child_series = book_series(books[child["artifact_ref"]], child["checksum"])
-        parent_series = book_series(books[parent["artifact_ref"]], parent["checksum"])
-        if not set(days) <= child_series.keys() or not set(days) <= parent_series.keys():
-            raise ValueError("parent_child_comparison_window_incomplete")
-        winner, loser = (child, parent) if sharpe([child_series[d] for d in days], 252) > sharpe(
-            [parent_series[d] for d in days], 252) else (parent, child)
-        self.owner.remove_member(pool, loser, reason=f"weaker_than:{winner['artifact_ref']}")
-        self.evidence.record({"event": "pool_competition_removed", "persona_id": pool["persona_id"],
-                              "removed": loser["artifact_ref"], "winner": winner["artifact_ref"],
-                              "post_admission_trading_days": len(days)})
+        receipt = self.owner.compete(pool, child, books)
+        self.evidence.record({"event": "pool_competition", "persona_id": pool["persona_id"],
+                              "child": child["artifact_ref"], "receipt": receipt})

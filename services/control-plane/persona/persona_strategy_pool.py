@@ -132,6 +132,7 @@ class PoolCandidate(BaseModel):
     artifact_ref: str = Field(min_length=1)
     checksum: str = Field(min_length=1)
     demand_ref: str | None = None
+    parent_ref: str | None = None
 
 
 class PoolDecisionRequest(BaseModel):
@@ -143,7 +144,7 @@ class PoolDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_version: int = Field(ge=1)
     execution_context: Literal["paper"]
-    action: Literal["admit", "reweight"]
+    action: Literal["admit", "reweight", "evolution_trial", "evolution_compete"]
     candidate: PoolCandidate | None = None
     books: dict[str, dict[str, Any]] = Field(default_factory=dict)
     observations: list[dict[str, Any]] = Field(default_factory=list)
@@ -151,7 +152,7 @@ class PoolDecisionRequest(BaseModel):
 
     @model_validator(mode="after")
     def _candidate_required(self):
-        if self.action != "admit" and self.candidate is not None:
+        if self.action not in {"admit", "evolution_trial", "evolution_compete"} and self.candidate is not None:
             raise ValueError("only admission accepts a candidate")
         return self
 
@@ -498,7 +499,61 @@ class PersonaStrategyPoolStore:
                     "execution_context": "paper", "execution_status": "requires_approved_envelope"}
         now = self._now()
         try:
-            if request.action == "reweight":
+            if request.action in {"evolution_trial", "evolution_compete"}:
+                candidate = request.candidate
+                if candidate is None or not candidate.parent_ref:
+                    raise ValueError("evolution_parent_required")
+                parent = next((m for m in members if m["artifact_ref"] == candidate.parent_ref and m["stage"] == "active"), None)
+                if parent is None:
+                    raise ValueError("evolution_parent_not_active")
+                entry = self._reader(candidate.artifact_ref, tenant_id)
+                child_baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=persona_id,
+                    artifact_ref=candidate.artifact_ref, checksum=candidate.checksum, entry=entry)
+                if child_baseline["status"] != "approved":
+                    raise ValueError("evolution_child_original_oos_not_approved:" + child_baseline["reason"])
+                artifact = (entry.get("metadata") or {}).get("strategy_artifact") or {}
+                if candidate.parent_ref not in (artifact.get("lineage") or {}).get("parent_registry_ids", []):
+                    raise ValueError("evolution_child_lineage_mismatch")
+                parent_entry = self._reader(parent["artifact_ref"], tenant_id)
+                parent_baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=persona_id,
+                    artifact_ref=parent["artifact_ref"], checksum=parent["checksum"], entry=parent_entry)
+                if parent_baseline["status"] != "approved":
+                    raise ValueError("evolution_parent_baseline_missing")
+                if not set(child_baseline["validated_universe"]) <= set(parent_baseline["validated_universe"]):
+                    raise ValueError("evolution_child_universe_widened")
+                if request.action == "evolution_trial":
+                    if any(m["artifact_ref"] == candidate.artifact_ref for m in members):
+                        raise ValueError("candidate_already_in_pool_history")
+                    members.append(PoolMember(artifact_ref=candidate.artifact_ref, checksum=candidate.checksum,
+                        parent_ref=parent["artifact_ref"], stage="trial", risk_weight=0,
+                        joined_at=now, baseline_ref=entry.get("approval_decision_id")).model_dump())
+                else:
+                    from services.evolution.pool_evolution_scheduler import member_days
+                    from pool_policy import dated_series, sharpe
+                    child = next((m for m in members if m["artifact_ref"] == candidate.artifact_ref
+                                  and m["stage"] == "trial" and m.get("parent_ref") == parent["artifact_ref"]
+                                  and m["checksum"] == candidate.checksum), None)
+                    if child is None:
+                        raise ValueError("evolution_child_not_trial")
+                    child_book = request.books.get(child["artifact_ref"], {})
+                    parent_book = request.books.get(parent["artifact_ref"], {})
+                    days = member_days(child, child_book)
+                    if len(days) < 60:
+                        raise ValueError("evolution_child_needs_60_new_trading_days")
+                    child_series = dated_series(child_book, child["checksum"])
+                    parent_series = dated_series(parent_book, parent["checksum"])
+                    if not set(days) <= parent_series.keys() or not set(days) <= child_series.keys():
+                        raise ValueError("evolution_comparison_window_incomplete")
+                    child_wins = sharpe([child_series[d] for d in days], policy.periods_per_year) > sharpe(
+                        [parent_series[d] for d in days], policy.periods_per_year)
+                    loser = parent if child_wins else child
+                    if child_wins:
+                        child.update(stage="active", risk_weight=parent["risk_weight"])
+                    loser.update(stage="removed", risk_weight=0, removed_at=now,
+                                 removal_reason="evolution_competition")
+                    decision.update(removed_artifact_ref=loser["artifact_ref"], post_admission_trading_days=len(days))
+                decision["status"] = "applied"
+            elif request.action == "reweight":
                 previous_stats = next(((v.get("decision") or {})["member_statistics"]
                     for v in reversed(self.versions(persona_id, tenant_id))
                     if "member_statistics" in (v.get("decision") or {})), {})

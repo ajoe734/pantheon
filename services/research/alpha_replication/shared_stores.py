@@ -60,7 +60,7 @@ class SharedFamilyTrialCounterStore(FamilyTrialCounterStore):
             self._counts = {}
 
     def get(self, family_id: str) -> int:
-        self._reload(strict=False)
+        self._reload(strict=True)
         return super().get(family_id)
 
     def increment(self, family_id: str, preset_count: Optional[int] = None) -> int:

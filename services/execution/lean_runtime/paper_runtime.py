@@ -5959,7 +5959,7 @@ class PaperRuntimeService:
         if event.event_type == "signal_generation":
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
             member_views = signal_metadata.get("portfolio_member_views")
-            if isinstance(member_views, dict):
+            if isinstance(member_views, dict) and member_views:
                 mark = signal_metadata.get("market_data") or {}
                 self._member_virtual_books.observe(
                     binding_id=signal_metadata["binding_id"],

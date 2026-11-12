@@ -317,7 +317,7 @@ class AutoConsumer:
         self.evidence.record({"event": "pool_member_removed", "decision_id": decision["decision_id"],
                               "tenant_id": decision["tenant_id"], "receipt": receipt,
                               "governance_decision_id": approval_id, "at": self.clock()})
-        return bool(receipt)
+        return bool(receipt) and not receipt.get("already_removed")
 
 
 # --------------------------------------------------------------- paper decay -> retire
