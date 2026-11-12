@@ -48,9 +48,11 @@ def _install_fake_client(monkeypatch, proposal: dict[str, Any], testability: str
     return calls
 
 
-def _tick(tmp_path, monkeypatch):
+def _tick(tmp_path, monkeypatch, *, body=None):
     evidence = tmp_path / "evidence.jsonl"
     record = _source("src-1")
+    if body is not None:
+        record.metadata["body"] = body
     record.metadata["tenant_id"] = "test"
     evidence.write_text(json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n")
     config = DistillationControllerConfig(
@@ -80,6 +82,56 @@ def _tick(tmp_path, monkeypatch):
     monkeypatch.setattr(dc, "_register_strategy_spec_if_absent", register)
     res = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
     return res, config
+
+
+@pytest.mark.parametrize("sector", [False, True])
+def test_screen_entry_recording_through_environment_controller(tmp_path, monkeypatch, sector):
+    from services.source_ingestion.hypothesis_compiler import CompilerStore
+    from services.source_ingestion.tests.test_hypothesis_extraction import _screen_entry_recording
+    from services.registry.candidate_pool import evaluate_screened_views
+    from services.registry.test_candidate_pool import recorded_market
+
+    recording = _screen_entry_recording()
+    seen = []
+
+    def transport(payload):
+        seen.append(payload)
+        if payload["prompt"].startswith("Propose a factor_rule_v1"):
+            assert '"screen_idea"' in payload["prompt"] and '"entry_idea"' in payload["prompt"]
+            return {"output": {"structured_data": copy.deepcopy(recording["proposal"])}}
+        response = copy.deepcopy(recording["response"])
+        if sector:
+            response["output"]["structured_data"]["hypothesis_card"] = recording["sector_card"]
+        return response
+
+    real = sec.SemanticExtractionClient
+
+    class Client(real):
+        def __init__(self, **kwargs):
+            super().__init__(transport_fn=transport, **kwargs)
+
+    monkeypatch.setattr(sec, "SemanticExtractionClient", Client)
+    monkeypatch.setenv(ENABLED, "1")
+    res, config = _tick(tmp_path, monkeypatch, body=recording["stored_text"])
+    store = CompilerStore(config.seed_store_path.with_name("hypothesis_compiler.sqlite"))
+    assert all(p["agent_id"] == "structured-extraction" and "tools" not in p for p in seen)
+    if sector:
+        assert len(seen) == 1 and res["reconcile"]["created"] == 0
+        assert [s for s, _ in _outcomes(config)] == ["needs_data"]
+        assert store.drafts() == []
+        assert store.needs_data_report() == [
+            {"dataset": "tw_industry_classification", "count": 1},
+            {"dataset": "tw_sector_flows", "count": 1}]
+    else:
+        assert len(seen) == 2 and res["reconcile"]["created"] == 1
+        artifact = store.drafts()[0]["artifact"]
+        seeds = config.seed_store_path.read_text()
+        assert artifact["screen_fingerprint"] in seeds and artifact["entry_fingerprint"] in seeds
+        assert [s["kind"] for s in artifact["strategy_logic"]["screen"]["steps"]] == ["filter", "rank"]
+        views = evaluate_screened_views(artifact, recorded_market(), "2026-09-02")
+        assert views["2317.TW"]["candidate_pool_snapshot"]["members"] == ["2317.TW"]
+        assert views["2317.TW"]["action"] == "BUY"
+        assert views["2330.TW"]["hold_reason"] == "outside_candidate_pool"
 
 
 def _outcomes(config) -> list[tuple[str, str]]:
