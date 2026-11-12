@@ -2,7 +2,7 @@
   "task_id": "SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111",
   "owner": "Codex",
   "reviewer": "Claude",
-  "delivery_status": "source_validation_in_progress",
+  "delivery_status": "source_ready_for_independent_review_with_three_reproduced_dev_baseline_failures",
   "review_decision": "pending_independent_Claude_review",
   "base_commit": "86ab46e44410a43af171285f9c876f868b267198",
   "scope": {
@@ -246,7 +246,56 @@
     "stage_prod_default_seconds": 0.75,
     "change": "none; constants verified from current dev, not increased by this task"
   },
-  "validation": [],
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Provisioned task-local interpreter and verified editable import mapping."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q -s services/source_ingestion/tests/test_registry_receipt_summary.py",
+      "exit_code": 0,
+      "result": "10 passed, 1 warning in 7.20s. Complete capture, current-dev writer, count-only growth, all seven raw receipts and journal/snapshot byte equality pass.",
+      "output": "/tmp/source-registry-projection-tests.log"
+    },
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_runtime_latest_source_record.py services/source_ingestion/tests/test_financial_source_catalog.py",
+      "exit_code": 0,
+      "result": "72 passed, 1 warning in 60.46s. Existing product-semantic assertions unchanged.",
+      "output": "/tmp/source-registry-source-tests.log"
+    },
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q scripts/test_project_market_data_to_bff_agora_surfaces.py scripts/test_source_ingest_deploy_diagnostics_contract.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py",
+      "exit_code": 1,
+      "result": "53 passed, 2 failed in 24.79s. Wrong-role projector mock does not reject viewer; workflow assertion omits existing FinMind connector. Both failures also occur on exact dev base; no test/auth/workflow changes.",
+      "output": "/tmp/source-registry-caller-tests.log"
+    },
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_management_data_sources_contract.py services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py",
+      "exit_code": 1,
+      "result": "15 passed, 1 failed in 29.96s. Human Inbox contributor thread-name assertion expects mgmt_human_inbox_contributor but sees bff-health-owner-read. Same failure occurs on exact dev base. Data-sources contract and environment timeout tests pass.",
+      "output": "/tmp/source-registry-bff-tests.log"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_project_market_data_to_bff_agora_surfaces.py::test_projector_wrong_role_fails_closed scripts/test_source_ingest_deploy_diagnostics_contract.py::test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py::test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals",
+      "cwd": "/tmp/source-registry-receipt-baseline-check-20261112",
+      "base_commit": "86ab46e44410a43af171285f9c876f868b267198",
+      "exit_code": 1,
+      "result": "3 failed in 24.84s, reproducing all three failures on an independent shared-object clone at the exact dev base, provisioned with its own editable venv. This checkout contains no receipt-summary implementation.",
+      "output": "/tmp/source-registry-base-failures.log"
+    },
+    {
+      "command": "git diff --check; JSON comparison of historical record against git show bf42eb38b:evidence.json; blob comparisons against dev",
+      "exit_code": 0,
+      "result": "Diff clean; historical evidence values preserved exactly. Catalog/receipt routes, scheduler receipt serialization, snapshot store/writer, BFF budget and projector are byte-identical to dev."
+    },
+    {
+      "command": "timeout 420 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py",
+      "exit_code": 0,
+      "result": "71 passed in 352.98s. Bounded foreground batch completed and terminal output/exit status collected.",
+      "output": "/tmp/source-registry-deploy-reader-tests.log"
+    }
+  ],
   "historical_evidence_at_bf42eb38b06b8fec40dcda6849b7030470012762": {
     "task_id": "SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111",
     "owner": "Codex",
@@ -598,5 +647,11 @@
       "cause": "The full policy/provider/catalog/universe plus non-receipt connector metadata already exceeds the bound. Receipt-only projection cannot satisfy acceptance 2 without a separately authorized response/acceptance scope change.",
       "limitations": "Local replay timings do not prove the unchanged BFF 0.75-second deadline or final hosted paired acceptance. Actual fixture retains original snapshots/calendar/lineage; the separate production-writer fixture proves growth and stored snapshot bytes are unchanged."
     }
-  }
+  },
+  "validation_diagnostics": [
+    "Initial current-dev replay run: 9 passed, 1 failed because current catalog additions changed legacy captured wire bytes. Fixed only the task-added replay hydration to pin historical static inputs; exact-byte assertion retained. Current-dev fixture remains live.",
+    "Next run: 9 passed, 1 failed in the added full-growth equality because real elapsed wall time changed freshness age/policy generated_at. Pinned test clock only for production-writer growth test; full-payload and original <=8-byte assertions retained.",
+    "Independent baseline worktree creation was denied by read-only shared git metadata. Used a separate shared-object clone with its own git metadata and editable venv; no shared metadata permissions or runtime guard changed."
+  ],
+  "validation_summary": "221 passed and 3 failed across task/source/caller/BFF/deploy-reader batches. All three failures independently reproduce on dev 86ab46e44410a43af171285f9c876f868b267198 (separate 3-failure baseline batch). No timeout counted as pass. Assigned Claude review, required GitHub CI and native supervisor integration are pending; no merge/done/hosted claim."
 }
