@@ -1,0 +1,24 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-POOL-ENVELOPE-PUBLISH-20261112-CI-RED-E07D208E2672",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "delivery_base_sha": "a41eb0b5f5b6fe7712081acdd5faec3858cc941a",
+  "hosted_behavior_claimed": false,
+  "scope": "Evidence manifest only; no code change required.",
+  "root_cause": {
+    "source_pr": "https://github.com/ajoe734/pantheon/pull/7242",
+    "source_head": "106a4b2c6702eeb286197d9efca2a8fbc59a2490",
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/43267309978/job/131357060726",
+    "failed_step": "Smoke acceptance / Run source ingestion tests",
+    "result": "4 failed, 1629 passed, 1 skipped",
+    "failed_tests": [
+      "test_hypothesis_compiler.py::test_unknown_screen_requirements_count_all_datasets_without_proposer",
+      "test_hypothesis_compiler.py::test_missing_screen_keeps_prediction_demand_accounting_and_non_testable_skip",
+      "test_hypothesis_compiler_wiring.py::test_screen_entry_recording_through_environment_controller[True]",
+      "test_hypothesis_extraction.py::test_sector_then_quality_idea_is_needs_data"
+    ],
+    "explanation": "PR #7242 does not touch services/source_ingestion. The four failures are stale test expectations after PR #7245 registered the industry classification dataset. They were fixed on dev by 2efb4fcba (task INTEGRATION-UNBLOCK-SD-PERSONA-CYCLE-RECONNECT-20261112-CI-RED-898E853D82C3, merged in #7256). PR #7242's merge-base with dev (a5e4d4955) predates that fix; src7242 does not contain 2efb4fcba."
+  },
+  "resolution": "Refresh PR #7242 against current dev (a41eb0b5f or later), which contains 2efb4fcba, then re-run Branch CI Gate. This repair branch is based on dev containing the fix; no production change was needed.",
+  "not_verified": "Source-ingestion tests were not re-run locally (no pytest env); the fix claim relies on the sibling task's recorded verification."
+}
