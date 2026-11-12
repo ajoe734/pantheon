@@ -52,15 +52,15 @@ def registry_fixture(tmp_path_factory):
     for adapter in adapters:
         runtime.manager.register_connector(adapter.connector())
     connector = adapters[0].connector()
+    calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-11-11")
+    assert calendar and calendar["holidays"] and calendar["trading_days"]
     days = []
     day = date(2026, 11, 11)
     while len(days) < 24:
-        if day.weekday() < 5:
+        if day.isoformat() in calendar["trading_days"]:
             days.append(day.isoformat())
         day -= timedelta(days=1)
     days.reverse()
-    calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=days[-1])
-    assert calendar and calendar["holidays"] and calendar["trading_days"]
 
     def record(index, trade_date, *, correction=False):
         symbol = f"{2300 + index}.TWSE"
@@ -151,12 +151,12 @@ def test_real_registry_size_and_local_before_after_timing(registry_fixture, monk
         legacy.setattr("services.source_ingestion.runtime._receipt_summary", IngestReceipt.to_dict)
         before, before_metrics = _measure(client)
     after, after_metrics = _measure(client)
+    print("REGISTRY_BENCHMARK=" + json.dumps({"before": before_metrics, "after": after_metrics}))
     assert _registry_receipt(before.json(), receipt.connector_id) == receipt.to_dict()
     assert _registry_receipt(after.json(), receipt.connector_id) == _receipt_summary(receipt)
     assert before_metrics["bytes"] > 700_000
     assert after_metrics["bytes"] < 150_000
     assert after_metrics["bytes"] < before_metrics["bytes"] / 4
-    print("REGISTRY_BENCHMARK=" + json.dumps({"before": before_metrics, "after": after_metrics}))
 
 
 def test_registry_and_freshness_are_bounded_and_full_receipt_unchanged(registry_fixture):
