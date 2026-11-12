@@ -1218,7 +1218,20 @@ class IngestPipelineService:
                 status_code=400,
                 detail="force_connector_ids must stay within exclusive_connector_ids",
             )
-        force_connector_ids.update(exclusive_connector_ids)
+        respect_cadence = bool(request.respect_cadence) if request else False
+        if respect_cadence:
+            if not exclusive_connector_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="respect_cadence requires explicit exclusive_connector_ids",
+                )
+            if force_connector_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="respect_cadence cannot be combined with force_connector_ids",
+                )
+        else:
+            force_connector_ids.update(exclusive_connector_ids)
         if max_concurrency < 1:
             raise HTTPException(status_code=400, detail="max_concurrency must be >= 1")
         if max_concurrency > self.runtime.SCHEDULER_MAX_CONCURRENCY:
@@ -1362,6 +1375,9 @@ class IngestPipelineService:
                 for item in [*ran, *failed]
                 if isinstance(item, Mapping)
             }
+            if respect_cadence:
+                # Cadence/active-frontier suppression is an accounted outcome here.
+                accounted_connector_ids |= set(skipped)
             claimed_connector_ids = {item.connector_id for item in claimed}
             for connector_id in sorted(exclusive_connector_ids - accounted_connector_ids - claimed_connector_ids):
                 failed.append({
@@ -1386,6 +1402,7 @@ class IngestPipelineService:
                 "max_concurrency": max_concurrency,
                 "forced_connector_count": len(force_connector_ids),
                 "exclusive_connector_count": len(exclusive_connector_ids),
+                "respect_cadence": respect_cadence,
                 "total_excluded": len(excluded),
                 "recovered_frontier_count": len(recovered_frontier),
                 "resolved_dlq_count": len(resolved_dlq),

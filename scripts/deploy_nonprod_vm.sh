@@ -140,8 +140,18 @@ if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_RESTART_POLICY="no"
 else
   # The default owner is a durable internal reconciler. Provider egress stays
-  # available only through the explicit bounded profile above.
-  SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
+  # available only through the explicit bounded profile above, or, when
+  # SOURCE_INGEST_STEADY_COLLECTOR_PULL=true is configured with exactly one
+  # PANTHEON_COLLECTOR_HOST, the continuous Collector-only pull.
+  if [[ "${SOURCE_INGEST_STEADY_COLLECTOR_PULL:-}" == "true" ]]; then
+    if [[ -z "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+      echo "[nonprod-deploy] ERROR: SOURCE_INGEST_STEADY_COLLECTOR_PULL=true requires PANTHEON_COLLECTOR_HOST" >&2
+      exit 1
+    fi
+    SOURCE_REFRESH_CONTROLLER_MODE="collector_steady_pull"
+  else
+    SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
+  fi
   SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"
   SOURCE_REFRESH_MAX_TICKS="0"
   SOURCE_REFRESH_RESTART_POLICY="unless-stopped"
@@ -1284,8 +1294,15 @@ validate_source_refresh_profile() {
       [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
         || error "external host allowlist requires the bounded source-ingest-scheduler profile"
     fi
-    [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
-      || error "default source-ingest owner must use reconcile_only mode"
+    if [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "collector_steady_pull" ]]; then
+      [[ -n "${PANTHEON_COLLECTOR_HOST:-}" \
+        && "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" \
+        && "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" == "${PANTHEON_COLLECTOR_HOST}" ]] \
+        || error "collector_steady_pull requires egress allowlist of exactly PANTHEON_COLLECTOR_HOST"
+    else
+      [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
+        || error "default source-ingest owner must use reconcile_only or collector_steady_pull mode"
+    fi
     [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
       || error "default source-ingest owner must use scheduled_tick truth"
     [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0" ]] \
@@ -2411,10 +2428,15 @@ elif action == "restore":
     steady_host = (env.get("PANTHEON_COLLECTOR_HOST") or os.environ.get("PANTHEON_COLLECTOR_HOST") or "").strip().lower()
     if steady_host and not (len(steady_host) <= 253 and re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*", steady_host)):
         raise SystemExit("PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring")
+    # Keep an explicitly configured continuous Collector pull; never reset it to
+    # reconcile_only. It is only valid with the exact collector host egress.
+    steady_mode = (os.environ.get("SOURCE_INGEST_RESTORE_CONTROLLER_MODE") or env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip()
+    if steady_mode != "collector_steady_pull" or not steady_host:
+        steady_mode = "reconcile_only"
     env.update({
         "PANTHEON_EXTERNAL_EGRESS": "allowlist" if steady_host else "deny",
         "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
-        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+        "SOURCE_INGEST_CONTROLLER_MODE": steady_mode,
     })
 # "compose up --no-build" starts whatever image the Compose name resolves to, and
 # a stale plain tag left by an earlier failed deploy once pointed at a rejected
@@ -3224,6 +3246,17 @@ lease = (env.get("SOURCE_INGEST_CONTROLLER_LEASE_SECONDS") or "").strip()
 print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS") or "60"))' "${steady_scheduler_env}")"
   fi
 
+  # Record the steady controller mode so every restore path (success, failure,
+  # interruption) returns to it instead of silently forcing reconcile_only.
+  local steady_controller_mode
+  steady_controller_mode="$(python3 -c 'import json,sys
+env = dict(item.partition("=")[::2] for item in json.loads(sys.argv[1] or "[]"))
+print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_scheduler_env}")"
+  if [[ "${steady_controller_mode}" != "collector_steady_pull" || -z "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+    steady_controller_mode="reconcile_only"
+  fi
+  export SOURCE_INGEST_RESTORE_CONTROLLER_MODE="${steady_controller_mode}"
+
   restore_bounded_source_refresh() {
     local rc="${1:-$?}" invoked_from_trap="false" restore_rc=0
     (( $# == 0 )) && invoked_from_trap="true"
@@ -3236,13 +3269,13 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
         [[ -z "${sched_log}" ]] || printf '%s\n' "${sched_log}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
       fi
     fi
-    info "restoring steady collector-host egress posture and source controller to reconcile_only"
+    info "restoring steady collector-host egress posture and source controller to ${steady_controller_mode}"
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
       PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST:-}" \
-      SOURCE_INGEST_CONTROLLER_MODE=reconcile_only SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
+      SOURCE_INGEST_CONTROLLER_MODE="${steady_controller_mode}" SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
       SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
     fi

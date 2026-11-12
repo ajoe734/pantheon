@@ -35,6 +35,11 @@ NON_TERMINAL_TRUTH_LEVEL = "scheduled_tick"
 RECONCILE_ONLY_MODE = "reconcile_only"
 RECONCILE_AND_PULL_MODE = "reconcile_and_pull"
 CONTROLLER_MODES = frozenset({RECONCILE_ONLY_MODE, RECONCILE_AND_PULL_MODE})
+# Continuous loop that pulls only registered Collector bundle connectors on their
+# own cadence. Deliberately outside CONTROLLER_MODES: the finite one-shot entry
+# (run_controller_once / scheduler_once) must never accept it.
+COLLECTOR_STEADY_PULL_MODE = "collector_steady_pull"
+CONFIGURABLE_CONTROLLER_MODES = CONTROLLER_MODES | {COLLECTOR_STEADY_PULL_MODE}
 UNRESOLVED_FRONTIER_STATUSES = frozenset({"queued", "retry", "running"})
 MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS = 100
 CADENCE_SOURCE_AGE_LIMIT_SECONDS = {
@@ -122,12 +127,15 @@ def run_schedule_tick(
     force_connector_ids: Sequence[str] | None = None,
     exclusive_connector_ids: Sequence[str] | None = None,
     controller_token: str | None = None,
+    respect_cadence: bool = False,
 ) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "max_concurrency": max_concurrency,
         "force_connector_ids": sorted(set(force_connector_ids or ())),
         "exclusive_connector_ids": sorted(set(exclusive_connector_ids or ())),
     }
+    if respect_cadence:
+        payload["respect_cadence"] = True
     return _request_json(
         api_url.rstrip("/") + "/api/source-ingest/run-scheduled",
         method="POST",
@@ -1199,6 +1207,44 @@ def _validate_due_state_readback(
         )
 
 
+def select_collector_pull_connectors(
+    actual: Mapping[str, Any], reconcile: Mapping[str, Any]
+) -> list[str]:
+    """Pick enabled, scheduled connectors whose registered definition is the Collector bundle adapter.
+
+    Selection uses the connector's registered definition (adapter token), never the
+    connector-id name, and only connectors the current desired-state reconcile admitted.
+    """
+
+    from .connector_definitions import deployed_connector_definitions
+    from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
+    collector_definitions = {
+        definition_id
+        for definition_id, definition in deployed_connector_definitions().items()
+        if definition.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+    }
+    reconciled = set(_connector_ids(reconcile))
+    selected: set[str] = set()
+    for item in actual.get("connectors") or []:
+        if not isinstance(item, Mapping) or item.get("configured") is not True:
+            continue
+        connector_id = str(item.get("connector_id") or "")
+        if connector_id not in reconciled:
+            continue
+        connector = item.get("connector") if isinstance(item.get("connector"), Mapping) else {}
+        metadata = connector.get("metadata") if isinstance(connector.get("metadata"), Mapping) else {}
+        if str(metadata.get("definition_id") or "") not in collector_definitions:
+            continue
+        if str(connector.get("status") or "") != "enabled":
+            continue
+        schedule = item.get("schedule") if isinstance(item.get("schedule"), Mapping) else {}
+        if schedule.get("enabled") is not True or int(schedule.get("interval_seconds") or 0) <= 0:
+            continue
+        selected.add(connector_id)
+    return sorted(selected)
+
+
 def build_loop_writer(*, dsn: str, state: ControllerState) -> LoopControllerWriterLike:
     if not dsn:
         raise ControllerTickError("controller_store", "DATABASE_URL is required for durable controller truth")
@@ -1240,14 +1286,18 @@ def config_from_env() -> ControllerConfig:
     interval = _env_int("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS", 60, minimum=1)
     alive = str(os.getenv("SOURCE_INGEST_CONTROLLER_ALIVE_PATH") or "").strip()
     mode = str(os.getenv("SOURCE_INGEST_CONTROLLER_MODE") or RECONCILE_ONLY_MODE).strip()
-    if mode not in CONTROLLER_MODES:
+    if mode not in CONFIGURABLE_CONTROLLER_MODES:
         raise ValueError("SOURCE_INGEST_CONTROLLER_MODE is invalid")
-    default_truth = NON_TERMINAL_TRUTH_LEVEL if mode == RECONCILE_ONLY_MODE else "reconciled_live_proof"
+    default_truth = (
+        "reconciled_live_proof" if mode == RECONCILE_AND_PULL_MODE else NON_TERMINAL_TRUTH_LEVEL
+    )
     truth_level = str(os.getenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL") or default_truth).strip()
     if truth_level not in {"scheduled_tick", "reconciled_live_proof"}:
         raise ValueError("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL is invalid")
     if mode == RECONCILE_ONLY_MODE and truth_level != NON_TERMINAL_TRUTH_LEVEL:
         raise ValueError("reconcile_only mode must use scheduled_tick truth")
+    if mode == COLLECTOR_STEADY_PULL_MODE and truth_level != NON_TERMINAL_TRUTH_LEVEL:
+        raise ValueError("collector_steady_pull mode must use scheduled_tick truth")
     max_ticks = _env_int("SOURCE_INGEST_CONTROLLER_MAX_TICKS", 0, minimum=0)
     force_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS")
     exclusive_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS")
@@ -1261,6 +1311,16 @@ def config_from_env() -> ControllerConfig:
     if len(frontier_recovery_connector_ids) > MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS:
         raise ValueError(
             "SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS exceeds the explicit recovery bound"
+        )
+    if mode == COLLECTOR_STEADY_PULL_MODE and (
+        max_ticks != 0
+        or force_connector_ids
+        or exclusive_connector_ids
+        or frontier_recovery_connector_ids
+    ):
+        raise ValueError(
+            "collector_steady_pull mode is unbounded and selects connectors itself; "
+            "it must not set max ticks, force, exclusive or recovery connector IDs"
         )
     if mode == RECONCILE_ONLY_MODE and (
         force_connector_ids or exclusive_connector_ids or frontier_recovery_connector_ids
@@ -1676,9 +1736,18 @@ def run_controller_tick(
             controller_token=config.controller_token,
             timeout_seconds=config.timeout_seconds,
         )
-        if config.mode == RECONCILE_ONLY_MODE:
+        steady_pull_ids: list[str] = []
+        if config.mode == COLLECTOR_STEADY_PULL_MODE:
+            steady_pull_ids = select_collector_pull_connectors(
+                read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds),
+                reconcile,
+            )
+        provider_egress_attempted = config.mode == RECONCILE_AND_PULL_MODE or bool(steady_pull_ids)
+        if config.mode == RECONCILE_ONLY_MODE or (
+            config.mode == COLLECTOR_STEADY_PULL_MODE and not steady_pull_ids
+        ):
             schedule = {
-                "mode": RECONCILE_ONLY_MODE,
+                "mode": config.mode,
                 "provider_egress_attempted": False,
                 "summary": {
                     "total_reconciled_connectors": len(_connector_ids(reconcile)),
@@ -1695,7 +1764,8 @@ def run_controller_tick(
                 expected_deployment=state.deployment,
             )
         else:
-            exclusive_connector_ids = sorted(set(config.exclusive_connector_ids))
+            steady = config.mode == COLLECTOR_STEADY_PULL_MODE
+            exclusive_connector_ids = steady_pull_ids if steady else sorted(set(config.exclusive_connector_ids))
             frontier_recovery = recover_explicit_frontier(
                 api_url=config.api_url,
                 recovery_connector_ids=config.frontier_recovery_connector_ids,
@@ -1704,7 +1774,9 @@ def run_controller_tick(
                 timeout_seconds=config.timeout_seconds,
             )
             forced_connector_ids = (
-                exclusive_connector_ids
+                []
+                if steady
+                else exclusive_connector_ids
                 if exclusive_connector_ids
                 else sorted(set(_mutated_connector_ids(reconcile)) | set(config.force_connector_ids))
             )
@@ -1715,6 +1787,7 @@ def run_controller_tick(
                 force_connector_ids=forced_connector_ids,
                 exclusive_connector_ids=exclusive_connector_ids,
                 controller_token=config.controller_token,
+                respect_cadence=steady,
             )
             actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
             validated_frontier_backlog = _validate_terminal_readback(
@@ -1739,14 +1812,16 @@ def run_controller_tick(
         accepted_actual = summarize_actual_readback(actual)
         accepted_actual["pre_captured_at"] = pre_actual.get("captured_at")
         accepted_actual["validated_frontier_backlog"] = validated_frontier_backlog
-        accepted_actual["validated_frontier_connector_ids"] = sorted(set(config.exclusive_connector_ids))
+        accepted_actual["validated_frontier_connector_ids"] = sorted(
+            set(config.exclusive_connector_ids) | set(steady_pull_ids)
+        )
         _async(
             writer.record_success(
                 LOOP_ID,
                 config.truth_level,
                 summary=(
                     "desired connector and schedule state reconciled; provider egress not attempted"
-                    if config.mode == RECONCILE_ONLY_MODE
+                    if not provider_egress_attempted
                     else "desired state reconciled; scheduled ingestion terminal readback accepted"
                 ),
                 backlog=validated_frontier_backlog,
@@ -1759,7 +1834,7 @@ def run_controller_tick(
                 + [ref for ref in evidence_refs if ref and ref != "None"],
                 payload={
                     "controller_mode": config.mode,
-                    "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
+                    "provider_egress_attempted": provider_egress_attempted,
                     "desired_state": desired_meta,
                     "reconcile_summary": reconcile.get("summary"),
                     "frontier_recovery": frontier_recovery,
@@ -1786,7 +1861,7 @@ def run_controller_tick(
             reconcile={"summary": reconcile.get("summary"), "connector_ids": sorted(wanted_connector_ids)},
             schedule={
                 "mode": config.mode,
-                "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
+                "provider_egress_attempted": provider_egress_attempted,
                 "frontier_recovery": frontier_recovery,
                 "summary": schedule.get("summary"),
             },
@@ -1796,7 +1871,7 @@ def run_controller_tick(
         return {
             "status": "ok",
             "controller_mode": config.mode,
-            "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
+            "provider_egress_attempted": provider_egress_attempted,
             "state_sequence_no": state.sequence_no,
             "desired_state": desired_meta,
             "reconcile_summary": reconcile.get("summary"),
