@@ -313,6 +313,24 @@
   },
   "review_revision": {
     "request": "Claude reopen 2026-11-12T21:12:31Z: summarize evidence under the 400-line diff budget and reference bulky history by digest.",
-    "change": "Replace duplicated historical evidence with an immutable Git reference and byte digest; retain current contract, measurements, reader audit, assertion explanations and baseline failures. No production code or tests changed in this revision."
+    "change": "Replace duplicated historical evidence with an immutable Git reference and byte digest; retain current contract, measurements, reader audit, assertion explanations and baseline failures. No production code or tests changed in this revision.",
+    "composed_dev_commit": "452eb1a6a973863ef26492ab99efce0a36de79ab",
+    "validation": [
+      {
+        "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+        "exit_code": 0,
+        "result": "Production +41/-1; tests +448; evidence +318 at summary anchor. Final evidence remains below 400 lines."
+      },
+      {
+        "command": "git diff --check; historical reference byte/SHA-256/Git-blob/JSON comparison; current contract/reader/fixture/measurement equality against 766536c17",
+        "exit_code": 0,
+        "result": "All comparisons pass; historical record is exactly recoverable from the referenced Git object."
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_registry_receipt_summary.py",
+        "exit_code": 0,
+        "result": "10 passed, 1 existing Starlette deprecation warning in 6.52s after dev composition. Foreground terminal output and exit status collected."
+      }
+    ]
   }
 }
