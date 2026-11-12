@@ -19,6 +19,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 from services.control_plane.persona.persona_strategy_pool import (
     PoolError,
+    PoolNotFound,
     canonical_digest,
 )
 from services.registry.portfolio_envelope import build_portfolio_envelope
@@ -26,6 +27,7 @@ from services.registry.portfolio_envelope import build_portfolio_envelope
 from .persona_provisioning_coordinator import (
     PersonaProvisioningCoordinationError,
     PersonaProvisioningCoordinator,
+    TERMINAL_RUNTIME_BINDING_STATUSES,
     _path_id,
     _registry_entry,
     deterministic_provisioning_ids,
@@ -41,6 +43,28 @@ class PoolPublishRefused(RuntimeError):
         self.reason = reason
         self.status_code = status_code
         self.step = step
+
+
+class OwnerPoolReader:
+    """Read pool versions from the persona owner API (never from BFF state).
+
+    ``fetch(path, tenant_id)`` returns the owner JSON or ``None`` for 404.
+    """
+
+    def __init__(self, fetch: Callable[[str, str], Any]) -> None:
+        self._fetch = fetch
+
+    def _read(self, persona_id: str, tenant_id: str, suffix: str) -> dict[str, Any]:
+        payload = self._fetch(f"/api/personas/{persona_id}/strategy-pool{suffix}", tenant_id)
+        if not isinstance(payload, Mapping) or payload.get("members") is None:
+            raise PoolNotFound(f"no strategy pool for persona {persona_id!r}")
+        return dict(payload)
+
+    def current(self, persona_id: str, tenant_id: str) -> dict[str, Any]:
+        return self._read(persona_id, tenant_id, "")
+
+    def version(self, persona_id: str, tenant_id: str, number: int) -> dict[str, Any]:
+        return self._read(persona_id, tenant_id, f"/versions/{int(number)}")
 
 
 class PublishRecordStore(Protocol):
@@ -152,6 +176,14 @@ class PersonaPoolPublisher:
             raise PoolPublishRefused(f"member {ref!r} has no strategy artifact", step="member")
         return entry
 
+    def _registry_view(self, artifact_id: str) -> "Mapping[str, Any] | None":
+        if not artifact_id:
+            return None
+        receipt = self.coordinator.transport.get(
+            "registry", f"/api/registry/strategy-artifacts/{_path_id(artifact_id)}"
+        )
+        return _registry_entry(receipt) if receipt is not None else None
+
     # -- publish -----------------------------------------------------------
     def publish(
         self,
@@ -178,37 +210,59 @@ class PersonaPoolPublisher:
         digest = canonical_digest(pool)
         history = self._load(tenant_id, persona_id)
         done = history["published"].get(str(number))
-        if done is not None and done["pool_digest"] != digest:
-            self._refuse(
-                tenant_id, persona_id, number,
-                "pool version content differs from the already published snapshot",
-                status_code=409, step="digest",
-            )
-        if done is None:
-            newest = max((int(k) for k in history["published"]), default=0)
-            if number < newest:
-                self._refuse(
-                    tenant_id, persona_id, number,
-                    f"pool version {number} is older than published version {newest}",
-                    status_code=409, step="order",
-                )
-
         record = ProvisioningRecord(
             tenant_id=tenant_id, idempotency_key="pool-publish", request_hash="",
             normalized_name="", persona_id=persona_id, request_payload={},
         )
         ids = deterministic_provisioning_ids(record)
-        previous = history["current_envelope"]
-        if done is not None:
-            previous = done["previous"]
-        elif previous is None:
-            previous = {
-                "artifact_id": ids.strategy_artifact_id,
-                "version": ids.version,
-                "plan_id": ids.deployment_plan_id,
-            }
         artifact_id = f"artifact-persona-pool-{ids.token}-v{number}"
         version = f"1.{number}.0"
+        # Authoritative owner state, never the local record: the live binding
+        # says what runs now and the Registry says what each envelope is.
+        reader = self.coordinator.runtime_binding_reader
+        live = [
+            b for b in (reader(ids.deployment_plan_id, ids.capital_pool_id) if reader else [])
+            if b.get("capital_pool_id") == ids.capital_pool_id
+            and b.get("status") not in TERMINAL_RUNTIME_BINDING_STATUSES
+        ]
+        if len(live) != 1:
+            self._refuse(
+                tenant_id, persona_id, number,
+                f"expected exactly one live RuntimeBinding for the persona pool, got {len(live)}",
+                status_code=409, step="binding",
+            )
+        live_binding = live[0]
+        existing = self._registry_view(artifact_id)
+        if existing is not None:
+            meta = existing.get("metadata") or {}
+            if meta.get("pool_digest") != digest:
+                self._refuse(
+                    tenant_id, persona_id, number,
+                    "pool version content differs from the already published snapshot",
+                    status_code=409, step="digest",
+                )
+            previous = {
+                "artifact_id": meta.get("previous_envelope_id"),
+                "version": meta.get("previous_envelope_version"),
+            }
+        else:
+            live_entry = self._registry_view(live_binding.get("artifact_id") or "")
+            live_pool = int(((live_entry or {}).get("metadata") or {}).get("pool_version") or 0)
+            if number <= live_pool:
+                self._refuse(
+                    tenant_id, persona_id, number,
+                    f"pool version {number} is not newer than the running envelope (pool version {live_pool})",
+                    status_code=409, step="order",
+                )
+            previous = {
+                "artifact_id": live_binding.get("artifact_id"),
+                "version": live_binding.get("artifact_version"),
+            }
+        if not previous["artifact_id"] or not previous["version"]:
+            self._refuse(
+                tenant_id, persona_id, number, "previous envelope cannot be identified",
+                status_code=409, step="previous",
+            )
 
         try:
             envelope, member_pins = self._build_envelope(
