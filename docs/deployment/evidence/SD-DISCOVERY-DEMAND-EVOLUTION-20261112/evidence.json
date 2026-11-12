@@ -30,7 +30,7 @@
   "docs/contracts/hypothesis_card.v1.schema.json has no predictions field",
   "services/research/replication/gate.py:775-935 out-of-sample backtest judgement",
   "services/research/alpha_replication/revalidation_worker.py:822 sponsor_persona_id hard-coded persona-tw-equity",
-  "no production code creates mutate or revalidate evolution proposals (only services/control-plane/bff/smoke_test.py:781 and services/runtime-manager/smoke_test.py:1273)",
+  "no production code creates mutate or revalidate evolution proposals (services/control-plane/bff/smoke_test.py:781 and services/runtime-manager/smoke_test.py:1273 only exercise execution endpoints with action_type=revalidate; they do not create proposals)",
   "services/evolution/auto_consumer.py:197 auto gate requires created_by_role evolution_controller",
   "services/evolution/auto_consumer_runtime.py:240 run_consumer_tick hosts the decay monitor",
   "services/evolution/cooldown_enforcement.py:45 retrain and revalidate cooldown 72 h",

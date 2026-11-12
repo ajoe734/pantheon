@@ -104,7 +104,7 @@ stopped on a start-up DNS race to `persona`. No binding was ever made.
 | --- | --- | --- |
 | retire | `auto_consumer.py` governed lifecycle | decay monitor (`decay_monitor.py`; `evaluate_paper_decay` `auto_consumer.py:405`, `build_retire_proposal` `:442`) — blocked by the missing baseline |
 | retrain | research bounded search (`evolution_search.py:186`, budget 50 `:27`) | incident and postmortem sweeps (`services/evolution/postmortem_bridge.py:76`, `:109`; action paths `services/evolution/main.py:2766`) — fire only on decline |
-| mutate | `evolution_executor.py`; research `main.py:1617`, `:2365` | **nobody** (only smoke tests build such proposals: `services/control-plane/bff/smoke_test.py:781`, `services/runtime-manager/smoke_test.py:1273`) |
+| mutate | `evolution_executor.py`; research `main.py:1617`, `:2365` | **nobody** (no production code creates mutate proposals; the smoke tests only exercise execution of a `revalidate` action, not proposal creation: `services/control-plane/bff/smoke_test.py:781`, `services/runtime-manager/smoke_test.py:1273`) |
 | revalidate | `evolution_executor.py` | **nobody** |
 
 The auto consumer only approves proposals created by `evolution_controller` (`auto_consumer.py:197`), so an
