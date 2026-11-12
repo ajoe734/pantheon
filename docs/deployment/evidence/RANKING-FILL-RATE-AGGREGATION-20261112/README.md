@@ -1,8 +1,8 @@
 # RANKING-FILL-RATE-AGGREGATION-20261112
 
-Owner: Codex2. Assigned reviewer: Claude. Source implementation ready; shared
-fixture scope repair required before independent review. No approval, merge or
-hosted activation is claimed.
+Owner: Codex2. Assigned reviewer: Claude. Source implementation and authorized
+shared fixture repair are ready for fresh exact-head independent review in
+PR #7247. No approval, merge or hosted activation is claimed.
 
 ## Contract
 
@@ -43,34 +43,41 @@ It proves partial fill 4/10 = 0.4, then runtime restart, reject 6 and no-op:
 ## Validation
 
 The manifest records exact commands, exit codes, hashes and source identities.
-The three scoped suites completed with 293 passed; after freezing the scenario
-clock and adding native-quantity coverage, the affected subset passed 9/9.
-These overlapping counts must not be added. The shared fixture contract is
-**3 failed, 2 passed** on this delivery. It is 5/5 on the unchanged base and 5/5
-with the exact proposed fixture repair applied in an isolated temporary source
-copy. Assertions and production gates were not weakened or skipped.
+The original three scoped suites completed with 293 passed; after freezing the
+scenario clock and adding native-quantity coverage, the affected subset passed
+9/9. These historical overlapping counts must not be added to fresh results.
+The shared fixture contract now passes **5/5 in the actual task worktree**.
+The manifest retains the earlier 3-failed/2-passed result as resolved historical
+evidence, alongside the original baseline and isolated-patch experiments.
+Fresh ranking and promotion HTTP callers pass **57/57**, including the real
+runtime/restart-to-quarterly-ranking test and zero/unknown admission cases.
+The broader four-suite caller run reports **150 passed, 4 failed**. All four
+failures reproduce on the unchanged base `421c13abc`: three inbox/cockpit timeout
+contracts and a portfolio PNL assertion (`None` versus `1.25`). Both terminal
+logs are retained; these failures are not counted as passes or repaired in this
+task. The 57-test run overlaps the broader run. Assertions and production gates
+were not weakened or skipped.
 
-## Required scope repair
+## Authorized fixture repair
 
 `services/control-plane/bff/test_bff_promotion_review_governance.py` defines the
 shared `build_pm12_eligible_persona_records` fixture used by the three failures.
-Its current scalar fill rate lacks order facts. `proposed-fixture-repair.patch`
-adds explicit local submitted/partial-filled test facts using the builder's
-existing `fill_rate` parameter. The target file has not been edited in this task
-worktree because it is absent from the canonical artifact contract.
+Its former scalar fill rate lacked order facts. Human/Ops added this exact
+artifact to the canonical contract at 2026-11-12T14:58:30Z and reopened the same
+task. Anchor commit `35e4e19f2` applies `proposed-fixture-repair.patch` in the
+original branch: explicit local submitted/partial-filled test facts use the
+builder's existing `fill_rate` parameter. These are unit-fixture facts only.
 
-The task handoff admission validates all PR files against declared artifacts
-(`.orchestrator/rewrite/task_contract.py::validate_task_artifact_diff_scope`).
-The governed `artifact-contract` mutation is Human/Ops-only and requires the task
-to be todo/blocked (`AI_COLLABORATION_GUIDE.md`, Status Commands). This is an
-artifact-scope hold, not a task-dependency hold; the declared quarter task is done.
+All six prior task source hashes remain unchanged. AST comparison verifies the
+fixture builder is identical after removing only the newly added order facts;
+the merged PNL owner-capital and quarter-series inputs are preserved. The scorer
+AST still equals the delivery base. Production unknown/zero/partial-fill/restart
+semantics and score weights remain unchanged by this repair.
 
-Required continuation: Human/Ops adds exactly the shared fixture file through
-`artifact-contract`, reopens this existing task, and returns it to Codex2. Apply
-the committed patch, rerun the unchanged fixture contract and affected callers,
-update this same PR/manifest, then hand off exact PR/head/manifest to Claude.
-Supervisor integration and owner `done` follow independent approval and merge.
-Do not create a replacement task or weaken the unknown-input guard.
+The earlier artifact-scope hold is resolved, and the declared quarter dependency
+is done. Fresh exact-head Claude review, required CI and native supervisor
+integration remain required before owner closeout. The same PR #7247 carries
+this delivery.
 
 ## Limits
 
