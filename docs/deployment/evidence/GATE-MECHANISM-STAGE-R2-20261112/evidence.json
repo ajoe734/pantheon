@@ -1,0 +1,26 @@
+{
+  "task_id": "GATE-MECHANISM-STAGE-R2-20261112",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "summary": "Replication gate runs hypothesis-card predictions as fixed in-sample tests (Holm within the card) before any criterion/backtest; a contradicted prediction refuses admission; mechanism_support is recorded and feeds persona evidence_quality; no testable prediction is admitted as mechanism_untested.",
+  "acceptance": {
+    "1": "mechanism_tests.run_mechanism_stage, called first in ReplicationGate.evaluate_candidate; tests test_event_window_on_recorded_ex_dividend_events_is_measured, test_regime_split_on_recorded_0050_200_day_mean_is_measured, test_default_alpha_is_five_percent_and_holm_is_within_the_card",
+    "2": "test_contradicted_prediction_refuses_admission_with_recorded_reason (primary criteria compared with a baseline run)",
+    "3": "test_supported_prediction_is_admitted_and_support_is_recorded_on_the_admission; persona test_mechanism_support_feeds_evidence_quality_and_untested_ranks_lower",
+    "4": "test_baseline_without_predictions_is_admitted_as_mechanism_untested; test_predictions_without_data_are_admitted_as_mechanism_untested; persona ranking test",
+    "5": "test_mechanism_stage_reads_no_out_of_sample_bar (poisoned OOS closes raise on any read; identical result) and test_mechanism_stage_runs_before_the_backtest_and_the_backtest_is_not_used_by_it",
+    "6": "fixtures/recorded_mechanism_tw.json: recorded TWSE STOCK_DAY (2330, 2317, 0050, 2024-01..2026-10) and TWT49U ex-dividend rows with URLs and response sha256; test_production_module_synthesizes_no_data"
+  },
+  "production_path": "ReplicationGate.evaluate_candidate (gate.py) <- AlphaRevalidationWorker (revalidation_worker.py forwards hypothesis_predictions/mechanism_inputs/dataset); integration tests in tests/test_gate_mechanism.py and test_revalidation_worker.py::test_real_gate_records_mechanism_status_on_the_run",
+  "verification": [
+    "/tmp/codex-replication-review-20261111/bin/python -m pytest services/research/replication services/control-plane/persona/test_persona_strategy_discovery.py -q  -> 76 passed",
+    "/tmp/codex-replication-review-20261111/bin/python -m pytest services/research/alpha_replication/test_revalidation_worker.py -q  -> 52 passed"
+  ],
+  "known_limits": [
+    "Real recorded events (14 in-sample ex-dividend events) are too few to reach alpha 0.05: the recorded-data tests pin the measured inconclusive result; supported/contradicted admission tests loosen only mechanism_alpha (named in the test module). Default 0.05 is pinned.",
+    "No historical monthly-revenue release dates exist on TWSE/MOPS endpoints, so the event_window recording uses the ex-dividend calendar.",
+    "0050 prices before its 2025-06-18 4-for-1 split are divided by 4 by the test helper (recorded in fixture provenance).",
+    "Carrying predictions from the compiled spec into hypothesis_predictions is not part of this task; the worker forwards them when the spec carries them.",
+    "Hosted acceptance is DISCOVERY-W5-HOSTED-ACCEPTANCE."
+  ]
+}

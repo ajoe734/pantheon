@@ -262,3 +262,59 @@ def test_strategy_spec_candidate_can_recommend_rapid_eval() -> None:
     assert match.matched_object_type == "strategy_spec"
     assert match.recommended_action.type == "run_rapid_eval"
     assert match.blockers == ()
+
+
+def _admitted_spec(strategy_id: str, **mechanism) -> dict:
+    return {
+        "strategy_id": strategy_id,
+        "title": "TWSE Momentum Rotation",
+        "hypothesis": "Momentum rotation remains effective on TWSE equities.",
+        "lifecycle_state": "approved",
+        "market_scope": {"symbols": ["2330"], "venues": ["TWSE"], "asset_classes": ["equity"],
+                         "frequency": "daily"},
+        "data_dependencies": [{"ref": "ohlcv", "kind": "dataset"},
+                              {"ref": "return labels", "kind": "feature_set"}],
+        "execution_profile": {"signal_schema_version": "research-signal-v1",
+                              "quantity_type": "PERCENT_PORTFOLIO", "execution_mode_hint": "paper",
+                              "rebalance_cadence": "swing"},
+        "governance": {"approval_required": True, "risk_profile": "medium"},
+        "provenance": {"source_kind": "workflow", "source_refs": ["note-momentum"],
+                       "created_at": "2026-06-09T00:00:00Z"},
+        "citation_bundle": {"evidence_refs": [{"ref_id": "evref-momentum-001"}]},
+        **mechanism,
+    }
+
+
+def test_mechanism_support_feeds_evidence_quality_and_untested_ranks_lower() -> None:
+    profile = extract_persona_strategy_profile(_persona())
+    specs = [
+        _admitted_spec("strat-untested", mechanism_status="mechanism_untested", mechanism_support=None),
+        _admitted_spec("strat-half", mechanism_status="tested", mechanism_support=0.5),
+        _admitted_spec("strat-supported", mechanism_status="tested", mechanism_support=1.0),
+        _admitted_spec("strat-plain"),  # no mechanism record at all behaves as untested
+    ]
+    matches = PersonaStrategyDiscoveryService().match_candidates(
+        profile, strategy_specs=specs, created_at="2026-06-10T00:00:00Z"
+    )
+    by_id = {m.matched_object_id: m for m in matches}
+    quality = {k: v.score_breakdown.evidence_quality for k, v in by_id.items()}
+    assert quality["strat-supported"] == quality["strat-untested"] + 3.0
+    assert quality["strat-half"] == quality["strat-untested"] + 1.5
+    assert quality["strat-plain"] == quality["strat-untested"]
+    # equal in every other factor: supported ranks above untested, untested is not blocked
+    assert by_id["strat-supported"].rank < by_id["strat-untested"].rank
+    assert by_id["strat-untested"].blockers == ()
+    assert by_id["strat-untested"].recommended_action.type == "run_rapid_eval"
+
+
+def test_nested_gate_mechanism_record_and_contradicted_blocker() -> None:
+    profile = extract_persona_strategy_profile(_persona())
+    supported = _admitted_spec("strat-nested", mechanism={"mechanism_status": "tested", "mechanism_support": 1.0})
+    contradicted = _admitted_spec("strat-contradicted", mechanism_status="contradicted", mechanism_support=0.0)
+    matches = PersonaStrategyDiscoveryService().match_candidates(
+        profile, strategy_specs=[supported, contradicted], created_at="2026-06-10T00:00:00Z"
+    )
+    by_id = {m.matched_object_id: m for m in matches}
+    assert by_id["strat-nested"].score_breakdown.evidence_quality > 0
+    assert "mechanism_contradicted" in by_id["strat-contradicted"].blockers
+    assert by_id["strat-contradicted"].recommended_action.type == "ignore"

@@ -1894,3 +1894,55 @@ def test_dropped_screen_is_durably_and_idempotently_registered_entry_only(tmp_pa
     # survives a worker restart: a fresh worker over the same data dir reads it back
     _, restarted = _worker(tmp_path, FakeAuthority())
     assert restarted.list_entry_only_registrations() == [record]
+
+
+def _event_prediction(sign: str) -> dict:
+    return {
+        "statement": "price moves on the recorded event",
+        "observable": {"dataset": "tw_ex_dividend", "field": "cash_dividend_value"},
+        "test_kind": "event_window",
+        "expected_sign": sign,
+        "window": {"before": 0, "after": 0},
+    }
+
+
+def test_card_predictions_and_inputs_reach_the_gate_mechanism_stage(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+    entry = _tw_registry_entry(payload)
+    target = entry["metadata"]["strategy_spec"]
+    target["hypothesis_predictions"] = [_event_prediction("-")]
+    target["mechanism_inputs"] = {"tw_ex_dividend": [{"symbol": "2330", "event_time": "2025-03-18T00:00:00+08:00"}]}
+
+    (request,) = _capture_gate_requests(worker, entry)
+
+    assert request.research_handoff["hypothesis_predictions"] == [_event_prediction("-")]
+    assert request.research_handoff["mechanism_inputs"] == target["mechanism_inputs"]
+    assert request.research_handoff["backtest_dataset"] == target["backtest_dataset"]
+
+
+def test_candidate_without_predictions_hands_nothing_extra_and_is_mechanism_untested(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+    (request,) = _capture_gate_requests(worker, _tw_registry_entry(payload))
+    assert "hypothesis_predictions" not in request.research_handoff
+    assert "mechanism_inputs" not in request.research_handoff
+
+
+def test_real_gate_records_mechanism_status_on_the_run(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+    with mock.patch.object(worker, "_fetch_strategy_spec_entry", return_value=_tw_registry_entry(payload)):
+        result = worker.run_once(tenant_id="tenant-a")
+    assert result["errors"] == []
+    run = next(iter(authority.runs.values()))
+    assert run.status == "completed"
+    assert run.metadata["mechanism_status"] == "mechanism_untested"
+    assert run.metadata["mechanism_support"] is None
+    assert run.metadata["replication_gate"]["metadata"]["mechanism"]["prediction_count"] == 0

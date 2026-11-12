@@ -152,6 +152,50 @@ primary path.
 * **Record**: `real_backtest_validation.details.screen_contribution` (also in
   `metadata.backtest_summary`) states the measured contribution.
 
+## 3b. Mechanism Stage (SD_DISCOVERY_DEMAND §3.2, operator decision O-15 = b)
+
+Runs first in `evaluate_candidate`, before every criterion and so before the backtest that
+produces the out-of-sample window. Implementation: `mechanism_tests.py`.
+
+* **Inputs** (handoff or spec): `hypothesis_predictions` (the card's `predictions[]`, or
+  `hypothesis_card.predictions`), `backtest_dataset` (governed prices, `records` or
+  `candidate_pool_market`), `mechanism_inputs` (`{dataset: [rows]}` with `symbol`,
+  `event_time`/`available_time` and the observable field). Nothing is generated: a
+  prediction whose data is absent, too thin, malformed or `needs_data:*` is recorded
+  `inconclusive` with `testable: false` and a reason, and never counts as support.
+* **In-sample only**: the series are cut at the in-sample cutoff (the earliest over all
+  instruments of the date at index `int(n * in_sample_ratio) - 1`, never later than the
+  protocol's own split) before any price is converted to a number; events and forward
+  windows reaching past the cutoff are dropped. The stage never calls the backtest.
+* **Fixed test per `test_kind`**: `event_window` (abnormal window return vs the symbol's
+  in-sample mean, one-sample t across events), `regime_split` (sign must hold in every
+  regime with enough days; 0050 above/below its prior-200-session mean, or point-in-time
+  bands from `mechanism_inputs`), `dose_response` (Spearman of value vs forward return),
+  `lead_lag` (input leads returns, and the reverse direction must not be stronger),
+  `cross_symbol_sign` (one-sided binomial over per-symbol Spearman signs).
+* **Holm correction** over the testable predictions of the card, `mechanism_alpha`
+  (default 0.05). Adjusted p <= alpha in the expected direction: `supported`; in the
+  opposite direction (or any significant effect for expected sign `0`): `contradicted`;
+  otherwise `inconclusive`. Each record carries the statistic, `p_value`, `holm_p_value`.
+* **Admission**: the primary rule (§3, §3a) is unchanged. Additionally, any
+  `contradicted` prediction refuses admission (`rejected`, reason in the summary and in the
+  `mechanism_stage` result; the primary criteria still run and are recorded).
+* **Record**: `metadata.mechanism_status` (`contradicted` | `mechanism_untested` | `tested`),
+  `metadata.mechanism_support` = supported / testable (null when nothing was testable),
+  `metadata.mechanism` (all predictions), the `mechanism_stage` result, and, on admission,
+  `registry_entry.mechanism_support|mechanism_status` and `replication_proof.mechanism`.
+* **Untested**: no testable prediction (including no predictions, e.g. template-derived
+  candidates) is admitted as `mechanism_untested` when the primary checks pass.
+* **Ranking**: `persona_strategy_match` adds `3 * mechanism_support` to the existing
+  `evidence_quality` factor; untested adds nothing, so it ranks below an otherwise equal
+  supported candidate; a `contradicted` record is the hard blocker `mechanism_contradicted`.
+* **Known limits**: tests are in-sample on short real histories and overlapping forward
+  windows are not de-overlapped, so a card needs enough events/observations
+  (`mechanism_min_*`) or it is `inconclusive`. Carrying `predictions[]` from the compiled
+  spec into `hypothesis_predictions` is the spec producer's job; the revalidation worker
+  forwards `raw_spec.hypothesis_predictions` / `hypothesis_card.predictions` /
+  `mechanism_inputs` and the approved run's dataset.
+
 ## 4. Admission Decisions
 
 ### ADMITTED

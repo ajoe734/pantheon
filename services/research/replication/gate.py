@@ -26,6 +26,11 @@ from .gate_schema import (
     RegistryPromotionRequest,
 )
 from .gate_config import GateConfig, AdmissionRules
+from .mechanism_tests import (
+    CONTRADICTED as MECHANISM_PREDICTION_CONTRADICTED,
+    MECHANISM_CONTRADICTED,
+    run_mechanism_stage,
+)
 from services.research.vectorbt.adapter.vectorbt_adapter import (
     INSUFFICIENT_HISTORY_STATUS,
     TAIWAN_BROKER_COMMISSION_RATE,
@@ -173,6 +178,20 @@ class ReplicationGate:
         gate_run_id = str(uuid.uuid4())[:8]
         results: List[ReplicationResult] = []
 
+        # Mechanism stage (SD_DISCOVERY_DEMAND §3.2). It runs before any criterion, so
+        # before the backtest that produces the out-of-sample window, and it reads the
+        # in-sample slice of the dataset only.
+        mechanism = self._run_mechanism_stage(request)
+        mechanism_contradicted = mechanism["mechanism_status"] == MECHANISM_CONTRADICTED
+        results.append(
+            ReplicationResult(
+                criterion_id="mechanism_stage",
+                passed=not mechanism_contradicted,
+                evidence=self._mechanism_evidence(mechanism),
+                details=mechanism,
+            )
+        )
+
         # Required criteria checks
         for criterion in self.config.get_required_criteria():
             result = self._check_criterion(criterion, request)
@@ -238,6 +257,12 @@ class ReplicationGate:
                 else CandidateAdmissionStatus.REJECTED
             )
 
+        if admitted and mechanism_contradicted:
+            admitted = False
+            reasoning = f"{reasoning}. Refused: {self._mechanism_evidence(mechanism)}"
+            replication_status = ReplicationStatus.FAILED
+            admission_status = CandidateAdmissionStatus.REJECTED
+
         # Build summary
         required_passed = sum(1 for r in required_results.values() if r)
         required_total = len(required_results)
@@ -263,6 +288,9 @@ class ReplicationGate:
                     optional_passed / optional_total if optional_total > 0 else 1.0
                 ),
                 "backtest_summary": backtest_details,
+                "mechanism_status": mechanism["mechanism_status"],
+                "mechanism_support": mechanism["mechanism_support"],
+                "mechanism": mechanism,
             },
         )
 
@@ -270,6 +298,57 @@ class ReplicationGate:
         self._log_evaluation(gate_run_id, request, response)
 
         return response
+
+    @staticmethod
+    def _mechanism_evidence(mechanism: Dict[str, Any]) -> str:
+        status = mechanism["mechanism_status"]
+        if status == MECHANISM_CONTRADICTED:
+            bad = [
+                f"#{r['index']} {r['test_kind']} (expected {r['expected_sign']}, "
+                f"Holm p={r['holm_p_value']:.4g})"
+                for r in mechanism["predictions"]
+                if r["status"] == MECHANISM_PREDICTION_CONTRADICTED
+            ]
+            return "In-sample mechanism test contradicted card prediction(s): " + "; ".join(bad)
+        if status == "mechanism_untested":
+            return (
+                f"mechanism_untested: {mechanism['testable_predictions']} testable of "
+                f"{mechanism['prediction_count']} predictions"
+            )
+        return (
+            f"mechanism_support={mechanism['mechanism_support']:.3f} "
+            f"({mechanism['supported_predictions']} supported of "
+            f"{mechanism['testable_predictions']} testable), none contradicted"
+        )
+
+    def _run_mechanism_stage(self, request: ReplicationRequest) -> Dict[str, Any]:
+        """Run the card's predictions on the in-sample window. Never reads out-of-sample bars."""
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+
+        def first(key: str, kind: type) -> Any:
+            for source in (handoff, spec):
+                if isinstance(source.get(key), kind):
+                    return source[key]
+            return None
+
+        predictions = first("hypothesis_predictions", list)
+        if predictions is None:
+            for source in (handoff, spec):
+                card = source.get("hypothesis_card")
+                if isinstance(card, dict) and isinstance(card.get("predictions"), list):
+                    predictions = card["predictions"]
+                    break
+        artifact = first("strategy_artifact", dict) or {}
+        params = artifact.get("parameters") if isinstance(artifact.get("parameters"), dict) else {}
+        symbols = params.get("symbols") if isinstance(params.get("symbols"), list) else []
+        return run_mechanism_stage(
+            predictions,
+            first("backtest_dataset", dict),
+            first("mechanism_inputs", dict),
+            config=self.config,
+            target_symbols=symbols,
+        )
 
     def _check_criterion(
         self, criterion, request: ReplicationRequest
@@ -1527,6 +1606,12 @@ def create_promotion_request(
         "evaluation_summary": evaluation_summary,
         "transaction_costs": backtest_summary.get("transaction_costs"),
     }
+    if isinstance(resp_meta, dict) and isinstance(resp_meta.get("mechanism"), dict):
+        replication_proof["mechanism_status"] = resp_meta.get("mechanism_status")
+        replication_proof["mechanism_support"] = resp_meta.get("mechanism_support")
+        replication_proof["mechanism"] = resp_meta["mechanism"]
+        registry_entry["mechanism_support"] = resp_meta.get("mechanism_support")
+        registry_entry["mechanism_status"] = resp_meta.get("mechanism_status")
 
     # Build lineage
     source_run_ids = [backtest_run_id] if backtest_run_id else []

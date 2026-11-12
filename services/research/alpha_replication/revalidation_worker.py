@@ -987,6 +987,9 @@ class AlphaRevalidationWorker:
             "strategy_artifact",
             "skip_backtest",
             "history_trading_days",
+            "hypothesis_card",
+            "hypothesis_predictions",
+            "mechanism_inputs",
         ):
             evaluation_spec.pop(non_schema_key, None)
 
@@ -1046,6 +1049,23 @@ class AlphaRevalidationWorker:
             handoff_payload["strategy_artifact"] = dict(raw_artifact)
             if isinstance(raw_dataset, Mapping):
                 handoff_payload["backtest_dataset"] = dict(raw_dataset)
+
+        raw_card = raw_spec.get("hypothesis_card")
+        raw_predictions = raw_spec.get("hypothesis_predictions")
+        if raw_predictions is None and isinstance(raw_card, Mapping):
+            raw_predictions = raw_card.get("predictions")
+        if isinstance(raw_predictions, list) and raw_predictions:
+            # The gate's mechanism stage tests the card's predictions on the in-sample
+            # window of the same governed dataset the approved run used, with the
+            # observable datasets the spec carries. Nothing is generated here: absent
+            # data leaves a prediction untestable in the gate.
+            handoff_payload["hypothesis_predictions"] = [
+                dict(p) for p in raw_predictions if isinstance(p, Mapping)
+            ]
+            if isinstance(raw_dataset, Mapping):
+                handoff_payload.setdefault("backtest_dataset", dict(raw_dataset))
+            if isinstance(raw_spec.get("mechanism_inputs"), Mapping):
+                handoff_payload["mechanism_inputs"] = dict(raw_spec["mechanism_inputs"])
 
         request = ReplicationRequest(
             candidate_id=run_id,
@@ -1127,6 +1147,12 @@ class AlphaRevalidationWorker:
             "approval_decision_id": entry["approval_decision_id"],
             "strategy_spec_checksum": entry["checksum"],
             "replication_gate": gate_response.to_dict(),
+            "mechanism_status": (gate_metadata or {}).get("mechanism_status")
+            if isinstance(gate_metadata, Mapping)
+            else None,
+            "mechanism_support": (gate_metadata or {}).get("mechanism_support")
+            if isinstance(gate_metadata, Mapping)
+            else None,
             "backtest_run_id": backtest_run_id,
             "backtest_summary": dict(backtest_summary),
         }
