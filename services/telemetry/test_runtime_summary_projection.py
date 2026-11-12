@@ -11,6 +11,68 @@ from pathlib import Path
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
 
+def _quarter_valuation_event(at, equity, *, runtime_id="return-runtime-0", started_at="2026-10-01T00:00:00Z", fills=1):
+    event = _event("pnl_snapshot", created_at=at)
+    event.update(runtime_id=runtime_id, event_id=f"valuation-{at}-{equity}", pnl_as_of=at)
+    event["metrics"] = {
+        "pnl": equity - 1000.0, "portfolio_value": equity, "initial_cash": 1000.0,
+        "cash": 0.0, "pnl_period_start_at": started_at, "pnl_currency": "TWD",
+        "valuation_mark_count": 1, "fill_count": fills,
+    }
+    event["metadata"].update({
+        "valuation_method": "fill_cash_ledger_mark_to_market", "valuation_as_of": at,
+        "mark_refs": [{"symbol": "TEST.US", "price": equity, "as_of": at,
+                       "source_ref": "local-owner-test-quote"}],
+    })
+    return event
+
+
+def test_quarter_equity_history_survives_replay_out_of_order_and_restart(tmp_path):
+    path = str(tmp_path / "quarter.json")
+    store = RuntimeSummaryProjectionStore(path=path)
+    last = _quarter_valuation_event("2026-12-15T00:00:00Z", 1200.0)
+    store.project_event(last)
+    decline = _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0)
+    store.project_event(decline)
+    store.project_event({**decline, "event_id": "retry-with-new-id"})
+    summary = RuntimeSummaryProjectionStore(path=path).get("return-runtime-0")
+    assert summary["pnl"] == 200.0
+    assert [p["equity"] for p in summary["quarter_equity_observations"]] == [800.0, 1200.0]
+    assert [p["event_id"] for p in summary["quarter_equity_observations"]] == [decline["event_id"], last["event_id"]]
+
+
+def test_quarter_equity_keeps_conflicts_and_missing_mark_attempts(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "quarter.json"))
+    event = _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0)
+    store.project_event(event)
+    store.project_event(_quarter_valuation_event("2026-11-01T00:00:00Z", 850.0))
+    heartbeat = _event(created_at="2026-11-02T00:00:00Z")
+    heartbeat["runtime_id"] = "return-runtime-0"
+    heartbeat["metadata"]["performance_telemetry"] = {"status": "marks_unavailable", "attempted_at": heartbeat["created_at"]}
+    summary = store.project_event(heartbeat)
+    assert len(summary["quarter_equity_observations"]) == 3
+    assert summary["quarter_equity_observations"][-1]["reason"] == "marks_unavailable"
+
+
+def test_quarter_equity_history_is_scoped_to_tenant_and_binding(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "quarter.json"))
+    first = _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0)
+    first["tenant_id"] = "tenant-a"
+    first["metadata"]["runtime_binding_effective_at"] = "2026-10-01T00:00:00Z"
+    store.project_event(first)
+    other_tenant = _quarter_valuation_event("2026-11-01T00:00:00Z", 900.0)
+    other_tenant["tenant_id"] = "tenant-b"
+    store.project_event(other_tenant)
+    assert store.get("return-runtime-0", tenant_id="tenant-a")["quarter_equity_observations"][0]["equity"] == 800.0
+    assert store.get("return-runtime-0", tenant_id="tenant-b")["quarter_equity_observations"][0]["equity"] == 900.0
+    newer = _quarter_valuation_event("2026-12-01T00:00:00Z", 1100.0)
+    newer.update(tenant_id="tenant-a", binding_id="new-binding")
+    newer["metadata"]["runtime_binding_effective_at"] = "2026-12-01T00:00:00Z"
+    summary = store.project_event(newer)
+    assert len(summary["quarter_equity_observations"]) == 1
+    assert summary["quarter_equity_observations"][0]["binding_id"] == "new-binding"
+
+
 def _event(event_type: str = "heartbeat", *, created_at: str = "2026-05-01T00:00:00Z", stage: str = "paper"):
     return {
         "event_id": f"evt-{stage}-{event_type}",
