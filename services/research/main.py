@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import asyncio
 import hashlib
 import json
 import json as _json
@@ -418,7 +419,7 @@ class RegistryWritebackBody(BaseModel):
 
 class MemoryWritebackBody(BaseModel):
     artifact_id: Optional[str] = None
-    sponsor_persona_id: str = "persona-tw-equity"
+    sponsor_persona_id: Optional[str] = None
     summary: Optional[str] = None
     headline: Optional[str] = None
     confidence: float = 1.0
@@ -455,6 +456,58 @@ class RetrievalInfluenceBody(BaseModel):
 
 
 app = FastAPI(title="Pantheon Research Orchestrator Service", version="0.1.0")
+
+
+async def _drain_memory_outbox() -> None:
+    interval = max(1, float(os.getenv("RESEARCH_MEMORY_POLL_SECONDS", "30")))
+    while True:
+        try:
+            result = await asyncio.to_thread(MemoryWritebackWorker().drain)
+            if result["total_processed"]:
+                logger.info("Research memory deliveries: %s", result)
+        except Exception:
+            logger.exception("Research memory delivery tick failed")
+        await asyncio.sleep(interval)
+
+
+@app.on_event("startup")
+async def start_memory_writeback_worker() -> None:
+    if os.getenv("RESEARCH_MEMORY_WORKER_ENABLED", "false").lower() == "true":
+        app.state.memory_writeback_task = asyncio.create_task(_drain_memory_outbox())
+
+
+@app.on_event("shutdown")
+async def stop_memory_writeback_worker() -> None:
+    task = getattr(app.state, "memory_writeback_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+def _memory_sponsor(run: Dict[str, Any], requested: Optional[str] = None) -> str:
+    """Resolve attribution from the owning demand/member carried by the run/task."""
+    task = store.get_task(run["task_id"]) or {}
+    params = run.get("parameters") or {}
+    contexts = [run, params, params.get("metadata") or {}, task.get("constraints") or {}]
+    exp = params.get("experiment_run") or {}
+    contexts.extend([exp, exp.get("metadata") or {}])
+    owners = set()
+    for context in contexts:
+        for source in [context, context.get("research_demand") or {}, context.get("pool_member") or {}]:
+            value = _first_text(source.get("persona_id"), source.get("sponsor_persona_id"))
+            if value:
+                owners.add(value)
+    if len(owners) > 1:
+        raise ResearchMemoryEligibilityError("Conflicting demand/pool member persona attribution")
+    owner = next(iter(owners), None)
+    if owner and requested and requested != owner:
+        raise ResearchMemoryEligibilityError("Requested sponsor differs from the demand/pool member owner")
+    if not owner:
+        raise ResearchMemoryEligibilityError("Missing demand/pool member persona attribution")
+    return owner
 store = build_research_orchestrator_store(DATA_DIR)
 def get_store() -> ResearchOrchestratorStore:
     return store
@@ -2764,7 +2817,7 @@ def _finish_run(
                     artifact_id=str(bt_summary.get("backtest_run_id") or "") or None,
                     source_event_type="research_finding_published",
                     source_event_id=str(exp_run.get("run_id") or run_id),
-                    sponsor_persona_id="persona-tw-equity",
+                    sponsor_persona_id=_memory_sponsor(run),
                     summary=summary,
                     headline=f"Replicated Taiwan strategy {exp_run.get('strategy_id') or ''}",
                     confidence=1.0,
@@ -2809,8 +2862,10 @@ def _finish_run(
                     },
                 )
                 outbox_store.create_record(outbox_record)
-            except Exception:
-                pass
+            except Exception as exc:
+                run["memory_writeback_error"] = str(exc)
+                store.put_run(run)
+                logger.warning("Memory enqueue refused for %s: %s", run_id, exc)
     return run
 
 
@@ -3179,7 +3234,7 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
                 artifact_id=artifact["artifact_id"],
                 source_event_type="research_finding_published",
                 source_event_id=run_id,
-                sponsor_persona_id=_first_text(body.metadata.get("sponsor_persona_id"), run.get("sponsor_persona_id"), "persona-tw-equity") or "persona-tw-equity",
+                sponsor_persona_id=_memory_sponsor(run, body.metadata.get("sponsor_persona_id")),
                 summary=_first_text(artifact.get("title"), f"Reviewed research finding from {run_id}") or f"Reviewed research finding from {run_id}",
                 headline=_first_text(artifact.get("title"), f"Research Finding {artifact['artifact_id']}") or f"Research Finding {artifact['artifact_id']}",
                 confidence=float(body.metadata.get("confidence") or 1.0),
@@ -3198,11 +3253,14 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
                     "registry_id": entry["registry_id"],
                     "actor_id": body.actor_id,
                     "auto_enqueued": True,
+                    "tenant_id": run.get("tenant_id"),
                 },
             )
             outbox_store.create_record(outbox_record)
-    except Exception:
-        pass
+    except Exception as exc:
+        run["memory_writeback_error"] = str(exc)
+        store.put_run(run)
+        logger.warning("Memory enqueue refused for %s: %s", run_id, exc)
 
     return writeback
 
@@ -3223,6 +3281,10 @@ def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, An
     except ResearchMemoryEligibilityError as exc:
         raise HTTPException(status_code=400, detail={"reason": "memory_writeback_not_eligible", "detail": str(exc)})
 
+    try:
+        _memory_sponsor(run, body.sponsor_persona_id)
+    except ResearchMemoryEligibilityError as exc:
+        raise HTTPException(status_code=400, detail={"reason": "memory_attribution_missing_or_conflicting", "detail": str(exc)}) from exc
     outbox_store = get_outbox_store()
     timestamp = body.created_at or utc_now()
     existing = outbox_store.find_by_source_event("research_finding_published", run_id)
@@ -3241,7 +3303,7 @@ def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, An
         artifact_id=artifact.get("artifact_id"),
         source_event_type="research_finding_published",
         source_event_id=run_id,
-        sponsor_persona_id=body.sponsor_persona_id,
+        sponsor_persona_id=_memory_sponsor(run, body.sponsor_persona_id),
         summary=body.summary or str(artifact.get("title") or f"Reviewed finding for {run_id}"),
         headline=body.headline or str(artifact.get("title") or f"Finding {run_id}"),
         confidence=body.confidence,
@@ -3260,6 +3322,7 @@ def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, An
             **body.metadata,
             "actor_id": body.actor_id,
             "idempotency_key": body.idempotency_key,
+            "tenant_id": run.get("tenant_id"),
         },
     )
     saved = outbox_store.create_record(record)

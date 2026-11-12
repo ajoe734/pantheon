@@ -229,6 +229,7 @@ class ResearchMemoryOutboxStore:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.data_dir / "research_memory_outbox.json"
         self._lock = threading.Lock()
+        self.delivery_lock = threading.RLock()
         self._records: Dict[str, ResearchMemoryOutboxRecord] = {}
         self._load()
 
@@ -244,12 +245,14 @@ class ResearchMemoryOutboxStore:
                 for k, v in raw.items():
                     if isinstance(v, dict):
                         self._records[k] = ResearchMemoryOutboxRecord.from_dict(v)
-        except Exception:
-            pass
+        except Exception as exc:
+            raise ValueError(f"Cannot load research memory outbox: {self.path}") from exc
 
     def _save(self) -> None:
         payload = {k: v.to_dict() for k, v in self._records.items()}
-        self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary.replace(self.path)
 
     def create_record(self, record: ResearchMemoryOutboxRecord) -> ResearchMemoryOutboxRecord:
         with self._lock:
