@@ -76,7 +76,7 @@ def _finite(value: Any) -> float | None:
 
 
 def quarter_equity_observation(
-    metrics: Mapping[str, Any], metadata: Mapping[str, Any], *, as_of: str,
+    metrics: Mapping[str, Any], metadata: Mapping[str, Any], *, as_of: Any,
 ) -> dict[str, Any]:
     """Describe an owner valuation for retention, never reconstruct missing marks.
 
@@ -136,7 +136,8 @@ def quarter_equity_observation(
         return result
     result.update({
         "status": "known", "reason": None, "pnl": pnl, "equity": equity,
-        "initial_cash": capital, "period_start_at": _iso(start),
+        "as_of": at.isoformat().replace("+00:00", "Z"),
+        "initial_cash": capital, "period_start_at": start.isoformat().replace("+00:00", "Z"),
         "currency": metrics.get("pnl_currency"), "fill_count": fills,
         "mark_refs": refs, "valuation_method": metadata["valuation_method"],
     })

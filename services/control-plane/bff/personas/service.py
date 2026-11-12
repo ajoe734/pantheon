@@ -5731,7 +5731,10 @@ def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) ->
         "unknown": 60.0,
     }.get(str(row.get("risk") or "unknown").lower(), 60.0)
     drawdown_score = 65.0 if drawdown is None else _pm12_clamp_score(100.0 - (drawdown * 400.0))
-    risk_score = round((risk_floor + drawdown_score) / 2.0, 6)
+    risk_score = (
+        None if metrics.get("quarter_window") and drawdown is None
+        else round((risk_floor + drawdown_score) / 2.0, 6)
+    )
     execution_score = 50.0
     if fill_rate is not None:
         execution_score = fill_rate * 100.0
@@ -5745,7 +5748,7 @@ def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) ->
         + (float(row.get("routed_strategy_count") or 0) * 5.0)
         + min(float(memory.get("total") or 0) * 2.0, 10.0)
     )
-    overall = None if pnl_score is None else (
+    overall = None if pnl_score is None or risk_score is None else (
         pnl_score * _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]
         + risk_score * _PM12_LEAGUE_SCORE_WEIGHTS["risk"]
         + execution_score * _PM12_LEAGUE_SCORE_WEIGHTS["execution"]
@@ -7524,6 +7527,9 @@ def _pm12_persona_league_ranking_item(
     if scores["pnl_score"] is None:
         exclusion_codes.append("unknown_pnl_return")
         exclusion_reasons.append("PnL, capital or matching performance period is unknown")
+    if quarter_window is not None and metrics.get("drawdown") is None:
+        exclusion_codes.append("unknown_quarter_drawdown")
+        exclusion_reasons.append("Owner-backed quarter equity series is unknown")
     if not lifecycle_operational:
         exclusion_codes.append("inactive_lifecycle")
         exclusion_reasons.append(f"Inactive lifecycle state: {state}")
@@ -13246,6 +13252,8 @@ def _pm12_telemetry_metrics_from_records(
     *,
     quarter_window: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    if quarter_window is not None:
+        return _pm12_quarter_metrics(runtime_ids, telemetry, quarter_window)
     telemetry = sorted(
         telemetry,
         key=lambda item: _pm12_telemetry_record_timestamp(item) or datetime.min.replace(tzinfo=timezone.utc),
@@ -13355,6 +13363,174 @@ def _pm12_telemetry_metrics_from_records(
         "telemetry_evidence_refs": telemetry_evidence_refs,
         **_pm12_pnl_return_metrics(runtime_ids, telemetry, quarter_window=quarter_window),
     }
+
+
+def _pm12_quarter_metrics(
+    runtime_ids: List[str], records: List[Dict[str, Any]], window: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Reduce retained owner valuations, never latest rolling drawdown or sums.
+
+    Quarter bounds are [start, end) in UTC. Initial funding is usable only
+    when the ledger opened in the quarter; older ledgers require an actual
+    observation exactly at quarter open. Multiple ledgers must share a grid:
+    inventing synchronized marks by carrying values forward is unsafe.
+    """
+    start = _audit_datetime(window["start_at"])
+    end = _audit_datetime(window["end_exclusive_at"])
+    days = (end - start).days
+    by_runtime: Dict[str, Dict[datetime, Dict[str, Any]]] = {rid: {} for rid in runtime_ids}
+    reasons: List[str] = []
+    evidence: List[Dict[str, Any]] = []
+    covered_days: Set[str] = set()
+    for record in records:
+        runtime_id = record.get("runtime_id")
+        if runtime_id not in by_runtime:
+            continue
+        for sample in record.get("quarter_equity_observations") or []:
+            if not isinstance(sample, dict):
+                reasons.append("malformed_quarter_observation")
+                continue
+            raw_at = sample.get("as_of")
+            try:
+                parsed = datetime.fromisoformat(str(raw_at).replace("Z", "+00:00"))
+                at = parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+            except ValueError:
+                at = None
+            if at is None:
+                reasons.append("invalid_observation_timezone")
+                continue
+            if not start <= at < end:
+                continue
+            if (sample.get("runtime_id") != runtime_id or not sample.get("binding_id")
+                    or (record.get("binding_id") and sample["binding_id"] != record["binding_id"])):
+                reasons.append("quarter_observation_identity_mismatch")
+                continue
+            covered_days.add(at.date().isoformat())
+            values = [_pm12_finite_number(sample.get(key)) for key in ("pnl", "equity", "initial_cash")]
+            pnl, equity, capital = values
+            if (sample.get("schema_version") != "quarter_equity.v1" or sample.get("status") != "known"
+                    or sample.get("valuation_method") != "fill_cash_ledger_mark_to_market"
+                    or any(value is None for value in values) or capital <= 0
+                    or not math.isclose(equity, capital + pnl, rel_tol=1e-9, abs_tol=1e-6)):
+                reasons.append(str(sample.get("reason") or "invalid_quarter_equity"))
+                continue
+            normalized = {**sample, "as_of": _pm12_iso_z(at)}
+            previous = by_runtime[runtime_id].get(at)
+            # Event retries may have a new id. Conflicting values, provenance,
+            # or binding generations at one boundary never pick a winner.
+            if previous and (
+                {k: v for k, v in previous.items() if k != "event_id"}
+                != {k: v for k, v in normalized.items() if k != "event_id"}
+            ):
+                reasons.append("ambiguous_quarter_observation")
+            elif previous is None:
+                by_runtime[runtime_id][at] = normalized
+    observed = sum(bool(samples) for samples in by_runtime.values())
+    count = sum(len(samples) for samples in by_runtime.values())
+    result: Dict[str, Any] = {
+        "runtime_ids": runtime_ids, "runtime_count": len(runtime_ids),
+        "telemetry_coverage_count": count, "quarter_window": window,
+        "pnl": None, "pnl_return": None, "pnl_capital": None, "pnl_period": None,
+        "pnl_unit": "ledger_currency", "pnl_return_unit": "fraction",
+        "pnl_return_status": "unknown", "pnl_return_reason": "missing_quarter_series",
+        "drawdown": None, "drawdown_status": "unknown", "drawdown_reason": "missing_quarter_series",
+        "drawdown_basis": "quarter_maximum_equity_drawdown", "pnl_sources": [],
+        "fill_rate": None, "avg_slippage_bps": None, "total_trades": None,
+        "latest_telemetry_at": None, "telemetry_evidence_refs": evidence,
+        "runtime_coverage": {"observed": observed, "expected": len(runtime_ids),
+                             "ratio": observed / len(runtime_ids) if runtime_ids else 0.0},
+        "temporal_observation_coverage": {
+            "observed_utc_days": len(covered_days), "quarter_utc_days": days,
+            "ratio": len(covered_days) / days, "basis": "distinct_utc_days_with_observations",
+            "complete_intraday_history_proven": False,
+        },
+        "trading_sample_sufficiency": {"status": "unknown", "total_trades": None,
+                                       "reason": "no_trading_sample_threshold_declared"},
+    }
+    if observed != len(runtime_ids) or not runtime_ids:
+        reasons.append("missing_quarter_series")
+    series = []
+    sources = []
+    for runtime_id, points in by_runtime.items():
+        if not points:
+            continue
+        ordered = sorted(points.items())
+        first, last = ordered[0][1], ordered[-1][1]
+        inception = _audit_datetime(first.get("period_start_at"))
+        if inception is None or inception > ordered[0][0]:
+            reasons.append("missing_quarter_opening_equity")
+            continue
+        if any((p.get("initial_cash"), p.get("period_start_at"), p.get("currency"), p.get("binding_id"))
+               != (first.get("initial_cash"), first.get("period_start_at"), first.get("currency"), first.get("binding_id"))
+               for _, p in ordered):
+            reasons.append("incompatible_ledger_funding_or_binding")
+            continue
+        if inception >= start:
+            opening_at, opening, opening_pnl, opening_fills = inception, first["initial_cash"], 0.0, 0
+            values = [(opening_at, opening), *[(at, p["equity"]) for at, p in ordered]]
+        elif ordered[0][0] == start:
+            opening_at, opening, opening_pnl, opening_fills = start, first["equity"], first["pnl"], first.get("fill_count")
+            values = [(at, p["equity"]) for at, p in ordered]
+        else:
+            reasons.append("missing_quarter_opening_equity")
+            continue
+        fills = [p.get("fill_count") for _, p in ordered]
+        if (any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in fills)
+                or any(b < a for a, b in zip(fills, fills[1:])) or opening <= 0):
+            reasons.append("invalid_quarter_equity_or_fill_count")
+            continue
+        series.append(values)
+        sources.append({"runtime_id": runtime_id, "binding_id": first["binding_id"],
+                        "pnl": last["pnl"] - opening_pnl, "capital": opening,
+                        "currency": first.get("currency"), "start_at": _pm12_iso_z(opening_at),
+                        "as_of": last["as_of"], "total_trades": fills[-1] - opening_fills,
+                        "capital_source": "owner_quarter_opening_equity",
+                        "event_id": last.get("event_id")})
+        evidence.extend({"ref_id": f"telemetry-event:{p.get('event_id')}", "source_type": "quarter_equity",
+                         "runtime_id": runtime_id, "observed_at": p["as_of"]} for _, p in ordered)
+    if len(series) > 1 and (
+        len({tuple(at for at, _ in points) for points in series}) != 1
+        or len({s["currency"] for s in sources}) != 1 or not sources[0]["currency"]
+    ):
+        reasons.append("incompatible_runtime_quarter_series")
+    if reasons:
+        reason = ";".join(sorted(set(reasons)))
+        result.update(pnl_return_reason=reason, drawdown_reason=reason)
+        return result
+    equities = [sum(points[i][1] for points in series) for i in range(len(series[0]))]
+    peak, maximum = equities[0], 0.0
+    for equity in equities:
+        peak = max(peak, equity)
+        maximum = max(maximum, min(1.0, (peak - equity) / peak))
+    capital = sum(s["capital"] for s in sources)
+    pnl = sum(s["pnl"] for s in sources)
+    if not all(math.isfinite(v) for v in (*equities, capital, pnl, pnl / capital)):
+        result.update(pnl_return_reason="nonfinite_quarter_equity", drawdown_reason="nonfinite_quarter_equity")
+        return result
+    trades = sum(s["total_trades"] for s in sources)
+    result.update({"pnl": pnl, "pnl_capital": capital, "pnl_return": pnl / capital,
+                   "pnl_return_status": "known", "pnl_return_reason": None,
+                   "drawdown": maximum, "drawdown_status": "known", "drawdown_reason": None,
+                   "pnl_sources": sources, "total_trades": trades,
+                   "latest_telemetry_at": sources[0]["as_of"],
+                   "pnl_period": {"start_at": sources[0]["start_at"], "as_of": sources[0]["as_of"],
+                                  "quarter": window["quarter"]}})
+    result["trading_sample_sufficiency"]["total_trades"] = trades
+    for field in ("fill_rate", "avg_slippage_bps"):
+        per_runtime = []
+        for runtime_id in runtime_ids:
+            candidates = [(at, value) for record in records if record.get("runtime_id") == runtime_id
+                          for at in [_audit_datetime(record.get(f"{field}_at"))]
+                          for value in [_pm12_finite_number(record.get(field))]
+                          if at is not None and start <= at < end and value is not None]
+            if candidates:
+                latest_at = max(at for at, _ in candidates)
+                values = {value for at, value in candidates if at == latest_at}
+                if len(values) == 1:
+                    per_runtime.append(values.pop())
+        if len(per_runtime) == len(runtime_ids):
+            result[field] = _management_avg(per_runtime)
+    return result
 
 
 def _pm12_pnl_return_metrics(
@@ -13470,18 +13646,7 @@ def _pm12_persona_telemetry_records(
             candidate.setdefault("runtime_id", runtime_id)
             dedupe_key = (
                 str(candidate.get("runtime_id") or ""),
-                str(
-                    candidate.get("collected_at")
-                    or candidate.get("collectedAt")
-                    or candidate.get("bucket_start")
-                    or candidate.get("bucketStart")
-                    or candidate.get("timestamp")
-                    or candidate.get("updated_at")
-                    or candidate.get("updatedAt")
-                    or candidate.get("created_at")
-                    or candidate.get("createdAt")
-                    or ""
-                ),
+                json.dumps(candidate, sort_keys=True, default=str),
             )
             if dedupe_key in seen:
                 continue

@@ -32,6 +32,7 @@ _PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
     'sleeve_ids', 'artifact_ids', 'broker_ids', 'eligible',
     'exclusion_codes', 'exclusion_reasons', 'exclusion_reason', 'evidence_coverage',
     'evidence_ref_ids', 'source_confidence',
+    'quarter', 'quarter_window',
 )
 
 

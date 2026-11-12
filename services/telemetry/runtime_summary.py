@@ -1220,16 +1220,24 @@ class RuntimeSummaryProjectionStore:
             if event_type == "pnl_snapshot" and not is_derived_metric_echo:
                 observation = quarter_equity_observation(
                     metrics, metadata,
-                    as_of=_explicit_metric_as_of(event.get("pnl_as_of"))
-                    or _explicit_metric_as_of(metrics.get("pnl_as_of")) or event_time,
+                    as_of=event.get("pnl_as_of") or metrics.get("pnl_as_of")
+                    or metadata.get("valuation_as_of"),
                 )
+                if observation["status"] == "unknown" and not observation.get("as_of"):
+                    # Date an admission failure without inventing a valuation
+                    # time or letting undated legacy data poison every quarter.
+                    observation["as_of"] = event_time
             perf_observation = metadata.get("performance_telemetry")
             if event_type == "heartbeat" and isinstance(perf_observation, dict):
                 if perf_observation.get("status") in ("marks_unavailable", "invalid_ledger", "invalid_drawdown_series"):
+                    _, attempted_at = _strict_rfc3339(perf_observation.get("attempted_at"))
+                    attempted_at = attempted_at or event_boundary_at
+                    if attempted_at is not None and event_boundary_at is not None:
+                        attempted_at = min(attempted_at, event_boundary_at)
                     observation = {
                         "schema_version": "quarter_equity.v1", "status": "unknown",
                         "reason": perf_observation["status"],
-                        "as_of": perf_observation.get("attempted_at") or event_time,
+                        "as_of": attempted_at.isoformat().replace("+00:00", "Z") if attempted_at else event_time,
                     }
             if observation is not None:
                 observation.update({"runtime_id": runtime_id, "binding_id": binding_id,

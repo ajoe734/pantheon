@@ -1366,6 +1366,14 @@ def _return_ranking(monkeypatch, tmp_path, observations, *, quarter="2026-Q4", r
     summaries = {}
     for index, (name, metrics) in enumerate(observations):
         runtime_id = f"return-runtime-{index}"
+        metrics = dict(metrics)
+        if "quarter_equity_observations" not in metrics and "pnl_period_start_at" in metrics:
+            # Explicit local owner-valued flat-ledger fixtures for the return
+            # normalisation tests. No production fallback reconstructs history.
+            metrics["quarter_equity_observations"] = [
+                _quarter_test_observation(runtime_id, record)
+                for record in [metrics, *metrics.get("history", [])]
+            ]
         rows.append({
             "id": name, "persona_id": name, "name": name,
             "state": "paper_running", "stage": "paper_running", "risk": "low",
@@ -1377,6 +1385,8 @@ def _return_ranking(monkeypatch, tmp_path, observations, *, quarter="2026-Q4", r
         })
         summaries[runtime_id] = {"runtime_id": runtime_id, "collected_at": "2026-11-12T04:10:00Z",
                                  "drawdown": 0.0, "fill_rate": 0.0, "avg_slippage_bps": 0.0,
+                                 "fill_rate_at": "2026-11-12T04:10:00Z",
+                                 "avg_slippage_bps_at": "2026-11-12T04:10:00Z",
                                  **metrics}
     store = _Pm12LeagueTestStore(fallback=False)
     store.get_telemetry_summary = lambda runtime_id: summaries.get(runtime_id)
@@ -1390,6 +1400,22 @@ def _return_ranking(monkeypatch, tmp_path, observations, *, quarter="2026-Q4", r
 def _period_pnl(pnl, capital):
     return {"pnl": pnl, "initial_cash": capital, "pnl_period_start_at": "2026-10-01T00:00:00Z",
             "pnl_at": "2026-11-12T04:10:00Z"}
+
+
+def _quarter_test_observation(runtime_id, record):
+    from services.execution.lean_runtime.performance_telemetry import quarter_equity_observation
+    pnl, capital = record.get("pnl"), record.get("initial_cash")
+    equity = capital + pnl if isinstance(capital, (int, float)) and isinstance(pnl, (int, float)) else None
+    return {
+        **quarter_equity_observation(
+            {**record, "portfolio_value": equity, "cash": equity,
+             "valuation_mark_count": 0, "fill_count": 1},
+            {"valuation_method": "fill_cash_ledger_mark_to_market", "mark_refs": []},
+            as_of=record.get("pnl_at"),
+        ),
+        "runtime_id": runtime_id, "binding_id": "test-binding",
+        "event_id": f"test-owner-{runtime_id}-{record.get('pnl_at')}",
+    }
 
 
 def test_quarterly_route_return_on_capital_discriminates_audited_pnls(monkeypatch, tmp_path):
@@ -1487,7 +1513,10 @@ def test_pnl_projection_reaches_quarterly_http_route(monkeypatch, tmp_path):
     projection = RuntimeSummaryProjectionStore(path=str(tmp_path / "projection.json"))
     event = _event("pnl_snapshot", created_at="2026-11-12T04:10:00Z")
     event["runtime_id"] = "return-runtime-0"
-    event["metrics"] = _period_pnl(4730.0, 100000.0)
+    event["metrics"] = {**_period_pnl(4730.0, 100000.0), "portfolio_value": 104730.0,
+                        "cash": 104730.0, "valuation_mark_count": 0, "fill_count": 1}
+    event["metadata"].update(valuation_method="fill_cash_ledger_mark_to_market", mark_refs=[])
+    event["pnl_as_of"] = event["created_at"]
     summary = projection.project_event(event)
     item = _return_ranking(monkeypatch, tmp_path, [("projected", summary)])["items"][0]
     assert item["components"]["pnl_score"] == 54.73
@@ -1522,3 +1551,126 @@ def test_pnl_return_requires_all_runtime_denominators_and_compatible_windows():
     records[1]["pnl_currency"] = "TWD"
     records[1]["pnl_period_start_at"] = "2026-10-02T00:00:00Z"
     assert personas_service._pm12_telemetry_metrics_from_records(["r1", "r2"], records)["pnl_return"] is None
+
+
+def _project_quarter_series(tmp_path, events):
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+    path = str(tmp_path / "quarter-owner-projection.json")
+    for event in events:
+        # Read from a new store each time to prove the retained series is durable.
+        RuntimeSummaryProjectionStore(path=path).project_event(event)
+    return RuntimeSummaryProjectionStore(path=path).get("return-runtime-0")
+
+
+def test_quarterly_http_route_retains_maximum_decline_after_recovery(monkeypatch, tmp_path):
+    from services.telemetry.test_runtime_summary_projection import _quarter_valuation_event
+    events = [
+        _quarter_valuation_event("2026-09-30T23:59:59Z", 10.0, started_at="2026-09-01T00:00:00Z"),
+        _quarter_valuation_event("2026-10-01T00:00:00Z", 1000.0, started_at="2026-09-01T00:00:00Z"),
+        _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0, started_at="2026-09-01T00:00:00Z", fills=2),
+        _quarter_valuation_event("2026-12-15T00:00:00Z", 1200.0, started_at="2026-09-01T00:00:00Z", fills=3),
+        _quarter_valuation_event("2027-01-01T00:00:00Z", 1.0, started_at="2026-09-01T00:00:00Z", fills=4),
+    ]
+    summary = _project_quarter_series(tmp_path, events)
+    # Current rolling drawdown and cumulative latest PnL are outside the quarter.
+    summary["drawdown"] = 0.0
+    data = _return_ranking(monkeypatch, tmp_path, [("recovered", summary)])
+    item = data["items"][0]
+    metrics = item["metrics"]
+    assert metrics["pnl"] == 200.0 and metrics["pnl_return"] == 0.2
+    assert metrics["drawdown"] == pytest.approx(0.2)
+    assert metrics["pnl_period"]["as_of"] == "2026-12-15T00:00:00Z"
+    assert metrics["total_trades"] == 2
+    assert item["components"]["risk_score"] == 55.0
+    assert item["quarter_window"]["timezone"] == "UTC"
+    assert metrics["runtime_coverage"] == {"observed": 1, "expected": 1, "ratio": 1.0}
+    assert metrics["temporal_observation_coverage"]["observed_utc_days"] == 3
+    assert metrics["temporal_observation_coverage"]["ratio"] == pytest.approx(3 / 92)
+    assert metrics["trading_sample_sufficiency"]["status"] == "unknown"
+    assert all(ref["observed_at"].startswith("2026-") for ref in metrics["telemetry_evidence_refs"])
+
+
+def test_quarterly_route_deduplicates_cumulative_observations(monkeypatch, tmp_path):
+    sample = _quarter_test_observation("return-runtime-0", _period_pnl(200.0, 1000.0))
+    only_final = _return_ranking(monkeypatch, tmp_path, [("single", {"quarter_equity_observations": [sample]})])["items"][0]
+    repeated = _return_ranking(monkeypatch, tmp_path, [("repeated", {"quarter_equity_observations": [
+        sample, {**sample, "event_id": "retried-owner-event"}, sample,
+    ]})])["items"][0]
+    assert only_final["metrics"]["pnl"] == repeated["metrics"]["pnl"] == 200.0
+    assert only_final["metrics"]["drawdown"] == repeated["metrics"]["drawdown"] == 0.0
+    assert repeated["metrics"]["telemetry_coverage_count"] == 1
+    assert repeated["metrics"]["total_trades"] == 1
+
+
+@pytest.mark.parametrize("defect,expected", [
+    ("missing_series", "missing_quarter_series"),
+    ("missing_open", "missing_quarter_opening_equity"),
+    ("missing_marks", "missing_marks"),
+    ("conflict", "ambiguous_quarter_observation"),
+    ("cash_flow", "incompatible_ledger_funding_or_binding"),
+    ("timezone", "invalid_observation_timezone"),
+])
+def test_quarterly_http_route_unknown_series_fails_closed(monkeypatch, tmp_path, defect, expected):
+    from services.telemetry.test_runtime_summary_projection import _quarter_valuation_event
+    first = _quarter_valuation_event("2026-10-01T00:00:00Z", 1000.0)
+    last = _quarter_valuation_event("2026-12-15T00:00:00Z", 1200.0, fills=2)
+    events = [first, last]
+    if defect == "missing_marks":
+        last["metadata"]["mark_refs"] = []
+    elif defect == "missing_open":
+        last["metrics"]["pnl_period_start_at"] = "2026-09-01T00:00:00Z"
+        events = [last]
+    elif defect == "conflict":
+        events.append(_quarter_valuation_event("2026-12-15T00:00:00Z", 1300.0, fills=2))
+    elif defect == "cash_flow":
+        last["metrics"].update(initial_cash=1100.0, pnl=100.0)
+    summary = _project_quarter_series(tmp_path, events)
+    if defect == "missing_series":
+        summary["quarter_equity_observations"] = []
+    elif defect == "timezone":
+        summary["quarter_equity_observations"][0]["as_of"] = "2026-10-01T00:00:00"
+    item = _return_ranking(monkeypatch, tmp_path, [("unknown", summary)])["items"][0]
+    assert item["score"] is None and item["rank"] is None and item["eligible"] is False
+    assert item["metrics"]["drawdown"] is None and item["metrics"]["pnl"] is None
+    assert expected in item["metrics"]["drawdown_reason"]
+    assert item["allocation_policy_input"] is None
+
+
+def test_quarterly_route_uses_offset_instant_and_per_metric_quarter_time(monkeypatch, tmp_path):
+    sample = _quarter_test_observation("return-runtime-0", _period_pnl(100.0, 1000.0))
+    sample["as_of"] = "2027-01-01T07:59:59+08:00"
+    item = _return_ranking(monkeypatch, tmp_path, [("offset", {
+        "quarter_equity_observations": [sample], "fill_rate": 0.0, "avg_slippage_bps": 99,
+        "fill_rate_at": "2027-01-01T00:00:00Z", "avg_slippage_bps_at": "2026-09-30T23:59:59Z",
+    })])["items"][0]
+    assert item["metrics"]["pnl"] == 100.0
+    assert item["metrics"]["pnl_period"]["as_of"] == "2026-12-31T23:59:59Z"
+    assert item["metrics"]["fill_rate"] is None and item["metrics"]["avg_slippage_bps"] is None
+
+
+def test_quarterly_runtime_aggregation_requires_synchronized_currency_series():
+    window = personas_service._pm12_quarter_window("2026-Q4", "2026-12-31T23:59:59Z")
+    records = []
+    for runtime_id in ("r1", "r2"):
+        observations = []
+        for at, pnl in [("2026-11-01T00:00:00Z", -200.0), ("2026-12-15T00:00:00Z", 200.0)]:
+            sample = _quarter_test_observation(runtime_id, {**_period_pnl(pnl, 1000.0), "pnl_at": at, "pnl_currency": "TWD"})
+            observations.append(sample)
+        records.append({"runtime_id": runtime_id, "quarter_equity_observations": observations})
+    reduce = lambda: personas_service._pm12_telemetry_metrics_from_records(["r1", "r2"], records, quarter_window=window)
+    metrics = reduce()
+    assert metrics["pnl"] == 400.0 and metrics["pnl_capital"] == 2000.0
+    assert metrics["drawdown"] == 0.2 and metrics["runtime_coverage"]["ratio"] == 1.0
+    records[1]["quarter_equity_observations"][0]["as_of"] = "2026-11-02T00:00:00Z"
+    assert "incompatible_runtime_quarter_series" in reduce()["pnl_return_reason"]
+    records[1]["quarter_equity_observations"][0]["as_of"] = "2026-11-01T00:00:00Z"
+    for sample in records[1]["quarter_equity_observations"]:
+        sample["currency"] = "USD"
+    assert reduce()["pnl"] is None
+
+
+def test_quarterly_route_legacy_summary_never_supplies_quarter_equity(monkeypatch, tmp_path):
+    item = _return_ranking(monkeypatch, tmp_path, [("legacy", {"pnl": 200, "drawdown": 0,
+                          "initial_cash": 1000, "total_trades": 10})])["items"][0]
+    assert item["metrics"]["pnl"] is None and item["metrics"]["drawdown"] is None
+    assert item["metrics"]["pnl_return_reason"] == "missing_quarter_series"
