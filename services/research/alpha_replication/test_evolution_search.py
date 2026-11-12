@@ -268,3 +268,18 @@ def test_retrain_child_preserves_registry_alias_lineage(parent):
     child, _ = es.build_child_artifact(parent, decision_id="evo-alias", kind="retrain",
         parameter_updates={"lookback_bars": 3}, parent_registry_ref="registry-parent-alias")
     assert child["lineage"]["parent_registry_ids"] == ["registry-parent-alias"]
+
+
+def test_early_gate_refusal_still_counts_a_built_family_trial(parent):
+    from types import SimpleNamespace
+    class Gate:
+        count = 0
+        def get_family_trial_count(self, _): return self.count
+        def record_family_trial(self, _):
+            self.count += 1
+            return self.count
+        def evaluate_candidate(self, _): return SimpleNamespace(passed=False, results=[])
+    gate = Gate()
+    verdict = es.judge_child_out_of_sample(parent, gate=gate, request_factory=lambda _: {}, family_id="family")
+    assert not verdict['passed']
+    assert verdict['trial_count_before'] == 0 and verdict['trial_count_after'] == 1

@@ -2336,6 +2336,10 @@ class _ProofCapturingGate:
     def get_family_trial_count(self, family_id: str) -> int:
         return self._gate.get_family_trial_count(family_id)
 
+    def record_family_trial(self, family_id: str) -> int:
+        record = getattr(self._gate, "record_family_trial", None)
+        return record(family_id) if callable(record) else self._gate.get_family_trial_count(family_id)
+
     def evaluate_candidate(self, request: Any) -> Any:
         try:
             response = self._gate.evaluate_candidate(request)

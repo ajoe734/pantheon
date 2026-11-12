@@ -381,6 +381,9 @@ def judge_child_out_of_sample(
     before = gate.get_family_trial_count(family_id)
     response = gate.evaluate_candidate(request_factory(child))
     after = gate.get_family_trial_count(family_id)
+    record_trial = getattr(gate, "record_family_trial", None)
+    if after == before and callable(record_trial):
+        after = record_trial(family_id)
     detail: Mapping[str, Any] = {}
     for result in getattr(response, "results", []) or []:
         if getattr(result, "criterion_id", "") == "real_backtest_validation":

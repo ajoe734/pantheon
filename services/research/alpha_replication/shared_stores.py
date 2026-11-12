@@ -99,3 +99,7 @@ class SharedReplicationGate(ReplicationGate):
     def __init__(self, config=None, trial_counter_path: Optional[Path] = None, backtest_run_store=None) -> None:
         super().__init__(config=config, trial_counter_path=trial_counter_path, backtest_run_store=backtest_run_store)
         self._trial_counter_store = SharedFamilyTrialCounterStore(trial_counter_path)
+
+    def record_family_trial(self, family_id: str) -> int:
+        """Count a built child rejected before the gate's numerical trial check."""
+        return self._trial_counter_store.increment(family_id)
