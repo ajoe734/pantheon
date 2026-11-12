@@ -3,7 +3,7 @@
     "snapshot_date": "2026-11-12",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 620,
+    "total_routes": 621,
     "status_values": [
       "implemented",
       "alias",
@@ -2927,6 +2927,12 @@
     {
       "method": "POST",
       "path": "/bff/personas/{param}/strategy-matches/{param}/actions",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/strategy-pool/publish",
       "family": "strategy-persona",
       "status": "implemented"
     },
