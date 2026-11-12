@@ -14,7 +14,7 @@
     },
     "tests": {
       "command": "python -m pytest services/source_ingestion/tests/test_intraday_reconcile.py services/source_ingestion/tests/test_intraday_store.py services/source_ingestion/tests/test_intraday_backfill.py -q",
-      "result": "64 passed (1 new report-coverage regression)",
+      "result": "65 passed (incl. empty-store explicit-symbols minute_missing read-only regression)",
       "covers": [
         "pass",
         "fail per field (open/high/low/close/volume)",

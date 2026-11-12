@@ -333,6 +333,15 @@ def test_report_surfaces_absent_symbol_entry_and_absent_day_manifest(tmp_path):
     assert sorted(str(p) for p in (tmp_path / "store").rglob("*")) == before
 
 
+def test_report_empty_store_with_explicit_symbols_reports_minute_missing_read_only(tmp_path):
+    rep = _report(tmp_path, [_official("2330", DAY)], [DAY], symbols=["2330"])
+    assert rep["symbol_universe"] == ["2330"]
+    assert rep["window_trading_days"] == [DAY]
+    assert rep["summary"]["outcome_counts"] == {"minute_missing": 1}
+    assert not (tmp_path / "store").exists()  # store neither created nor mutated
+    assert _report(tmp_path, [], [DAY])["window_trading_days"] == []  # no universe -> nothing intended
+
+
 def _recovered(tmp_path):
     store = _store(tmp_path)
     store.put_symbol_day("2330", DAY, _bars(close=120.0))

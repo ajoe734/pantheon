@@ -44,7 +44,13 @@ def build_report(store_root: Path, official_root: Path, config: Path | None, day
     # instead of silently dropping out. Official symbols outside the universe are not pulled in.
     universe = sorted({s.upper() for s in symbols} if symbols else
                       set().union(*(_manifest_symbols(store, d) for d in all_days)) if all_days else set())
-    first = all_days[0] if all_days else None
+    # Empty minute store: an explicit intended universe still owes minute_missing for every
+    # official day, so the window starts at the earliest official date; with no explicit
+    # universe there is nothing intended to report.
+    if all_days:
+        first = all_days[0]
+    else:
+        first = min(official.dates_present, default=None) if universe else None
     all_dates = sorted(set(all_days) | {d for d in official.dates_present if first and d >= first})
     window = all_dates[: days if days is not None else cfg.pass_rate_window_days]
     results, per_day = [], {}
