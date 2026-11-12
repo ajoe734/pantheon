@@ -10,8 +10,8 @@ same rule fingerprint raise ``support_count`` instead of creating a new draft.
 
 from __future__ import annotations
 
-import hashlib
 import copy
+import hashlib
 import json
 import re
 import sqlite3
@@ -201,7 +201,8 @@ def card_key(card: Mapping[str, Any]) -> str:
     spans = card.get("cited_spans") or []
     sid = spans[0].get("source_record_id", "") if spans and isinstance(spans[0], Mapping) else ""
     basis = json.dumps({"compiler": "screen_entry.v1", "sid": sid,
-                        "card": {k: v for k, v in card.items() if k not in {"predictions", "testability"}}}, sort_keys=True)
+                        "card": {k: v for k, v in card.items()
+                                 if k not in {"predictions", "testability", "factor_rule_v1"}}}, sort_keys=True)
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
 
 
@@ -260,11 +261,11 @@ def validate_proposal(proposal: Any, *, card: Mapping[str, Any] | None = None) -
     except Exception as exc:  # defensive: malformed model output must never crash the worker
         return NOT_EXPRESSIBLE, f"invalid_factor_rule:{type(exc).__name__}", "", None
     if card:
-        declared = {(i["dataset"], i["field"]): i["name"] for i in normalized["inputs"]}
         for section, refs in (("screen_idea", _refs(normalized.get("screen", {}))),
                               ("entry_idea", _refs({k: normalized[k] for k in ("signal", "entry", "exit", "strength")}))):
+            consumed = {(i["dataset"], i["field"]) for i in normalized["inputs"] if i["name"] in refs}
             for item in card.get(section, {}).get("signal_inputs", []):
-                if declared.get((item["dataset"], item["field"])) not in refs:
+                if (item["dataset"], item["field"]) not in consumed:
                     return NOT_EXPRESSIBLE, f"omitted_{section}_input:{item['dataset']}.{item['field']}", "", None
     artifact = {
         "strategy_logic": normalized,
@@ -305,14 +306,17 @@ def _pair_defaults(proposal: Mapping[str, Any], card: Mapping[str, Any]) -> tupl
     logic, params, surface = p["strategy_logic"], p["parameters"], p["mutation_surface"]
     if not all(isinstance(v, dict) for v in (logic, params, surface)):
         raise ValueError("missing_logic_parameters_or_mutation_surface")
+    if not isinstance(surface.get("controls"), list):
+        raise ValueError("mutation_controls_must_be_list")
     defaults: dict[str, str] = {}
 
     def constant(name: str, value: int) -> dict:
         key = "hc_default_" + name
-        if key in params:
+        if key in params or any(isinstance(c, Mapping) and c.get("parameter_key") == key
+                                for c in surface["controls"]):
             raise ValueError("reserved_default_parameter:" + key)
         params[key] = value
-        surface.setdefault("controls", []).append({
+        surface["controls"].append({
             "parameter_key": key, "value_type": "number", "current_value": value,
             "allowed_range": {"min": value, "max": value}, "step": 1,
         })
@@ -369,12 +373,6 @@ class HypothesisCompiler:
 
         testability = str(card.get("testability") or "")
         key = card_key(card)
-        missing = idea_missing_datasets(card)
-        if missing:
-            for dataset in missing:
-                self._store.count_needs_data(dataset, key)
-            self._store.record_outcome(key, NEEDS_DATA, "idea_input_unavailable", missing[0])
-            return CompileOutcome(NEEDS_DATA, "idea_input_unavailable", dataset=missing[0])
         for prediction in card.get("predictions", ()):
             dataset = prediction_missing_dataset(prediction)
             if dataset:
@@ -383,6 +381,12 @@ class HypothesisCompiler:
                 self._store.count_needs_data(dataset, key)
         if testability == "not_testable":
             return CompileOutcome(SKIPPED, "not_testable")
+        missing = idea_missing_datasets(card)
+        if missing:
+            for dataset in missing:
+                self._store.count_needs_data(dataset, key)
+            self._store.record_outcome(key, NEEDS_DATA, "idea_input_unavailable", missing[0])
+            return CompileOutcome(NEEDS_DATA, "idea_input_unavailable", dataset=missing[0])
         if testability.startswith("needs_data:"):
             ds = testability.split(":", 1)[1]
             if not _DATASET_RE.match(ds):

@@ -195,6 +195,57 @@ def _prediction_recording():
     return json.loads(path.read_text())
 
 
+def _screen_entry_recording():
+    return json.loads((Path(__file__).parent / "fixtures/hypothesis_screen_entry_recorded.json").read_text())
+
+
+def test_screen_entry_citations_survive_real_extraction_path(tmp_path):
+    recording = _screen_entry_recording()
+    transport = _RecordedTransport(recording)
+    worker, _, store, _ = _worker(tmp_path, transport)
+    assert _run(worker, _source(body=recording["stored_text"])).created == 1
+    card = _card_with_origin(store.list_all()[0])
+    raw = recording["response"]["output"]["structured_data"]["hypothesis_card"]
+    assert card == {**raw, "origin": "news"}
+    assert "then rank" in card["screen_idea"]["statement"]
+    assert "screen_idea" in transport.calls[0]["prompt"]
+    assert "entry_idea" in transport.calls[0]["prompt"]
+    assert "tools" not in transport.calls[0]
+
+
+def test_sector_then_quality_idea_is_needs_data(tmp_path):
+    recording = _screen_entry_recording()
+    recording["response"]["output"]["structured_data"]["hypothesis_card"] = recording["sector_card"]
+    worker, _, store, _ = _worker(tmp_path, _RecordedTransport(recording))
+    assert _run(worker, _source(body=recording["stored_text"])).created == 1
+    card = _card_with_origin(store.list_all()[0])
+    assert "then ranks quality" in card["screen_idea"]["statement"]
+    assert card["testability"] == "needs_data:tw_industry_classification"
+
+
+@pytest.mark.parametrize("part", ["screen_idea", "entry_idea"])
+def test_idea_citations_fail_closed(tmp_path, part):
+    recording = _screen_entry_recording()
+    recording["response"]["output"]["structured_data"]["hypothesis_card"][part]["cited_spans"][0]["exact_text"] = "invented"
+    worker, _, store, ledger = _worker(tmp_path, _RecordedTransport(recording))
+    assert _run(worker, _source(body=recording["stored_text"])).created == 0
+    assert store.list_all() == []
+    assert "citation_unverifiable" in ledger.events()[0]["detail"]
+
+
+@pytest.mark.parametrize("part", ["screen_idea", "entry_idea"])
+@pytest.mark.parametrize("target", ["idea", "input", "span"])
+@pytest.mark.parametrize("key", ["route", "sink", "tool_calls"])
+def test_injected_idea_keys_fail_closed(tmp_path, part, target, key):
+    recording = _screen_entry_recording()
+    idea = recording["response"]["output"]["structured_data"]["hypothesis_card"][part]
+    obj = {"idea": idea, "input": idea["signal_inputs"][0], "span": idea["cited_spans"][0]}[target]
+    obj[key] = "injected"
+    worker, _, store, ledger = _worker(tmp_path, _RecordedTransport(recording))
+    assert _run(worker, _source(body=recording["stored_text"])).created == 0
+    assert store.list_all() == [] and ledger.events()[0]["outcome"] == "failed"
+
+
 class _RecordedTransport:
     def __init__(self, recording=None):
         self.recording = recording or _prediction_recording()
