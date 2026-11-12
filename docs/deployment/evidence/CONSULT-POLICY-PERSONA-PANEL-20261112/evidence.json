@@ -1,7 +1,7 @@
 {
   "task_id": "CONSULT-POLICY-PERSONA-PANEL-20261112",
   "kind": "source_implementation_evidence",
-  "owner": "Claude",
+  "owner": "Claude2",
   "assigned_reviewer": "Codex",
   "independent_review": "pending",
   "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md (6.4 / D6 / D7 / D8)",
@@ -45,12 +45,12 @@
   },
   "verification": {
     "command": ".venv-pantheon/bin/python -m pytest services/consultation services/persona/test_consult_triggers.py; .venv-pantheon/bin/python -m pytest services/control-plane/persona -k policy",
-    "result": "113 passed (consultation + triggers); 43 passed (persona policy selection). services/governance approval PostgreSQL tests error without a database in this env (pre-existing, unrelated); governance consult/veto/handoff selection 39 passed before that error."
+    "result": "122 passed (consultation + triggers); 43 passed (persona policy selection). services/governance approval PostgreSQL tests error without a database in this env (pre-existing, unrelated); governance consult/veto/handoff selection 39 passed before that error."
   },
   "not_claimed": [
     "Hosted/deployed run: no real hosted cycle or consultation was executed.",
     "Own-agent routing (rework): services/openclaw-gateway-adapter/consultation_provider.py now routes participant.agent=persona_own_agent to provider.invoke(agent_id=<persona_id>), refuses output whose agent_id is not that persona, tool calls, or attribution other than the asked persona (test_persona_own_agent_routing.py). Not proven against a hosted gateway with provisioned persona agents; hosted/private-memory backfill obligations remain open. The adapter and governance edits sit outside the originally listed scoped artifacts and need owner-boundary acknowledgement at review.",
-    "Governance ingress stores the handoff (target_gate, memo_ids, evidence_refs); it does not persist the extra gated_decision/gate fields the executor also sends. The memo is linked to the decision via the request target and the handoff evidence ref.",
+    "Governance ingress persists the handoff (target_gate, memo_ids, evidence_refs) and the gated_decision/gate fields (including target_version/candidate_digest); the memo is also linked to the decision via the request target and the handoff evidence ref.",
     "Risk and red team personas are created in draft; advancing to consultable is a governed lifecycle step, not automated.",
     "The three-persona hosted backfill / private-memory obligation and real P1-fix hosted evidence stay outstanding.",
     "Env: no source-level change to evolution; it is an address plus health probe only."
@@ -58,6 +58,9 @@
   "rework_20261112": {
     "risk_veto_dedup": "required_consultation merges may_veto onto the initiator entry when the risk persona initiates; unit + e2e regressions",
     "gated_decision_wiring": "governance consultation-handoffs stores gated_decision/gate/operator_decision for consultation.panel.* handoffs; the existing approval decide command (POST /api/governance/approvals/{id}/decide) refuses (409) approved outcomes on a target with a pending risk veto unless a human operator principal decides, and then durably records operator_decision=decided on the handoff; e2e test attempts real adoption after risk reject (storage double replaces PostgreSQL only; no DB available in this env)",
+    "panel_admission_boundary": "consultation_provider.admit_panel_agent runs before any persona dispatch: persona_id must be an admissible persona id (never main / structured-extraction / the provider default / a consult- id); the turn runs on a tenant+persona bound consultation-only agent consult-<digest>-<persona_id> that must be live in the gateway registry and whose live config.get policy is deny-all (tools.deny=['*'], empty allow, exec denied, no skills, memorySearch off, contextInjection never). A persona trading agent with read/persona_proposal_submit is refused (403). Tests: services/consultation/tests/test_persona_own_agent_routing.py",
+    "committee_memory_boundary": "the consultation agent has no private cache; the provider retrieves memory itself and injects only institutional hits plus same-persona hits scoped persona_and_committee; persona_private and other-persona hits are dropped (sentinel tests). The daily/private workspace cache is not touched. Memory fetch failure degrades to empty committee context.",
+    "open_obligations": "hosted provisioning of the consult-<digest>-<persona_id> agents (agents.list entries with deny-all policy; adapter ensure route in main.py is outside this task's scoped artifacts) and backfill remain separate hosted obligations; until provisioned, panel turns fail closed with 403.",
     "target_binding": "panel.gated_decision type/id must equal request target_type/target_id at consultation entry (422) and in executor (WorkflowBlocked)"
   },
   "rework_20261112_r2": {

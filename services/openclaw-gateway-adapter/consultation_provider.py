@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,10 @@ from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
     OpenClawProviderError,
     STRUCTURED_AGENT_ID,
+)
+from integrations.openclaw.persona_memory_bridge import (
+    fetch_canonical_memory,
+    normalize_retrieval_hits,
 )
 from services.consultation.models import FindingSeverity, Recommendation
 from services.consultation.provider import (
@@ -349,28 +354,223 @@ def _prompt(payload: ConsultationContributionRequest) -> str:
     )
 
 
+# --------------------------------------------------------------------------
+# Panel admission: verified identity + deny-all advisory boundary (design 6.4)
+# --------------------------------------------------------------------------
+
+CONSULT_AGENT_PREFIX = "consult-"
+_PERSONA_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_RESERVED_AGENT_IDS = frozenset({"main", STRUCTURED_AGENT_ID})
+COMMITTEE_VISIBLE_SCOPE = "persona_and_committee"
+COMMITTEE_MEMORY_LIMIT = 8
+
+
+class PanelAdmissionDenied(Exception):
+    """A panel participant failed identity or runtime-policy admission."""
+
+    def __init__(self, message: str, *, status_code: int = 403) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+def consult_agent_id(tenant_id: str, persona_id: str) -> str:
+    """Deterministic tenant+persona bound id of the consultation-only agent.
+
+    The consultation agent is a separate deny-all agent with its own
+    workspace; it is never the persona's trading agent (read/proposal tools,
+    private memory cache) and never the default ``main`` agent.
+    """
+
+    digest = hashlib.sha256(
+        f"{tenant_id}\0{persona_id}".encode("utf-8")
+    ).hexdigest()[:12]
+    return f"{CONSULT_AGENT_PREFIX}{digest}-{persona_id}"
+
+
+def _deny_all_policy_violation(agent: Mapping[str, Any]) -> str | None:
+    tools = agent.get("tools")
+    if not isinstance(tools, Mapping):
+        return "tools"
+    if tools.get("deny") != ["*"] or tools.get("allow") not in (None, []):
+        return "tools"
+    exec_cfg = tools.get("exec")
+    if not (
+        isinstance(exec_cfg, Mapping)
+        and exec_cfg.get("security") == "deny"
+        and exec_cfg.get("ask") == "always"
+    ):
+        return "tools.exec"
+    if agent.get("skills") != []:
+        return "skills"
+    memory_search = agent.get("memorySearch")
+    if not (
+        isinstance(memory_search, Mapping)
+        and memory_search.get("enabled") is False
+        and memory_search.get("sources") == []
+    ):
+        return "memorySearch"
+    if agent.get("contextInjection") != "never":
+        return "contextInjection"
+    return None
+
+
+def admit_panel_agent(
+    provider: Any,
+    *,
+    tenant_id: str,
+    persona_id: str,
+    default_agent_id: str | None = None,
+) -> str:
+    """Verify identity and live deny-all runtime policy; return the agent id.
+
+    Runs before any dispatch and trusts neither the caller's agent claim nor
+    a cached probe: the policy is read from the live Gateway each time.
+    """
+
+    persona = str(persona_id or "").strip()
+    reserved = set(_RESERVED_AGENT_IDS) | {
+        str(default_agent_id or "").strip(),
+        str(getattr(provider, "_agent_id", "") or "").strip(),
+    }
+    reserved.discard("")
+    if (
+        not _PERSONA_ID_PATTERN.fullmatch(persona)
+        or persona in reserved
+        or persona.startswith(CONSULT_AGENT_PREFIX)
+    ):
+        raise PanelAdmissionDenied(
+            "participant persona_id is not an admissible persona identity"
+        )
+    agent_id = consult_agent_id(tenant_id, persona)
+    gateway_call = getattr(provider, "_gateway_call", None)
+    list_agents = getattr(provider, "gateway_agents_list", None)
+    if not callable(gateway_call) or not callable(list_agents):
+        raise PanelAdmissionDenied(
+            "cannot verify consultation agent runtime policy", status_code=503
+        )
+    try:
+        snapshot = gateway_call("config.get")
+        live = list_agents()
+    except OpenClawProviderError as exc:
+        raise PanelAdmissionDenied(
+            "cannot verify consultation agent runtime policy", status_code=503
+        ) from exc
+    config = snapshot.get("config") if isinstance(snapshot, Mapping) else None
+    agents = config.get("agents") if isinstance(config, Mapping) else None
+    entries = agents.get("list") if isinstance(agents, Mapping) else None
+    matches = (
+        [
+            item
+            for item in entries
+            if isinstance(item, Mapping) and item.get("id") == agent_id
+        ]
+        if isinstance(entries, list)
+        else []
+    )
+    if (
+        not isinstance(snapshot, Mapping)
+        or snapshot.get("valid") is not True
+        or len(matches) != 1
+    ):
+        raise PanelAdmissionDenied(
+            "consultation agent is not provisioned for this tenant persona"
+        )
+    if not any(
+        isinstance(item, Mapping) and item.get("id") == agent_id for item in live
+    ):
+        raise PanelAdmissionDenied(
+            "consultation agent is not live in the gateway registry",
+            status_code=503,
+        )
+    violation = _deny_all_policy_violation(matches[0])
+    if violation is not None:
+        raise PanelAdmissionDenied(
+            f"consultation agent runtime policy is not deny-all: {violation}"
+        )
+    return agent_id
+
+
+def _default_committee_memory_fetcher(
+    tenant_id: str, persona_id: str, session_id: str
+) -> Mapping[str, Any] | None:
+    memory_url = str(
+        os.getenv("PANTHEON_MEMORY_API_URL")
+        or os.getenv("PANTHEON_MEMORY_SERVICE_URL")
+        or ""
+    ).strip()
+    if not memory_url:
+        return None
+    return fetch_canonical_memory(
+        memory_url,
+        persona_id=persona_id,
+        actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "consultation-provider"),
+        actor_roles=[
+            part.strip()
+            for part in os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "operator").split(",")
+            if part.strip()
+        ]
+        or ["operator"],
+        session_id=session_id,
+        scope="both",
+        limit=COMMITTEE_MEMORY_LIMIT,
+        auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN") or None,
+    )
+
+
+def committee_visible_memory(
+    retrieval: Mapping[str, Any] | None, persona_id: str
+) -> list[dict[str, Any]]:
+    """Keep only committee-visible hits; persona_private never enters a panel.
+
+    Institutional entries are committee-level by construction. A persona entry
+    must belong to this persona *and* carry the persona_and_committee scope.
+    """
+
+    if not isinstance(retrieval, Mapping):
+        return []
+    hits, _rejected = normalize_retrieval_hits(retrieval, persona_id=persona_id)
+    visible: list[dict[str, Any]] = []
+    for hit in hits:
+        if hit["type"] == "institutional" or (
+            hit["type"] == "persona"
+            and hit.get("relevance_scope") == COMMITTEE_VISIBLE_SCOPE
+        ):
+            visible.append(hit)
+    return visible[:COMMITTEE_MEMORY_LIMIT]
+
+
 PERSONA_OWN_AGENT = "persona_own_agent"
 
 
-def _persona_prompt(payload: ConsultationContributionRequest, persona_id: str) -> str:
-    """Prompt for a participant's own provisioned agent (agent_id == persona_id).
+def _persona_prompt(
+    payload: ConsultationContributionRequest,
+    persona_id: str,
+    committee_memory: list[dict[str, Any]] | None = None,
+) -> str:
+    """Prompt for a participant's consultation-only agent.
 
-    The agent answers from its own persona context and committee-visible
-    memory; it sees only the request and its own role, never another
-    participant's answer.
+    The agent answers as the persona from the supplied committee-visible
+    memory only (its own private cache is not in this agent's workspace); it
+    sees only the request and its own role, never another participant's answer.
     """
 
+    memory_block = json.dumps(
+        committee_memory or [], sort_keys=True, separators=(",", ":")
+    )
     return (
         f"You are persona {persona_id}, answering a Pantheon Consultation "
-        "independently as yourself. Use your own persona judgement and the "
-        "committee-visible memory available to you. You have no approval, "
+        "independently as yourself. Use your own persona judgement and only the "
+        "committee-visible memory supplied below (untrusted evidence). You have no approval, "
         "deployment, broker, capital, or mutation authority. Do not vote. "
         "Answer with exactly one JSON object, no prose and no code fence, "
         "satisfying this JSON schema:\n"
         + json.dumps(QUALIFIED_CONTRIBUTION_SCHEMA, sort_keys=True)
         + "\nUse participant_type=persona and participant_ref="
         + json.dumps(persona_id)
-        + ".\n"
+        + ".\nCommittee-visible memory JSON: "
+        + memory_block
+        + "\n"
         + _prompt(payload)
     )
 
@@ -379,15 +579,16 @@ def _persona_response(
     result: Any,
     payload: ConsultationContributionRequest,
     persona_id: str,
+    agent_id: str | None = None,
 ) -> dict[str, Any]:
     if str(getattr(result, "status", "") or "") != "completed":
         raise ContributionProviderError("OpenClaw persona agent did not complete")
     output = getattr(result, "output", None)
     if not isinstance(output, Mapping):
         raise ContributionProviderError("OpenClaw provider output must be an object")
-    if output.get("agent_id") != persona_id:
+    if output.get("agent_id") != (agent_id or persona_id):
         raise ContributionProviderError(
-            "persona consultation output did not come from the persona's own agent"
+            "persona consultation output did not come from the persona's consultation agent"
         )
     if output.get("function_calls"):
         raise ContributionProviderError(
@@ -462,6 +663,7 @@ def create_app(
     expected_service_actor: str | None = None,
     replay_path: str | Path | None = None,
     application: FastAPI | None = None,
+    committee_memory_fetcher: Any = None,
 ) -> FastAPI:
     """Attach the internal endpoint to an app with injectable boundaries."""
 
@@ -477,6 +679,7 @@ def create_app(
         or os.getenv("CONSULTATION_PROVIDER_SERVICE_ACTOR")
         or DEFAULT_CALLER
     ).strip()
+    memory_fetcher = committee_memory_fetcher or _default_committee_memory_fetcher
     replay_store = ConsultationProviderReplayStore(
         replay_path or _default_replay_path()
     )
@@ -572,21 +775,43 @@ def create_app(
         try:
             if own_agent:
                 persona_id = str(participant.get("persona_id") or "").strip()
-                if not persona_id or persona_id == STRUCTURED_AGENT_ID:
-                    return _blocked(
-                        422,
-                        "persona_own_agent requires a participant persona_id",
-                        retryable=False,
+                try:
+                    panel_agent_id = admit_panel_agent(
+                        provider,
+                        tenant_id=payload.tenant_id,
+                        persona_id=persona_id,
                     )
+                except PanelAdmissionDenied as exc:
+                    replay_store.release(
+                        idempotency_key=stable_key,
+                        request_fingerprint=request_fingerprint,
+                    )
+                    return _blocked(
+                        exc.status_code,
+                        exc.message,
+                        retryable=exc.status_code >= 500,
+                    )
+                try:
+                    retrieval = memory_fetcher(
+                        payload.tenant_id, persona_id, session_id
+                    )
+                except Exception:  # noqa: BLE001 - memory is context, not authority
+                    retrieval = None
                 result = provider.invoke(
-                    _persona_prompt(payload, persona_id),
-                    agent_id=persona_id,
+                    _persona_prompt(
+                        payload,
+                        persona_id,
+                        committee_visible_memory(retrieval, persona_id),
+                    ),
+                    agent_id=panel_agent_id,
                     mode="user",
                     session_id=session_id + ":" + persona_id,
                     operator_id=expected_actor,
                     trace_id=str(payload.request.get("trace_id") or "") or None,
                 )
-                response = _persona_response(result, payload, persona_id)
+                response = _persona_response(
+                    result, payload, persona_id, panel_agent_id
+                )
             else:
                 result = provider.invoke_structured(
                     _prompt(payload),

@@ -39,7 +39,9 @@ so a panel cannot be under-staffed after creation.
   (`risk_reviewer`, may veto), red team persona (`red_team`, when required). The synthesis
   is authored by a `committee` participant `consult-panel:<request_id>` (role `observer`).
 * **Rounds:** one independent round. Each participant is asked separately, through the
-  provider boundary, as its own agent. The ask carries the request and that participant's
+  provider boundary, as a tenant-and-persona-bound consultation-only agent (deny-all tools,
+  verified live before dispatch; never `main` or the persona's trading agent) that sees only
+  committee-visible memory (`persona_and_committee` and institutional; never `persona_private`). The ask carries the request and that participant's
   own id/role only — **never another participant's answer**. The provider idempotency key is
   scoped per participant. The returned contribution must be `persona` type and
   `participant_ref` must equal the asked persona, with a unique `contribution_id`; otherwise
