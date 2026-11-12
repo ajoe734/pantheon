@@ -765,7 +765,14 @@ def validate_factor_rule_logic(
         allow_literal_constants=False,
     )
     signal_refs, all_const_params = collect_expression_refs_and_params(signal_ast)
-    allowed_signal_refs = set(declared_inputs.keys()) | set(BUILT_IN_PRICE_VOLUME_FIELDS)
+    has_minute_input = any(
+        d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS for d in declared_inputs.values()
+    )
+    # Minute strategies must read every price field through a declared governed input;
+    # implicit built-ins would bypass minute dataset/PIT/lag/session constraints.
+    allowed_signal_refs = set(declared_inputs.keys()) | (
+        set() if has_minute_input else set(BUILT_IN_PRICE_VOLUME_FIELDS)
+    )
     unknown_signal_refs = signal_refs - allowed_signal_refs
     if unknown_signal_refs:
         raise FactorRuleValidationError(
@@ -1246,11 +1253,18 @@ def resolve_point_in_time_inputs(
         )
 
     env: dict[str, tuple[float, ...]] = {}
+    minute_bound = any(
+        isinstance(i, Mapping) and i.get("dataset") in INTRADAY_PRICE_VOLUME_DATASETS
+        for i in strategy_logic.get("inputs", ())
+    )
+    if minute_bound:
+        # Never expose generic/raw closes or synthesized vwap to a minute strategy.
+        close_series = ()
     if close_series:
         env["close"] = close_series
 
     # Populate built-in price-volume fields if available in features
-    for pv_field in BUILT_IN_PRICE_VOLUME_FIELDS:
+    for pv_field in () if minute_bound else BUILT_IN_PRICE_VOLUME_FIELDS:
         if pv_field == "close":
             continue
         raw_pv = feature_map.get(pv_field)

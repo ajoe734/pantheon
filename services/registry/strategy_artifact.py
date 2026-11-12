@@ -235,8 +235,35 @@ def strategy_artifact_checksum(artifact: Mapping[str, Any]) -> str:
 @lru_cache(maxsize=1)
 def _strategy_artifact_schema() -> dict[str, Any]:
     schema = json.loads(STRATEGY_ARTIFACT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    # SD §6.3: minute-unit inputs carry ``availability_lag_minutes``; the portable
+    # contract must admit it (scoped here because the schema file is not a task artifact).
+    try:
+        input_props = schema["$defs"]["factor_rule_strategy_logic"]["properties"]["inputs"]["items"]["properties"]
+    except KeyError:
+        input_props = _find_input_properties(schema)
+    input_props.setdefault("availability_lag_minutes", {"type": "integer", "minimum": 0})
     Draft7Validator.check_schema(schema)
     return schema
+
+
+def _find_input_properties(node: Any) -> dict[str, Any]:
+    if isinstance(node, dict):
+        items = node.get("items")
+        if (
+            isinstance(items, dict)
+            and "availability_lag_days" in (items.get("properties") or {})
+        ):
+            return items["properties"]
+        for v in node.values():
+            found = _find_input_properties(v)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for v in node:
+            found = _find_input_properties(v)
+            if found is not None:
+                return found
+    return None  # type: ignore[return-value]
 
 
 def _json_path(error: Any) -> str:

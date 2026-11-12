@@ -219,3 +219,74 @@ def test_minute_decision_time_must_be_timezone_aware(_restore_catalogue, bad):
         factor_rule.evaluate_factor_rule_view(
             _art(), None, features={"px": series}, decision_time="2026-11-10T09:02:00+08:00"
         )
+
+
+def _px_obs():
+    return [
+        _obs("2026-11-10T09:00:00+08:00", 100.0, "2026-11-10T09:00:00+08:00"),
+        _obs("2026-11-10T09:01:00+08:00", 101.0, "2026-11-10T09:01:00+08:00"),
+    ]
+
+
+@pytest.mark.parametrize("field", ["close", "vwap", "open", "high", "low", "volume"])
+@pytest.mark.parametrize("slot", ["signal", "long_when", "short_when", "flat_when", "strength"])
+def test_minute_strategy_rejects_implicit_builtin_price_refs(_restore_catalogue, field, slot):
+    _register_minute_close()
+    logic = _minute_logic(lag_minutes=3)
+    ref = {"op": "ts_mean", "args": [{"ref": field}, {"const_param": "w"}]}
+    gt = {"op": "gt", "args": [ref, {"const_param": "w"}]}
+    if slot == "signal":
+        logic["signal"] = ref
+    elif slot == "long_when":
+        logic["entry"]["long_when"] = gt
+    elif slot == "short_when":
+        logic["entry"]["short_when"] = gt
+    elif slot == "flat_when":
+        logic["exit"]["flat_when"] = gt
+    else:
+        logic["strength"] = {"op": "clip01", "args": [ref]}
+    with pytest.raises(factor_rule.FactorRuleValidationError, match="undeclared"):
+        factor_rule.validate_factor_rule_logic(logic, {"w": 2})
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.evaluate_factor_rule_view(
+            {"strategy_logic": logic, "parameters": {"w": 2}},
+            [900.0, 1000.0],
+            features={"px": _px_obs()},
+            decision_time="2026-11-10T09:03:00+08:00",
+        )
+
+
+def test_minute_env_never_exposes_generic_closes(_restore_catalogue):
+    _register_minute_close()
+    env = factor_rule.resolve_point_in_time_inputs(
+        _minute_logic(lag_minutes=3), [900.0, 1000.0], features={"px": _px_obs()},
+        decision_time="2026-11-10T09:04:00+08:00",
+    )
+    assert set(env) == {"px"}
+
+
+def test_full_artifact_with_minute_lag_validates_and_registers(_restore_catalogue):
+    import copy
+
+    from services.registry.strategy_artifact import (
+        build_strategy_artifact_registry_payload,
+        validate_strategy_artifact,
+    )
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+    _register_minute_close()
+    art = copy.deepcopy(_sample_factor_rule_artifact())
+    logic = art["strategy_logic"]
+    logic["inputs"][0].update(dataset="tw_price_1m", field="close", availability_lag_days=0)
+    for lag in (3, 5):
+        logic["inputs"][0]["availability_lag_minutes"] = lag
+        validate_strategy_artifact(art)
+        build_strategy_artifact_registry_payload(
+            {"registry_id": art["artifact_id"], "artifact_state": "candidate", "strategy_artifact": art}
+        )
+    logic["inputs"][0]["availability_lag_minutes"] = 2  # below governed minimum
+    with pytest.raises(StrategyArtifactValidationError):
+        validate_strategy_artifact(art)
+    logic["inputs"][0]["availability_lag_minutes"] = -1  # schema minimum
+    with pytest.raises(StrategyArtifactValidationError):
+        validate_strategy_artifact(art)

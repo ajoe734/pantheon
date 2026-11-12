@@ -32,9 +32,12 @@
         "review fix P1: a published day that later fails/quarantines is durably withdrawn (tombstone/replacement line) - public GET 200 -> 404, survives reload, daily snapshot bytes unchanged",
         "review fix P2: session ends 13:30 (270 regular minutes); last 60m bucket is 13:00-13:30 half bucket (expected 30), 13:30 auction bar kept in it; 5m/15m/30m full buckets; early-close via session_close_minute",
         "review fix P1: minute-unit lag enforced in validation (availability_lag_minutes) and point-in-time resolution (registered 3-minute lag hides 09:01 bar at 09:02, visible at 09:04)",
-        "review fix P2: cross_session=false resets windows to the latest visible Taipei session; true keeps prior session"
+        "review fix P2: cross_session=false resets windows to the latest visible Taipei session; true keeps prior session",
+        "review fix P1: minute-bound strategies (any declared tw_price_*m input) reject implicit built-in close/open/high/low/volume/vwap refs in signal/entry/exit/strength at validation, and resolve_point_in_time_inputs exposes no generic closes/synthetic vwap; public-evaluator regressions in test_strategy_artifact_bar_frequency.py",
+        "review fix P2: strategy_artifact schema load admits optional integer availability_lag_minutes>=0 on inputs; full-artifact validate + registry payload tests for lag 3/5 accepted, 2 and -1 rejected"
       ],
-      "rereview_result": "439 passed, 48 skipped (exit 0) after addressing review REJECT of PR #7234"
+      "rereview_result": "439 passed, 48 skipped (exit 0) after addressing review REJECT of PR #7234",
+      "bounded_rerun": "timeout 550 python -m pytest services/registry/test_factor_rule.py services/registry/test_strategy_artifact.py services/registry/tests services/research/tests/test_intraday_bars.py services/source_ingestion/tests/test_snapshot_frequency_isolation.py services/source_ingestion/tests/test_intraday_snapshot_projection.py => 163 passed, exit 0"
     },
     "merged": {
       "status": "not_yet",
