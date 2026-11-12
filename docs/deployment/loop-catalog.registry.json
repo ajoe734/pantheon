@@ -745,7 +745,7 @@
         "domain": "persona_control_plane",
         "service_or_doc": "services/control-plane/cron and services/persona",
         "authoritative_write_owner": "persona schedule registry, OpenClaw cron run records, and OODA packet store",
-        "current_controller_owner": null
+        "current_controller_owner": "persona_cycle_controller"
       },
       "trigger_model": {
         "primary": "cron/scheduled",
@@ -766,8 +766,8 @@
           "eligible persona lifecycle state",
           "required per-persona OODA schedule policy"
         ],
-        "query": "planned: list every eligible persona and its required Observe, Orient, Decide, Act-proposal, and Learn schedule",
-        "query_status": "planned"
+        "query": "Persona owner records in paper_running, paper_owner or consultable with an authoritative tenant and active status",
+        "query_status": "implemented"
       },
       "actual_state": {
         "sources": [
@@ -775,19 +775,19 @@
           "OODA packet store",
           "persona schedule and packet health records"
         ],
-        "query": "planned: list schedule identity, last terminal cron run, persisted OODA packet, orphan state, and controller health per eligible persona",
-        "query_status": "planned"
+        "query": "OpenClaw daily-cycle jobs and terminal cron.runs joined to durable packet claims and per-persona health",
+        "query_status": "implemented"
       },
       "controller_contract": {
-        "status": "not_implemented",
-        "controller_name": null,
-        "desired_state_query": null,
-        "actual_state_query": null,
-        "idempotency_key": "planned: persona_id + schedule_kind + cadence + policy_version",
-        "duplicate_event_policy": "planned: duplicate registration and cron completion events converge on one schedule and one packet per cron run identity",
-        "restart_behavior": null,
-        "liveness_metric": null,
-        "operator_truth_projection": "planned: LOOP-PROD-OODA-001 and LOOP-PROD-BFF-001"
+        "status": "implemented",
+        "controller_name": "persona_cycle_controller",
+        "desired_state_query": "eligible lifecycle records from the persistent Persona owner",
+        "actual_state_query": "OpenClaw persona daily-cycle registrations, terminal run identities and persisted OODA packets",
+        "idempotency_key": "tenant_id + persona_id + workflow_id + cron_job_id + runId (or runAtMs)",
+        "duplicate_event_policy": "Exact schedule readback converges duplicates; durable packet claims fence turns and risk actions. Uncertain attempts become terminal observing failures without a second turn.",
+        "restart_behavior": "Persona service lifespan restarts reconciliation. Durable packets on the shared volume replay run claims. Provisioning first-evaluation schedules remain owned by provisioning.",
+        "liveness_metric": "last_heartbeat_at and per-persona last packet, reached stage, failure reason and risk result",
+        "operator_truth_projection": "Management persona health exposes persona_cycle_health; canonical loop health remains twelve rows. Hosted acceptance is separate from this implemented source contract."
       },
       "notes": [
         "This overlay composes pre-LEAN research, interaction, consultation, governance, telemetry, and learning loops; it excludes capital_pool_execution because persona Act is proposal-only and excludes bff_health_monitoring because platform health is not a persona decision stage.",

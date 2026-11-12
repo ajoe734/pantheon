@@ -213,6 +213,10 @@ class OodaPacketsPort:
             json.loads(json.dumps(packet))
             for packet in raw_records
             if _ooda_packet_id(packet)
+            # Daily-cycle packets can contain private reasoning and staged
+            # memory. They require an exact authenticated tenant context.
+            and ("persona_cycle" not in packet or
+                 bool(selected_tenant.get()) and packet.get("tenant_id") == selected_tenant.get())
         ]
 
         if status:
