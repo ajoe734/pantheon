@@ -71,7 +71,9 @@ def _module_realpath(module: ModuleType) -> str | None:
     if not filename:
         return None
     try:
-        return os.path.realpath(filename)
+        # Same resolution semantics as _module_file (Path.resolve, including its
+        # RuntimeError on symlink loops); only the containment test is string-based.
+        return str(Path(filename).resolve())
     except OSError:
         return None
 
