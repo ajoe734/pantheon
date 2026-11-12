@@ -204,6 +204,10 @@ class RegistryEntryCreate:
     evaluation_summary: Optional[dict[str, Any]] = None
     rollback_target: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
+    replication_success: Optional[bool] = None
+    replication_proof: Optional[dict[str, Any]] = None
+    """Admitted gate verdict persisted by the producer's own PromotionGate
+    validation at registration; never set from a bare client flag."""
 
     def __post_init__(self):
         if isinstance(self.artifact_type, str):
@@ -257,6 +261,9 @@ class RegistryEntry:
     ``_authorize_read``/``_authorize_write``); it is never reassigned by a
     later mutation, unlike ``last_actor``. ``BUILTIN_TENANT`` marks a
     checked-in bootstrap artifact — see that constant's docstring."""
+    replication_success: Optional[bool] = None
+    replication_proof: Optional[dict[str, Any]] = None
+    """Immutable admitted replication-gate verdict (None = unknown/historical)."""
 
     def to_dict(self) -> dict:
         """Durable JSONB payload for a Postgres owner store row.
@@ -287,6 +294,8 @@ class RegistryEntry:
             "updated_at": self.updated_at,
             "last_actor": self.last_actor,
             "owner_tenant": self.owner_tenant,
+            "replication_success": self.replication_success,
+            "replication_proof": self.replication_proof,
         }
 
     @classmethod
@@ -314,6 +323,8 @@ class RegistryEntry:
             updated_at=d.get("updated_at"),
             last_actor=d.get("last_actor"),
             owner_tenant=d.get("owner_tenant"),
+            replication_success=d.get("replication_success"),
+            replication_proof=d.get("replication_proof"),
         )
 
 

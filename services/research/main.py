@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import json as _json
@@ -2252,13 +2253,110 @@ def _evolution_oos_context(
 
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
     backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
-    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    gate = _ProofCapturingGate(
+        SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    )
+
+    def _record_owned(evaluation: Dict[str, Any]) -> Optional[str]:
+        run_id = backtests.record(evaluation)
+        if run_id:
+            gate.evaluations[run_id] = copy.deepcopy(evaluation)  # the exact evaluation the gate judges
+            _bind_backtest_run_owner(data_dir, run_id, tenant_id=tenant_id, decision_id=decision_id)
+        return run_id
+
     factory = executor.build_gate_request_factory(
         spec=spec, dataset=dataset, decision_id=decision_id, tenant_id=tenant_id,
-        record_backtest=backtests.record, family_id=family_id, timestamp=utc_now(),
+        record_backtest=_record_owned, family_id=family_id, timestamp=utc_now(),
     )
 
     return gate, factory
+
+
+class _ProofCapturingGate:
+    """Delegates to the real gate and keeps each response so registration can send the real proof.
+
+    The proof/evaluation transport is scoped to this gate (one executing run); a rejected
+    judgement is released immediately and everything else dies with the gate.
+    """
+
+    def __init__(self, gate: Any) -> None:
+        self._gate = gate
+        self.proofs: Dict[str, Dict[str, Any]] = {}
+        self.evaluations: Dict[str, Dict[str, Any]] = {}
+
+    def release(self, run_id: Any) -> None:
+        self.proofs.pop(str(run_id or ""), None)
+        self.evaluations.pop(str(run_id or ""), None)
+
+    def get_family_trial_count(self, family_id: str) -> int:
+        return self._gate.get_family_trial_count(family_id)
+
+    def evaluate_candidate(self, request: Any) -> Any:
+        try:
+            response = self._gate.evaluate_candidate(request)
+        except BaseException:
+            self.proofs.clear()
+            self.evaluations.clear()
+            raise
+        for result in getattr(response, "results", []) or []:
+            if getattr(result, "criterion_id", "") == "real_backtest_validation":
+                run_id = str((getattr(result, "details", None) or {}).get("backtest_run_id") or "")
+                if not run_id:
+                    continue
+                if getattr(response, "passed", False) and callable(getattr(response, "to_dict", None)):
+                    self.proofs[run_id] = response.to_dict()
+                else:
+                    self.release(run_id)
+        # Evaluations recorded for runs that never produced a passing proof are not retained.
+        for run_id in [r for r in self.evaluations if r not in self.proofs]:
+            self.evaluations.pop(run_id, None)
+        return response
+
+
+def _producer_proof_registration(
+    *, data_dir: Path, child: Dict[str, Any], verdict: Dict[str, Any], decision_id: str, run_id: str,
+    gate: Any = None,
+) -> Dict[str, Any]:
+    """Registration fields for a gate-passed child: the real proof, its run evaluation and lineage.
+
+    Records the actual gate verdict (trial/mandate context + digest) in the server-owned run
+    record so the Registry can authenticate it through the owner-binding readback.
+    """
+    from services.registry.promotion.gate import real_backtest_verdict_digest
+    backtest_run_id = str(verdict.get("backtest_run_id") or "")
+    proof = getattr(gate, "proofs", {}).pop(backtest_run_id, None)
+    results = (proof or {}).get("results") if isinstance(proof, dict) else None
+    details = next(
+        (r.get("details") for r in results or [] if r.get("criterion_id") == "real_backtest_validation"), None
+    )
+    evaluation = getattr(gate, "evaluations", {}).pop(backtest_run_id, None)
+    summary = {
+        "out_of_sample_gate": dict(verdict),
+        "decision_id": decision_id,
+    }
+    if not isinstance(details, dict) or not evaluation:
+        return {"evaluation_summary": summary, "producer_run_id": run_id}
+    wire = json.loads(json.dumps(proof, default=str))
+    wire["replication_results"] = wire.pop("results")
+    wire["backtest_run_id"] = backtest_run_id
+    full = json.loads(json.dumps(evaluation, default=str))
+    summary.update(
+        backtest_run_id=backtest_run_id, out_of_sample_sharpe_ratio=details.get("out_of_sample_sharpe_ratio"),
+        max_drawdown=abs(float(details.get("out_of_sample_max_drawdown"))),
+        round_trips=details.get("out_of_sample_round_trips"),
+    )
+    wire["evaluation_summary"] = summary
+    _bind_backtest_run_gate_verdict(
+        data_dir, backtest_run_id,
+        {"admission_status": wire.get("admission_status"), "trial_count": details.get("trial_count"),
+         "mandate_max_drawdown": details.get("mandate_max_drawdown"), "family_id": details.get("family_id"),
+         "verdict_digest": real_backtest_verdict_digest(json.loads(json.dumps(details, default=str)))},
+    )
+    # The artifact checksum is fixed before the run exists, so the exact backtest run is the producer run.
+    return {
+        "evaluation_summary": summary, "producer_run_id": backtest_run_id, "replication_proof": wire,
+        "backtest_evaluation": full,
+    }
 
 
 def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
@@ -2336,7 +2434,10 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                         "artifact_state": "candidate",
                         "strategy_artifact": child,
                         "producer_run_id": run_id,
-                        "evaluation_summary": {"out_of_sample_gate": verdict, "decision_id": decision_id},
+                        **_producer_proof_registration(
+                            data_dir=Path(ALPHA_REPLICATION_DATA_DIR), child=child, verdict=verdict,
+                            decision_id=decision_id, run_id=run_id, gate=gate,
+                        ),
                         "metadata": {k: v for k, v in entry_meta.items() if k == "persona_id"},
                     },
                 )
@@ -2351,6 +2452,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                         raise RegistryVersionConflict(str(exc.detail)) from None
                 else:
                     raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+        getattr(gate, "release", lambda _run: None)(verdict.get("backtest_run_id"))  # adopted/registered: release
         if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") != "candidate":
             raise _RetrainFailure("register_candidate", "Registry did not report the child as a candidate")
         run = get_store().get_run(run_id) or {}
@@ -4105,6 +4207,113 @@ def _visible_saved_artifacts(tenant_id: str) -> List[Dict[str, Any]]:
 _ARTIFACT_READ_ROLES = tuple(dict.fromkeys(
     ("viewer", "view_only", "operator", "approver", "admin", "reviewer", *AUTHENTICATED_SERVICE_ROLES)
 ))
+
+
+_BACKTEST_OWNER_READ_ROLES = tuple(dict.fromkeys(("registry-writer", *AUTHENTICATED_SERVICE_ROLES)))
+
+
+def _backtest_owner_path(data_dir: Path) -> Path:
+    return Path(data_dir) / "backtest_run_owners.json"
+
+
+def _update_backtest_owner_file(data_dir: Path, mutate: Any) -> None:
+    """Serialised reload/merge/atomic-replace of the authoritative owner file.
+
+    An interprocess flock spans the whole cycle, the temp file is unique per writer, and a
+    present-but-corrupt file fails closed (never reset to empty, which would drop other tenants).
+    """
+    import fcntl
+    import tempfile
+
+    path = _backtest_owner_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_name(path.name + ".lock"), "a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            if path.exists():
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(loaded, dict):
+                    raise ValueError(f"{path.name} is not a JSON object")
+            else:
+                loaded = {}
+            if mutate(loaded) is False:
+                return
+            fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(loaded, indent=2, sort_keys=True) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp_name, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _bind_backtest_run_owner(data_dir: Path, run_id: str, *, tenant_id: str, decision_id: str) -> None:
+    """Server-side tenant/decision binding written by the code that ran the protocol."""
+    def mutate(loaded: Dict[str, Any]) -> None:
+        loaded[run_id] = {"tenant_id": tenant_id, "decision_id": decision_id}
+
+    _update_backtest_owner_file(data_dir, mutate)
+
+
+def _bind_backtest_run_gate_verdict(data_dir: Path, run_id: str, gate_verdict: Dict[str, Any]) -> None:
+    """Persist the real gate decision context beside the run owner record (server-side only)."""
+    def mutate(loaded: Dict[str, Any]) -> Optional[bool]:
+        owner = loaded.get(run_id)
+        if not isinstance(owner, dict):
+            return False  # an unbound run never gains a verdict
+        owner["gate_verdict"] = gate_verdict
+        return None
+
+    _update_backtest_owner_file(data_dir, mutate)
+
+
+@app.get("/api/research-orchestrator/backtest-runs/{run_id}/owner-binding")
+def read_backtest_run_owner_binding(
+    run_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    """Read-only producer proof of a recorded backtest run, bound to the authenticated tenant.
+
+    The caller bearer is verified by the strict Research verifier (viewer roles are
+    not admitted).  The run is returned only when the server-owned run owner record
+    names the same tenant; foreign or unbound runs are 404, never disclosed.
+    """
+    try:
+        verified = authenticate_tenant(
+            authorization=authorization, tenant_id=x_tenant_id, service_prefix="RESEARCH",
+            required_roles=_BACKTEST_OWNER_READ_ROLES,
+        ).tenant_id
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except TenantBoundaryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore
+
+    record = SharedBacktestRunStore(data_dir / "backtest_runs.json").get(run_id)
+    try:
+        owners = json.loads(_backtest_owner_path(data_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        owners = {}
+    owner = owners.get(run_id) if isinstance(owners, dict) else None
+    if not record or not isinstance(owner, dict) or owner.get("tenant_id") != verified:
+        raise HTTPException(status_code=404, detail="backtest run not found for tenant")
+    return {
+        "backtest_run_id": run_id, "tenant_id": verified, "decision_id": owner.get("decision_id"),
+        "status": record.get("status"), "artifact_checksum": record.get("artifact_checksum"),
+        "dataset_id": record.get("dataset_id"), "source_dataset_refs": record.get("source_dataset_refs"),
+        "artifact_ref": record.get("artifact_ref"), "evaluation_digest": record.get("evaluation_digest"),
+        "gate_verdict": owner.get("gate_verdict"),
+    }
 
 
 def _authenticated_artifact_tenant(
