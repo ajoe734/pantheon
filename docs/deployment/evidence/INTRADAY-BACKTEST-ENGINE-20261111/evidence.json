@@ -25,12 +25,13 @@
         "Review REOPEN fix 2: evaluate_single_alpha_template / evaluate_alpha_template_library take intraday_replay_dataset and attach a governed 'intraday' block (1/5/15/30-bar IC, replay) beside the unchanged daily output (omitted -> identical to before). Templates are rebound onto the minute dataset only for price/volume inputs; others report available=false.",
         "Review REOPEN fix 3: govern_intraday_replay_dataset and compute_intraday_ic_metrics enforce reconciled source_snapshot (hash must match records), replay label/clock, availability ceiling and no quarantined/partial/waived flags; failures raise IntradayEvaluationUnavailable.",
         "Review REOPEN 2 fix A: GovernedVectorbtInputAdapter.prepare (the actual backtest boundary) now rejects intraday replay unless source_snapshot is reconciled_only=true tw_price_1m with content_sha256 that matches the records hash, and rejects quarantined/unreconciled records even with a refreshed hash (IntradayDataUnavailable).",
+        "Review REOPEN 3 fix: _minute_bound_template preflights every required minute input field against the governed bars; a missing field (e.g. vwap) raises IntradayEvaluationUnavailable -> available=false with a concrete reason, never synthesized or daily-substituted.",
         "Review REOPEN 2 fix B: forced flatten bars are simulated as SizeType.TargetAmount=0 (closes the ACTUALLY executed position, never reverses), so cash-limited/partial fills cannot leave or flip a residual; Taiwan sell tax on the flatten leg is resolved from the actual flow direction."
       ]
     },
     "tests": {
       "command": "python -m pytest services/research/tests/test_vectorbt_intraday.py services/research/vectorbt/test_adapter.py services/research/tests/test_alpha_template_evaluation.py services/research/tests/test_intraday_bars.py -q",
-      "result": "116 passed, 5 subtests passed (133s, real vectorbt 1.1.1). test_vectorbt_intraday.py 31 passed incl. real-store negatives (stale hash, quarantined+rehash, reconciled_only=false, missing hash) and cash-limited flatten net_position==0 with and without Taiwan costs.",
+      "result": "117 passed, 5 subtests passed (139s, real vectorbt 1.1.1). test_vectorbt_intraday.py 32 passed incl. missing-governed-vwap (VWAP0, alpha101:#41) -> intraday.available=false via public entrypoint; incl. real-store negatives (stale hash, quarantined+rehash, reconciled_only=false, missing hash) and cash-limited flatten net_position==0 with and without Taiwan costs.",
       "covers": [
         "no-look-ahead positive/negative (availability ceiling, bar_end clock, future-bar perturbation)",
         "next-bar-open sensitivity",
