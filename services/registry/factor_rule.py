@@ -184,6 +184,8 @@ def _seed_default_feature_catalogue() -> None:
                 )
             )
     seeded: tuple[tuple[str, str, int, str], ...] = (
+        ("tw_industry_classification", "industry_code", 0, "Prospectively observed official industry category"),
+        ("tw_sector_flows", "net_shares", 0, "Sector institutional net shares; maximum constituent availability"),
         ("tw_monthly_revenue", "yoy", 10, "Taiwan listed company monthly revenue YoY (%)"),
         ("tw_monthly_revenue", "mom", 10, "Taiwan listed company monthly revenue MoM (%)"),
         ("tw_monthly_revenue", "revenue", 10, "Taiwan listed company monthly revenue"),

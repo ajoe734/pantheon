@@ -449,6 +449,7 @@ def _collector_definition(
 
 # Governed TWSE/TPEx OpenAPI fundamentals (feature catalogue datasets).
 GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS: tuple[str, ...] = (
+    "tw_industry_classification",
     "tw_monthly_revenue",
     "tw_financial_statement",
     "tw_valuation_bwibbu",

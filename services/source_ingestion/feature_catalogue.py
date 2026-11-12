@@ -92,6 +92,12 @@ _INST_FIELDS = (
 )
 
 DATASET_SPECS: tuple[DatasetSpec, ...] = (
+    _ds("tw_industry_classification", "tw_industry_classification", "symbol", "daily", "event_time", 0,
+        ("twse:opendata/t187ap03_L", "tpex:mopsfin_t187ap03_O"),
+        "Official industry code observed prospectively; available only from acquisition, never backfilled"),
+    _ds("tw_sector_flows", "tw_sector_flow", "symbol", "daily", "event_time", 0,
+        ("tw_institutional_flows", "tw_industry_classification"),
+        "Sector total institutional net shares, projected onto each classified member; complete governed market required"),
     _ds("tw_price_daily", "tw_price_daily", "symbol", "daily", "date", 0, _PRICE_SOURCES,
         "Daily OHLCV bars for TWSE/TPEx equities"),
     _ds("tw_monthly_revenue", "tw_monthly_revenue", "symbol", "monthly", "event_time", 10,
@@ -131,6 +137,10 @@ for _ds_name in ("tw_price_daily",):
         _FIELDS.append(CatalogueField(_ds_name, _f, _f, _u, f"Daily {_f}"))
     _FIELDS.append(CatalogueField(_ds_name, "vwap", "vwap", "TWD", "Daily volume weighted average price"))
 _FIELDS += [
+    CatalogueField("tw_industry_classification", "industry_code", "industry_code", "category_code",
+                   "Official numeric industry category; not an ordinal score; acquired-time availability"),
+    CatalogueField("tw_sector_flows", "net_shares", "net_shares", "shares",
+                   "Sum of foreign, trust and dealer net shares across classified sector members; max constituent availability"),
     CatalogueField("tw_monthly_revenue", "yoy", "yoy", "percent", "Monthly revenue YoY (%)"),
     CatalogueField("tw_monthly_revenue", "mom", "mom", "percent", "Monthly revenue MoM (%)"),
     CatalogueField("tw_monthly_revenue", "revenue", "revenue", "TWD_thousand", "Monthly revenue"),
@@ -486,6 +496,10 @@ def feature_inputs_for_factor_rule(
 ) -> dict[str, list[dict[str, Any]]]:
     """Build the ``features`` mapping for a factor rule from governed observations."""
     obs_list = list(observations)
+    if any(item.get("dataset") == "tw_sector_flows" for item in inputs):
+        from services.registry.sector_features import sector_flow_observations
+
+        obs_list.extend(sector_flow_observations(obs_list, decision_time=decision_time))
     features: dict[str, list[dict[str, Any]]] = {}
     for item in inputs:
         series = read_feature_series(
