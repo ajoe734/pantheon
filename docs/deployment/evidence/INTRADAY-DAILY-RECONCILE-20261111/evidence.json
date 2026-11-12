@@ -13,12 +13,41 @@
       ]
     },
     "tests": {
-      "command": "python -m pytest services/source_ingestion/tests/test_intraday_reconcile.py services/source_ingestion/tests/test_intraday_store.py services/source_ingestion/tests/test_intraday_backfill.py -q",
-      "result": "55 passed (24 new in test_intraday_reconcile.py)",
-      "covers": ["pass", "fail per field (open/high/low/close/volume)", "tick-vs-pct tolerance and boundaries", "volume 2% boundary", "coverage <95%", "gap 11 min fail / 10 min pass", "no_official_row", "pending_official (absent partition, not-yet-available row)", "official_row_conflict", "minute_missing", "bars outside regular session", "already_quarantined", "dry-run writes nothing", "tampered shard / stale pass invisible", "refetch readmission (stale / still failing / passing)", "waiver flagged non-replication", "pass rate <90% not widened", "config rejects auto widen", "read-only report script"]
+      "command": "python -m pytest services/source_ingestion/tests/test_intraday_reconcile.py services/source_ingestion/tests/test_intraday_store.py -q (44 passed on the current head; backfill test file not rerun after fix)",
+      "result": "44 passed in that run (29 in test_intraday_reconcile.py incl. 5 review-fix regressions; those 5 fail on previous head ecb8ca4)",
+      "covers": [
+        "pass",
+        "fail per field (open/high/low/close/volume)",
+        "tick-vs-pct tolerance and boundaries",
+        "volume 2% boundary",
+        "coverage <95%",
+        "gap 11 min fail / 10 min pass",
+        "no_official_row",
+        "pending_official (absent partition, not-yet-available row)",
+        "official_row_conflict",
+        "minute_missing",
+        "bars outside regular session",
+        "already_quarantined",
+        "dry-run writes nothing",
+        "tampered shard / stale pass invisible",
+        "refetch readmission (stale / still failing / passing)",
+        "waiver flagged non-replication",
+        "pass rate <90% not widened",
+        "config rejects auto widen",
+        "read-only report script",
+        "P1 readmit/waiver sidecar bound to current resolved quarantine generation (re-quarantine, interrupted resolution fail closed)",
+        "P2 pass->pending withdraws pass on write, write=False stays read-only",
+        "P2 recovered clean day reconciles as pass with preserved timestamps; official change revalidated"
+      ]
     },
-    "merged": {"status": "not_yet", "note": "recorded after PR merge"},
-    "hosted": {"status": "not_run", "note": "W5 owns hosted proof; no hosted store/official snapshot was accessed by this source task"}
+    "merged": {
+      "status": "not_yet",
+      "note": "recorded after PR merge"
+    },
+    "hosted": {
+      "status": "not_run",
+      "note": "W5 owns hosted proof; no hosted store/official snapshot was accessed by this source task"
+    }
   },
   "design_decisions": {
     "quarantine": "IntradayStore.quarantine_symbol_day (manifest status quarantined => IntradayStore.read_rows returns []); detail carries outcome, violations {field, observed, official, tolerance, reason}, source_refs",
@@ -27,7 +56,8 @@
     "waiver": "operator + reason required; waived=true, replication_eligible=false, no bar_availability_ts, served only with include_waived=True",
     "pending_vs_missing": "official partition for the date absent or row not yet available => pending_official (nothing quarantined, day invisible); partition present but symbol row absent => no_official_row (quarantine)",
     "tick_table": "TWSE stock price bands parameterised in config; ETF 0.01 tick below 50 is not modelled (stock table gives the larger tolerance there)",
-    "volume_unit_factor": "config value 1000 is only an inference (K1 probe: raw KBar x1000 within 1.6-7.9% of official on all 267 rows); recorded in every result as inferred_unverified_not_acceptance, not an acceptance claim"
+    "volume_unit_factor": "config value 1000 is only an inference (K1 probe: raw KBar x1000 within 1.6-7.9% of official on all 267 rows); recorded in every result as inferred_unverified_not_acceptance, not an acceptance claim",
+    "review_fix_round": "readmitted/waived sidecars store quarantine_resolved_at/quarantined_at and the loader requires them to equal the current resolved quarantine record; reconcile_symbol_day evaluates resolved readmitted rows instead of reporting already_quarantined; pending outcomes in write mode unlink the pass sidecar"
   },
   "real_input_facts_not_pass": {
     "kbar_probe_residuals": "/tmp/pantheon-kbar-probe-20261112/real-finmind-kbar-probe-run1.json sha256 f0e74d5c9484fcfd2a1476a0a452b33264ea0002f8e6b325f33501747a25330b; all-267-row volume residuals 2330 6.49%/7.86%, 2317 1.63%/2.69% against the 2% target. These are all-row sums including the 14:30 row, regular-session sums were not reconstructable; under this contract such days would fail/quarantine, tolerance is not widened and no clean-day PASS is claimed.",

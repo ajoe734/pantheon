@@ -300,3 +300,71 @@ def test_official_snapshot_reader_and_report_script_are_read_only(tmp_path):
     report = json.loads(out.stdout)
     assert report["read_only"] and report["summary"]["outcome_counts"] == {"pass": 1}
     assert sorted(str(p) for p in tmp_path.rglob("*")) == before
+
+
+def _recovered(tmp_path):
+    store = _store(tmp_path)
+    store.put_symbol_day("2330", DAY, _bars(close=120.0))
+    off = OfficialDaily([_official()], [DAY])
+    _run(store, off)
+    later = NOW + timedelta(hours=1)
+    ok = readmit_after_refetch(store, off, "2330", DAY, _bars(fetched="2026-11-10T09:30:00Z"), CFG, clock=lambda: later)
+    assert ok.outcome == "pass"
+    return store, off, later
+
+
+def test_requarantine_after_readmit_closes_loader(tmp_path):
+    store, _, _ = _recovered(tmp_path)
+    assert len(read_reconciled_rows(store, "2330", DAY)) == 271
+    store.quarantine_symbol_day("2330", DAY, reason="new_conflicting_provider_rows")
+    assert read_reconciled_rows(store, "2330", DAY) == []
+
+
+def test_interrupted_resolution_fails_closed(tmp_path):
+    store, _, _ = _recovered(tmp_path)
+    q = store.quarantine_path("2330", DAY)
+    rec = json.loads(q.read_text())
+    rec.update(resolved_at=None, resolution=None)
+    q.write_text(json.dumps(rec))
+    assert read_reconciled_rows(store, "2330", DAY) == []
+
+
+def test_waiver_sidecar_bound_to_quarantine_generation(tmp_path):
+    store = _store(tmp_path)
+    store.put_symbol_day("2330", DAY, _bars(close=120.0))
+    _run(store, OfficialDaily([_official()], [DAY]))
+    record_waiver(store, "2330", DAY, operator="op", reason="r", clock=lambda: NOW)
+    assert read_reconciled_rows(store, "2330", DAY, include_waived=True)
+    store.quarantine_symbol_day("2330", DAY, reason="again")
+    assert read_reconciled_rows(store, "2330", DAY, include_waived=True) == []
+
+
+def test_pass_then_pending_withdraws_pass_but_dry_run_is_read_only(tmp_path):
+    store = _store(tmp_path)
+    store.put_symbol_day("2330", DAY, _bars())
+    assert _run(store, OfficialDaily([_official()], [DAY])).outcome == "pass"
+    assert len(read_reconciled_rows(store, "2330", DAY)) == 271
+    assert _run(store, OfficialDaily([], []), write=False).outcome == "pending_official"
+    assert len(read_reconciled_rows(store, "2330", DAY)) == 271
+    assert _run(store, OfficialDaily([], [])).outcome == "pending_official"
+    assert read_reconciled_rows(store, "2330", DAY) == []
+    store2 = _store(tmp_path / "b")
+    store2.put_symbol_day("2330", DAY, _bars())
+    _run(store2, OfficialDaily([_official()], [DAY]))
+    late = _official(avail="2026-11-10T10:00:00Z")
+    assert _run(store2, OfficialDaily([late], [DAY])).outcome == "pending_official"
+    assert read_reconciled_rows(store2, "2330", DAY) == []
+
+
+def test_recovered_day_reconciles_as_pass_with_real_timestamps(tmp_path):
+    store, off, later = _recovered(tmp_path)
+    before = read_reconciled_rows(store, "2330", DAY)[0]["reconciled_at"]
+    ro = _run(store, off, write=False)
+    assert ro.outcome == "pass" and ro.unchanged and ro.reconciled_at == before
+    assert pass_rate_summary([ro], CFG)["pass_rate"] == "1"
+    # official change is revalidated: a now-conflicting official value fails and re-quarantines
+    bad = OfficialDaily([_official(c=130.0)], [DAY])
+    assert _run(store, bad, write=False).outcome == "fail"
+    assert read_reconciled_rows(store, "2330", DAY)
+    assert _run(store, bad).outcome == "fail"
+    assert read_reconciled_rows(store, "2330", DAY) == []

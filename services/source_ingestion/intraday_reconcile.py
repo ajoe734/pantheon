@@ -371,6 +371,47 @@ def _fetched_at(rows: Sequence[Mapping[str, Any]], manifest_entry: Mapping[str, 
     return max(stamps) if stamps else _parse_ts(manifest_entry.get("stored_at"))
 
 
+def _recovery_state(store: IntradayStore, symbol: str, day: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """(sidecar, quarantine record) iff the sidecar is bound to the *current, resolved*
+    quarantine generation. Unresolved, reopened or interrupted-resolution -> None (fail closed)."""
+    rec = read_record(store, symbol, day)
+    if not rec or rec.get("kind") not in ("readmitted", "waived"):
+        return None
+    qpath = store.quarantine_path(symbol, day)
+    try:
+        qrec = json.loads(qpath.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    resolved = qrec.get("resolved_at")
+    if not resolved or rec.get("quarantine_resolved_at") != resolved:
+        return None
+    if rec.get("quarantine_quarantined_at") != qrec.get("quarantined_at"):
+        return None
+    if bool(qrec.get("waived")) != (rec.get("kind") == "waived"):
+        return None
+    return rec, qrec
+
+
+def _bind_recovery(store: IntradayStore, symbol: str, day: str, qrec: Mapping[str, Any]) -> None:
+    """Bind the sidecar to the quarantine generation that has just been resolved."""
+    path = record_path(store, symbol, day)
+    rec = json.loads(path.read_text(encoding="utf-8"))
+    rec["quarantine_resolved_at"] = qrec.get("resolved_at")
+    rec["quarantine_quarantined_at"] = qrec.get("quarantined_at")
+    _atomic_write(path, (_canonical(rec) + "\n").encode("utf-8"))
+
+
+def _pending(store: IntradayStore, res: ReconciliationResult, write: bool, reason: str,
+             *, drop_record: bool) -> ReconciliationResult:
+    """Pending outcome; a write run withdraws any earlier pass so it cannot stay loader-visible."""
+    res.outcome, res.reason = OUTCOME_PENDING, reason
+    if write and drop_record:
+        stale = record_path(store, res.symbol, res.session_date)
+        if stale.exists():
+            stale.unlink()
+    return res
+
+
 # ---------------------------------------------------------------- reconcile
 def reconcile_symbol_day(
     store: IntradayStore,
@@ -391,10 +432,14 @@ def reconcile_symbol_day(
     off_rows = official.rows_for(sym, day)
     distinct = {r.ohlcv() for r in off_rows}
 
+    recovered: tuple[dict[str, Any], dict[str, Any]] | None = None
     if status == STATUS_QUARANTINED:
-        res.outcome, res.reason = OUTCOME_ALREADY_QUARANTINED, str((entry or {}).get("reason") or "")
-        return res
-    if status != STATUS_ACCEPTED:
+        recovered = _recovery_state(store, sym, day)
+        if (recovered is None or recovered[0].get("kind") != "readmitted"
+                or _file_sha(_readmit_rows_path(store, sym, day)) != recovered[0].get("shard_sha256")):
+            res.outcome, res.reason = OUTCOME_ALREADY_QUARANTINED, str((entry or {}).get("reason") or "")
+            return res
+    elif status != STATUS_ACCEPTED:
         if off_rows:
             res.outcome, res.reason = OUTCOME_MINUTE_MISSING, f"minute_status_{status or 'absent'}"
         return res
@@ -402,8 +447,7 @@ def reconcile_symbol_day(
     now = clock()
     if not off_rows:
         if day not in official.dates_present:
-            res.outcome, res.reason = OUTCOME_PENDING, "official_partition_not_available"
-            return res
+            return _pending(store, res, write, "official_partition_not_available", drop_record=True)
         res.outcome, res.reason = OUTCOME_NO_OFFICIAL, "no_official_row_for_symbol_day"
         return _quarantine(store, res, write, now)
     if len(distinct) > 1:
@@ -416,30 +460,37 @@ def reconcile_symbol_day(
     res.official_available_at = None if row.available_at is None else _iso(row.available_at)
     res.official = {k: str(getattr(row, k)) for k in (*PRICE_FIELDS, "volume")}
     if row.available_at is None or row.available_at > now:
-        res.outcome, res.reason = OUTCOME_PENDING, "official_row_not_yet_available"
-        return res
+        return _pending(store, res, write, "official_row_not_yet_available", drop_record=True)
 
-    rows = store.read_rows(sym, day)
+    if recovered is not None:
+        rec0 = recovered[0]
+        kind = "readmitted"
+        rows = _read_gz_lines(_readmit_rows_path(store, sym, day))
+        shard_hash, content_hash = rec0.get("shard_sha256"), rec0.get("content_hash")
+        fetched = _parse_ts(rec0.get("fetched_at"))
+        minute_ref = {"readmitted_rows_sha256": shard_hash, "row_count": len(rows)}
+        extra = {k: rec0.get(k) for k in ("quarantine_resolved_at", "quarantine_quarantined_at")}
+    else:
+        kind = "reconciled"
+        rows = store.read_rows(sym, day)
+        shard_hash, content_hash = entry.get("shard_sha256"), entry.get("content_hash")
+        fetched = _fetched_at(rows, entry)
+        minute_ref = {"shard_sha256": shard_hash, "content_hash": content_hash,
+                      "raw_response_hash": entry.get("raw_response_hash"), "row_count": entry.get("row_count")}
+        extra = None
     agg = aggregate_minutes(rows, cfg)
     res.observed = {k: _fmt(agg.get(k)) for k in (*PRICE_FIELDS, "volume", "raw_volume", "bar_count",
                                                   "coverage", "longest_missing_run")}
-    res.source_refs = {
-        "official": dict(row.ref),
-        "minute": {"shard_sha256": entry.get("shard_sha256"), "content_hash": entry.get("content_hash"),
-                   "raw_response_hash": entry.get("raw_response_hash"), "row_count": entry.get("row_count")},
-    }
+    res.source_refs = {"official": dict(row.ref), "minute": minute_ref}
     res.violations = evaluate_aggregate(agg, row, cfg)
     if res.violations:
         res.outcome, res.reason = OUTCOME_FAIL, ",".join(sorted({v["reason"] for v in res.violations}))
         return _quarantine(store, res, write, now)
 
-    fetched = _fetched_at(rows, entry)
     if fetched is None:
-        res.outcome, res.reason = OUTCOME_PENDING, "fetched_at_unknown"
-        return res
+        return _pending(store, res, write, "fetched_at_unknown", drop_record=True)
     prior = read_record(store, sym, day)
-    shard_hash = entry.get("shard_sha256")
-    if (prior and prior.get("kind") == "reconciled" and prior.get("shard_sha256") == shard_hash
+    if (prior and prior.get("kind") == kind and prior.get("shard_sha256") == shard_hash
             and prior.get("official_row_hash") == row.ref.get("line_sha256")
             and prior.get("config_hash") == cfg.config_hash):
         res.outcome, res.unchanged = OUTCOME_PASS, True
@@ -450,9 +501,9 @@ def reconcile_symbol_day(
     res.reconciled_at = _iso(reconciled)
     res.bar_availability_ts = _availability(rows, fetched, reconciled)
     if write:
-        _write_record(store, res, kind="reconciled", shard_sha256=shard_hash, content_hash=entry.get("content_hash"),
+        _write_record(store, res, kind=kind, shard_sha256=shard_hash, content_hash=content_hash,
                       row_count=len(rows), official_row_hash=row.ref.get("line_sha256"), cfg=cfg,
-                      fetched=fetched)
+                      fetched=fetched, extra=extra)
     return res
 
 
@@ -563,7 +614,8 @@ def readmit_after_refetch(
     _write_record(store, res, kind="readmitted", shard_sha256=_sha256(payload), content_hash=_sha256(_canonical(
         [[r["bar_start"], r["open"], r["high"], r["low"], r["close"], r["volume"]] for r in ordered])),
         row_count=len(ordered), official_row_hash=off.ref.get("line_sha256"), cfg=cfg, fetched=fetched)
-    store.resolve_quarantine(sym, day, resolution="refetch_reconciled_pass", waived=False)
+    resolved = store.resolve_quarantine(sym, day, resolution="refetch_reconciled_pass", waived=False)
+    _bind_recovery(store, sym, day, resolved)
     return res
 
 
@@ -590,8 +642,10 @@ def record_waiver(
     if record["shard_sha256"] is None:
         raise ReconcileError(f"{sym} {day} shard missing")
     _atomic_write(record_path(store, sym, day), (_canonical(record) + "\n").encode("utf-8"))
-    store.resolve_quarantine(sym, day, resolution=f"operator_waiver: {reason.strip()}", waived=True)
-    return record
+    resolved = store.resolve_quarantine(sym, day, resolution=f"operator_waiver: {reason.strip()}", waived=True)
+    _bind_recovery(store, sym, day, resolved)
+    return {**record, "quarantine_resolved_at": resolved.get("resolved_at"),
+            "quarantine_quarantined_at": resolved.get("quarantined_at")}
 
 
 # ---------------------------------------------------------------- loader-facing read
@@ -613,9 +667,11 @@ def read_reconciled_rows(
     if kind == "reconciled":
         path, ok = store.shard_path(sym, day), status == STATUS_ACCEPTED and entry.get("shard_sha256") == rec.get("shard_sha256")
     elif kind == "readmitted":
-        path, ok = _readmit_rows_path(store, sym, day), status == STATUS_QUARANTINED
+        path = _readmit_rows_path(store, sym, day)
+        ok = status == STATUS_QUARANTINED and _recovery_state(store, sym, day) is not None
     elif kind == "waived":
-        path, ok = store.shard_path(sym, day), include_waived and status == STATUS_QUARANTINED
+        path = store.shard_path(sym, day)
+        ok = include_waived and status == STATUS_QUARANTINED and _recovery_state(store, sym, day) is not None
     else:
         return []
     if not ok or _file_sha(path) != rec.get("shard_sha256"):
