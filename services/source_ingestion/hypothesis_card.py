@@ -79,6 +79,18 @@ _PREDICTION_SCHEMA: dict[str, Any] = {
     },
 }
 
+_IDEA_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["statement", "signal_inputs", "cited_spans"],
+    "properties": {
+        "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "signal_inputs": {"type": "array", "minItems": 1, "maxItems": 12,
+                          "items": _PREDICTION_SCHEMA["properties"]["observable"]},
+        "cited_spans": {"type": "array", "minItems": 1, "maxItems": 8, "items": _SPAN_SCHEMA},
+    },
+}
+
 
 def _card_properties(*, with_origin: bool) -> tuple[dict[str, Any], list[str]]:
     prediction_schema = {
@@ -87,6 +99,8 @@ def _card_properties(*, with_origin: bool) -> tuple[dict[str, Any], list[str]]:
                        if with_origin or k != "testability"},
     }
     props: dict[str, Any] = {
+        "screen_idea": _IDEA_SCHEMA,
+        "entry_idea": _IDEA_SCHEMA,
         "claim": {"type": "string", "minLength": 1, "maxLength": 600},
         "mechanism": {"type": "string", "minLength": 1, "maxLength": 1000},
         "signal_inputs": {
@@ -177,6 +191,9 @@ def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) ->
             f"cited_spans entries use source_record_id={source_record_id!r}; `start`/`end` are",
             "character offsets into the document and `exact_text` must equal document[start:end] exactly.",
             "signal_inputs name governed datasets/features; rule_sketch uses plain factor vocabulary only.",
+            "Separately include screen_idea (which stocks, in ordered steps) and entry_idea (when to buy).",
+            "Each idea has statement, signal_inputs [{dataset, field}], and exact cited_spans.",
+            "Omit an idea when absent from the document; never invent a missing screen or entry.",
             "Include predictions: two to four independently testable predictions implied by the stated mechanism.",
             "Each has statement, observable {dataset, field}, test_kind (event_window, regime_split,",
             "dose_response, lead_lag, cross_symbol_sign), expected_sign (+, -, 0),",
@@ -230,6 +247,12 @@ def finalize_card(
     if errors:
         raise CardRejected("schema_invalid", errors[0].message)
     verify_cited_spans(card, text=text, source_record_id=source_record_id)
+    for name in ("screen_idea", "entry_idea"):
+        if name in card:
+            verify_cited_spans(card[name], text=text, source_record_id=source_record_id)
+    missing = idea_missing_datasets(card)
+    if missing and card["testability"] != "not_testable":
+        card["testability"] = f"needs_data:{missing[0]}"
     if "predictions" in card:
         predictions = []
         for i, prediction in enumerate(card["predictions"]):
@@ -243,6 +266,18 @@ def finalize_card(
             predictions.append({**prediction, "testability": f"needs_data:{missing}" if missing else "testable"})
         card["predictions"] = predictions
     return card
+
+
+def idea_missing_datasets(card: Mapping[str, Any]) -> list[str]:
+    """Both unknown datasets and unknown fields are unmet data requirements."""
+    from services.registry.factor_rule import get_feature_definition
+
+    return sorted({
+        item["dataset"]
+        for name in ("screen_idea", "entry_idea") if name in card
+        for item in card[name]["signal_inputs"]
+        if get_feature_definition(item["dataset"], item["field"]) is None
+    })
 
 
 def prediction_missing_dataset(prediction: Mapping[str, Any]) -> str:
