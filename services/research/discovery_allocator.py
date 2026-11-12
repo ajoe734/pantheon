@@ -171,7 +171,7 @@ class DiscoveryAllocator:
             except Exception as exc:  # noqa: BLE001 - keep earlier bindings, record this failure
                 result.skipped.append({
                     "artifact_ref": ref,
-                    "reason": f"provision_failed:{type(exc).__name__}:{exc}"[:300],
+                    "reason": f"provision_failed:{type(exc).__name__}:{exc}"[:1500],
                 })
                 if isinstance(exc, OwnerUnreachable):
                     result.error = f"owner_unreachable:{exc.service}:{exc}"
@@ -365,12 +365,20 @@ def resolve_gate_passed(
     return passed, skipped
 
 
-def bundle_registry_id(artifact_checksum: str) -> str:
-    """Deterministic Registry id of the execution_bundle for one exact artifact."""
+def judged_artifact_ref(spec_view: Any) -> str:
+    """Registry id of the exact judged artifact: the inline artifact's own ``artifact_id``.
 
-    import hashlib as _hashlib
+    The gate judges the StrategySpec's inline ``strategy_artifact``; its identity
+    inside Registry is that artifact's ``artifact_id`` (an execution_bundle of the
+    same id).  Raises ``ValueError`` when there is no such id.
+    """
 
-    return f"artifact-gate-{_hashlib.sha256(str(artifact_checksum).encode()).hexdigest()[:20]}"
+    entry = _mapping(_mapping(spec_view).get("entry")) or _mapping(spec_view)
+    spec = _mapping(_mapping(entry.get("metadata")).get("strategy_spec"))
+    ref = str(_mapping(spec.get("strategy_artifact")).get("artifact_id") or "").strip()
+    if not ref:
+        raise ValueError("artifact_id_missing")
+    return ref
 
 
 def normalize_gate_candidate(passed: Mapping[str, Any], spec_view: Any, bundle_view: Any, *, tenant_id: str) -> dict[str, Any]:
@@ -404,7 +412,7 @@ def normalize_gate_candidate(passed: Mapping[str, Any], spec_view: Any, bundle_v
     if judged != passed.get("artifact_checksum"):
         raise ValueError("artifact_not_the_gate_judged_one")
     bundle = _mapping(_mapping(bundle_view).get("entry")) or _mapping(bundle_view)
-    bundle_id = bundle_registry_id(judged)
+    bundle_id = judged_artifact_ref(spec_view)
     bmeta = _mapping(bundle.get("metadata"))
     if bundle.get("registry_id") != bundle_id or bundle.get("artifact_type") != "execution_bundle":
         raise ValueError("execution_bundle_missing")
@@ -464,7 +472,7 @@ def make_production_ports(
             ref = str(item.get("strategy_spec_id") or "")
             try:
                 spec_view = call("registry", "GET", f"{registry_url}/api/registry/strategy-specs/{_up.quote(ref, safe='')}", None)
-                bundle_id = bundle_registry_id(str(item.get("artifact_checksum")))
+                bundle_id = judged_artifact_ref(spec_view)
                 try:
                     bundle_view = call(
                         "registry", "GET",
