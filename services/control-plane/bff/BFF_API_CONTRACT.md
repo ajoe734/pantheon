@@ -336,6 +336,30 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 | `/api/v1/bindings` | GET | CP-03 | `{ data: [PersonaCapitalBinding], meta }` | `persona_id`, `capital_pool_id`, `role`, `validity` |
 | `/api/v1/bindings/{binding_id}` | GET | CP-04 | `{ data: PersonaCapitalBinding + Persona, meta }` | — |
 
+#### 9.2.1 Governed quarterly paper allocation cycle
+
+Paper personas compete for paper capital once per quarter through the existing ranking and allocation
+path. Real capital allocation and its human approval path are unchanged; this surface can never create or
+apply a real (canary/live) rebalance.
+
+| Route | Method | Role | Response |
+|---|---|---|---|
+| `/bff/management/paper-allocation-cycles` | POST | operator | `{ data: { cycle, rebalance, applied, replayed, receipt }, meta }` |
+| `/bff/management/paper-allocation-cycles` | GET | read | `{ data: [PaperCycle], items, meta }`; filters `quarter`, `capital_pool_id` |
+
+* POST body: `quarter` (`YYYY-Qn`), `ranking_snapshot_id` (admitted quarterly snapshot of that quarter),
+  `capital_pool_id` (paper pool, `metadata.execution_context=paper`), optional `pool_health` (per persona
+  `risk_budget_factor` / `capacity_factor` / provenance). `Idempotency-Key` is required.
+* The Capital owner recomputes targets from the snapshot with policy `persona-paper-quarterly-allocation-v1`
+  (real tier caps S 25 % / A 15 % / B 8 %, +25 % quarterly increase cap, existing exclusions, total weight
+  never above 1.0), creates one proposal per tenant + quarter + pool, applies it automatically in the paper
+  ledger with an audit receipt and a rollback target. A rerun or catch-up returns the existing cycle.
+* Pool-health factors default to 1.0; the reason is stored per persona line (`pool_health_factors`).
+* Missing paper ledger / unique paper-owner binding skips that persona with a recorded reason; unknown
+  snapshot, period mismatch, non-paper pool or non-paper environment fail closed (4xx).
+* GET projects each cycle proposal with its lines, cap reasons, exclusions and factors; the same proposal is
+  also visible through `GET /bff/rebalances`.
+
 ### 9.3 Deployment Surfaces (DP-01–DP-04)
 
 **Canonical source**: BINDING_AND_DEPLOYMENT_SEMANTICS.md

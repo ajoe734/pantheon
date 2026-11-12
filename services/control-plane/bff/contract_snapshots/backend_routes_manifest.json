@@ -3,7 +3,7 @@
     "snapshot_date": "2026-11-12",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 615,
+    "total_routes": 617,
     "status_values": [
       "implemented",
       "alias",
@@ -3208,6 +3208,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/management/paper-allocation-cycles",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/management/paper-telemetry",
       "family": "unknown",
       "status": "implemented"
@@ -3648,6 +3654,12 @@
     {
       "method": "POST",
       "path": "/bff/management/nl/ask/stream",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/paper-allocation-cycles",
       "family": "unknown",
       "status": "implemented"
     },

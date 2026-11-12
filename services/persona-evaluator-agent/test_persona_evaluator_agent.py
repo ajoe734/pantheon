@@ -514,3 +514,95 @@ def test_max_personas_bound_applies_to_admitted_rows_in_order():
     fetch, _ = _fetch(items, [])
     got, _ = pea.collect_evidence("http://bff", QUARTER, {}, fetch)
     assert [i["persona_id"] for i in got] == [f"p{i}" for i in range(pea.MAX_PERSONAS)]
+
+
+# --- governed quarterly paper allocation cycle trigger -------------------------------------------------------------
+
+NEXT_QUARTER_NOW = NOW + 120 * 86400  # 2026-Q4 is after 2026-Q3 (NOW)
+
+
+def _seed_closed_quarter(tmp_path, items=None):
+    fetch, _ = _fetch(items or [_item("p1"), _item("p2")], [])
+    assert _run(tmp_path, fetch)["status"] == "ok"
+    return pea.Store(tmp_path / "state.json")
+
+
+def _cycle_fetch(log, *, applied=True, fail=False, pools=None):
+    def fetch(url, data=None, headers=None, timeout=20):
+        log.append((url, data, headers))
+        if "/strategy-pool" in url:
+            pid = url.split("/personas/")[1].split("/")[0]
+            if pools and pid in pools:
+                return pools[pid]
+            raise OSError("no pool")
+        if fail:
+            raise RuntimeError("owner refused")
+        return {"data": {"applied": applied, "replayed": False, "rebalance": {"rebalance_id": "rb-1"}}}
+    return fetch
+
+
+def _paper_cycle(store, fetch, pool="pool-paper", now=NEXT_QUARTER_NOW):
+    return pea.paper_cycle_once(store=store, bff_url="http://bff", bff_headers={"Authorization": "Bearer x"},
+                                persona_url="http://persona", persona_token="p", tenant="t1", paper_pool_id=pool,
+                                fetch=fetch, now=lambda: now)
+
+
+def test_saved_snapshot_records_the_paper_personas_for_the_quarter_close_cycle(tmp_path):
+    store = _seed_closed_quarter(tmp_path, [_item("p1"), _item("p2", state="frozen") | {"stage": "retired"}])
+    assert next(iter(store.load()["results"].values()))["paper_persona_ids"] == ["p1"]
+
+
+def test_cycle_waits_for_quarter_close_and_needs_a_configured_pool(tmp_path):
+    store = _seed_closed_quarter(tmp_path)
+    log = []
+    assert _paper_cycle(store, _cycle_fetch(log), now=NOW)["status"] == "waiting_for_quarter_close"  # same quarter
+    assert _paper_cycle(store, _cycle_fetch(log), pool="")["status"] == "not_configured"
+    assert not [e for e in log if "paper-allocation-cycles" in e[0]]
+
+
+def test_quarter_close_triggers_exactly_one_cycle_with_the_persisted_snapshot_and_is_remembered(tmp_path):
+    store = _seed_closed_quarter(tmp_path)
+    snapshot_id = store.load()["latest"][QUARTER]
+    log = []
+    record = _paper_cycle(store, _cycle_fetch(log))
+    assert record["status"] == "applied" and record["quarter"] == QUARTER and record["rebalance_id"] == "rb-1"
+    calls = [e for e in log if "paper-allocation-cycles" in e[0]]
+    assert len(calls) == 1
+    _, body, headers = calls[0]
+    assert body["ranking_snapshot_id"] == snapshot_id and body["quarter"] == QUARTER and body["capital_pool_id"] == "pool-paper"
+    assert headers["Idempotency-Key"] == f"paper-cycle:t1:{QUARTER}:pool-paper"
+    assert _paper_cycle(store, _cycle_fetch(log))["reused"] is True
+    assert len([e for e in log if "paper-allocation-cycles" in e[0]]) == 1
+
+
+def test_failed_cycle_is_recorded_and_retried_with_the_same_idempotency_key(tmp_path):
+    store = _seed_closed_quarter(tmp_path)
+    log = []
+    failed = _paper_cycle(store, _cycle_fetch(log, fail=True))
+    assert failed["status"] == "degraded" and "owner refused" in failed["reason"]
+    assert _paper_cycle(store, _cycle_fetch(log))["status"] == "applied"
+    keys = {e[2]["Idempotency-Key"] for e in log if "paper-allocation-cycles" in e[0]}
+    assert len(keys) == 1
+
+
+def test_pool_health_factors_come_from_recorded_health_and_stay_one_with_a_reason_otherwise():
+    health = {"gross_utilisation": {"status": "known", "value": 0.4}, "idle_day_share": {"status": "known", "value": 0.25}}
+    factors = pea.pool_health_factors(health, {"budget_full": 0.8})
+    assert factors["risk_budget_factor"] == 0.5 and factors["capacity_factor"] == 0.75 and factors["status"] == "known"
+    full = pea.pool_health_factors({"gross_utilisation": {"status": "known", "value": 0.95},
+                                    "idle_day_share": {"status": "known", "value": 0.0}}, {"budget_full": 0.8})
+    assert full["risk_budget_factor"] == 1.0 and full["capacity_factor"] == 1.0
+    unknown = pea.pool_health_factors({"gross_utilisation": {"status": "unknown", "value": None}}, {"budget_full": 0.8})
+    assert unknown["risk_budget_factor"] == 1.0 and unknown["capacity_factor"] == 1.0
+    assert unknown["status"] == "unavailable" and set(unknown["reasons"]) == {"risk_budget_factor", "capacity_factor"}
+    assert pea.pool_health_factors(health, None)["risk_budget_factor"] == 1.0  # no policy: unknown, never invented
+
+
+def test_collect_pool_health_records_the_reason_when_the_pool_is_missing(tmp_path):
+    pool = {"decision": {"policy": {"budget_full": 0.5}, "health": {"gross_utilisation": {"status": "known", "value": 0.25}}}}
+    got = pea.collect_pool_health(["p1", "p2"], persona_url="http://persona", token="t", tenant="t1",
+                                  fetch=_cycle_fetch([], pools={"p1": pool}))
+    assert got["p1"]["risk_budget_factor"] == 0.5
+    assert got["p2"]["risk_budget_factor"] == 1.0 and "pool health unavailable" in got["p2"]["reason"]
+    none = pea.collect_pool_health(["p1"], persona_url="http://persona", token="", tenant="t1", fetch=_cycle_fetch([]))
+    assert none["p1"]["risk_budget_factor"] == 1.0 and none["p1"]["status"] == "unavailable"
