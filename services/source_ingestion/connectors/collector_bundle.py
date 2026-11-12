@@ -878,6 +878,12 @@ class CollectorBundleAdapter:
             ):
                 if metadata.get(market_key) not in (None, "", [], {}):
                     market_row.setdefault(market_key, metadata[market_key])
+            exchange = str(market_row.get("exchange") or "").upper()
+            if self.dataset in PRIORITY_LATEST_DATASETS and market_row.get("symbol") and exchange in {"TWSE", "TPEX"}:
+                # Same canonical identity as the official OpenAPI row, so a session's collector and
+                # official closes land on one symbol series and can be compared.
+                market_row.setdefault("symbol_canonical", f"{str(market_row['symbol']).strip().upper()}.{exchange}")
+                market_row.setdefault("market", "TW")
             if market_row:
                 metadata.setdefault("normalized_row", market_row)
             if self.dataset in PRIORITY_LATEST_DATASETS:

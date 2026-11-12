@@ -689,6 +689,17 @@ def _trusted_unresolved_dlq_count(actual: Mapping[str, Any]) -> int | None:
     return unresolved_count
 
 
+def _collector_cover_event_time(trade_date: str) -> datetime:
+    # Same event-time stamp the collector connector gives a market row without a publish time.
+    day = datetime.fromisoformat(trade_date)
+    return datetime(day.year, day.month, day.day, 6, 30, tzinfo=timezone.utc)
+
+
+def _collector_cover_session_close(trade_date: str) -> datetime:
+    day = datetime.fromisoformat(trade_date)
+    return datetime(day.year, day.month, day.day, 5, 30, tzinfo=timezone.utc)  # 13:30 Asia/Taipei
+
+
 def _validate_terminal_readback(
     *,
     reconcile: Mapping[str, Any],
@@ -949,6 +960,12 @@ def _validate_terminal_readback(
             actual_readback=actual,
         )
     invalid: list[str] = []
+    # TW-SAME-DAY-CLOSE-VIA-COLLECTOR: a session covered by an admitted collector close (both
+    # exchanges, complete lineage) counts as fresh for the official market connector, whose own
+    # OpenAPI rows for that session only publish the next morning.
+    from .tw_close_reconcile import covered_collector_close_session
+
+    collector_close_cover = covered_collector_close_session(list(actual_connectors.values()))
     for connector_id in sorted(wanted):
         item = actual_connectors[connector_id]
         schedule_readback = item.get("schedule") if isinstance(item.get("schedule"), Mapping) else {}
@@ -983,7 +1000,12 @@ def _validate_terminal_readback(
             record = item.get("latest_source_record")
             health = item.get("source_health")
             freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
-            if freshness.get("status") != "fresh" and not is_collector:
+            collector_cover_applies = (
+                connector_id == "tw-twse-tpex-official-market"
+                and collector_close_cover is not None
+                and now_dt >= _collector_cover_session_close(collector_close_cover["trade_date"])
+            )
+            if freshness.get("status") != "fresh" and not is_collector and not collector_cover_applies:
                 invalid.append(f"{connector_id}:freshness_not_accepted")
             staleness_seconds = freshness.get("staleness_seconds")
             interval_seconds = int(schedule_readback.get("interval_seconds") or 0)
@@ -1106,6 +1128,15 @@ def _validate_terminal_readback(
                             max_refresh_age_seconds=max_source_age or 86400,
                             calendar_evidence=cal_ev,
                         )
+                        if not tw_ok and tw_reason == "market_input_stale" and collector_cover_applies:
+                            tw_ok, tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
+                                event_time_dt=_collector_cover_event_time(collector_close_cover["trade_date"]),
+                                now_dt=eval_now_dt,
+                                refresh_receipt_dt=refresh_receipt_dt,
+                                lineage={**lineage, "collector_close": collector_close_cover["lineage"]},
+                                max_refresh_age_seconds=max_source_age or 86400,
+                                calendar_evidence=cal_ev,
+                            )
                         if not tw_ok:
                             reason_tag = f"[{tw_reason}]" if tw_reason else ""
                             tag_entry = f"{connector_id}:source_data_stale{reason_tag}"

@@ -25,6 +25,16 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
+from .tw_close_reconcile import (
+    COLLECTOR_CLOSE_KEY,
+    OUTCOME_AGREE,
+    OUTCOME_MISMATCH,
+    collector_close_lineage,
+    compare_close,
+    merge_reconciliation,
+    taipei_date,
+)
+
 
 SCHEMA_VERSION = "source_ingest_requirement_snapshot.v1"
 CHECKSUM_ALGORITHM = "sha256"
@@ -371,7 +381,7 @@ _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS = frozenset(
         "points",
     }
 )
-_MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS = frozenset({"calendar_evidence", "market"})
+_MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS = frozenset({"calendar_evidence", "market", "close_reconciliation"})
 _MARKET_SNAPSHOT_ENVELOPE_FIELDS = frozenset(
     {"state", "checksum_algorithm", "checksum"}
 )
@@ -468,8 +478,15 @@ class MarketSnapshotPoint:
     content_ref: str
     ingest_run_id: str
     market: str | None = None
+    # Lineage of a close relayed by the collector from the exchange website (provisional, not official).
+    collector_close: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
+        if self.collector_close is not None:
+            validated = collector_close_lineage({COLLECTOR_CLOSE_KEY: {**dict(self.collector_close), "provisional": True, "official": False}})
+            if validated is None:
+                raise MarketSnapshotStateError("collector close lineage must name collector source, exchange endpoint and bundle digest")
+            object.__setattr__(self, "collector_close", validated)
         object.__setattr__(
             self,
             "event_time",
@@ -507,7 +524,13 @@ class MarketSnapshotPoint:
         }
         if self.market is not None:
             data["market"] = self.market
+        if self.collector_close is not None:
+            data["collector_close"] = dict(self.collector_close)
         return data
+
+    @property
+    def is_provisional(self) -> bool:
+        return self.collector_close is not None
 
     @classmethod
     def from_dict(cls, value: Any) -> "MarketSnapshotPoint":
@@ -521,7 +544,7 @@ class MarketSnapshotPoint:
             "content_ref",
             "ingest_run_id",
         }
-        if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market"}):
+        if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market", "collector_close"}):
             raise MarketSnapshotStateError("market snapshot point schema is invalid")
         return cls(
             event_time=value["event_time"],
@@ -531,6 +554,7 @@ class MarketSnapshotPoint:
             content_ref=value["content_ref"],
             ingest_run_id=value["ingest_run_id"],
             market=value.get("market"),
+            collector_close=value.get("collector_close"),
         )
 
 
@@ -544,9 +568,16 @@ class LatestMarketSnapshot:
     schema_version: str = MARKET_SNAPSHOT_SCHEMA_VERSION
     calendar_evidence: Mapping[str, Any] | None = None
     market: str | None = None
+    # Official-vs-collector close comparisons for retained sessions (official always wins).
+    close_reconciliation: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "symbol", _market_snapshot_symbol(self.symbol))
+        recon = tuple(dict(e) for e in (self.close_reconciliation or ()))
+        for entry in recon:
+            if entry.get("outcome") not in (OUTCOME_AGREE, OUTCOME_MISMATCH) or not entry.get("trade_date"):
+                raise MarketSnapshotStateError("close reconciliation entry is invalid")
+        object.__setattr__(self, "close_reconciliation", recon)
         points = tuple(self.points)
         if not points:
             raise MarketSnapshotStateError("market snapshot requires at least one normalized point")
@@ -616,13 +647,18 @@ class LatestMarketSnapshot:
         return tuple(point.close for point in self.points)
 
     @property
-    def lineage(self) -> dict[str, list[str]]:
-        return {
+    def lineage(self) -> dict[str, list[Any]]:
+        lineage: dict[str, list[Any]] = {
             "source_ids": sorted({point.source_id for point in self.points}),
             "connector_ids": sorted({point.connector_id for point in self.points}),
             "content_refs": sorted({point.content_ref for point in self.points}),
             "ingest_run_ids": sorted({point.ingest_run_id for point in self.points}),
         }
+        provisional = [dict(point.collector_close) for point in self.points if point.collector_close is not None]
+        if provisional:
+            # Names the collector source, exchange endpoint and bundle digest of every relayed close.
+            lineage["collector_close"] = provisional
+        return lineage
 
     @property
     def snapshot_id(self) -> str:
@@ -655,6 +691,8 @@ class LatestMarketSnapshot:
             state["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
         if self.market is not None:
             state["market"] = self.market
+        if self.close_reconciliation:
+            state["close_reconciliation"] = [dict(e) for e in self.close_reconciliation]
         return state
 
     def to_public_dict(self, *, requested_symbol: Any | None = None) -> dict[str, Any]:
@@ -680,6 +718,10 @@ class LatestMarketSnapshot:
             public["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
         if self.market is not None:
             public["market"] = self.market
+        if self.close_reconciliation:
+            from .tw_close_reconcile import reconciliation_readback
+
+            public["close_reconciliation"] = reconciliation_readback(self.close_reconciliation)
         return public
 
     @classmethod
@@ -703,6 +745,7 @@ class LatestMarketSnapshot:
             observed_at=value.get("observed_at"),
             calendar_evidence=value.get("calendar_evidence"),
             market=value.get("market"),
+            close_reconciliation=tuple(value.get("close_reconciliation") or ()),
         )
         if value.get("event_time") != snapshot.event_time:
             raise MarketSnapshotStateError("market snapshot event_time does not match points")
@@ -858,6 +901,22 @@ class LatestMarketSnapshotStore:
             # source-selected record.  The metadata fallback preserves the
             # contract for connectors that place shared calendar proof beside
             # their normalized row.
+            collector_lineage = None
+            if isinstance(metadata.get(COLLECTOR_CLOSE_KEY), Mapping):
+                collector_lineage = collector_close_lineage(metadata)
+                if collector_lineage is None:
+                    return None  # a relayed close without complete lineage is never admitted
+            if collector_lineage is not None:
+                point = MarketSnapshotPoint(
+                    event_time=point.event_time,
+                    close=point.close,
+                    source_id=point.source_id,
+                    connector_id=point.connector_id,
+                    content_ref=point.content_ref,
+                    ingest_run_id=point.ingest_run_id,
+                    market=point.market,
+                    collector_close=collector_lineage,
+                )
             calendar_evidence = _market_snapshot_calendar_evidence(
                 row.get("calendar_evidence")
                 if row.get("calendar_evidence") is not None
@@ -866,6 +925,44 @@ class LatestMarketSnapshotStore:
         except (MarketSnapshotStateError, StrategyArtifactValidationError):
             return None
         return normalized_symbol, point, calendar_evidence
+
+    @staticmethod
+    def _merge_point(
+        by_time: dict[str, tuple[MarketSnapshotPoint, Any]],
+        symbol: str,
+        point: MarketSnapshotPoint,
+        evidence: Any,
+        reconciled: list[dict[str, Any]],
+    ) -> None:
+        """Official wins: a collector close never replaces or hides an official row for the same date.
+
+        Official rows (OpenAPI) and collector rows carry different event-time stamps for one session,
+        so they are matched on the Asia/Taipei trade date. When an official row lands on a date
+        that holds a provisional collector close, the official row replaces it and the pair is
+        compared (agreement or typed mismatch is recorded).
+        """
+        day = taipei_date(point.event_time)
+        same_day = {t: pe for t, pe in by_time.items() if taipei_date(t) == day}
+        if point.is_provisional:
+            if any(not p.is_provisional for p, _ in same_day.values()):
+                return  # official row exists for this session: the collector row is dropped
+            for t in same_day:
+                del by_time[t]  # a newer collector row replaces an older collector row
+            by_time[point.event_time] = (point, evidence)
+            return
+        for t, (existing, _ev) in list(same_day.items()):
+            if existing.is_provisional and existing.collector_close is not None:
+                reconciled.append(
+                    compare_close(
+                        symbol=symbol,
+                        trade_date=day,
+                        collector_close=existing.close,
+                        official_close=point.close,
+                        lineage=existing.collector_close,
+                    )
+                )
+                del by_time[t]
+        by_time[point.event_time] = (point, evidence)
 
     def append_normalized_records(
         self,
@@ -929,13 +1026,16 @@ class LatestMarketSnapshotStore:
                                 point.event_time: (point, prior.calendar_evidence)
                                 for point in (prior.points if prior is not None else ())
                             }
+                            reconciled: list[dict[str, Any]] = []
                             for point, calendar_evidence in grouped[symbol]:
                                 # A newer normalized record for an already-seen
                                 # trading day replaces that day's lineage. This
                                 # keeps closes chronologically distinct while
                                 # retaining the exact official record selected
                                 # by the latest successful ingest run.
-                                points_by_event_time[point.event_time] = (point, calendar_evidence)
+                                self._merge_point(
+                                    points_by_event_time, symbol, point, calendar_evidence, reconciled
+                                )
                             points_with_evidence = tuple(
                                 sorted(
                                     points_by_event_time.values(),
@@ -949,6 +1049,11 @@ class LatestMarketSnapshotStore:
                                 points=points,
                                 observed_at=observed,
                                 calendar_evidence=calendar_evidence,
+                                close_reconciliation=merge_reconciliation(
+                                    prior.close_reconciliation if prior is not None else (),
+                                    reconciled,
+                                    oldest_trade_date=taipei_date(points[0].event_time),
+                                ),
                             )
                             if (
                                 prior is not None
@@ -956,6 +1061,7 @@ class LatestMarketSnapshotStore:
                                 and prior.calendar_evidence == candidate.calendar_evidence
                                 and prior.observed_at == candidate.observed_at
                                 and prior.market == candidate.market
+                                and prior.close_reconciliation == candidate.close_reconciliation
                             ):
                                 continue
                             state = candidate.to_dict()
