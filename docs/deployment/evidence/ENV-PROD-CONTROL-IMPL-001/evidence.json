@@ -474,5 +474,26 @@
     "validation": "test_bootstrap_sudo_env_reset_still_delivers_release_and_images_to_first_stateful_compose uses a fake sudo that resets env unless -E; confirmed failing without the fix, passing with it; focused bootstrap tests pass locally. Local only, not hosted acceptance.",
     "hosted_status": "pending: root publishes a new controller after review/CI/merge; no healthy Prod baseline, drills or RPO/RTO claimed.",
     "release_complete_claimed": false
+  },
+  "prod_docker_auth_home_repair_20261111": {
+    "diagnosis": "Production run 43071238060 attempt1/job130704707433 failed IMAGE_PULL_FAILED in prod_ops prepull_images after bootstrap succeeded. Existing sudo -E retained OS Login HOME with no Docker config, while nested bootstrap sudo login used root HOME. Root reproduced the same qualified BFF digest pull failing in the outer context and succeeding with the existing root Docker config.",
+    "source_evidence": "/home/chloe_ong_dev_cctech_support_com/pantheon-acceptance-captures/ENV-PROD-CONTROL-IMPL-001/Root01a11-20261111-stage111112/same-ENV-docker-auth-context-repair/actual-auth-context-reproduction.json",
+    "original_job_log_sha256": "49a8b73aec5a8ce86defc63de152ba3a42d70fe97619aee59dc3a120412905ec",
+    "repair": "Add -H to all four existing sudo -E env workflow entrypoints: bootstrap, pre-pull, migrate and atomic switch. Preserve -E so release/image environment survives. All use the existing root HOME and Docker authentication context.",
+    "unchanged": "bootstrap run_priv_env; scripts and compose; release manifests 111/112 and immutable FE/BFF/24-owner pins; credentials, IAM and production approval policy.",
+    "regression": {
+      "test": "BootstrapTests.test_workflow_privileged_entrypoints_share_bootstrap_docker_auth_home",
+      "before": "FAILED (exit 1): actual workflow pre-pull returned IMAGE_PULL_FAILED with old sudo -E prefix after bootstrap nested login succeeded.",
+      "after": "PASS: bootstrap login and real prod_ops pre-pull share a temporary root Docker auth marker; legacy sudo -E control still fails. Each of the four workflow prefixes preserves root HOME and PROD_ROOT. Synthetic local binaries only; no real credentials or Docker daemon.",
+      "command": ".venv-pantheon/bin/python3 -m unittest tests.deployment.test_production_release.BootstrapTests",
+      "result": "10 tests OK; exit 0"
+    },
+    "hosted_status": "external_wait: protected Prod execution, two actual rollback drills, RPO/RTO proof, exact hosted identities and observation remain owned by the existing Ops lane. This source worker did not dispatch, approve, rerun or switch Prod.",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false,
+    "additional_validation": {
+      "command": ".venv-pantheon/bin/python3 -m unittest tests.deployment.test_production_release.StaticContractTests",
+      "result": "16 tests OK; exit 0; git diff --check passed"
+    }
   }
 }
