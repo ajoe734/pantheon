@@ -712,30 +712,70 @@ class ReplicationGate:
         logic = control["strategy_logic"]
         parameters = control["parameters"]
         parameters["symbols"] = boundary
-        floor_key = "screen_control_close_floor"
-        input_name = "screen_control_close"
-        declared = {i["name"] for i in logic["inputs"]}
-        if input_name not in declared:
-            logic["inputs"].append(
-                {
-                    "name": input_name,
-                    "dataset": "tw_price_daily",
-                    "field": "close",
-                    "availability_lag_days": 0,
-                }
-            )
-        parameters[floor_key] = 0
+        canonical_input = {
+            "dataset": "tw_price_daily",
+            "field": "close",
+            "availability_lag_days": 0,
+        }
+        canonical_control = {
+            "value_type": "integer",
+            "current_value": 0,
+            "allowed_range": {"min": 0, "max": 1},
+            "step": 1,
+        }
+        declared = {i["name"]: i for i in logic["inputs"]}
         controls = control.setdefault("mutation_surface", {}).setdefault("controls", [])
-        if not any(c.get("parameter_key") == floor_key for c in controls):
-            controls.append(
-                {
-                    "parameter_key": floor_key,
-                    "value_type": "integer",
-                    "current_value": 0,
-                    "allowed_range": {"min": 0, "max": 1},
-                    "step": 1,
-                }
-            )
+        used = set(declared) | set(parameters) | {c.get("parameter_key") for c in controls}
+
+        # Reuse an existing pair only when the screen is already the canonical
+        # pass-everything filter AND the bound input/parameter have exact canonical
+        # semantics. Any other same-named binding is left untouched (it may serve the
+        # entry/exit rules or be an actual selection) and fresh names are allocated.
+        input_name = floor_key = None
+        steps = logic["screen"].get("steps")
+        if isinstance(steps, list) and len(steps) == 1 and isinstance(steps[0], dict):
+            expr = steps[0].get("expression") or {}
+            args = expr.get("args") if isinstance(expr, dict) else None
+            if (
+                steps[0].get("kind") == "filter"
+                and steps[0].get("refresh") == "daily"
+                and isinstance(expr, dict)
+                and expr.get("op") == "gt"
+                and isinstance(args, list)
+                and len(args) == 2
+                and isinstance(args[0], dict)
+                and isinstance(args[1], dict)
+            ):
+                n, k = args[0].get("ref"), args[1].get("const_param")
+                existing_ctl = [c for c in controls if c.get("parameter_key") == k]
+                if (
+                    set(args[0]) == {"ref"}
+                    and set(args[1]) == {"const_param"}
+                    and n in declared
+                    and {kk: vv for kk, vv in declared[n].items() if kk != "name"} == canonical_input
+                    and parameters.get(k) == 0
+                    and not isinstance(parameters.get(k), bool)
+                    and len(existing_ctl) == 1
+                    and {kk: vv for kk, vv in existing_ctl[0].items() if kk != "parameter_key"}
+                    == canonical_control
+                    and str(n).startswith("screen_control_close")
+                    and str(k).startswith("screen_control_close_floor")
+                ):
+                    input_name, floor_key = n, k
+        if input_name is None:
+            def fresh(base: str) -> str:
+                name, i = base, 1
+                while name in used:
+                    i += 1
+                    name = f"{base}_{i}"
+                used.add(name)
+                return name
+
+            input_name = fresh("screen_control_close")
+            floor_key = fresh("screen_control_close_floor")
+            logic["inputs"].append({"name": input_name, **canonical_input})
+            parameters[floor_key] = 0
+            controls.append({"parameter_key": floor_key, **canonical_control})
         logic["screen"]["steps"] = [
             {
                 "kind": "filter",

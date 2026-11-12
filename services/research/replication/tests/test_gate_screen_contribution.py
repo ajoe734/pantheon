@@ -227,3 +227,42 @@ def test_forged_entry_only_form_with_a_selection_step_is_still_a_screen():
     # the unvalidated flag never grants entry-only treatment: not admitted
     assert not result.passed
     assert response.admission_status.value == "rejected"
+
+
+def _colliding_selection_artifact():
+    """Schema-valid artifact whose existing `screen_control_close` input is a real selection."""
+    _, _, _, dropped = evaluate(artifact("bottom"))
+    art = json.loads(json.dumps(dropped.details["screen_contribution"]["re_registration"]["strategy_artifact"]))
+    logic = art["strategy_logic"]
+    name = logic["screen"]["steps"][0]["expression"]["args"][0]["ref"]
+    for inp in logic["inputs"]:
+        if inp["name"] == name:
+            inp.update(dataset="tw_institutional_flows", field="foreign_net_shares",
+                       availability_lag_days=0)
+    return art, name
+
+
+def test_colliding_non_canonical_control_input_is_not_entry_only_and_is_preserved():
+    art, name = _colliding_selection_artifact()
+    assert not ReplicationGate._is_registered_entry_only(art)
+    control = ReplicationGate._whole_boundary_control_artifact(art, ["2330.TW"])
+    by_name = {i["name"]: i for i in control["strategy_logic"]["inputs"]}
+    # existing binding is untouched; the control uses a fresh canonical close input
+    assert by_name[name]["dataset"] == "tw_institutional_flows"
+    ref = control["strategy_logic"]["screen"]["steps"][0]["expression"]["args"][0]["ref"]
+    assert ref != name and by_name[ref]["dataset"] == "tw_price_daily" and by_name[ref]["field"] == "close"
+
+
+def test_canonical_entry_only_form_stays_a_fixed_point():
+    _, _, _, dropped = evaluate(artifact("bottom"))
+    entry_only = json.loads(json.dumps(dropped.details["screen_contribution"]["re_registration"]["strategy_artifact"]))
+    assert ReplicationGate._is_registered_entry_only(entry_only)
+
+
+def test_colliding_selection_input_still_gets_contribution_comparison():
+    art, _ = _colliding_selection_artifact()
+    art["parameters"]["symbols"] = ["2330.TW"]
+    assert ReplicationGate._screen_inputs(
+        build_request(art, dataset(recorded_market(attest_coverage=True))),
+        {"artifact_bundle": {}},
+    ) is not None
