@@ -763,3 +763,21 @@ def test_definitions_pull_price_history_every_30_minutes():
         meta = defs[sid].metadata["collector"]
         assert meta["cadence_seconds"] <= 1800
     assert defs["collector-tw-twse-t86"].metadata["collector"]["cadence_seconds"] == 86400
+
+
+def test_oversized_newest_day_is_delivered_whole_in_one_pull(tmp_path):
+    source_id = "collector-tw-twse-price-history"
+    files, entries = {}, []
+    for n, size in ((1, 600), (2, 1500)):  # run2 = newest day, larger than max_records
+        f, e = _day_bundle(source_id, n, size)
+        files.update(f)
+        entries.append(e)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    adapter = CollectorBundleAdapter(
+        connector_id="conn-big", raw_root=str(tmp_path / "store"), transport=FakeTransport(files), host=HOST,
+        source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+        max_records=1000, cadence_seconds=1800,
+    )
+    first = adapter.pull()
+    newest = [r for r in first.records if r.metadata["trade_date"] == "2024-11-02"]
+    assert len(newest) == 1500 and first.priority_done

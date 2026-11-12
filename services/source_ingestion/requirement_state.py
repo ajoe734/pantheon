@@ -1043,7 +1043,11 @@ class LatestMarketSnapshotStore:
                                 )[-self.max_closes :]
                             )
                             points = tuple(point for point, _evidence in points_with_evidence)
-                            calendar_evidence = points_with_evidence[-1][1]
+                            # Collector closes carry no calendar evidence; keep the newest governed
+                            # evidence rather than letting a collector point erase it.
+                            calendar_evidence = next(
+                                (ev for _pt, ev in reversed(points_with_evidence) if ev is not None), None
+                            )
                             candidate = LatestMarketSnapshot(
                                 symbol=symbol,
                                 points=points,

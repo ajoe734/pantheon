@@ -178,6 +178,9 @@ class CollectorPullResult:
 
 PRIORITY_LATEST_DATASETS = frozenset({"tw_price_daily"})
 PRIORITY_LATEST_MAX_CADENCE_SECONDS = 3600
+# The newest session is delivered whole in one pull (bounded by this ceiling, above any single
+# exchange day) so the 30-minute deadline never depends on a second scheduled pull.
+PRIORITY_LATEST_MAX_ROWS = 5000
 _BUNDLE_TRADE_DATE_RE = re.compile(r"^(?:backfill|close)-(\d{4}-\d{2}-\d{2})")
 
 
@@ -507,7 +510,9 @@ class CollectorBundleAdapter:
         """
 
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
-        priority = self._pull_priority_latest(cursor, trace_id=trace_id, total_cap=total_cap)
+        priority = self._pull_priority_latest(
+            cursor, trace_id=trace_id, total_cap=max(total_cap, PRIORITY_LATEST_MAX_ROWS) if total_cap > 0 else 0
+        )
         if priority is None:
             return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)
         records, key, paused, delivered, done = priority

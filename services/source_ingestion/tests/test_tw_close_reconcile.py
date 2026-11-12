@@ -84,7 +84,10 @@ def test_collector_close_for_newest_session_is_admitted_with_named_lineage(tmp_p
     assert close["collector_source_id"] == TWSE and close["exchange_endpoint"] == MI_INDEX_URL
     assert len(close["bundle_sha256"]) == 64 and close["trade_date"] == "2026-06-11"
     assert public["closes"][-1] == 960.0
-    # 15:00 Taipei on the session day: the relayed close is admitted (the official row is not out yet)
+    # 15:00 Taipei on the session day: the relayed close is admitted (the official row is not out yet).
+    # The recorded calendar-evidence fixture was fetched after this simulated clock, so drop it here;
+    # evidence retention is covered by test_collector_close_keeps_prior_governed_calendar_evidence.
+    public = {k: v for k, v in public.items() if k != "calendar_evidence"}
     decision = admit_market_snapshot(public, expected_symbol="2330.TWSE", max_age_seconds=86400,
                                      now_iso="2026-06-11T07:00:00Z")
     assert decision.admitted, decision
@@ -179,3 +182,29 @@ def test_preflight_cover_needs_both_exchanges_on_the_same_session():
 def test_preflight_helpers_stamp_session_close_and_event_time_in_utc():
     assert controller_worker._collector_cover_session_close("2026-06-11") == datetime(2026, 6, 11, 5, 30, tzinfo=timezone.utc)
     assert controller_worker._collector_cover_event_time("2026-06-11") == datetime(2026, 6, 11, 6, 30, tzinfo=timezone.utc)
+
+
+def test_collector_close_keeps_prior_governed_calendar_evidence(tmp_path):
+    store = _store(tmp_path)
+    old = [r for r in _official_records() if r.metadata["normalized_row"]["date"] == "2026-06-09"]
+    store.append_normalized_records(old, ingest_run_id="o1", observed_at="2026-06-09T10:00:00Z")
+    before = _snap(store).calendar_evidence
+    store.append_normalized_records(_collector_records(tmp_path, [_row("2026-06-10", 955.0)]),
+                                    ingest_run_id="c", observed_at="2026-06-10T07:00:00Z")
+    after = _snap(store)
+    assert after.closes[-1] == 955.0 and after.calendar_evidence == before
+
+
+def test_collector_cover_receipt_uses_validated_collector_receipts():
+    def conn(ts):
+        return {"freshness": {"last_success_at": ts}}
+
+    got = controller_worker._collector_cover_receipt(
+        {TWSE: conn("2026-06-11T07:00:00Z"), TPEX: conn("2026-06-11T06:50:00Z"),
+         "tw-twse-tpex-official-market": conn("2026-06-11T00:30:00Z")})
+    assert got == datetime(2026, 6, 11, 6, 50, tzinfo=timezone.utc)
+    assert controller_worker._collector_cover_receipt({TWSE: conn("2026-06-11T07:00:00Z")}) is None
+    assert controller_worker._collector_cover_receipt(
+        {TWSE: conn("2026-06-11T07:00:00Z"), TPEX: conn("not-a-time")}) is None
+    assert controller_worker._collector_cover_receipt(
+        {TWSE: conn("2026-06-11T07:00:00Z"), TPEX: {"freshness": {}}}) is None
