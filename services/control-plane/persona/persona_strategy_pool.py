@@ -485,7 +485,7 @@ class PersonaStrategyPoolStore:
         members = [dict(m) for m in current["members"]]
         count = max((int((v.get("decision") or {}).get("persona_trial_count", 0))
                      for v in self.versions(persona_id, tenant_id)), default=0)
-        if request.action == "admit" and request.candidate is not None:
+        if request.action in {"admit", "evolution_trial"} and request.candidate is not None:
             count += 1
         decision = {"action": request.action, "status": "refused", "reasons": [],
                     "persona_trial_count": count, "policy": policy.model_dump(),

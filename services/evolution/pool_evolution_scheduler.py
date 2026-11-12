@@ -86,6 +86,9 @@ class PoolEvolutionScheduler:
         for pool in self.owner.pools():
             pid = pool["persona_id"]
             try:
+                # Reconcile an append whose publication was interrupted, including
+                # research trial admission. Publishing the same version is idempotent.
+                self.owner.publish(pool)
                 books = self.owner.books(pool)
                 for member in pool["members"]:
                     if member["stage"] == "removed":

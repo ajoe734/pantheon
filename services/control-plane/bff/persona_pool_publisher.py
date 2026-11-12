@@ -574,7 +574,7 @@ class PersonaPoolPublisher:
         if not members:
             previous_entry = self._registry_view(previous["artifact_id"])
             empty_template = ((previous_entry or {}).get("metadata") or {}).get("strategy_artifact")
-            if not empty_template:
+            if not empty_template or previous_entry.get("artifact_state") != "approved":
                 raise PoolPublishRefused("empty pool requires the previous approved envelope", step="members")
         try:
             envelope = build_portfolio_envelope(

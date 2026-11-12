@@ -36,6 +36,9 @@ def validate_portfolio_envelope(artifact: Mapping[str, Any]) -> None:
     logic = artifact["strategy_logic"]
     members = logic["members"]
     params = artifact["parameters"]
+    if not members and (not params.get("pool_version") or not params.get("pool_digest")
+                        or not artifact["lineage"].get("parent_registry_ids")):
+        raise Error("empty portfolio requires pinned pool provenance and prior lineage")
     if artifact["mutation_surface"]["controls"]:
         raise Error("portfolio envelope is immutable; publish a new version to change it")
     if set(artifact["mutation_surface"]["immutable_parameters"]) != set(params):

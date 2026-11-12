@@ -34,6 +34,70 @@ def post_admission_dataset(dataset, joined_at, *, minimum_days=20):
     return {**dataset, "records": records}
 
 
+def revalidate_member(*, artifact, dataset, member, baseline):
+    """Fresh-data monitoring of an already admitted member on its gate return basis.
+
+    This is not a new candidate admission: the original approved OOS proof stays
+    mandatory. Requiring another two years inside a 20-day monitoring window
+    would prevent periodic revalidation from ever evaluating its intended data.
+    """
+    from services.evolution.auto_consumer import DecayPolicy
+    from services.execution.lean_runtime.member_virtual_book import gate_basis_metrics
+    from services.registry.strategy_artifact import evaluate_strategy_view
+    from services.registry.portfolio_envelope import required_portfolio_history
+    from services.research.vectorbt.adapter.vectorbt_adapter import GovernedVectorbtInputAdapter, _bar_features_for_index
+    from services.execution.shioaji_adapter import normalize_taiwan_symbol
+
+    if baseline.get("status") != "approved":
+        raise ExecutorRefusal("evaluation_rejected", "no_approved_member_baseline")
+    fresh = post_admission_dataset(dataset, member["joined_at"])
+    prepared = GovernedVectorbtInputAdapter().prepare(fresh)
+    import math
+    if prepared.data_frequency not in {"daily", "1d"} or any(
+        not all(math.isfinite(value) and value > 0 for value in bar[:4])
+        or not math.isfinite(bar[4]) or bar[4] < 0
+        for bars in prepared.ohlcv_by_instrument.values() for bar in bars
+    ):
+        raise ExecutorRefusal("evaluation_rejected", "post_admission_observations_invalid")
+    wanted = {normalize_taiwan_symbol(s) for s in artifact["parameters"]["symbols"]}
+    instruments = [s for s in prepared.instruments if normalize_taiwan_symbol(s) in wanted]
+    if {normalize_taiwan_symbol(s) for s in instruments} != wanted:
+        raise ExecutorRefusal("evaluation_rejected", "post_admission_symbols_missing")
+    calendars = [tuple(prepared.dates_by_instrument[s]) for s in instruments]
+    if not calendars or len(calendars[0]) < 20:
+        raise ExecutorRefusal("evaluation_rejected", "insufficient_post_admission_trading_days")
+    if len(set(calendars)) != 1:
+        raise ExecutorRefusal("evaluation_rejected", "post_admission_dates_unaligned")
+    books = []
+    warmup = required_portfolio_history(artifact)
+    for symbol in instruments:
+        prices = [r[3] for r in prepared.ohlcv_by_instrument[symbol]]
+        observations = []
+        for index, day in enumerate(prepared.dates_by_instrument[symbol]):
+            if index + 1 < warmup:
+                continue
+            features, at = _bar_features_for_index(prepared, symbol, index)
+            view = evaluate_strategy_view(artifact, prices[:index + 1], features=features, decision_time=at, symbol=symbol)
+            observations.append({"price": prices[index],
+                "direction": {"LONG": 1, "SHORT": -1, "FLAT": 0}[view["direction"]]})
+        if len(observations) < 2:
+            raise ExecutorRefusal("evaluation_rejected", "post_admission_warmup_incomplete")
+        books.append({"symbol": symbol, "observations": observations})
+    metric, missing = gate_basis_metrics(books, baseline["order_quantity"])
+    if missing:
+        raise ExecutorRefusal("evaluation_rejected", missing)
+    if not all(math.isfinite(metric[key]) for key in ("sharpe_ratio", "max_drawdown")):
+        raise ExecutorRefusal("evaluation_rejected", "post_admission_metrics_nonfinite")
+    policy = DecayPolicy()
+    passed = (metric["sharpe_ratio"] >= baseline["oos_sharpe"] * policy.min_sharpe_ratio_of_baseline
+              and metric["max_drawdown"] <= baseline["oos_max_drawdown"] * policy.max_drawdown_multiple)
+    return {"outcome": "revalidation_passed" if passed else "revalidation_failed",
+            "reason": "post_admission_member_baseline_comparison", "verdict": {
+                "passed": passed, "baseline_key": baseline["baseline_key"], "metrics": metric,
+                "start_date": calendars[0][0], "end_date": calendars[0][-1],
+                "source_dataset_refs": fresh["source_dataset_refs"]}}
+
+
 class ExecutorRefusal(Exception):
     """A stated, non-transport refusal: the run ends completed with this outcome."""
 
@@ -118,6 +182,7 @@ def execute_mutate(
     register_child: Callable[[Mapping[str, Any], Mapping[str, Any]], Any],
     children: int = 1,
     family_versions: Callable[[], Any] | None = None,
+    parent_registry_ref: str | None = None,
 ) -> dict[str, Any]:
     logic = parent.get("strategy_logic")
     if not isinstance(logic, Mapping) or logic.get("kind") != "factor_rule_v1":
@@ -125,7 +190,7 @@ def execute_mutate(
     result = search.run_mutation_decision(
         parent, decision_id=decision_id, gate=gate, request_factory=request_factory,
         family_id=family_id, children=children, register_child=register_child,
-        family_versions=family_versions,
+        family_versions=family_versions, parent_registry_ref=parent_registry_ref,
     )
     built = [c for c in result["children"] if c.get("built")]
     registered = [c["verdict"]["child_artifact_id"] for c in built if c.get("registered")]
@@ -145,7 +210,11 @@ def execute_revalidate(
     gate: Any,
     request_factory: Callable[[Mapping[str, Any]], Any],
 ) -> dict[str, Any]:
-    verdict = search.judge_child_out_of_sample(artifact, gate=gate, request_factory=request_factory, family_id=family_id)
+    request = request_factory(artifact)
+    evaluation = getattr(request, "backtest_evaluation", None)
+    if isinstance(evaluation, Mapping) and evaluation.get("status") != "completed":
+        raise ExecutorRefusal("evaluation_rejected", "post_admission_evaluation_unavailable")
+    verdict = search.judge_child_out_of_sample(artifact, gate=gate, request_factory=lambda _: request, family_id=family_id)
     passed = bool(verdict["passed"])
     return {
         "outcome": "revalidation_passed" if passed else "revalidation_failed",

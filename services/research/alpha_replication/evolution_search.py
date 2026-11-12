@@ -302,6 +302,7 @@ def build_child_artifact(
     source_run_ids: Sequence[str] = (),
     child_version: str | None = None,
     existing_versions: Sequence[Any] = (),
+    parent_registry_ref: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build one registered-ready child. Returns ``(child_artifact, descriptor)``.
 
@@ -334,6 +335,7 @@ def build_child_artifact(
             parameter_updates=parameter_updates,
             source_run_ids=runs,
         )
+        child["lineage"]["parent_registry_ids"] = [parent_registry_ref or parent["artifact_id"]]
         return child, {"kind": "retrain", "parameter_updates": dict(parameter_updates)}
 
     if kind != "mutate":
@@ -354,7 +356,7 @@ def build_child_artifact(
     child["mutation_surface"]["controls"] = result["controls"]
     child["artifact_id"] = child_id
     child["version"] = child_version
-    child["lineage"]["parent_registry_ids"] = [parent["artifact_id"]]
+    child["lineage"]["parent_registry_ids"] = [parent_registry_ref or parent["artifact_id"]]
     child["lineage"]["source_run_ids"] = runs
     try:
         validate_strategy_artifact(child)
@@ -410,6 +412,7 @@ def run_mutation_decision(
     register_child: Callable[[Mapping[str, Any], Mapping[str, Any]], Any] | None = None,
     family_versions: Callable[[], Sequence[Any]] | None = None,
     max_version_retries: int = 3,
+    parent_registry_ref: str | None = None,
 ) -> dict[str, Any]:
     """Approved ``mutate`` decision: structural children, each judged out-of-sample.
 
@@ -431,7 +434,7 @@ def run_mutation_decision(
             try:
                 child, descriptor = build_child_artifact(
                     parent, decision_id=f"{decision_id}#{index}", kind="mutate", rng=rng,
-                    source_run_ids=[decision_id], existing_versions=known,
+                    source_run_ids=[decision_id], existing_versions=known, parent_registry_ref=parent_registry_ref,
                 )
             except EvolutionSearchError as exc:
                 result = {"index": index, "built": False, "error": str(exc)}

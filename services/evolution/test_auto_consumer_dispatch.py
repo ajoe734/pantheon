@@ -182,8 +182,12 @@ def world(tmp_path, monkeypatch):
             return 200, [{"binding_id": "pcb-discovery-1", "tenant_id": TENANT, "persona_id": "p1", "status": "active",
                           "metadata": {"strategy_spec_registry_id": SPEC_ID, "tenant_id": TENANT}}]
         if url == f"http://reg/api/registry/strategy-artifacts/{ARTIFACT_ID}":
-            return 200, {"entry": {"registry_id": ARTIFACT_ID, "owner_tenant": TENANT, "metadata": {"strategy_artifact": {
+            return 200, {"entry": {"registry_id": ARTIFACT_ID, "version": "1.0.0", "artifact_state": "approved", "checksum": "sha256:member", "owner_tenant": TENANT, "metadata": {"strategy_artifact": {
                 "strategy_logic": {"kind": "factor_rule_v1"}, "lineage": {"source_strategy_spec_id": SPEC_ID}}}}}
+        if url == "http://per/api/personas/p1/strategy-pool":
+            return 200, {"persona_id": "p1", "tenant_id": TENANT, "pool_version": 1,
+                         "members": [{"artifact_ref": ARTIFACT_ID, "checksum": "sha256:member",
+                                      "joined_at": "2026-01-01T00:00:00Z", "stage": "active"}]}
         if url == "http://per/api/personas/p1":
             return 200, {"persona_id": "p1", "tenant_id": TENANT, "lifecycle_state": "paper_owner"}
         raise AssertionError(url)
@@ -219,7 +223,7 @@ def _propose(decision_id="evo-ad-1", action="retrain"):
         "decision_id": decision_id, "tenant_id": TENANT, "target_type": "candidate_artifact", "target_id": ARTIFACT_ID,
         "target_version": "1.0.0", "action_type": action, "rationale": "Paper drawdown breached baseline.",
         "created_by_role": "evolution_controller", "created_by_id": "evolution-controller-01",
-        "linked_incident_id": f"inc-{decision_id}", "target_stage": "paper"})
+        "linked_incident_id": f"inc-{decision_id}", "target_stage": "paper", "persona_id": "p1"})
     assert r.status_code == 201, r.text
     return r.json()
 

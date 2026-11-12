@@ -253,3 +253,18 @@ def _bump(path, n):
     store = SharedFamilyTrialCounterStore(path)
     for _ in range(n):
         store.increment("fam")
+
+
+def test_corrupt_shared_family_counter_fails_closed_on_read(tmp_path):
+    import pytest
+    from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
+    path = tmp_path / 'counts.json'
+    path.write_text('not-json')
+    with pytest.raises(ValueError):
+        SharedFamilyTrialCounterStore(path).get('family')
+
+
+def test_retrain_child_preserves_registry_alias_lineage(parent):
+    child, _ = es.build_child_artifact(parent, decision_id="evo-alias", kind="retrain",
+        parameter_updates={"lookback_bars": 3}, parent_registry_ref="registry-parent-alias")
+    assert child["lineage"]["parent_registry_ids"] == ["registry-parent-alias"]

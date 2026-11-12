@@ -5137,9 +5137,16 @@ class PaperRuntimeService:
             )
         from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
 
-        self._member_virtual_books = MemberVirtualBooks(
-            str(resolved_lifecycle_path) + ".member-books.json"
-        )
+        member_book_path = str(resolved_lifecycle_path) + ".member-books.json"
+        # Deployment replaces runtime IDs when publishing an envelope. Keep
+        # immutable member histories under the persona identity across replacements.
+        if not configured_lifecycle_path and not performance_state_path and self._identity.persona_id:
+            import hashlib
+            member_scope = hashlib.sha256(json.dumps([
+                os.getenv("PANTHEON_TENANT_ID", "default"), self._identity.persona_id
+            ]).encode()).hexdigest()
+            member_book_path = str(Path(resolved_lifecycle_path).parent / "member-books" / (member_scope + ".json"))
+        self._member_virtual_books = MemberVirtualBooks(member_book_path)
         self._lifecycle_outbox = LifecycleTelemetryOutbox(resolved_lifecycle_path)
         try:
             self._lifecycle_chains = self._lifecycle_outbox.chains()

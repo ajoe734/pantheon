@@ -2191,7 +2191,7 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
             try:
                 child, _descriptor = search.build_child_artifact(
                     parent_artifact, decision_id=decision_id, kind="retrain", parameter_updates=proposed,
-                    source_run_ids=source_runs, child_version=new_version,
+                    source_run_ids=source_runs, child_version=new_version, parent_registry_ref=target_artifact_id,
                 )
             except search.EvolutionSearchError as exc:
                 raise _RetrainFinished("no_candidate", f"retrain_child_invalid: {exc}") from None
@@ -2452,6 +2452,28 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     if not isinstance(parent, dict):
         raise _RetrainFailure("read_target_artifact", "Registry entry carries no strategy_artifact")
     family_id = str(parent.get("strategy_id") or parent.get("artifact_id"))
+    if params.get("pool_member") and action == "revalidate":
+        from services.evolution.approved_baselines import resolve_member_baseline
+        ctx = params["pool_member"]
+        baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=ctx["persona_id"],
+            artifact_ref=ctx["artifact_ref"], checksum=ctx["checksum"], entry=entry)
+        dataset = _RETRAIN_DATASET_LOADER(parent, params) if callable(_RETRAIN_DATASET_LOADER) else None
+        if not isinstance(dataset, dict):
+            raise _RetrainFinished("evaluation_rejected", "governed_post_admission_dataset_unavailable")
+        try:
+            result = executor.revalidate_member(artifact=parent, dataset=dataset, member=ctx, baseline=baseline)
+        except executor.ExecutorRefusal as exc:
+            raise _RetrainFinished(exc.outcome, exc.reason) from None
+        if result["outcome"] == "revalidation_failed":
+            owner = _pool_owner(params)
+            pool = owner.pool(ctx["persona_id"])
+            member = next((m for m in pool["members"] if m["artifact_ref"] == ctx["artifact_ref"]
+                           and m["checksum"] == ctx["checksum"] and m["joined_at"] == ctx["joined_at"]), None)
+            if member is None:
+                raise _RetrainFailure("pool_revalidation", "approved member identity changed")
+            owner.remove_member(pool, member, reason="evolution:" + decision_id)
+        _retrain_record(run_id, evolution_result=result["verdict"])
+        raise _RetrainFinished(result["outcome"], result["reason"])
 
     gate, factory = _evolution_oos_context(
         parent=parent, entry_meta=entry_meta, params=params, tenant_id=tenant_id, decision_id=decision_id,
@@ -2517,6 +2539,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                 request_factory=factory, register_child=register_child,
                 family_versions=lambda: _registry_family_versions(registry_url, tenant_id, parent),
                 children=50 if params.get("pool_member") else 1,
+                parent_registry_ref=target_artifact_id,
             )
         else:
             result = executor.execute_revalidate(parent, family_id=family_id, gate=gate, request_factory=factory)
@@ -2529,15 +2552,6 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
             os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
         else:
             os.environ["PANTHEON_VECTORBT_BACKEND"] = prev
-    if params.get("pool_member") and result["outcome"] == "revalidation_failed":
-        owner = _pool_owner(params)
-        ctx = params["pool_member"]
-        pool = owner.pool(ctx["persona_id"])
-        member = next((m for m in pool["members"] if m["artifact_ref"] == ctx["artifact_ref"]
-                       and m["checksum"] == ctx["checksum"] and m["joined_at"] == ctx["joined_at"]), None)
-        if member is None:
-            raise _RetrainFailure("pool_revalidation", "approved member identity changed")
-        owner.remove_member(pool, member, reason="evolution:" + decision_id)
     _retrain_record(
         run_id, evolution_result=result.get("detail") or result.get("verdict"),
         parent_artifact_checksum=strategy_artifact_checksum(parent),

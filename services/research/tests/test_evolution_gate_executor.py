@@ -204,3 +204,26 @@ def test_a_lost_revision_race_reallocates_and_rejudges(research, world, monkeypa
     assert run["outcome"] == "candidate_created", run
     assert [p["strategy_artifact"]["version"] for p in world.registered.values()] == ["1.2.0"]
     assert run["family_trial_count"] == 2  # the re-judged child is a second family trial
+
+
+def test_pool_revalidation_uses_only_recorded_post_admission_bars():
+    from services.evolution.test_approved_baselines import genuine_entry
+    from services.evolution.approved_baselines import resolve_member_baseline
+    from services.research.alpha_replication.evolution_executor import revalidate_member, ExecutorRefusal
+    from services.research.tests.test_pool_admission import recorded_dataset
+    entry = genuine_entry()
+    baseline = resolve_member_baseline(tenant_id='t1', persona_id='p1', artifact_ref=entry['registry_id'],
+        checksum=entry['checksum'], entry=entry)
+    artifact = entry['metadata']['strategy_artifact']
+    result = revalidate_member(artifact=artifact, dataset=recorded_dataset(),
+        member={'joined_at': '2024-09-30T00:00:00Z'}, baseline=baseline)
+    assert result['outcome'] in {'revalidation_passed', 'revalidation_failed'}
+    assert result['verdict']['start_date'] > '2024-09-30'
+    assert result['verdict']['source_dataset_refs'] == recorded_dataset()['source_dataset_refs']
+    assert result['verdict']['metrics']['basis'] == baseline['return_basis']
+    with pytest.raises(ExecutorRefusal, match='insufficient_post_admission_trading_days'):
+        revalidate_member(artifact=artifact, dataset=recorded_dataset(),
+            member={'joined_at': '2024-12-30T00:00:00Z'}, baseline=baseline)
+    with pytest.raises(ExecutorRefusal, match='no_approved_member_baseline'):
+        revalidate_member(artifact=artifact, dataset=recorded_dataset(),
+            member={'joined_at': '2024-09-30T00:00:00Z'}, baseline={'status': 'no_approved_baseline'})

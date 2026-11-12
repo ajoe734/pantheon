@@ -53,7 +53,9 @@ class SharedFamilyTrialCounterStore(FamilyTrialCounterStore):
             loaded = json.loads(self._path.read_text(encoding="utf-8"))
             if not isinstance(loaded, dict):
                 raise ValueError("counter file is not an object")
-            self._counts = {str(k): int(v) for k, v in loaded.items()}
+            if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in loaded.values()):
+                raise ValueError("family trial counts must be nonnegative integers")
+            self._counts = {str(k): v for k, v in loaded.items()}
         except Exception:
             if strict:  # a shared counter that cannot be read must never reset to zero
                 raise

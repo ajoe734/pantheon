@@ -814,3 +814,25 @@ def test_retry_preserves_dispatch_uncertainty_across_earlier_owner_read_failures
     for run in world.transport.queued:
         run()
     assert world.runtime.calls == ["deploy", "replace"]
+
+
+def test_last_member_removal_publishes_empty_flat_envelope_and_keeps_runtime(world, monkeypatch, tmp_path):
+    from services.registry.strategy_artifact import evaluate_strategy_view
+    client = _client(world, monkeypatch, tmp_path)
+    member = world.member('artifact-a', .5)
+    world.append([member], 0)
+    first = client.post(PATH, json={}, headers=H)
+    assert first.status_code == 200, first.text
+    previous = _live(world)[0]
+    removed = member.model_copy(update={'stage': 'removed', 'risk_weight': 0,
+        'removed_at': '2026-11-12T00:00:00Z', 'removal_reason': 'evolution:test-member'})
+    world.append([removed], 1)
+    response = client.post(PATH, json={}, headers=H)
+    assert response.status_code == 200, response.text
+    receipt = response.json()['data']
+    assert receipt['status'] == 'published'
+    current = _live(world)
+    assert len(current) == 1 and current[0]['runtime_id'] == previous['runtime_id']
+    envelope = world.transport.objects[('registry', '/api/registry/strategy-artifacts/' + receipt['envelope_artifact_id'])]['entry']['metadata']['strategy_artifact']
+    assert envelope['strategy_logic']['members'] == []
+    assert evaluate_strategy_view(envelope, [100, 101], symbol='2330.TW')['direction'] == 'FLAT'

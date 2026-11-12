@@ -118,7 +118,21 @@ class MemberVirtualBooks:
             self.books = state["books"]
             self.snapshot()  # reject corrupt metrics before accepting new observations
 
-    def observe(self, *, binding_id, envelope_checksum, symbol, event_time,
+    def observe(self, **observation):
+        if self.path is None:
+            return self._observe(**observation)
+        import fcntl
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with Path(str(self.path) + ".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if self.path.exists():
+                    self.books = MemberVirtualBooks(self.path).books
+                return self._observe(**observation)
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def _observe(self, *, binding_id, envelope_checksum, symbol, event_time,
                 price, source_ref, members, bar_frequency):
         if not source_ref or not event_time or not members:
             raise ValueError("virtual book requires source, time and pinned member views")
@@ -133,6 +147,19 @@ class MemberVirtualBooks:
         candidate = copy.deepcopy(self.books)
         for member_id, member in members.items():
             key = json.dumps([binding_id, envelope_checksum, member_id, symbol])
+            if key not in candidate:
+                # A pool publication changes the envelope/binding, not an
+                # unchanged member's virtual strategy. Carry only the exact
+                # immutable member/symbol history in this persona-scoped store.
+                prior = [b for b in candidate.values() if b["member_id"] == member_id
+                         and b["artifact_id"] == member["artifact_id"] and b["checksum"] == member["checksum"]
+                         and b["version"] == member["version"] and b["symbol"] == symbol
+                         and b["underlying_count"] == member.get("underlying_count", 1)]
+                if prior:
+                    carried = copy.deepcopy(max(prior, key=lambda b: b["observations"][-1]["event_time"]))
+                    carried.update(binding_id=binding_id, envelope_checksum=envelope_checksum,
+                                   virtual_only=member["virtual_only"])
+                    candidate[key] = carried
             book = candidate.setdefault(key, {"binding_id": binding_id,
                 "envelope_checksum": envelope_checksum, "member_id": member_id,
                 "artifact_id": member["artifact_id"], "version": member["version"],

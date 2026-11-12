@@ -1,99 +1,78 @@
-"""Runtime wiring: scope from real allocator records, decay telemetry -> retire, through the real evolution service."""
+"""Pool scope and durable removal/publication retries at the owner HTTP seams."""
+import copy
 
-import json
+import pytest
 
-from fastapi.testclient import TestClient
+from services.evolution import auto_consumer_runtime as rt
 
-import services.evolution.auto_consumer_runtime as rt
-from services.evolution.test_governed_persona_lifecycle import FakeWorld
-
-TENANT = "default"
-ENV = {
-    "EVOLUTION_AUTO_CONSUMER_ENABLED": "true", "EVOLUTION_API_URL": "http://evo",
-    "EVOLUTION_SCHEDULER_TENANT_ID": TENANT,
-    "AUTO_CONSUMER_PERSONA_URL": "http://per", "AUTO_CONSUMER_GOVERNANCE_URL": "http://gov",
-    "AUTO_CONSUMER_CAPITAL_URL": "http://cap", "AUTO_CONSUMER_REGISTRY_URL": "http://reg",
-    "AUTO_CONSUMER_PROPOSER_TOKEN": "tp", "AUTO_CONSUMER_PROPOSER_ID": "proposer",
-    "AUTO_CONSUMER_GATE_TOKEN": "tg", "AUTO_CONSUMER_GATE_ID": "gate", "AUTO_CONSUMER_PERSONA_TOKEN": "tper",
-    "AUTO_CONSUMER_CAPITAL_TOKEN": "tcap", "AUTO_CONSUMER_REGISTRY_TOKEN": "treg",
-}
-
-SPEC_ID = "spec-disc-1"
-ARTIFACT_ID = "art-disc-1"
-BINDING_ID = "pcb-discovery-abc123"
+TENANT = "tenant-a"
+ENV = {"EVOLUTION_SCHEDULER_TENANT_ID": TENANT,
+       "AUTO_CONSUMER_PERSONA_URL": "http://per", "AUTO_CONSUMER_PERSONA_TOKEN": "persona-test",
+       "AUTO_CONSUMER_REGISTRY_URL": "http://reg", "AUTO_CONSUMER_REGISTRY_TOKEN": "registry-test",
+       "AUTO_CONSUMER_BFF_URL": "http://bff", "AUTO_CONSUMER_BFF_TOKEN": "operator-test"}
 
 
-def _binding(**over):
-    # Exactly the shape the discovery allocator's provision() creates: no persona metadata markers.
-    row = {"binding_id": BINDING_ID, "tenant_id": TENANT, "persona_id": "p1", "status": "active", "budget": 10000,
-           "metadata": {"strategy_spec_registry_id": SPEC_ID, "tenant_id": TENANT}}
-    row.update(over)
-    return row
+@pytest.fixture
+def owners():
+    member = {"artifact_ref": "a", "checksum": "sha256:a", "joined_at": "2024-01-01T00:00:00Z",
+              "stage": "active", "risk_weight": 1, "baseline_ref": "baseline-a"}
+    pool = {"persona_id": "p", "tenant_id": TENANT, "pool_version": 1, "members": [member]}
+    persona = {"persona_id": "p", "tenant_id": TENANT, "lifecycle_state": "paper_owner"}
+    entry = {"registry_id": "a", "owner_tenant": TENANT, "version": "1.0.0", "artifact_state": "approved",
+             "checksum": "sha256:a", "metadata": {"strategy_artifact": {"strategy_logic": {"kind": "factor_rule_v1"}}}}
+    state = {"pool": pool, "persona": persona, "entry": entry, "publish_down": False, "writes": []}
+    def transport(method, url, headers, body):
+        assert headers["X-Tenant-Id"] == TENANT
+        if url == "http://per/api/personas/p": return 200, persona
+        if url == "http://per/api/personas/p/strategy-pool": return 200, state["pool"]
+        if url == "http://reg/api/registry/strategy-artifacts/a": return 200, {"entry": entry}
+        state["writes"].append((method, url, body))
+        if url.endswith("/strategy-pool/versions"):
+            if body["expected_version"] != state["pool"]["pool_version"]: return 409, {}
+            state["pool"] = {**state["pool"], "pool_version": state["pool"]["pool_version"] + 1,
+                             "members": copy.deepcopy(body["members"])}
+            return 201, state["pool"]
+        if url.endswith("/strategy-pool/publish"):
+            return (503, {}) if state["publish_down"] else (200, {"data": {"status": "published"}})
+        raise AssertionError("unexpected owner effect: " + url)
+    decision = {"decision_id": "d", "tenant_id": TENANT, "target_id": "a", "target_version": "1.0.0",
+                "persona_id": "p", "metadata": {"pool_member": {**member, "persona_id": "p"}}}
+    return rt.PoolOwner(ENV, transport), decision, state
 
 
-def _owners(bindings=None, persona_state="paper_owner", kind="factor_rule_v1", persona_tenant=TENANT,
-            artifact_persona=None):
-    bindings = [_binding()] if bindings is None else bindings
-    persona = {"persona_id": "p1", "tenant_id": persona_tenant, "lifecycle_state": persona_state, "metadata": {}}
-
-    def call(method, url, headers, body):
-        if url == "http://cap/api/bindings":
-            return 200, bindings
-        if url == f"http://reg/api/registry/strategy-artifacts/{ARTIFACT_ID}":
-            meta = {"persona_id": artifact_persona} if artifact_persona else {}
-            return 200, {"entry": {"registry_id": ARTIFACT_ID, "owner_tenant": TENANT, "metadata": {
-                **meta, "strategy_artifact": {"strategy_logic": {"kind": kind}, "lineage": {"source_strategy_spec_id": SPEC_ID}}}}}
-        if url.startswith("http://reg/"):
-            return 404, {"detail": "nf"}
-        if url == "http://per/api/personas/p1":
-            return 200, persona
-        raise AssertionError(url)
-
-    return call, persona
+def test_scope_is_verified_pool_membership_without_allocator_bindings(owners):
+    owner, decision, _ = owners
+    assert owner.resolve(decision)["pool_member"]["artifact_ref"] == "a"
+    assert not rt.enabled({})
 
 
-def _scope(call):
-    return rt.DiscoveryBindingScope(capital_url="http://cap", registry_url="http://reg", persona_url="http://per",
-                                    capital_token=lambda: "c", registry_token=lambda: "r", persona_token=lambda: "p",
-                                    transport=call)
+@pytest.mark.parametrize("change", ["tenant", "lifecycle", "checksum", "version", "not_member", "not_approved"])
+def test_changed_owner_facts_fail_closed(owners, change):
+    owner, decision, state = owners
+    if change == "tenant": state["persona"]["tenant_id"] = "other"
+    if change == "lifecycle": state["persona"]["lifecycle_state"] = "live_owner"
+    if change == "checksum": state["entry"]["checksum"] = "sha256:other"
+    if change == "version": state["entry"]["version"] = "2.0.0"
+    if change == "not_member": state["pool"]["members"] = []
+    if change == "not_approved": state["entry"]["artifact_state"] = "candidate"
+    assert owner.resolve(decision) is None
+    assert not state["writes"]
 
 
-def test_disabled_by_default():
-    assert not rt.enabled({}) and rt.enabled(ENV)
-
-
-def test_allocated_persona_resolves_without_any_persona_metadata_injection():
-    call, _ = _owners()
-    got = _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID})
-    assert got["persona_id"] == "p1" and got["stage"] == "paper" and got["strategy_kind"] == "factor_rule_v1"
-    # the admitted spec itself is also an in-scope target
-    assert _scope(call).resolve({"tenant_id": TENANT, "target_id": SPEC_ID})["persona_id"] == "p1"
-
-
-def test_scope_fails_closed():
-    for kw in ({"bindings": []},
-               {"bindings": [_binding(status="retired")]},
-               {"bindings": [_binding(binding_id="pcb-manual-1")]},
-               {"bindings": [_binding(), _binding(binding_id="pcb-discovery-zzz", persona_id="p2")]},
-               {"persona_tenant": "other"}):
-        call, _ = _owners(**kw)
-        assert _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID}) is None, kw
-    call, _ = _owners()
-    assert _scope(call).resolve({"tenant_id": "other", "target_id": ARTIFACT_ID}) is None
-
-
-def test_explicit_persona_mismatch_fails_closed():
-    # artifact metadata names a non-discovery persona while the only discovery binding belongs to p1
-    call, _ = _owners(artifact_persona="non-discovery-persona-2")
-    assert _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID}) is None
-    from services.evolution.auto_consumer import evaluate_gate
-    verdict = evaluate_gate({"decision_id": "d1", "decision_state": "proposed", "action_type": "retrain",
-                             "tenant_id": TENANT, "target_id": ARTIFACT_ID}, _scope(call))
-    assert verdict.eligible is False
-    # agreeing artifact persona and a conflicting decision persona
-    call, _ = _owners(artifact_persona="p1")
-    assert _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID})["persona_id"] == "p1"
-    assert _scope(call).resolve({"tenant_id": TENANT, "target_id": ARTIFACT_ID, "persona_id": "p9"}) is None
+def test_removal_retries_publication_without_repeating_pool_mutation(owners):
+    owner, decision, state = owners
+    scope = owner.resolve(decision)
+    state["publish_down"] = True
+    with pytest.raises(RuntimeError, match="503"):
+        owner.retire(decision, scope)
+    assert state["pool"]["members"][0]["stage"] == "removed"
+    assert state["persona"]["lifecycle_state"] == "paper_owner"
+    assert owner.resolve(decision) is not None  # only this decision can resume
+    state["publish_down"] = False
+    receipt = owner.retire(decision, owner.resolve(decision))
+    assert receipt["already_removed"] is True and receipt["status"] == "published"
+    assert len([call for call in state["writes"] if call[1].endswith("/versions")]) == 1
+    assert not any("lifecycle" in call[1] for call in state["writes"])
 
 
 def test_decision_reads_bind_the_configured_tenant_without_transport_help():
