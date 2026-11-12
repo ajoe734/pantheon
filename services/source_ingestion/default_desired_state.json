@@ -1,10 +1,21 @@
 {
   "authority": "deployment://source-ingest/default-public-market-requirement",
+  "collector_admission_notes": {
+    "community_sources": "collector_social_posts sources are admitted at test volume (per-pull cap COLLECTOR_COMMUNITY_TEST_VOLUME) until the O-6 counsel review is recorded",
+    "reference": "SD_STRATEGY_DISCOVERY_SOURCES_2026-11-10 sections 7, 13, 14; DEV_PLAN O-decision table"
+  },
+  "held_collector_sources": [
+    {
+      "connector_id": "collector-library-books",
+      "reason": "O-12: books are operator-supplied files placed in the collector library; none are confirmed on the hosted collector and nothing is downloaded, so the source stays configured_disabled until the operator enables it through the existing source commands",
+      "state": "configured_disabled"
+    }
+  ],
   "personas": [
     {
       "created_at": "2026-07-14T00:00:00Z",
       "lifecycle_state": "research_only",
-      "mandate": "Maintain a credential-free official Taiwan market reference feed for governed research.",
+      "mandate": "Maintain a credential-free official Taiwan market reference feed and the admitted Collector bundle sources for governed research.",
       "name": "Source Ingest Public Market Baseline",
       "persona_id": "persona-source-ingest-public-market",
       "required_data_sources": [
@@ -15,6 +26,216 @@
           ],
           "dataset": "tw_price_daily",
           "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "hourly",
+          "connector_candidates": [
+            "collector-gdelt"
+          ],
+          "dataset": "collector_news_articles",
+          "market": "GLOBAL",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "hourly",
+          "connector_candidates": [
+            "collector-news-rss"
+          ],
+          "dataset": "collector_news_articles",
+          "market": "GLOBAL",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-tw-cmoney-forum"
+          ],
+          "dataset": "collector_social_posts",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-tw-instagram-popular"
+          ],
+          "dataset": "collector_social_posts",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-tw-macro-cbc"
+          ],
+          "dataset": "collector_macro_series",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "weekly",
+          "connector_candidates": [
+            "collector-tw-macro-dgbas"
+          ],
+          "dataset": "collector_macro_series",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "weekly",
+          "connector_candidates": [
+            "collector-tw-macro-ndc"
+          ],
+          "dataset": "collector_macro_series",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-tw-ptt-stock"
+          ],
+          "dataset": "collector_social_posts",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-tw-threads"
+          ],
+          "dataset": "collector_social_posts",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-tw-tpex-price-history"
+          ],
+          "dataset": "tw_price_daily",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-tw-twse-price-history"
+          ],
+          "dataset": "tw_price_daily",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-tw-twse-t86"
+          ],
+          "dataset": "tw_institutional_flow",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-youtube-finance"
+          ],
+          "dataset": "collector_social_posts",
+          "market": "GLOBAL",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "strategy-seed-paper-corpus"
+          ],
+          "dataset": "strategy_seed_metadata",
+          "market": "GLOBAL",
           "policy_gates": [
             "require_connector_approved",
             "require_schedule_active",

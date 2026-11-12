@@ -24,6 +24,12 @@ from .connectors.taiwan_official import (
     TW_OFFICIAL_CONNECTOR_ID,
     TaiwanOfficialMarketDatasetAdapter,
 )
+from .connector_definitions import ConnectorDefinition, get_connector_definition, list_connector_definitions
+from .connectors.collector_bundle import (
+    COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+    COLLECTOR_HOST_ENV,
+    CollectorBundleAdapter,
+)
 from .ingest_manager import IngestManager
 
 
@@ -186,6 +192,90 @@ class SourceProvisioningResult:
 
 ProviderFactory = Callable[[str], SourceConnectorProvider]
 
+COLLECTOR_HOST_UNSET_REASON = (
+    f"{COLLECTOR_HOST_ENV} is not set; Collector bundle connectors are not provisioned without the collector host"
+)
+
+
+def collector_definition(connector_id: str) -> ConnectorDefinition | None:
+    """The deployed Collector bundle ConnectorDefinition for a candidate id, else None."""
+
+    definition = get_connector_definition(connector_id)
+    if definition is not None and definition.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN:
+        return definition
+    return None
+
+
+def deployed_collector_definitions() -> list[ConnectorDefinition]:
+    return [d for d in list_connector_definitions() if d.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN]
+
+
+def collector_host_configured() -> bool:
+    import os
+
+    return bool((os.environ.get(COLLECTOR_HOST_ENV) or "").strip())
+
+
+class CollectorDefinitionProvider:
+    """Provision one Collector source straight from its deployed ConnectorDefinition.
+
+    There is no second registry: source id, type, platform, publisher, trust, attribution,
+    dataset, per-pull cap and cadence all come from the definition; the host comes from
+    PANTHEON_COLLECTOR_HOST. The connector id is the definition id, so sources that share
+    one dataset (five social platforms on collector_social_posts) stay separate connectors.
+    """
+
+    def __init__(self, connector_id: str) -> None:
+        definition = collector_definition(connector_id)
+        if definition is None:
+            raise SourceEvidenceError(f"{connector_id} is not a deployed Collector bundle definition")
+        if not collector_host_configured():
+            raise SourceEvidenceError(COLLECTOR_HOST_UNSET_REASON)
+        self.definition = definition
+        collector = dict(definition.metadata.get("collector") or {})
+        self.cadence_seconds = int(collector.get("cadence_seconds") or 86400)
+        self.adapter = CollectorBundleAdapter(
+            connector_id=connector_id,
+            source_id=str(collector["source_id"]),
+            source_type=str(collector["source_type"]),
+            platform=collector.get("platform"),
+            publisher=collector.get("publisher"),
+            trust_score=float(collector.get("trust_score") or 0.3),
+            attribution_required=bool(collector.get("attribution_required")),
+            license_scope=str(collector.get("license_scope") or "collector_public_web"),
+            cadence_seconds=self.cadence_seconds,
+            dataset=str(collector.get("dataset") or "collector_bundle_items"),
+            max_records=int(definition.default_limits.get("max_records") or 500),
+        )
+
+    def connector(self) -> SourceConnector:
+        payload = self.adapter.connector().to_dict()
+        metadata = dict(payload.get("metadata") or {})
+        metadata["definition_id"] = self.definition.definition_id
+        payload["metadata"] = metadata
+        return SourceConnector.from_dict(payload)
+
+    def fetch_config(self) -> Mapping[str, Any]:
+        from .connectors.collector_bundle import collector_host
+
+        adapter = self.adapter
+        fetch = dict(adapter.fetch_config())
+        config = {
+            "source_id": adapter.source_id,
+            "source_type": adapter.source_type,
+            "platform": adapter.platform,
+            "publisher": adapter.publisher,
+            "trust_score": adapter.trust_score,
+            "attribution_required": adapter.attribution_required,
+            "license_scope": adapter.license_scope,
+            "cadence_seconds": adapter.cadence_seconds,
+            "dataset": adapter.dataset,
+            "host": collector_host(),
+            "max_records": adapter.max_records,
+        }
+        fetch["adapter_config"] = {key: value for key, value in config.items() if value is not None}
+        return fetch
+
 
 class SourceProvisioningReconciler:
     """Idempotent controller for Persona.required_data_sources."""
@@ -207,6 +297,10 @@ class SourceProvisioningReconciler:
             "tw-finmind-datasets": lambda connector_id: FinMindTaiwanDatasetAdapter(connector_id=connector_id),
             TW_OFFICIAL_CONNECTOR_ID: lambda connector_id: TaiwanOfficialMarketDatasetAdapter(connector_id=connector_id),
         }
+        # Every deployed Collector definition is an allowlisted provider; whether it can be
+        # provisioned right now (collector host configured) is decided per requirement.
+        for defn in deployed_collector_definitions():
+            self.provider_factories[defn.definition_id] = CollectorDefinitionProvider
         if provider_factories:
             self.provider_factories.update(provider_factories)
 
@@ -271,6 +365,21 @@ class SourceProvisioningReconciler:
                 schedule_action="not_attempted",
                 idempotency_key=requirement.idempotency_key,
                 details={"reason": "default supervised source controller currently requires scheduled live_pull"},
+            )
+
+        collector_candidates = [c for c in requirement.connector_candidates if collector_definition(c) is not None]
+        if collector_candidates and not collector_host_configured():
+            return SourceProvisioningAction(
+                persona_id=requirement.persona_id,
+                dataset=requirement.dataset,
+                connector_id=collector_candidates[0],
+                # Skipped, not unsupported: a deployment without a collector host is a valid posture,
+                # and must not fail the whole controller tick closed. The reason stays in the readback.
+                status="skipped",
+                connector_action="collector_host_not_configured",
+                schedule_action="not_attempted",
+                idempotency_key=requirement.idempotency_key,
+                details={"reason": COLLECTOR_HOST_UNSET_REASON, "collector_host_env": COLLECTOR_HOST_ENV},
             )
 
         connector_id = self._select_connector_id(requirement)
@@ -432,6 +541,9 @@ class SourceProvisioningReconciler:
         return []
 
     def _provider_supports(self, connector_id: str, requirement: PersonaDataSourceRequirement) -> bool:
+        definition = collector_definition(connector_id)
+        if definition is not None:
+            return collector_host_configured() and requirement.dataset in definition.datasets
         if connector_id == "tw-finmind-datasets":
             return requirement.market.upper() == "TW" and requirement.dataset in _FINMIND_DATASET_BY_NORMALIZED
         if connector_id == TW_OFFICIAL_CONNECTOR_ID:
@@ -464,6 +576,9 @@ class SourceProvisioningReconciler:
         requirement: PersonaDataSourceRequirement,
     ) -> dict[str, Any]:
         payload = dict(fetch)
+        if collector_definition(connector_id) is not None:
+            # The Collector adapter pulls real bundles; an empty pull must not be masked.
+            return payload
         request = dict(payload.get("request") or {})
         if connector_id == TW_OFFICIAL_CONNECTOR_ID:
             request["dataset"] = requirement.dataset
@@ -568,6 +683,10 @@ class SourceProvisioningReconciler:
         interval_seconds = CADENCE_INTERVAL_SECONDS.get(requirement.cadence)
         if interval_seconds is None:
             raise SourceEvidenceError(f"Unsupported persona data source cadence: {requirement.cadence}")
+        definition = collector_definition(connector_id)
+        if definition is not None:
+            # The definition owns a Collector source's cadence; the requirement cadence is a label.
+            interval_seconds = int((definition.metadata.get("collector") or {}).get("cadence_seconds") or interval_seconds)
         enabled = interval_seconds > 0
         existing = self.schedule_store.get_schedule(connector_id)
         desired = {

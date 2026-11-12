@@ -262,6 +262,8 @@ services:
     restart: "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
     stop_grace_period: 30s
     # Sole durable owner. Explicit bounded smoke via SOURCE_INGEST_CONTROLLER_MAX_TICKS=1.
+    # Modes: reconcile_only (no pulls), reconcile_and_pull (finite bounded), collector_steady_pull
+    # (unbounded, Collector bundle connectors only, cadence-respecting; needs MAX_TICKS=0).
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json

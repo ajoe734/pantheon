@@ -611,9 +611,12 @@ def test_source_refresh_taifex_and_twse_env_transport_and_unmerged_host_parity()
     assert 'SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")' in ssh_bash_body
     assert 'SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")' in ssh_bash_body
 
-    # Ensure TWSE www.twse.com.tw auto-append is strictly scoped to tw-twse-tpex-official-market
-    init_block = source.split("SOURCE_REFRESH_CONNECTOR_ID=", 1)[1].split("DEV_APP_DB_USER=", 1)[0]
-    assert '"${SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market"' in init_block
+    # Egress-host init (from the egress mode through DEV_APP_DB_USER) must never auto-append a
+    # direct-provider host: hosts come only from the explicit allowlist or the single Collector host.
+    init_block = source.split('SOURCE_REFRESH_EGRESS_MODE="', 1)[1].split("DEV_APP_DB_USER=", 1)[0]
+    assert 'SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST}"' in init_block
+    assert "twse.com.tw" not in init_block
+    assert "tpex.org.tw" not in init_block
     assert "taifex.com.tw" not in init_block
 
 
@@ -733,3 +736,23 @@ with_dev_bff_runtime_env "${{runtime_sha}}" false \
     control_case = remote_case.split("\n  control)\n", 1)[1].split("\n  refresh-only)\n", 1)[0]
     assert "PANTHEON_PAPER_EXPRESSION_LAYER" not in control_case
 
+
+
+def _dev_deploy_step_env_block() -> str:
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    step = workflow.split("      - name: Deploy dev VM stack under lease\n", 1)[1]
+    return step.split("        shell: /bin/bash", 1)[0]
+
+
+def test_dev_deploy_step_maps_steady_collector_pull_var_to_env() -> None:
+    # vars.* is not shell env: the deploy step must map the existing flag explicitly,
+    # alongside the existing single PANTHEON_COLLECTOR_HOST mapping, with no new names.
+    block = _dev_deploy_step_env_block()
+    assert (
+        "SOURCE_INGEST_STEADY_COLLECTOR_PULL: ${{ vars.SOURCE_INGEST_STEADY_COLLECTOR_PULL == 'true' && 'true' || 'false' }}"
+        in block
+    )
+    assert "PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}" in block
+    # Bounded profile, egress allowlist and quotas stay untouched.
+    assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS: \"1\"" in block
+    assert block.count("SOURCE_INGEST_STEADY_COLLECTOR_PULL") == 2  # comment + mapping

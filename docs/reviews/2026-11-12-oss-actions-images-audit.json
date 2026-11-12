@@ -1,0 +1,2320 @@
+{
+ "task": "OSS-ACTIONS-IMAGES-EVIDENCE-20261112",
+ "supplements": "OSS-CURRENT-VERSION-EVIDENCE-20261112 (PR7208)",
+ "observed_at": {
+  "declarations": "2026-11-12T04:32:35.337004+00:00",
+  "releases": "2026-11-12T04:34:01.152086+00:00",
+  "comparison": "2026-11-12T04:45:22.608806+00:00"
+ },
+ "input_sha256": {
+  "oss-actions-images-current-comparison-20261112.json": "6f58cf2c311a1d99d403d9d69c4c6b2c7bd31c6a1087919b008f7efe7e251c52",
+  "oss-actions-images-declarations-20261112.json": "83345992a5ea9d25047839fe5446396d02528a5da59906e612a5956b7d76352c",
+  "oss-actions-images-official-releases-20261112.json": "b136c2a91e9edc87bbe143fa0f47665abd47b57725cd22b7658e179dda54ce12",
+  "oss-fe-checkout-41hex-candidates-20261112.json": "d33b4d27ad2db85d5f478f0e254cc04a8741d348650a5679ddec8d767be1b57e",
+  "oss-fe-checkout-upstream-resolution-20261112.json": "9914a3e5c1413554d7faf260464720037f54a6f0bf2ac353490098b376844772"
+ },
+ "snapshots": [
+  {
+   "repository": "ajoe734/pantheon",
+   "commit": "8999306d1cc30e3fa36b09ee7cdccb1c5431aa52",
+   "candidate_files": 89,
+   "action_declarations": 135,
+   "image_declarations": 123,
+   "files": [
+    ".github/workflows/agora-hosted-acceptance.yml",
+    ".github/workflows/api-tests.yml",
+    ".github/workflows/benchmarks.yml",
+    ".github/workflows/bff-route-diff.yml",
+    ".github/workflows/branch-ci.yml",
+    ".github/workflows/canonical-review-attestation-audit.yml",
+    ".github/workflows/canonical-review-gate.yml",
+    ".github/workflows/dependency-alert-reachability.yml",
+    ".github/workflows/dev-tw-market-refresh.yml",
+    ".github/workflows/gh-actions.yml",
+    ".github/workflows/master-release.yml",
+    ".github/workflows/nightly-publish-cut.yml",
+    ".github/workflows/nonprod-deploy.yml",
+    ".github/workflows/p0-bridge-guards.yml",
+    ".github/workflows/persona-owner-contract.yml",
+    ".github/workflows/production-release.yml",
+    ".github/workflows/publish-promote.yml",
+    ".github/workflows/publish-snapshot-prune.yml",
+    ".github/workflows/regression-tests.yml",
+    ".github/workflows/report-generator.yml",
+    ".github/workflows/research-regression-tests.yml",
+    ".github/workflows/rotate-execute-plans-dev-proof-jwts.yml",
+    ".github/workflows/stage-0-ci.yml",
+    ".github/workflows/staging-ephemeral-deploy.yml",
+    ".github/workflows/staging-orphan-cleanup.yml",
+    ".github/workflows/syntax-tests.yml",
+    ".github/workflows/tj-e2e-012-hosted-acceptance.yml",
+    ".github/workflows/virtual-environments.yml",
+    "Dockerfile.smoke",
+    "deploy/collector/Dockerfile",
+    "deploy/collector/docker-compose.yml",
+    "deploy/production/docker-compose.prod-control.yml",
+    "deploy/staging/docker-compose.staging.yml",
+    "docker-compose.control.yml",
+    "docker-compose.exec.yml",
+    "docker-compose.remote-dev.yml",
+    "docker-compose.search.yml",
+    "docker-compose.staging-full.yml",
+    "docker-compose.yml",
+    "integrations/openclaw/gateway/Dockerfile",
+    "services/broker/Dockerfile",
+    "services/capital/Dockerfile",
+    "services/channels/web/Dockerfile",
+    "services/consultation/Dockerfile",
+    "services/control-plane/bff/Dockerfile",
+    "services/control-plane/feedback/Dockerfile",
+    "services/control-plane/persona/Dockerfile",
+    "services/control-plane/router/Dockerfile",
+    "services/deployment/Dockerfile",
+    "services/dev-paper-principal-issuer/Dockerfile",
+    "services/evaluation/Dockerfile",
+    "services/evolution/Dockerfile",
+    "services/execution/lean_runtime/Dockerfile",
+    "services/feedback/Dockerfile",
+    "services/governance/Dockerfile",
+    "services/incidents/Dockerfile",
+    "services/learning/dspy/Dockerfile",
+    "services/learning/imitation/Dockerfile",
+    "services/learning/trl/Dockerfile",
+    "services/lineage-read/Dockerfile",
+    "services/memory/Dockerfile",
+    "services/monitor-agent/Dockerfile",
+    "services/openclaw-gateway-adapter/Dockerfile",
+    "services/optimizer-svc/Dockerfile",
+    "services/paper_fleet_reconciler/Dockerfile",
+    "services/persona-evaluator-agent/Dockerfile",
+    "services/policy-learning/Dockerfile",
+    "services/postmortems/Dockerfile",
+    "services/promotion/Dockerfile",
+    "services/reconciliation-drift/Dockerfile",
+    "services/registry/Dockerfile",
+    "services/registry/Dockerfile.test",
+    "services/registry/experiments/Dockerfile",
+    "services/research-worker-gateway/Dockerfile",
+    "services/research/Dockerfile",
+    "services/research/dspy/Dockerfile",
+    "services/research/finrl/Dockerfile",
+    "services/research/imitation/Dockerfile",
+    "services/research/mlflow/Dockerfile",
+    "services/research/qlib/Dockerfile",
+    "services/research/quantlib/Dockerfile",
+    "services/research/rllib/Dockerfile",
+    "services/research/statsmodels/Dockerfile",
+    "services/research/vectorbt/Dockerfile",
+    "services/runtime-manager/Dockerfile",
+    "services/search/Dockerfile",
+    "services/source_ingestion/Dockerfile",
+    "services/telemetry/Dockerfile",
+    "services/training-session/Dockerfile"
+   ]
+  },
+  {
+   "repository": "ajoe734/execute-plans",
+   "commit": "aa17cd4fc390e2c311ef50cbd5f7d2160faea775",
+   "candidate_files": 13,
+   "action_declarations": 59,
+   "image_declarations": 0,
+   "files": [
+    ".github/workflows/agora-hosted-acceptance.yml",
+    ".github/workflows/branch-ci.yml",
+    ".github/workflows/main-release.yml",
+    ".github/workflows/nightly-publish-cut.yml",
+    ".github/workflows/pantheon-canonical-review-gate.yml",
+    ".github/workflows/pantheon-dev-fe-deploy.yml",
+    ".github/workflows/pantheon-integration-gate.yml",
+    ".github/workflows/pantheon-proof-watchdog.yml",
+    ".github/workflows/pfg-agora-journey-e2e-hosted-acceptance.yml",
+    ".github/workflows/pfg-mgmt-journey-e2e-hosted-acceptance.yml",
+    ".github/workflows/ppl-alloc-009-hosted-acceptance.yml",
+    ".github/workflows/publish-promote.yml",
+    ".github/workflows/srcm-p1-mgmt-ui-hosted-acceptance.yml"
+   ]
+  }
+ ],
+ "totals": {
+  "candidate_files": 102,
+  "action_declarations": 194,
+  "image_declarations": 123,
+  "remote_action_declarations": 194,
+  "local_action_declarations": 0,
+  "distinct_remote_action_repositories": 9,
+  "distinct_repository_ref_groups": 18
+ },
+ "image_declaration_classes": {
+  "external_tag_only": 57,
+  "internal_image": 3,
+  "dynamic_variable": 55,
+  "external_digest_pinned": 8
+ },
+ "image_distinct_declared_strings": 41,
+ "action_groups": [
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "actions/checkout",
+   "declared_ref": "34e114876b0b11c390a56381ad16ebd13914f8d5",
+   "ref_kind": "commit-sha",
+   "occurrences": 10,
+   "latest_official_release": "v7.0.1",
+   "disposition": "unknown",
+   "detail": "unresolved SHA/main-to-release equivalence; do not infer failure or deployed version",
+   "locations": [
+    {
+     "path": ".github/workflows/agora-hosted-acceptance.yml",
+     "line": 68
+    },
+    {
+     "path": ".github/workflows/agora-hosted-acceptance.yml",
+     "line": 105
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 201
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 210
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 219
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 228
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 2907
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 2916
+    },
+    {
+     "path": ".github/workflows/rotate-execute-plans-dev-proof-jwts.yml",
+     "line": 35
+    },
+    {
+     "path": ".github/workflows/tj-e2e-012-hosted-acceptance.yml",
+     "line": 81
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "actions/upload-artifact",
+   "declared_ref": "v4",
+   "ref_kind": "release-family-tag",
+   "occurrences": 9,
+   "latest_official_release": "v7.0.2",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/agora-hosted-acceptance.yml",
+     "line": 323
+    },
+    {
+     "path": ".github/workflows/dependency-alert-reachability.yml",
+     "line": 67
+    },
+    {
+     "path": ".github/workflows/dev-tw-market-refresh.yml",
+     "line": 224
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 353
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 405
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 506
+    },
+    {
+     "path": ".github/workflows/staging-ephemeral-deploy.yml",
+     "line": 201
+    },
+    {
+     "path": ".github/workflows/staging-orphan-cleanup.yml",
+     "line": 91
+    },
+    {
+     "path": ".github/workflows/tj-e2e-012-hosted-acceptance.yml",
+     "line": 143
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "actions/checkout",
+   "declared_ref": "v6",
+   "ref_kind": "release-family-tag",
+   "occurrences": 50,
+   "latest_official_release": "v7.0.1",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/api-tests.yml",
+     "line": 11
+    },
+    {
+     "path": ".github/workflows/benchmarks.yml",
+     "line": 14
+    },
+    {
+     "path": ".github/workflows/benchmarks.yml",
+     "line": 17
+    },
+    {
+     "path": ".github/workflows/bff-route-diff.yml",
+     "line": 19
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 69
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 163
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 202
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 258
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 607
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 674
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 739
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 780
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 862
+    },
+    {
+     "path": ".github/workflows/canonical-review-attestation-audit.yml",
+     "line": 119
+    },
+    {
+     "path": ".github/workflows/canonical-review-gate.yml",
+     "line": 105
+    },
+    {
+     "path": ".github/workflows/dependency-alert-reachability.yml",
+     "line": 37
+    },
+    {
+     "path": ".github/workflows/gh-actions.yml",
+     "line": 16
+    },
+    {
+     "path": ".github/workflows/master-release.yml",
+     "line": 25
+    },
+    {
+     "path": ".github/workflows/nightly-publish-cut.yml",
+     "line": 43
+    },
+    {
+     "path": ".github/workflows/nightly-publish-cut.yml",
+     "line": 124
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 25
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 43
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 60
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 75
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 92
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 126
+    },
+    {
+     "path": ".github/workflows/persona-owner-contract.yml",
+     "line": 73
+    },
+    {
+     "path": ".github/workflows/production-release.yml",
+     "line": 68
+    },
+    {
+     "path": ".github/workflows/production-release.yml",
+     "line": 139
+    },
+    {
+     "path": ".github/workflows/publish-promote.yml",
+     "line": 36
+    },
+    {
+     "path": ".github/workflows/publish-snapshot-prune.yml",
+     "line": 48
+    },
+    {
+     "path": ".github/workflows/regression-tests.yml",
+     "line": 16
+    },
+    {
+     "path": ".github/workflows/report-generator.yml",
+     "line": 11
+    },
+    {
+     "path": ".github/workflows/research-regression-tests.yml",
+     "line": 16
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 99
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 127
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 158
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 186
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 214
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 236
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 250
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 292
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 387
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 445
+    },
+    {
+     "path": ".github/workflows/staging-ephemeral-deploy.yml",
+     "line": 113
+    },
+    {
+     "path": ".github/workflows/staging-orphan-cleanup.yml",
+     "line": 39
+    },
+    {
+     "path": ".github/workflows/staging-orphan-cleanup.yml",
+     "line": 67
+    },
+    {
+     "path": ".github/workflows/syntax-tests.yml",
+     "line": 16
+    },
+    {
+     "path": ".github/workflows/syntax-tests.yml",
+     "line": 76
+    },
+    {
+     "path": ".github/workflows/virtual-environments.yml",
+     "line": 11
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "jlumbroso/free-disk-space",
+   "declared_ref": "main",
+   "ref_kind": "branch",
+   "occurrences": 7,
+   "latest_official_release": "v2.0.0",
+   "disposition": "unknown",
+   "detail": "unresolved SHA/main-to-release equivalence; do not infer failure or deployed version",
+   "locations": [
+    {
+     "path": ".github/workflows/api-tests.yml",
+     "line": 14
+    },
+    {
+     "path": ".github/workflows/gh-actions.yml",
+     "line": 45
+    },
+    {
+     "path": ".github/workflows/regression-tests.yml",
+     "line": 43
+    },
+    {
+     "path": ".github/workflows/report-generator.yml",
+     "line": 14
+    },
+    {
+     "path": ".github/workflows/research-regression-tests.yml",
+     "line": 43
+    },
+    {
+     "path": ".github/workflows/syntax-tests.yml",
+     "line": 43
+    },
+    {
+     "path": ".github/workflows/virtual-environments.yml",
+     "line": 14
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "actions/setup-python",
+   "declared_ref": "v6",
+   "ref_kind": "release-family-tag",
+   "occurrences": 32,
+   "latest_official_release": "v7.1.0",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/bff-route-diff.yml",
+     "line": 22
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 97
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 166
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 203
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 262
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 610
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 677
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 742
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 783
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 865
+    },
+    {
+     "path": ".github/workflows/canonical-review-gate.yml",
+     "line": 107
+    },
+    {
+     "path": ".github/workflows/dependency-alert-reachability.yml",
+     "line": 40
+    },
+    {
+     "path": ".github/workflows/master-release.yml",
+     "line": 29
+    },
+    {
+     "path": ".github/workflows/nightly-publish-cut.yml",
+     "line": 52
+    },
+    {
+     "path": ".github/workflows/nightly-publish-cut.yml",
+     "line": 128
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 31
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 46
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 63
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 95
+    },
+    {
+     "path": ".github/workflows/p0-bridge-guards.yml",
+     "line": 129
+    },
+    {
+     "path": ".github/workflows/persona-owner-contract.yml",
+     "line": 78
+    },
+    {
+     "path": ".github/workflows/production-release.yml",
+     "line": 69
+    },
+    {
+     "path": ".github/workflows/production-release.yml",
+     "line": 140
+    },
+    {
+     "path": ".github/workflows/publish-promote.yml",
+     "line": 45
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 105
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 133
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 163
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 295
+    },
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 390
+    },
+    {
+     "path": ".github/workflows/staging-ephemeral-deploy.yml",
+     "line": 116
+    },
+    {
+     "path": ".github/workflows/staging-orphan-cleanup.yml",
+     "line": 70
+    },
+    {
+     "path": ".github/workflows/syntax-tests.yml",
+     "line": 79
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "actions/checkout",
+   "declared_ref": "v4",
+   "ref_kind": "release-family-tag",
+   "occurrences": 2,
+   "latest_official_release": "v7.0.1",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/dev-tw-market-refresh.yml",
+     "line": 29
+    },
+    {
+     "path": ".github/workflows/dev-tw-market-refresh.yml",
+     "line": 30
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "actions/upload-artifact",
+   "declared_ref": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+   "ref_kind": "commit-sha",
+   "occurrences": 15,
+   "latest_official_release": "v7.0.2",
+   "disposition": "unknown",
+   "detail": "unresolved SHA/main-to-release equivalence; do not infer failure or deployed version",
+   "locations": [
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 677
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 1254
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 1453
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 1599
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 1796
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 1921
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 1965
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 2037
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 2137
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 2676
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 2685
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 2694
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 3573
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 3722
+    },
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 4730
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "google-github-actions/auth",
+   "declared_ref": "c200f3691d83b41bf9bbd8638997a462592937ed",
+   "ref_kind": "commit-sha",
+   "occurrences": 4,
+   "latest_official_release": "v3",
+   "disposition": "unknown",
+   "detail": "unresolved SHA/main-to-release equivalence; do not infer failure or deployed version",
+   "locations": [
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 3367
+    },
+    {
+     "path": ".github/workflows/production-release.yml",
+     "line": 163
+    },
+    {
+     "path": ".github/workflows/staging-ephemeral-deploy.yml",
+     "line": 147
+    },
+    {
+     "path": ".github/workflows/staging-orphan-cleanup.yml",
+     "line": 75
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "google-github-actions/setup-gcloud",
+   "declared_ref": "e427ad8a34f8676edf47cf7d7925499adf3eb74f",
+   "ref_kind": "commit-sha",
+   "occurrences": 4,
+   "latest_official_release": "v3.0.1",
+   "disposition": "unknown",
+   "detail": "unresolved SHA/main-to-release equivalence; do not infer failure or deployed version",
+   "locations": [
+    {
+     "path": ".github/workflows/nonprod-deploy.yml",
+     "line": 3374
+    },
+    {
+     "path": ".github/workflows/production-release.yml",
+     "line": 167
+    },
+    {
+     "path": ".github/workflows/staging-ephemeral-deploy.yml",
+     "line": 154
+    },
+    {
+     "path": ".github/workflows/staging-orphan-cleanup.yml",
+     "line": 81
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "actions/dependency-review-action",
+   "declared_ref": "v4",
+   "ref_kind": "release-family-tag",
+   "occurrences": 1,
+   "latest_official_release": "v5.0.0",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 270
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/pantheon",
+   "upstream": "actions/setup-node",
+   "declared_ref": "v4",
+   "ref_kind": "release-family-tag",
+   "occurrences": 1,
+   "latest_official_release": "v7.1.0",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/stage-0-ci.yml",
+     "line": 300
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/execute-plans",
+   "upstream": "actions/checkout",
+   "declared_ref": "34e114876b0b11c390a56381ad16ebd13914f8d5a",
+   "ref_kind": "commit-sha",
+   "occurrences": 4,
+   "latest_official_release": "v7.0.1",
+   "disposition": "unknown",
+   "detail": "unresolved SHA/main-to-release equivalence; do not infer failure or deployed version",
+   "locations": [
+    {
+     "path": ".github/workflows/agora-hosted-acceptance.yml",
+     "line": 70
+    },
+    {
+     "path": ".github/workflows/pfg-mgmt-journey-e2e-hosted-acceptance.yml",
+     "line": 58
+    },
+    {
+     "path": ".github/workflows/ppl-alloc-009-hosted-acceptance.yml",
+     "line": 65
+    },
+    {
+     "path": ".github/workflows/srcm-p1-mgmt-ui-hosted-acceptance.yml",
+     "line": 61
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/execute-plans",
+   "upstream": "actions/setup-node",
+   "declared_ref": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+   "ref_kind": "commit-sha",
+   "occurrences": 5,
+   "latest_official_release": "v7.1.0",
+   "disposition": "unknown",
+   "detail": "unresolved SHA/main-to-release equivalence; do not infer failure or deployed version",
+   "locations": [
+    {
+     "path": ".github/workflows/agora-hosted-acceptance.yml",
+     "line": 164
+    },
+    {
+     "path": ".github/workflows/pfg-agora-journey-e2e-hosted-acceptance.yml",
+     "line": 214
+    },
+    {
+     "path": ".github/workflows/pfg-mgmt-journey-e2e-hosted-acceptance.yml",
+     "line": 107
+    },
+    {
+     "path": ".github/workflows/ppl-alloc-009-hosted-acceptance.yml",
+     "line": 84
+    },
+    {
+     "path": ".github/workflows/srcm-p1-mgmt-ui-hosted-acceptance.yml",
+     "line": 137
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/execute-plans",
+   "upstream": "actions/upload-artifact",
+   "declared_ref": "v4",
+   "ref_kind": "release-family-tag",
+   "occurrences": 12,
+   "latest_official_release": "v7.0.2",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/agora-hosted-acceptance.yml",
+     "line": 236
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 1124
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 1485
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 1756
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 1595
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 1647
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 1655
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 2043
+    },
+    {
+     "path": ".github/workflows/pfg-agora-journey-e2e-hosted-acceptance.yml",
+     "line": 247
+    },
+    {
+     "path": ".github/workflows/pfg-mgmt-journey-e2e-hosted-acceptance.yml",
+     "line": 131
+    },
+    {
+     "path": ".github/workflows/ppl-alloc-009-hosted-acceptance.yml",
+     "line": 106
+    },
+    {
+     "path": ".github/workflows/srcm-p1-mgmt-ui-hosted-acceptance.yml",
+     "line": 161
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/execute-plans",
+   "upstream": "actions/checkout",
+   "declared_ref": "v4",
+   "ref_kind": "release-family-tag",
+   "occurrences": 21,
+   "latest_official_release": "v7.0.1",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 66
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 144
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 169
+    },
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 220
+    },
+    {
+     "path": ".github/workflows/main-release.yml",
+     "line": 26
+    },
+    {
+     "path": ".github/workflows/nightly-publish-cut.yml",
+     "line": 39
+    },
+    {
+     "path": ".github/workflows/pantheon-canonical-review-gate.yml",
+     "line": 61
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 465
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 491
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 783
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 1228
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 1338
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 1793
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 508
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 689
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 1703
+    },
+    {
+     "path": ".github/workflows/pantheon-proof-watchdog.yml",
+     "line": 249
+    },
+    {
+     "path": ".github/workflows/pantheon-proof-watchdog.yml",
+     "line": 467
+    },
+    {
+     "path": ".github/workflows/pantheon-proof-watchdog.yml",
+     "line": 602
+    },
+    {
+     "path": ".github/workflows/pantheon-proof-watchdog.yml",
+     "line": 700
+    },
+    {
+     "path": ".github/workflows/publish-promote.yml",
+     "line": 38
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/execute-plans",
+   "upstream": "actions/setup-node",
+   "declared_ref": "v4",
+   "ref_kind": "release-family-tag",
+   "occurrences": 9,
+   "latest_official_release": "v7.1.0",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/branch-ci.yml",
+     "line": 177
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 615
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 1235
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 1800
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 699
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 1709
+    },
+    {
+     "path": ".github/workflows/pantheon-proof-watchdog.yml",
+     "line": 255
+    },
+    {
+     "path": ".github/workflows/pantheon-proof-watchdog.yml",
+     "line": 474
+    },
+    {
+     "path": ".github/workflows/pantheon-proof-watchdog.yml",
+     "line": 618
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/execute-plans",
+   "upstream": "actions/github-script",
+   "declared_ref": "v7",
+   "ref_kind": "release-family-tag",
+   "occurrences": 7,
+   "latest_official_release": "v9.0.0",
+   "disposition": "candidate",
+   "detail": "declared release family differs from upstream latest; compatibility and runner requirements require evaluation",
+   "locations": [
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 212
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 693
+    },
+    {
+     "path": ".github/workflows/pantheon-dev-fe-deploy.yml",
+     "line": 1213
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 157
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 516
+    },
+    {
+     "path": ".github/workflows/pantheon-integration-gate.yml",
+     "line": 597
+    },
+    {
+     "path": ".github/workflows/pantheon-proof-watchdog.yml",
+     "line": 100
+    }
+   ]
+  },
+  {
+   "repository": "ajoe734/execute-plans",
+   "upstream": "actions/checkout",
+   "declared_ref": "34e114876b0b11c390a56381ad16ebd13914f8d5",
+   "ref_kind": "commit-sha",
+   "occurrences": 1,
+   "latest_official_release": "v7.0.1",
+   "disposition": "unknown",
+   "detail": "unresolved SHA/main-to-release equivalence; do not infer failure or deployed version",
+   "locations": [
+    {
+     "path": ".github/workflows/pfg-agora-journey-e2e-hosted-acceptance.yml",
+     "line": 104
+    }
+   ]
+  }
+ ],
+ "image_dispositions": [
+  {
+   "declared": "python:3.11-slim / python:3.12-slim",
+   "count": 51,
+   "observed_latest": "Python 3.15.2 stable",
+   "disposition": "current-supported-baseline",
+   "evidence": "python.org: 3.11 and 3.12 are security-maintained branches",
+   "remaining_checks": "Exact patch/digest of the pulled image and application compatibility with newer minors are unverified."
+  },
+  {
+   "declared": "postgres:16-alpine@sha256:cf78e766…",
+   "count": 2,
+   "observed_latest": "PostgreSQL 18.6 stable (19 is RC1, not stable)",
+   "disposition": "current-supported-baseline",
+   "evidence": "postgresql.org versioning: major 16 supported until 2028-11-09; current 16 minor 16.15",
+   "remaining_checks": "Digest content/minor unverified; no major upgrade or data migration is implied."
+  },
+  {
+   "declared": "pgvector/pgvector:pg16",
+   "count": 1,
+   "observed_latest": "not confirmed (releases/latest HTTP 404, no retry)",
+   "disposition": "unknown",
+   "evidence": "Official README install tag v0.8.7 is documentation evidence only; pg16 is the PostgreSQL major, not the extension version",
+   "remaining_checks": "Actual extension version inside the image and compatibility unverified."
+  },
+  {
+   "declared": "busybox:1.36@sha256:73aaf090…",
+   "count": 1,
+   "observed_latest": "1.36.1 latest explicit stable announcement; 1.38.0 marked unstable",
+   "disposition": "unknown",
+   "evidence": "busybox.net homepage",
+   "remaining_checks": "No digest-to-patch/platform lookup performed; 1.38.0 is not stable and is not a replacement target."
+  },
+  {
+   "declared": "caddy:2.8-alpine",
+   "count": 1,
+   "observed_latest": "v2.11.9",
+   "disposition": "candidate",
+   "evidence": "https://github.com/caddyserver/caddy/releases/tag/v2.11.9",
+   "remaining_checks": "Active use (collector compose), config compatibility and image content unverified."
+  },
+  {
+   "declared": "nats:2.11-alpine@sha256:e4bf19f1…",
+   "count": 2,
+   "observed_latest": "v2.15.3",
+   "disposition": "candidate",
+   "evidence": "https://github.com/nats-io/nats-server/releases/tag/v2.15.3",
+   "remaining_checks": "Active profile, config compatibility and digest content unverified."
+  },
+  {
+   "declared": "redis:7-alpine@sha256:ff02b58f…",
+   "count": 3,
+   "observed_latest": "8.10.3",
+   "disposition": "candidate",
+   "evidence": "https://github.com/redis/redis/releases/tag/8.10.3",
+   "remaining_checks": "Active profile, client/persistence compatibility and digest content unverified."
+  },
+  {
+   "declared": "qdrant/qdrant:v1.13.4",
+   "count": 1,
+   "observed_latest": "v1.20.0",
+   "disposition": "candidate",
+   "evidence": "https://github.com/qdrant/qdrant/releases/tag/v1.20.0",
+   "remaining_checks": "Active profile (search compose), storage/client compatibility unverified."
+  },
+  {
+   "declared": "diygod/rsshub:chromium-bundled-2026-11-01",
+   "count": 1,
+   "observed_latest": "v2026.11.12-8633.c86f1d5",
+   "disposition": "unknown",
+   "evidence": "https://github.com/DIYgod/RSSHub/releases/tag/v2026.11.12-8633.c86f1d5",
+   "remaining_checks": "Declared tag is a dated image tag, not a release version; its mapping to the release tag is unverified."
+  },
+  {
+   "declared": "ghcr.io/openclaw/openclaw:2026.7.1",
+   "count": 2,
+   "observed_latest": "v2026.11.3",
+   "disposition": "candidate",
+   "evidence": "https://github.com/openclaw/openclaw/releases/tag/v2026.11.3",
+   "remaining_checks": "Gateway adapter compatibility and active use unverified."
+  },
+  {
+   "declared": "internal images: pantheon-collector-worker:1.0.0, pantheon-openclaw-gateway:2026.7.1, pantheon-openclaw-activation-ready-e2e-adapter:latest",
+   "count": 3,
+   "observed_latest": "n/a (no upstream release)",
+   "disposition": "unknown",
+   "evidence": "Locally built; no official upstream",
+   "remaining_checks": "Owner classification required; no version comparison is possible."
+  },
+  {
+   "declared": "27 distinct ${PANTHEON_*_IMAGE} variables",
+   "count": 55,
+   "observed_latest": "n/a (resolved at deploy time)",
+   "disposition": "unknown",
+   "evidence": "Compose variable references with digest-required messages",
+   "remaining_checks": "Actual resolved image identities are not in the declarations."
+  }
+ ],
+ "release_observations": [
+  {
+   "repository": "actions/checkout",
+   "tag": "v7.0.1",
+   "published_at": "2026-07-20T15:10:05Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/actions/checkout/releases/tag/v7.0.1",
+   "api_url": "https://api.github.com/repos/actions/checkout/releases/latest"
+  },
+  {
+   "repository": "actions/dependency-review-action",
+   "tag": "v5.0.0",
+   "published_at": "2026-05-08T20:23:50Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/actions/dependency-review-action/releases/tag/v5.0.0",
+   "api_url": "https://api.github.com/repos/actions/dependency-review-action/releases/latest"
+  },
+  {
+   "repository": "actions/github-script",
+   "tag": "v9.0.0",
+   "published_at": "2026-04-09T22:57:15Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/actions/github-script/releases/tag/v9.0.0",
+   "api_url": "https://api.github.com/repos/actions/github-script/releases/latest"
+  },
+  {
+   "repository": "actions/setup-node",
+   "tag": "v7.1.0",
+   "published_at": "2026-10-08T02:52:34Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/actions/setup-node/releases/tag/v7.1.0",
+   "api_url": "https://api.github.com/repos/actions/setup-node/releases/latest"
+  },
+  {
+   "repository": "actions/setup-python",
+   "tag": "v7.1.0",
+   "published_at": "2026-10-22T02:56:04Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/actions/setup-python/releases/tag/v7.1.0",
+   "api_url": "https://api.github.com/repos/actions/setup-python/releases/latest"
+  },
+  {
+   "repository": "actions/upload-artifact",
+   "tag": "v7.0.2",
+   "published_at": "2026-10-07T10:08:14Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/actions/upload-artifact/releases/tag/v7.0.2",
+   "api_url": "https://api.github.com/repos/actions/upload-artifact/releases/latest"
+  },
+  {
+   "repository": "google-github-actions/auth",
+   "tag": "v3",
+   "published_at": "2025-09-03T02:14:46Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/google-github-actions/auth/releases/tag/v3",
+   "api_url": "https://api.github.com/repos/google-github-actions/auth/releases/latest"
+  },
+  {
+   "repository": "google-github-actions/setup-gcloud",
+   "tag": "v3.0.1",
+   "published_at": "2025-08-28T13:37:55Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/google-github-actions/setup-gcloud/releases/tag/v3.0.1",
+   "api_url": "https://api.github.com/repos/google-github-actions/setup-gcloud/releases/latest"
+  },
+  {
+   "repository": "jlumbroso/free-disk-space",
+   "tag": "v2.0.0",
+   "published_at": "2026-09-17T06:49:33Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/lumbroso-commons/free-disk-space/releases/tag/v2.0.0",
+   "api_url": "https://api.github.com/repos/jlumbroso/free-disk-space/releases/latest"
+  },
+  {
+   "repository": "caddyserver/caddy",
+   "tag": "v2.11.9",
+   "published_at": "2026-11-05T01:30:24Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/caddyserver/caddy/releases/tag/v2.11.9",
+   "api_url": "https://api.github.com/repos/caddyserver/caddy/releases/latest"
+  },
+  {
+   "repository": "DIYgod/RSSHub",
+   "tag": "v2026.11.12-8633.c86f1d5",
+   "published_at": "2026-11-12T04:16:44Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/DIYgod/RSSHub/releases/tag/v2026.11.12-8633.c86f1d5",
+   "api_url": "https://api.github.com/repos/DIYgod/RSSHub/releases/latest"
+  },
+  {
+   "repository": "openclaw/openclaw",
+   "tag": "v2026.11.3",
+   "published_at": "2026-11-10T18:53:07Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/openclaw/openclaw/releases/tag/v2026.11.3",
+   "api_url": "https://api.github.com/repos/openclaw/openclaw/releases/latest"
+  },
+  {
+   "repository": "nats-io/nats-server",
+   "tag": "v2.15.3",
+   "published_at": "2026-11-11T12:27:18Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/nats-io/nats-server/releases/tag/v2.15.3",
+   "api_url": "https://api.github.com/repos/nats-io/nats-server/releases/latest"
+  },
+  {
+   "repository": "pgvector/pgvector",
+   "api_url": "https://api.github.com/repos/pgvector/pgvector/releases/latest",
+   "status": "not_confirmed",
+   "http_status": 404,
+   "retry_performed": false
+  },
+  {
+   "repository": "qdrant/qdrant",
+   "tag": "v1.20.0",
+   "published_at": "2026-10-22T14:14:12Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/qdrant/qdrant/releases/tag/v1.20.0",
+   "api_url": "https://api.github.com/repos/qdrant/qdrant/releases/latest"
+  },
+  {
+   "repository": "redis/redis",
+   "tag": "8.10.3",
+   "published_at": "2026-10-26T11:56:24Z",
+   "prerelease": false,
+   "draft": false,
+   "source_url": "https://github.com/redis/redis/releases/tag/8.10.3",
+   "api_url": "https://api.github.com/repos/redis/redis/releases/latest"
+  }
+ ],
+ "image_declarations": [
+  {
+   "file": "Dockerfile.smoke",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "deploy/collector/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "deploy/collector/docker-compose.yml",
+   "line": 7,
+   "kind": "compose_image",
+   "declared": "diygod/rsshub:chromium-bundled-2026-11-01",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "deploy/collector/docker-compose.yml",
+   "line": 30,
+   "kind": "compose_image",
+   "declared": "pantheon-collector-worker:1.0.0",
+   "classification": "internal_image"
+  },
+  {
+   "file": "deploy/collector/docker-compose.yml",
+   "line": 58,
+   "kind": "compose_image",
+   "declared": "caddy:2.8-alpine",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 68,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_POSTGRES_IMAGE:?pinned postgres image required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 84,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_NATS_IMAGE:?pinned nats image required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 97,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_SIGNAL_STORE_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 112,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_RUNTIME_MANAGER_IMAGE:?immutable runtime-manager digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 128,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_GOVERNANCE_IMAGE:?immutable governance digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 144,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_DEPLOYMENT_IMAGE:?immutable deployment digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 162,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE:?immutable lifecycle-projector digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 185,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 278,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 293,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_LINEAGE_READ_IMAGE:?immutable lineage-read digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 310,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_REGISTRY_IMAGE:?immutable registry digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 336,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_TELEMETRY_IMAGE:?immutable telemetry digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 362,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_INCIDENTS_IMAGE:?immutable incidents digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 386,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_POSTMORTEMS_IMAGE:?immutable postmortems digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 408,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_EVOLUTION_IMAGE:?immutable evolution digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 437,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_RECONCILIATION_DRIFT_SVC_IMAGE:?immutable reconciliation-drift-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 465,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_PERSONA_IMAGE:?immutable persona digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 493,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_CONSULTATION_SVC_IMAGE:?immutable consultation-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 510,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_SOURCE_INGEST_IMAGE:?immutable source-ingest digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 540,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_TRAINING_SESSION_SVC_IMAGE:?immutable training-session-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 573,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_POLICY_LEARNING_SVC_IMAGE:?immutable policy-learning-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 596,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_RESEARCH_ORCHESTRATOR_SVC_IMAGE:?immutable research-orchestrator-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 619,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_AGORA_INTERACTION_WORKER_IMAGE:?immutable agora-interaction-worker digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 653,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_PAPER_FLEET_RECONCILER_IMAGE:?immutable paper-fleet-reconciler digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 693,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_PAPER_SIGNAL_PRODUCER_IMAGE:?immutable paper-signal-producer digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 725,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_MEMORY_IMAGE:?immutable memory digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 745,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_CAPITAL_IMAGE:?immutable capital digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/production/docker-compose.prod-control.yml",
+   "line": 773,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_OPENCLAW_GATEWAY_ADAPTER_IMAGE:?immutable openclaw-gateway-adapter digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 71,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_POSTGRES_IMAGE:?pinned postgres image required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 94,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_NATS_IMAGE:?pinned nats image required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 111,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_RUNTIME_MANAGER_IMAGE:?immutable runtime-manager digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 130,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_GOVERNANCE_IMAGE:?immutable governance digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 155,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_DEPLOYMENT_IMAGE:?immutable deployment digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 181,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE:?immutable lifecycle-projector digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 204,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 325,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_LINEAGE_READ_IMAGE:?immutable lineage-read digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 342,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_REGISTRY_IMAGE:?immutable registry digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 370,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_TELEMETRY_IMAGE:?immutable telemetry digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 398,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_INCIDENTS_IMAGE:?immutable incidents digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 424,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_POSTMORTEMS_IMAGE:?immutable postmortems digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 448,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_EVOLUTION_IMAGE:?immutable evolution digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 479,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_RECONCILIATION_DRIFT_SVC_IMAGE:?immutable reconciliation-drift-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 509,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_PERSONA_IMAGE:?immutable persona digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 539,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_CONSULTATION_SVC_IMAGE:?immutable consultation-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 558,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_SOURCE_INGEST_IMAGE:?immutable source-ingest digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 588,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_TRAINING_SESSION_SVC_IMAGE:?immutable training-session-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 623,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_POLICY_LEARNING_SVC_IMAGE:?immutable policy-learning-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 646,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_RESEARCH_ORCHESTRATOR_SVC_IMAGE:?immutable research-orchestrator-svc digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 669,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_AGORA_INTERACTION_WORKER_IMAGE:?immutable agora-interaction-worker digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 699,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_SIGNAL_STORE_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 718,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_PAPER_FLEET_RECONCILER_IMAGE:?immutable paper-fleet-reconciler digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 756,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_PAPER_SIGNAL_PRODUCER_IMAGE:?immutable paper-signal-producer digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 787,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_MEMORY_IMAGE:?immutable memory digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 807,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_CAPITAL_IMAGE:?immutable capital digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "deploy/staging/docker-compose.staging.yml",
+   "line": 837,
+   "kind": "compose_image",
+   "declared": "${PANTHEON_OPENCLAW_GATEWAY_ADAPTER_IMAGE:?immutable openclaw-gateway-adapter digest required}",
+   "classification": "dynamic_variable"
+  },
+  {
+   "file": "docker-compose.control.yml",
+   "line": 25,
+   "kind": "compose_image",
+   "declared": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+   "classification": "external_digest_pinned"
+  },
+  {
+   "file": "docker-compose.control.yml",
+   "line": 47,
+   "kind": "compose_image",
+   "declared": "nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00",
+   "classification": "external_digest_pinned"
+  },
+  {
+   "file": "docker-compose.exec.yml",
+   "line": 21,
+   "kind": "compose_image",
+   "declared": "redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+   "classification": "external_digest_pinned"
+  },
+  {
+   "file": "docker-compose.remote-dev.yml",
+   "line": 3,
+   "kind": "compose_image",
+   "declared": "redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+   "classification": "external_digest_pinned"
+  },
+  {
+   "file": "docker-compose.search.yml",
+   "line": 6,
+   "kind": "compose_image",
+   "declared": "pgvector/pgvector:pg16",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "docker-compose.search.yml",
+   "line": 22,
+   "kind": "compose_image",
+   "declared": "qdrant/qdrant:v1.13.4",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "docker-compose.yml",
+   "line": 56,
+   "kind": "compose_image",
+   "declared": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+   "classification": "external_digest_pinned"
+  },
+  {
+   "file": "docker-compose.yml",
+   "line": 84,
+   "kind": "compose_image",
+   "declared": "nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00",
+   "classification": "external_digest_pinned"
+  },
+  {
+   "file": "docker-compose.yml",
+   "line": 101,
+   "kind": "compose_image",
+   "declared": "redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+   "classification": "external_digest_pinned"
+  },
+  {
+   "file": "docker-compose.yml",
+   "line": 812,
+   "kind": "compose_image",
+   "declared": "busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+   "classification": "external_digest_pinned"
+  },
+  {
+   "file": "docker-compose.yml",
+   "line": 826,
+   "kind": "compose_image",
+   "declared": "pantheon-openclaw-gateway:2026.7.1",
+   "classification": "internal_image"
+  },
+  {
+   "file": "docker-compose.yml",
+   "line": 2870,
+   "kind": "compose_image",
+   "declared": "pantheon-openclaw-activation-ready-e2e-adapter:latest",
+   "classification": "internal_image"
+  },
+  {
+   "file": "integrations/openclaw/gateway/Dockerfile",
+   "line": 17,
+   "kind": "docker_base",
+   "declared": "ghcr.io/openclaw/openclaw:2026.7.1",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/broker/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/capital/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/channels/web/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/consultation/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/control-plane/bff/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/control-plane/feedback/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/control-plane/persona/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/control-plane/router/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/deployment/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/dev-paper-principal-issuer/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/evaluation/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/evolution/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/execution/lean_runtime/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/feedback/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/governance/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/incidents/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/learning/dspy/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/learning/imitation/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/learning/trl/Dockerfile",
+   "line": 9,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/lineage-read/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/memory/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/monitor-agent/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/openclaw-gateway-adapter/Dockerfile",
+   "line": 10,
+   "kind": "docker_base",
+   "declared": "ghcr.io/openclaw/openclaw:2026.7.1",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/openclaw-gateway-adapter/Dockerfile",
+   "line": 12,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/optimizer-svc/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/paper_fleet_reconciler/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/persona-evaluator-agent/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/policy-learning/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/postmortems/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/promotion/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/reconciliation-drift/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/registry/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/registry/Dockerfile.test",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/registry/experiments/Dockerfile",
+   "line": 5,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research-worker-gateway/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/dspy/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/finrl/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/imitation/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/mlflow/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/qlib/Dockerfile",
+   "line": 5,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/quantlib/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/rllib/Dockerfile",
+   "line": 7,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/statsmodels/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/research/vectorbt/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.11-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/runtime-manager/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/search/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/source_ingestion/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/telemetry/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  },
+  {
+   "file": "services/training-session/Dockerfile",
+   "line": 1,
+   "kind": "docker_base",
+   "declared": "python:3.12-slim",
+   "classification": "external_tag_only"
+  }
+ ],
+ "checkout_41hex": {
+  "declarations": [
+   {
+    "repository": "ajoe734/execute-plans",
+    "commit": "aa17cd4fc390e2c311ef50cbd5f7d2160faea775",
+    "path": ".github/workflows/agora-hosted-acceptance.yml",
+    "line": 70,
+    "declared": "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a",
+    "exact_line_verified": true
+   },
+   {
+    "repository": "ajoe734/execute-plans",
+    "commit": "aa17cd4fc390e2c311ef50cbd5f7d2160faea775",
+    "path": ".github/workflows/pfg-mgmt-journey-e2e-hosted-acceptance.yml",
+    "line": 58,
+    "declared": "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a",
+    "exact_line_verified": true
+   },
+   {
+    "repository": "ajoe734/execute-plans",
+    "commit": "aa17cd4fc390e2c311ef50cbd5f7d2160faea775",
+    "path": ".github/workflows/ppl-alloc-009-hosted-acceptance.yml",
+    "line": 65,
+    "declared": "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a",
+    "exact_line_verified": true
+   },
+   {
+    "repository": "ajoe734/execute-plans",
+    "commit": "aa17cd4fc390e2c311ef50cbd5f7d2160faea775",
+    "path": ".github/workflows/srcm-p1-mgmt-ui-hosted-acceptance.yml",
+    "line": 61,
+    "declared": "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a",
+    "exact_line_verified": true
+   }
+  ],
+  "upstream_resolution": [
+   {
+    "ref": "34e114876b0b11c390a56381ad16ebd13914f8d5",
+    "url": "https://api.github.com/repos/actions/checkout/commits/34e114876b0b11c390a56381ad16ebd13914f8d5",
+    "retry_performed": false,
+    "status": 200,
+    "resolved_sha": "34e114876b0b11c390a56381ad16ebd13914f8d5",
+    "html_url": "https://github.com/actions/checkout/commit/34e114876b0b11c390a56381ad16ebd13914f8d5"
+   },
+   {
+    "ref": "34e114876b0b11c390a56381ad16ebd13914f8d5a",
+    "url": "https://api.github.com/repos/actions/checkout/commits/34e114876b0b11c390a56381ad16ebd13914f8d5a",
+    "retry_performed": false,
+    "status": 200,
+    "resolved_sha": "34e114876b0b11c390a56381ad16ebd13914f8d5",
+    "html_url": "https://github.com/actions/checkout/commit/34e114876b0b11c390a56381ad16ebd13914f8d5"
+   }
+  ],
+  "conclusion": "both the 41-hex and 40-hex refs return HTTP 200 and resolve to the same 40-hex SHA 34e114876b0b11c390a56381ad16ebd13914f8d5; failure hypothesis not demonstrated; no repair created"
+ },
+ "limits": [
+  "Declarations do not establish actual active compose profiles, installed versions or served deployment.",
+  "Internal images, variables and image digest/manifest contents remain unverified.",
+  "Release family comparisons are candidate differences, not proof upgrades are safe or source implementations can be deleted.",
+  "Source/runtime/provider/credentials/CI/deployment unchanged; no second dispatcher or new worker.",
+  "Latest release tags do not identify deployed images or compatibility.",
+  "Pinned action SHA/tag equivalence not fully resolved by release-only lookup.",
+  "Docker variables/internal images require actual original-owner classification.",
+  "Tracked Dockerfile and compose declarations plus workflow uses only; no execution/active profile or deployed version inferred.",
+  "Dynamic variables and internal images require original-owner classification; no upgrade/retirement inferred solely from declarations.",
+  "Local actions are local code; their uses declarations do not have an upstream release."
+ ]
+}

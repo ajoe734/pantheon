@@ -1117,6 +1117,8 @@ class RegistryStore:
             evaluation_summary=payload.evaluation_summary,
             rollback_target=payload.rollback_target,
             metadata=payload.metadata,
+            replication_success=payload.replication_success,
+            replication_proof=payload.replication_proof,
             created_at=now,
             updated_at=now,
             last_actor=actor,
