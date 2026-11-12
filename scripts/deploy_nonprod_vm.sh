@@ -2210,6 +2210,10 @@ for _ in range(20):
     cursor -= timedelta(days=1)
 session_date = cursor
 session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
+if connector_id == "tw-finmind-broker-daily-report":
+    from services.source_ingestion.connectors.finmind_taiwan import latest_published_broker_session
+    session_date = latest_published_broker_session(now_u, is_session_day=is_session_day)
+    session_close = datetime(session_date.year, session_date.month, session_date.day, 18, 0, tzinfo=tz).astimezone(timezone.utc)
 
 if connector_id in CHIP_CONNECTORS:
     if now_t.weekday() >= 5:
@@ -2692,7 +2696,11 @@ from services.source_ingestion.active_universe import (
     DEFAULT_SOURCE_UPDATE_RULES,
     build_active_universe_job_fanout,
 )
-from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
+from services.source_ingestion.connectors.finmind_taiwan import (
+    FinMindTaiwanBrokerDailyReportAdapter,
+    latest_published_broker_session,
+)
+from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
 from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
 
 api_url = (os.environ.get("SOURCE_INGEST_API_URL") or "http://127.0.0.1:18097").rstrip("/")
@@ -2711,7 +2719,25 @@ raw_symbols = [s.strip() for s in active_symbols_csv.split(",") if s.strip()]
 if not raw_symbols:
     raise SystemExit("No active Taiwan paper symbols available for the bounded refresh")
 
-run_date = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+def _twse_session_day(day):
+    # Governed TWSE calendar; dates outside its coverage fall back to weekday-only.
+    evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+    return not evidence or day.isoformat() not in (evidence.get("holidays") or {})
+
+# PANTHEON_REFRESH_PREFLIGHT_NOW pins the clock only for isolated tests/reproduction.
+_pinned_now = os.environ.get("PANTHEON_REFRESH_PREFLIGHT_NOW", "").strip()
+_now = datetime.fromisoformat(_pinned_now.replace("Z", "+00:00")) if _pinned_now else datetime.now(timezone.utc)
+if is_finmind:
+    # Broker reports publish 18:00 Taipei: default to the latest genuinely published session.
+    run_date = latest_published_broker_session(_now, is_session_day=_twse_session_day).isoformat()
+    _explicit = os.environ.get("SOURCE_INGEST_BOUNDED_TRADE_DATE", "").strip()
+    if _explicit:
+        # Explicit historical intent is preserved; unpublished (future) sessions are rejected.
+        if _explicit > run_date:
+            raise SystemExit(f"Requested broker trade date {_explicit} is not yet published (latest published: {run_date})")
+        run_date = _explicit
+else:
+    run_date = _now.astimezone(timezone(timedelta(hours=8))).date().isoformat()
 members = [
     {
         "symbol": sym,

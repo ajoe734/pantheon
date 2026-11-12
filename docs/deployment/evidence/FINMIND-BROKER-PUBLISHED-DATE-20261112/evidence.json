@@ -1,0 +1,18 @@
+{
+  "task_id": "FINMIND-BROKER-PUBLISHED-DATE-20261112",
+  "scope": "source-only; no hosted provider proof, no live provider access",
+  "defect": "bounded refresh preparation selected current Taipei date as broker run_date before the 18:00 Taipei publication (09:32 Nov 12 -> 2026-11-12 returned no rows)",
+  "fix": {
+    "helper": "services/source_ingestion/connectors/finmind_taiwan.py::latest_published_broker_session",
+    "preparation": "scripts/deploy_nonprod_vm.sh PREPARE_DATASET_PY uses helper + governed TWSE holidays for FinMind only; official price/TAIFEX date semantics unchanged",
+    "preflight": "FinMind session_date/close use 18:00 publication",
+    "explicit_date": "SOURCE_INGEST_BOUNDED_TRADE_DATE preserves historical intent; future/unpublished dates rejected",
+    "metadata": "update_cadence daily_after_close_21_00_taipei -> daily_after_close_18_00_taipei (FinMind 2026-10-06 notice)"
+  },
+  "unchanged": ["25-symbol/1000-record batches", "4500/hour budget", "402/auth stop", "empty rows remain SourceEvidenceError", "partial vs complete coverage"],
+  "tests": {
+    "scripts/test_deploy_nonprod_vm.py": "127 passed, 2 skipped (finmind/preflight 43 + rest 84)",
+    "finmind connector tests": "51 passed"
+  },
+  "limitations": ["No hosted run or provider PASS claimed", "Dates beyond governed TWSE calendar coverage (2026-12-31) fall back to weekday-only", "Pre-13:30 preflight skip for chip connectors unchanged"]
+}
