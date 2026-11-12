@@ -532,7 +532,7 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         if isinstance(artifact.get("strategy_logic"), Mapping)
         else None
     )
-    if expression_policy is not None:
+    if expression_policy is not None and strategy_logic_kind != "persona_portfolio_v1":
         required_expr_controls = (
             {
                 k: v
@@ -665,6 +665,10 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
             validate_factor_rule_logic(strategy_logic, parameters, mutation_surface)
         except FactorRuleValidationError as exc:
             raise StrategyArtifactValidationError(str(exc)) from exc
+    elif strategy_logic["kind"] == "persona_portfolio_v1":
+        from .portfolio_envelope import validate_portfolio_envelope
+
+        validate_portfolio_envelope(artifact)
     else:
         raise StrategyArtifactValidationError(
             f"unsupported strategy_logic kind: {strategy_logic.get('kind')!r}"
@@ -1128,11 +1132,22 @@ def evaluate_strategy_action(
     decision_time: Any = None,
     holding_bars: int | None = None,
     current_direction: str | None = None,
+    symbol: str | None = None,
 ) -> str:
     """Interpret a StrategyArtifact rule (close_to_close_momentum or factor_rule_v1) deterministically."""
     validate_strategy_artifact(strategy_artifact)
     if closes is not None and isinstance(closes, (str, bytes)):
         raise StrategyArtifactValidationError("closes must be a numeric sequence")
+
+    if strategy_artifact["strategy_logic"]["kind"] == "persona_portfolio_v1":
+        from .portfolio_envelope import evaluate_portfolio_envelope
+
+        result = evaluate_portfolio_envelope(
+            strategy_artifact, closes, features=features,
+            decision_time=decision_time, symbol=symbol,
+            holding_bars=holding_bars, current_direction=current_direction,
+        )
+        return result["view"]["action"]
 
     logic = strategy_artifact["strategy_logic"]
     if logic["kind"] == "factor_rule_v1":
@@ -1187,11 +1202,22 @@ def evaluate_strategy_view(
     decision_time: Any = None,
     holding_bars: int | None = None,
     current_direction: str | None = None,
+    symbol: str | None = None,
 ) -> dict[str, Any]:
     """Interpret a StrategyArtifact view with optional strength for backtest and paper."""
     validate_strategy_artifact(strategy_artifact)
     if closes is not None and isinstance(closes, (str, bytes)):
         raise StrategyArtifactValidationError("closes must be a numeric sequence")
+
+    if strategy_artifact["strategy_logic"]["kind"] == "persona_portfolio_v1":
+        from .portfolio_envelope import evaluate_portfolio_envelope
+
+        result = evaluate_portfolio_envelope(
+            strategy_artifact, closes, features=features,
+            decision_time=decision_time, symbol=symbol,
+            holding_bars=holding_bars, current_direction=current_direction,
+        )
+        return result["view"]
 
     logic = strategy_artifact["strategy_logic"]
     if logic["kind"] == "factor_rule_v1":

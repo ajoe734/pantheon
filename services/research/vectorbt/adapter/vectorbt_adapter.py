@@ -801,6 +801,10 @@ def _artifact_action_sequence(
         start_index = int(parameters[logic["lookback_parameter"]]) - 1
     elif kind == "factor_rule_v1":
         start_index = max(0, required_history_bars(logic, parameters) - 1)
+    elif kind == "persona_portfolio_v1":
+        from services.registry.portfolio_envelope import required_portfolio_history
+
+        start_index = required_portfolio_history(artifact) - 1
     else:
         raise VectorbtWorkflowError(f"unsupported strategy_logic kind {kind!r}")
 
@@ -833,6 +837,7 @@ def _artifact_action_sequence(
                     closes[: index + 1],
                     features=bar_features,
                     decision_time=decision_time,
+                    symbol=instrument,
                 )
             except StrategyArtifactValidationError as exc:
                 msg = str(exc)
@@ -912,6 +917,10 @@ def _artifact_view_strength(
         start_index = int(parameters[logic["lookback_parameter"]]) - 1
     elif kind == "factor_rule_v1":
         start_index = max(0, required_history_bars(logic, parameters) - 1)
+    elif kind == "persona_portfolio_v1":
+        from services.registry.portfolio_envelope import required_portfolio_history
+
+        start_index = required_portfolio_history(artifact) - 1
     else:
         raise VectorbtWorkflowError(f"unsupported strategy_logic kind {kind!r}")
 
@@ -937,6 +946,7 @@ def _artifact_view_strength(
                     closes[: index + 1],
                     features=bar_features,
                     decision_time=decision_time,
+                    symbol=instrument,
                 )
             except StrategyArtifactValidationError as exc:
                 msg = str(exc)

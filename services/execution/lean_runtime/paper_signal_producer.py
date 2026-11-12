@@ -431,6 +431,7 @@ class CurrentArtifactStrategy:
         {
             "close_to_close_momentum",
             "factor_rule_v1",
+            "persona_portfolio_v1",
         }
     )
 
@@ -564,7 +565,7 @@ class CurrentArtifactStrategy:
             "momentum": view.get("momentum"),
         }
 
-    def __call__(self, binding: Any, now_iso: str) -> dict[str, Any]:
+    def __call__(self, binding: Any, now_iso: str, *, _portfolio_symbol: str | None = None) -> dict[str, Any]:
         b_dict = _binding_dict_from_obj(binding)
         binding_id = _required_binding_text(b_dict, "binding_id")
         metadata = (
@@ -645,9 +646,39 @@ class CurrentArtifactStrategy:
                 f"binding {binding_id} requested unsupported strategy_logic kind {logic_kind!r}",
             )
 
+        if logic_kind == "persona_portfolio_v1":
+            from services.registry.strategy_artifact import (
+                StrategyArtifactValidationError, validate_strategy_artifact,
+            )
+
+            try:
+                validate_strategy_artifact(strategy_artifact)
+            except (StrategyArtifactValidationError, ValueError, TypeError) as exc:
+                raise SignalDecisionUnavailable("artifact_payload_invalid", str(exc)) from exc
+            symbols = strategy_artifact["parameters"]["symbols"]
+            if len(symbols) > 1 and _portfolio_symbol is None:
+                decisions = []
+                snapshots = b_dict.get("market_inputs") or metadata.get("market_inputs")
+                for underlying in symbols:
+                    member_binding = {**b_dict, "symbol": underlying}
+                    if isinstance(snapshots, Mapping):
+                        if underlying not in snapshots:
+                            raise SignalDecisionUnavailable(
+                                "market_input_missing", f"portfolio snapshot missing for {underlying}"
+                            )
+                        member_binding["market_input"] = snapshots[underlying]
+                    decisions.append(self(member_binding, now_iso, _portfolio_symbol=underlying))
+                return {"portfolio_decisions": decisions}
+
         market_input = _market_input_for_binding(
             b_dict, metadata, strategy_artifact=strategy_artifact, now_iso=now_iso
         )
+        if logic_kind == "persona_portfolio_v1" and (
+            not market_input.get("event_time") or not market_input.get("source_ref")
+        ):
+            raise SignalDecisionUnavailable(
+                "market_input_missing", "portfolio virtual marks require event_time and source_ref"
+            )
         closes = market_input["closes"]
         features = market_input.get("features")
         decision_time = (
@@ -689,7 +720,18 @@ class CurrentArtifactStrategy:
                 self._expression_on()
                 and strategy_artifact.get("expression_policy") is not None
             )
-            if expression_enabled:
+            portfolio_result = None
+            if logic_kind == "persona_portfolio_v1":
+                from services.registry.portfolio_envelope import evaluate_portfolio_envelope
+
+                portfolio_result = evaluate_portfolio_envelope(
+                    strategy_artifact, closes, features=features, decision_time=decision_time,
+                    symbol=market_input["symbol"],
+                    holding_bars=holding_bars, current_direction=current_direction,
+                )
+                view = portfolio_result["view"]
+                action = view["action"]
+            elif expression_enabled:
                 from services.registry.strategy_artifact import evaluate_strategy_view
 
                 view = evaluate_strategy_view(
@@ -825,6 +867,20 @@ class CurrentArtifactStrategy:
                 "is_real_capital": False,
             },
         }
+        if portfolio_result is not None:
+            out["metadata"]["portfolio_member_views"] = {
+                member["member_id"]: {
+                    **{key: member[key] for key in (
+                        "artifact_id", "version", "checksum", "risk_weight", "virtual_only"
+                    )},
+                    "view": portfolio_result["member_views"][member["member_id"]],
+                    "underlying_count": len(member["artifact"]["parameters"]["symbols"]),
+                }
+                for member in strategy_logic["members"]
+                if member["member_id"] in portfolio_result["member_views"]
+            }
+            out["metadata"]["portfolio_net_view"] = dict(portfolio_result["view"])
+            out["metadata"]["portfolio_bar_frequency"] = parameters["bar_frequency"]
         if expression_enabled and view is not None and is_taiwan_venue_symbol(symbol):
             # Lazy: the producer evaluates only after admission and a stored
             # record lookup, so a restart never re-runs builder or decider.
@@ -1776,6 +1832,14 @@ class PaperSignalProducer:
             return 0
 
         self._degraded_by_binding.pop(binding_id, None)
+        if isinstance(out, dict) and "portfolio_decisions" in out:
+            return sum(self._enqueue_output(binding, now_iso, decision)
+                       for decision in out["portfolio_decisions"])
+        return self._enqueue_output(binding, now_iso, out)
+
+    def _enqueue_output(self, binding: Any, now_iso: str, out: Any) -> int:
+        b_dict = _binding_dict_from_obj(binding)
+        binding_id = b_dict["binding_id"]
         store = self._store_for(binding)
 
         enqueued = 0
