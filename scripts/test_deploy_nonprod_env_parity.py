@@ -611,9 +611,12 @@ def test_source_refresh_taifex_and_twse_env_transport_and_unmerged_host_parity()
     assert 'SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")' in ssh_bash_body
     assert 'SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")' in ssh_bash_body
 
-    # Ensure TWSE www.twse.com.tw auto-append is strictly scoped to tw-twse-tpex-official-market
-    init_block = source.split("SOURCE_REFRESH_CONNECTOR_ID=", 1)[1].split("DEV_APP_DB_USER=", 1)[0]
-    assert '"${SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market"' in init_block
+    # Egress-host init (from the egress mode through DEV_APP_DB_USER) must never auto-append a
+    # direct-provider host: hosts come only from the explicit allowlist or the single Collector host.
+    init_block = source.split('SOURCE_REFRESH_EGRESS_MODE="', 1)[1].split("DEV_APP_DB_USER=", 1)[0]
+    assert 'SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST}"' in init_block
+    assert "twse.com.tw" not in init_block
+    assert "tpex.org.tw" not in init_block
     assert "taifex.com.tw" not in init_block
 
 

@@ -1682,3 +1682,244 @@ def test_freshness_summary_taiwan_official_rejects_unparsable_receipt() -> None:
     )
 
     assert summary["stale"] is True
+
+
+# --- COLLECTOR-STEADY-PULL-RESTORE-20261112: real controller -> scheduler -> Collector adapter ---
+
+_STEADY_HOST = "collector.example.test"
+_STEADY_COLLECTOR_ID = "collector-tw-ptt-stock"
+
+
+def _steady_collector_config(connector_id: str, *, definition_id: str = _STEADY_COLLECTOR_ID) -> dict:
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+
+    adapter = CollectorBundleAdapter(
+        connector_id=connector_id, source_id=_STEADY_COLLECTOR_ID, source_type="social", platform="ptt",
+        host=_STEADY_HOST, max_records=10,
+    )
+    full = adapter.connector().to_dict()
+    allowed = ("connector_id", "source_type", "provider", "license_scope", "auth_type", "supported_modes", "auth_policy",
+               "rate_limit_policy", "license_policy", "source_metadata", "metadata")
+    connector = {key: full[key] for key in allowed if key in full}
+    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a", "definition_id": definition_id}
+    fetch = dict(adapter.fetch_config())
+    fetch["adapter_config"] = {
+        **fetch["adapter_config"], "source_type": "social", "platform": "ptt", "host": _STEADY_HOST,
+    }
+    return {"connector": connector, "fetch": fetch}
+
+
+@pytest.fixture()
+def steady_stack(client, monkeypatch: pytest.MonkeyPatch):
+    from services.source_ingestion import controller_worker
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport, make_bundle
+
+    test_client, tempdir, module = client
+    monkeypatch.setenv("PANTHEON_COLLECTOR_HOST", _STEADY_HOST)
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tempdir / "market"))
+    files, entry, _ = make_bundle(source_id=_STEADY_COLLECTOR_ID)
+    files["bundles/index.json"] = __import__("json").dumps({"bundles": [entry]}).encode()
+    reads: list[str] = []
+
+    class RecordingTransport(FakeTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            reads.append(relative_path)
+            return super().read(relative_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: RecordingTransport(files))
+
+    def local_request(url, *, method="GET", payload=None, bearer_token=None, timeout_seconds=30.0, allow_list=False):
+        path = "/" + url.split("//", 1)[1].split("/", 1)[1]
+        headers = {"Authorization": f"Bearer {module.runtime.controller_token}"} if bearer_token else None
+        response = test_client.request(method, path, json=payload, headers=headers)
+        assert response.status_code < 400, (path, response.text)
+        return response.json()
+
+    monkeypatch.setattr(controller_worker, "_request_json", local_request)
+    return test_client, module, reads
+
+
+def _steady_reconcile(connector_ids):
+    from services.source_ingestion.tests import test_controller_worker as tcw
+
+    return tcw._collector_reconcile(*connector_ids)
+
+
+def _steady_step(reconcile):
+    """The steady branch of run_controller_tick, using its real selection, scheduler and readback calls."""
+    from services.source_ingestion import controller_worker as cw
+
+    api = "http://source-ingest.test:8097"
+    actual = cw.read_actual_state_with_fetch_bindings(api_url=api)
+    selected = cw.select_collector_pull_connectors(actual, reconcile)
+    schedule = (
+        cw.run_schedule_tick(
+            api_url=api, max_concurrency=1, force_connector_ids=[], exclusive_connector_ids=selected,
+            controller_token="controller-test-token-that-is-at-least-32-characters",
+        )
+        if selected
+        else None
+    )
+    return selected, schedule
+
+
+def test_steady_controller_calls_drive_real_scheduler_and_collector_adapter(steady_stack) -> None:
+    import time
+
+    test_client, module, reads = steady_stack
+    cid = "conn-collector-ptt"
+    created = test_client.post("/api/source-ingest/connectors", json=_steady_collector_config(cid))
+    assert created.status_code == 201, created.text
+    assert test_client.put(f"/api/source-ingest/connectors/{cid}/schedule", json={"interval_seconds": 6, "enabled": True}).status_code == 200
+    # A due, scheduled, enabled direct-provider connector must never be pulled by the steady loop.
+    assert _configure_with_records(test_client, connector_id="conn-direct-provider").status_code == 201
+    assert test_client.put("/api/source-ingest/connectors/conn-direct-provider/schedule", json={"interval_seconds": 1, "enabled": True}).status_code == 200
+    reconcile = _steady_reconcile([cid, "conn-direct-provider"])
+
+    # Tick 1: due -> the real scheduler runs the real registered Collector adapter via the fake transport.
+    selected, schedule = _steady_step(reconcile)
+    assert selected == [cid]
+    assert [item["connector_id"] for item in schedule["ran"]] == [cid]
+    assert schedule["excluded"] == ["conn-direct-provider"]
+    assert schedule["summary"]["total_failed"] == 0
+    pulled_after_first = len(reads)
+    assert pulled_after_first > 0
+    assert schedule["ran"][0]["run"]["status"] == "completed"
+    assert schedule["ran"][0]["receipt"]["normalized_count"] == 2
+
+    # Readback after the pull: record, PIT time, provenance and persisted cursor, with no direct-provider record.
+    readback = test_client.get("/api/source-ingest/controller/readback").json()
+    item = next(c for c in readback["connectors"] if c["connector_id"] == cid)
+    record = item["latest_source_record"]
+    assert record["connector_id"] == cid and record["source_id"].startswith(f"collector:{_STEADY_COLLECTOR_ID}:")
+    assert record["provenance"]["available_time"] or record["metadata"].get("available_time")
+    assert item["freshness"]["last_success_at"]
+    direct = next(c for c in readback["connectors"] if c["connector_id"] == "conn-direct-provider")
+    assert not direct.get("latest_source_record")
+    assert test_client.get("/api/source-ingest/source-records/src-conn-direct-provider-note-1", headers=_read_headers()).status_code == 404
+
+    # Tick 2 within the cadence: nothing is selected, no scheduler call and no adapter read.
+    selected, schedule = _steady_step(reconcile)
+    assert selected == [] and schedule is None
+    assert len(reads) == pulled_after_first
+
+    # Tick 3 after the interval: due again, the real adapter is invoked again.
+    time.sleep(6.2)
+    selected, schedule = _steady_step(reconcile)
+    assert selected == [cid]
+    assert schedule["summary"]["total_failed"] == 0
+    assert len(reads) > pulled_after_first
+
+
+def test_steady_controller_calls_exclude_disabled_collector(steady_stack) -> None:
+    test_client, module, reads = steady_stack
+    cid = "conn-collector-disabled"
+    assert test_client.post("/api/source-ingest/connectors", json=_steady_collector_config(cid)).status_code == 201
+    assert test_client.put(f"/api/source-ingest/connectors/{cid}/schedule", json={"interval_seconds": 1, "enabled": True}).status_code == 200
+    lifecycle = test_client.put(
+        f"/api/source-ingest/connectors/{cid}/lifecycle",
+        json={"status": "disabled", "reason": "hold", "actor_id": "op", "trace_id": "t-disable"},
+    )
+    assert lifecycle.status_code == 200, lifecycle.text
+    selected, schedule = _steady_step(_steady_reconcile([cid]))
+    assert selected == [] and schedule is None
+    assert reads == []
+
+
+def _full_tick_setup(steady_stack, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.tests import test_controller_worker as tcw
+
+    http, module, reads = steady_stack
+    cid = "conn-collector-ptt"
+    assert http.post("/api/source-ingest/connectors", json=_steady_collector_config(cid)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{cid}/schedule", json={"interval_seconds": 6, "enabled": True}).status_code == 200
+    personas = ({"persona_id": "steady-persona", "required_data_sources": [{
+        "dataset": "collector_social_posts", "market": "TW", "cadence": "daily",
+        "source_class": "live_pull", "connector_candidates": [cid], "policy_gates": [],
+    }]},)
+    digest = module.runtime._desired_state_digest(list(personas))
+    config = replace(
+        tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
+        state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, max_concurrency=1,
+    )
+    metadata = {**tcw._desired_meta(), "sha256": digest}
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kwargs: (personas, metadata))
+
+    def tick():
+        return cw.run_controller_tick(
+            config=config, state=tcw._state(), store=cw.ControllerStateStore(config.state_path),
+            writer=tcw.RecordingWriter([]),
+        )
+
+    return http, reads, tick
+
+
+def test_full_controller_tick_completes_real_collector_pull_and_suppresses_next_in_cadence(
+    steady_stack, tmp_path, monkeypatch
+) -> None:
+    http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
+    assert tick()["status"] == "ok"
+    pulled = len(reads)
+    assert pulled > 0
+    # Second tick is inside the (reconciled, daily) cadence: still accepted, no adapter read.
+    assert tick()["status"] == "ok"
+    assert len(reads) == pulled
+
+
+@pytest.mark.parametrize("corruption", ["tenant", "future_pit", "bundle_incomplete"])
+def test_full_controller_tick_fails_closed_on_collector_readback_violation(
+    steady_stack, tmp_path, monkeypatch, corruption
+) -> None:
+    from services.source_ingestion import controller_worker as cw
+
+    http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
+    original = cw.read_actual_state
+
+    def corrupted(**kwargs):
+        actual = original(**kwargs)
+        for connector in actual.get("connectors") or []:
+            record = connector.get("latest_source_record")
+            if not isinstance(record, dict):
+                continue
+            if corruption == "tenant":
+                record["provenance"]["tenant_id"] = "tenant-other"
+            elif corruption == "future_pit":
+                record["provenance"]["available_time"] = "2999-01-01T00:00:00Z"
+            else:
+                record["metadata"]["collector"]["bundle_status"] = "partial"
+        return actual
+
+    monkeypatch.setattr(cw, "read_actual_state", corrupted)
+    with pytest.raises(cw.ControllerTickError, match="terminal source readback failed closed"):
+        tick()
+
+
+def test_full_tick_excludes_definition_fetch_adapter_mismatch(steady_stack, tmp_path, monkeypatch):
+    from dataclasses import replace
+    from services.source_ingestion import controller_worker
+    from services.source_ingestion import provider_adapters as pa
+    http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
+    token = 'TaiwanOfficialMarketDatasetAdapter.records_from_payload'
+    calls = []
+    def fake_direct_transport(adapter, request, trace_id):
+        calls.append(token)
+        return ()
+    monkeypatch.setitem(pa.ALLOWED_PROVIDER_ADAPTERS, token, replace(pa.ALLOWED_PROVIDER_ADAPTERS[token], handler=fake_direct_transport))
+    cfg = _steady_collector_config('conn-collector-ptt')
+    cfg['fetch'] = {'mode': 'provider_owned_adapter', 'adapter': token,
+                    'adapter_config': {}, 'request': {}, 'max_records': 10,
+                    'allow_empty': True, 'empty_reason': 'review local fake direct transport'}
+    response = http.post('/api/source-ingest/connectors', json=cfg)
+    assert response.status_code == 201, response.text
+    try:
+        result = tick()
+        print('full_tick_status', result['status'])
+    except controller_worker.ControllerTickError as exc:
+        print('full_tick_terminal_error_after_adapter_execution', str(exc))
+    print('full_tick_direct_provider_adapter_calls', calls, 'collector_reads', reads)
+    assert calls == []
+    assert reads == []
