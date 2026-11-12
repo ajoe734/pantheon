@@ -181,5 +181,11 @@
   "operator_follow_up": [
     "set PANTHEON_COLLECTOR_HOST on the dev source-ingest runtime (existing W1 Ops owner) so reconcile provisions the 14 connectors; until then reconcile reports skipped/collector_host_not_configured",
     "decide how to drain the two-year history (see finding)"
-  ]
+  ],
+  "review_round_2_fairness_fix": {
+    "finding": "limit_collector_pull_batch ranked only by last_success_at so a permanently failing source monopolised bounded slots",
+    "fix": "rank by latest of last_success_at and last_failure_at from readback freshness (least recently attempted first); cadence and per-pull caps unchanged",
+    "regression": "services/source_ingestion/tests/test_scheduled_connector.py::test_one_failing_collector_does_not_starve_other_admitted_sources (real controller, max_concurrency=1, injected GDELT failure)",
+    "focused_suites": "314 passed"
+  }
 }

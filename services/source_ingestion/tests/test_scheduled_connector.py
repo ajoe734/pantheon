@@ -2144,3 +2144,40 @@ def test_without_collector_host_nothing_is_provisioned_and_reason_is_in_readback
     assert all("PANTHEON_COLLECTOR_HOST" in a["details"]["reason"] for a in collector_actions)
     ids = {c["connector_id"] for c in http.get("/api/source-ingest/controller/readback").json()["connectors"]}
     assert not any(i.startswith("collector-") or i.startswith("strategy-seed-") for i in ids)
+
+
+
+
+def test_one_failing_collector_does_not_starve_other_admitted_sources(admission_stack, monkeypatch):
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors import SourceEvidenceError
+
+    http, module, reads, wanted, files, transport, tick = admission_stack
+    tick(cw.RECONCILE_ONLY_MODE)
+    original_read = transport.read
+
+    def fail_first_source(relative_path, *, max_bytes):
+        if '/collector-gdelt/' in relative_path:
+            raise SourceEvidenceError('review injected unavailable GDELT bundle')
+        return original_read(relative_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(transport, 'read', fail_first_source)
+    batches = []
+    errors = []
+    original_limit = cw.limit_collector_pull_batch
+
+    def record_batch(actual, selected, *, limit):
+        batch = original_limit(actual, selected, limit=limit)
+        batches.append(batch)
+        return batch
+
+    monkeypatch.setattr(cw, 'limit_collector_pull_batch', record_batch)
+    for _ in range(4):
+        try:
+            tick(cw.COLLECTOR_STEADY_PULL_MODE)
+        except cw.ControllerTickError as exc:
+            errors.append(str(exc))
+    readback = http.get('/api/source-ingest/controller/readback').json()
+    succeeded = [c['connector_id'] for c in readback['connectors']
+                 if c['connector_id'] in wanted and c.get('latest_source_record')]
+    assert succeeded, f'No other admitted source ran after four ticks; batches={batches}; errors={errors}'

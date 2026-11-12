@@ -1373,21 +1373,31 @@ def select_collector_pull_connectors(
     return sorted(selected)
 
 
+def _attempt_sort_key(value: Any) -> str:
+    parsed = parse_utc(str(value)) if value else None
+    return parsed.isoformat() if parsed is not None else ""
+
+
 def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str], *, limit: int) -> list[str]:
     """Bound one steady tick to what the scheduler can claim (its max concurrency).
 
     The scheduler claims at most ``limit`` exclusively selected connectors per tick and reports the
     rest as failed, so more due Collector sources than slots must be spread over ticks. The
-    least recently successful sources go first, so a source that keeps failing cannot starve the
-    others; the remainder stay due and are picked up on the next tick.
+    least recently attempted sources go first (latest of last success and last failure from the
+    readback), so a source that keeps failing rotates behind the others instead of monopolising
+    the slots; the remainder stay due and are picked up on the next tick.
     """
 
-    last_success: dict[str, str] = {}
+    last_attempt: dict[str, str] = {}
     for item in actual.get("connectors") or []:
         if isinstance(item, Mapping):
             freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
-            last_success[str(item.get("connector_id") or "")] = str(freshness.get("last_success_at") or "")
-    ranked = sorted(selected, key=lambda connector_id: (last_success.get(connector_id, ""), connector_id))
+            attempts = [
+                _attempt_sort_key(freshness.get("last_success_at")),
+                _attempt_sort_key(freshness.get("last_failure_at")),
+            ]
+            last_attempt[str(item.get("connector_id") or "")] = max(attempts)
+    ranked = sorted(selected, key=lambda connector_id: (last_attempt.get(connector_id, ""), connector_id))
     return sorted(ranked[: max(int(limit), 1)])
 
 
