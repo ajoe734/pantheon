@@ -1,0 +1,7 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-DATASOURCE-READ-BUDGET-20261112-CI-RED-453C6870EA0C",
+  "source_pr": 7201,
+  "root_cause": "Research suite job (run 43131554569, job 130901021242) hit the 20-minute step timeout at ~94% progress with all tests passing (no failures). Source PR only touches services/control-plane/bff and its evidence, not services/research, so this is a CI runtime/timeout flake, not a code defect.",
+  "action": "Re-ran failed job via gh run rerun --failed; no source change required.",
+  "source_pr_files": ["docs/deployment/evidence/BFF-DATASOURCE-READ-BUDGET-20261112/evidence.json","services/control-plane/bff/main.py","services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py"]
+}
