@@ -52,7 +52,7 @@
   ],
   "rework_20261112": {
     "risk_veto_dedup": "required_consultation merges may_veto onto the initiator entry when the risk persona initiates; unit + e2e regressions",
-    "gated_decision_wiring": "governance consultation-handoffs stores gated_decision/gate/operator_decision for consultation.panel.* handoffs; POST /api/governance/consultation-gates/adopt refuses (409) auto-adoption when a veto is pending or no panel review exists; e2e test attempts adoption after risk reject",
+    "gated_decision_wiring": "governance consultation-handoffs stores gated_decision/gate/operator_decision for consultation.panel.* handoffs; the existing approval decide command (POST /api/governance/approvals/{id}/decide) refuses (409) approved outcomes on a target with a pending risk veto unless a human operator principal decides, and then durably records operator_decision=decided on the handoff; e2e test attempts real adoption after risk reject (storage double replaces PostgreSQL only; no DB available in this env)",
     "target_binding": "panel.gated_decision type/id must equal request target_type/target_id at consultation entry (422) and in executor (WorkflowBlocked)"
   }
 }

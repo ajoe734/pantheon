@@ -327,8 +327,8 @@ def _validated_panel_gate(body: Dict[str, Any]) -> Dict[str, Any]:
     """Persist the gated decision and gate a panel handoff carries.
 
     A risk-persona veto yields a pending operator decision at the owning gate;
-    automatic adoption of that decision is then refused (see
-    ``adopt_consultation_gated_decision``).
+    adoption of that decision through the approval ``decide`` command is then
+    refused unless a human operator decides (see ``_consultation_veto_block``).
     """
 
     decision = body.get("gated_decision")
@@ -476,67 +476,6 @@ def accept_consultation_handoff(
         "handoff_id": handoff_id,
         "consumer_ref": str(canonical["consumer_ref"]),
         "idempotent": not inserted,
-    }
-
-
-@app.post(
-    "/api/governance/consultation-gates/adopt",
-    response_model=Dict[str, Any],
-    summary="Attempt automatic adoption of a consultation-gated decision",
-)
-def adopt_consultation_gated_decision(
-    body: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(None),
-    service_actor: Optional[str] = Header(
-        None,
-        alias="X-Pantheon-Service-Actor",
-    ),
-    tenant_header: Optional[str] = Header(None, alias="X-Pantheon-Tenant-Id"),
-) -> Dict[str, Any]:
-    """Decision-owner gate: refuse auto-adoption without a clean panel review.
-
-    Adoption is allowed only when a panel handoff for exactly this decision
-    exists and none of them requires an operator decision. A risk veto (or a
-    missing panel) refuses adoption and leaves the pending operator decision.
-    """
-
-    _, tenant_id = _authenticate_consultation_handoff_service(
-        authorization=authorization,
-        service_actor=service_actor,
-        tenant_id=tenant_header,
-    )
-    decision_type = _required_string(body.get("type"), "type")
-    decision_id = _required_string(body.get("id"), "id")
-    reviews = [
-        item
-        for item in consultation_handoff_store.list_all()
-        if item.get("tenant_id") == tenant_id
-        and (item.get("gated_decision") or {}).get("type") == decision_type
-        and (item.get("gated_decision") or {}).get("id") == decision_id
-    ]
-    if not reviews:
-        raise HTTPException(
-            status_code=409,
-            detail="no consultation panel review exists for this decision",
-        )
-    blocking = [
-        item for item in reviews if (item.get("gate") or {}).get("operator_decision_required")
-    ]
-    if blocking:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "adopted": False,
-                "operator_decision_required": True,
-                "operator_decision": blocking[0].get("operator_decision"),
-                "handoff_id": blocking[0].get("handoff_id"),
-                "reason": "risk persona opposed; automatic adoption refused",
-            },
-        )
-    return {
-        "adopted": True,
-        "operator_decision_required": False,
-        "handoff_ids": [item["handoff_id"] for item in reviews],
     }
 
 
@@ -1466,6 +1405,43 @@ def _tenant_approval(decision_id: str, ctx: AuthContext) -> ApprovalDecision:
     return decision
 
 
+def _consultation_veto_block(
+    tenant_id: str, target_id: str
+) -> Optional[Dict[str, Any]]:
+    """Return a pending vetoed panel handoff for this approval target, if any."""
+
+    for item in consultation_handoff_store.list_all():
+        gate = item.get("gate") or {}
+        op = item.get("operator_decision") or {}
+        if (
+            item.get("tenant_id") == tenant_id
+            and (item.get("gated_decision") or {}).get("id") == target_id
+            and gate.get("operator_decision_required")
+            and op.get("status") == "pending"
+        ):
+            return item
+    return None
+
+
+def _resolve_consultation_veto(
+    handoff: Dict[str, Any], *, actor_id: str, decision_id: str, outcome: str
+) -> None:
+    """Durably record the human operator decision on a vetoed panel handoff."""
+
+    resolved = {
+        **handoff,
+        "operator_decision": {
+            **(handoff.get("operator_decision") or {}),
+            "status": "decided",
+            "decided_by": actor_id,
+            "approval_decision_id": decision_id,
+            "outcome": outcome,
+            "decided_at": _utc_now(),
+        },
+    }
+    consultation_handoff_store.compare_and_set(handoff, resolved)
+
+
 def _approval_command(operation, decision_id, body, authorization, idempotency_key):
     from services.governance.pg_store import ApprovalCommandConflict, ApprovalCommandNotFound
     ctx = _approval_principal(authorization)
@@ -1504,6 +1480,8 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
         # The owner-stamped scope is part of the command identity, so a replay
         # under a different scope can never match the original receipt.
         command['authorization_scope'] = grant.authorization_scope
+    vetoed_handoff: List[Dict[str, Any]] = []
+
     def mutate(decision):
         if operation == 'propose':
             if decision is not None:
@@ -1530,6 +1508,17 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             if operation == 'decide':
                 validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
             verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())
+        if operation == 'decide' and str(getattr(body.outcome, 'value', body.outcome)) in (
+                'approved', 'approved_with_conditions'):
+            veto_block = _consultation_veto_block(
+                ctx.claims['tenant_id'], decision.target_id)
+            if veto_block is not None:
+                if role == 'automated_gate' or 'operator' not in ctx.roles:
+                    raise ApprovalCommandConflict(
+                        'risk persona opposed in consultation panel '
+                        + str(veto_block.get('handoff_id'))
+                        + '; adoption refused, human operator decision required')
+                vetoed_handoff.append(veto_block)
         if operation == 'decide' and decision.decision_state == DecisionState.PROPOSED:
             decision.accept_review(actor_role=role, actor_id=ctx.actor_id)
         if operation == 'review':
@@ -1547,7 +1536,12 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
     if not hasattr(store, 'execute_command'):
         raise HTTPException(503, 'Approval commands require PostgreSQL decision and audit stores')
     try:
-        return ApprovalDecisionResponse(**store.execute_command(command=command, mutate=mutate, audit_store=audit_store))
+        result = store.execute_command(command=command, mutate=mutate, audit_store=audit_store)
+        if vetoed_handoff:
+            _resolve_consultation_veto(
+                vetoed_handoff[-1], actor_id=ctx.actor_id, decision_id=decision_id,
+                outcome=str(getattr(body.outcome, 'value', body.outcome)))
+        return ApprovalDecisionResponse(**result)
     except ApprovalCommandNotFound as exc:
         raise HTTPException(404, str(exc)) from exc
     except ApprovalCommandConflict as exc:

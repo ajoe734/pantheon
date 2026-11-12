@@ -8,6 +8,9 @@ stands in for each persona's own agent.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import socket
 import threading
@@ -171,6 +174,13 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
         tmp_path / "handoffs.json", id_fields=("handoff_id",)
     )
     monkeypatch.setattr(governance_main, "consultation_handoff_store", handoffs)
+    # The REAL approval ``decide`` command runs; only its PostgreSQL row/CAS
+    # storage is replaced by an in-memory double (no database in this env).
+    governance_store = _MemoryApprovalStore()
+    monkeypatch.setattr(governance_main, "store", governance_store)
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_SECRET", GOV_JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_ISSUER", "panel-gov")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_AUDIENCE", "panel-gov-aud")
     with _serve(consultation_main.app) as api, _serve(memory_main.app) as memory, _serve(
         governance_main.app
     ) as governance, _serve(evolution_main.app) as evolution, _serve(
@@ -184,6 +194,7 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
             "persona": persona,
             "root": tmp_path,
             "handoffs": handoffs,
+            "governance_store": governance_store,
             "memory_main": memory_main,
         }
 
@@ -358,14 +369,53 @@ def test_risk_oppose_blocks_auto_adoption_and_becomes_operator_decision(
     assert gate["vetoed_by"] == triggers.RISK_PERSONA_ID
 
 
-def _adopt(stack: dict[str, Any], decision_type: str, decision_id: str) -> tuple[int, Any]:
+GOV_JWT_SECRET = "panel-governance-jwt-secret-0123456789abcdef"
+
+
+class _MemoryApprovalStore:
+    """Storage double for ``store.execute_command`` (same mutate contract)."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict[str, Any]] = {}
+
+    def execute_command(self, *, command: dict, mutate, audit_store) -> dict:
+        from services.governance.main import ApprovalDecision
+        from services.governance.pg_store import ApprovalCommandConflict
+
+        base = self.rows.get(command["decision_id"])
+        if (base.get("version", 0) if base else 0) != command["expected_version"]:
+            raise ApprovalCommandConflict("Approval base version is stale")
+        decision = mutate(ApprovalDecision.from_dict(base) if base else None)
+        decision.version = command["expected_version"] + 1
+        decision.event_id = f"evt-{decision.decision_id}-{decision.version}"
+        self.rows[decision.decision_id] = decision.to_dict()
+        return dict(self.rows[decision.decision_id])
+
+    def get(self, decision_id: str):
+        from services.governance.main import ApprovalDecision
+
+        row = self.rows.get(decision_id)
+        return ApprovalDecision.from_dict(row) if row else None
+
+
+def _gov_token(sub: str, roles: list[str]) -> str:
+    enc = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=")
+    payload = {
+        "sub": sub, "tenant_id": TENANT, "roles": roles, "iss": "panel-gov",
+        "aud": "panel-gov-aud", "exp": time.time() + 900,
+    }
+    signed = enc(b'{"alg":"HS256","typ":"JWT"}') + b"." + enc(json.dumps(payload).encode())
+    sig = enc(hmac.new(GOV_JWT_SECRET.encode(), signed, hashlib.sha256).digest())
+    return (signed + b"." + sig).decode()
+
+
+def _gov_post(stack: dict[str, Any], path: str, body: dict, sub: str, roles: list[str]):
     req = urllib.request.Request(
-        stack["governance"] + "/api/governance/consultation-gates/adopt",
-        data=json.dumps({"type": decision_type, "id": decision_id}).encode(),
+        stack["governance"] + "/api/governance/approvals" + path,
+        data=json.dumps(body).encode(),
         headers={
-            "Authorization": f"Bearer {HANDOFF_TOKEN}",
-            "X-Pantheon-Tenant-Id": TENANT,
-            "X-Pantheon-Service-Actor": "consultation-workflow-executor",
+            "Authorization": f"Bearer {_gov_token(sub, roles)}",
+            "Idempotency-Key": f"{sub}-{path}-{time.time_ns()}",
             "Content-Type": "application/json",
         },
         method="POST",
@@ -375,6 +425,41 @@ def _adopt(stack: dict[str, Any], decision_type: str, decision_id: str) -> tuple
             return resp.status, json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read().decode())
+
+
+def _propose_and_review(stack: dict[str, Any], decision_id: str, target_id: str) -> None:
+    status, body = _gov_post(
+        stack, "",
+        {
+            "decision_id": decision_id, "expected_version": 0,
+            "target_type": "registry_entry", "target_id": target_id,
+            "target_version": "1", "tenant_id": TENANT,
+            "owner_user_id": "proposer-1", "risk_level": "low",
+            "candidate_digest": "a" * 64, "expires_at": "2099-01-01T00:00:00Z",
+        },
+        "proposer-1", ["approval_proposer"],
+    )
+    assert status == 201, body
+    status, body = _gov_post(
+        stack, f"/{decision_id}/review",
+        {"expected_version": 1, "actor_role": "governance_reviewer", "actor_id": "rev-1"},
+        "rev-1", ["governance_reviewer"],
+    )
+    assert status == 200, body
+
+
+def _decide(
+    stack: dict[str, Any], decision_id: str, *, actor: str, roles: list[str],
+    actor_role: str = "governance_reviewer", outcome: str = "approved",
+):
+    return _gov_post(
+        stack, f"/{decision_id}/decide",
+        {
+            "expected_version": 2, "actor_role": actor_role, "actor_id": actor,
+            "outcome": outcome, "rationale": "adoption attempt",
+        },
+        actor, roles,
+    )
 
 
 def test_risk_veto_refuses_real_auto_adoption_at_decision_owner(
@@ -392,12 +477,31 @@ def test_risk_veto_refuses_real_auto_adoption_at_decision_owner(
     stored = stack["handoffs"].list_all()[0]
     assert stored["gated_decision"] == {"type": "trial_admission", "id": "trial-veto"}
     assert stored["operator_decision"]["status"] == "pending"
-    status, body = _adopt(stack, "trial_admission", "trial-veto")
-    assert status == 409
-    assert body["detail"]["operator_decision_required"] is True
-    assert body["detail"]["adopted"] is False
-    # An unreviewed decision is not adoptable either.
-    assert _adopt(stack, "trial_admission", "never-reviewed")[0] == 409
+    # Real adoption attempts through the owning approval ``decide`` command.
+    _propose_and_review(stack, "apv-veto", "trial-veto")
+    status, body = _decide(
+        stack, "apv-veto", actor="auto-gate", roles=["automated_gate"],
+        actor_role="automated_gate",
+    )
+    assert status == 409, body
+    assert "human operator decision required" in json.dumps(body)
+    status, body = _decide(stack, "apv-veto", actor="rev-1", roles=["governance_reviewer"])
+    assert status == 409, body  # a non-operator reviewer cannot adopt either
+    assert stack["handoffs"].list_all()[0]["operator_decision"]["status"] == "pending"
+    assert stack["governance_store"].rows["apv-veto"]["decision_state"] == "under_review"
+    # The durable operator decision: a human operator adopts, and it is recorded.
+    status, body = _decide(
+        stack, "apv-veto", actor="op-1", roles=["governance_reviewer", "operator"]
+    )
+    assert status == 200, body
+    resolved = stack["handoffs"].list_all()[0]["operator_decision"]
+    assert resolved["status"] == "decided"
+    assert resolved["decided_by"] == "op-1"
+    assert resolved["approval_decision_id"] == "apv-veto"
+    # A target with no veto is adopted by the unchanged owner path.
+    _propose_and_review(stack, "apv-clean", "trial-clean")
+    status, body = _decide(stack, "apv-clean", actor="rev-1", roles=["governance_reviewer"])
+    assert status == 200, body
 
 
 def test_risk_initiated_patch_keeps_veto_end_to_end(stack: dict[str, Any]) -> None:
@@ -422,7 +526,12 @@ def test_risk_initiated_patch_keeps_veto_end_to_end(stack: dict[str, Any]) -> No
         )
     assert result["completed"] == 1, result
     assert stack["handoffs"].list_all()[0]["gate"]["operator_decision_required"] is True
-    assert _adopt(stack, "harness_patch", "patch-risk-init")[0] == 409
+    _propose_and_review(stack, "apv-patch", "patch-risk-init")
+    status, _body = _decide(
+        stack, "apv-patch", actor="auto-gate", roles=["automated_gate"],
+        actor_role="automated_gate",
+    )
+    assert status == 409
 
 
 def test_panel_decision_must_match_request_target(stack: dict[str, Any]) -> None:
