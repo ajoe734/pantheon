@@ -1,0 +1,95 @@
+{
+  "task_id": "MEMORY-WRITEBACK-WIRING-20261112",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "recorded_at": "2026-11-12",
+  "source_status": "ready_for_independent_review",
+  "hosted_status": "external_wait",
+  "integration_base": "8f0445559a19474d7e7da29ed3f175c0800df558",
+  "review_decision": "pending_assigned_reviewer",
+  "acceptance": [
+    {
+      "id": 1,
+      "source_evidence": "Strict JWT Memory retrieval through real Governance: operator access, committee-only visibility and cross-persona rejection; existing Memory auth tests retained.",
+      "hosted": "pending_deployed_authorized_and_isolated_retrieval"
+    },
+    {
+      "id": 2,
+      "source_evidence": "Compose activates feedback polling; real HTTP feedback bridge processes terminal executed evolution and published postmortems into one persona/institutional pair each; replay after lost response is idempotent.",
+      "hosted": "pending_running_worker_and_natural_source_event_receipts"
+    },
+    {
+      "id": 3,
+      "source_evidence": "Research completion gate and explicit writeback entrypoints enqueue demand/member-attributed findings; production worker sends the configured bearer to Memory HTTP; missing/conflicting attribution fails closed.",
+      "hosted": "pending_deployed_gate_finding_and_service_credential_receipt"
+    },
+    {
+      "id": 4,
+      "source_evidence": "Memory production HTTP entry accepts persona-svc pool/harness and consultation-svc consultation events; mismatched writer role, unknown writer and tenant substitution are rejected. Downstream owner business triggers are separate tasks.",
+      "hosted": "pending_natural_owner_events_after_downstream_delivery"
+    },
+    {
+      "id": 5,
+      "source_evidence": "Durable failed record preserves reason/retry count; queue restart and credential file resolution retry without duplicate Memory entries; partial paired persistence is repaired, and tenant/persona rebinding is refused.",
+      "hosted": "pending_observed_delivery_retry_receipts"
+    },
+    {
+      "id": 6,
+      "source_evidence": "services/research/tests/test_memory_writeback_wiring.py uses actual feedback polling, Research HTTP completion/writeback/startup worker, Memory writeback/retrieval, and Governance authz. Only outbound HTTP is substituted; fixtures and JWTs are test-only.",
+      "result": "passed"
+    }
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q -rs --disable-warnings services/research/alpha_replication/test_revalidation_worker.py",
+      "exit_status": 0,
+      "result": "49 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q -rs --disable-warnings services/memory services/research/tests/test_reviewed_memory_writeback.py services/research/tests/test_memory_writeback_wiring.py services/postmortems/test_main_routes.py",
+      "exit_status": 0,
+      "result": "148 passed, 1 skipped, 2 subtests passed",
+      "skip_reason": "Local Postgres backend container not reachable"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_memory_writeback_wiring.py services/memory/test_research_finding_writeback.py",
+      "exit_status": 0,
+      "result": "54 passed"
+    },
+    {
+      "command": "docker compose --profile root config -q",
+      "exit_status": 0,
+      "result": "passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m compileall -q services/memory services/persona/learning_feedback_bridge.py services/research/main.py services/research/memory_writeback_worker.py services/research/research_memory_outbox.py services/research/alpha_replication/revalidation_worker.py",
+      "exit_status": 0,
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0,
+      "result": "passed"
+    }
+  ],
+  "hosted_read_only_observation": {
+    "url": "https://app.dev.mvl-cap.tw/deployment.json",
+    "deploymentState": "accepted",
+    "frontendSha": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
+    "bffSourceCommitSha": "bee62bc2978618539984aff9db136b064adc14a0",
+    "proves_task_writeback": false
+  },
+  "remaining_hosted_requirements": [
+    "Canonical source review/integration and existing authorized exact-pair dev delivery",
+    "Existing valid service credential supplied to the deployed workers; none present in this worker environment",
+    "Natural source event IDs, one paired receipt per event, attributed Research receipt, delivery retry receipt",
+    "Authorized operator and committee retrieval, private/cross-persona denial, exact deployed SHA/image evidence"
+  ],
+  "boundaries": [
+    "No hosted deployment or synthetic hosted event was executed",
+    "No credential, issuer or service authorization grant was created",
+    "No hosted PASS or terminal task completion is claimed",
+    "Pool/harness/panel business triggers remain with their downstream owner tasks",
+    "Source review and merge do not satisfy hosted acceptance"
+  ]
+}
