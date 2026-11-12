@@ -120,9 +120,12 @@
     "A prospective company profile does not establish delisted-company history; survivorship admission remains unchanged"
   ],
   "review": {
-    "status": "awaiting independent exact-head review",
+    "status": "handoff rejected: canonical artifact contract lacks required production integration paths",
     "manifest_committed_before_handoff": true,
-    "required_next_actor": "Claude",
-    "merge_authority": "canonical supervisor integrator"
+    "required_next_actor": "Human/Ops",
+    "merge_authority": "canonical supervisor integrator",
+    "admission_attempt_head": "c6240b813852bfae150b62f99ff624dcfd3f1d45",
+    "admission_attempt_pr": 7245,
+    "corrective_evidence": "review-admission-hold.md"
   }
 }
