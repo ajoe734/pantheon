@@ -1930,6 +1930,11 @@ services:
       PANTHEON_MEMORY_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_MEMORY_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_MEMORY_DATA_DIR: /data/memory
+      # memory.retrieve policy is evaluated by the canonical governance
+      # service (POST /api/governance/authz/check, which takes no bearer).
+      # Without this, retrieve denies with governance_authz_unconfigured.
+      # PANTHEON_MEMORY_AUTHZ_MODE=local is deliberately NOT set (no bypass).
+      PANTHEON_GOVERNANCE_AUTHZ_URL: ${PANTHEON_GOVERNANCE_AUTHZ_URL:-http://governance:8082}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - memory-data:/data/memory
