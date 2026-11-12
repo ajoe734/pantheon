@@ -663,6 +663,11 @@ class ReplicationGate:
         )
         logic = artifact.get("strategy_logic") if isinstance(artifact, dict) else None
         artifact_screened = isinstance(logic, dict) and "screen" in logic
+        if artifact_screened and ReplicationGate._is_registered_entry_only(artifact):
+            # Durable entry-only registration: governed eligibility + min_size remain
+            # in the artifact (and so in the backtest), but there is no selection left
+            # to contribute, so the screen-contribution comparison does not apply.
+            return None
         bundle = backtest_eval.get("artifact_bundle")
         evidence_screened = isinstance(bundle, dict) and bool(bundle.get("candidate_pool_snapshots"))
         if not (artifact_screened or evidence_screened):
@@ -671,6 +676,25 @@ class ReplicationGate:
             artifact if artifact_screened else None,
             dataset if isinstance(dataset, dict) and dataset.get("candidate_pool_market") else None,
         )
+
+    @staticmethod
+    def _is_registered_entry_only(artifact: Dict[str, Any]) -> bool:
+        """Validate structurally that an artifact is a gate-produced entry-only form.
+
+        No caller flag is trusted: the artifact must be exactly the fixed point of the
+        whole-boundary control construction, i.e. its screen holds only the governed
+        eligibility block, ``min_size`` and the single pass-everything floor filter,
+        with no selection step left.
+        """
+        try:
+            symbols = artifact["parameters"]["symbols"]
+            if not isinstance(symbols, list) or not symbols:
+                return False
+            return ReplicationGate._whole_boundary_control_artifact(
+                artifact, list(symbols)
+            ) == artifact
+        except Exception:
+            return False
 
     @staticmethod
     def _whole_boundary_control_artifact(

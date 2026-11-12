@@ -198,3 +198,32 @@ def test_control_keeps_daily_boundary_exclusions_for_suspended_symbols():
     views = va._screened_artifact_view_sequence(prepared, control_art)
     inst = next(i for i in views if i.startswith("0050"))
     assert {v["action"] for v in views[inst]} == {"HOLD"}
+
+
+def test_durable_entry_only_registration_resubmits_without_being_dropped_again():
+    _, _, _, dropped = evaluate(artifact("bottom"))
+    registration = dropped.details["screen_contribution"]["re_registration"]
+    entry_only = registration["strategy_artifact"]
+    # round-trip through durable JSON, as a stored registration would be
+    entry_only = json.loads(json.dumps(entry_only))
+    gate, _, response, result = evaluate(entry_only)
+    # no screen-contribution comparison applies, and it is not dropped again
+    assert "screen_contribution" not in result.details
+    assert result.details.get("status") != "screen_dropped"
+    assert "screen_contribution" not in response.metadata["backtest_summary"]
+    # all primary admission checks still ran
+    assert {"oos_sharpe_positive_after_costs", "walk_forward_consistent_across_folds"} <= set(
+        result.details["checks"])
+    assert gate.get_family_trial_count(result.details["family_id"]) == 1
+    # governed daily boundary eligibility and min_size are retained
+    screen = entry_only["strategy_logic"]["screen"]
+    assert "min_size" in screen and len(screen["steps"]) == 1
+
+
+def test_forged_entry_only_form_with_a_selection_step_is_still_a_screen():
+    art = artifact("bottom")  # real selection step: must not bypass the contribution test
+    art["strategy_logic"]["screen"]["entry_only"] = True
+    _, _, response, result = evaluate(art)
+    # the unvalidated flag never grants entry-only treatment: not admitted
+    assert not result.passed
+    assert response.admission_status.value == "rejected"

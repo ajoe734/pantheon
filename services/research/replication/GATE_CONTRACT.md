@@ -137,6 +137,12 @@ primary path.
   checksum; record holds reason and lineage to the screened parent and both runs;
   readable via `list_entry_only_registrations`). The run metadata carries the
   `registration_id`.
+* **Resubmitting an entry-only registration**: the gate recognises the registered artifact
+  structurally, never from a caller flag: its screen must be the fixed point of the
+  whole-boundary control construction (eligibility block, `min_size`, single
+  pass-everything filter, no selection step). Such a candidate skips only the
+  screen-contribution comparison (one trial, no `screen_contribution` block); every primary
+  admission check still runs. Any artifact with a selection step stays a screened candidate.
 * **Control cannot run**: status `control_unavailable`; fails closed.
 * **Trials**: the screened evaluation (screen variant) and the control (entry variant) each
   increment the family counter; `trial_accounting` records both.
