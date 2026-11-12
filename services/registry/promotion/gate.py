@@ -128,6 +128,41 @@ class PromotionGate:
             },
         }
 
+    @staticmethod
+    def verify_admitted_replication_proof(
+        proof: Any, evaluation_summary: Any, lineage: Any,
+    ) -> dict[str, Any]:
+        """Return a copy of ``proof`` iff it is an admitted real-backtest gate verdict.
+
+        Mirrors what ``create_promotion_request`` emits: admitted status, a passed
+        ``real_backtest_validation`` result with no failed checks, the same
+        ``backtest_run_id`` as the entry summary and lineage, and an embedded
+        summary equal to the registered one.  Raises ``PromotionError`` otherwise.
+        """
+        if not isinstance(proof, Mapping) or not proof:
+            raise PromotionError("replication_proof must be a non-empty object.")
+        summary = evaluation_summary if isinstance(evaluation_summary, Mapping) else {}
+        run_id = str(summary.get("backtest_run_id") or "").strip()
+        status = getattr(proof.get("admission_status"), "value", proof.get("admission_status"))
+        if str(status) != "admitted" or not run_id or str(proof.get("backtest_run_id") or "") != run_id:
+            raise PromotionError("replication_proof is not an admitted verdict for this backtest run.")
+        if proof.get("evaluation_summary") != summary:
+            raise PromotionError("replication_proof evaluation_summary differs from the entry summary.")
+        if run_id not in (_normalize_lineage(lineage).get("source_run_ids") or []):
+            raise PromotionError("replication_proof backtest run is not in entry lineage.")
+        verdicts = [r for r in proof.get("replication_results") or []
+                    if isinstance(r, Mapping) and r.get("criterion_id") == "real_backtest_validation"]
+        details = verdicts[0].get("details") if len(verdicts) == 1 else None
+        details = details if isinstance(details, Mapping) else {}
+        checks = details.get("checks")
+        if (len(verdicts) != 1 or verdicts[0].get("passed") is not True
+                or details.get("status") != "passed" or details.get("failed_checks")
+                or str(details.get("backtest_run_id") or "") != run_id
+                or not isinstance(checks, Mapping) or not checks
+                or not all(v is True for v in checks.values())):
+            raise PromotionError("replication_proof real_backtest_validation did not pass.")
+        return copy.deepcopy(dict(proof))
+
     def check_requirements(self, target_state: PromotionState, metadata: Mapping[str, Any]) -> None:
         """Enforces metadata requirements for each promotion state."""
         lineage = _normalize_lineage(metadata.get("lineage"))

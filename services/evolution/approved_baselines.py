@@ -40,10 +40,9 @@ def _code(symbol: Any) -> str:
 
 def _gate_proof_failure(entry: Mapping[str, Any], summary: Mapping[str, Any], run_id: str) -> str | None:
     """Reason the persisted proof is not an exact passed gate verdict, else ``None``."""
-    if "replication_success" not in entry and "replication_proof" not in entry:
-        # RegistryEntry (services/registry/models.py) has no such owner fields, so a
-        # genuine GET /api/registry/entries/{id} never carries the gate verdict.
-        return "gate_verdict_not_persisted_by_registry_owner"
+    if entry.get("replication_success") is None and not entry.get("replication_proof"):
+        # Historical/unproven entry: the registry owner recorded no gate verdict.
+        return "gate_verdict_not_recorded"
     if entry.get("replication_success") is not True:
         return "gate_not_passed"
     proof = entry.get("replication_proof")
@@ -52,7 +51,11 @@ def _gate_proof_failure(entry: Mapping[str, Any], summary: Mapping[str, Any], ru
     status = getattr(proof.get("admission_status"), "value", proof.get("admission_status"))
     if str(status) != "admitted" or str(proof.get("backtest_run_id") or "") != run_id:
         return "gate_not_passed"
-    if proof.get("evaluation_summary") != summary:
+    proof_summary = proof.get("evaluation_summary")
+    # The registry owner may add its own schema keys to the registered summary; every
+    # key the gate produced must still be present and equal.
+    if (not isinstance(proof_summary, Mapping) or not proof_summary
+            or any(k not in summary or summary[k] != v for k, v in proof_summary.items())):
         return "gate_proof_differs_from_summary"
     verdicts = [r for r in proof.get("replication_results") or []
                 if isinstance(r, Mapping) and r.get("criterion_id") == "real_backtest_validation"]

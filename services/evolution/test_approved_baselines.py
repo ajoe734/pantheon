@@ -90,11 +90,11 @@ class ApprovedBaselineTests(unittest.TestCase):
         self.assertEqual(b["source_refs"]["backtest_run_id"], summary["backtest_run_id"])
         self.assertEqual((b["return_basis"], b["periods_per_year"]), (RETURN_BASIS, 365))
 
-    def test_real_registry_owner_schema_does_not_carry_the_gate_verdict(self):
-        """Round-trip through the genuine RegistryEntry: unknown top-level proof is dropped."""
+    def test_real_registry_owner_round_trip_carries_the_gate_verdict(self):
+        """Genuine RegistryEntry durable round trip keeps the admitted proof; legacy rows stay unavailable."""
         from services.registry.models import RegistryEntry
         e = self.one
-        owner = RegistryEntry.from_dict({
+        payload = {
             "registry_id": e["registry_id"], "artifact_type": "execution_bundle",
             "strategy_id": "strat-tw-replication-001", "version": "1.0.0",
             "artifact_state": "approved", "lineage": e["lineage"],
@@ -102,11 +102,16 @@ class ApprovedBaselineTests(unittest.TestCase):
             "checksum": e["checksum"], "evaluation_summary": e["evaluation_summary"],
             "approval_decision_id": e["approval_decision_id"], "metadata": e["metadata"],
             "owner_tenant": "t1", "replication_success": True,
-            "replication_proof": e["replication_proof"]}).to_dict()
-        self.assertNotIn("replication_success", owner)
-        b = resolve(owner)
+            "replication_proof": e["replication_proof"]}
+        owner = RegistryEntry.from_dict(payload).to_dict()
+        self.assertIs(owner["replication_success"], True)
+        self.assertEqual(owner["replication_proof"], e["replication_proof"])
+        self.assertEqual(resolve(owner)["status"], "approved")
+        legacy = RegistryEntry.from_dict({k: v for k, v in payload.items()
+                                          if not k.startswith("replication_")}).to_dict()
+        b = resolve(legacy)
         self.assertEqual((b["status"], b["reason"]),
-                         ("no_approved_baseline", "gate_verdict_not_persisted_by_registry_owner"))
+                         ("no_approved_baseline", "gate_verdict_not_recorded"))
 
     def test_two_members_resolve_distinct_baselines_from_their_own_proof(self):
         a, b = resolve(self.one), resolve(self.two, universe=("2330.TW", "2317.TW"))

@@ -192,6 +192,26 @@ class TestPromotionGate(unittest.TestCase):
             ["bt-promo-gate-001"],
         )
 
+        # The producer's own proof verifies; tampered/failed/unbound proofs do not.
+        proof, summary = draft_entry["replication_proof"], draft_entry["evaluation_summary"]
+        lineage = draft_entry["lineage"]
+        verified = PromotionGate.verify_admitted_replication_proof(proof, summary, lineage)
+        self.assertEqual(verified, proof)
+        import copy as _copy
+        failed = _copy.deepcopy(proof)
+        for r in failed["replication_results"]:
+            if r.get("criterion_id") == "real_backtest_validation":
+                r["passed"] = False
+        for bad_proof, bad_summary, bad_lineage in (
+            (failed, summary, lineage),
+            ({}, summary, lineage),
+            (proof, {**summary, "out_of_sample_sharpe_ratio": 9.9}, lineage),
+            (proof, summary, {"source_run_ids": ["some-other-run"]}),
+            ({**proof, "admission_status": "rejected"}, summary, lineage),
+        ):
+            with self.assertRaises(PromotionError):
+                PromotionGate.verify_admitted_replication_proof(bad_proof, bad_summary, bad_lineage)
+
         candidate_entry = self.gate.promote(draft_entry, PromotionState.CANDIDATE)
         self.assertEqual(candidate_entry["lifecycle_state"], "candidate")
 

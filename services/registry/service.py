@@ -66,6 +66,7 @@ from .strategy_artifact import (
     strategy_artifact_checksum,
     validate_strategy_artifact,
 )
+from .promotion.gate import PromotionError, PromotionGate
 from .paper_strategy_spec import validate_strategy_spec
 from .alpha_template import (
     AlphaTemplateValidationError,
@@ -208,6 +209,7 @@ class StrategyArtifactRegisterRequest(BaseModel):
     evaluation_summary: Optional[dict[str, Any]] = None
     rollback_target: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
+    replication_proof: Optional[dict[str, Any]] = None
 
 
 class StrategyArtifactMutationRequest(BaseModel):
@@ -987,6 +989,7 @@ def _strategy_artifact_registration(
         "evaluation_summary": payload.evaluation_summary,
         "rollback_target": payload.rollback_target,
         "metadata": payload.metadata,
+        "replication_proof": payload.replication_proof,
     }
 
 
@@ -997,7 +1000,19 @@ def _register_strategy_artifact(
     ctx: AuthContext,
     actor: Optional[dict[str, Any]] = None,
 ) -> RegistryEntryView:
+    registration = dict(registration)
+    replication_proof = registration.pop("replication_proof", None)
     registry_id, create_payload = build_strategy_artifact_registry_payload(registration)
+    if replication_proof is not None:
+        # The success flag is derived here from the verified producer proof, never
+        # accepted from the caller.
+        try:
+            create_payload.replication_proof = PromotionGate.verify_admitted_replication_proof(
+                replication_proof, registration.get("evaluation_summary"), create_payload.lineage.to_dict(),
+            )
+        except PromotionError as exc:
+            raise RegistryError(str(exc)) from exc
+        create_payload.replication_success = True
     view, created = registry_service.register_if_absent(create_payload, registry_id, actor=actor)
     if created:
         return view
@@ -1040,6 +1055,8 @@ def _register_strategy_artifact(
         or comparison_entry.evaluation_summary != create_payload.evaluation_summary
         or comparison_entry.rollback_target != create_payload.rollback_target
         or comparison_entry.metadata != create_payload.metadata
+        or comparison_entry.replication_success != create_payload.replication_success
+        or comparison_entry.replication_proof != create_payload.replication_proof
     ):
         raise RegistryError(
             f"StrategyArtifact registry_id already exists with different content: {registry_id}"
