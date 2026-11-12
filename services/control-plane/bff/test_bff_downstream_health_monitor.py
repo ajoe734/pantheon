@@ -2720,6 +2720,30 @@ class TestIncidentDeliveryRetryWindow:
         assert waited >= 900.0 - attempts * 0.5
         assert attempts > 5
 
+    def test_incident_backoff_hard_ceiling_is_sixty_seconds(self):
+        monitor = self._monitor()
+        monitor._store.queue_delivery(
+            delivery_id="d1", event_id="e1", channel="incident_open",
+            target_name="capital", url="http://inc:8090/x", body={"a": 1},
+            dependency_ids=[], max_attempts=5,
+        )
+        for base, cap in ((120.0, 60.0), (1.0, 120.0), (1.0, 1e9)):
+            for attempt_count in (0, 3, 6, 7, 10):
+                with monitor._store._connect() as conn:
+                    conn.execute("UPDATE delivery_outbox SET status='claimed', claim_token='t'")
+                row = dict(monitor.list_delivery_records()[0], claim_token="t")
+                row["attempt_count"] = attempt_count
+                before = time.time()
+                status = monitor._store.fail_delivery(
+                    row, error="network_error", fatal=False,
+                    base_backoff_seconds=base,
+                    incident_max_backoff_seconds=cap,
+                )
+                if status == "dead_letter":
+                    break
+                delay = monitor.list_delivery_records()[0]["next_attempt_at"] - before
+                assert delay <= 60.5, (base, cap, attempt_count, delay)
+
     def test_incident_non_retryable_dead_letters_at_once_and_telemetry_keeps_five(self):
         monitor = self._monitor()
         for ch in ("incident_open", "telemetry"):

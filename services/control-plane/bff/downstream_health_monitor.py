@@ -1694,7 +1694,10 @@ class _DurableHealthStore:
             # once the backoff waited so far covers the retry window.  Derived
             # from attempt_count so an explicit replay (attempt_count=0)
             # restarts the window without a schema change.
-            cap = max(base, incident_max_backoff_seconds)
+            cap = min(
+                INCIDENT_MAX_BACKOFF_SECONDS,
+                max(0.1, incident_max_backoff_seconds),
+            )
             waited = sum(
                 min(cap, base * (2 ** (k - 1))) for k in range(1, attempt)
             )
@@ -2130,11 +2133,14 @@ class DownstreamHealthMonitor:
                 INCIDENT_RETRY_WINDOW_SECONDS,
             ),
         )
-        self._incident_max_backoff = max(
-            1.0,
-            _env_float(
-                "PANTHEON_BFF_HEALTH_INCIDENT_MAX_BACKOFF_SECONDS",
-                INCIDENT_MAX_BACKOFF_SECONDS,
+        self._incident_max_backoff = min(
+            INCIDENT_MAX_BACKOFF_SECONDS,
+            max(
+                1.0,
+                _env_float(
+                    "PANTHEON_BFF_HEALTH_INCIDENT_MAX_BACKOFF_SECONDS",
+                    INCIDENT_MAX_BACKOFF_SECONDS,
+                ),
             ),
         )
         self._delivery_max_age = max(
