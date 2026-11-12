@@ -236,6 +236,26 @@
         "services/registry/factor_rule.py:281,392"
       ],
       "status": "source-verified"
+    },
+    {
+      "id": "F8",
+      "claim": "change_schedule cannot size limits.max_records and reconciler _ensure_schedule overrides interval from requirement cadence",
+      "sources": [
+        "services/source_ingestion/source_management_commands.py:1239-1274",
+        "services/source_ingestion/persona_source_reconciler.py:561-597",
+        "services/control-plane/bff/console_gap/datasources.py:1143-1161"
+      ],
+      "status": "source-verified"
+    },
+    {
+      "id": "F9",
+      "claim": "features/ files written by market_data_storage are metadata refs only; usable feature values come via feature_catalogue read_feature_series; hosted feature coverage unobserved",
+      "sources": [
+        "services/source_ingestion/market_data_storage.py:56-104,253-285",
+        "services/source_ingestion/feature_catalogue.py:95-154,431,480",
+        "services/source_ingestion/connector_definitions.py:361-376,481-488"
+      ],
+      "status": "source-verified; hosted unobserved"
     }
   ],
   "unknown": [
@@ -246,9 +266,10 @@
     "hosted values of SOURCE_MANAGEMENT_COMMANDS_ENABLED and PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED",
     "whether TWSE/TPEx fundamentals endpoints respond from the dev VM",
     "industry classification source, point-in-time history, delisted/suspended history",
-    "any watchdog or GitHub outage cause (no evidence read; none asserted)"
+    "any watchdog or GitHub outage cause (no evidence read; none asserted)",
+    "historical cause of the empty governed owner inventory"
   ],
-  "activation_repair_matrix_ref": "report.md section 6 (steps 0-10); executed only by original W1 / sole COMPAT publisher in the existing exact-pair gate-before-switch/rollback flow",
+  "activation_repair_matrix_ref": "report.md section 6 (steps 0-9); reconciler-derived cadence/limits; later limits repair unsupported (change_schedule preserves limits; reconciler resets interval); executed only by original owners",
   "not_claimed": [
     "hosted ingestion",
     "W1 three governed days",
@@ -265,5 +286,13 @@
     "provider_calls": false,
     "credentials_used": false,
     "business_writes": false
-  }
+  },
+  "owner_inventory_0932Z": {
+    "at": "2026-11-12T09:32:13.184239+00:00",
+    "count": 0,
+    "http_status": 200,
+    "proof_sha256": "5558904df68705a8d78061651e1be5454c59ec503312ca992be07f39a5f7312a",
+    "note": "cited separately from the 09:22Z legacy registry; historical cause of empty inventory UNKNOWN"
+  },
+  "authorised_activation_path": "Source management commands OFF / UI legacy no-action (Human/Ops 09:44:15Z). Provisioning owner: COLLECTOR-HOSTED-ADMISSION-20261112 (deployment desired-state holder -> persona-source reconciler -> registry/scheduler -> steady pull); not implemented/deployed by this audit; no flag flip, no policy-gate waiver, no manual compat-route registration"
 }

@@ -14,7 +14,7 @@
 - **唯一在跑的官方 connector 只要 `tw_price_daily`，而且被截成 100 筆。** 最近一次排程（09:21Z）收了 100 筆，全部是上市（TWSE），0 筆上櫃（TPEx），符號從 `00400A` 開始（代表是 OpenAPI 回傳的前 100 列，而非全市場）。月營收、財報、估值、融資融券等在程式裡都實作了，但沒有任何 instance 去請求它們；現有的 bounded refresh 腳本還會**明確拒絕** 非 `tw_price_daily` 的官方資料集。
 - **兩年日線在 Collector 主機上抓到了（依設計文件），但 Pantheon 的 normalized store 沒有。** store 只有 61 個日期標籤（2026-08-12…2026-11-11），且這些是路徑標籤，不是發布時間證明。Collector 拉取有每次上限（預設 500 筆）和每日一次的排程，不調整就追不上兩年的量。
 - **產業分類、時點正確（PIT）、下市股票歷史：沒有證據，保持「未驗證」。** 月營收列裡有一個當下快照的「產業別」欄位，不是 PIT 分類。
-- **下一步全部走既有流程**（原 W1 / 唯一 COMPAT publisher、既有 Source management 指令、既有 exact-pair gate），本審計不新增任何工具或權限。
+- **下一步全部走既有流程**（原 W1 / 唯一 COMPAT publisher、既有 deployment desired-state → persona-source reconciler（COLLECTOR-HOSTED-ADMISSION-20261112）、既有 exact-pair gate；Source management 指令維持關閉、UI legacy 不動作，不建議打開旗標），本審計不新增任何工具或權限。
 
 ## 1. Evidence used (all read-only, nothing copied wholesale)
 
@@ -32,7 +32,7 @@ Code identity: only the corrected 08:50Z `/workspace` module-hash proof and the 
 
 Observed service posture (08:50Z): the API source container (`source-ingest`) has `PANTHEON_EXTERNAL_EGRESS=allowlist` with exactly one allowed host (the collector host); the scheduler container has `SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`; `SOURCE_INGEST_STEADY_COLLECTOR_PULL` is unset. Both mount the same volume at `/data/source-ingest`.
 
-Registry (09:22Z) lists **8** connectors, **`collector_definition_bound_instances = 0`**:
+Registry (09:22Z, legacy projection) lists **8** connectors, **`collector_definition_bound_instances = 0`**. Separately, the governed owner inventory read at **2026-11-12T09:32:13.184239Z** (HTTP 200, identity stable, sanitized proof sha256 `5558904df68705a8d78061651e1be5454c59ec503312ca992be07f39a5f7312a`) returned `sources: []`, **count = 0**. Both observations are cited independently: the 09:22Z legacy registry shows no definition-bound connectors, and the 09:32Z owner inventory shows no governed managed instances. Neither is a statement about the past: the **historical cause of the empty inventory is unknown** (an empty inventory does not prove there never were instances or that no data was lost; initialization/persistence/config paths were not audited).
 
 | Connector | Status | Definition bound | Schedule | Note |
 | --- | --- | --- | --- | --- |
@@ -63,6 +63,22 @@ Definitions in `services/source_ingestion/connector_definitions.py`; storage wri
 | FinMind reference prices | `tw-finmind-datasets` (`finmind_tw_price_reference`) | no | no | reference only; **must not** be relabelled `tw_price_daily` or backdated |
 | Industry / sector (PIT) | none | n/a | none | no dataset; `industry_neutralize` parsed but rejected (`factor_rule.py:281,392`) |
 
+### 3.1 Feature storage mapping (normalized vs feature, and what is usable)
+
+Two distinct write targets exist (`market_data_storage.py:56-104,253-285`): `normalized/<dataset>/date=<label>/<run>.jsonl` holds the records; `features/<feature_target>/date=<label>/<run>.jsonl` receives only **metadata reference rows** (`source_id`, `connector_id`, `source_dataset`, `feature_dataset`, `feature_as_of_time`) and a `feature_rows` ref in the manifest. Those feature files carry no field values, so a `features/` ref is **not** usable feature data. Values reach factor rules through the governed reader `feature_catalogue.py:431 read_feature_series` / `:480 feature_inputs_for_factor_rule` over observation rows with `dataset/field/entity/event_time/available_time`, and the catalogue (`feature_catalogue.py:95-154`) maps `tw_price_daily`, `tw_monthly_revenue` (yoy/mom/revenue, lag 10 d), `tw_quarterly_statements` -> `tw_financial_statement` (lag 45 d), `tw_margin_transactions` -> `tw_margin_short_balance`, `tw_valuation_bwibbu`, `tw_institutional_flows`/`tpex_institutional_flows` -> `tw_institutional_flow`.
+
+| Requested dataset | Normalized path (code) | Feature target routing (code) | Hosted observation |
+| --- | --- | --- | --- |
+| Official daily price | `normalized/tw_price_daily` | official definition `feature_targets=("returns",)` -> `features/returns` (refs only) | normalized: 61 labels; feature: **unobserved** (08:50Z scan did not report a `features/` tree) |
+| Two-year price / T86 (Collector) | `normalized/tw_price_daily` etc. | no derived feature routing (`COLLECTOR_DERIVED_FEATURE_DATASETS` covers only social and macro) | none; unobserved |
+| Monthly revenue, statements, valuation | `normalized/tw_monthly_revenue`, `tw_financial_statement`, `tw_valuation_bwibbu` (definition `storage_targets`) | **no** `feature_targets` declared; catalogue reader depends on observation rows | no directory; feature coverage **unobserved** |
+| Margin, institutional flow | `normalized/tw_margin_short_balance`, `tw_institutional_flow` | none declared on the definition | none; feature **unobserved** |
+| Macro | raw `collector_macro_series` (raw-only) | derived `tw_macro_series` -> `normalized/tw_macro_series` + `features/tw_macro_series` (`connector_definitions.py:361-376`) | none; unobserved |
+| Community / news | raw `collector_social_posts` (raw-only) | derived `tw_community_daily` -> `normalized/` + `features/` | none; unobserved |
+| Industry / sector | none | none | none |
+
+Hosted feature coverage is **unobserved** for every dataset above unless a later read-only listing evidences it; metadata refs alone would not count as feature data.
+
 ## 4. Each demonstrated missing link
 
 ### 4.1 Legacy official connector: bounded to 100 rows, no TPEx in the last run
@@ -79,7 +95,7 @@ Sources: `provider_adapters.py:103-130` (`max_records = fetch.max_records or req
 
 ### 4.3 Collector sources: definitions without instances, so steady pull selects nothing
 
-* 14 reviewed definitions (`COLLECTOR_SOURCE_SPECS`, `connector_definitions.py:326`) become instances only through Source management `create` (`source_management_commands.py:258`). Zero exist (§2).
+* 14 reviewed definitions (`COLLECTOR_SOURCE_SPECS`, `connector_definitions.py:326`) become instances only through a definition-bound provisioning owner: the existing persona-source reconciler (§6 step 3; the `COLLECTOR-HOSTED-ADMISSION-20261112` path) or, if ever authorised, Source management `create` (`source_management_commands.py:258`). Zero exist (§2).
 * `select_collector_pull_connectors` (`controller_worker.py:1312`) requires, per connector: `configured`, in the current desired-state reconcile result, `metadata.definition_id` in the Collector definitions, persisted fetch `mode=provider_owned_adapter` + Collector bundle adapter token (`:1268`), `status=enabled`, schedule enabled with interval > 0, and readback `freshness.is_due`. The legacy connectors fail the definition test, so `SOURCE_INGEST_STEADY_COLLECTOR_PULL=true` alone creates nothing to pull (confirms the task premise; core/caller are source-DONE, not served after the failed Root `69a/82ff` rollback).
 * The default desired state (`default_desired_state.json`) has a single deployment requirement `persona-source-ingest-public-market` for `tw_price_daily` via the legacy connector; it registers no Collector instance.
 * **14 vs 16.** The repo defines 14 Collector definitions. `deploy/collector/fetch-policy.json` has 22 source entries (19 `enabled: true`, 3 false); 8 of them have **no** Pantheon definition: `collector-macro-dbnomics`, `collector-paper-arxiv`, `collector-paper-nber-rss`, `collector-paper-openalex`, `collector-papers`, `collector-tw-ptt-mirrors`, `collector-tw-twse-openapi`, `collector-youtube-gemini-notes`; all 14 definitions are present in the policy. The "16 sources" figure comes from the host `/status.json` on 2026-11-10 (`COLLECTOR-HOST-PROVISION-20261110`), whose source names are **not** in the evidence allowed for this audit. Do not equate 16 with 14. Names must be read from the live authenticated `/status.json` and intersected with the 14 definition ids before any instance is proposed.
@@ -90,7 +106,7 @@ Sources: `provider_adapters.py:103-130` (`max_records = fetch.max_records or req
 * `create` always starts `configured_disabled` with the schedule disabled (`:385-386`); `enable` requires a passed canary (`:861-…`). The canary `provider_read` and `source_normalized` stages are **fixed-value stages** (`"records_fetched": 10`, `source_management_commands.py:595`), i.e. a passed canary performs no provider/collector read. Passing canary/enable is therefore **not** data evidence; only a scheduled-run receipt with the dataset in the normalized store is.
 * `_materialize_connector_runtime` (`:1490`) projects `schedule.interval_seconds` (default 86400) into the schedule store; `change_schedule` (`:1239`) requires a `cadence` string. Set `interval_seconds` explicitly.
 * Management-created connectors carry no `approved`/`approval_status` metadata, while the `require_connector_approved` gate passes only for that or a built-in factory (`persona_source_reconciler.py:375-384`). A requirement that keeps that gate for a managed Collector connector will fail as `policy_gate_failed` and never enter the reconcile result. Use `require_schedule_active`, `require_source_health_ok`, `no_live_capital` (and `public-source-only` for auth-less sources) for these requirements.
-* Both write surfaces are default-off and fail closed: Source `SOURCE_MANAGEMENT_COMMANDS_ENABLED=1` (`routers/management.py:38`) and BFF `PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED=1` (`console_gap/datasources.py:53`). Their state on the hosted dev stack was not observed.
+* Both write surfaces are default-off and fail closed: Source `SOURCE_MANAGEMENT_COMMANDS_ENABLED=1` (`routers/management.py:38`) and BFF `PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED=1` (`console_gap/datasources.py:53`). Their hosted state was not observed, and the current authorised posture is **commands off / UI legacy no-action** (§6); this audit does not recommend flipping them.
 
 ## 5. Raw coverage vs official truth vs point-in-time
 
@@ -106,19 +122,22 @@ Sources: `provider_adapters.py:103-130` (`max_records = fetch.max_records or req
 
 No new tool, service, grant, issuer, endpoint, queue or platform. Executed only by the original W1 / sole COMPAT publisher inside the same exact-pair gate-before-switch/rollback flow. This audit performed none of it.
 
-| # | Step | Existing entry point | Required non-secret payload / config | Check before moving on |
+**Authorised path (current).** The original native Human/Ops 09:44:15Z instruction and acceptance keep Source management commands **OFF** and the UI legacy path **no-action**. This report therefore does **not** prescribe setting `SOURCE_MANAGEMENT_COMMANDS_ENABLED` or the BFF counterpart, waiving any policy gate, or registering sources by hand through compatibility routes. Source provisioning is owned by the already-admitted task `COLLECTOR-HOSTED-ADMISSION-20261112` (Claude/Codex, in_progress 09:45:58Z), which uses the one existing mechanism: deployment desired-state holder -> existing persona-source reconciler provisions from the actual `ConnectorDefinition` -> existing registry/scheduler -> steady Collector pull. No manual API registration and no second mechanism. That task is the owner of the still-pending source connection; its creation is **not** evidence that anything is implemented or deployed. The genuine O6 / open-source holds, existing flags, tenant, secret, PIT and daily truth, and the runtime uncertainty in §7 all stand.
+
+| # | Step | Existing entry point | Required non-secret input | Check before moving on |
 | --- | --- | --- | --- | --- |
-| 0 | Serve the reviewed core+caller release | existing release/exact-pair flow (core `54fc`, caller `04e9`) | — | source modules on host match the release |
-| 1 | Resolve real Collector names | authenticated collector `/status.json` and `/bundles/index.json` (read-only, existing bundle token path) | — | list of host source ids; intersect with the 14 definition ids; record per-source bundle count and newest/oldest date for the three price/flow sources; this is what decides raw coverage |
-| 2 | Enable Source management writes in dev | `SOURCE_MANAGEMENT_COMMANDS_ENABLED=1`, BFF `PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED=1` | deploy vars of the existing flow | `GET /api/source-ingest/management/connector-definitions` lists the Collector ids |
-| 3 | Create each instance (real tenant/source identity, no TradingPersona) | BFF `POST /bff/management/data-sources` → Source `POST /api/source-ingest/management/commands` `command_type=create` | `source_instance_id` and `connector_id` (e.g. `collector-tw-twse-price-history`), `definition_id` = that id, optional `limits.max_records`, `schedule.interval_seconds`, `connector_config.public.max_records`; no secret fields (definition `secret_fields=()`, auth is the deploy-level bundle token) | receipt `succeeded`; registry shows `definition_id` and fetch `provider_owned_adapter` + Collector adapter token |
-| 4 | Size the pull | same `change_schedule` command | `schedule: {cadence, interval_seconds}`, `limits.max_records` sized from step-1 bundle sizes (unknown today) | cursor advances per run (`resume_cursor.json`) |
-| 5 | Admit to reconcile | deployment desired-state file (`SOURCE_INGEST_DESIRED_STATE_PATH`, holder `persona-source-ingest-public-market`) or the existing owner requirement URL (`SOURCE_INGEST_DESIRED_STATE_URL`, `live_pull` only); prefer the deployment holder so no TradingPersona stands in for a source | requirement `{dataset, market:"TW", cadence:"daily", source_class:"live_pull", connector_candidates:[<instance connector_id>], policy_gates:[without require_connector_approved]}`; one requirement per connector id | reconcile `results[].actions[].connector_id` contains the id with status not `skipped` |
-| 6 | Validate, canary, enable | `validate`, `canary`, `enable` commands (`enable_schedule: true`) | `expected_revision` | **do not treat as data proof** (§4.4) |
-| 7 | Opt in steady pull | `SOURCE_INGEST_STEADY_COLLECTOR_PULL=true` (+ `PANTHEON_COLLECTOR_HOST`), existing workflow var wired by `04e9` | deploy var | scheduler `collector_steady_pull`; egress = collector host only |
-| 8 | Fundamentals (separate instances, not the singleton) | `create` with `definition_id=tw-twse-tpex-official-market`, a new `connector_id` per dataset | `connector_config.public`: `{"dataset":"tw_monthly_revenue"|"tw_financial_statement"|"tw_valuation_bwibbu","venues":["TWSE","TPEx"],"max_records":N}`, `limits.max_records` ≥ venue payload size; direct OpenAPI egress is **not** in steady allowlist — needs the existing bounded egress profile or an explicit owner decision | a scheduled receipt for the dataset and a `normalized/<dataset>` directory. Note the current bounded refresh script rejects these datasets (§4.2); an owner must decide whether to extend it, which is a separate reviewed change |
-| 9 | Legacy price slice | existing instance `limits.max_records` / `priority_symbols` | raise the cap enough to cover both venues; unknown required value | TPEx rows present in a run |
-| 10 | Industry, delisted history | out of this audit's authority | — | stays unverified until `TW-INDUSTRY-CLASSIFICATION-DATASET` |
+| 0 | Serve the reviewed core+caller release | existing release/exact-pair flow (core `54fc`, caller `04e9`) | - | source modules on host match the release |
+| 1 | Resolve real Collector names | authenticated collector `/status.json` and `/bundles/index.json` (read-only, existing bundle token path) | - | host source ids intersected with the 14 definition ids; per-source bundle count and newest/oldest date for the price/flow sources; this alone decides raw coverage |
+| 2 | Declare the requirement in the deployment holder | deployment desired-state file (`SOURCE_INGEST_DESIRED_STATE_PATH`, holder `persona-source-ingest-public-market`) via `COLLECTOR-HOSTED-ADMISSION-20261112` | requirement `{dataset, market:"TW", cadence, source_class:"live_pull", connector_candidates:[...], policy_gates:[...]}`; one requirement per connector id; keep the real policy gates (do not drop `require_connector_approved` to force a pass; if a gate cannot pass for a Collector-bound connector that is an owner finding for that task, not something to waive here) | reconcile `results[].actions[].connector_id` lists the connector with a non-`skipped` status |
+| 3 | Reconciler provisions from the ConnectorDefinition | existing `persona_source_reconciler.py` / registry / scheduler (no management command) | the connector, fetch mode `provider_owned_adapter` + Collector bundle adapter token and `limits` come from the definition defaults (`max_records` 500 for Collector definitions, 100 for the official definition) | registry shows `definition_id` bound and `collector_definition_bound_instances > 0` and a governed owner inventory `count > 0` |
+| 4 | Limits and cadence are what the reconciler yields | `_ensure_schedule` (`persona_source_reconciler.py:561-597`) sets `interval_seconds` from the requirement cadence (`daily` = 86400) and **overwrites** any custom interval on every reconcile | cadence is set only by the requirement's `cadence`; a custom interval is not a supported lever on this path | effective schedule row equals the cadence-derived interval |
+| 5 | Sizing `limits.max_records` | **not available later** through the existing commands: `change_schedule` (`source_management_commands.py:1239-1274`) preserves `limits=desired.limits`, and BFF `services/control-plane/bff/console_gap/datasources.py:1143-1161` forwards only `schedule`. Measured/sized limits belong at creation time (the definition default or the create payload), and repairing limits afterwards is an unsupported change that would need its own separately reviewed owner change | size from the step-1 bundle index (unknown today) before the first provisioning | cursor advances per run (`resume_cursor.json`); sizing remains **unknown** until measured |
+| 6 | Opt in steady pull | `SOURCE_INGEST_STEADY_COLLECTOR_PULL=true` (+ `PANTHEON_COLLECTOR_HOST`), existing workflow var wired by `04e9` | deploy var | scheduler `collector_steady_pull`; egress = collector host only |
+| 7 | Fundamentals | one official-connector requirement per dataset (`tw_monthly_revenue`, `tw_financial_statement`, `tw_valuation_bwibbu`) | these datasets are **not** in `_OFFICIAL_TW_DATASETS` (§4.2), so the existing reconciler cannot bind them; direct OpenAPI egress is not in the steady allowlist. Needs a separately reviewed owner decision (extend reconciler / bounded profile); not solved here | a scheduled receipt and a `normalized/<dataset>` directory |
+| 8 | Legacy price slice | existing legacy instance `limits.max_records` / `priority_symbols` | cap large enough to cover both venues; required value unknown | TPEx rows in a run |
+| 9 | Industry, delisted history | out of this audit's authority | - | stays unverified until `TW-INDUSTRY-CLASSIFICATION-DATASET` |
+
+**Only if the owners later authorise the management-command surface** (it is not authorised now): each command requires a non-empty `reason` (`source_management_commands.py:204`) and an `Idempotency-Key` header (replay with a different payload gives 409, `:216-225`); `create` takes `source_instance_id`, `connector_id`, `definition_id`, `limits`, `schedule.interval_seconds`, `connector_config.public`; `change_schedule` needs `schedule.cadence` and `expected_revision`; `enable` needs a passed canary, `expected_revision` and the `enable_schedule` confirmation (`:888`). Canary is not data proof (§4.4).
 
 ## 7. Explicit unknowns (kept, not assumed)
 
@@ -126,7 +145,7 @@ No new tool, service, grant, issuer, endpoint, queue or platform. Executed only 
 2. Row counts per Collector bundle and TWSE/TPEx fundamentals payload sizes (needed for `max_records`).
 3. Per-day symbol coverage inside the 61 `tw_price_daily` labels.
 4. Why the legacy connector failed with `host_not_allowlisted` on 2026-11-11T19:17:57Z and how the 09:21Z scheduled success obtained egress.
-5. Hosted values of the two management-command flags.
+5. Hosted values of the two management-command flags (authorised posture is off; not flipped by this audit). Also: the historical cause of the empty governed owner inventory.
 6. Whether TWSE/TPEx fundamentals endpoints respond from the dev VM.
 7. Industry classification source, PIT history and delisted-symbol history.
 8. Whether any watchdog or GitHub outage contributed: no evidence read; no cause is asserted.
