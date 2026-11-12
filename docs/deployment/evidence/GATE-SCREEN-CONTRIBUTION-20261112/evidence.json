@@ -14,7 +14,7 @@
     "status": "passed",
     "exit_status": 0,
     "command": "python -m pytest services/research/replication services/research/alpha_replication/test_revalidation_worker.py -q",
-    "result": "91 passed in 125s",
+    "result": "91 passed in 125s; after removing tests/__init__.py the screen-scoped subset (8) re-passed",
     "log": "docs/deployment/evidence/GATE-SCREEN-CONTRIBUTION-20261112/validation.log"
   },
   "acceptance_evidence": {
