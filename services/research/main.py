@@ -62,6 +62,7 @@ from services.research.research_memory_outbox import (
     build_research_memory_outbox_store,
     get_outbox_store,
     validate_research_memory_writeback_eligibility,
+    resolve_memory_sponsor,
 )
 from services.research.memory_writeback_worker import MemoryWritebackWorker
 from services.research.retrieval_influence import (
@@ -494,20 +495,9 @@ def _memory_sponsor(run: Dict[str, Any], requested: Optional[str] = None) -> str
     contexts = [run, params, params.get("metadata") or {}, task.get("constraints") or {}]
     exp = params.get("experiment_run") or {}
     contexts.extend([exp, exp.get("metadata") or {}])
-    owners = set()
-    for context in contexts:
-        for source in [context, context.get("research_demand") or {}, context.get("pool_member") or {}]:
-            value = _first_text(source.get("persona_id"), source.get("sponsor_persona_id"))
-            if value:
-                owners.add(value)
-    if len(owners) > 1:
-        raise ResearchMemoryEligibilityError("Conflicting demand/pool member persona attribution")
-    owner = next(iter(owners), None)
-    if owner and requested and requested != owner:
-        raise ResearchMemoryEligibilityError("Requested sponsor differs from the demand/pool member owner")
-    if not owner:
-        raise ResearchMemoryEligibilityError("Missing demand/pool member persona attribution")
-    return owner
+    return resolve_memory_sponsor(*contexts, requested=requested)
+
+
 store = build_research_orchestrator_store(DATA_DIR)
 def get_store() -> ResearchOrchestratorStore:
     return store
@@ -2804,6 +2794,8 @@ def _finish_run(
                 else {}
             )
             try:
+                if (exp_meta.get("replication_gate") or {}).get("passed") is not True:
+                    raise ResearchMemoryEligibilityError("Replication gate has not passed; memory finding refused")
                 outbox_store = get_outbox_store()
                 outbox_id = _next_id(
                     "mout",

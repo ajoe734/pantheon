@@ -19,6 +19,25 @@ class ResearchMemoryEligibilityError(ValueError):
     """Raised when research memory writeback quality, license, or review gates fail."""
 
 
+def resolve_memory_sponsor(*contexts: Dict[str, Any], requested: Optional[str] = None) -> str:
+    """Demand/member attribution is required; an API argument cannot invent an owner."""
+    owners = set()
+    for context in contexts:
+        for source in [context, context.get("research_demand") or {}, context.get("pool_member") or {}]:
+            for key in ("persona_id", "sponsor_persona_id"):
+                value = str(source.get(key) or "").strip()
+                if value:
+                    owners.add(value)
+    if len(owners) > 1:
+        raise ResearchMemoryEligibilityError("Conflicting demand/pool member persona attribution")
+    owner = next(iter(owners), None)
+    if owner and requested and requested != owner:
+        raise ResearchMemoryEligibilityError("Requested sponsor differs from the demand/pool member owner")
+    if not owner:
+        raise ResearchMemoryEligibilityError("Missing demand/pool member persona attribution")
+    return owner
+
+
 STUB_ADAPTERS = {"stub", "handoff_only", "manual"}
 PROHIBITED_LICENSE_TERMS = {"prohibited", "no_derivative", "no_derivatives"}
 PROHIBITED_ALLOWED_USE_TERMS = {"no_derivative", "no_derivatives", "no_memory", "raw_only"}

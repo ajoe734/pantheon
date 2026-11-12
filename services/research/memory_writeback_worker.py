@@ -80,6 +80,8 @@ class MemoryWritebackWorker:
                 receipt = self.direct_writeback(payload)
             else:
                 receipt = self._post_http(payload)
+            if not isinstance(receipt, dict) or not receipt.get("persona_memory_ids") or not receipt.get("institutional_entry_id"):
+                raise ValueError("Memory response lacks persisted persona/institutional receipt identifiers")
 
             record.status = "delivered"
             record.delivered_at = utc_now()
@@ -159,6 +161,10 @@ class MemoryWritebackWorker:
         }
 
     def retry(self, outbox_id: str) -> Dict[str, Any]:
+        with self.outbox_store.delivery_lock:
+            return self._retry(outbox_id)
+
+    def _retry(self, outbox_id: str) -> Dict[str, Any]:
         record = self.outbox_store.get_record(outbox_id)
         if not record:
             return {"status": "not_found", "outbox_id": outbox_id, "error": "outbox record not found"}

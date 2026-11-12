@@ -30,6 +30,9 @@ class LearnFeedbackUnauthorizedError(PermissionError):
 
 
 _SOURCE_WRITE_AUTHORITY = {
+    SourceEventType.POOL_OUTCOME.value: WriteAuthority.PERSONA_SVC.value,
+    SourceEventType.HARNESS_EXPERIENCE.value: WriteAuthority.PERSONA_SVC.value,
+    SourceEventType.CONSULTATION_CLOSED.value: WriteAuthority.CONSULTATION_SVC.value,
     SourceEventType.RUNTIME_TELEMETRY_OUTCOME.value: WriteAuthority.TELEMETRY_SVC.value,
     SourceEventType.POSTMORTEM_PUBLISHED.value: WriteAuthority.INCIDENT_SVC.value,
     SourceEventType.EVOLUTION_DECISION_APPROVED.value: WriteAuthority.EVOLUTION_SVC.value,
@@ -38,6 +41,9 @@ _SOURCE_WRITE_AUTHORITY = {
 }
 
 _PERSONA_MEMORY_TYPE = {
+    SourceEventType.POOL_OUTCOME.value: PersonaMemoryType.STRATEGY_LESSON.value,
+    SourceEventType.HARNESS_EXPERIENCE.value: PersonaMemoryType.STRATEGY_LESSON.value,
+    SourceEventType.CONSULTATION_CLOSED.value: PersonaMemoryType.CONSULTATION_OUTCOME.value,
     SourceEventType.RUNTIME_TELEMETRY_OUTCOME.value: PersonaMemoryType.RISK_OBSERVATION.value,
     SourceEventType.POSTMORTEM_PUBLISHED.value: PersonaMemoryType.STRATEGY_LESSON.value,
     SourceEventType.EVOLUTION_DECISION_APPROVED.value: PersonaMemoryType.STRATEGY_LESSON.value,
@@ -46,6 +52,9 @@ _PERSONA_MEMORY_TYPE = {
 }
 
 _INSTITUTIONAL_KNOWLEDGE_TYPE = {
+    SourceEventType.POOL_OUTCOME.value: KnowledgeType.CROSS_PERSONA_OBSERVATION.value,
+    SourceEventType.HARNESS_EXPERIENCE.value: KnowledgeType.CROSS_PERSONA_OBSERVATION.value,
+    SourceEventType.CONSULTATION_CLOSED.value: KnowledgeType.CROSS_PERSONA_OBSERVATION.value,
     SourceEventType.RUNTIME_TELEMETRY_OUTCOME.value: KnowledgeType.CROSS_PERSONA_OBSERVATION.value,
     SourceEventType.POSTMORTEM_PUBLISHED.value: KnowledgeType.INCIDENT_LESSON.value,
     SourceEventType.EVOLUTION_DECISION_APPROVED.value: KnowledgeType.EVOLUTION_RATIONALE.value,
@@ -74,19 +83,22 @@ def write_learn_feedback(
         write_authority=normalized["write_authority"],
         active_only=False,
     )
-    if existing_persona_entries or existing_institutional_entries:
-        return _result(
-            created=False,
-            normalized=normalized,
-            persona_entries=existing_persona_entries,
-            institutional_entries=existing_institutional_entries,
-        )
-
     persona_entries = _build_persona_entries(normalized)
     institutional_entry = _build_institutional_entry(normalized)
-
-    saved_institutional = institutional_store.create(institutional_entry)
-    saved_persona = [persona_store.create(entry) for entry in persona_entries]
+    existing_persona = {entry.memory_id: entry for entry in existing_persona_entries}
+    existing_institutional = {entry.entry_id: entry for entry in existing_institutional_entries}
+    missing = institutional_entry.entry_id not in existing_institutional or any(
+        entry.memory_id not in existing_persona for entry in persona_entries
+    )
+    saved_institutional = existing_institutional.get(institutional_entry.entry_id)
+    if saved_institutional is None:
+        saved_institutional = institutional_store.create(institutional_entry)
+    saved_persona = []
+    for entry in persona_entries:
+        saved = existing_persona.get(entry.memory_id)
+        if saved is None:
+            saved = persona_store.create(entry)
+        saved_persona.append(saved)
 
     # Handle supersession of prior entries if declared
     for target_ref in normalized.get("supersedes") or []:
@@ -125,7 +137,7 @@ def write_learn_feedback(
                         pass
 
     return _result(
-        created=True,
+        created=missing,
         normalized=normalized,
         persona_entries=saved_persona,
         institutional_entries=[saved_institutional],
@@ -200,6 +212,9 @@ def _normalize_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
     is_research_event = source_event_type in (
         SourceEventType.RESEARCH_FINDING_PUBLISHED.value,
         SourceEventType.RESEARCH_TASK_COMPLETED.value,
+        SourceEventType.POOL_OUTCOME.value,
+        SourceEventType.HARNESS_EXPERIENCE.value,
+        SourceEventType.CONSULTATION_CLOSED.value,
     )
     if not contributing_persona_ids and is_research_event and sponsor_persona_id:
         contributing_persona_ids = [sponsor_persona_id]
@@ -239,6 +254,9 @@ def _normalize_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
         "tenant_id": tenant_id,
         "source_event_type": source_event_type,
         "source_event_id": source_event_id,
+        "event_details": {key: payload[key] for key in (
+            "cue", "lesson", "outcome", "action", "reason", "pool_member_id", "harness_version", "memo_id",
+        ) if key in payload},
         "write_authority": write_authority,
         "sponsor_persona_id": sponsor_persona_id,
         "contributing_persona_ids": contributing_persona_ids,
@@ -321,6 +339,7 @@ def _build_persona_entries(normalized: Mapping[str, Any]) -> List[PersonaMemoryE
         )
         tags = _dedupe([*normalized["tags"], *feedback["tags"], feedback["persona_id"]])
         structured_payload = {
+            **normalized["event_details"],
             "source_event_type": normalized["source_event_type"],
             "source_event_id": normalized["source_event_id"],
             "sponsor_persona_id": normalized["sponsor_persona_id"],
@@ -374,6 +393,7 @@ def _build_institutional_entry(normalized: Mapping[str, Any]) -> InstitutionalMe
         normalized["source_event_id"],
     )
     structured_payload = {
+        **normalized["event_details"],
         "source_event_type": normalized["source_event_type"],
         "source_event_id": normalized["source_event_id"],
         "sponsor_persona_id": normalized["sponsor_persona_id"],
