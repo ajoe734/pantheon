@@ -2806,8 +2806,13 @@ if is_finmind:
     ]
     if any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
         raise SystemExit("FinMind fanout produced a batch exceeding the fetch.max_records guard")
+    # The adapter's fetch_config() also carries provider-descriptive keys (base_url, endpoint,
+    # secret_ref_id, dataset, history_start, max_rank) that the strict ConfiguredFetchBody DTO
+    # forbids; their intent already lives in adapter_config (secret_ref_id, max_rank) and the
+    # registered adapter token. Keep only the typed fetch-body keys; DTO stays strict.
+    typed_fetch_keys = ("mode", "adapter", "adapter_config", "next_watermark")
     fetch_cfg = {
-        **fetch_cfg,
+        **{key: fetch_cfg[key] for key in typed_fetch_keys if key in fetch_cfg},
         "request": {"dataset": dataset, "symbols": list(finmind_batches[0])},
         "max_records": per_job_budget,
     }
