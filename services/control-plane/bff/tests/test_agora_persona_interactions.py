@@ -289,6 +289,15 @@ def test_management_talk_and_reflect_keep_exact_focused_selection(monkeypatch, m
     binding = resolution.json()["data"]["context_binding"]
     assert binding["selected_persona_ids"] == ["focus"]
     assert binding["initial_mode"] == mode
+    snapshots = {row["persona_id"]: row["participant_snapshot"]
+                 for row in _eligible(c, binding["workshop_id"], mode)["included"]}
+    submitted = c.post("/bff/agora/interactions", json=_daily_submission(binding, snapshots),
+                       headers={**AUTH, "Idempotency-Key": uuid.uuid4().hex})
+    assert submitted.status_code == 202, submitted.text
+    data = submitted.json()["data"]
+    assert [row["persona_id"] for row in data["participants"]] == ["focus"]
+    assert data["authority"]["execution_authority"] == "none"
+    assert data["authority"]["broker_called"] is False
 
 
 def test_management_compare_freeze_rejects_private_selected_peer(monkeypatch):
@@ -322,6 +331,9 @@ def test_private_agora_workshop_preserves_own_servant_and_denies_other_user(monk
 def test_submit_uses_matching_management_receipt_even_after_new_agora_receipt(monkeypatch):
     c = client(monkeypatch)
     rows = _institutional_cohort(monkeypatch)
+    # An explicit immutable version keeps the participant snapshot unchanged;
+    # only the authoritative role/receipt check can reject this stale choice.
+    rows[2]["persona_version"] = "v1"
     resolution = _resolve_persona_entry(c, ids=["focus", "peer"])
     assert resolution.status_code == 200, resolution.text
     binding = resolution.json()["data"]["context_binding"]
@@ -339,6 +351,66 @@ def test_submit_uses_matching_management_receipt_even_after_new_agora_receipt(mo
                       headers={**AUTH, "Idempotency-Key": uuid.uuid4().hex})
     assert response.status_code == 422, response.text
     assert "participant_eligibility_failed" in response.text
+    assert interaction_lifecycle.list("pantheon-dev", "interaction-user") == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("archetype", "agora_servant"), ("mandate", "user_private_agora_servant"),
+    ("strategy_family", "agora_servant"), ("persona_class", "agora_servant"),
+    ("owner_scope", "user_private"), ("visibility_scope", "private"), ("memory_scope", "private_user"),
+])
+@pytest.mark.parametrize("location", ["record", "metadata"])
+def test_management_compare_uses_canonical_role_and_privacy_fields(monkeypatch, field, value, location):
+    c = client(monkeypatch)
+    rows = _institutional_cohort(monkeypatch)
+    private = rows[1]
+    for key in ("archetype", "mandate", "strategy_family", "metadata"):
+        private.pop(key, None)
+    private["metadata"] = {"agora_user_id": "interaction-user"}
+    (private if location == "record" else private["metadata"])[field] = value
+    rows[2]["persona_id"] = "agora-servant-name-is-not-authority"
+    resolution = _resolve_persona_entry(c)
+    pool = _eligible(c, resolution.json()["data"]["workshop_id"])
+    assert [row["persona_id"] for row in pool["included"]] == ["focus", "agora-servant-name-is-not-authority"]
+    assert "persona_not_institutional" in next(
+        row["reasons"] for row in pool["excluded"] if row["persona_id"] == "ordinary-id")
+
+
+@pytest.mark.parametrize("owners", [{}, {"agora_user_id": "another-user"},
+                                     {"agora_user_id": "interaction-user", "user_id": "another-user"}])
+def test_private_agora_eligibility_fails_closed_for_missing_or_conflicting_user(monkeypatch, owners):
+    c = client(monkeypatch)
+    rows = _institutional_cohort(monkeypatch)
+    rows[1]["metadata"].pop("agora_user_id")
+    rows[1]["metadata"].update(owners)
+    resolved = c.post("/bff/agora/interactions/context:resolve", headers=AUTH, json=context_payload())
+    pool = _eligible(c, resolved.json()["data"]["workshop_id"])
+    assert "persona_user_mismatch" in next(
+        row["reasons"] for row in pool["excluded"] if row["persona_id"] == "ordinary-id")
+
+
+def test_management_compare_rejects_forged_source_route_and_legacy_private_submit(monkeypatch):
+    c = client(monkeypatch)
+    _institutional_cohort(monkeypatch)
+    resolution = _resolve_persona_entry(c)
+    binding = resolution.json()["data"]["context_binding"]
+    private_submit = c.post("/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": uuid.uuid4().hex}, json={
+            "workshop_id": binding["workshop_id"], "mode": "consult", "environment": "research",
+            "topic": "Compare", "participant_persona_ids": ["focus", "ordinary-id"],
+            "context_refs": [{"type": "persona", "id": "focus"}]})
+    assert private_submit.status_code == 422, private_submit.text
+    assert "participant_eligibility_failed" in private_submit.text
+    resolution = _resolve_persona_entry(c, ids=["focus", "peer"])
+    binding = resolution.json()["data"]["context_binding"]
+    pool = _eligible(c, binding["workshop_id"])
+    body = _daily_submission(binding, {row["persona_id"]: row["participant_snapshot"] for row in pool["included"]})
+    body["context_snapshot"]["source_route"] = f"/agora/strategy-workshop/{binding['workshop_id']}"
+    body["context_snapshot"]["return_route"] = body["context_snapshot"]["source_route"]
+    forged = c.post("/bff/agora/interactions", json=body,
+                    headers={**AUTH, "Idempotency-Key": uuid.uuid4().hex})
+    assert forged.status_code == 409, forged.text
+    assert "context_binding_missing" in forged.text
     assert interaction_lifecycle.list("pantheon-dev", "interaction-user") == []
 
 
