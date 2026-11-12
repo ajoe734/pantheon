@@ -2097,6 +2097,9 @@ def paper_cycle_world(client, monkeypatch):
     reader = _PcReader()
     monkeypatch.setattr(_allocation_lineage, "create_ranking_reader", lambda: reader)
     monkeypatch.setenv("PANTHEON_ENV", "dev")
+    from datetime import datetime, timezone
+    monkeypatch.setattr(sys.modules["services.capital.main"], "_utc_now",
+                        lambda: datetime(2027, 4, 2, tzinfo=timezone.utc))  # after 2027-Q1 closed
     pool = _pool_payload(pool_id="pool-paper", owner_type="org", risk_policy_ref=None, approval_decision_id=None,
                          actor_role="operator", actor_id="operator-1", budget=1000.0,
                          metadata={"internal": True, "execution_context": "paper"})
@@ -2215,3 +2218,37 @@ def test_paper_quarterly_lines_cannot_be_forged_into_a_real_policy_proposal():
         verify_rebalance_lineage({"ranking_snapshot_id": "x", "allocation_evaluation_id": "y",
                                   "allocation_policy_version": "persona-paper-quarterly-allocation-v1",
                                   "lines": [{"persona_id": "p1", "capital_scope": "pool"}]})
+
+
+@pytest.mark.real_lineage
+def test_open_or_future_quarter_is_refused_by_the_owner_and_does_not_consume_the_cycle(paper_cycle_world, monkeypatch):
+    from datetime import datetime, timezone
+    test_client, reader = paper_cycle_world
+    module = sys.modules["services.capital.main"]
+    snap = reader.add(PC_ITEMS, "2026-Q4")
+    monkeypatch.setattr(module, "_utc_now", lambda: datetime(2026, 11, 12, tzinfo=timezone.utc))
+    assert _pc_run(test_client, snap).status_code == 400
+    assert test_client.get("/api/rebalances").json() == []
+    monkeypatch.setattr(module, "_utc_now", lambda: datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc))
+    assert _pc_run(test_client, snap).status_code == 400
+    monkeypatch.setattr(module, "_utc_now", lambda: datetime(2027, 1, 1, tzinfo=timezone.utc))
+    assert _pc_run(test_client, snap).status_code == 200
+
+
+@pytest.mark.real_lineage
+def test_retained_holdings_of_departed_or_skipped_personas_count_toward_the_paper_total(paper_cycle_world):
+    test_client, reader = paper_cycle_world
+    assert _pc_run(test_client, reader.add(PC_ITEMS, "2026-Q4")).status_code == 200
+    held = _pc_weights(test_client)
+    for persona in ("p4", "p5", "p6"):
+        assert test_client.post("/api/bindings", json=_binding_payload(
+            binding_id=f"binding-{persona}", persona_id=persona, capital_pool_id="pool-paper", capital_sleeve_id=None,
+            role="paper_owner", allowed_deployment_scope="paper")).status_code == 201
+    entrants = [_pc_item(p, "tier-1", 90.0) for p in ("p4", "p5", "p6")]
+    response = _pc_run(test_client, reader.add(entrants, "2027-Q1"), quarter="2027-Q1")
+    assert response.status_code == 200, response.text
+    weights = _pc_weights(test_client)
+    assert set(held) <= set(weights)
+    for persona in held:
+        assert weights[persona] == pytest.approx(held[persona])  # departed personas keep their holding
+    assert sum(weights.values()) <= 1.0 + 1e-9

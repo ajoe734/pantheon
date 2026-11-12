@@ -138,7 +138,8 @@ def evaluate_allocation(
     rows = _canonical_rows(
         snapshot, payload.get("rows"), _PAPER_QUARTERLY_CONTEXT_FIELDS if quarterly else _CONTEXT_FIELDS)
     try:
-        raw_lines = calculate(rows)
+        raw_lines = (calculate(rows, retained_weight=payload.get("retained_weight", 0.0))
+                     if quarterly else calculate(rows))
     except (KeyError, TypeError, ValueError) as exc:
         raise AllocationLineageError(f"ranking snapshot cannot be evaluated: {exc}") from exc
     snapshot_id = snapshot["ranking_snapshot_id"]
@@ -174,6 +175,7 @@ def verify_rebalance_lineage(proposal: Dict[str, Any]) -> None:
     evaluated = evaluate_allocation({
         "ranking_snapshot_id": proposal["ranking_snapshot_id"],
         "allocation_policy_version": proposal["allocation_policy_version"],
+        "retained_weight": (proposal.get("simulation") or {}).get("retained_weight", 0.0) if quarterly else 0.0,
         "rows": [{"persona_id": line.get("persona_id"), "ranking_snapshot_id": proposal["ranking_snapshot_id"],
                   **{field: line[field] for field in context_fields if field in line}} for line in lines],
     }, paper=paper, quarterly=quarterly)

@@ -91,6 +91,10 @@ def world(tmp_path, monkeypatch):
     ranking = _RankingStore()
     monkeypatch.setattr(pea, "build_rankings_store", lambda: ranking)
     with CapitalBffAuthorityHarness(tmp_path, seed_allocation=False, ranking_reader=ranking) as harness:
+        clock = {"now": Q1_CLOSE_TIME}  # the owner clock is the simulated schedule time
+        monkeypatch.setattr(harness.capital_module, "_utc_now",
+                            lambda: datetime.fromtimestamp(clock["now"], tz=timezone.utc))
+        harness.clock = clock
         assert harness.client.post("/bff/capital-pools", json={
             "pool_id": POOL, "name": "Paper pool", "owner_id": "org-1", "owner_type": "org", "budget": 1000.0,
             "metadata": {"internal": True, "execution_context": "paper"}},
@@ -107,6 +111,7 @@ def world(tmp_path, monkeypatch):
 
 def _evaluate(world, tmp_path, now):
     harness, w, _ = world
+    harness.clock["now"] = now
     return pea.run_once(
         store=pea.Store(tmp_path / "evaluator.json"), bff_url="http://bff", bff_headers=EVALUATOR, adapter_url="http://ad",
         adapter_token="t", governance_url="http://gov", governance_token="g", tenant=TENANT, actor="evaluator",
@@ -115,6 +120,7 @@ def _evaluate(world, tmp_path, now):
 
 def _cycle(world, tmp_path, now, pool=POOL):
     harness, w, _ = world
+    harness.clock["now"] = now
     return pea.paper_cycle_once(
         store=pea.Store(tmp_path / "evaluator.json"), bff_url="http://bff", bff_headers=EVALUATOR,
         persona_url="http://persona", persona_token="p", tenant=TENANT, paper_pool_id=pool, fetch=w.fetch, now=lambda: now)
@@ -225,3 +231,16 @@ def test_missing_configuration_or_snapshot_fails_closed_without_allocation(world
     assert _cycle(world, tmp_path, Q1_CLOSE_TIME, pool="")["status"] == "not_configured"
     assert _cycle(world, tmp_path, Q1_CLOSE_TIME)["status"] == "waiting_for_quarter_close"  # no closed-quarter snapshot saved
     assert harness.capital_client.get("/api/rebalances").json() == [] and _weights(harness) == {}
+
+
+def test_direct_operator_post_before_quarter_close_is_refused_and_keeps_the_cycle_available(world) -> None:
+    harness, w, tmp_path = world
+    _evaluate(world, tmp_path, Q4_RANK_TIME)
+    snapshot_id = pea.Store(tmp_path / "evaluator.json").load()["latest"]["2026-Q4"]
+    body = {"authority_mode": "governed_paper_quarterly_cycle", "quarter": "2026-Q4",
+            "ranking_snapshot_id": snapshot_id, "capital_pool_id": POOL}
+    early = harness.client.post("/bff/management/allocation-policy/evaluate", json=body,
+                                headers={**HEADERS, "Idempotency-Key": "early"})
+    assert early.status_code >= 400, early.text
+    assert harness.capital_client.get("/api/rebalances").json() == []
+    assert _cycle(world, tmp_path, Q1_CLOSE_TIME)["status"] == "applied"

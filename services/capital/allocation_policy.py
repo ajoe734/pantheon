@@ -357,6 +357,8 @@ def _paper_factor(row: Dict[str, Any], name: str) -> float:
 
 def calculate_paper_competition_allocations(
     rows: Iterable[Dict[str, Any]],
+    *,
+    retained_weight: float = 0.0,
 ) -> List[Dict[str, Any]]:
     """Share the paper pool across every paper persona by the real policy arithmetic.
 
@@ -364,9 +366,14 @@ def calculate_paper_competition_allocations(
     to their paper ledger, shared internal paper pool and unique paper-owner
     binding.  Score share, tier caps, the +25 percent quarterly increase cap and
     the exclusions are the real policy's (``calculate_target_allocations``); only
-    the eligible stage differs.  The sum of target weights must stay within 1.0
-    (the configured paper total); otherwise the whole cycle is refused.
+    the eligible stage differs.  ``retained_weight`` is the weight still held by
+    allocations that receive no line (departed or skipped personas); the targets
+    are scaled down so retained + targets never exceed the paper total of 1.0.
     """
+    if isinstance(retained_weight, bool) or not isinstance(retained_weight, (int, float)) \
+            or not math.isfinite(float(retained_weight)) or not 0.0 <= float(retained_weight) <= 1.0 + 1e-9:
+        raise ValueError("paper quarterly retained_weight must be between 0 and 1")
+    retained_weight = min(float(retained_weight), 1.0)
     prepared: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for source in rows:
@@ -406,9 +413,18 @@ def calculate_paper_competition_allocations(
         policy_version=_PAPER_QUARTERLY_POLICY_VERSION,
     )
     by_persona = {r["persona_id"]: r for r in prepared}
+    total = sum(line["target_weight"] for line in lines)
+    available = max(0.0, 1.0 - retained_weight)
+    if total > available + 1e-12:
+        scale = available / total
+        for line in lines:
+            line["target_weight"] = math.floor(line["target_weight"] * scale * 1e8) / 1e8
+            line["delta"] = round(line["target_weight"] - float(line.get("current_weight") or 0.0), 8)
+            line["requires_human_approval"] = line["target_weight"] > float(line.get("current_weight") or 0.0)
+            line["cap_reasons"] = [*line["cap_reasons"], "paper_total_budget_scale"]
     total = round(sum(line["target_weight"] for line in lines), 8)
-    if total > 1.0 + 1e-9:
-        raise ValueError(f"paper quarterly targets sum to {total}, above the paper total of 1.0")
+    if total + retained_weight > 1.0 + 1e-9:
+        raise ValueError(f"paper quarterly projected portfolio {total + retained_weight} is above the paper total of 1.0")
     result = []
     for line in lines:
         row = by_persona[line["persona_id"]]

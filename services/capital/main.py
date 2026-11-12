@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Optional
@@ -1043,6 +1044,15 @@ class PaperAllocationCycleRequest(BaseModel):
 
 
 CYCLE_KIND = "paper_quarterly_cycle"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _quarter_end(quarter: str) -> datetime:
+    year, q = int(quarter[:4]), int(quarter[-1])
+    return datetime(year + (q == 4), 1 if q == 4 else q * 3 + 1, 1, tzinfo=timezone.utc)
 QUARTERLY_INCREASE_CAP = 0.25
 
 
@@ -1093,6 +1103,8 @@ def run_paper_allocation_cycle(service: "CapitalBoundaryService", body: PaperAll
             _apply(service, rebalance_id, body)
         return _cycle_result(service, rebalance_id, tenant, replayed=True)
 
+    if _utc_now() < _quarter_end(body.quarter):
+        raise ValueError(f"quarter {body.quarter} has not closed; the paper allocation cycle runs after quarter close")
     snapshot = lineage._load_snapshot(body.ranking_snapshot_id)
     if snapshot.get("period") != body.quarter:
         raise lineage.AllocationLineageError("ranking snapshot period does not match the cycle quarter")
@@ -1126,9 +1138,14 @@ def run_paper_allocation_cycle(service: "CapitalBoundaryService", body: PaperAll
             })
     if not rows:
         raise lineage.AllocationLineageError("no eligible paper persona in the ranking snapshot; cycle not created")
+    row_personas = {r["persona_id"] for r in rows}
+    retained = round(sum(float(a.get("current_weight") or 0.0) for pid, a in held.items() if pid not in row_personas), 8)
     evaluation = lineage.evaluate_allocation(
-        {"ranking_snapshot_id": snapshot["ranking_snapshot_id"], "rows": rows}, paper=True, quarterly=True)
+        {"ranking_snapshot_id": snapshot["ranking_snapshot_id"], "rows": rows, "retained_weight": retained},
+        paper=True, quarterly=True)
     lines = evaluation["lines"]
+    if round(sum(l["target_weight"] for l in lines) + retained, 8) > 1.0 + 1e-9:
+        raise ValueError("paper cycle would exceed the paper total; cycle not created")
     if any(line.get("capital_scope") != "paper_ledger" for line in lines):
         raise PermissionError("paper cycle cannot carry a non-paper line")
     budget = getattr(pool, "budget", None)
@@ -1143,6 +1160,7 @@ def run_paper_allocation_cycle(service: "CapitalBoundaryService", body: PaperAll
         simulation={"kind": CYCLE_KIND, "quarter": body.quarter, "paper_total": budget,
                     "paper_total_basis": "capital_pool.budget" if budget is not None else "unknown",
                     "target_weight_sum": round(sum(l["target_weight"] for l in lines), 8),
+                    "retained_weight": retained,
                     "line_capital": ({l["persona_id"]: round(l["target_weight"] * budget, 8) for l in lines}
                                      if budget is not None else None),
                     "skipped": skipped},

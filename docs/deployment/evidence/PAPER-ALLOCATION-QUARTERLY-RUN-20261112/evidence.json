@@ -9,7 +9,7 @@
     "route": "evaluator POST /bff/management/allocation-policy/evaluate (authority_mode=governed_paper_quarterly_cycle, operator) -> existing CapitalOwnerWriter.evaluate_allocation -> Capital owner POST /api/allocation-evaluations; no new BFF route or adapter method (keeps the task artifact contract)",
     "owner_cycle": "services/capital/main.py run_paper_allocation_cycle: recompute from the admitted snapshot, policy persona-paper-quarterly-allocation-v1, create one rebalance proposal per tenant+quarter+pool, apply automatically inside the paper ledger (approval_ref paper-auto:<id>), receipt + audit_ref + rollback_target",
     "idempotency": "rebalance_id derived from tenant|quarter|pool; an existing cycle is returned, an unapplied one is only completed; evaluator also records applied cycles in its state",
-    "policy": "calculate_paper_competition_allocations reuses calculate_target_allocations (score share, tier caps S25/A15/B8, +25% increase cap, exclusions) with paper_running as the positive stage; sum of weights above 1.0 refuses the cycle",
+    "policy": "calculate_paper_competition_allocations reuses calculate_target_allocations (score share, tier caps S25/A15/B8, +25% increase cap, exclusions) with paper_running as the positive stage; retained weight of held allocations without a line (departed/skipped personas) is reserved and targets are scaled down (paper_total_budget_scale) so the projected owner portfolio never exceeds 1.0; the owner also refuses any cycle whose projection would exceed it",
     "pool_health": "evaluator derives risk_budget_factor = min(1, gross_utilisation/budget_full) and capacity_factor = 1 - idle_day_share from the persona's current strategy-pool decision.health; anything unknown stays 1.0 with the reason stored in pool_health_factors (O-21)",
     "real_capital_unchanged": "calculate_target_allocations defaults, real evaluate endpoint, human approval and apply path are untouched; factor fields are context fields only for the paper quarterly policy; the cycle refuses non-paper pools, non-dev environments and non-paper lines"
   },
@@ -44,6 +44,11 @@
       "result": "5 failed; identical set fails on base 2e9d3f284 (pre-existing)"
     }
   ],
+  "review_fixes": [
+    "P1: services/capital/main.py reserves retained holdings and the policy scales targets so retained+targets <= 1; verify_rebalance_lineage reproduces the evaluation with simulation.retained_weight; regression test_retained_holdings_of_departed_or_skipped_personas_count_toward_the_paper_total",
+    "P2: owner refuses a cycle before UTC quarter end (main._quarter_end); regressions test_open_or_future_quarter_is_refused_by_the_owner... (owner) and test_direct_operator_post_before_quarter_close_is_refused... (BFF)"
+  ],
+  "review_fix_verification": "pytest services/capital: 387 passed, 12 skipped; persona-evaluator-agent + test_bff_capital_paper_allocation.py: 54 passed",
   "decisions_for_review": [
     "capacity_factor = 1 - idle_day_share is an implementation choice for 'could the persona use more capital'; the addendum names budget-full plus waiting candidates, for which no persisted source exists yet",
     "Only the latest closed quarter with a persisted snapshot is cycled; older missed quarters are not replayed",
