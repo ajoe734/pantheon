@@ -1131,6 +1131,27 @@ class SourceIngestionRuntime:
             "provenance": {key: metadata[key] for key in provenance_keys if key in metadata},
         }
 
+    @staticmethod
+    def _record_run_receipt_readback(
+        record: SourceRecord | None, receipts: Sequence[IngestReceipt]
+    ) -> dict[str, Any] | None:
+        """Completed receipt of the very ingest run that produced ``record`` (None when unpaired)."""
+        if record is None:
+            return None
+        meta = record.metadata or {}
+        run_id = str(meta.get("source_ingest_run_id") or meta.get("ingest_run_id") or "")
+        if not run_id:
+            return None
+        for receipt in reversed(tuple(receipts)):
+            if receipt.status == "completed" and str(receipt.ingest_run_id) == run_id and receipt.finished_at:
+                return {
+                    "ingest_run_id": run_id,
+                    "connector_id": receipt.connector_id,
+                    "status": receipt.status,
+                    "finished_at": receipt.finished_at,
+                }
+        return None
+
     def _latest_source_record_by_connector(
         self,
         receipts_by_connector: Mapping[str, Sequence[IngestReceipt]] | None = None,
@@ -1180,7 +1201,13 @@ class SourceIngestionRuntime:
             if cid in COLLECTOR_PRICE_HISTORY_SOURCE_IDS:
                 # The collector backfills oldest-first after a same-day close is admitted, so the
                 # latest completed run can be an older session; newest admitted session wins.
-                rec_key = (is_price, rec_avail, is_accepted_run, is_active_symbol, rec_created, source_id)
+                # Rank by the validated trade date / event time, never available_time: the collector
+                # sets available_time to fetched_at, so a later backfill fetch would otherwise displace
+                # a newer close.
+                rec_session = str(
+                    rec_meta.get("trade_date") or norm_row.get("trade_date") or str(rec_meta.get("event_time") or "")[:10]
+                )[:10]
+                rec_key = (is_price, rec_session, is_accepted_run, is_active_symbol, rec_avail, rec_created, source_id)
             else:
                 rec_key = (is_accepted_run, is_price, is_active_symbol, rec_avail, rec_created, source_id)
             if cid not in latest or rec_key > latest[cid][0]:
@@ -1238,6 +1265,9 @@ class SourceIngestionRuntime:
                     "fetch_state": fetch_states[connector_id],
                     "freshness": freshness,
                     "latest_source_record": self._source_record_readback(latest_by_connector.get(connector_id)),
+                    "latest_source_record_receipt": self._record_run_receipt_readback(
+                        latest_by_connector.get(connector_id), receipts_by_connector.get(connector_id, ())
+                    ),
                     "source_health": health_payload,
                 }
             )

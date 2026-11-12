@@ -30,7 +30,7 @@ from .connectors.finmind_taiwan import (
     shared_kbar_budget as _finmind_shared_kbar_budget,
     FinMindTaiwanDatasetAdapter,
 )
-from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, PRIORITY_LATEST_MAX_ROWS, CollectorBundleAdapter
+from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter
 from .connectors.social import AdmittedSocialMediaAdapter
 from .connectors.taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
 from .connectors.taiwan_official import (
@@ -127,11 +127,6 @@ def execute_provider_owned_adapter(
         raise SourceEvidenceError("fetch.max_records must be > 0 for provider_owned_adapter")
     request[EFFECTIVE_MAX_RECORDS_KEY] = max_records
     records = spec.handler(adapter, request, trace_id)
-    if token == COLLECTOR_BUNDLE_ADAPTER_TOKEN:
-        # The adapter already enforced its cap and acknowledged exactly what it returned; the
-        # newest-session priority bundle may legitimately exceed one pull's cap, so slicing here
-        # would drop rows whose delivery the priority state has already recorded.
-        max_records = max(max_records, PRIORITY_LATEST_MAX_ROWS)
     return tuple(_attach_run_metadata(record, token=token, request=request) for record in records[:max_records])
 
 

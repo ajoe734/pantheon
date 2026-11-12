@@ -16,6 +16,7 @@ def _make_record(
     run_id: str = "run-001",
     available_time: str = "2026-08-28T05:30:00Z",
     created_at: str = "2026-08-30T01:00:00Z",
+    trade_date: str | None = None,
 ) -> SourceRecord:
     return SourceRecord(
         source_id=source_id,
@@ -31,6 +32,7 @@ def _make_record(
             "symbol": symbol,
             "source_ingest_run_id": run_id,
             "available_time": available_time,
+            **({"trade_date": trade_date, "event_time": f"{trade_date}T06:30:00Z"} if trade_date else {}),
             "normalized_row": {
                 "dataset": dataset,
                 "symbol": symbol,
@@ -192,13 +194,15 @@ def test_collector_price_history_keeps_newest_session_across_older_backfill_run(
     # TW-SAME-DAY-CLOSE-VIA-COLLECTOR: backfill runs after a same-day close must not replace coverage.
     runtime = SourceIngestionRuntime(data_dir=tmp_path)
     connector_id = "collector-tw-twse-price-history"
+    # production semantics: available_time is the fetch time, so the older backfill fetched later
+    # has the later available_time and must still lose to the newer trade date.
     runtime.evidence_repository.add_source_record(
-        _make_record("c:close", connector_id, run_id="run-close", available_time="2026-06-11T06:30:00Z",
-                     created_at="2026-06-11T07:00:00Z")
+        _make_record("c:close", connector_id, run_id="run-close", available_time="2026-11-10T07:00:00Z",
+                     created_at="2026-11-10T07:00:00Z", trade_date="2026-11-10")
     )
     runtime.evidence_repository.add_source_record(
-        _make_record("c:backfill", connector_id, run_id="run-backfill", available_time="2026-06-09T06:30:00Z",
-                     created_at="2026-06-11T07:30:00Z")
+        _make_record("c:backfill", connector_id, run_id="run-backfill", available_time="2026-11-10T07:30:00Z",
+                     created_at="2026-11-10T07:30:00Z", trade_date="2024-11-02")
     )
     receipts = [_make_receipt(connector_id, run_id="run-close"), _make_receipt(connector_id, run_id="run-backfill")]
     latest = runtime._latest_source_record_by_connector({connector_id: receipts})

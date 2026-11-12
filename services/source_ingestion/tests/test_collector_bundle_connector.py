@@ -765,49 +765,70 @@ def test_definitions_pull_price_history_every_30_minutes():
     assert defs["collector-tw-twse-t86"].metadata["collector"]["cadence_seconds"] == 86400
 
 
-def test_oversized_newest_day_is_delivered_whole_in_one_pull(tmp_path):
-    source_id = "collector-tw-twse-price-history"
+def _oversized_files(source_id):
     files, entries = {}, []
     for n, size in ((1, 600), (2, 1500)):  # run2 = newest day, larger than max_records
         f, e = _day_bundle(source_id, n, size)
         files.update(f)
         entries.append(e)
     files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    return files
+
+
+def test_oversized_newest_day_is_delivered_in_bounded_batches_without_exceeding_cap(tmp_path):
+    source_id = "collector-tw-twse-price-history"
+    files = _oversized_files(source_id)
+
+    def make():
+        return CollectorBundleAdapter(
+            connector_id="conn-big", raw_root=str(tmp_path / "store"), transport=FakeTransport(files), host=HOST,
+            source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+            max_records=1000, cadence_seconds=600,
+        )
+
+    adapter = make()
+    first = adapter.pull(cursor=adapter.load_resume_cursor())
+    assert len(first.records) == 1000 and not first.priority_done and first.priority_delivered == 1000
+    assert {r.metadata["trade_date"] for r in first.records} == {"2024-11-02"}
+    adapter.save_resume_cursor(first)
+    adapter = make()
+    second = adapter.pull(cursor=adapter.load_resume_cursor())
+    assert len(second.records) <= 1000 and second.priority_done
+    newest = [r for r in second.records if r.metadata["trade_date"] == "2024-11-02"]
+    assert len(newest) == 500
+    assert {r.source_id for r in newest}.isdisjoint({r.source_id for r in first.records})
+
+
+def test_pull_honors_a_caller_cap_of_one_for_priority_bundles(tmp_path):
+    source_id = "collector-tw-twse-price-history"
     adapter = CollectorBundleAdapter(
-        connector_id="conn-big", raw_root=str(tmp_path / "store"), transport=FakeTransport(files), host=HOST,
+        connector_id="conn-cap1", raw_root=str(tmp_path / "store"),
+        transport=FakeTransport(_oversized_files(source_id)), host=HOST,
         source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
-        max_records=1000, cadence_seconds=1800,
+        max_records=1000, cadence_seconds=600,
     )
-    first = adapter.pull()
-    newest = [r for r in first.records if r.metadata["trade_date"] == "2024-11-02"]
-    assert len(newest) == 1500 and first.priority_done
+    result = adapter.pull(max_records=1)
+    assert len(result.records) == 1 and result.priority_delivered == 1 and not result.priority_done
 
 
-def test_public_path_returns_every_priority_row_above_max_records_and_acks_accurately(tmp_path, monkeypatch):
+def test_public_path_never_exceeds_fetch_max_records_and_acks_accurately(tmp_path, monkeypatch):
     from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
 
     source_id = "collector-tw-twse-price-history"
-    files, entries = {}, []
-    for n, size in ((1, 600), (2, 1500)):  # run2 = newest day, larger than fetch.max_records
-        f, e = _day_bundle(source_id, n, size)
-        files.update(f)
-        entries.append(e)
-    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files = _oversized_files(source_id)
     monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
     monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
     config = {"source_id": source_id, "source_type": "market", "attribution_required": True,
-              "dataset": "tw_price_daily", "cadence_seconds": 1800, "host": HOST, "max_records": 1000}
+              "dataset": "tw_price_daily", "cadence_seconds": 600, "host": HOST, "max_records": 1000}
     fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 1000}
-
-    def pull():
-        adapter = CollectorBundleAdapter(connector_id="conn-pub", **config)
-        return execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
-
-    first = pull()
-    newest = [r for r in first if r.metadata["trade_date"] == "2024-11-02"]
-    assert len(newest) == 1500  # whole newest session on the first governed pull
-    second = pull()
-    # the oldest-first sweep resumes with the backfill; any later replay of the newest day is
-    # idempotent (identical source ids), never a different or partial row set
-    assert {r.metadata["trade_date"] for r in second[:600]} == {"2024-11-01"}
-    assert {r.source_id for r in second if r.metadata["trade_date"] == "2024-11-02"} <= {r.source_id for r in newest}
+    first = execute_provider_owned_adapter(
+        connector=CollectorBundleAdapter(connector_id="conn-pub", **config).connector(), fetch=fetch, trace_id="t"
+    )
+    assert len(first) == 1000
+    assert {r.metadata["trade_date"] for r in first} == {"2024-11-02"}
+    fetch["max_records"] = 1
+    config["max_records"] = 1
+    one = execute_provider_owned_adapter(
+        connector=CollectorBundleAdapter(connector_id="conn-pub1", **config).connector(), fetch=fetch, trace_id="t"
+    )
+    assert len(one) == 1

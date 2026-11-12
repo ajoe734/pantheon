@@ -162,10 +162,28 @@ def test_compare_close_is_exact_to_four_decimals():
                          official_close=955.0, lineage=lin)["outcome"] == "mismatch"
 
 
-def _collector_item(connector_id, trade_date, url):
-    return {"connector_id": connector_id, "latest_source_record": {"metadata": {"collector_close": {
-        "provisional": True, "official": False, "collector_source_id": connector_id,
-        "exchange_endpoint": url, "bundle_sha256": "c" * 64, "trade_date": trade_date}}}}
+def _collector_item(connector_id, trade_date, url, *, run_id="run-close", receipt_run_id=None, finished="2026-06-11T07:00:00Z"):
+    receipt_run_id = run_id if receipt_run_id is None else receipt_run_id
+    event = f"{trade_date}T06:30:00Z"
+    return {
+        "connector_id": connector_id,
+        "latest_source_record": {
+            "connector_id": connector_id, "status": "normalized",
+            "metadata": {
+                "trade_date": trade_date,
+                "collector": {"source_id": connector_id, "bundle_status": "complete", "bundle_sha256": "c" * 64},
+                "collector_close": {
+                    "provisional": True, "official": False, "collector_source_id": connector_id,
+                    "exchange_endpoint": url, "bundle_sha256": "c" * 64, "trade_date": trade_date},
+            },
+            "provenance": {"source_ingest_run_id": run_id, "event_time": event,
+                           "available_time": f"{trade_date}T06:50:00Z"},
+        },
+        "latest_source_record_receipt": {"ingest_run_id": receipt_run_id, "connector_id": connector_id,
+                                         "status": "completed", "finished_at": finished},
+        # connector-level freshness must never be borrowed
+        "freshness": {"last_success_at": "2026-06-12T09:00:00Z"},
+    }
 
 
 def test_preflight_cover_needs_both_exchanges_on_the_same_session():
@@ -195,16 +213,21 @@ def test_collector_close_keeps_prior_governed_calendar_evidence(tmp_path):
     assert after.closes[-1] == 955.0 and after.calendar_evidence == before
 
 
-def test_collector_cover_receipt_uses_validated_collector_receipts():
-    def conn(ts):
-        return {"freshness": {"last_success_at": ts}}
-
-    got = controller_worker._collector_cover_receipt(
-        {TWSE: conn("2026-06-11T07:00:00Z"), TPEX: conn("2026-06-11T06:50:00Z"),
-         "tw-twse-tpex-official-market": conn("2026-06-11T00:30:00Z")})
-    assert got == datetime(2026, 6, 11, 6, 50, tzinfo=timezone.utc)
-    assert controller_worker._collector_cover_receipt({TWSE: conn("2026-06-11T07:00:00Z")}) is None
-    assert controller_worker._collector_cover_receipt(
-        {TWSE: conn("2026-06-11T07:00:00Z"), TPEX: conn("not-a-time")}) is None
-    assert controller_worker._collector_cover_receipt(
-        {TWSE: conn("2026-06-11T07:00:00Z"), TPEX: {"freshness": {}}}) is None
+def test_cover_binds_receipt_to_the_covered_record_run_and_never_borrows_freshness():
+    both = [_collector_item(TWSE, "2026-06-11", MI_INDEX_URL, finished="2026-06-11T07:00:00Z"),
+            _collector_item(TPEX, "2026-06-11", DAILY_QUOTES_URL, finished="2026-06-11T06:55:00Z")]
+    cover = covered_collector_close_session(both)
+    assert cover["receipt_at"] == datetime(2026, 6, 11, 6, 55, tzinfo=timezone.utc)
+    # receipt of a different (backfill) run does not attest the selected close
+    other = _collector_item(TPEX, "2026-06-11", DAILY_QUOTES_URL, receipt_run_id="run-backfill")
+    assert covered_collector_close_session([both[0], other]) is None
+    # missing receipt -> fail closed even though connector freshness looks fine
+    missing = _collector_item(TPEX, "2026-06-11", DAILY_QUOTES_URL)
+    missing["latest_source_record_receipt"] = None
+    assert covered_collector_close_session([both[0], missing]) is None
+    # fetch after the receipt, or event outside the trade date, is unpaired
+    late = _collector_item(TPEX, "2026-06-11", DAILY_QUOTES_URL, finished="2026-06-11T06:40:00Z")
+    assert covered_collector_close_session([both[0], late]) is None
+    bad = _collector_item(TPEX, "2026-06-11", DAILY_QUOTES_URL)
+    bad["latest_source_record"]["provenance"]["event_time"] = "2026-06-10T06:30:00Z"
+    assert covered_collector_close_session([both[0], bad]) is None

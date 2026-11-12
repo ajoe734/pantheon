@@ -511,7 +511,7 @@ class CollectorBundleAdapter:
 
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         priority = self._pull_priority_latest(
-            cursor, trace_id=trace_id, total_cap=max(total_cap, PRIORITY_LATEST_MAX_ROWS) if total_cap > 0 else 0
+            cursor, trace_id=trace_id, total_cap=total_cap
         )
         if priority is None:
             return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)

@@ -695,27 +695,6 @@ def _collector_cover_event_time(trade_date: str) -> datetime:
     return datetime(day.year, day.month, day.day, 6, 30, tzinfo=timezone.utc)
 
 
-def _collector_cover_receipt(actual_connectors: Mapping[str, Any]) -> datetime | None:
-    """Oldest last_success_at of the collector price-history sources that cover the relayed session.
-
-    Returns None (so the freshness check fails closed) when any receipt is missing or invalid.
-    """
-    from .tw_close_reconcile import COLLECTOR_PRICE_HISTORY_SOURCE_IDS
-
-    receipts: list[datetime] = []
-    for source_id in COLLECTOR_PRICE_HISTORY_SOURCE_IDS:
-        item = actual_connectors.get(source_id)
-        freshness = item.get("freshness") if isinstance(item, Mapping) else None
-        raw = freshness.get("last_success_at") if isinstance(freshness, Mapping) else None
-        if not raw:
-            return None
-        try:
-            receipts.append(parse_utc(str(raw)))
-        except ControllerStateError:
-            return None
-    return min(receipts) if receipts else None
-
-
 def _collector_cover_session_close(trade_date: str) -> datetime:
     day = datetime.fromisoformat(trade_date)
     return datetime(day.year, day.month, day.day, 5, 30, tzinfo=timezone.utc)  # 13:30 Asia/Taipei
@@ -1153,7 +1132,7 @@ def _validate_terminal_readback(
                             tw_ok, tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
                                 event_time_dt=_collector_cover_event_time(collector_close_cover["trade_date"]),
                                 now_dt=eval_now_dt,
-                                refresh_receipt_dt=_collector_cover_receipt(actual_connectors),
+                                refresh_receipt_dt=collector_close_cover["receipt_at"],
                                 lineage={**lineage, "collector_close": collector_close_cover["lineage"]},
                                 max_refresh_age_seconds=max_source_age or 86400,
                                 calendar_evidence=cal_ev,
