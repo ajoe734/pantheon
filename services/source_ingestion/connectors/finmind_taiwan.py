@@ -120,14 +120,18 @@ FINMIND_TAIWAN_DATASETS: tuple[dict[str, Any], ...] = (
         "history_start": FINMIND_BROKER_REPORT_HISTORY_START,
         "cadence": "daily_after_close",
     },
-    {
-        "dataset": FINMIND_KBAR_DATASET,
-        "normalized_dataset": FINMIND_KBAR_NORMALIZED_DATASET,
-        "minimum_tier": "sponsor",
-        "history_start": None,  # real availability is probed (evidence), not assumed
-        "cadence": "daily_after_close",
-    },
 )
+
+# KBar is deliberately NOT in FINMIND_TAIWAN_DATASETS: that catalog feeds the generic
+# persona reconciler / FinMindTaiwanDatasetAdapter, which would stamp session-date
+# available_time (PIT leak). KBar is served only by FinMindTaiwanKBarAdapter.
+FINMIND_KBAR_CATALOG_ENTRY: dict[str, Any] = {
+    "dataset": FINMIND_KBAR_DATASET,
+    "normalized_dataset": FINMIND_KBAR_NORMALIZED_DATASET,
+    "minimum_tier": "sponsor",
+    "history_start": None,  # real availability is probed (evidence), not assumed
+    "cadence": "daily_after_close",
+}
 
 
 def _utc_now() -> str:
@@ -302,6 +306,12 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
         api_endpoint: str | None = None,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
+        if dataset == FINMIND_KBAR_DATASET:
+            # Fail closed: KBar needs fetched_at/reconciled_at-bounded availability and
+            # must go through FinMindTaiwanKBarAdapter, never the session-date generic path.
+            raise ValueError(
+                "TaiwanStockKBar must be normalized by FinMindTaiwanKBarAdapter, not the generic dataset adapter"
+            )
         records: list[SourceRecord] = []
         endpoint = api_endpoint or _finmind_url(FINMIND_DATA_ENDPOINT, {"dataset": dataset})
         for row in _rows_from_payload(payload)[: self.max_records]:
@@ -1321,7 +1331,7 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
             "base_url": FINMIND_BASE_URL,
             "endpoint": FINMIND_DATA_ENDPOINT,
             "secret_ref_id": self.secret_ref_id,
-            "datasets": [d for d in FINMIND_TAIWAN_DATASETS if d["dataset"] == FINMIND_KBAR_DATASET],
+            "datasets": [dict(FINMIND_KBAR_CATALOG_ENTRY)],
             "hourly_self_limit": FINMIND_KBAR_HOURLY_SELF_LIMIT,
         }
 

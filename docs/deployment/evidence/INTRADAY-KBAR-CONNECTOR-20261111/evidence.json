@@ -62,7 +62,7 @@
     "publication_time": {
       "status": "partial",
       "observation": "same-day request 2026-11-12 09:26:55 Taipei returned 0 rows (no intraday availability)",
-      "gap": "actual publication time not yet observed; 13:35-17:30 Taipei polling collected by Human/Ops, owned by INTRADAY-1M-STORE-BACKFILL scheduling. Connector correctness does not depend on it: bar_availability_ts uses real fetched_at; ~15:50 remains unconfirmed."
+      "gap": "2026-11-12 09:40 Taipei re-check: worker has no FINMIND_API_TOKEN in env and the documented ~15:50 publication window has not occurred, so no empty-to-first-nonempty observation could be taken honestly; none invented. Original gap: actual publication time not yet observed; 13:35-17:30 Taipei polling collected by Human/Ops, owned by INTRADAY-1M-STORE-BACKFILL scheduling. Connector correctness does not depend on it: bar_availability_ts uses real fetched_at; ~15:50 remains unconfirmed."
     }
   },
   "not_verified": [

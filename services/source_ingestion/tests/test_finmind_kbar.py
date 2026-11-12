@@ -10,6 +10,7 @@ import pytest
 from services.source_ingestion.connector_definitions import DEPLOYED_CONNECTOR_DEFINITIONS
 from services.source_ingestion.connectors import finmind_taiwan as fm
 from services.source_ingestion.connectors.finmind_taiwan import (
+    FINMIND_KBAR_CATALOG_ENTRY,
     FINMIND_TAIWAN_DATASETS,
     FinMindCredentialError,
     FinMindLiveFetcher,
@@ -28,7 +29,8 @@ def _row(minute, o=100.0, h=101.0, l=99.0, c=100.5, v=10, sid="2330", d=DAY):
 
 
 def test_dataset_row_maps_to_tw_price_1m_only():
-    row = next(d for d in FINMIND_TAIWAN_DATASETS if d["dataset"] == "TaiwanStockKBar")
+    row = FINMIND_KBAR_CATALOG_ENTRY
+    assert row["dataset"] == "TaiwanStockKBar"
     assert row["normalized_dataset"] == "tw_price_1m"
     assert row["cadence"] == "daily_after_close"
     # daily truth is untouched
@@ -218,3 +220,16 @@ def test_after_hours_1430_bar_excluded_and_counted():
     )
     assert res.kept_bars == 2 and res.dropped_outside_session == 1
     assert all("14:30" not in r.metadata["normalized_row"]["bar_start"] for r in res.records)
+
+
+def test_kbar_not_in_shared_catalog_and_generic_adapter_fails_closed():
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanDatasetAdapter
+    from services.source_ingestion import persona_source_reconciler as psr
+
+    assert all(d["dataset"] != "TaiwanStockKBar" for d in FINMIND_TAIWAN_DATASETS)
+    # persona reconciler must not auto-provision tw_price_1m through the generic adapter
+    assert "tw_price_1m" not in psr._FINMIND_DATASET_BY_NORMALIZED
+    import pytest
+
+    with pytest.raises(ValueError):
+        FinMindTaiwanDatasetAdapter().records_from_data_payload("TaiwanStockKBar", {"data": [_row("09:00:00")]})
