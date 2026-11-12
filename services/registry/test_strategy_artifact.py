@@ -1,6 +1,27 @@
 """EVOLOOP-003 tests for the minimal evolvable StrategyArtifact contract."""
 from __future__ import annotations
 
+
+def test_screen_schema_is_portable_and_legacy_artifact_bytes_are_preserved():
+    import copy
+    import json
+    from jsonschema import Draft7Validator
+    from services.registry.test_candidate_pool import screen_artifact
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+    from services.registry.strategy_artifact import (
+        STRATEGY_ARTIFACT_SCHEMA_PATH, strategy_artifact_checksum, validate_strategy_artifact,
+    )
+
+    artifact = screen_artifact()
+    Draft7Validator(json.loads(STRATEGY_ARTIFACT_SCHEMA_PATH.read_text())).validate(artifact)
+    validate_strategy_artifact(artifact)
+    legacy = _sample_factor_rule_artifact()
+    before = copy.deepcopy(legacy)
+    checksum = strategy_artifact_checksum(legacy)
+    validate_strategy_artifact(legacy)
+    assert legacy == before
+    assert strategy_artifact_checksum(legacy) == checksum
+
 import asyncio
 import copy
 import threading

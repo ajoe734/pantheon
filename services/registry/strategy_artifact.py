@@ -1203,6 +1203,11 @@ def evaluate_strategy_action(
     logic = strategy_artifact["strategy_logic"]
     if logic["kind"] == "factor_rule_v1":
         try:
+            if "screen" in logic:
+                return evaluate_strategy_view(
+                    strategy_artifact, closes, features=features, decision_time=decision_time,
+                    holding_bars=holding_bars, current_direction=current_direction, symbol=symbol,
+                )["action"]
             return evaluate_factor_rule_action(
                 strategy_artifact,
                 closes,
@@ -1273,6 +1278,15 @@ def evaluate_strategy_view(
     logic = strategy_artifact["strategy_logic"]
     if logic["kind"] == "factor_rule_v1":
         try:
+            if "screen" in logic:
+                from .candidate_pool import MARKET_FEATURE_KEY, evaluate_screened_view
+
+                if not symbol:
+                    raise FactorRuleValidationError("screen requires the decision symbol")
+                return evaluate_screened_view(
+                    strategy_artifact, (features or {}).get(MARKET_FEATURE_KEY), symbol,
+                    decision_time, holding_bars=holding_bars, current_direction=current_direction,
+                )
             return evaluate_factor_rule_view(
                 strategy_artifact,
                 closes,

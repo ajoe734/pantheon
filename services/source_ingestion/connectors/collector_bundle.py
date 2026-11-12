@@ -28,6 +28,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import urllib.request
@@ -170,6 +171,23 @@ class CollectorPullResult:
     observed: Mapping[str, Any] = field(default_factory=dict)
     feature_rejected: tuple[Mapping[str, str], ...] = ()
     complete: bool = True  # False: the output cap left raw items / derived rows for a later pull
+    priority_key: str | None = None  # newest-trading-day bundle delivered ahead of the cursor sweep
+    priority_delivered: int = 0  # items of that bundle delivered so far (it may exceed one pull's cap)
+    priority_done: bool = False
+
+
+PRIORITY_LATEST_DATASETS = frozenset({"tw_price_daily"})
+PRIORITY_LATEST_MAX_CADENCE_SECONDS = 3600
+# The newest session is delivered whole in one pull (bounded by this ceiling, above any single
+# exchange day) so the 30-minute deadline never depends on a second scheduled pull.
+PRIORITY_LATEST_MAX_ROWS = 5000
+_BUNDLE_TRADE_DATE_RE = re.compile(r"^(?:backfill|close)-(\d{4}-\d{2}-\d{2})")
+
+
+def _bundle_trade_date(entry: Mapping[str, Any]) -> str:
+    """Trade date a price-history bundle covers: backfill/close run ids name it, others use the run date."""
+    match = _BUNDLE_TRADE_DATE_RE.match(str(entry.get("run_id") or ""))
+    return match.group(1) if match else str(entry.get("date") or "")
 
 
 def _cursor_key(finished_at: datetime, run_id: str) -> str:
@@ -483,6 +501,135 @@ class CollectorBundleAdapter:
         trace_id: str = "",
         max_records: int | None = None,
     ) -> CollectorPullResult:
+        """Cursor-ordered pull; price-history sources deliver the newest trading day first.
+
+        The cursor sweep is oldest-first, so a two-year backfill would hold the newest close
+        behind hundreds of older per-date bundles. For ``tw_price_daily`` the newest-trade-date
+        bundle is verified and returned ahead of the sweep (its key is persisted separately), and
+        the cursor sweep continues with whatever output cap remains. Replays are idempotent.
+        """
+
+        total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
+        priority = self._pull_priority_latest(
+            cursor, trace_id=trace_id, total_cap=total_cap
+        )
+        if priority is None:
+            return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)
+        records, key, paused, delivered, done = priority
+        remaining = total_cap - len(records)
+        if remaining <= 0:
+            base = CollectorPullResult(
+                records=(), next_cursor=cursor, bundle_count=0, complete=False,
+                observed=observed_from_collector_status(
+                    self.read_status(), source_id=self.source_id, cursor=cursor, cadence_seconds=self._health_cadence_seconds()
+                ),
+            )
+        else:
+            base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining)
+        seen = {r.source_id for r in records}
+        merged = (*records, *(r for r in base.records if r.source_id not in seen))
+        return CollectorPullResult(
+            records=merged,
+            next_cursor=base.next_cursor,
+            bundle_count=base.bundle_count + 1,
+            paused_reasons=(*paused, *base.paused_reasons),
+            observed=base.observed,
+            feature_rejected=base.feature_rejected,
+            complete=base.complete,
+            priority_key=key,
+            priority_delivered=delivered,
+            priority_done=done,
+        )
+
+    def _priority_latest_enabled(self) -> bool:
+        # A sub-hourly Pantheon pull cadence (price-history definitions: 30 min) means the newest
+        # session must not wait behind the oldest-first backfill sweep; daily cadence keeps the
+        # plain cursor order.
+        return (
+            self.source_type == "market"
+            and self.dataset in PRIORITY_LATEST_DATASETS
+            and 0 < self.cadence_seconds <= PRIORITY_LATEST_MAX_CADENCE_SECONDS
+        )
+
+    def _health_cadence_seconds(self) -> int | None:
+        # The Pantheon pull cadence of a price-history source (30 min) is faster than the collector's
+        # own run cadence; staleness is judged against the host's cadence from status.json.
+        if self.source_type == "market" and self.dataset in PRIORITY_LATEST_DATASETS:
+            return None
+        return self.cadence_seconds
+
+    def _priority_key_path(self) -> Path:
+        return self._raw_root() / "state" / _slug(self.connector_id) / "latest_priority.json"
+
+    def _load_priority_state(self) -> tuple[str | None, int, bool]:
+        path = self._priority_key_path()
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+        except (OSError, ValueError):
+            return None, 0, False
+        if isinstance(doc, dict) and doc.get("source_id") == self.source_id and doc.get("key"):
+            return str(doc["key"]), int(doc.get("delivered") or 0), bool(doc.get("done"))
+        return None, 0, False
+
+    def _pull_priority_latest(
+        self, cursor: str | None, *, trace_id: str, total_cap: int
+    ) -> tuple[list[SourceRecord], str, tuple[str, ...], int, bool] | None:
+        if (
+            not self._priority_latest_enabled()
+            or self.source_type != "market"
+            or self.dataset not in PRIORITY_LATEST_DATASETS
+            or total_cap <= 0
+        ):
+            return None
+        transport = self._transport()
+        index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
+        entries = index.get("bundles") if isinstance(index, dict) else None
+        if not isinstance(entries, list):
+            raise SourceEvidenceError("collector bundle index.json must contain a bundles list")
+        mine = [
+            e for e in entries
+            if isinstance(e, dict) and str(e.get("source_id") or "") == self.source_id
+            and str(e.get("status") or "complete") == "complete"
+        ]
+        if not mine:
+            return None
+        newest = max(
+            mine,
+            key=lambda e: (
+                _bundle_trade_date(e),
+                _cursor_key(_utc(e.get("finished_at"), "index finished_at"), str(e.get("run_id") or "")),
+            ),
+        )
+        key = _cursor_key(_utc(newest.get("finished_at"), "index finished_at"), str(newest.get("run_id") or ""))
+        base_cursor, partial_skip = _split_cursor(cursor)
+        if base_cursor is not None and (key < base_cursor or (key == base_cursor and not partial_skip)):
+            return None  # the sweep already consumed it
+        state_key, delivered, done = self._load_priority_state()
+        if state_key is not None:
+            if key < state_key or (key == state_key and done):
+                return None
+            if key > state_key:
+                delivered = 0
+        else:
+            delivered = 0
+        bundle = verify_bundle(
+            transport, expected_source_id=self.source_id, entry=newest, item_window=(delivered, delivered + total_cap)
+        )
+        if bundle.status == "paused":
+            return [], key, (f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}",), delivered, False
+        window = bundle.items[delivered:delivered + total_cap]
+        rows = [self._record(bundle, row, trace_id=trace_id) for row in window]
+        self._write_raw([(bundle, {})], rows)
+        new_delivered = delivered + len(window)
+        return rows, key, (), new_delivered, new_delivered >= len(bundle.items)
+
+    def _pull_ordered(
+        self,
+        *,
+        cursor: str | None = None,
+        trace_id: str = "",
+        max_records: int | None = None,
+    ) -> CollectorPullResult:
         transport = self._transport()
         index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
         entries = index.get("bundles") if isinstance(index, dict) else None
@@ -560,7 +707,7 @@ class CollectorBundleAdapter:
         )
         self._write_raw(raw_plan, records)
         observed = observed_from_collector_status(
-            self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self.cadence_seconds
+            self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self._health_cadence_seconds()
         )
         pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
         complete = not unverified_pending and (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
@@ -595,6 +742,18 @@ class CollectorBundleAdapter:
         Cleared once a pull reaches the end, so a finished sweep replays from scratch exactly
         like an un-cursored pull (idempotent downstream).
         """
+        if result.priority_key:
+            pri = self._priority_key_path()
+            pri.parent.mkdir(parents=True, exist_ok=True)
+            tmp = pri.with_name(pri.name + ".tmp")
+            tmp.write_text(
+                json.dumps({
+                    "source_id": self.source_id, "key": result.priority_key,
+                    "delivered": result.priority_delivered, "done": result.priority_done,
+                }),
+                encoding="utf-8",
+            )
+            os.replace(tmp, pri)
         path = self._resume_cursor_path()
         if result.complete or not result.next_cursor:
             path.unlink(missing_ok=True)
@@ -733,8 +892,26 @@ class CollectorBundleAdapter:
             ):
                 if metadata.get(market_key) not in (None, "", [], {}):
                     market_row.setdefault(market_key, metadata[market_key])
+            exchange = str(market_row.get("exchange") or "").upper()
+            if self.dataset in PRIORITY_LATEST_DATASETS and market_row.get("symbol") and exchange in {"TWSE", "TPEX"}:
+                # Same canonical identity as the official OpenAPI row, so a session's collector and
+                # official closes land on one symbol series and can be compared.
+                market_row.setdefault("symbol_canonical", f"{str(market_row['symbol']).strip().upper()}.{exchange}")
+                market_row.setdefault("market", "TW")
             if market_row:
                 metadata.setdefault("normalized_row", market_row)
+            if self.dataset in PRIORITY_LATEST_DATASETS:
+                # Exchange-website close relayed by the collector: provisional, never official truth.
+                metadata["collector_close"] = {
+                    "provisional": True,
+                    "official": False,
+                    "collector_source_id": self.source_id,
+                    "exchange_endpoint": url,
+                    "upstream_endpoint": row.get("upstream_endpoint"),
+                    "bundle_sha256": str(manifest["bundle_sha256"]).lower(),
+                    "bundle_run_id": bundle.run_id,
+                    "trade_date": row.get("trade_date"),
+                }
             for key, val in metrics_dict.items():
                 if val not in (None, "", [], {}):
                     metadata.setdefault(key, val)
