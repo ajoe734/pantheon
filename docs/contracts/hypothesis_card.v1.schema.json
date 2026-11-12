@@ -79,6 +79,122 @@
         "community_theme"
       ]
     },
+    "predictions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "cited_spans": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "end": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "exact_text": {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source_record_id": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "start": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "source_record_id",
+                "start",
+                "end",
+                "exact_text"
+              ],
+              "type": "object"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array"
+          },
+          "expected_sign": {
+            "enum": [
+              "+",
+              "-",
+              "0"
+            ]
+          },
+          "observable": {
+            "additionalProperties": false,
+            "properties": {
+              "dataset": {
+                "pattern": "^[A-Za-z0-9_.\\-]{1,80}$",
+                "type": "string"
+              },
+              "field": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "dataset",
+              "field"
+            ],
+            "type": "object"
+          },
+          "statement": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "test_kind": {
+            "enum": [
+              "event_window",
+              "regime_split",
+              "dose_response",
+              "lead_lag",
+              "cross_symbol_sign"
+            ]
+          },
+          "testability": {
+            "pattern": "^(testable|needs_data:[A-Za-z0-9_.\\-]{1,80})$",
+            "type": "string"
+          },
+          "window": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "before": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "before",
+              "after"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "statement",
+          "observable",
+          "test_kind",
+          "expected_sign",
+          "window",
+          "cited_spans"
+        ],
+        "type": "object"
+      },
+      "maxItems": 4,
+      "minItems": 0,
+      "type": "array"
+    },
     "rule_sketch": {
       "maxLength": 1000,
       "type": "string"
