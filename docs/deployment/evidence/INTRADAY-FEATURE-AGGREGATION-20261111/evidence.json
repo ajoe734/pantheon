@@ -17,7 +17,7 @@
       ]
     },
     "tests": {
-      "command": "python -m pytest services/research/tests/test_intraday_bars.py services/registry/tests services/source_ingestion/tests/test_snapshot_frequency_isolation.py services/source_ingestion/tests/test_intraday_snapshot_projection.py -q",
+      "command": "python -m pytest services/research/tests/test_intraday_bars.py services/registry services/source_ingestion/tests/test_snapshot_frequency_isolation.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_intraday_reconcile.py services/source_ingestion/tests/test_pipeline_snapshot_dataset_isolation.py -q",
       "result": "all new tests pass; wider runs of services/source_ingestion/tests, services/registry, strategy_spec, persona provisioning, paper_signal_producer, operational_readiness, hosted_lifecycle_probe, paper_fleet_reconciler show only failures that are identical on the unmodified base commit (12 in test_controller_worker/test_distillation_controller/test_finmind_broker_backfill, 2 in test_persona_provisioning_route_security, 2 live-postgres/idle-cycle tests)",
       "covers": [
         "SD 6.1 table 1d/1m/5m/15m/30m/60m -> dataset; any other value rejected by validate_execution_recipe and persona provisioning",
@@ -28,11 +28,22 @@
         "LatestMarketSnapshotStore keyed by (symbol, dataset); _point_from_record rejects other-dataset records; unknown dataset/frequency fail closed",
         "daily state lines and public JSON byte-identical (dataset key written only for non-daily)",
         "snapshots/latest?frequency= default 1d; 422 for unknown, 404 for an unprojected frequency, no fallback",
-        "end-to-end: IntradayStore ingest -> reconcile_day (projection at end of run) -> GET frequency=1m returns real bar closes (non-empty assertion); pending_official, fail/quarantine, tampered shard, dry-run write nothing; default 1d response bytes identical before/after"
-      ]
+        "end-to-end: IntradayStore ingest -> reconcile_day (projection at end of run) -> GET frequency=1m returns real bar closes (non-empty assertion); pending_official, fail/quarantine, tampered shard, dry-run write nothing; default 1d response bytes identical before/after",
+        "review fix P1: a published day that later fails/quarantines is durably withdrawn (tombstone/replacement line) - public GET 200 -> 404, survives reload, daily snapshot bytes unchanged",
+        "review fix P2: session ends 13:30 (270 regular minutes); last 60m bucket is 13:00-13:30 half bucket (expected 30), 13:30 auction bar kept in it; 5m/15m/30m full buckets; early-close via session_close_minute",
+        "review fix P1: minute-unit lag enforced in validation (availability_lag_minutes) and point-in-time resolution (registered 3-minute lag hides 09:01 bar at 09:02, visible at 09:04)",
+        "review fix P2: cross_session=false resets windows to the latest visible Taipei session; true keeps prior session"
+      ],
+      "rereview_result": "439 passed, 48 skipped (exit 0) after addressing review REJECT of PR #7234"
     },
-    "merged": {"status": "not_yet", "note": "recorded after PR merge"},
-    "hosted": {"status": "not_run", "note": "W5 owns hosted proof; no provider, token, VM or hosted store was accessed"}
+    "merged": {
+      "status": "not_yet",
+      "note": "recorded after PR merge"
+    },
+    "hosted": {
+      "status": "not_run",
+      "note": "W5 owns hosted proof; no provider, token, VM or hosted store was accessed"
+    }
   },
   "design_decisions": {
     "projection_writer": "intraday_snapshot_projection.project_reconciled_minute_snapshots is the only minute snapshot writer; it takes pass results, re-reads rows via hash-verified read_reconciled_rows, and calls append_normalized_records(dataset='tw_price_1m'). reconcile_day invokes it at the end of a write=True run when snapshot_store is given. pipeline.persist_latest_market_snapshots exclusion is untouched.",
@@ -42,7 +53,6 @@
   },
   "gaps": [
     "The runtime wiring of reconcile_day(snapshot_store=...) into a scheduled/hosted reconcile run is not exercised: the only repository caller is the read-only report script (write=False). Hosted scheduling belongs to K2/W5.",
-    "Append-only store: a day already projected and later re-quarantined is not withdrawn from the minute snapshot (reconcile removes the pass record, so loaders/read_reconciled_rows stop serving it, but the latest-snapshot log keeps the earlier points until overwritten). Needs a tombstone design.",
     "5m/15m/30m/60m latest snapshots are not projected (only the 1m dataset is written; coarser frequencies return 404 from snapshots/latest); aggregation is served by services/research/intraday_bars.load_bars.",
     "Not exercised against real provider data; KBar unit and publication time remain K1/K3 unverified items. No hosted evidence.",
     "Pre-existing failing tests listed under tests.result are unchanged by this task."
