@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "EvidenceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "packet",
+            "virtual_book",
+            "memo",
+            "lesson",
+            "trade_reflection"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "ref": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Ref",
+          "type": "string"
+        },
+        "moment": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Moment",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ref",
+        "moment"
+      ],
+      "title": "EvidenceReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "persona_harness_patch.v1",
+      "default": "persona_harness_patch.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "patch_id": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Patch Id",
+      "type": "string"
+    },
+    "persona_id": {
+      "minLength": 1,
+      "title": "Persona Id",
+      "type": "string"
+    },
+    "session_id": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "base_version": {
+      "minimum": 1,
+      "title": "Base Version",
+      "type": "integer"
+    },
+    "patch_type": {
+      "enum": [
+        "route_policy",
+        "consult_policy",
+        "memory",
+        "behavior",
+        "tool_profile",
+        "skill",
+        "workflow",
+        "threshold",
+        "memory_policy"
+      ],
+      "title": "Patch Type",
+      "type": "string"
+    },
+    "proposed_change": {
+      "additionalProperties": true,
+      "minProperties": 1,
+      "title": "Proposed Change",
+      "type": "object"
+    },
+    "evidence_refs": {
+      "items": {
+        "$ref": "#/$defs/EvidenceReference"
+      },
+      "minItems": 1,
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "expected_effect": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Expected Effect",
+      "type": "string"
+    },
+    "rollback_target": {
+      "minimum": 1,
+      "title": "Rollback Target",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "patch_id",
+    "persona_id",
+    "session_id",
+    "base_version",
+    "patch_type",
+    "proposed_change",
+    "evidence_refs",
+    "expected_effect",
+    "rollback_target"
+  ],
+  "title": "PersonaPatch",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/contracts/persona_harness_patch.v1.schema.json"
+}
