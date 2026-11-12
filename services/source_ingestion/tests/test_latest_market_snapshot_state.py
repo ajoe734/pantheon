@@ -479,30 +479,35 @@ def test_paper_signal_producer_rejects_missing_market_context_fail_closed() -> N
 
 
 
-BEE_REF = "bee62bc2978618539984aff9db136b064adc14a0"
-NEW70A_REF = "70a5bb860e855beacd14445c29bff64ccfa7e8f2"
+from services.source_ingestion.tests.frozen_source_codec import (
+    BEE_REF, NEW70A_REF, CODECS, frozen_source_codec as _frozen_source_codec,
+)
 
 
-def _frozen_source_codec(ref):
-    """Execute the actual immutable Git blob, not a reimplemented old parser.
+@pytest.mark.parametrize("ref", [BEE_REF, NEW70A_REF])
+@pytest.mark.parametrize("corruption", ["truncated", "same_length", "missing"])
+def test_frozen_codec_integrity_before_execution(ref, corruption, monkeypatch):
+    filename = CODECS[ref][0]
+    read_bytes = Path.read_bytes
 
-    Service-suites CI checks out full history. Missing history fails this proof.
-    Only the codec is loaded; runtime/main and providers are never initialized.
-    """
-    import subprocess
-    import sys
-    import types
-    root = Path(__file__).resolve().parents[3]
-    raw = subprocess.run(["git", "show", ref + ":services/source_ingestion/requirement_state.py"],
-                         cwd=root, capture_output=True, check=True, timeout=15).stdout
-    expected = {BEE_REF: "5c52524ec58fb555b7af101a495bce825fc10595",
-                NEW70A_REF: "16f31f4e38bcd39e10d2a3a8e82a96b18fa59f44"}[ref]
-    assert hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == expected
-    name = "services.source_ingestion._frozen_" + ref
-    module = types.ModuleType(name)
-    sys.modules[name] = module
-    exec(compile(raw, name, "exec"), module.__dict__)
-    return module
+    def damaged(path):
+        raw = read_bytes(path)
+        if path.name != filename:
+            return raw
+        if corruption == "missing":
+            raise FileNotFoundError(path)
+        if corruption == "truncated":
+            return raw[:-1]
+        return b"!" + raw[1:]
+
+    monkeypatch.setattr(Path, "read_bytes", damaged)
+    with pytest.raises(FileNotFoundError if corruption == "missing" else ValueError):
+        _frozen_source_codec(ref)
+
+
+def test_frozen_codec_requires_full_known_commit():
+    with pytest.raises(ValueError, match="unknown frozen Source codec commit"):
+        _frozen_source_codec(BEE_REF[:7])
 
 
 def _state_envelope(codec, state):

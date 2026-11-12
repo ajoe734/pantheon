@@ -698,17 +698,11 @@ def run_local_source_probe(docker, args):
     bootstrap = ""
     if image in docker.source_codecs:
         ref = docker.source_codecs[image]
-        root = Path(__file__).resolve().parents[1]
-        raw = subprocess.run(["git", "show", ref + ":services/source_ingestion/requirement_state.py"],
-                             cwd=root, capture_output=True, check=True, timeout=15).stdout
-        path = Path(docker.source_scratch.name) / (ref + ".py")
-        path.write_bytes(raw)
         bootstrap = (
-            "import importlib.util, sys, services.source_ingestion as package\n"
-            f"spec=importlib.util.spec_from_file_location('services.source_ingestion.requirement_state',{str(path)!r})\n"
-            "module=importlib.util.module_from_spec(spec)\n"
-            "sys.modules[spec.name]=module\n"
-            "spec.loader.exec_module(module)\n"
+            "import sys, services.source_ingestion as package\n"
+            "from services.source_ingestion.tests.frozen_source_codec import frozen_source_codec\n"
+            f"module=frozen_source_codec({ref!r})\n"
+            "sys.modules['services.source_ingestion.requirement_state']=module\n"
             "package.requirement_state=module\n"
         )
     result = subprocess.run([sys.executable, "-c", bootstrap + code, mode, argument],
