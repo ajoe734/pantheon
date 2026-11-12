@@ -12,9 +12,9 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-PERIODS_PER_YEAR = 252
+PERIODS_PER_YEAR = 365  # vectorbt pf.sharpe_ratio() default year_freq=365 days with freq='1D'
 # The gate scores share-sized (artifact order_quantity, init_cash) vectorbt
-# portfolios per instrument, daily, sqrt(252), Taiwan costs on every fill, and
+# portfolios per instrument, daily, sqrt(365) (vectorbt year_freq), Taiwan costs on every fill, and
 # aggregates multi-symbol runs as the mean of per-instrument Sharpe.  A virtual
 # book is comparable only when it reports exactly this basis; the exposure-fraction
 # book does not, so comparison is explicitly ``incomparable_return_basis``.
@@ -40,6 +40,10 @@ def _code(symbol: Any) -> str:
 
 def _gate_proof_failure(entry: Mapping[str, Any], summary: Mapping[str, Any], run_id: str) -> str | None:
     """Reason the persisted proof is not an exact passed gate verdict, else ``None``."""
+    if "replication_success" not in entry and "replication_proof" not in entry:
+        # RegistryEntry (services/registry/models.py) has no such owner fields, so a
+        # genuine GET /api/registry/entries/{id} never carries the gate verdict.
+        return "gate_verdict_not_persisted_by_registry_owner"
     if entry.get("replication_success") is not True:
         return "gate_not_passed"
     proof = entry.get("replication_proof")

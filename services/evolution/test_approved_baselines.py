@@ -88,7 +88,25 @@ class ApprovedBaselineTests(unittest.TestCase):
         self.assertEqual(b["oos_max_drawdown"], abs(summary["max_drawdown"]))
         self.assertEqual(b["baseline_key"], f"t1/p1/{self.one['registry_id']}/{self.one['checksum']}")
         self.assertEqual(b["source_refs"]["backtest_run_id"], summary["backtest_run_id"])
-        self.assertEqual((b["return_basis"], b["periods_per_year"]), (RETURN_BASIS, 252))
+        self.assertEqual((b["return_basis"], b["periods_per_year"]), (RETURN_BASIS, 365))
+
+    def test_real_registry_owner_schema_does_not_carry_the_gate_verdict(self):
+        """Round-trip through the genuine RegistryEntry: unknown top-level proof is dropped."""
+        from services.registry.models import RegistryEntry
+        e = self.one
+        owner = RegistryEntry.from_dict({
+            "registry_id": e["registry_id"], "artifact_type": "execution_bundle",
+            "strategy_id": "strat-tw-replication-001", "version": "1.0.0",
+            "artifact_state": "approved", "lineage": e["lineage"],
+            "storage_ref": {"backend": "inline", "path": "$.entry.metadata.strategy_artifact"},
+            "checksum": e["checksum"], "evaluation_summary": e["evaluation_summary"],
+            "approval_decision_id": e["approval_decision_id"], "metadata": e["metadata"],
+            "owner_tenant": "t1", "replication_success": True,
+            "replication_proof": e["replication_proof"]}).to_dict()
+        self.assertNotIn("replication_success", owner)
+        b = resolve(owner)
+        self.assertEqual((b["status"], b["reason"]),
+                         ("no_approved_baseline", "gate_verdict_not_persisted_by_registry_owner"))
 
     def test_two_members_resolve_distinct_baselines_from_their_own_proof(self):
         a, b = resolve(self.one), resolve(self.two, universe=("2330.TW", "2317.TW"))

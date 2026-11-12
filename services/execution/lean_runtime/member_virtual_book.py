@@ -32,16 +32,18 @@ def _net_interval_costs(symbol, rows):
 
 
 GATE_INIT_CASH = 100_000.0  # vectorbt adapter BacktestConfig.init_cash default
+# pf.sharpe_ratio() with freq='1D' annualises with vectorbt's default year_freq=365 days.
+GATE_PERIODS_PER_YEAR = 365
 
 
-def gate_basis_metrics(books, order_quantity, *, periods_per_year=252):
+def gate_basis_metrics(books, order_quantity, *, periods_per_year=GATE_PERIODS_PER_YEAR):
     """Replay the gate's share-sized cash portfolio from the recorded directions.
 
     Mirrors the vectorbt gate path: per instrument, a BUY/SELL view is a signed
     ``order_quantity``-share order filled at the mark (FLAT is no order), buys are
     capped by cash, commission on every fill plus sell tax, equity = cash + shares
-    * mark from ``GATE_INIT_CASH``, Sharpe = mean/stdev(ddof=1)*sqrt(252) of the
-    daily equity returns, and the aggregate is the mean of per-instrument Sharpe
+    * mark from ``GATE_INIT_CASH``, Sharpe = mean/stdev(ddof=1)*sqrt(365) of the
+    daily equity returns (annualised by vectorbt's year_freq=365 days, not 252), and the aggregate is the mean of per-instrument Sharpe
     and drawdown.  Returns ``(metrics, None)`` or ``(None, reason)``.
     """
     if isinstance(order_quantity, bool) or not isinstance(order_quantity, (int, float)) \
@@ -53,7 +55,7 @@ def gate_basis_metrics(books, order_quantity, *, periods_per_year=252):
         if any("direction" not in row for row in rows):
             return None, "direction_not_recorded"
         tax = _ETF_TAX_RATE if str(book["symbol"]).split(".")[0].startswith("00") else _EQUITY_TAX_RATE
-        cash, shares, previous, peak, drawdown = GATE_INIT_CASH, 0.0, GATE_INIT_CASH, GATE_INIT_CASH, 0.0
+        cash, shares, previous, peak, drawdown = GATE_INIT_CASH, 0.0, GATE_INIT_CASH, None, 0.0
         returns = []
         for row in rows:
             price, sign = row["price"], row["direction"]
@@ -67,7 +69,8 @@ def gate_basis_metrics(books, order_quantity, *, periods_per_year=252):
             equity = cash + shares * price
             returns.append(equity / previous - 1)
             previous = equity
-            peak = max(peak, equity)
+            # vectorbt's max_drawdown peaks from the first bar's value, not init_cash.
+            peak = equity if peak is None else max(peak, equity)
             drawdown = max(drawdown, (peak - equity) / peak)
         deviation = statistics.stdev(returns) if len(returns) > 1 else 0.0
         if deviation <= 0:

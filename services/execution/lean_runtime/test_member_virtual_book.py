@@ -107,10 +107,33 @@ class GateBasisTests(unittest.TestCase):
         r = [e0 / 100000 - 1, (100000 - 1001.425 + 1050) / e0 - 1, e2 / (100000 - 1001.425 + 1050) - 1]
         import math, statistics
         self.assertAlmostEqual(metrics["sharpe_ratio"],
-                               statistics.mean(r) / statistics.stdev(r) * math.sqrt(252), places=9)
+                               statistics.mean(r) / statistics.stdev(r) * math.sqrt(365), places=9)
         self.assertEqual(metrics["basis"],
                          "gate_share_sized_per_instrument_mean_sharpe_taiwan_fill_costs")
-        self.assertEqual(metrics["periods_per_year"], 252)
+        self.assertEqual(metrics["periods_per_year"], 365)
+
+    def test_numerical_parity_with_genuine_vectorbt_gate_path(self):
+        try:
+            import pandas as pd
+            import vectorbt as vbt
+        except ImportError:
+            self.skipTest("vectorbt not installed")
+        from services.execution.lean_runtime.member_virtual_book import gate_basis_metrics
+        cases = [((1, 0, -1), (100, 105, 110)),
+                 ((1, 0, 0, -1, 1, -1), (100, 96, 103, 99, 101, 95)),
+                 ((1, -1, 1, 0, -1), (50, 52, 49, 51, 47))]
+        for directions, prices in cases:
+            for symbol, tax in (("2330.TW", 0.003), ("0050.TW", 0.001)):
+                with self.subTest(directions=directions, symbol=symbol):
+                    sizes = pd.Series([10.0 * d for d in directions])
+                    fees = pd.Series([0.001425 + (tax if d < 0 else 0.0) for d in directions])
+                    pf = vbt.Portfolio.from_orders(
+                        pd.Series([float(p) for p in prices]), size=sizes, size_type="amount",
+                        direction="both", init_cash=100000.0, fees=fees, freq="1D")
+                    metrics, reason = gate_basis_metrics([self._book(directions, prices, symbol)], 10)
+                    self.assertIsNone(reason)
+                    self.assertAlmostEqual(metrics["sharpe_ratio"], float(pf.sharpe_ratio()), places=6)
+                    self.assertAlmostEqual(metrics["max_drawdown"], abs(float(pf.max_drawdown())), places=9)
 
     def test_unavailable_when_unsized_or_direction_not_recorded_or_constant(self):
         from services.execution.lean_runtime.member_virtual_book import gate_basis_metrics
