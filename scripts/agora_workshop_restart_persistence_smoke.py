@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -59,6 +60,10 @@ from agora.dataset_extraction.extractor import (  # noqa: E402
 from agora.dataset_extraction.models import AgoraInteractionEvidenceRequest  # noqa: E402
 
 
+EVIDENCE_RECOVERY_SECONDS = 30.0
+EVIDENCE_POLL_SECONDS = 0.25
+
+
 def require_postgres_backends() -> None:
     for env_name in (WORKSHOP_BACKEND_ENV, GOVERNANCE_BACKEND_ENV, DATASET_BACKEND_ENV):
         backend = os.environ.get(env_name, "").strip().lower()
@@ -75,6 +80,16 @@ def proposal_id_for(workshop_id: str) -> str:
 
 def evidence_id_for(workshop_id: str) -> str:
     return f"evidence-{workshop_id}"
+
+
+def evidence_for(workshop_id: str) -> AgoraInteractionEvidenceRequest:
+    return AgoraInteractionEvidenceRequest(
+        evidence_id=evidence_id_for(workshop_id),
+        interaction_kind="ask",
+        persona_id="persona-smoke",
+        captured_at="2026-07-14T00:00:00Z",
+        content={"text": f"smoke test query for {workshop_id}"},
+    )
 
 
 def proposal_record(
@@ -223,13 +238,7 @@ def seed(
 
     # Seed dataset/evidence inbox persistence check
     evidence_id = evidence_id_for(workshop_id)
-    evidence = AgoraInteractionEvidenceRequest(
-        evidence_id=evidence_id,
-        interaction_kind="ask",
-        persona_id="persona-smoke",
-        captured_at="2026-07-14T00:00:00Z",
-        content={"text": f"smoke test query for {workshop_id}"},
-    )
+    evidence = evidence_for(workshop_id)
     _, is_new = dataset_store.add_to_inbox(
         evidence,
         tenant_id,
@@ -365,35 +374,87 @@ def verify(
     if len(proposal_store.history(proposal_id, tenant_id, user_id)) != 3:
         raise RuntimeError(f"proposal {proposal_id!r} replay created duplicate revisions")
 
-    # Verify dataset/evidence inbox persistence check
+    verify_evidence(dataset_store, workshop_id=workshop_id, tenant_id=tenant_id, user_id=user_id)
+
+
+def verify_evidence(
+    dataset_store: AgoraDatasetStore, *, workshop_id: str, tenant_id: str, user_id: str,
+) -> None:
+    """Allow the lifespan consumer to win; require its actual durable effects.
+
+    One targeted recovery uses the existing lease owner for pending or expired
+    work. A live competing claim is observed until a fixed deadline; failures
+    and missing terminal effects are never retried into success.
+    """
     evidence_id = evidence_id_for(workshop_id)
-    backlog = dataset_store.get_backlog(tenant_id, user_id)
-    backlog_ids = [item["evidence_id"] for item in backlog]
-    if evidence_id not in backlog_ids:
-        raise RuntimeError(f"evidence {evidence_id!r} was not found in backlog during verify")
+    scope = {"tenant_id": tenant_id, "user_id": user_id}
+    expected_entry = {
+        "evidence_id": evidence_id,
+        **scope,
+        "idempotency_key": f"restart-smoke:{evidence_id}",
+        "request_digest": evidence_request_digest(evidence_for(workshop_id)),
+        "admission_receipt_id": f"rcpt-adm-{evidence_id}",
+    }
+    deadline = time.monotonic() + EVIDENCE_RECOVERY_SECONDS
+    recovery_attempted = False
+    while True:
+        entry = dataset_store.get_inbox_entry(evidence_id, **scope)
+        if entry is None:
+            raise RuntimeError(f"evidence {evidence_id!r} durable inbox entry was not found")
+        if any(entry.get(key) != value for key, value in expected_entry.items()):
+            raise RuntimeError(f"evidence {evidence_id!r} durable inbox identity mismatch")
+        status = entry.get("status")
+        if status == "processed":
+            break
+        if status not in {"pending", "processing"}:
+            raise RuntimeError(f"evidence {evidence_id!r} extraction status={status!r}")
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"evidence {evidence_id!r} recovery deadline: status={status!r}")
+        if not recovery_attempted:
+            dataset_store.process_inbox(
+                **scope, evidence_id=evidence_id, batch_size=1,
+                worker_id="restart-persistence-smoke",
+            )
+            recovery_attempted = True
+            continue
+        time.sleep(min(EVIDENCE_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
 
-    dataset_result = dataset_store.process_inbox(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        worker_id="restart-persistence-smoke",
-    )
-    if dataset_result["processed"] < 1:
-        raise RuntimeError(f"evidence {evidence_id!r} was not processed by dataset worker")
-
-    backlog_after = dataset_store.get_backlog(tenant_id, user_id)
-    backlog_ids_after = [item["evidence_id"] for item in backlog_after]
-    if evidence_id in backlog_ids_after:
-        raise RuntimeError(f"evidence {evidence_id!r} remained in backlog after processing")
-
-    record = dataset_store.get(
-        evidence_id,
-        tenant_id=tenant_id,
-        user_id=user_id,
-    )
+    record = dataset_store.get(evidence_id, **scope)
     if record is None:
         raise RuntimeError(f"dataset record for {evidence_id!r} was not found after processing")
-    if record.tenant_id != tenant_id or record.user_id != user_id:
+    expected_record = {
+        "evidence_id": evidence_id, **scope, "status": "processed",
+        "persona_id": "persona-smoke", "interaction_kind": "ask", "dataset_kind": "observe",
+        "admission_receipt_id": entry["admission_receipt_id"],
+    }
+    if (not entry.get("processed_at") or not record.dataset_version_id
+            or any(getattr(record, key) != value for key, value in expected_record.items())):
         raise RuntimeError(f"dataset record field mismatch for {evidence_id!r}")
+
+    def matching_handoff() -> str:
+        effects = [row for row in dataset_store.list_handoffs(**scope)
+                   if evidence_id in row.get("evidence_ids", [])
+                   or row.get("dataset_version_id") == record.dataset_version_id]
+        expected_effect = {
+            **scope, "evidence_ids": [evidence_id],
+            "dataset_version_id": record.dataset_version_id, "dataset_kind": "observe",
+            "authority_limit": "Observe/Learn",
+        }
+        if (len(effects) != 1 or not effects[0].get("handoff_id")
+                or any(effects[0].get(key) != value for key, value in expected_effect.items())
+                or effects[0].get("ack_status") not in {"pending", "acknowledged"}):
+            raise RuntimeError(f"evidence {evidence_id!r} durable handoff mismatch")
+        return effects[0]["handoff_id"]
+
+    handoff_id = matching_handoff()
+    replay = dataset_store.process_inbox(
+        **scope, evidence_id=evidence_id, batch_size=1, worker_id="restart-persistence-smoke",
+    )
+    if any(replay[key] != 0 for key in ("claimed", "processed", "failed", "handoffs_created")):
+        raise RuntimeError(f"evidence {evidence_id!r} extraction replay was not exactly-once")
+    replay_record = dataset_store.get(evidence_id, **scope)
+    if replay_record != record or matching_handoff() != handoff_id:
+        raise RuntimeError(f"evidence {evidence_id!r} replay changed durable effects")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

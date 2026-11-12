@@ -46,6 +46,70 @@ class FakeStore:
         return self.sessions.get(workshop_id)
 
 
+@pytest.fixture
+def smoke(monkeypatch):
+    """Run the deployed CLI entrypoint with isolated, real owner stores."""
+    helper = _load_helper()
+    workshops = FakeStore()
+    proposals = helper.ProposalStore(backend="memory")
+    datasets = helper.AgoraDatasetStore(backend="memory")
+    for name in (helper.WORKSHOP_BACKEND_ENV, helper.GOVERNANCE_BACKEND_ENV,
+                 helper.DATASET_BACKEND_ENV):
+        monkeypatch.setenv(name, "postgres")
+    monkeypatch.setattr(helper, "make_workshop_store", lambda: workshops)
+    monkeypatch.setattr(helper, "ProposalStore", lambda: proposals)
+    monkeypatch.setattr(helper, "AgoraDatasetStore", lambda: datasets)
+
+    def run(action):
+        return helper.main([action, "--workshop-id", "ws-race", "--tenant-id", "tenant",
+                            "--user-id", "viewer"])
+
+    assert run("seed") == 0
+    return helper, datasets, run
+
+
+def _natural_batch(store):
+    from agora.evidence.worker import run_extraction_batch
+    return run_extraction_batch(store, worker_id="natural-lifespan-batch")
+
+
+def _assert_single_effects(store):
+    scope = {"tenant_id": "tenant", "user_id": "viewer"}
+    entry = store.get_inbox_entry("evidence-ws-race", **scope)
+    record = store.get("evidence-ws-race", **scope)
+    handoffs = store.list_handoffs(**scope)
+    assert entry["status"] == "processed" and entry["attempt_count"] == 1
+    assert len(store.list_by_dataset("observe", **scope)) == 1
+    assert len(handoffs) == 1
+    assert handoffs[0]["evidence_ids"] == [record.evidence_id]
+    assert handoffs[0]["dataset_version_id"] == record.dataset_version_id
+    assert _natural_batch(store) == {"processed": 0, "failed": 0, "handoffs_created": 0}
+
+
+def test_cli_accepts_natural_consumption_before_verify(smoke):
+    _, store, run = smoke
+    assert _natural_batch(store) == {"processed": 1, "failed": 0, "handoffs_created": 1}
+    assert store.get_backlog("tenant", "viewer") == []
+    assert run("verify") == 0
+    _assert_single_effects(store)
+
+
+def test_cli_accepts_consumer_winning_pending_read_to_claim(smoke, monkeypatch):
+    _, store, run = smoke
+    claim = store.claim_inbox
+    competed = []
+
+    def compete(**kwargs):
+        if kwargs["worker_id"] == "restart-persistence-smoke" and not competed:
+            competed.append(_natural_batch(store))
+        return claim(**kwargs)
+
+    monkeypatch.setattr(store, "claim_inbox", compete)
+    assert run("verify") == 0
+    assert competed == [{"processed": 1, "failed": 0, "handoffs_created": 1}]
+    _assert_single_effects(store)
+
+
 def test_helper_seeds_and_verifies_workshop_proposal_and_outbox() -> None:
     helper = _load_helper()
     store = FakeStore()
