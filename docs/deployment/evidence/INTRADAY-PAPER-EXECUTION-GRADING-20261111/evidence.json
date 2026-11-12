@@ -1,0 +1,39 @@
+{
+  "task": "INTRADAY-PAPER-EXECUTION-GRADING-20261111",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "plan_ref": "DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10 §4 K7; SD_INTRADAY_MINUTE_BARS_2026-11-11 §6.4, §7, §9 K7",
+  "base_commit": "a5e4d495574cfa9f645813689daaf87832df1c52",
+  "tracks": {
+    "source": {
+      "status": "implemented_pending_independent_review",
+      "artifacts": [
+        "services/execution/lean_runtime/paper_signal_producer.py",
+        "services/execution/lean_runtime/intraday_settlement.py",
+        "services/execution/lean_runtime/instrument_candidates.py",
+        "services/execution/lean_runtime/test_intraday_paper_grading.py"
+      ],
+      "summary": [
+        "intraday_settlement.py implements the SD 6.4 six-step timeline as pure functions: plan_next_session_decision (step 3 window: bar_availability_ts <= decision time < D+1 08:55; target = D+1 09:00 first bar), pending_record (step 4 pending_settlement, no fill), settle (step 5: fill only from the real, reconciled, non-partial D+1 first bar open, delayed_simulated, price_observed_at recorded; expired_no_price at D+2 08:55), grade (step 6: first-bar open to horizon-th bar close, truncated at 13:30 and flagged), advance_decision (immutable first-write records over the existing decision-record store).",
+        "A bar whose availability stamp is at/before its session close, or a D bar, can never settle D+1; D close and past D opens are never fill sources; a late-reconciled D+1 bar after expiry is still expired_no_price.",
+        "paper_signal_producer: the snapshot is selected by the declared bar_frequency (snapshots/latest?frequency= only for intraday; the daily URL is unchanged), dataset/frequency isolation fails closed (market_input_frequency_mismatch), a missing stored bar is intraday_bar_missing, live-session decisions are no_live_intraday_feed, the feature clock is the real submission time, and the pending_settlement record is persisted before the order.",
+        "instrument_candidates: next_trading_day, session_bounds, submission_cutoff, in_regular_session built on the existing governed calendar (is_trading_day); no new calendar.",
+        "The grading horizon is the artifact's hold_bars (the only existing, mutation-classified holding parameter); 1 bar if absent."
+      ],
+      "verification": {
+        "command": "python -m pytest services/execution/lean_runtime/test_intraday_paper_grading.py (33 tests)",
+        "result": "33 passed",
+        "regression": "test_paper_signal_producer, test_instrument_candidates, test_current_artifact_signal, test_signal_isolation: 203 passed, 13 skipped, 1 failed. The single failure (ExpressionStartupReportTest::test_entrypoint_strategy_without_mount_reports_the_gap) also fails on the unmodified base and is unrelated."
+      }
+    },
+    "hosted": {
+      "status": "not_run",
+      "gaps": [
+        "No real-provider probe, hosted run or real D/D+1 timestamps were produced; hosted proof belongs to INTRADAY-HOSTED-ACCEPTANCE-20261111 (W5).",
+        "No scheduler job yet calls advance_decision for pending intraday decisions with a reconciled-only bar reader (intraday_bars.load_bars); that wiring and the pending-record index are outside this task's artifact list and are reported for W5.",
+        "snapshots/latest returns closes and observed_at only; the minute factor-rule PIT feature observations the evaluator requires are supplied inline in tests. Source-side projection of tagged feature observations is not part of this task.",
+        "Live intraday remains unavailable by design (no_live_intraday_feed); no feed authorisation path was added."
+      ]
+    }
+  }
+}
