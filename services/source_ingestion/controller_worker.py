@@ -773,10 +773,63 @@ def _validate_terminal_readback(
             schedule=schedule,
             actual_readback=actual,
         )
-    if unresolved_dlq_count:
+    exclusive_connector_ids = {
+        str(connector_id).strip()
+        for connector_id in expected_exclusive_connector_ids
+        if str(connector_id).strip()
+    }
+    validated_unresolved_dlq_count = unresolved_dlq_count
+    if exclusive_connector_ids:
+        exclusive_count = schedule_summary.get("exclusive_connector_count")
+        if type(exclusive_count) is not int or exclusive_count != len(exclusive_connector_ids):
+            raise ControllerTickError(
+                "schedule_contract",
+                "scheduled tick response contradicts the exclusive connector scope",
+                reconcile=reconcile,
+                schedule=schedule,
+                actual_readback=actual,
+            )
+        by_connector = actual.get("dlq_status_counts_by_connector")
+        known_connector_ids = {
+            item.get("connector_id")
+            for item in actual.get("connectors") or []
+            if isinstance(item, Mapping) and item.get("configured") is True
+        }
+        if (
+            not isinstance(by_connector, Mapping)
+            or any(
+                not isinstance(connector_id, str)
+                or not connector_id.strip()
+                or connector_id not in known_connector_ids
+                or not isinstance(counts, Mapping)
+                or set(counts) != expected_dlq_statuses
+                or any(type(count) is not int or count < 0 for count in counts.values())
+                or sum(counts.values()) < 1
+                for connector_id, counts in by_connector.items()
+            )
+            or any(
+                sum(counts[status] for counts in by_connector.values()) != dlq_status_counts[status]
+                for status in expected_dlq_statuses
+            )
+        ):
+            raise ControllerTickError(
+                "actual_readback",
+                "authoritative source readback has missing, unknown or contradictory scoped dead-letter counts",
+                reconcile=reconcile,
+                schedule=schedule,
+                actual_readback=actual,
+            )
+        validated_unresolved_dlq_count = sum(
+            counts[status]
+            for connector_id, counts in by_connector.items()
+            if connector_id in exclusive_connector_ids
+            for status in ("pending", "replay_failed", "schema_rejected")
+        )
+    if validated_unresolved_dlq_count:
         raise ControllerTickError(
             "actual_readback",
-            f"authoritative source readback has {unresolved_dlq_count} unresolved dead-letter entrie(s)",
+            f"authoritative source readback has {validated_unresolved_dlq_count} unresolved dead-letter entrie(s)"
+            + (" in selected connector scope" if exclusive_connector_ids else ""),
             reconcile=reconcile,
             schedule=schedule,
             actual_readback=actual,
@@ -809,26 +862,11 @@ def _validate_terminal_readback(
             schedule=schedule,
             actual_readback=actual,
         )
-    exclusive_connector_ids = {
-        str(connector_id).strip()
-        for connector_id in expected_exclusive_connector_ids
-        if str(connector_id).strip()
-    }
     validated_frontier_backlog = (
         sum(frontier_backlog_by_connector.get(connector_id, 0) for connector_id in exclusive_connector_ids)
         if exclusive_connector_ids
         else frontier_backlog
     )
-    if exclusive_connector_ids:
-        exclusive_count = schedule_summary.get("exclusive_connector_count")
-        if type(exclusive_count) is not int or exclusive_count != len(exclusive_connector_ids):
-            raise ControllerTickError(
-                "schedule_contract",
-                "scheduled tick response contradicts the exclusive connector scope",
-                reconcile=reconcile,
-                schedule=schedule,
-                actual_readback=actual,
-            )
     if validated_frontier_backlog:
         scope = "selected connector scope" if exclusive_connector_ids else "global scope"
         raise ControllerTickError(
