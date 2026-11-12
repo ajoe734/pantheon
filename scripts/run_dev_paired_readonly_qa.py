@@ -42,16 +42,21 @@ HOST_SUFFIX = ".mvl-cap.tw"
 BASELINE_PATH = re.compile(
     r"^/home/[A-Za-z0-9_.-]+/pantheon-acceptance-captures/[A-Za-z0-9_./-]+\.json$"
 )
-# Owner inventory is read straight from the source-ingest owner service on the
-# dev VM over the existing pinned SSH transport, using two FIXED read-only GETs.
-# It never derives expectations from the BFF projection under test, carries no
-# bearer in remote argv, and is not an arbitrary shell/host executor.
+# Owner inventory is read from the source-ingest owner service on the dev VM
+# over the existing pinned SSH transport with two FIXED read-only GETs.  The
+# bearer (legitimate dev-login, RAM only) and tenant header travel on the SSH
+# stdin as a curl header file (``-H @-``): never in local or remote argv.  It
+# never derives expectations from the BFF projection under test.
+_CURL = "curl -sS --max-time 30 -H @- -w '\\n%{http_code}' "
 OWNER_READS = {
-    "sources": "curl -fsS --max-time 30 -H 'Accept: application/json' "
-    "http://127.0.0.1:18097/api/source-ingest/management/sources",
-    "registry": "curl -fsS --max-time 30 -H 'Accept: application/json' "
-    "http://127.0.0.1:18097/api/source-ingest/registry",
+    "sources": _CURL + "http://127.0.0.1:18097/api/source-ingest/management/sources",
+    "registry": _CURL + "http://127.0.0.1:18097/api/source-ingest/registry",
 }
+OWNER_PROFILE = "OPERATOR_A"
+# Complete private witnesses are kept on the dev VM under the EXISTING private
+# acceptance-capture tree through the same pinned SSH transport.
+RETAIN_ROOT = "$HOME/pantheon-acceptance-captures/DEV-ORIGINAL-PAIRED-READONLY-QA"
+SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,120}$")
 TRANSPORT_ENV_KEYS = (
     "PATH", "HOME", "RUNNER_TEMP", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "REMOTE_USER",
     "DEV_DEPLOY_SSH_HOST", "DEV_DEPLOY_SSH_USER", "DEV_DEPLOY_SSH_PORT", "DEV_DEPLOY_SSH_TIMEOUT",
@@ -71,7 +76,8 @@ CLI_TIMEOUT_SECONDS = 3600
 Http = Callable[[str, str, Mapping[str, str], "bytes | None", float], "tuple[int, Any]"]
 CliRunner = Callable[..., "tuple[int, str, str]"]  # (argv, stdin, timeout, cwd=None)
 BaselineFetcher = Callable[[str, Path], None]
-OwnerReader = Callable[[str], Any]  # key in OWNER_READS -> parsed JSON document
+OwnerReader = Callable[[str, "str | None"], "tuple[int, Any]"]  # (key, header text|None) -> (status, JSON)
+Retainer = Callable[[str, str, bytes], str]  # (run dir name, file name, bytes) -> remote sha256 readback
 
 
 class Unproven(Exception):
@@ -153,16 +159,44 @@ def default_baseline_fetcher(remote_path: str, local_path: Path) -> None:
         raise Unproven("missing_private_baseline", "private baseline could not be fetched")
 
 
-def default_owner_reader(key: str) -> Any:
+def default_owner_reader(key: str, headers: "str | None") -> "tuple[int, Any]":
     transport = Path(__file__).resolve().parent / "dev_vm_ssh.sh"
+    stdin = ("Accept: application/json\n" + (headers or "")).encode()
     try:
         proc = subprocess.run(  # noqa: S603
             [str(transport), "exec", OWNER_READS[key]],
-            capture_output=True, timeout=90, check=False, env=_transport_env(),
+            input=stdin, capture_output=True, timeout=90, check=False, env=_transport_env(),
         )
-        return json.loads(proc.stdout.decode("utf-8")) if proc.returncode == 0 else None
+        if proc.returncode != 0:
+            return 0, None
+        body, _, status = proc.stdout.decode("utf-8").rpartition("\n")
+        code = int(status.strip())
+        try:
+            return code, json.loads(body) if body.strip() else {}
+        except ValueError:
+            return code, None
     except (subprocess.TimeoutExpired, OSError, ValueError):
-        return None
+        return 0, None
+
+
+def default_retainer(run_dir: str, name: str, data: bytes) -> str:
+    """Write one complete private witness to the dev VM and return the remote sha256 readback."""
+    if not SAFE_NAME.match(run_dir) or not SAFE_NAME.match(name):
+        raise Unproven("private_retention_failed", "unsafe private retention name")
+    transport = Path(__file__).resolve().parent / "dev_vm_ssh.sh"
+    target = f"{RETAIN_ROOT}/{run_dir}"
+    write = f"umask 077 && mkdir -p {target} && cat > {target}/{name} && sha256sum {target}/{name}"
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [str(transport), "exec", write],
+            input=data, capture_output=True, timeout=600, check=False, env=_transport_env(),
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        raise Unproven("private_retention_failed", "private witness transfer failed or timed out") from None
+    out = proc.stdout.decode("utf-8", "replace").split()
+    if proc.returncode != 0 or not out or not SHA64.match(out[0]):
+        raise Unproven("private_retention_failed", "private witness could not be written")
+    return out[0]
 
 
 def _ident(row: Any) -> "tuple[str, str]":
@@ -186,6 +220,7 @@ class Caller:
         cli_runner: CliRunner = default_cli_runner,
         baseline_fetcher: BaselineFetcher = default_baseline_fetcher,
         owner_reader: OwnerReader = default_owner_reader,
+        retainer: Retainer = default_retainer,
     ) -> None:
         self.args = args
         self.environ = environ
@@ -193,6 +228,7 @@ class Caller:
         self.cli_runner = cli_runner
         self.baseline_fetcher = baseline_fetcher
         self.owner_reader = owner_reader
+        self.retainer = retainer
         self.secrets: list[str] = []
 
     # -- helpers ---------------------------------------------------------
@@ -219,20 +255,59 @@ class Caller:
             raise Unproven("auth_posture", "BFF auth posture is not strict")
         return {"fe": live_fe, "bff": live_bff, "auth_mode": "strict"}
 
-    def _owner_inventory(self) -> dict:
-        """Independent owner inventory (never the BFF projection being measured).
+    def _owner_headers(self, bff: str) -> str:
+        """Real dev-login bearer (RAM only) bound to the tested tenant, as curl header lines."""
+        prof = self.profiles[OWNER_PROFILE]
+        status, login = self.http(
+            f"{bff}/bff/auth/dev-login", "POST", {"Content-Type": "application/json", "Accept": "application/json"},
+            json.dumps({"grant_type": "client_credentials", "client_id": prof["client_id"],
+                        "client_secret": prof["client_secret"]}).encode(), 30)
+        token = login.get("access_token") if isinstance(login, dict) else None
+        if status != 200 or not isinstance(token, str) or not token:
+            raise Unproven("owner_auth_unavailable", "dev-login for owner reads failed")
+        self.secrets.append(token)
+        status, me = self.http(f"{bff}/bff/me", "GET", {"Authorization": f"Bearer {token}",
+                                                         "Accept": "application/json"}, None, 30)
+        data = me.get("data") if isinstance(me, dict) else None
+        if status != 200 or not isinstance(data, dict) or data.get("tenant_id") != self.args.tenant_id:
+            raise Unproven("owner_tenant_mismatch", "authenticated principal is not in the tested tenant")
+        return f"Authorization: Bearer {token}\nX-Tenant-Id: {self.args.tenant_id}\n"
+
+    def _owner_get(self, key: str, headers: str) -> Any:
+        # Anonymous access must be refused, otherwise the bearer proves nothing.
+        anon_status, _ = self.owner_reader(key, None)
+        if anon_status == 200:
+            raise Unproven("owner_auth_not_enforced",
+                           f"owner {key} API answers anonymous callers; authenticated owner evidence is impossible")
+        status, doc = self.owner_reader(key, headers)
+        if status in (401, 403):
+            raise Unproven("owner_auth_unavailable", f"owner {key} API refused the authenticated principal")
+        if status != 200 or doc is None:
+            raise Unproven("owner_inventory_unavailable", f"owner {key} API is unavailable")
+        return doc
+
+    def _owner_inventory(self, bff: str) -> dict:
+        """Independent, authenticated, tenant-scoped owner inventory (never the BFF projection).
 
         Governed owner instances win when present; otherwise the legacy
         connector registry is the owner evidence and the mode is
-        ``legacy_projection``.  Unknown/failed/duplicate/incomplete evidence is
-        rejected, and raw ids/counts are preserved rather than set-collapsed.
+        ``legacy_projection``.  Unknown/failed/duplicate/incomplete/cross-tenant
+        evidence is rejected, and raw ids/counts are preserved.
         """
-        doc = self.owner_reader("sources")
+        headers = self._owner_headers(bff)
+        doc = self._owner_get("sources", headers)
         if not isinstance(doc, dict) or not isinstance(doc.get("sources"), list):
             raise Unproven("owner_inventory_unavailable", "owner instance listing is unavailable or malformed")
         rows = doc["sources"]
         if doc.get("count") != len(rows):
             raise Unproven("owner_inventory_invalid", "owner instance count does not match its rows")
+        tenant = self.args.tenant_id
+        for row in rows:
+            owner_tenant = row.get("tenant_id") if isinstance(row, dict) else None
+            if owner_tenant is None:
+                raise Unproven("owner_tenant_unproven", "owner instance rows carry no tenant attribution")
+            if owner_tenant != tenant:
+                raise Unproven("owner_tenant_mismatch", "owner instance belongs to a different tenant")
         if rows:
             instances, ids = [], []
             for row in rows:
@@ -250,7 +325,7 @@ class Caller:
                 raise Unproven("owner_inventory_invalid", "owner inventory contains duplicate identifiers")
             return {"source_mode": "governed_owner", "meta_source": "service_client",
                     "connector_ids": sorted(ids), "instance_count": len(rows), "instances": instances}
-        reg = self.owner_reader("registry")
+        reg = self._owner_get("registry", headers)
         if not isinstance(reg, dict) or not isinstance(reg.get("connectors"), list) or not reg["connectors"]:
             raise Unproven("owner_inventory_unavailable", "owner registry is unavailable, empty or malformed")
         ids = [_ident(row)[1] for row in reg["connectors"]]
@@ -260,9 +335,13 @@ class Caller:
                 "instance_count": 0, "registry_count": len(ids)}
 
     def _collect_cli_artifacts(self, out_dir: Path) -> "dict | None":
-        """Sanitized result + value-free semantic diff summary from the private CLI dir.
+        """Retain COMPLETE private witnesses, then build the sanitized public summary.
 
-        current-responses.json and baseline/business values are never retained.
+        Every regular file of the CLI result directory is redacted of this run's
+        credentials, written byte-complete to the private dev-VM acceptance
+        tree over the existing SSH transport and hash-verified by readback.  The
+        local directory is never deleted here.  The public record carries only
+        hashes, counts and bounded pointers (no before/after/business values).
         """
         dirs = sorted(
             (d for d in out_dir.glob("paired-readonly-*") if d.is_dir() and not d.is_symlink()),
@@ -271,6 +350,27 @@ class Caller:
         if not dirs:
             return None
         d, art = dirs[-1], {}
+        run_dir = f"{self.args.root_run_id}-{self.args.run_attempt or '1'}"
+        retained: dict[str, Any] = {}
+        failure: "Unproven | None" = None
+        for f in sorted(d.iterdir()):
+            if not f.is_file() or f.is_symlink() or not SAFE_NAME.match(f.name):
+                continue
+            raw = f.read_bytes()
+            data = self._redact(raw.decode("utf-8", "replace")).encode() if self.secrets else raw
+            local_sha = hashlib.sha256(data).hexdigest()
+            entry: dict[str, Any] = {"bytes": len(data), "sha256": local_sha, "retained": False}
+            try:
+                entry["remote_sha256"] = self.retainer(run_dir, f.name, data)
+                entry["retained"] = entry["remote_sha256"] == local_sha
+                if not entry["retained"]:
+                    raise Unproven("private_retention_failed", f"private readback hash mismatch for {f.name}")
+            except Unproven as exc:
+                failure = failure or exc
+            retained[f.name] = entry
+        art["private_witness"] = {"remote_dir": f"{RETAIN_ROOT}/{run_dir}", "files": retained}
+        if failure is not None:
+            art["private_witness"]["failure"] = failure.code
         result = d / "result.json"
         if result.is_file() and not result.is_symlink():
             raw = result.read_bytes()
@@ -292,8 +392,12 @@ class Caller:
                            "pointers_truncated": len(items) > DIFF_POINTER_CAP}
                     for path, items in doc.items() if isinstance(items, list)
                 }
+                art["differences_total"] = sum(v["count"] for v in art["differences"].values())
+                art["differences_complete_private_sha256"] = retained.get(diff.name, {}).get("sha256")
             except (ValueError, AttributeError):
                 art["differences_parse_error"] = True
+        if failure is not None:
+            art["retention_failure"] = failure
         return art
 
     # -- main ------------------------------------------------------------
@@ -384,7 +488,7 @@ class Caller:
             raise Unproven("missing_private_baseline", "private baseline is not UTF-8 text") from None
 
         evidence["identity_before"] = self._identity(fe, bff)
-        inventory = self._owner_inventory()
+        inventory = self._owner_inventory(bff)
         evidence["source_owner_registry"] = inventory
 
         payload = {
@@ -418,8 +522,14 @@ class Caller:
             "stdout_tail": self._redact(out)[-4000:],
             "stderr_tail": self._redact(err)[-2000:],
         }
-        evidence["cli_artifacts"] = self._collect_cli_artifacts(out_dir)
+        artifacts = self._collect_cli_artifacts(out_dir)
+        failure = artifacts.pop("retention_failure", None) if artifacts else None
+        evidence["cli_artifacts"] = artifacts
         evidence["identity_after"] = self._identity(fe, bff)  # drift raises Unproven
+        if artifacts is None:
+            raise Unproven("private_retention_failed", "CLI produced no private result directory to retain")
+        if failure is not None:
+            raise failure
         evidence["outcome"] = "pass" if code == 0 else "failed"
 
 

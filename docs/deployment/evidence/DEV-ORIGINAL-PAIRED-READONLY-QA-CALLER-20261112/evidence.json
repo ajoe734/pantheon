@@ -8,7 +8,7 @@
     "scripts/test_run_dev_paired_readonly_qa.py",
     "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py (secret-reference counts +1 for the new step)"
   ],
-  "local_verification": "caller fixtures + strict-auth + env-parity + bootstrap + source-sha suites: 174 passed, 2 skipped; workflow YAML parses; git diff --check clean; no real CLI/VM/SSH/secret access",
+  "local_verification": "caller fixtures + strict-auth contract: 70 passed; workflow YAML parses; git diff --check clean; no real CLI/VM/SSH/secret access",
   "remaining_for_actual_execution": [
     "merged qualified CLI + this caller + reviewed transport in one exact accepted pair",
     "repo/env vars DEV_ORIGINAL_QA_TENANT_ID, _PERSONA_ID, _EXPECTED_ROLES_JSON, _BASELINE_PATH, _BASELINE_SHA256 (missing => outcome unproven, never pass)",
@@ -17,8 +17,12 @@
   "review_rejection_fixes": {
     "root_identity": "--root-run-id is GITHUB_RUN_ID only (matches release controller runId); --run-attempt recorded separately in evidence",
     "cli_readiness": "credential-free prepare step (npm ci --ignore-scripts, playwright install chromium) + caller preflight probe before any credential use; failure => cli_not_ready unproven",
-    "evidence_retention": "CLI result.json and value-free per-path diff pointer/count summary embedded in the release evidence file; current-responses.json and baseline values never retained",
-    "owner_inventory": "independent: two fixed read-only GETs of the source-ingest owner (management/sources, registry) over the existing pinned SSH transport; connector_ids follow the FE connector_id||id contract; caller no longer reads the BFF projection or logs in; unavailable/duplicate/incomplete => unproven",
+    "evidence_retention": "COMPLETE redacted CLI result dir (result, full-baseline-differences with before/after, current-responses) written byte-complete to the existing private acceptance-capture tree on the dev VM via the existing SSH transport with remote sha256 readback; local tree never deleted; public evidence keeps only hashes/counts/<=500 pointers per group plus differences_total and full-diff sha256; retention failure or missing result dir => unproven. Regression: 13 groups/1020 differences survive cleanup, public summary value-free",
+    "owner_inventory": "authenticated: real dev-login bearer (OPERATOR_A, RAM only) validated against /bff/me tenant; bearer+X-Tenant-Id sent to the fixed owner GETs on SSH stdin via curl -H @- (never argv/files/logs); anonymous probe must be refused; every owner row must carry tenant_id equal to the tested tenant; unavailable/auth/tenant/anonymous-accepted => unproven",
     "runtime_errors": "any exception yields structured unproven evidence retaining expected baseline metadata and completed child exit/artifacts; missing node => exit 127"
+  },
+  "owner_blocker_ac8": {
+    "path": "services/source_ingestion/routers/management.py:169-180 (list_management_sources) and source_management_store instance model",
+    "issue": "owner list endpoint performs no authentication/tenant filtering and instance rows carry no tenant_id, so authenticated tenant-scoped owner evidence cannot be obtained; the caller fails closed (owner_auth_not_enforced / owner_tenant_unproven) instead of bypassing. Needs owner-side auth+tenant scoping in a separate task outside declared artifacts."
   }
 }
