@@ -1,0 +1,181 @@
+{
+ "task": "OSS-ACTIONS-IMAGES-EVIDENCE-20261112",
+ "kind": "documentation-only supplement to merged PR7208",
+ "input_sha256": {
+  "oss-actions-images-current-comparison-20261112.json": "6f58cf2c311a1d99d403d9d69c4c6b2c7bd31c6a1087919b008f7efe7e251c52",
+  "oss-actions-images-declarations-20261112.json": "83345992a5ea9d25047839fe5446396d02528a5da59906e612a5956b7d76352c",
+  "oss-actions-images-official-releases-20261112.json": "b136c2a91e9edc87bbe143fa0f47665abd47b57725cd22b7658e179dda54ce12",
+  "oss-fe-checkout-41hex-candidates-20261112.json": "d33b4d27ad2db85d5f478f0e254cc04a8741d348650a5679ddec8d767be1b57e",
+  "oss-fe-checkout-upstream-resolution-20261112.json": "9914a3e5c1413554d7faf260464720037f54a6f0bf2ac353490098b376844772"
+ },
+ "snapshots": [
+  {
+   "repository": "ajoe734/pantheon",
+   "commit": "8999306d1cc30e3fa36b09ee7cdccb1c5431aa52",
+   "candidate_files": 89,
+   "action_declarations": 135,
+   "image_declarations": 123
+  },
+  {
+   "repository": "ajoe734/execute-plans",
+   "commit": "aa17cd4fc390e2c311ef50cbd5f7d2160faea775",
+   "candidate_files": 13,
+   "action_declarations": 59,
+   "image_declarations": 0
+  }
+ ],
+ "totals": {
+  "candidate_files": 102,
+  "action_declarations": 194,
+  "image_declarations": 123,
+  "remote_action_declarations": 194,
+  "local_action_declarations": 0,
+  "distinct_remote_action_repositories": 9,
+  "distinct_repository_ref_groups": 18
+ },
+ "image_declaration_classes": {
+  "external_tag_only": 57,
+  "internal_image": 3,
+  "dynamic_variable": 55,
+  "external_digest_pinned": 8
+ },
+ "release_observations": {
+  "requested": 16,
+  "confirmed": 15,
+  "observed_at": "2026-11-12T04:34:01.152086+00:00",
+  "not_confirmed": [
+   {
+    "repository": "pgvector/pgvector",
+    "http_status": 404,
+    "retry_performed": false,
+    "readme_install_tag_documentation_only": "v0.8.7"
+   }
+  ],
+  "confirmed_tags": {
+   "actions/checkout": {
+    "tag": "v7.0.1",
+    "published_at": "2026-07-20T15:10:05Z",
+    "url": "https://github.com/actions/checkout/releases/tag/v7.0.1"
+   },
+   "actions/dependency-review-action": {
+    "tag": "v5.0.0",
+    "published_at": "2026-05-08T20:23:50Z",
+    "url": "https://github.com/actions/dependency-review-action/releases/tag/v5.0.0"
+   },
+   "actions/github-script": {
+    "tag": "v9.0.0",
+    "published_at": "2026-04-09T22:57:15Z",
+    "url": "https://github.com/actions/github-script/releases/tag/v9.0.0"
+   },
+   "actions/setup-node": {
+    "tag": "v7.1.0",
+    "published_at": "2026-10-08T02:52:34Z",
+    "url": "https://github.com/actions/setup-node/releases/tag/v7.1.0"
+   },
+   "actions/setup-python": {
+    "tag": "v7.1.0",
+    "published_at": "2026-10-22T02:56:04Z",
+    "url": "https://github.com/actions/setup-python/releases/tag/v7.1.0"
+   },
+   "actions/upload-artifact": {
+    "tag": "v7.0.2",
+    "published_at": "2026-10-07T10:08:14Z",
+    "url": "https://github.com/actions/upload-artifact/releases/tag/v7.0.2"
+   },
+   "google-github-actions/auth": {
+    "tag": "v3",
+    "published_at": "2025-09-03T02:14:46Z",
+    "url": "https://github.com/google-github-actions/auth/releases/tag/v3"
+   },
+   "google-github-actions/setup-gcloud": {
+    "tag": "v3.0.1",
+    "published_at": "2025-08-28T13:37:55Z",
+    "url": "https://github.com/google-github-actions/setup-gcloud/releases/tag/v3.0.1"
+   },
+   "jlumbroso/free-disk-space": {
+    "tag": "v2.0.0",
+    "published_at": "2026-09-17T06:49:33Z",
+    "url": "https://github.com/lumbroso-commons/free-disk-space/releases/tag/v2.0.0"
+   },
+   "caddyserver/caddy": {
+    "tag": "v2.11.9",
+    "published_at": "2026-11-05T01:30:24Z",
+    "url": "https://github.com/caddyserver/caddy/releases/tag/v2.11.9"
+   },
+   "DIYgod/RSSHub": {
+    "tag": "v2026.11.12-8633.c86f1d5",
+    "published_at": "2026-11-12T04:16:44Z",
+    "url": "https://github.com/DIYgod/RSSHub/releases/tag/v2026.11.12-8633.c86f1d5"
+   },
+   "openclaw/openclaw": {
+    "tag": "v2026.11.3",
+    "published_at": "2026-11-10T18:53:07Z",
+    "url": "https://github.com/openclaw/openclaw/releases/tag/v2026.11.3"
+   },
+   "nats-io/nats-server": {
+    "tag": "v2.15.3",
+    "published_at": "2026-11-11T12:27:18Z",
+    "url": "https://github.com/nats-io/nats-server/releases/tag/v2.15.3"
+   },
+   "qdrant/qdrant": {
+    "tag": "v1.20.0",
+    "published_at": "2026-10-22T14:14:12Z",
+    "url": "https://github.com/qdrant/qdrant/releases/tag/v1.20.0"
+   },
+   "redis/redis": {
+    "tag": "8.10.3",
+    "published_at": "2026-10-26T11:56:24Z",
+    "url": "https://github.com/redis/redis/releases/tag/8.10.3"
+   }
+  }
+ },
+ "disposition_counts": {
+  "action_groups": {
+   "unknown": 8,
+   "candidate": 10
+  },
+  "image_families": {
+   "current-supported-baseline": 2,
+   "unknown": 5,
+   "candidate": 5
+  }
+ },
+ "checkout_41hex": "both the 41-hex and 40-hex refs return HTTP 200 and resolve to the same 40-hex SHA 34e114876b0b11c390a56381ad16ebd13914f8d5; failure hypothesis not demonstrated; no repair created",
+ "flags": {
+  "deployed_version_claimed": false,
+  "upgrade_performed": false,
+  "compatibility_layer_added": false,
+  "retired_original_tasks_reopened": false,
+  "package_installed": false,
+  "credentials_provider_or_vm_used": false,
+  "hosted_completion_claimed": false
+ },
+ "details": "docs/reviews/2026-11-12-oss-actions-images-audit.json",
+ "report": "docs/reviews/2026-11-12-oss-actions-images-audit.md",
+ "validation": [
+  {
+   "check": "sha256 of five inputs",
+   "result": "pass (all match supplied values)"
+  },
+  {
+   "check": "every action/image declaration line vs exact git blob (pantheon 8999306d1, execute-plans aa17cd4f)",
+   "result": "pass (194 + 123, 0 mismatches); 4 checkout candidates verified"
+  },
+  {
+   "check": "JSON parse + counts (102 files, 194 actions, 123 images, 9 repos, 18 groups, 15/16 releases)",
+   "result": "pass"
+  },
+  {
+   "check": "evidence.json line count < 400",
+   "result": "pass (<200 lines)"
+  },
+  {
+   "check": "git diff --check",
+   "result": "pass"
+  },
+  {
+   "check": "python3 scripts/audit_canonical_docs.py",
+   "result": "fail, pre-existing/unrelated: reports missing canonical file ai-activity-log.jsonl in this worktree; no reference to the three changed files"
+  }
+ ]
+}
