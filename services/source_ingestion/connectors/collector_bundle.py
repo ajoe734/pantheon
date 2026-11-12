@@ -212,8 +212,15 @@ def verify_bundle(
     *,
     expected_source_id: str,
     entry: Mapping[str, Any],
+    item_window: tuple[int, int] | None = None,
 ) -> VerifiedBundle:
-    """Fetch and verify one bundle; raises on any mismatch, returns nothing partial."""
+    """Fetch and verify one bundle; raises on any mismatch, returns nothing partial.
+
+    ``item_window`` (start, stop over items.jsonl rows) bounds per-pull transport work:
+    manifest, items.jsonl, id coverage and bundle_sha256 (declared hashes) are always
+    verified, but raw files are fetched and hash/size checked only for the windowed rows.
+    Rows outside the window are verified when a later pull's window reaches them.
+    """
 
     source_id = str(entry.get("source_id") or "").strip()
     date = str(entry.get("date") or "").strip()
@@ -253,18 +260,6 @@ def verify_bundle(
             raise SourceEvidenceError("collector bundle manifest.items need unique item_id values")
         manifest_items[item_id] = item
 
-    raw_bytes: dict[str, bytes] = {}
-    for item_id, item in manifest_items.items():
-        declared = str(item.get("content_sha256") or "").strip().lower()
-        raw_path = _safe_raw_path(str(item.get("raw_path") or ""))
-        data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
-        actual = _sha256(data)
-        if declared != actual:
-            raise SourceEvidenceError(f"collector bundle raw hash mismatch for item {item_id}: declared={declared} actual={actual}")
-        if "bytes" in item and int(item["bytes"]) != len(data):
-            raise SourceEvidenceError(f"collector bundle raw size mismatch for item {item_id}")
-        raw_bytes[actual] = data
-
     if compute_bundle_sha256([str(i["content_sha256"]).lower() for i in manifest_items.values()]) != str(
         manifest.get("bundle_sha256") or ""
     ).lower():
@@ -281,6 +276,23 @@ def verify_bundle(
     item_ids = [str(row.get("id") or "").strip() for row in items]
     if sorted(item_ids) != sorted(manifest_items) or len(set(item_ids)) != len(item_ids):
         raise SourceEvidenceError("collector bundle items.jsonl ids do not match manifest.items")
+
+    if item_window is None:
+        wanted_ids = list(manifest_items)
+    else:
+        wanted_ids = item_ids[max(item_window[0], 0) : max(item_window[1], 0)]
+    raw_bytes: dict[str, bytes] = {}
+    for item_id in wanted_ids:
+        item = manifest_items[item_id]
+        declared = str(item.get("content_sha256") or "").strip().lower()
+        raw_path = _safe_raw_path(str(item.get("raw_path") or ""))
+        data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
+        actual = _sha256(data)
+        if declared != actual:
+            raise SourceEvidenceError(f"collector bundle raw hash mismatch for item {item_id}: declared={declared} actual={actual}")
+        if "bytes" in item and int(item["bytes"]) != len(data):
+            raise SourceEvidenceError(f"collector bundle raw size mismatch for item {item_id}")
+        raw_bytes[actual] = data
 
     return VerifiedBundle(
         source_id=source_id,
@@ -488,7 +500,24 @@ class CollectorBundleAdapter:
                 pending.append((finished, key, entry))
         pending.sort(key=lambda t: t[1])
 
-        verified = [verify_bundle(transport, expected_source_id=self.source_id, entry=e) for _, _, e in pending]
+        # Bound per-pull verification work to what the output cap can return: verify bundles
+        # lazily and only fetch raw files for the rows that can fit under the cap. Later
+        # rows/bundles are verified by the pulls that reach them (persisted resume cursor).
+        total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
+        verified: list[VerifiedBundle] = []
+        remaining = max(total_cap, 1)
+        unverified_pending = False
+        for _, key, entry in pending:
+            if remaining <= 0:
+                unverified_pending = True
+                break
+            skip = partial_skip if key == base_cursor else 0
+            bundle = verify_bundle(
+                transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining)
+            )
+            verified.append(bundle)
+            if bundle.status != "paused":
+                remaining -= max(len(bundle.items) - skip, 0)
 
         all_records: list[SourceRecord] = []
         paused: list[str] = []
@@ -503,7 +532,6 @@ class CollectorBundleAdapter:
         # The caller's output cap covers raw + derived feature records together. Shrink the
         # raw budget until both fit; derived rows are acknowledged (ledger / emission
         # markers) only if actually returned, so a capped expansion stays pending.
-        total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         budget = total_cap
         while True:
             records, next_cursor, raw_plan = self._select_raw(
@@ -535,7 +563,7 @@ class CollectorBundleAdapter:
             self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self.cadence_seconds
         )
         pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
-        complete = (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
+        complete = not unverified_pending and (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
         return CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
@@ -921,18 +949,24 @@ class CollectorBundleAdapter:
         root = self._raw_root()
         for bundle, _ in plan:
             target = root / "raw" / _slug(self.connector_id) / _slug(self.dataset) / f"date={bundle.date}" / f"bundle-{bundle.run_id}"
-            if target.exists():
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = Path(tempfile.mkdtemp(prefix=".bundle-", dir=target.parent))
-            try:
-                for item_id, item in bundle.manifest_items.items():
-                    (tmp / PurePosixPath(item["raw_path"]).name).write_bytes(bundle.raw_bytes[str(item["content_sha256"]).lower()])
-                (tmp / "manifest.json").write_text(json.dumps(bundle.manifest, sort_keys=True), encoding="utf-8")
-                os.replace(tmp, target)
-            finally:
-                if tmp.exists():
-                    shutil.rmtree(tmp, ignore_errors=True)
+            target.mkdir(parents=True, exist_ok=True)
+            # Raw files are written per verified item (windowed pulls verify a bundle in
+            # slices), each atomically; the manifest lands once the first slice does.
+            for item in bundle.manifest_items.values():
+                sha = str(item["content_sha256"]).lower()
+                if sha not in bundle.raw_bytes:
+                    continue
+                dest = target / PurePosixPath(item["raw_path"]).name
+                if dest.exists():
+                    continue
+                tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+                tmp.write_bytes(bundle.raw_bytes[sha])
+                os.replace(tmp, dest)
+            manifest_path = target / "manifest.json"
+            if not manifest_path.exists():
+                tmp = manifest_path.with_name(f".manifest.{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(bundle.manifest, sort_keys=True), encoding="utf-8")
+                os.replace(tmp, manifest_path)
 
 
 @dataclass(frozen=True)

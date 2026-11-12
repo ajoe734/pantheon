@@ -167,9 +167,17 @@
       "days_to_drain_at_definition_cadence_86400s": 1218,
       "days_to_drain_if_pulled_hourly": 50.8
     },
-    "first_pull": "500 rows per source on the first pull, event-dated from the oldest bundle first (bundles are consumed in finished_at order)",
+    "first_pull": "First pull returns at most 500 rows per source, event-dated from the oldest bundle first. Bundle verification is windowed to the cap: per pull the adapter reads index.json, each touched bundle's manifest.json and items.jsonl (+status.json) and at most max_records(500) raw files (only the rows that can be returned are hash/size-verified; bundle_sha256 over declared hashes and items/manifest id coverage are verified for every touched bundle). Rows beyond the window are verified when the persisted resume cursor reaches them.",
     "finding": "At the definition cadence of one pull per day the cap drains only 500 rows per source per day, i.e. roughly 3-4 years per source: the two-year backfill is correct and resumable but not practical at steady cadence. Options (operator/Root decision, not done here because the task forbids widening limits and hosted/deploy changes): a temporary shorter interval for the three history connectors through the existing schedule command (hourly = ~53/37/51 days), or a one-off larger per-job cap; neither is changed by this task",
-    "official_truth": "TW_OFFICIAL_HISTORY_MAX_MONTHS=2 untouched; official tw_price_daily records are never written by the collector path"
+    "official_truth": "TW_OFFICIAL_HISTORY_MAX_MONTHS=2 untouched; official tw_price_daily records are never written by the collector path",
+    "per_pull_io": {
+      "max_raw_reads_per_pull": 500,
+      "fixed_reads_per_touched_bundle": 2,
+      "touched_bundles_per_pull": "1 typically (a 1300-row day takes ~3 pulls: 500/500/300; the tail pull may touch the next bundle)",
+      "worst_case_requests_per_pull": "~510 (500 raw + 2-3 bundles x 2 + index + status), well inside the 30s controller request budget at the observed transport rate; previously the first pull verified ALL pending bundles (~633100 raw reads for TWSE)",
+      "regression": "test_collector_bundle_connector.py::test_multi_bundle_history_pull_reads_only_what_the_cap_can_return (3 bundles x 600 rows, cap 500: max 500 raw reads/pull, 1800 rows delivered exactly once across resumes, tampered later raw caught when its window is reached)"
+    },
+    "duration": "Pull count is unchanged (rows/500); each pull is now bounded at ~500 raw reads instead of scaling with total pending history, so drain time stays as listed (about 1267/877/1218 pulls) rather than the first pull blocking on the whole backlog"
   },
   "not_changed": [
     "deploy workflows",
