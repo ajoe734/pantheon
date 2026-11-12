@@ -1,0 +1,96 @@
+{
+  "task_id": "PERSONA-PORTFOLIO-COMBINATION-20261112",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "status": "owner_validation_complete_pending_independent_review",
+  "implementation_commit": "b694049573cb6a10740c1d02cfefa235fb8b10ea",
+  "base_commit": "91249d9ea5cd225e9734e61368d2efc936b53aad",
+  "review": {
+    "decision": "pending",
+    "authority": "assigned reviewer via canonical exact-head handoff; this manifest is owner evidence, not approval"
+  },
+  "scope": {
+    "kind": "persona_portfolio_v1",
+    "artifact_type": "execution_bundle",
+    "member_limit": 20,
+    "authorization": "existing Registry approval, DeploymentPlan and RuntimeBinding",
+    "immutable_payload": "member snapshots, versions, checksums, weights, virtual-only flags, combination rule, risk limits, expression policy and lineage",
+    "publication_on_pool_change": "wave 2 task; not implemented here",
+    "hosted_activation": "not claimed"
+  },
+  "acceptance_coverage": {
+    "1": "test_pin_validation_and_limits_fail_closed; test_registry_approval_boundary_and_version_identity; test_missing_underlying_or_corrupt_member_queues_nothing",
+    "2": "test_netting_clipping_and_virtual_only; test_decimal_weights_cancel_without_a_residual_order; test_multi_underlying_selects_only_members_of_that_underlying",
+    "3": "test_runtime_virtual_only_members_and_summary_without_account_fills; existing instrument/runtime regression suites",
+    "4": "test_singleton_preserves_exact_view_and_actions; test_singleton_expression_strength_is_identical; test_factor_members_use_independent_history_and_fail_on_missing_features",
+    "5": "test_previous_view_prices_trial_returns_and_restart; test_member_aggregate_waits_for_observed_intervals_on_every_underlying; runtime integration",
+    "6": "runtime integration projects member_virtual_books alongside account metrics",
+    "7": {
+      "test": "test_recorded_bars_match_paper_actions_strengths_and_real_vectorbt",
+      "source": "recorded real TWSE responses",
+      "bars_per_instrument": 40,
+      "evaluable_bars_per_instrument": 39,
+      "net_view_decisions_compared": 78,
+      "backend": "real vectorbt 1.1.1"
+    },
+    "8": "same runtime binding, pool and queue for both underlyings; existing single_runtime_enforced tests pass; enforcement code unchanged"
+  },
+  "market_evidence": [
+    {
+      "path": "docs/deployment/evidence/PERSONA-PORTFOLIO-COMBINATION-20261112/twse-2317-202410.json",
+      "url": "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20241001&stockNo=2317",
+      "rows": 19,
+      "sha256": "6c900ef9b8e209d562daeafc50f072f7cdf21d370449c173341edb36f043c232"
+    },
+    {
+      "path": "docs/deployment/evidence/PERSONA-PORTFOLIO-COMBINATION-20261112/twse-2317-202411.json",
+      "url": "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20241101&stockNo=2317",
+      "rows": 21,
+      "sha256": "c071fa960f09c50caf386a8caa6f0521a21f0dbf0c59996f20608722c5e46b1a"
+    },
+    {
+      "path": "docs/deployment/evidence/PERSONA-PORTFOLIO-COMBINATION-20261112/twse-2330-202410.json",
+      "url": "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20241001&stockNo=2330",
+      "rows": 19,
+      "sha256": "f9fc715bf83872774c3dfb5fc80324b560a08959908716e8ec88db301a8151ed"
+    },
+    {
+      "path": "docs/deployment/evidence/PERSONA-PORTFOLIO-COMBINATION-20261112/twse-2330-202411.json",
+      "url": "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20241101&stockNo=2330",
+      "rows": 21,
+      "sha256": "1309f224b5a7051fbbd63e98b361f77e09861b755884c2a5e1a3a5175f56b29a"
+    }
+  ],
+  "validation": [
+    {
+      "command": "timeout 300 /tmp/persona-portfolio-venv/bin/python -m pytest -q services/registry/test_strategy_artifact.py services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py services/execution/lean_runtime/test_current_artifact_signal.py services/research/vectorbt/test_adapter.py services/research/tests/test_portfolio_envelope_parity.py --durations=8",
+      "exit_status": 0,
+      "result": "139 passed, 12 subtests passed",
+      "terminal_output": "docs/deployment/evidence/PERSONA-PORTFOLIO-COMBINATION-20261112/strategy-vectorbt-tests.log"
+    },
+    {
+      "command": "timeout 300 /tmp/persona-portfolio-venv/bin/python -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_paper_runtime.py services/execution/lean_runtime/test_performance_telemetry.py services/telemetry/test_runtime_summary_projection.py services/runtime_manager/test_runtime_binding.py --durations=5",
+      "exit_status": 0,
+      "result": "453 passed, 70 subtests passed",
+      "terminal_output": "docs/deployment/evidence/PERSONA-PORTFOLIO-COMBINATION-20261112/runtime-regression-tests.log"
+    },
+    {
+      "command": "timeout 90 /tmp/persona-portfolio-venv/bin/python -m pytest -q services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py services/research/tests/test_portfolio_envelope_parity.py",
+      "exit_status": 0,
+      "result": "14 passed, 7 subtests passed",
+      "terminal_output": "docs/deployment/evidence/PERSONA-PORTFOLIO-COMBINATION-20261112/acceptance-tests.log"
+    }
+  ],
+  "prior_nonpassing_batches": {
+    "timeouts": "Initial 90s/150s aggregate runs exited 124 and were not counted as passes; terminal output collected and longer bounded batches rerun.",
+    "environment": "Initial isolated environment lacked pytest/httpx/Flask/PyYAML. Dependencies installed in /tmp/persona-portfolio-venv; final recorded commands passed."
+  },
+  "limitations": [
+    "Daily virtual-book annualisation only; ordered intraday work must define intraday sampling.",
+    "Virtual returns are gross underlying view returns, equal notional across observed member underlyings, separate from instrument/account execution performance.",
+    "Canonical independent review, CI and supervisor merge still required; no hosted deployment performed."
+  ],
+  "warnings": [
+    "Upstream vectorbt/pandas and fastapi/httpx deprecations; no test failures in final batches."
+  ]
+}
