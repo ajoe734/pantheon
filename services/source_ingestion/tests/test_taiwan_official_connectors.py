@@ -2301,3 +2301,78 @@ def test_holiday_calendar_is_sourced_from_twse_openapi_endpoint() -> None:
     assert records[0].metadata["normalized_row"]["name"] == "中華民國開國紀念日"
 
 
+
+
+@pytest.mark.parametrize("venue,fixture,code_key,industry_key", [
+    ("TWSE", "twse", "公司代號", "產業別"),
+    ("TPEx", "tpex", "SecuritiesCompanyCode", "SecuritiesIndustryCode"),
+])
+def test_recorded_company_profiles_through_provider_refresh_and_storage(
+    tmp_path, monkeypatch, venue, fixture, code_key, industry_key,
+):
+    from datetime import datetime, timedelta
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from services.source_ingestion.connectors import taiwan_official as tw
+    from services.source_ingestion.feature_catalogue import observations_from_row, read_feature_series
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    recording = json.loads((Path(__file__).parent / "fixtures" / f"{fixture}_company_profile_recorded.json").read_text())
+    stamp = recording["recorded_at"]
+    monkeypatch.setattr(tw, "_utc_now", lambda: stamp)
+
+    class RecordedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(tz)
+
+    monkeypatch.setattr(tw, "datetime", RecordedClock)
+    seen = []
+
+    def official(request, **kwargs):
+        seen.append(request.full_url)
+        return recording["records"]
+
+    monkeypatch.setattr(tw, "_fetch_official", official)
+    connector = TaiwanOfficialMarketDatasetAdapter().connector()
+    records = execute_provider_owned_adapter(
+        connector=connector,
+        fetch={"adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
+               "request": {"dataset": "tw_industry_classification", "venues": [venue]}, "max_records": 50},
+        trace_id="recorded-industry-refresh",
+    )
+    assert seen == [recording["source_url"]]
+    assert len(records) == len(recording["records"])
+    expected = {r[code_key]: int(r[industry_key]) for r in recording["records"]}
+    observations = []
+    for record in records:
+        row = record.metadata["normalized_row"]
+        assert row["industry_code"] == expected[row["symbol"]]
+        assert row["available_time"] == row["observed_at"] == row["ingest_time"] == stamp
+        assert row["event_time"] == "2026-11-12"
+        observations.extend(observations_from_row("tw_industry_classification", row))
+    assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-11")
+    assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-12T14:27:00Z")
+    instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time=instant - timedelta(microseconds=1))
+    assert len(read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time=instant)) == len(records)
+    assert len(read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-13")) == len(records)
+    writer = MarketDataStorageWriter(tmp_path)
+    manifest = writer.write_run(result=SimpleNamespace(records=records, run=SimpleNamespace(ingest_run_id="observed-1")), connector=connector)
+    ref = manifest.normalized_refs[0]
+    assert ref["date"] == "2026-11-12"
+    assert Path(ref["uri"]).is_file()
+    stored = [json.loads(line)["metadata"]["normalized_row"] for line in Path(ref["uri"]).read_text().splitlines()]
+    assert [r["industry_code"] for r in stored] == [r.metadata["normalized_row"]["industry_code"] for r in records]
+
+
+def test_company_profile_missing_industry_is_not_imputed():
+    import json
+    from pathlib import Path
+    from services.source_ingestion.connectors.taiwan_official import normalize_industry_classification_rows
+    recording = json.loads((Path(__file__).parent / "fixtures/tpex_company_profile_recorded.json").read_text())
+    row = dict(recording["records"][0])
+    row.pop("SecuritiesIndustryCode")  # explicit missing-field fault on real response
+    assert normalize_industry_classification_rows("TPEx", [row], source_dataset="mopsfin_t187ap03_O",
+        api_endpoint=recording["source_url"], ingest_time=recording["recorded_at"]) == ()

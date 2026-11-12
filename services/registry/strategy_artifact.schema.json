@@ -675,6 +675,7 @@
                 "abs",
                 "sign",
                 "clip01",
+                "industry_neutralize",
                 "log",
                 "signed_power",
                 "max2",

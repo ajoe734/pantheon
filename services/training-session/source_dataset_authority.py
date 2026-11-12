@@ -1283,7 +1283,10 @@ def feature_observations_from_wrappers(
                         "field": fld["field"],
                         "entity": entity,
                         "event_time": event.date().isoformat(),
-                        "available_time": _iso(available),
+                        "available_time": (
+                            available.isoformat().replace("+00:00", "Z")
+                            if dataset_id == "tw_industry_classification" else _iso(available)
+                        ),
                         "ingest_time": ingest_text,
                         "availability_lag_days": max(
                             int(fld["availability_lag_days"]), int(row.get("availability_lag_days") or 0)
