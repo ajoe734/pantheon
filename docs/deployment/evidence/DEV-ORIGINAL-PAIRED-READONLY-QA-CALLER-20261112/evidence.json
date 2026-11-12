@@ -24,5 +24,13 @@
   "owner_blocker_ac8": {
     "status": "withdrawn",
     "note": "Assistant-added per-hop owner JWT/tenant-verifier prerequisite (old AC5 same-bearer wording) withdrawn by explicit native clarification; old AC text retained for audit, not a silent waiver. Owner HTTP auth is reported as unknown/not verified; deployment-wide internal inventory scope is separate from BFF identity. Actual hosted QA prerequisites (private baseline copy, real run) remain blocked/unproven."
+  },
+  "ci_failure_correction": {
+    "failed_check": "Smoke 131376871877: scripts/test_cross_repo_release_controller.py::test_nonprod_workflow_outputs_candidate_auto_binding_contract",
+    "cause": "test banned --pair-id across the whole coordinate-dev-release job; the post-switch readonly QA caller legitimately passes the controller-bound pair id",
+    "fix": "ban scoped to the release-controller invocation step only; controller still receives no caller-supplied pair id; required QA expected-pair argument unchanged",
+    "commit": "150d83219",
+    "local_verification": "3 scoped test files: 167 passed",
+    "not_claimed": "no real VM/SSH/hosted/secret access; acceptance capture still not executed"
   }
 }
