@@ -64,7 +64,7 @@ def create_human_evidence_router(
         return HTTPException(status_code, detail={"status": "unavailable", "reason": reason})
 
     def require_owner() -> None:
-        if dataset_store.backend != "postgres" and not allow_ephemeral:
+        if getattr(dataset_store, "backend", None) != "postgres" and not allow_ephemeral:
             raise unavailable("agora_evidence_durable_owner_unconfigured")
 
     def register_write(path: str, evidence_type: str) -> None:

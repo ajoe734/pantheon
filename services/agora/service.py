@@ -37,7 +37,7 @@ class AgoraEvidenceWriteService:
         content["agora_human_evidence"] = {
             "type": evidence_type, "subject_ref": body.subject_ref,
             "actor_id": scope.operator_id, "environment_ceiling": "paper",
-            "execution_authority": "none",
+            "runtime_effect": "none",
         }
         evidence = AgoraInteractionEvidenceRequest(
             evidence_id=body.evidence_id, interaction_kind=kind,
@@ -57,6 +57,10 @@ class AgoraEvidenceWriteService:
     def public_record(entry: Any) -> Any:
         if entry is None or "agora_human_evidence" not in entry.get("content", {}):
             return None
+        from datetime import datetime, timedelta, timezone
+        created = datetime.fromisoformat(str(entry["created_at"]).replace("Z", "+00:00"))
+        if not entry.get("consent_granted") or created + timedelta(days=entry["retention_days"]) <= datetime.now(timezone.utc):
+            return None
         return {key: entry.get(key) for key in (
             "evidence_id", "tenant_id", "user_id", "persona_id", "interaction_kind",
             "content", "source_refs", "captured_at", "created_at", "status", "error_message",
@@ -66,13 +70,12 @@ class AgoraEvidenceWriteService:
         return self.public_record(self.store.get(evidence_id, tenant_id=tenant_id, user_id=user_id))
 
     def observe(self, *, tenant_id: str, user_id: str, persona_id: str, since: Any = None) -> Any:
-        from datetime import datetime, timedelta, timezone
-        now = datetime.now(timezone.utc)
+        from datetime import datetime
         items = []
         for entry in self.store.list_persona(tenant_id=tenant_id, user_id=user_id, persona_id=persona_id):
             item = self.public_record(entry)
             created = datetime.fromisoformat(str(entry["created_at"]).replace("Z", "+00:00"))
-            if item and entry.get("consent_granted") and created + timedelta(days=entry["retention_days"]) > now:
+            if item:
                 if since is None or created > since:
                     items.append(item)
         return sorted(items, key=lambda item: (str(item["created_at"]), item["evidence_id"]))

@@ -46,7 +46,9 @@ def install_evidence_worker(app: Any, store: Any, *, interval_seconds: float = 5
                     pass
 
         async with previous(application) as state:
-            task = asyncio.create_task(run(), name="agora-evidence-extraction") if store.backend == "postgres" else None
+            task = asyncio.create_task(run(), name="agora-evidence-extraction") if getattr(store, "backend", None) == "postgres" else None
+            if task is None:
+                application.state.agora_evidence_worker = {"status": "unavailable", "reason": "agora_evidence_durable_owner_unconfigured"}
             try:
                 yield state
             finally:
