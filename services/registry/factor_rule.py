@@ -795,6 +795,19 @@ def validate_factor_rule_logic(
     )
     signal_refs, all_const_params = collect_expression_refs_and_params(signal_ast)
     declared_freq = declared_intraday_frequency(parameters)
+    if (
+        declared_freq is None
+        and isinstance(parameters, Mapping)
+        and parameters.get("bar_frequency") == _DAILY_BAR_FREQUENCY
+    ):
+        daily_declared_minute = sorted(
+            {d["dataset"] for d in declared_inputs.values() if d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS}
+        )
+        if daily_declared_minute:
+            raise FactorRuleValidationError(
+                f"bar_frequency {_DAILY_BAR_FREQUENCY!r} contradicts declared minute input dataset(s) "
+                f"{daily_declared_minute}"
+            )
     if declared_freq is not None:
         # A declared minute frequency must read governed frequency-matching
         # observations; zero/non-minute inputs would leave raw closes exposed.
@@ -1324,6 +1337,11 @@ def resolve_point_in_time_inputs(
         for i in strategy_logic.get("inputs", ())
         if isinstance(i, Mapping) and i.get("dataset") in INTRADAY_PRICE_VOLUME_DATASETS
     }
+    if bar_frequency == _DAILY_BAR_FREQUENCY and minute_datasets:
+        raise FactorRuleValidationError(
+            f"bar_frequency {_DAILY_BAR_FREQUENCY!r} contradicts declared minute input dataset(s) "
+            f"{sorted(minute_datasets)}"
+        )
     if declared_freq is not None and minute_datasets != {INTRADAY_FREQUENCY_DATASETS[declared_freq]}:
         raise FactorRuleValidationError(
             f"bar_frequency {declared_freq!r} requires declared inputs from "

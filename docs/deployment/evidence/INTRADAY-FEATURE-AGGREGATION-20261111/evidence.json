@@ -92,5 +92,12 @@
     "tests": "services/registry/tests/test_strategy_artifact_bar_frequency.py: full-artifact validate_strategy_artifact + evaluate_strategy_view negatives for 1m/5m/15m/30m/60m with empty and daily inputs across signal/entry/exit/strength; mismatched/contradicting datasets; unknown frequencies; resolver; positive valid 1m artifact; daily regression; table mirror equality",
     "source_test_results": "timeout 550 pytest services/registry services/research/tests/test_intraday_bars.py + 5 source_ingestion test files => 532 passed, 48 skipped, 7 subtests passed, exit 0",
     "not_tested": "hosted remains W5"
+  },
+  "review_reject_fix_round6": {
+    "reviewed_head": "e784cc35511d072ab4949b7f433e643e8a11320c",
+    "p1_frequency_isolation": "explicit bar_frequency=1d with any minute-dataset input now rejected in validate_factor_rule_logic and resolve_point_in_time_inputs; test: test_explicit_1d_rejects_minute_inputs_at_validation_and_evaluation; genuine daily regression retained; test_full_artifact_with_minute_lag_validates_and_registers now declares 1m.",
+    "p1_pit_backdating": "requirement_state.append_normalized_records keeps the later prior observed_at for non-daily datasets so out-of-order/idempotent reprojection never relabels retained newer points as earlier-available; daily path untouched; test: test_out_of_order_rerun_never_backdates_retained_newer_points (public GET + reload).",
+    "verification": "reviewer bounded command: 547 passed, 48 skipped, 7 subtests, exit0 (source/tests only; merged/hosted not claimed)",
+    "ci_revalidation_failure": "test_revalidation_worker.py::test_crash_after_authority_write_reclaims_same_attempt_without_duplicate passed 3/3 alone and full file 46 passed locally on this head; file untouched by this task (diff only intraday_bars.py); suspected lease-timing flake in CI, NOT waived and frozen-base reproduction not done; needs CI rerun on the new head."
   }
 }

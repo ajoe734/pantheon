@@ -188,3 +188,29 @@ def test_withdrawal_keeps_other_published_sessions(tmp_path):
     assert snap.withdraw_sessions("2330", "tw_price_1m", [DAY]) is True
     reloaded = LatestMarketSnapshotStore(tmp_path / "snap.jsonl", max_closes=400)
     assert reloaded.get("2330", "tw_price_1m") is None
+
+
+def test_out_of_order_rerun_never_backdates_retained_newer_points(tmp_path, monkeypatch: Any):
+    from datetime import timedelta
+
+    module = _load_source_main(monkeypatch, tmp_path / "svc")
+    client = TestClient(module.app)
+    snap = module.runtime.latest_market_snapshot_store
+    istore = _store(tmp_path / "intraday")
+    day2 = "2026-11-11"
+    istore.put_symbol_day("2330", DAY, _bars())
+    istore.put_symbol_day("2330", day2, _bars(day=day2, close=110.0))
+    off = OfficialDaily([_official(), _official(day=day2, c=110.0, avail="2026-11-11T06:30:00Z")], [DAY, day2])
+    t1, t2 = NOW, NOW + timedelta(days=1)
+    reconcile_day(istore, off, DAY, CFG, symbols=["2330"], clock=lambda: t1, snapshot_store=snap)
+    reconcile_day(istore, off, day2, CFG, symbols=["2330"], clock=lambda: t2, snapshot_store=snap)
+    before = _get(client, "1m").json()
+    assert before["event_time"] == "2026-11-11T05:31:00Z"
+
+    reconcile_day(istore, off, DAY, CFG, symbols=["2330"], clock=lambda: t2 + timedelta(hours=3),
+                  snapshot_store=snap)
+    for c in (client, TestClient(_load_source_main(monkeypatch, tmp_path / "svc").app)):  # also after reload
+        after = _get(c, "1m").json()
+        assert after["event_time"] == before["event_time"]
+        assert after["closes"] == before["closes"]
+        assert after["observed_at"] == before["observed_at"]

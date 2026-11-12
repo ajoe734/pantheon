@@ -276,6 +276,7 @@ def test_full_artifact_with_minute_lag_validates_and_registers(_restore_catalogu
 
     _register_minute_close()
     art = copy.deepcopy(_sample_factor_rule_artifact())
+    art["parameters"]["bar_frequency"] = "1m"  # minute inputs require the matching declared frequency
     logic = art["strategy_logic"]
     logic["inputs"][0].update(dataset="tw_price_1m", field="close", availability_lag_days=0)
     for lag in (3, 5):
@@ -470,3 +471,30 @@ def test_close_to_close_momentum_daily_unchanged():
     base = evaluate_strategy_view(art, [100.0] * 30 + [120.0])
     art["parameters"]["bar_frequency"] = "1d"
     assert evaluate_strategy_view(art, [100.0] * 30 + [120.0]) == base
+
+
+def test_explicit_1d_rejects_minute_inputs_at_validation_and_evaluation(_restore_catalogue):
+    import copy
+
+    from services.registry.strategy_artifact import evaluate_strategy_view, validate_strategy_artifact
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+    _register_minute_close()
+    art = copy.deepcopy(_sample_factor_rule_artifact())
+    assert art["parameters"]["bar_frequency"] == "1d"
+    art["strategy_logic"]["inputs"][0].update(
+        dataset="tw_price_1m", field="close", availability_lag_days=0, availability_lag_minutes=3
+    )
+    feats = {"rev_yoy": [
+        {"value": v, "event_time": f"2026-11-10T09:0{i + 1}:00+08:00",
+         "available_time": f"2026-11-10T09:0{i + 1}:00+08:00", "dataset": "tw_price_1m"}
+        for i, v in enumerate((100, 100.5, 100.1, 120))
+    ]}
+    with pytest.raises(StrategyArtifactValidationError):
+        validate_strategy_artifact(art)
+    with pytest.raises((StrategyArtifactValidationError, factor_rule.FactorRuleValidationError)):
+        factor_rule.resolve_point_in_time_inputs(
+            art["strategy_logic"], None, features=feats,
+            decision_time="2026-11-10T09:10:00+08:00", bar_frequency="1d")
+    with pytest.raises(StrategyArtifactValidationError):
+        evaluate_strategy_view(art, None, features=feats, decision_time="2026-11-10T09:10:00+08:00")

@@ -1104,10 +1104,19 @@ class LatestMarketSnapshotStore:
                             )
                             points = tuple(point for point, _evidence in points_with_evidence)
                             calendar_evidence = points_with_evidence[-1][1]
+                            # PIT: out-of-order/idempotent reprojection must never
+                            # relabel retained newer points as available earlier.
+                            snapshot_observed = observed
+                            if (
+                                dataset != DAILY_SNAPSHOT_DATASET
+                                and prior is not None
+                                and prior.observed_at > observed
+                            ):
+                                snapshot_observed = prior.observed_at
                             candidate = LatestMarketSnapshot(
                                 symbol=symbol,
                                 points=points,
-                                observed_at=observed,
+                                observed_at=snapshot_observed,
                                 calendar_evidence=calendar_evidence,
                                 dataset=dataset,
                             )
