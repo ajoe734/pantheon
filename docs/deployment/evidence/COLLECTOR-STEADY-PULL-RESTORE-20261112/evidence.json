@@ -3,7 +3,12 @@
   "scope": "source-only; no hosted activation, no provider or collector egress, no governed ingestion days claimed",
   "change": {
     "controller_mode": "collector_steady_pull (unbounded, scheduled_tick truth, selects registered Collector bundle definitions that are enabled, scheduled, reconcile-admitted and currently due per readback freshness.is_due; calls run-scheduled only for those, with exclusive ids and no force ids)",
-    "unchanged": ["reconcile_only never pulls", "reconcile_and_pull stays 1..24 ticks with explicit connector ids", "run_controller_once rejects the new mode", "bounded TWSE/TPEx/TAIFEX/FinMind host sets and quotas"],
+    "unchanged": [
+      "reconcile_only never pulls",
+      "reconcile_and_pull stays 1..24 ticks with explicit connector ids",
+      "run_controller_once rejects the new mode",
+      "bounded TWSE/TPEx/TAIFEX/FinMind host sets and quotas"
+    ],
     "scheduler": "no server change: the controller applies cadence by only selecting due connectors, because exclusive selection forces them; no due connector means no scheduler call and no provider egress",
     "deploy": "SOURCE_INGEST_STEADY_COLLECTOR_PULL=true plus PANTHEON_COLLECTOR_HOST selects collector_steady_pull; egress stays allowlist of exactly the collector host; restore (success, failure, interruption trap) returns to the recorded steady scheduler mode, else reconcile_only"
   },
@@ -13,8 +18,14 @@
     "bounded refresh restore will keep the recorded steady mode automatically"
   ],
   "local_verification": {
-    "controller_and_scheduler_tests": "services/source_ingestion/tests/test_controller_worker.py, test_scheduler.py, test_controller_worker_manual_once.py: all pass except 5 pre-existing failures from missing uvicorn/asyncpg in the local venv",
-    "deploy_tests": "scripts/test_dev_tw_market_refresh.py 69 pass after fix; scripts/test_deploy_nonprod_vm.py steady tests pass; test_deploy_nonprod_env_parity.py has 1 failure that also fails on the parent commit"
+    "p1_signal_cleanup": "deploy_nonprod_vm.sh: INT and TERM now have their own traps that run the restore then exit 130/143; EXIT keeps its trap. scripts/test_dev_tw_market_refresh.py::test_bounded_refresh_terminating_signal_restores_and_exits_nonzero[INT,TERM] fails on the prior script (exit 0, flow resumed) and passes now; asserts collector_steady_pull restore, exit 128+signal, no later projector launch, no completed outcome",
+    "p2_real_adapter_cadence": "services/source_ingestion/tests/test_scheduled_connector.py::test_steady_controller_calls_* use the controller's real read_actual_state/select_collector_pull_connectors/run_schedule_tick against the real runtime and the registered CollectorBundleAdapter over a local fake transport: due pull, cadence suppression (no scheduler call or adapter read), due again after the interval, direct-provider connector excluded (scheduler 'excluded', no record), disabled Collector excluded; readback record/provenance/freshness asserted. Reconcile is the only stubbed step",
+    "batches": "scheduled_connector+controller_worker+manual_once+collector_bundle+compose_activation: 253 pass; test_dev_tw_market_refresh.py 71 pass (full file, exit 0 after env deps); test_deploy_nonprod_vm.py+env_parity: 142 pass 2 skipped 1 fail = test_source_refresh_taifex_and_twse_env_transport_and_unmerged_host_parity, identical test and script text on dev (not caused by this change). Local env needed pytest, pyyaml, jsonschema and source_ingestion requirements.txt (pydantic/fastapi); earlier exit124/missing-module runs were environment causes, not passes"
   },
-  "not_claimed": ["hosted activation", "three actual governed ingestion days", "whole W1 acceptance"]
+  "not_claimed": [
+    "hosted activation",
+    "three actual governed ingestion days",
+    "whole W1 acceptance"
+  ],
+  "known_open_finding": "Full run_controller_tick terminal readback validation (_validate_terminal_readback) is persona-requirement centred (desired_state dataset, provenance api_endpoint/schema_hash, freshness within cadence). A management-created real Collector connector with raw social records lacks those provenance keys, so a full tick would fail closed after the real pull. Not changed here (collector_bundle.py and validator semantics are outside this task's artifacts); needs an owner decision before hosted activation"
 }
