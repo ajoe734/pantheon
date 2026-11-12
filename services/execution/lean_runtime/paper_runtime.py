@@ -2769,7 +2769,10 @@ class PaperExecutionAlgorithm:
             next_quantity=target_quantity,
             next_cash=next_cash,
         )
-        self._publish("paper_fill_simulated", symbol, delta, "set_holdings")
+        self._publish(
+            "paper_fill_simulated", symbol, delta, "set_holdings",
+            metadata={"requested_quantity": abs(delta)},
+        )
 
     def MarketOrder(self, symbol: str, quantity: float) -> None:  # noqa: N802
         security = self._security(symbol)
@@ -6051,7 +6054,9 @@ class PaperRuntimeService:
             # Keep the requested amount even for partial fills and rejections.
             # This identity travels with the durable lifecycle/fill outbox;
             # replay must never turn one submitted order into two orders.
-            telemetry_metadata.setdefault("order_id", f"paper-order-{event.event_id}")
+            telemetry_metadata.setdefault(
+                "order_id", event.metadata.get("broker_order_id") or f"paper-order-{event.event_id}"
+            )
             telemetry_metadata.setdefault("order_submitted_at", event.created_at)
         if event.event_type == "bracket_order_logged":
             metrics: dict[str, Any] = {
@@ -6122,6 +6127,8 @@ class PaperRuntimeService:
             if requested is None and event.event_type == "paper_fill_simulated":
                 requested = abs(event.quantity)
             try:
+                if isinstance(requested, bool):
+                    raise ValueError("boolean submitted order quantity")
                 requested = _finite_float(requested, field="submitted order quantity")
                 requested = abs(requested) if requested != 0 else None
             except ValueError:

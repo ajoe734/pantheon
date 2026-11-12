@@ -886,7 +886,11 @@ def period_fill_rate(
         runtime_id = record.get("runtime_id")
         if runtime_id not in runtime_ids:
             continue
-        for fact in record.get("order_execution_observations") or []:
+        facts = record.get("order_execution_observations", [])
+        if not isinstance(facts, list):
+            details["reason"] = "invalid_order_execution_observation"
+            return result
+        for fact in facts:
             if not isinstance(fact, dict):
                 details["reason"] = "invalid_order_execution_observation"
                 return result
@@ -897,8 +901,9 @@ def period_fill_rate(
                 return result
             binding_id = fact.get("binding_id")
             order_id = fact.get("order_id")
-            if (fact.get("runtime_id") != runtime_id or not binding_id or not order_id
-                    or not fact.get("event_id")
+            if (fact.get("runtime_id") != runtime_id
+                    or any(not isinstance(value, str) or not value.strip()
+                           for value in (binding_id, order_id, fact.get("event_id")))
                     or (record.get("binding_id") and record["binding_id"] != binding_id)):
                 details["reason"] = "order_execution_identity_mismatch"
                 return result
@@ -911,7 +916,8 @@ def period_fill_rate(
                 if previous is not None and previous != value:
                     order["conflict"] = True
                 order["submission"] = value
-            elif fact.get("kind") == "fill" and fact.get("fill_id"):
+            elif (fact.get("kind") == "fill" and isinstance(fact.get("fill_id"), str)
+                  and fact["fill_id"].strip()):
                 fill_id = fact["fill_id"]
                 previous = order["fills"].get(fill_id)
                 if previous is not None and previous != value:
@@ -920,7 +926,7 @@ def period_fill_rate(
             else:
                 details["reason"] = "invalid_order_execution_observation"
                 return result
-            order["events"].add(fact["event_id"])
+            order["events"].add((at, fact["event_id"]))
     numerator = denominator = 0.0
     for (runtime_id, binding_id, order_id), order in sorted(orders.items()):
         submission = order["submission"]
@@ -950,7 +956,7 @@ def period_fill_rate(
             "runtime_id": runtime_id, "binding_id": binding_id, "order_id": order_id,
             "submitted_at": submitted_at.isoformat().replace("+00:00", "Z"),
             "submitted_quantity": submitted, "filled_quantity": filled,
-            "event_ids": sorted(order["events"]),
+            "event_ids": sorted({event_id for at, event_id in order["events"] if in_window(at)}),
         })
     if not runtime_ids or observed_runtimes != set(runtime_ids):
         details["reason"] = "missing_runtime_submitted_orders" if observed_runtimes else "no_submitted_orders"
@@ -1366,6 +1372,11 @@ class RuntimeSummaryProjectionStore:
                     current["order_execution_observations"] = history
                 # Recompute from retained facts, never from a heartbeat's scalar.
                 current.update(period_fill_rate([runtime_id], [{**current, "runtime_id": runtime_id}]))
+                for field in ("fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id"):
+                    current.pop(field, None)
+                if current["fill_rate_details"]["status"] == "known":
+                    current["fill_rate_at"] = current["fill_rate_details"]["window"]["as_of"]
+                    current["fill_rate_binding_id"] = binding_id
 
             # Keep owner valuations independently of the latest-metric view.
             # A heartbeat or rolling-window eviction must not erase an earlier

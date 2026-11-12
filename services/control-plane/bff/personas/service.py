@@ -7607,7 +7607,7 @@ def _pm12_persona_league_ranking_item(
 
     if telemetry_count == 0:
         source_confidence = "unavailable"
-    elif scores["pnl_score"] is None or metrics.get("drawdown") is None:
+    elif scores["pnl_score"] is None or metrics.get("drawdown") is None or metrics.get("fill_rate") is None:
         source_confidence = "degraded"
     else:
         source_confidence = "formal"
