@@ -75,6 +75,74 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def quarter_equity_observation(
+    metrics: Mapping[str, Any], metadata: Mapping[str, Any], *, as_of: str,
+) -> dict[str, Any]:
+    """Describe an owner valuation for retention, never reconstruct missing marks.
+
+    The fill cash ledger has fixed initial funding (no external cash flows).
+    Its cumulative PnL and equity must reconcile before either becomes ranking
+    evidence. The projection supplies runtime/binding/event identity separately.
+    """
+    result: dict[str, Any] = {
+        "schema_version": "quarter_equity.v1", "as_of": as_of,
+        "status": "unknown", "reason": "missing_owner_valuation",
+    }
+    def aware_time(value: Any) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
+
+    at = aware_time(as_of)
+    start = aware_time(metrics.get("pnl_period_start_at"))
+    if metadata.get("valuation_method") != "fill_cash_ledger_mark_to_market":
+        return result
+    if at is None or start is None or start > at:
+        result["reason"] = "invalid_valuation_period"
+        return result
+    values = [None if isinstance(metrics.get(key), bool) else _finite(metrics.get(key))
+              for key in ("pnl", "portfolio_value", "initial_cash", "cash")]
+    pnl, equity, capital, cash = values
+    if any(value is None for value in values) or capital <= 0 or not math.isclose(
+        equity, capital + pnl, rel_tol=1e-9, abs_tol=1e-6
+    ):
+        result["reason"] = "invalid_or_cash_flow_adjusted_equity"
+        return result
+    refs = metadata.get("mark_refs")
+    count = metrics.get("valuation_mark_count")
+    if (not isinstance(refs, list) or isinstance(count, bool)
+            or not isinstance(count, int) or count != len(refs)
+            or (not refs and not math.isclose(cash, equity, abs_tol=1e-6))):
+        result["reason"] = "missing_marks"
+        return result
+    for ref in refs:
+        if not isinstance(ref, dict):
+            result["reason"] = "missing_marks"
+            return result
+        price = None if isinstance(ref.get("price"), bool) else _finite(ref.get("price"))
+        mark_at = aware_time(ref.get("as_of"))
+        if (price is None or price <= 0 or not ref.get("symbol")
+                or not str(ref.get("source_ref") or "").strip()
+                or mark_at is None or mark_at > at):
+            result["reason"] = "missing_marks"
+            return result
+    fills = metrics.get("fill_count")
+    if isinstance(fills, bool) or not isinstance(fills, int) or fills < 0:
+        result["reason"] = "invalid_fill_count"
+        return result
+    result.update({
+        "status": "known", "reason": None, "pnl": pnl, "equity": equity,
+        "initial_cash": capital, "period_start_at": _iso(start),
+        "currency": metrics.get("pnl_currency"), "fill_count": fills,
+        "mark_refs": refs, "valuation_method": metadata["valuation_method"],
+    })
+    return result
+
+
 _VENUE_SUFFIXES = frozenset(
     {
         "US",
