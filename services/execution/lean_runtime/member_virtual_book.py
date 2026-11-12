@@ -230,9 +230,17 @@ class MemberVirtualBooks:
                 baseline = baseline_resolver(member["artifact_id"], member["checksum"],
                                              [u["symbol"] for u in member["underlyings"]])
                 member["baseline"] = baseline
-                if isinstance(baseline, dict) and baseline.get("status") == "approved" and all_underlyings:
-                    gate_book, reason = gate_basis_metrics(
-                        [b for b, _, _ in group], baseline.get("order_quantity"))
+                if isinstance(baseline, dict) and baseline.get("status") == "approved":
+                    # The gate scores one common window; replay only when every
+                    # underlying is observed and all share the same bar times.
+                    times = {tuple(row["event_time"] for row in b["observations"]) for b, _, _ in group}
+                    if not all_underlyings:
+                        gate_book, reason = None, "underlying_marks_missing"
+                    elif not complete or len(times) != 1:
+                        gate_book, reason = None, "histories_not_aligned_to_common_window"
+                    else:
+                        gate_book, reason = gate_basis_metrics(
+                            [b for b, _, _ in group], baseline.get("order_quantity"))
                     member["gate_basis"] = gate_book if gate_book else {"unavailable_reason": reason}
                 member["baseline_comparison"] = compare_member_book(baseline, member)
         return result

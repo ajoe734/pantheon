@@ -91,6 +91,33 @@ class MemberVirtualBookTests(unittest.TestCase):
         self.assertAlmostEqual(row["net_of_costs"]["total_return"], -(0.001425 * 2 + 0.003), places=6)
 
 
+class UnalignedHistoryTests(unittest.TestCase):
+    def test_incomplete_or_unaligned_underlying_histories_are_never_compared(self):
+        """Reviewer counterexample: 2330 through Oct03, 2317 through Oct02 is not 'compared'."""
+        approved = {"status": "approved", "baseline_key": "k", "oos_sharpe": 0.5, "oos_max_drawdown": 0.1,
+                    "return_basis": "gate_share_sized_per_instrument_mean_sharpe_taiwan_fill_costs",
+                    "periods_per_year": 365, "order_quantity": 10}
+        member = {"artifact_id": "a", "version": "1.0.0", "checksum": "sha256:member",
+                  "virtual_only": False, "underlying_count": 2,
+                  "view": {"direction": "LONG", "strength": 1}}
+
+        def snapshot(marks):
+            books = MemberVirtualBooks()
+            for symbol, day, price in marks:
+                books.observe(binding_id="b", envelope_checksum="sha256:e", symbol=symbol,
+                              event_time=f"2024-10-{day:02}T05:30:00Z", price=price, source_ref="r",
+                              members={"m": member}, bar_frequency="1d")
+            return books.snapshot(baseline_resolver=lambda *_: approved)[0]
+        short = snapshot([("2330.TW", 1, 100), ("2330.TW", 2, 101), ("2330.TW", 3, 99),
+                          ("2317.TW", 1, 50), ("2317.TW", 2, 52)])
+        self.assertFalse(short["marks_complete"])
+        self.assertEqual(short["baseline_comparison"]["status"], "member_metric_missing")
+        self.assertEqual(short["gate_basis"]["unavailable_reason"], "histories_not_aligned_to_common_window")
+        one_side = snapshot([("2330.TW", 1, 100), ("2330.TW", 2, 101), ("2330.TW", 3, 99)])
+        self.assertEqual(one_side["gate_basis"]["unavailable_reason"], "underlying_marks_missing")
+        self.assertEqual(one_side["baseline_comparison"]["status"], "member_metric_missing")
+
+
 class GateBasisTests(unittest.TestCase):
     def _book(self, directions, prices, symbol="2330.TW"):
         return {"symbol": symbol, "observations": [

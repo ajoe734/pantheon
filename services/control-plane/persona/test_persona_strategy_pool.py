@@ -307,7 +307,7 @@ def test_concurrent_refusals_are_all_recorded(env):
 def test_member_baselines_resolve_each_member_from_its_own_gate_proof(env, tmp_path):
     client, reg, owner = env
     from persona_strategy_pool import PersonaStrategyPoolStore
-    from services.evolution.test_approved_baselines import genuine_entry, run_record_reader
+    from services.evolution.test_approved_baselines import genuine_entry
 
     proof = genuine_entry(tenant="tenant-a")  # real gate on recorded Taiwan backtest output
     reg.entries[proof["registry_id"]] = proof
@@ -316,8 +316,7 @@ def test_member_baselines_resolve_each_member_from_its_own_gate_proof(env, tmp_p
         _member(proof["registry_id"], checksum=proof["checksum"], risk_weight=0.5),
         _member("art-2", stage="trial", risk_weight=0.1, baseline_ref=None, parent_ref=proof["registry_id"]),
     ], 0).status_code == 201
-    store = PersonaStrategyPoolStore(AtomicJsonRecordStore(tmp_path / "pools.json"), registry_reader=reg.read,
-                                   run_record_reader=run_record_reader)
+    store = PersonaStrategyPoolStore(AtomicJsonRecordStore(tmp_path / "pools.json"), registry_reader=reg.read)
     rows = store.member_baselines("persona-1", "tenant-a")
     by_ref = {r["baseline"]["baseline_key"].split("/")[2]: r for r in rows}
     assert by_ref[proof["registry_id"]]["baseline"]["status"] == "approved"
@@ -325,9 +324,3 @@ def test_member_baselines_resolve_each_member_from_its_own_gate_proof(env, tmp_p
     # the trial child has no pass of its own: it never inherits the parent's proof
     assert by_ref["art-2"]["baseline"]["reason"] == "strategy_artifact_missing"
     assert by_ref["art-2"]["stage"] == "trial" and by_ref["art-2"]["pool_version"] == 1
-
-
-def test_store_defaults_to_the_owner_run_record_reader_without_injection():
-    from persona_strategy_pool import PersonaStrategyPoolStore
-    from services.evolution.approved_baselines import backtest_run_record_reader
-    assert PersonaStrategyPoolStore(object())._run_reader is backtest_run_record_reader

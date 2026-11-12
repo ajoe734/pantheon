@@ -195,8 +195,11 @@ class TestPromotionGate(unittest.TestCase):
         # The producer's own proof verifies; tampered/failed/unbound proofs do not.
         proof, summary = draft_entry["replication_proof"], draft_entry["evaluation_summary"]
         lineage = draft_entry["lineage"]
-        verified = PromotionGate.verify_admitted_replication_proof(proof, summary, lineage)
-        self.assertEqual(verified, proof)
+        checksum = bt_eval["strategy_artifact"]["checksum"]
+        kw = {"backtest_evaluation": bt_eval, "artifact_checksum": checksum}
+        verified = PromotionGate.verify_admitted_replication_proof(proof, summary, lineage, **kw)
+        self.assertEqual({k: v for k, v in verified.items() if k != "owner_verified_binding"}, proof)
+        self.assertEqual(verified["owner_verified_binding"]["artifact_checksum"], checksum)
         import copy as _copy
         failed = _copy.deepcopy(proof)
         for r in failed["replication_results"]:
@@ -210,7 +213,7 @@ class TestPromotionGate(unittest.TestCase):
             ({**proof, "admission_status": "rejected"}, summary, lineage),
         ):
             with self.assertRaises(PromotionError):
-                PromotionGate.verify_admitted_replication_proof(bad_proof, bad_summary, bad_lineage)
+                PromotionGate.verify_admitted_replication_proof(bad_proof, bad_summary, bad_lineage, **kw)
 
         candidate_entry = self.gate.promote(draft_entry, PromotionState.CANDIDATE)
         self.assertEqual(candidate_entry["lifecycle_state"], "candidate")

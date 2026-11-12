@@ -5929,26 +5929,13 @@ class PaperRuntimeService:
     def _member_book_snapshot(self, **scope) -> list[dict[str, Any]]:
         """Member virtual books with each member's own approved baseline and comparison."""
         from services.evolution.approved_baselines import (
-            backtest_run_record_reader, http_registry_entry_reader, resolve_member_baseline,
+            http_registry_entry_reader, resolve_member_baseline,
         )
 
         # Registry owner read by default; tests may inject a reader.
         reader = getattr(self, "_member_entry_reader", None) or http_registry_entry_reader
         persona_id = getattr(self._identity, "persona_id", None) or ""
         tenant_id = os.getenv("PANTHEON_TENANT_ID", "default").strip() or "default"
-
-        # Authoritative gate run record (research owner's BacktestRunStore file);
-        # unavailable store stays an explicit missing proof, never a fallback.
-        run_reader = getattr(self, "_member_run_record_reader", None) or backtest_run_record_reader
-
-        def run_record(entry):
-            summary = (entry or {}).get("evaluation_summary") if isinstance(entry, Mapping) else None
-            run_id = summary.get("backtest_run_id") if isinstance(summary, Mapping) else None
-            try:
-                return run_reader(run_id) if callable(run_reader) and run_id else None
-            except Exception:  # noqa: BLE001 - unreadable run record is not proof
-                log.exception("member baseline run record read failed for %s", run_id)
-                return None
 
         def resolve(artifact_id, checksum, symbols):
             try:
@@ -5959,7 +5946,6 @@ class PaperRuntimeService:
             return resolve_member_baseline(
                 tenant_id=tenant_id, persona_id=persona_id, artifact_ref=artifact_id,
                 checksum=checksum, entry=entry, universe=symbols,
-                run_record=run_record(entry),
             )
 
         return self._member_virtual_books.snapshot(baseline_resolver=resolve, **scope)

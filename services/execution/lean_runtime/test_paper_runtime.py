@@ -6147,7 +6147,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
 
     def test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account(self):
         """Recorded Taiwan gate proof -> registry entries -> runtime snapshot, per member."""
-        from services.evolution.test_approved_baselines import RUN_RECORDS, genuine_entry
+        from services.evolution.test_approved_baselines import genuine_entry
         from services.execution.lean_runtime.member_virtual_book import virtual_book_metrics
         service = PaperRuntimeService(
             store=InMemoryPendingSignalStore([]), identity=self._identity(),
@@ -6158,16 +6158,6 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
         good = genuine_entry("recorded_backtest_tw_2330_2317", ("2330.TW", "2317.TW"), tenant="default")
         entries = {decay["registry_id"]: decay, good["registry_id"]: good}
         service._member_entry_reader = lambda ref, tenant: entries.get(ref)
-        # Production construction: the run record comes from the research owner's
-        # BacktestRunStore file via ALPHA_REPLICATION_DATA_DIR, no injected reader.
-        data_dir = tempfile.TemporaryDirectory()
-        self.addCleanup(data_dir.cleanup)
-        (Path(data_dir.name) / "backtest_runs.json").write_text(json.dumps(RUN_RECORDS))
-        patcher = patch.dict(os.environ, {"ALPHA_REPLICATION_DATA_DIR": data_dir.name})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.assertIsNone(getattr(service, "_member_run_record_reader", None))
-
         def member(entry, count):
             return {entry["registry_id"]: {
                 "artifact_id": entry["registry_id"], "version": "1.0.0", "checksum": entry["checksum"],

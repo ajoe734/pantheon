@@ -3954,17 +3954,20 @@ def test_strict_viewer_and_view_only_read_scoped_strategy_spec_views_and_preserv
 
 
 
-def _real_gate_registration(artifact_id: str):
-    """Registration whose proof/summary come from the real ReplicationGate producer path."""
+def _real_gate_registration():
+    """Registration of the genuine canonical artifact + proof from the real ReplicationGate path."""
     import json as _json
     from pathlib import Path as _Path
+    from services.registry.strategy_artifact import strategy_artifact_checksum
     from services.research.replication.gate import ReplicationGate, create_promotion_request
     from services.research.replication.gate_schema import ReplicationRequest
-    from services.registry.promotion.gate import PromotionGate
+    from services.research.vectorbt.adapter.vectorbt_adapter import build_canonical_tw_strategy_artifact
 
     fixture = (_Path(__file__).resolve().parents[1] / "research" / "replication" / "fixtures"
                / "recorded_backtest_tw_2330.json")
     bt_eval = _json.loads(fixture.read_text(encoding="utf-8"))
+    artifact = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-replication-001", symbols=("2330.TW",))
+    assert strategy_artifact_checksum(artifact) == bt_eval["strategy_artifact"]["checksum"]
     spec = {"name": "tw_momentum", "description": "d", "signals": ["momentum"],
             "parameters": {"lookback": 2},
             "governance": {"approval_required": True, "policy_id": "oc-001-research-normalization"}}
@@ -3981,37 +3984,63 @@ def _real_gate_registration(artifact_id: str):
     gate = ReplicationGate()
     gate.backtest_run_store.record(bt_eval)
     promo = create_promotion_request(gate.evaluate_candidate(req), spec)
-    draft = PromotionGate.build_draft_entry_from_replication_request(promo, strategy_id="s")
-    registration = _cross_tenant_artifact_registration(artifact_id=artifact_id)
-    run_id = draft["evaluation_summary"]["backtest_run_id"]
-    registration["strategy_artifact"]["lineage"]["source_run_ids"] = [run_id]
-    registration["evaluation_summary"] = draft["evaluation_summary"]
-    registration["replication_proof"] = draft["replication_proof"]
-    return registration
+    summary = promo.registry_entry["evaluation_summary"]
+    return {"registry_id": artifact["artifact_id"], "artifact_state": "candidate", "strategy_artifact": artifact,
+            "producer_run_id": summary["backtest_run_id"], "evaluation_summary": summary,
+            "replication_proof": promo.replication_proof, "backtest_evaluation": bt_eval}
 
 
-def test_real_gate_proof_persists_through_register_and_get_and_rejects_forgery(strict_client):
+def test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery(strict_client):
+    import copy as _copy
+    from services.evolution.approved_baselines import resolve_member_baseline
     token = _jwt(subject="gate-owner", tenant="tenant-a")
     other = _jwt(subject="gate-other", tenant="tenant-b")
-    reg = _real_gate_registration("artifact-gate-proof-probe")
+    reg = _real_gate_registration()
+    rid = reg["registry_id"]
+
+    # Forged / altered / foreign submissions are refused before anything is persisted.
+    def forged(mutate):
+        r = _copy.deepcopy(reg)
+        mutate(r)
+        return strict_client.post("/api/registry/strategy-artifacts", json=r, headers=_bearer(token)).status_code
+    def alter_metrics(r):
+        r["evaluation_summary"].update(out_of_sample_sharpe_ratio=999.0, max_drawdown=1e-6)
+        r["replication_proof"]["evaluation_summary"] = r["evaluation_summary"]
+        d = next(x for x in r["replication_proof"]["replication_results"]
+                 if x["criterion_id"] == "real_backtest_validation")["details"]
+        d.update(out_of_sample_sharpe_ratio=999.0, out_of_sample_max_drawdown=1e-6)
+    def fabricate_checks(r):
+        r["backtest_evaluation"]["out_of_sample"]["sharpe_ratio"] = -2.0
+    assert forged(alter_metrics) == 400
+    assert forged(fabricate_checks) == 400
+    assert forged(lambda r: r.pop("backtest_evaluation")) == 400
+    assert forged(lambda r: r["replication_proof"].update(admission_status="rejected")) == 400
+    assert forged(lambda r: r["backtest_evaluation"]["strategy_artifact"].update(checksum="sha256:other")) == 400
+
     created = strict_client.post("/api/registry/strategy-artifacts", json=reg, headers=_bearer(token))
     assert created.status_code == 200, created.text
-    got = strict_client.get("/api/registry/entries/artifact-gate-proof-probe", headers=_bearer(token))
+    approved = advance_registry_http(
+        strict_client, f"/api/registry/strategy-artifacts/{rid}/advance",
+        json={"target_state": "approved", "approver": "gate-reviewer", "expected_artifact_state": "candidate"},
+        headers=_bearer(token))
+    assert approved.status_code == 200, approved.text
+    got = strict_client.get(f"/api/registry/entries/{rid}", headers=_bearer(token))
     assert got.status_code == 200, got.text
     entry = got.json()["entry"]
     assert entry["replication_success"] is True
-    assert entry["replication_proof"] == reg["replication_proof"]
-    # replay with a different proof is not an idempotent no-op
-    assert strict_client.post("/api/registry/strategy-artifacts", json={**reg, "replication_proof": None},
-                              headers=_bearer(token)).status_code == 400
-    # tenant isolation preserved
-    assert strict_client.get("/api/registry/entries/artifact-gate-proof-probe",
-                             headers=_bearer(other)).status_code == 403
-
-    forged = _real_gate_registration("artifact-gate-proof-forged")
-    forged["replication_proof"] = {**forged["replication_proof"], "admission_status": "rejected"}
-    assert strict_client.post("/api/registry/strategy-artifacts", json=forged,
-                              headers=_bearer(token)).status_code == 400
+    binding = entry["replication_proof"]["owner_verified_binding"]
+    assert binding["artifact_checksum"] == entry["checksum"]
+    assert binding["evaluation_digest"].startswith("sha256:")
+    # The persisted GET entry is what the resolver consumes: approved, with the genuine numbers.
+    baseline = resolve_member_baseline(
+        tenant_id="tenant-a", persona_id="p1", artifact_ref=rid, checksum=entry["checksum"],
+        entry=entry, universe=("2330.TW",))
+    assert baseline["status"] == "approved", baseline
+    assert baseline["oos_sharpe"] == reg["evaluation_summary"]["out_of_sample_sharpe_ratio"]
+    # replay with different proof is not an idempotent no-op; tenant isolation preserved
+    assert strict_client.post("/api/registry/strategy-artifacts", json={**reg, "replication_proof": None,
+                              "backtest_evaluation": None}, headers=_bearer(token)).status_code in (400, 409)
+    assert strict_client.get(f"/api/registry/entries/{rid}", headers=_bearer(other)).status_code == 403
 
 
 def test_artifact_registered_without_proof_has_unknown_gate_verdict(strict_client):

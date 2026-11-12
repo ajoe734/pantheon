@@ -210,6 +210,8 @@ class StrategyArtifactRegisterRequest(BaseModel):
     rollback_target: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
     replication_proof: Optional[dict[str, Any]] = None
+    backtest_evaluation: Optional[dict[str, Any]] = None
+    """Producer's full gate evaluation; recomputed (digest/checks/metrics) at registration, not stored."""
 
 
 class StrategyArtifactMutationRequest(BaseModel):
@@ -990,6 +992,7 @@ def _strategy_artifact_registration(
         "rollback_target": payload.rollback_target,
         "metadata": payload.metadata,
         "replication_proof": payload.replication_proof,
+        "backtest_evaluation": payload.backtest_evaluation,
     }
 
 
@@ -1002,6 +1005,7 @@ def _register_strategy_artifact(
 ) -> RegistryEntryView:
     registration = dict(registration)
     replication_proof = registration.pop("replication_proof", None)
+    backtest_evaluation = registration.pop("backtest_evaluation", None)
     registry_id, create_payload = build_strategy_artifact_registry_payload(registration)
     if replication_proof is not None:
         # The success flag is derived here from the verified producer proof, never
@@ -1009,6 +1013,9 @@ def _register_strategy_artifact(
         try:
             create_payload.replication_proof = PromotionGate.verify_admitted_replication_proof(
                 replication_proof, registration.get("evaluation_summary"), create_payload.lineage.to_dict(),
+                backtest_evaluation=backtest_evaluation,
+                artifact_checksum=strategy_artifact_checksum(registration["strategy_artifact"]),
+                producer_run_id=create_payload.producer_run_id or "",
             )
         except PromotionError as exc:
             raise RegistryError(str(exc)) from exc

@@ -130,15 +130,23 @@ class PromotionGate:
 
     @staticmethod
     def verify_admitted_replication_proof(
-        proof: Any, evaluation_summary: Any, lineage: Any,
+        proof: Any, evaluation_summary: Any, lineage: Any, *,
+        backtest_evaluation: Any = None, artifact_checksum: str = "", producer_run_id: str = "",
     ) -> dict[str, Any]:
-        """Return a copy of ``proof`` iff it is an admitted real-backtest gate verdict.
+        """Return a copy of ``proof`` iff it is an admitted gate verdict bound to its evaluation.
 
-        Mirrors what ``create_promotion_request`` emits: admitted status, a passed
-        ``real_backtest_validation`` result with no failed checks, the same
-        ``backtest_run_id`` as the entry summary and lineage, and an embedded
-        summary equal to the registered one.  Raises ``PromotionError`` otherwise.
+        The caller must also supply the producer's full ``backtest_evaluation`` (the
+        run the ReplicationGate evaluated).  The registry owner recomputes from it:
+        the run digest (same canonical form as ``BacktestRunStore``), the artifact
+        checksum binding, the out-of-sample metrics, and every
+        ``real_backtest_validation`` check.  The summary, verdict details and checks
+        must equal those recomputed values, so altered metrics, an all-true
+        fabricated checks block, or a proof for another artifact/run is refused.
+        The registry-verified binding is stored under ``owner_verified_binding``.
         """
+        import hashlib
+        import json
+
         if not isinstance(proof, Mapping) or not proof:
             raise PromotionError("replication_proof must be a non-empty object.")
         summary = evaluation_summary if isinstance(evaluation_summary, Mapping) else {}
@@ -148,8 +156,8 @@ class PromotionGate:
             raise PromotionError("replication_proof is not an admitted verdict for this backtest run.")
         if proof.get("evaluation_summary") != summary:
             raise PromotionError("replication_proof evaluation_summary differs from the entry summary.")
-        if run_id not in (_normalize_lineage(lineage).get("source_run_ids") or []):
-            raise PromotionError("replication_proof backtest run is not in entry lineage.")
+        if run_id != producer_run_id and run_id not in (_normalize_lineage(lineage).get("source_run_ids") or []):
+            raise PromotionError("replication_proof backtest run is neither the producer run nor in entry lineage.")
         verdicts = [r for r in proof.get("replication_results") or []
                     if isinstance(r, Mapping) and r.get("criterion_id") == "real_backtest_validation"]
         details = verdicts[0].get("details") if len(verdicts) == 1 else None
@@ -161,7 +169,71 @@ class PromotionGate:
                 or not isinstance(checks, Mapping) or not checks
                 or not all(v is True for v in checks.values())):
             raise PromotionError("replication_proof real_backtest_validation did not pass.")
-        return copy.deepcopy(dict(proof))
+
+        ev = backtest_evaluation
+        if not isinstance(ev, Mapping) or not ev:
+            raise PromotionError("backtest_evaluation is required to bind the gate verdict.")
+        identity = ev.get("strategy_artifact") if isinstance(ev.get("strategy_artifact"), Mapping) else {}
+        if (str(ev.get("backtest_run_id") or "") != run_id or ev.get("status") != "completed"
+                or not artifact_checksum or str(identity.get("checksum") or "") != artifact_checksum
+                or ev.get("backend") != "vectorbt_portfolio" or ev.get("market") != "TW"
+                or ev.get("governed_data") is not True or not ev.get("source_dataset_refs")):
+            raise PromotionError("backtest_evaluation is not a completed governed run of this artifact.")
+        digest = "sha256:" + hashlib.sha256(
+            json.dumps(dict(ev), sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+        try:
+            from services.research.replication.gate_config import GateConfig
+
+            cfg = GateConfig()
+            oos, ins = ev["out_of_sample"], ev["in_sample"]
+            bench = ev["benchmarks"]["buy_and_hold_same_symbols"]
+            folds = ev["walk_forward"]["folds"]
+            sharpe = float(oos["sharpe_ratio"])
+            drawdown = abs(float(oos["max_drawdown"]))
+            trips = int(oos["round_trips"])
+            fold_sharpes = [float(f["sharpe_ratio"]) for f in folds]
+            fold_returns = [float(f["total_return"]) for f in folds]
+            trial_count = int(details["trial_count"])
+            deflation = cfg.compute_deflated_sharpe_threshold(trial_count)
+            mandate = float(details["mandate_max_drawdown"])
+            threshold = float(deflation["deflated_sharpe_threshold"])
+            positive = [r for r in fold_returns if r > 0.0]
+            share = max(positive) / sum(positive) if positive and sum(positive) > 0.0 else 1.0
+            expected_checks = {
+                "oos_sharpe_positive_after_costs": sharpe > 0.0,
+                "oos_sharpe_exceeds_deflated_threshold": sharpe > threshold,
+                "oos_sharpe_beats_buy_and_hold": sharpe > float(bench["sharpe_ratio"]),
+                "oos_max_drawdown_within_mandate": drawdown <= mandate,
+                "oos_minimum_round_trips_met": trips >= cfg.min_oos_round_trips,
+                "walk_forward_consistent_across_folds": (
+                    len(folds) >= cfg.walk_forward_folds and all(x > 0.0 for x in fold_sharpes)
+                    and len(positive) >= 2 and share < 1.0),
+            }
+            derived = {
+                "out_of_sample_sharpe_ratio": sharpe, "out_of_sample_max_drawdown": drawdown,
+                "out_of_sample_round_trips": trips, "in_sample_sharpe_ratio": float(ins["sharpe_ratio"]),
+                "out_of_sample_total_return": float(oos["total_return"]),
+                "buy_and_hold_sharpe_ratio": float(bench["sharpe_ratio"]),
+                "walk_forward_fold_sharpes": fold_sharpes,
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PromotionError("backtest_evaluation lacks the gate's out-of-sample evidence.") from exc
+        if (not all(expected_checks.values()) or dict(checks) != expected_checks
+                or any(details.get(k) != v for k, v in derived.items())
+                or summary.get("out_of_sample_sharpe_ratio") != sharpe
+                or summary.get("max_drawdown") != drawdown or summary.get("round_trips") != trips):
+            raise PromotionError("replication_proof differs from the recomputed backtest evaluation.")
+
+        verified = copy.deepcopy(dict(proof))
+        verified["owner_verified_binding"] = {
+            "backtest_run_id": run_id, "artifact_checksum": artifact_checksum,
+            "evaluation_digest": digest, "status": "completed",
+            "out_of_sample_sharpe_ratio": sharpe, "out_of_sample_max_drawdown": drawdown,
+            "out_of_sample_round_trips": trips,
+        }
+        return verified
 
     def check_requirements(self, target_state: PromotionState, metadata: Mapping[str, Any]) -> None:
         """Enforces metadata requirements for each promotion state."""

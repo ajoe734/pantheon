@@ -38,7 +38,7 @@ def _code(symbol: Any) -> str:
     return str(symbol).strip().upper().split(".")[0]
 
 
-def _gate_proof_failure(entry: Mapping[str, Any], summary: Mapping[str, Any], run_id: str) -> str | None:
+def _gate_proof_failure(entry: Mapping[str, Any], summary: Mapping[str, Any], run_id: str, checksum: str) -> str | None:
     """Reason the persisted proof is not an exact passed gate verdict, else ``None``."""
     if entry.get("replication_success") is None and not entry.get("replication_proof"):
         # Historical/unproven entry: the registry owner recorded no gate verdict.
@@ -72,6 +72,15 @@ def _gate_proof_failure(entry: Mapping[str, Any], summary: Mapping[str, Any], ru
                                 ("max_drawdown", "out_of_sample_max_drawdown")):
         if summary.get(field) != details.get(detail_field):
             return "gate_proof_differs_from_summary"
+    binding = proof.get("owner_verified_binding")
+    if not isinstance(binding, Mapping) or not str(binding.get("evaluation_digest") or "").startswith("sha256:"):
+        return "gate_binding_not_owner_verified"
+    if (str(binding.get("backtest_run_id") or "") != run_id or binding.get("status") != "completed"
+            or str(binding.get("artifact_checksum") or "") != checksum
+            or binding.get("out_of_sample_sharpe_ratio") != summary.get("out_of_sample_sharpe_ratio")
+            or binding.get("out_of_sample_max_drawdown") != summary.get("max_drawdown")
+            or binding.get("out_of_sample_round_trips") != summary.get("round_trips")):
+        return "gate_binding_differs_from_summary"
     trips = summary.get("round_trips")
     if not _finite(trips) or trips <= 0:
         return "gate_round_trips_missing"
@@ -81,7 +90,6 @@ def _gate_proof_failure(entry: Mapping[str, Any], summary: Mapping[str, Any], ru
 def resolve_member_baseline(
     *, tenant_id: str, persona_id: str, artifact_ref: str, checksum: str,
     entry: Mapping[str, Any] | None, universe: Sequence[str] | None = None,
-    run_record: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve one member's baseline from its own immutable approved registry entry.
 
@@ -93,10 +101,9 @@ def resolve_member_baseline(
     A summary Sharpe above a threshold is not a gate verdict.  Approval needs the
     persisted passed gate proof (``replication_success``, admitted
     ``replication_proof`` whose ``real_backtest_validation`` passed with no failed
-    checks and matches the summary) *and* the authoritative backtest run record
-    (``BacktestRunStore``) binding that run id to this member's checksum.  The
-    entry itself carries no checksum for the run, so without ``run_record`` the
-    result is ``backtest_run_binding_unavailable`` rather than an approval.
+    checks and matches the summary) *and* the registry owner's ``owner_verified_binding`` (run digest, artifact
+    checksum and out-of-sample metrics recomputed from the producer's evaluation at
+    registration), read through the existing authenticated registry owner read.
     """
     key = baseline_key(tenant_id, persona_id, artifact_ref, checksum)
     if not isinstance(entry, Mapping) or not entry:
@@ -128,21 +135,15 @@ def resolve_member_baseline(
     if not run_id:
         return _missing(key, "backtest_run_missing")
     lineage = entry.get("lineage") if isinstance(entry.get("lineage"), Mapping) else {}
-    if run_id not in (lineage.get("source_run_ids") or []):
+    if run_id != entry.get("producer_run_id") and run_id not in (lineage.get("source_run_ids") or []):
         return _missing(key, "backtest_run_not_in_lineage")
     sharpe = summary.get("out_of_sample_sharpe_ratio")
     drawdown = summary.get("max_drawdown")
     if not _finite(sharpe) or not _finite(drawdown):
         return _missing(key, "out_of_sample_metrics_missing")
-    failed = _gate_proof_failure(entry, summary, run_id)
+    failed = _gate_proof_failure(entry, summary, run_id, checksum)
     if failed:
         return _missing(key, failed)
-    if not isinstance(run_record, Mapping) or str(run_record.get("backtest_run_id") or "") != run_id:
-        return _missing(key, "backtest_run_binding_unavailable")
-    if run_record.get("status") != "completed":
-        return _missing(key, "backtest_run_not_completed")
-    if str(run_record.get("artifact_checksum") or "") != checksum:
-        return _missing(key, "backtest_run_bound_to_other_artifact")
     parameters = artifact.get("parameters") if isinstance(artifact.get("parameters"), Mapping) else {}
     validated = [str(s) for s in parameters.get("symbols") or []]
     if not validated:
@@ -195,27 +196,6 @@ def http_registry_entry_reader(registry_id: str, tenant_id: str) -> Mapping[str,
     if not isinstance(entry, Mapping) or entry.get("registry_id") != registry_id:
         raise RuntimeError("registry returned a malformed or mismatched entry")
     return entry
-
-
-def backtest_run_record_reader(run_id: str) -> Mapping[str, Any] | None:
-    """Read-only view of the research owner's ``BacktestRunStore`` file.
-
-    Uses the owner's existing ``ALPHA_REPLICATION_DATA_DIR``; with it unset there is
-    no authoritative store and the result is ``None`` (explicit missing proof).
-    """
-    import json
-    import os
-    from pathlib import Path
-
-    directory = (os.getenv("ALPHA_REPLICATION_DATA_DIR") or "").strip()
-    if not directory or not run_id:
-        return None
-    path = Path(directory) / "backtest_runs.json"
-    if not path.is_file():
-        return None
-    runs = json.loads(path.read_text(encoding="utf-8"))
-    record = runs.get(run_id) if isinstance(runs, dict) else None
-    return dict(record) if isinstance(record, dict) else None
 
 
 def compare_member_book(baseline: Mapping[str, Any] | None, book: Mapping[str, Any]) -> dict[str, Any]:

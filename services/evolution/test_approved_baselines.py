@@ -10,11 +10,7 @@ from services.evolution.approved_baselines import (
 FIXTURES = Path(__file__).resolve().parents[1] / "research" / "replication" / "fixtures"
 
 
-RUN_RECORDS = {}  # authoritative BacktestRunStore records written by the genuine gate path
-
-
-def run_record_reader(run_id):
-    return RUN_RECORDS.get(run_id)
+EVALUATIONS = {}  # run id -> the producer evaluation the genuine gate path scored
 
 
 def genuine_entry(fixture="recorded_backtest_tw_2330", symbols=("2330.TW",), tenant="t1"):
@@ -53,20 +49,25 @@ def genuine_entry(fixture="recorded_backtest_tw_2330", symbols=("2330.TW",), ten
     assert response.passed, response
     promotion = create_promotion_request(response, request.proposed_strategy_spec)
     summary = promotion.registry_entry["evaluation_summary"]
-    RUN_RECORDS[summary["backtest_run_id"]] = gate.backtest_run_store.get(summary["backtest_run_id"])
+    from services.registry.promotion.gate import PromotionGate
+    EVALUATIONS[summary["backtest_run_id"]] = evaluation
+    # The registry owner's own verification mints the persisted proof + binding.
+    verified = PromotionGate.verify_admitted_replication_proof(
+        promotion.replication_proof, summary, promotion.lineage,
+        backtest_evaluation=evaluation, artifact_checksum=checksum)
     return {"registry_id": "reg-" + fixture, "artifact_state": "approved", "checksum": checksum,
             "owner_tenant": tenant, "approval_decision_id": "dec-" + fixture,
             "evaluation_summary": summary, "lineage": promotion.lineage,
+            "producer_run_id": summary["backtest_run_id"],
             "replication_success": promotion.registry_entry["replication_success"],
-            "replication_proof": promotion.replication_proof,
+            "replication_proof": verified,
             "metadata": {"strategy_artifact": artifact}}
 
 
 def resolve(e, universe=("2330.TW",), checksum=None, ref=None, tenant="t1"):
     return resolve_member_baseline(
         tenant_id=tenant, persona_id="p1", artifact_ref=ref or (e or {}).get("registry_id", "x"),
-        checksum=checksum or (e or {}).get("checksum", ""), entry=e, universe=universe,
-        run_record=run_record_reader(((e or {}).get("evaluation_summary") or {}).get("backtest_run_id")))
+        checksum=checksum or (e or {}).get("checksum", ""), entry=e, universe=universe)
 
 
 def book(sharpe=0.4, drawdown=0.05, **kw):
@@ -130,7 +131,7 @@ class ApprovedBaselineTests(unittest.TestCase):
             "strategy_artifact_missing": mutate(lambda e: e["metadata"].clear()),
             "artifact_checksum_mismatch": mutate(lambda e: e["metadata"]["strategy_artifact"]["parameters"].update(lookback_bars=9)),
             "backtest_run_missing": mutate(lambda e: e["evaluation_summary"].update(backtest_run_id="")),
-            "backtest_run_not_in_lineage": mutate(lambda e: e["lineage"].update(source_run_ids=["other-run"])),
+            "backtest_run_not_in_lineage": mutate(lambda e: (e["lineage"].update(source_run_ids=["other-run"]), e.pop("producer_run_id"))),
             "out_of_sample_metrics_missing": mutate(lambda e: e["evaluation_summary"].update(out_of_sample_sharpe_ratio=None)),
             "gate_proof_differs_from_summary": mutate(lambda e: e["evaluation_summary"].update(out_of_sample_sharpe_ratio=-1.0)),
             "gate_not_passed": mutate(lambda e: e.update(replication_success=False)),
@@ -151,7 +152,7 @@ class ApprovedBaselineTests(unittest.TestCase):
         self.assertNotEqual(resolve(grafted)["status"], "approved")
         grafted["replication_proof"] = copy.deepcopy(self.two["replication_proof"])
         b = resolve(grafted)  # even a fully grafted proof is bound to another artifact's run
-        self.assertEqual((b["status"], b["reason"]), ("no_approved_baseline", "backtest_run_bound_to_other_artifact"))
+        self.assertEqual((b["status"], b["reason"]), ("no_approved_baseline", "gate_binding_differs_from_summary"))
 
         def mutate(fn):
             e = copy.deepcopy(self.one); fn(e); return e
@@ -163,7 +164,7 @@ class ApprovedBaselineTests(unittest.TestCase):
         cases = {
             "gate_not_passed/rejected": mutate(lambda e: e["replication_proof"].update(admission_status="rejected")),
             "gate_not_passed/verdict": mutate(fail_gate),
-            "gate_round_trips_missing": mutate(lambda e: e["evaluation_summary"].update(round_trips=0)),
+            "gate_binding_not_owner_verified": mutate(lambda e: e["replication_proof"].pop("owner_verified_binding")),
         }
         for name, e in cases.items():
             with self.subTest(name):
@@ -173,17 +174,54 @@ class ApprovedBaselineTests(unittest.TestCase):
                 self.assertEqual(b["status"], "no_approved_baseline")
                 self.assertEqual(b["reason"], name.split("/")[0])
 
-    def test_run_record_is_required_and_must_bind_this_checksum(self):
+    def test_forged_metrics_with_unchanged_owner_binding_are_not_approved(self):
+        # Reviewer counterexample: Sharpe 999 / drawdown ~0 in summary, proof and details.
+        forged = copy.deepcopy(self.one)
+        forged["evaluation_summary"].update(out_of_sample_sharpe_ratio=999.0, max_drawdown=0.000001)
+        proof = forged["replication_proof"]
+        proof["evaluation_summary"] = forged["evaluation_summary"]
+        details = next(r for r in proof["replication_results"]
+                       if r["criterion_id"] == "real_backtest_validation")["details"]
+        details.update(out_of_sample_sharpe_ratio=999.0, out_of_sample_max_drawdown=0.000001)
+        b = resolve(forged)
+        self.assertEqual((b["status"], b["reason"]), ("no_approved_baseline", "gate_binding_differs_from_summary"))
+
+    def test_registry_owner_refuses_altered_fabricated_or_foreign_proof(self):
+        from services.registry.promotion.gate import PromotionError, PromotionGate
         entry = self.one
-        kw = dict(tenant_id="t1", persona_id="p1", artifact_ref=entry["registry_id"],
-                  checksum=entry["checksum"], entry=entry, universe=("2330.TW",))
-        record = run_record_reader(entry["evaluation_summary"]["backtest_run_id"])
-        self.assertEqual(resolve_member_baseline(**kw)["reason"], "backtest_run_binding_unavailable")
-        self.assertEqual(resolve_member_baseline(**kw, run_record={**record, "artifact_checksum": "sha256:x"})["reason"],
-                         "backtest_run_bound_to_other_artifact")
-        self.assertEqual(resolve_member_baseline(**kw, run_record={**record, "status": "failed"})["reason"],
-                         "backtest_run_not_completed")
-        self.assertEqual(resolve_member_baseline(**kw, run_record=record)["status"], "approved")
+        run_id = entry["evaluation_summary"]["backtest_run_id"]
+        evaluation = EVALUATIONS[run_id]
+
+        def verify(proof=None, summary=None, ev=None, checksum=None):
+            return PromotionGate.verify_admitted_replication_proof(
+                proof if proof is not None else entry["replication_proof"],
+                summary if summary is not None else entry["evaluation_summary"], entry["lineage"],
+                backtest_evaluation=ev if ev is not None else evaluation,
+                artifact_checksum=checksum or entry["checksum"])
+        self.assertEqual(verify()["owner_verified_binding"]["backtest_run_id"], run_id)
+        # altered metrics everywhere, evaluation untouched
+        summary = {**entry["evaluation_summary"], "out_of_sample_sharpe_ratio": 999.0, "max_drawdown": 1e-6}
+        proof = copy.deepcopy(entry["replication_proof"])
+        proof["evaluation_summary"] = summary
+        details = next(r for r in proof["replication_results"]
+                       if r["criterion_id"] == "real_backtest_validation")["details"]
+        details.update(out_of_sample_sharpe_ratio=999.0, out_of_sample_max_drawdown=1e-6)
+        with self.assertRaises(PromotionError):
+            verify(proof, summary)
+        # wholly fabricated all-true checks over a failing evaluation
+        weak = copy.deepcopy(evaluation)
+        weak["out_of_sample"]["sharpe_ratio"] = -1.0
+        with self.assertRaises(PromotionError):
+            verify(ev=weak)
+        # evaluation for another artifact / another run, and missing evaluation
+        with self.assertRaises(PromotionError):
+            verify(checksum=self.two["checksum"])
+        with self.assertRaises(PromotionError):
+            verify(ev=EVALUATIONS[self.two["evaluation_summary"]["backtest_run_id"]])
+        with self.assertRaises(PromotionError):
+            PromotionGate.verify_admitted_replication_proof(
+                entry["replication_proof"], entry["evaluation_summary"], entry["lineage"],
+                backtest_evaluation=None, artifact_checksum=entry["checksum"])
 
     def test_wrong_child_scope_or_universe_never_inherits_proof(self):
         # A child with a different checksum/ref cannot use this entry's proof.
@@ -212,34 +250,6 @@ class ApprovedBaselineTests(unittest.TestCase):
         self.assertEqual(undefined["status"], "member_metric_missing")
         missing = compare_member_book(resolve(None, ref="x"), book())
         self.assertEqual((missing["status"], missing["reason"]), ("no_approved_baseline", "registry_entry_missing"))
-
-
-class RunRecordReaderTests(unittest.TestCase):
-    def test_reads_only_the_owner_store_and_is_missing_without_it(self):
-        import os, tempfile
-        from unittest import mock
-        from services.evolution.approved_baselines import backtest_run_record_reader
-        with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "backtest_runs.json").write_text(json.dumps({"run-1": {"backtest_run_id": "run-1"}}))
-            with mock.patch.dict(os.environ, {"ALPHA_REPLICATION_DATA_DIR": directory}):
-                self.assertEqual(backtest_run_record_reader("run-1"), {"backtest_run_id": "run-1"})
-                self.assertIsNone(backtest_run_record_reader("run-2"))  # foreign/unknown run
-            with mock.patch.dict(os.environ, {"ALPHA_REPLICATION_DATA_DIR": ""}):
-                self.assertIsNone(backtest_run_record_reader("run-1"))  # no store configured
-        entry = genuine_entry()
-        missing = resolve_member_baseline(
-            tenant_id="t1", persona_id="p", artifact_ref=entry["registry_id"], checksum=entry["checksum"],
-            entry=entry, run_record=None)
-        self.assertEqual(missing["reason"], "backtest_run_binding_unavailable")
-        failed = resolve_member_baseline(
-            tenant_id="t1", persona_id="p", artifact_ref=entry["registry_id"], checksum=entry["checksum"],
-            entry={**entry, "replication_success": False}, run_record=run_record_reader(
-                entry["evaluation_summary"]["backtest_run_id"]))
-        self.assertEqual(failed["reason"], "gate_not_passed")
-        approved = resolve_member_baseline(
-            tenant_id="t1", persona_id="p", artifact_ref=entry["registry_id"], checksum=entry["checksum"],
-            entry=entry, run_record=run_record_reader(entry["evaluation_summary"]["backtest_run_id"]))
-        self.assertGreater(approved["order_quantity"], 0)
 
 
 if __name__ == "__main__":
