@@ -27,6 +27,12 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 POLICY_ID = "consult-policy-v1"
 
+# Consult policy the Persona owner records on the panel personas. The
+# PersonaPolicyResolver catalog registers it as consultable with no tool or
+# route policy, so these personas can sit on a panel but hold no trading
+# authority.
+CONSULT_PANEL_POLICY_ID = "consult-panel.non-trading"
+
 RISK_PERSONA_ID = "persona-risk-officer"
 RED_TEAM_PERSONA_ID = "persona-red-team"
 
@@ -75,6 +81,8 @@ class ConsultRequirement:
     participants: tuple[PanelParticipant, ...]
     reasons: tuple[str, ...] = ()
     touches: tuple[str, ...] = ()
+    target_version: str = ""
+    candidate_digest: str = ""
 
     @property
     def risk_persona_id(self) -> str | None:
@@ -91,6 +99,16 @@ class ConsultRequirement:
             "gated_decision": {
                 "type": self.decision_type,
                 "id": self.decision_id,
+                **(
+                    {"target_version": self.target_version}
+                    if self.target_version
+                    else {}
+                ),
+                **(
+                    {"candidate_digest": self.candidate_digest}
+                    if self.candidate_digest
+                    else {}
+                ),
             },
             "initiator_persona_id": self.initiator_persona_id,
             "participants": [item.to_dict() for item in self.participants],
@@ -107,6 +125,8 @@ def required_consultation(
     touches: Iterable[str] = (),
     risk_persona_id: str = RISK_PERSONA_ID,
     red_team_persona_id: str = RED_TEAM_PERSONA_ID,
+    target_version: str = "",
+    candidate_digest: str = "",
 ) -> ConsultRequirement | None:
     """Return the consultation a decision requires, or ``None`` if ungated."""
 
@@ -152,6 +172,8 @@ def required_consultation(
         participants=tuple(unique),
         reasons=tuple(reasons),
         touches=tuple(sorted(scopes)),
+        target_version=str(target_version or ""),
+        candidate_digest=str(candidate_digest or ""),
     )
 
 
@@ -293,7 +315,7 @@ def bootstrap_consult_personas(
 ) -> dict[str, str]:
     """Create the risk and red team personas when missing; idempotent.
 
-    Returns ``{persona_id: 'created' | 'exists'}``. Both personas are created
+    Returns ``{persona_id: 'created' | 'exists' | 'repaired'}``. Both personas are created
     through ``POST /api/personas`` (the Persona owner's normal create path) in
     ``draft`` with ``metadata.trading=false`` / ``consultable=true``; advancing
     their lifecycle stays a governed step.
@@ -307,12 +329,29 @@ def bootstrap_consult_personas(
     listing = call("GET", f"{base}/api/personas", None)
     if not isinstance(listing, list):
         raise RuntimeError("persona list response must be an array")
-    existing = {str(item.get("persona_id")) for item in listing if isinstance(item, dict)}
+    existing = {
+        str(item.get("persona_id")): item
+        for item in listing
+        if isinstance(item, dict)
+    }
     result: dict[str, str] = {}
     for spec in PANEL_PERSONA_SPECS:
         persona_id = spec["persona_id"]
         if persona_id in existing:
-            result[persona_id] = "exists"
+            if existing[persona_id].get("consult_policy_id") == CONSULT_PANEL_POLICY_ID:
+                result[persona_id] = "exists"
+            else:
+                # Complete a previously half-provisioned persona through the
+                # owner's normal patch path; nothing else is touched.
+                call(
+                    "PATCH",
+                    f"{base}/api/personas/{persona_id}",
+                    {
+                        "actor_id": actor_id,
+                        "consult_policy_id": CONSULT_PANEL_POLICY_ID,
+                    },
+                )
+                result[persona_id] = "repaired"
             continue
         body = {
             "actor_id": actor_id,
@@ -322,6 +361,7 @@ def bootstrap_consult_personas(
             "lifecycle_state": "draft",
             "owner": actor_id,
             "tenant_id": tenant_id,
+            "consult_policy_id": CONSULT_PANEL_POLICY_ID,
             "metadata": {
                 "persona_class": "consult_panel",
                 "panel_role": spec["panel_role"],

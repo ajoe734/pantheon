@@ -89,12 +89,20 @@ def test_missing_required_answer_fails_closed():
 
 class FakePersonaOwner:
     def __init__(self, existing=()):
-        self.records = {i: {"persona_id": i} for i in existing}
+        self.records = {
+            i: {"persona_id": i, "consult_policy_id": t.CONSULT_PANEL_POLICY_ID}
+            for i in existing
+        }
         self.posts = []
 
     def __call__(self, method, url, body):
         if method == "GET":
             return list(self.records.values())
+        if method == "PATCH":
+            self.records[url.rsplit("/", 1)[1]].update(
+                {k: v for k, v in body.items() if k != "actor_id"}
+            )
+            return {}
         self.posts.append(body)
         if body["persona_id"] in self.records:
             return {"_conflict": True}
@@ -137,3 +145,14 @@ def test_risk_persona_initiating_keeps_veto_after_dedup():
         {t.RISK_PERSONA_ID: "reject", t.RED_TEAM_PERSONA_ID: "approve"},
     )
     assert gate.operator_decision_required
+
+
+def test_bootstrap_sets_consult_policy_and_repairs_half_provisioned_persona():
+    owner = FakePersonaOwner()
+    owner.records[t.RISK_PERSONA_ID] = {"persona_id": t.RISK_PERSONA_ID, "consult_policy_id": None}
+    out = t.bootstrap_consult_personas(persona_url="http://p", http=owner)
+    assert out == {t.RISK_PERSONA_ID: "repaired", t.RED_TEAM_PERSONA_ID: "created"}
+    assert owner.records[t.RED_TEAM_PERSONA_ID]["consult_policy_id"] == t.CONSULT_PANEL_POLICY_ID
+    assert owner.records[t.RISK_PERSONA_ID]["consult_policy_id"] == t.CONSULT_PANEL_POLICY_ID
+    again = t.bootstrap_consult_personas(persona_url="http://p", http=owner)
+    assert set(again.values()) == {"exists"}

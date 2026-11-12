@@ -65,6 +65,17 @@ class ConsultPolicy:
     consultable: bool = True
 
 
+# Consult policy recorded on the risk / red team panel personas by the governed
+# bootstrap (services.persona.consult_triggers.CONSULT_PANEL_POLICY_ID):
+# consultable, no skills; with no tool or route policy they hold no trading
+# authority.
+BUILTIN_CONSULT_POLICIES: Dict[str, ConsultPolicy] = {
+    "consult-panel.non-trading": ConsultPolicy(
+        "consult-panel.non-trading", allowed_skills=[], consultable=True
+    ),
+}
+
+
 # ---------------------------------------------------------------------------
 # Resolution result
 # ---------------------------------------------------------------------------
@@ -121,7 +132,12 @@ class PersonaPolicyResolver:
     ) -> None:
         self._tool_profiles: Dict[str, ToolProfile] = tool_profiles or {}
         self._route_policies: Dict[str, RoutePolicy] = route_policies or {}
-        self._consult_policies: Dict[str, ConsultPolicy] = consult_policies or {}
+        # Built-in panel policy first so a caller catalog can never be
+        # required to carry it, and can never weaken it by reusing its id.
+        self._consult_policies: Dict[str, ConsultPolicy] = {
+            **(consult_policies or {}),
+            **BUILTIN_CONSULT_POLICIES,
+        }
         self._binding_store = binding_store
 
     # ------------------------------------------------------------------

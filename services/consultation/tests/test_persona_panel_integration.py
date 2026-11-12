@@ -427,12 +427,15 @@ def _gov_post(stack: dict[str, Any], path: str, body: dict, sub: str, roles: lis
         return exc.code, json.loads(exc.read().decode())
 
 
-def _propose_and_review(stack: dict[str, Any], decision_id: str, target_id: str) -> None:
+def _propose_and_review(
+    stack: dict[str, Any], decision_id: str, target_id: str,
+    target_type: str = "registry_entry",
+) -> None:
     status, body = _gov_post(
         stack, "",
         {
             "decision_id": decision_id, "expected_version": 0,
-            "target_type": "registry_entry", "target_id": target_id,
+            "target_type": target_type, "target_id": target_id,
             "target_version": "1", "tenant_id": TENANT,
             "owner_user_id": "proposer-1", "risk_level": "low",
             "candidate_digest": "a" * 64, "expires_at": "2099-01-01T00:00:00Z",
@@ -526,7 +529,7 @@ def test_risk_initiated_patch_keeps_veto_end_to_end(stack: dict[str, Any]) -> No
         )
     assert result["completed"] == 1, result
     assert stack["handoffs"].list_all()[0]["gate"]["operator_decision_required"] is True
-    _propose_and_review(stack, "apv-patch", "patch-risk-init")
+    _propose_and_review(stack, "apv-patch", "patch-risk-init", "evolution_proposal")
     status, _body = _decide(
         stack, "apv-patch", actor="auto-gate", roles=["automated_gate"],
         actor_role="automated_gate",
@@ -623,3 +626,117 @@ def _get(base: str, path: str) -> Any:
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read().decode())
+
+
+def test_memory_outage_after_risk_veto_still_holds_adoption_then_retry_adopts(
+    stack: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.consultation import workflow_executor as wf
+
+    _bootstrap(stack)
+    real = wf._write_panel_memory
+    calls = {"n": 0}
+
+    def flaky(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("memory unavailable")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(wf, "_write_panel_memory", flaky)
+    with _provider_fake({INITIATOR: "approve", triggers.RISK_PERSONA_ID: "reject"}) as fake:
+        cfg = _config(stack, f"http://127.0.0.1:{fake.server_address[1]}/contribute")
+        requirement = triggers.required_consultation(
+            "trial_admission", "trial-outage", initiator_persona_id=INITIATOR
+        )
+        ConsultationServiceClient(
+            base_url=stack["api"], token=SERVICE_TOKEN, tenant_id=TENANT
+        ).open_persona_panel(requirement, persona_id=INITIATOR, trace_id="trace-outage")
+        first = run_tick(config=cfg, state=WorkflowStateStore(cfg.state_path), provider=_provider(cfg))
+        assert first["completed"] == 0
+        # The hold exists even though memory failed.
+        held = stack["handoffs"].list_all()
+        assert len(held) == 1 and held[0]["operator_decision"]["status"] == "pending"
+        _propose_and_review(stack, "apv-outage", "trial-outage")
+        status, body = _decide(
+            stack, "apv-outage", actor="auto-gate", roles=["automated_gate"],
+            actor_role="automated_gate",
+        )
+        assert status == 409, body
+        # Retry adopts the same handoff (no duplicate) and finishes memory.
+        for _ in range(5):
+            second = run_tick(config=cfg, state=WorkflowStateStore(cfg.state_path), provider=_provider(cfg))
+            if second["completed"]:
+                break
+            time.sleep(0.5)
+    assert len(stack["handoffs"].list_all()) == 1
+    assert stack["handoffs"].list_all()[0]["operator_decision"]["status"] == "pending"
+    status, _ = _decide(
+        stack, "apv-outage", actor="auto-gate", roles=["automated_gate"],
+        actor_role="automated_gate",
+    )
+    assert status == 409
+
+
+def test_unrelated_target_type_cannot_consume_or_clear_veto(stack: dict[str, Any]) -> None:
+    _bootstrap(stack)
+    _c, result, _f = _run_panel(
+        stack, {INITIATOR: "approve", triggers.RISK_PERSONA_ID: "reject"},
+        decision_type="trial_admission", touches=(), decision_id="shared-id",
+    )
+    assert result["completed"] == 1, result
+    # A human approval of an unmapped target type with the same id is neither
+    # blocked by nor resolves the veto.
+    _propose_and_review(stack, "model-approval", "shared-id", "model_artifact")
+    status, body = _decide(stack, "model-approval", actor="op-1", roles=["governance_reviewer", "operator"])
+    assert status == 200, body
+    assert stack["handoffs"].list_all()[0]["operator_decision"]["status"] == "pending"
+    _propose_and_review(stack, "trial-approval", "shared-id")
+    status, body = _decide(
+        stack, "trial-approval", actor="auto-gate", roles=["automated_gate"],
+        actor_role="automated_gate",
+    )
+    assert status == 409, body
+
+
+def test_veto_bound_to_candidate_version(stack: dict[str, Any]) -> None:
+    from services.governance import main as gov
+
+    handoff = {
+        "tenant_id": TENANT,
+        "gated_decision": {"type": "trial_admission", "id": "t-1", "target_version": "2"},
+        "gate": {"operator_decision_required": True},
+        "operator_decision": {"status": "pending"},
+        "handoff_id": "h-1",
+    }
+    stack["handoffs"].put(handoff)
+    assert gov._consultation_veto_block(TENANT, "t-1", "registry_entry", "2", "") is not None
+    assert gov._consultation_veto_block(TENANT, "t-1", "registry_entry", "1", "") is None
+
+
+def test_bootstrap_personas_resolve_consultable_and_non_trading_and_idempotent(
+    stack: dict[str, Any],
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    first = _bootstrap(stack)
+    assert set(first.values()) == {"created"}
+    assert set(_bootstrap(stack).values()) == {"exists"}
+    request = urllib.request.Request(
+        stack["persona"] + "/api/personas", headers={"Authorization": f"Bearer {PERSONA_TOKEN}"}
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        rows = json.loads(response.read())
+    assert len(rows) == 2
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "control-plane" / "persona"))
+    try:
+        from persona_policy_resolver import PersonaPolicyResolver
+    finally:
+        sys.path.pop(0)
+    for row in rows:
+        resolved = PersonaPolicyResolver().resolve(SimpleNamespace(**row))
+        assert resolved.consultable is True and not resolved.denied
+        assert resolved.effective_tools == [] and resolved.effective_workflows == []
+        assert row["metadata"]["trading"] is False
+        assert row["lifecycle_state"] == "draft"

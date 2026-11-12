@@ -19,11 +19,16 @@
     "3_risk_veto": [
       "services/persona/test_consult_triggers.py::test_risk_oppose_vetoes_even_when_everyone_else_approves",
       "services/persona/test_consult_triggers.py::test_missing_required_answer_fails_closed",
-      "services/consultation/tests/test_persona_panel_integration.py::test_risk_oppose_blocks_auto_adoption_and_becomes_operator_decision"
+      "services/consultation/tests/test_persona_panel_integration.py::test_risk_oppose_blocks_auto_adoption_and_becomes_operator_decision",
+      "services/consultation/tests/test_persona_panel_integration.py::test_memory_outage_after_risk_veto_still_holds_adoption_then_retry_adopts (hold persisted before memory; automated decide 409 during memory outage; retry adopts same handoff, no duplicate)",
+      "services/consultation/tests/test_persona_panel_integration.py::test_unrelated_target_type_cannot_consume_or_clear_veto",
+      "services/consultation/tests/test_persona_panel_integration.py::test_veto_bound_to_candidate_version"
     ],
     "4_idempotent_bootstrap": [
       "services/persona/test_consult_triggers.py::test_bootstrap_creates_both_non_trading_personas_once",
-      "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (real Persona owner POST /api/personas; second run creates nothing)"
+      "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (real Persona owner POST /api/personas; second run creates nothing)",
+      "services/consultation/tests/test_persona_panel_integration.py::test_bootstrap_personas_resolve_consultable_and_non_trading_and_idempotent (real Persona owner + real PersonaPolicyResolver: consultable=True, no tools/workflows, draft, trading=false; second run creates nothing)",
+      "services/persona/test_consult_triggers.py::test_bootstrap_sets_consult_policy_and_repairs_half_provisioned_persona"
     ],
     "5_memo_evidence_and_memory": [
       "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (memo listed under the gated decision target; real governance handoff acknowledged with memo evidence ref; real memory service strict-auth writes initiator consultation_outcome + institutional cross_persona_observation)"
@@ -39,8 +44,8 @@
     ]
   },
   "verification": {
-    "command": "pytest services/consultation services/persona/test_consult_triggers.py; pytest services/consultation/tests/test_panel_deployed_config.py (consultable resolver test included)",
-    "result": "101 passed (consultation + triggers + deployed-config); 33 passed (existing policy resolver suite)"
+    "command": ".venv-pantheon/bin/python -m pytest services/consultation services/persona/test_consult_triggers.py; .venv-pantheon/bin/python -m pytest services/control-plane/persona -k policy",
+    "result": "113 passed (consultation + triggers); 43 passed (persona policy selection). services/governance approval PostgreSQL tests error without a database in this env (pre-existing, unrelated); governance consult/veto/handoff selection 39 passed before that error."
   },
   "not_claimed": [
     "Hosted/deployed run: no real hosted cycle or consultation was executed.",
@@ -54,5 +59,10 @@
     "risk_veto_dedup": "required_consultation merges may_veto onto the initiator entry when the risk persona initiates; unit + e2e regressions",
     "gated_decision_wiring": "governance consultation-handoffs stores gated_decision/gate/operator_decision for consultation.panel.* handoffs; the existing approval decide command (POST /api/governance/approvals/{id}/decide) refuses (409) approved outcomes on a target with a pending risk veto unless a human operator principal decides, and then durably records operator_decision=decided on the handoff; e2e test attempts real adoption after risk reject (storage double replaces PostgreSQL only; no DB available in this env)",
     "target_binding": "panel.gated_decision type/id must equal request target_type/target_id at consultation entry (422) and in executor (WorkflowBlocked)"
+  },
+  "rework_20261112_r2": {
+    "memory_outage_hold": "workflow_executor persists + dispatches + acknowledges the gate handoff (installing the operator-decision hold at governance) BEFORE the memory writeback; panel claims no longer short-circuit on an acknowledged handoff, so a retry after memory failure still writes memory",
+    "veto_binding": "governance CONSULT_GATED_APPROVAL_TARGETS maps trial_admission->{registry_entry,paper_canary_candidacy}, envelope_publication->{allocation_policy,registry_entry}, harness_patch->{persona_training_target,evolution_proposal,evolution_execute}; veto lookup/resolution requires mapped target_type, same id, and the panel-bound target_version/candidate_digest when present (required_consultation accepts them). Mapping is an explicit owner-boundary choice for reviewer confirmation.",
+    "bootstrap_provisioning": "bootstrap creates personas with consult_policy_id=consult-panel.non-trading (built into PersonaPolicyResolver: consultable, no skills; no tool/route policy so no trading authority) and repairs existing ones via the owner PATCH path; lifecycle stays draft (governed)."
   }
 }

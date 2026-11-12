@@ -1405,17 +1405,38 @@ def _tenant_approval(decision_id: str, ctx: AuthContext) -> ApprovalDecision:
     return decision
 
 
+# Explicit owner mapping: which approval target types are the adoption path of
+# each consult-gated decision type. A veto is only ever matched or consumed by
+# an approval of a mapped target type with the same id (and, when the panel
+# bound one, the same version/candidate digest).
+CONSULT_GATED_APPROVAL_TARGETS: Dict[str, frozenset] = {
+    "trial_admission": frozenset({"registry_entry", "paper_canary_candidacy"}),
+    "envelope_publication": frozenset({"allocation_policy", "registry_entry"}),
+    "harness_patch": frozenset(
+        {"persona_training_target", "evolution_proposal", "evolution_execute"}
+    ),
+}
+
+
 def _consultation_veto_block(
-    tenant_id: str, target_id: str
+    tenant_id: str, target_id: str, target_type: str = "",
+    target_version: str = "", candidate_digest: str = "",
 ) -> Optional[Dict[str, Any]]:
-    """Return a pending vetoed panel handoff for this approval target, if any."""
+    """Return a pending vetoed panel handoff bound to this exact approval."""
 
     for item in consultation_handoff_store.list_all():
         gate = item.get("gate") or {}
         op = item.get("operator_decision") or {}
+        gated = item.get("gated_decision") or {}
+        mapped = CONSULT_GATED_APPROVAL_TARGETS.get(str(gated.get("type") or ""), frozenset())
+        bound_version = str(gated.get("target_version") or "")
+        bound_digest = str(gated.get("candidate_digest") or "")
         if (
             item.get("tenant_id") == tenant_id
-            and (item.get("gated_decision") or {}).get("id") == target_id
+            and gated.get("id") == target_id
+            and str(target_type) in mapped
+            and (not bound_version or bound_version == str(target_version or ""))
+            and (not bound_digest or bound_digest == str(candidate_digest or ""))
             and gate.get("operator_decision_required")
             and op.get("status") == "pending"
         ):
@@ -1511,7 +1532,10 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
         if operation == 'decide' and str(getattr(body.outcome, 'value', body.outcome)) in (
                 'approved', 'approved_with_conditions'):
             veto_block = _consultation_veto_block(
-                ctx.claims['tenant_id'], decision.target_id)
+                ctx.claims['tenant_id'], decision.target_id,
+                str(getattr(decision.target_type, 'value', decision.target_type)),
+                str(getattr(decision, 'target_version', '') or ''),
+                str(getattr(decision, 'candidate_digest', '') or ''))
             if veto_block is not None:
                 if role == 'automated_gate' or 'operator' not in ctx.roles:
                     raise ApprovalCommandConflict(

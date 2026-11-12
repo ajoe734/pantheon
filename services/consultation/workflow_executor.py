@@ -499,7 +499,13 @@ def execute_claim(
     if str(request.get("tenant_id") or "") != config.tenant_id:
         raise WorkflowBlocked("ConsultRequest tenant does not match worker tenant")
 
-    recovered = _existing_acknowledged_handoff(config, claim.request_id)
+    # A panel claim never short-circuits on an acknowledged handoff: the hold
+    # is persisted before the memory writeback, so the handoff alone does not
+    # prove the memory work finished. The panel path is fully idempotent.
+    is_panel = isinstance((request.get("metadata") or {}).get("panel"), Mapping)
+    recovered = (
+        None if is_panel else _existing_acknowledged_handoff(config, claim.request_id)
+    )
     if recovered is not None:
         memo_id, handoff_id = recovered
         state.complete(claim, memo_id=memo_id, handoff_id=handoff_id)
@@ -1136,22 +1142,10 @@ def _execute_panel_claim(
     state.save_progress(claim, phase="memo_published", memo_id=memo_id)
     _phase_hook(phase_hook, "memo_published")
 
-    claim = _renew(state, claim, config)
-    _write_panel_memory(
-        config,
-        request=request,
-        panel=panel,
-        decision=decision,
-        participants=participants,
-        gate=gate,
-        memo_id=memo_id,
-        summary=summary,
-        confidence=confidence,
-        evidence_ids=all_evidence,
-    )
-    state.save_progress(claim, phase="memory_written", memo_id=memo_id)
-    _phase_hook(phase_hook, "memory_written")
-
+    # Fail-closed hold first: persist and dispatch the gate handoff (which
+    # installs the operator-decision hold at the decision owner) before any
+    # asynchronous memory write, so a memory outage cannot leave a published
+    # veto without a hold.
     claim = _renew(state, claim, config)
     memo_ref = f"consultation://memos/{memo_id}"
     handoff = _api_post(
@@ -1195,6 +1189,23 @@ def _execute_panel_claim(
         claim, phase="handoff_acknowledged", memo_id=memo_id, handoff_id=handoff_id
     )
     _phase_hook(phase_hook, "handoff_acknowledged")
+
+    claim = _renew(state, claim, config)
+    _write_panel_memory(
+        config,
+        request=request,
+        panel=panel,
+        decision=decision,
+        participants=participants,
+        gate=gate,
+        memo_id=memo_id,
+        summary=summary,
+        confidence=confidence,
+        evidence_ids=all_evidence,
+    )
+    state.save_progress(claim, phase="memory_written", memo_id=memo_id)
+    _phase_hook(phase_hook, "memory_written")
+
     state.complete(claim, memo_id=memo_id, handoff_id=handoff_id)
     return {
         "request_id": claim.request_id,

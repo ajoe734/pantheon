@@ -68,6 +68,9 @@ governance handoff (`consultation.panel.<decision_type>.reviewed`, evidence refs
   answer → `operator_decision` (fail closed).
 * `approve` / `approve_with_conditions` → `adopt_eligible`.
 
+The gate handoff (the hold) is persisted and dispatched before the memory writeback, and the
+hold is bound to the gated decision's mapped approval target type, id and (when bound) version.
+
 The veto holds in paper too: an oppose is never auto-adopted anywhere; it is routed to an
 operator. Red team opposition is reported as a disagreement but does not veto.
 
