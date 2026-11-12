@@ -70,6 +70,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     bf.add_argument("--holidays-file", default=None, help="JSON list of extra closure dates (YYYY-MM-DD)")
     bf.add_argument("--dry-run", action="store_true", help="Print request count and wall-clock only")
 
+    sub.add_parser(
+        "capture-close",
+        help="Capture today's TWSE+TPEx all-stock close (14:40-17:00 Taipei window; timer retries)",
+    )
+
     prune_p = sub.add_parser("prune", help="Prune bundles older than raw_retention_days (90 days)")
     prune_p.add_argument("--max-age-days", type=int, default=None)
 
@@ -122,6 +127,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(json.dumps({"updated_at": utc_iso(), "sources": {}}, indent=2))
         return 0
+
+    if args.command == "capture-close":
+        from .close_capture import capture_same_day_close
+
+        runner = CollectorRunner(config, root_dir=args.root_dir, hasher=AuthorHasher.from_file(args.salt_file))
+        result = capture_same_day_close(runner, now=datetime.now(timezone.utc))
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return 2 if result.retry_needed else 0
 
     if args.command == "backfill":
         now_iso = utc_iso()
