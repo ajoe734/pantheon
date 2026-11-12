@@ -4,7 +4,7 @@
 | --- | --- |
 | Status | Design for implementation; the operator asked on 2026-11-12 to write it, open the tasks and let the supervisor and auto workers deliver them |
 | Date | 2026-11-12 |
-| Repo base | `origin/dev` `4042386ef7b11cee46343ba2cad53033239c1ced`; repository references re-checked on this base on 2026-11-12; inherited hosted observations are qualified in §3 |
+| Repo base | `origin/dev` `97308364387bd613382cbad4550eb6682a539932`; repository references re-checked on this base on 2026-11-12; inherited hosted observations are qualified in §3 |
 | Extends | `docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_PERSONA_STRATEGY_POOL_AUTONOMY_2026-11-12.md` (target model §4, persona cycle §5.5) and its capital addendum; nothing in the pool model is replaced |
 | Restores | the per-persona OODA of `Pantheon_總索引版系統分析文件.md` §6.4; the persona memory plan (BG-004, OCLAW-PMEM); the consult policy of `PERSONA_RUNTIME_MODEL.md` §6/§13; the seven-stage discussion loop; the Agora learning surfaces deleted by `AGORA-DEAD-SURFACES-REMOVAL-001` |
 | Adds | evidence-driven self-optimisation of the persona harness (operator direction of 2026-11-12) |
