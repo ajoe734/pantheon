@@ -307,6 +307,64 @@ class AlphaReplicationQueue:
             self._rewrite_durable(entries)
             return True
 
+    def mark_insufficient_history(
+        self,
+        tenant_id: str,
+        strategy_spec_id: str,
+        *,
+        claim_token: str,
+        reason: str,
+        authority_task_id: str | None = None,
+        authority_run_id: str | None = None,
+        experiment_task_id: str | None = None,
+        experiment_run_id: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Record a candidate with < 2 years point-in-time history as insufficient_history."""
+
+        current = parse_utc(_utc_now(now))
+        assert current is not None
+        with self._lock_context():
+            entries = self._read()
+            entry = self._find(entries, tenant_id, strategy_spec_id)
+            if not self._owns_live_claim(entry, claim_token, current):
+                return False
+            entry["last_revalidation_at"] = _utc_now(current)
+            entry["last_revalidation_status"] = "insufficient_history"
+            entry["insufficient_history_reason"] = _require_text(reason, "reason")[:2000]
+            entry["status"] = "insufficient_history"
+            if authority_task_id:
+                entry["authority_task_id"] = _require_text(
+                    authority_task_id,
+                    "authority_task_id",
+                )
+            if authority_run_id:
+                authority_run_ids = list(entry.get("authority_run_ids") or [])
+                resolvable_run_id = _require_text(
+                    authority_run_id,
+                    "authority_run_id",
+                )
+                if resolvable_run_id not in authority_run_ids:
+                    authority_run_ids.append(resolvable_run_id)
+                entry["authority_run_ids"] = authority_run_ids
+            if experiment_task_id:
+                entry["experiment_task_id"] = _require_text(
+                    experiment_task_id,
+                    "experiment_task_id",
+                )
+            if experiment_run_id:
+                experiment_run_ids = list(entry.get("experiment_run_ids") or [])
+                domain_run_id = _require_text(
+                    experiment_run_id,
+                    "experiment_run_id",
+                )
+                if domain_run_id not in experiment_run_ids:
+                    experiment_run_ids.append(domain_run_id)
+                entry["experiment_run_ids"] = experiment_run_ids
+            self._clear_claim(entry)
+            self._rewrite_durable(entries)
+            return True
+
     def mark_failed(
         self,
         tenant_id: str,
@@ -437,6 +495,9 @@ class AlphaReplicationQueue:
             "pending": sum(1 for entry in entries if entry.get("status") == "pending"),
             "claimed": sum(1 for entry in entries if entry.get("status") == "claimed"),
             "completed": sum(1 for entry in entries if entry.get("status") == "completed"),
+            "insufficient_history": sum(
+                1 for entry in entries if entry.get("status") == "insufficient_history"
+            ),
             "dlq": sum(1 for entry in entries if entry.get("status") == "dlq"),
             "revalidated": sum(
                 1 for entry in entries if int(entry.get("revalidation_count") or 0) > 0

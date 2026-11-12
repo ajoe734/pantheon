@@ -1,0 +1,149 @@
+{
+  "task_id": "CI-SANDBOX-APT-DNS-20261111",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "status": "fallback_metadata_budget_corrected_awaiting_exact_head_ci_and_independent_review",
+  "failed_attempts": [
+    {
+      "run": "43032317523",
+      "attempt": 1,
+      "job": "130567301359",
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/43032317523/attempts/1",
+      "pr": 7176,
+      "source_head": "78813d453acde3db137b2521ddb5fd06a965d705",
+      "raw_log_sha256": "eb8a306699bb2683ef78b260f18d795472428362f6d68903b0c66eb8b972c1a6",
+      "failure": "Temporary failure resolving 'azure.archive.ubuntu.com' via mirror+file:/etc/apt/apt-mirrors.txt; step timed out after 5 minutes"
+    },
+    {
+      "run": "43032317523",
+      "attempt": 2,
+      "job": "130582344330",
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/43032317523/attempts/2",
+      "pr": 7176,
+      "source_head": "78813d453acde3db137b2521ddb5fd06a965d705",
+      "raw_log_sha256": "fbd183f8b63803330109998e2009587cfa1e1f9d0399155ef2086dc7c1388a0e",
+      "failure": "same DNS failure on failed-only rerun of unchanged head"
+    }
+  ],
+  "change": {
+    "helper": "scripts/ci/provision_worker_sandbox.sh",
+    "bounds": "Primary update 45s, fallback update 90s, install 60s per attempt; Acquire::Retries=1, 15s HTTP/HTTPS inactivity timeouts and 5s kill grace. Four apt attempts total 255s + 20s kill grace + 5s capability probe = 280s, leaving 20s overhead in the unchanged 5-minute step.",
+    "fallback": "one HTTPS fallback to Launchpad-registered MIT SIPB mirrors.mit.edu/ubuntu for all three Ubuntu suites, signed-by ubuntu-archive-keyring; refused on non-Ubuntu. APT::Update::Error-Mode=any prevents partial metadata failures being accepted with stale lists.",
+    "diagnostics": "Temporary DNS discriminator code removed from candidate. Existing 8f434dced diagnostic run is separate historical evidence, not a requirement to pass.",
+    "exit_codes": {
+      "10": "metadata",
+      "11": "install",
+      "12": "profile/capability probe",
+      "13": "unsupported distro (primary code returned)"
+    },
+    "unchanged": [
+      "runner ubuntu-24.04",
+      "unchanged upstream bwrap-userns-restrict profile",
+      "real /usr/bin/bwrap probe",
+      "package signature verification",
+      "Verify real worker sandbox boundaries step"
+    ]
+  },
+  "validation": {
+    "local": "python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection; bash -n helper",
+    "local_result": "26 tests OK using checkout-scoped .venv-pantheon/bin/python3 (0.936s, exit 0); bash -n helper OK; git diff --check OK. Includes the existing 23 tests and three focused metadata-budget regression tests. Fixture-only validation does not prove runner provisioning.",
+    "local_note": "fixture tests only; development-host DNS is not proof of GitHub runner DNS",
+    "previous_failed_candidate": "exact head 3e3982afb Branch CI run 43043688209: Python packaging provision success; Service suites (postgres/runtime/misc/heavy) success; Runtime mirror guard and Commit trailers success; Smoke acceptance FAILURE in 'Provision real worker sandbox' - primary azure mirror apt update exit 124, fallback archive/security.ubuntu.com exit 124 ('Temporary failure resolving security.ubuntu.com'), helper fail-closed exit 10 (primary=10 fallback=10). Runner DNS to Ubuntu hosts was down for the whole ~90s window; the bounded fallback did not help in that case. No hosted pass claimed.",
+    "hosted": {
+      "head": "7bb062a3bba00f6ee4cdbe01615b8ee595551096",
+      "base": "9ce4f3396f44b402290cd94578d20ba628b0ac48",
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/43051904067",
+      "smoke_job": "https://github.com/ajoe734/pantheon/actions/runs/43051904067/job/130632539407",
+      "raw_job_log_sha256": "1b679c8ae694ebfc26b863349c948c1f39f0a0a624393c73fd9474a2262b5f43",
+      "helper_blob": "47fd4622901dad34cc3fe905b054859b92444162",
+      "workflow_blob": "cadb8abaf81a09ecf9ede2e834157d2f7f9744d1",
+      "provision": {
+        "result": "success",
+        "started_at": "2026-11-11T15:51:43Z",
+        "completed_at": "2026-11-11T15:53:04Z",
+        "primary": "APT update bounded timeout exit 124 at 15:52:28Z; original output retained",
+        "fallback": "Same runner fetched all three noble InRelease files and package indexes over HTTPS from mirrors.mit.edu, then installed bubblewrap and apparmor-profiles using signed-by ubuntu-archive-keyring with no signature/TLS/freshness bypass",
+        "packages": {
+          "bubblewrap": "0.9.0-1ubuntu0.3",
+          "apparmor": "4.0.1really4.0.1-0ubuntu0.24.04.9",
+          "apparmor-profiles": "4.0.1really4.0.1-0ubuntu0.24.04.9"
+        },
+        "upstream_profile_sha256": "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9",
+        "capability": "Unchanged upstream AppArmor profile loaded; real /usr/bin/bwrap capability probe passed (exit 0) at 15:52:59Z"
+      },
+      "passed_steps": [
+        "Verify workflow contract (23 focused tests)",
+        "BFF test architecture gate",
+        "BFF tenant fallback audit gate",
+        "Run source ingestion tests",
+        "Run compose contract tests"
+      ],
+      "smoke": "FAILURE at Run lean runtime and paper lifecycle tests: 1 failed, 587 passed, 13 skipped, 70 subtests passed; process exit 1",
+      "boundary_checks": "Verify real worker sandbox boundaries SKIPPED because the preceding product suite failed. No boundary/browser/full-Smoke pass or completed delivery claimed.",
+      "other_checks_as_of_1604Z": "Commit trailers, Runtime mirror guard, Python packaging provision, Service suites misc/runtime passed; heavy installs, postgres, Research still running (not counted as passed)"
+    },
+    "product_blocker": {
+      "test": "services/execution/lean_runtime/test_futures_session_inputs.py::ProducerRuntimeFuturesWiringIntegrationTests::test_summary_projection_and_drift_see_futures_valuation",
+      "failure": "KeyError: mark_price at test_futures_session_inputs.py:1038",
+      "local_reproduction": "timeout 150s .venv-pantheon/bin/python3 -m pytest -q <test above>: exit 1, same KeyError, 2.98s",
+      "scope_evidence": "At historical head 7bb062a3b, git diff origin/dev HEAD -- services/execution/lean_runtime services/telemetry/runtime_summary.py was empty. The fixture was then outside the declared scope; no product source or assertions had changed.",
+      "routing": "Claude owns the archived PAPER-FUTURES-SESSION-MARK-AND-WINDOW-20261110 task containing this test. Request existing coordination to route the current product regression; that completed task is NOT a blocking task dependency.",
+      "remaining": "The 2026-11-11T16:07:45Z canonical artifact-contract admission now permits this exact existing fixture in the original task. Fixture correction is recorded below; exact-head full CI including real worker boundaries, independent review and integration remain required. PR7176 remains with its existing owner; no repair merge exists yet."
+    },
+    "fixture_resolution": {
+      "scope": "Only test_summary_projection_and_drift_see_futures_valuation transport inputs in the existing test_futures_session_inputs.py; no production code, clock, freshness rule or assertion changes.",
+      "cause": "Risk/order/fill/position payloads carried the runtime wall clock while only pnl/drawdown created_at was fixed to 2026-11-10T07:13:29Z. After that date the projection correctly rejected the earlier valuation against later position observations.",
+      "correction": "Keep the existing valuation instant and transport all opening events at the fixture's 2026-11-09T09:00:00Z opening instant, in existing event order. Retain exact 97.1 mark, net -19.884, drawdown, provenance and missing/stale/tombstone/calendar assertions.",
+      "anchor_commit": "cc162bb9815ed828ff8fc7bcf35399d07294b2fa",
+      "before": "timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_futures_session_inputs.py::ProducerRuntimeFuturesWiringIntegrationTests::test_summary_projection_and_drift_see_futures_valuation: exit 1; same KeyError mark_price; 3.07s.",
+      "after": "Same exact node/command: exit 0; 1 passed, 1 warning; 2.97s.",
+      "lean_batch_command": "timeout 240s .venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "lean_batch_result": "exit 0; 588 passed, 13 skipped, 1 warning, 70 subtests passed in 182.68s. No skip/xfail or assertion changes were introduced.",
+      "focused": "timeout 90s .venv-pantheon/bin/python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection: exit 0; 23 tests OK. bash -n scripts/ci/provision_worker_sandbox.sh and git diff --check: exit 0. Checkout-scoped Python distribution check-only: exit 0.",
+      "delivery": "Freeze final source/evidence head on existing PR7183 after this correction. Later terminal CI/review/merge outcomes belong in canonical delivery/review/final reporting, without evidence-only commits that invalidate useful CI or exact-head approval. Historical 7bb provisioning SUCCESS and whole-Smoke FAILURE above remain unchanged; final-head CI and real negative boundary results are not yet claimed."
+    },
+    "metadata_timeout_history": {
+      "head": "51b7c95a857c1f25baf69fdfc1ec95ac03ad6329",
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/43056202118",
+      "smoke_job": "https://github.com/ajoe734/pantheon/actions/runs/43056202118/job/130650741034",
+      "raw_job_log_sha256": "f35fbdea1c0daa501b2dae095bf797c01589c896ef7caf161b4f0e3b8c4b4c5c",
+      "result": "Provisioning FAILURE, helper exit 10; downstream tests and boundaries did not run.",
+      "primary": "45s update timeout, exit 124 at 2026-11-11T16:28:11Z.",
+      "fallback": "HTTPS noble/noble-updates/noble-security InRelease fetched at 16:28:11-12Z; main Packages 1.4MB and universe Packages 15.0MB fetched; universe Translation-en 5.98MB progressing at 16:28:50Z; 45s full metadata timeout at 16:28:56Z, exit 124.",
+      "diagnosis": "Reachable registered signed mirror with progressing fresh metadata transfer. The metadata budget was insufficient; this was not evidence of DNS or signature failure.",
+      "approval": "Any prior approval of this historical head does not cover the new metadata-budget code."
+    },
+    "metadata_budget_resolution": {
+      "anchor_commit": "9b685e5c9e261d5d3fc355a0a4dada65dba39d8b",
+      "change": "Only fallback apt update receives a fixed 90s timeout. Primary update, installs, retry count, per-connection timeouts, suite/signature/TLS checks and five-minute workflow bound are unchanged. No new configuration, mirror, resolver, endpoint or framework.",
+      "local_command": "timeout 90s .venv-pantheon/bin/python3 -m unittest scripts.test_ci_worker_sandbox_provision scripts.test_branch_ci_gate_selection",
+      "regressions": [
+        "Real GNU timeout wraps the temporary apt fixture. A fallback transfer delayed 0.3s completes despite a 0.1s primary metadata budget.",
+        "Both install attempts exercise actual default timeout arguments 45/60/90/60 and their aggregate five-minute margin.",
+        "Metadata timeout status 124 remains fail-closed exit 10, preserving original diagnostics and preventing installs/profile loading."
+      ],
+      "unchanged_fixture_verification": "The prior complete lean batch (588 passed, 13 skipped, 70 subtests) above is historical validation of the unchanged five-line fixture correction; not rerun locally without new regression evidence.",
+      "delivery": "Freeze this code/evidence on existing PR7183. Actual final-head complete GitHub CI, real sandbox negative boundaries, fresh Claude independent approval and supervisor integration remain required. Record terminal outcomes in canonical delivery/review/final reporting without moving the reviewed head for evidence-only bookkeeping. No repair merge, completed delivery or hosted deployment is claimed here."
+    }
+  },
+  "recovery": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/7183",
+    "diagnostic_head": "8f434dced6913cf27c77b9ed6bdccffd7b7070c4",
+    "diagnostic_run": "https://github.com/ajoe734/pantheon/actions/runs/43050526399",
+    "diagnostic_status": "Run completed cancelled after candidate push via existing concurrency; Smoke job130629176269 had remained queued. No runner diagnostic result or pass claimed. Canonical scope explicitly permits registered-mirror testing as an alternative, not an additional diagnostic gate.",
+    "candidate_code_commit": "a84750563",
+    "previous_runner_failure": {
+      "head": "ee941531f975b1ce2e714066dfe663e19a619a89",
+      "run": "43048261505",
+      "job": "130618844557",
+      "result": "primary update timeout 124; fallback update timeout 124; security.ubuntu.com temporary resolution failure; helper exit 10"
+    },
+    "context_correction": "Advisory PR983 is a different historical merged task; source180ae1a46 is unavailable locally. Actual task PR7183 and GitHub evidence above control this recovery.",
+    "registered_mirror_validation": {
+      "mirror": "https://mirrors.mit.edu/ubuntu/",
+      "registration": "https://launchpad.net/ubuntu/+archivemirrors (MIT SIPB)",
+      "development_host_check": "HTTPS curl and gpgv with installed ubuntu-archive-keyring succeeded for noble, noble-updates, noble-security; signed Origin Ubuntu and Codename noble. Updates Date 2026-11-11 05:14:56 UTC; security Date 2026-11-11 07:35:28 UTC.",
+      "limitation": "Development-host gpgv is supplementary; actual runner APT install and capability proof are recorded above. Full Smoke remains red for a separate product regression. No extra acceptance gate or public resolver override introduced."
+    }
+  }
+}

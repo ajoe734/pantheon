@@ -37,6 +37,7 @@ from typing import Any, Mapping
 
 from common import (
     canonical_task_state_lock_file,
+    current_pid_namespace,
     durable_write_bytes,
     read_activity_log_tail_bytes,
     utc_now as iso_now,
@@ -575,12 +576,36 @@ def proc_pid_state(pid: Any) -> str | None:
         return None
 
 
-def worker_has_live_runtime(worker: dict[str, Any], *, pid_alive: bool | None = None) -> bool:
+def runtime_pids_observable(orchestrator_state: Mapping[str, Any]) -> bool:
+    """True when this process can judge the worker PIDs in runtime state.
+
+    The supervisor records its PID namespace, and the worker PIDs it records
+    live there. A governed status command run from inside a worker sandbox has
+    a private PID namespace, so /proc cannot say whether those PIDs are alive.
+    State written before the supervisor recorded a namespace keeps the
+    original /proc behavior.
+    """
+    supervisor = orchestrator_state.get("supervisor")
+    recorded = supervisor.get("pid_namespace") if isinstance(supervisor, Mapping) else None
+    if not isinstance(recorded, str) or not recorded:
+        return True
+    return current_pid_namespace() == recorded
+
+
+def worker_has_live_runtime(
+    worker: dict[str, Any],
+    *,
+    pid_alive: bool | None = None,
+    pid_observable: bool = True,
+) -> bool:
     status = str(worker.get("status") or "").strip().lower()
     pid = worker.get("pid")
     has_pid = pid not in {None, "", 0, "0"}
     if pid_alive is None and has_pid:
-        pid_alive = pid_is_alive(pid)
+        # An unobservable PID is not evidence of a dead worker. The supervisor
+        # reconciles worker status against its own process table every tick,
+        # so fall back to that status instead of reporting every worker lost.
+        pid_alive = pid_is_alive(pid) if pid_observable else True
 
     if status in {"running", "started", "waiting_approval"}:
         if has_pid:
@@ -596,6 +621,7 @@ def worker_has_live_runtime(worker: dict[str, Any], *, pid_alive: bool | None = 
 def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[str, Any]) -> list[dict[str, Any]]:
     ai_status = _ai_status_module()
     resolver = ai_status.task_resolver(state)
+    pids_observable = runtime_pids_observable(orchestrator_state)
     rows: list[dict[str, Any]] = []
     for run_id, worker in (orchestrator_state.get("workers", {}) or {}).items():
         task_id = str(worker.get("task_id") or "").strip()
@@ -611,9 +637,13 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
             task_status = str(handoff.get("status") or "pending")
             task_source = "handoff"
         pid = worker.get("pid")
-        pid_state = proc_pid_state(pid) if pid not in {None, "", 0, "0"} else None
+        pid_state = proc_pid_state(pid) if pids_observable and pid not in {None, "", 0, "0"} else None
         pid_alive = bool(pid_state and pid_state.upper() not in {"Z", "X"}) if pid_state is not None else None
-        live_runtime = worker_has_live_runtime(worker, pid_alive=pid_alive)
+        live_runtime = worker_has_live_runtime(
+            worker,
+            pid_alive=pid_alive,
+            pid_observable=pids_observable,
+        )
         if worker_status in {"superseded", "reassigned"}:
             bucket = "transition"
         elif task_status == "done" or worker_status in {"completed", "failed"}:
@@ -647,6 +677,7 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
                 "pid": pid,
                 "pid_alive": pid_alive,
                 "pid_state": pid_state,
+                "pid_observable": pids_observable,
                 "is_live_runtime": live_runtime,
             }
         )

@@ -34,6 +34,16 @@ run_priv() {
   fi
 }
 
+# Like run_priv, but preserves the exported release/image environment across the sudo hop (sudo resets it by
+# default, which would drop the manifest release_id/owner images compose requires for interpolation).
+run_priv_env() {
+  if [[ "${PROD_USE_SUDO:-false}" == "true" || "${FAKE_OSLOGIN_NONROOT:-false}" == "true" ]]; then
+    "$SUDO" -E "$@"
+  else
+    "$@"
+  fi
+}
+
 for v in PROD_ROOT PROD_DATA_MOUNT PROD_BFF_HOST PROD_FE_HOST PROD_IDP_ISSUER \
          PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE PROD_COMPOSE_ENV_FILE PROD_TENANT_ID; do
   [[ -n "${!v:-}" ]] || fail MISSING_INPUT "required env ${v} is missing"
@@ -348,8 +358,8 @@ PROD_TENANT_ID=${PROD_TENANT_ID}
 PROD_BFF_CORS_ORIGINS=https://${PROD_FE_HOST}
 PROD_BLUE_PORT=${PROD_BLUE_PORT:-18001}
 PROD_GREEN_PORT=${PROD_GREEN_PORT:-18002}
-PANTHEON_POSTGRES_IMAGE=${PANTHEON_POSTGRES_IMAGE:-postgres:16-alpine@sha256:6b202572e5a92a4938fa080be515ad270515fc2d4a5850fa4ca10b0bd3efad89}
-PANTHEON_NATS_IMAGE=${PANTHEON_NATS_IMAGE:-nats:2.10-alpine@sha256:d3eb053c882d39324bf4b1be5b4cb4dc1aa4bbbe0bf6ce3cdca90f2f2b0b12a7}
+PANTHEON_POSTGRES_IMAGE=${PANTHEON_POSTGRES_IMAGE:-postgres:16@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685}
+PANTHEON_NATS_IMAGE=${PANTHEON_NATS_IMAGE:-nats:2.11@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00}
 PANTHEON_SIGNAL_STORE_IMAGE=${PANTHEON_SIGNAL_STORE_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
 EOF
   chmod 0600 "$tmp_ce"
@@ -484,7 +494,7 @@ for k, v in out.items():
 PY
   )" || fail MANIFEST_RELEASE_VARS "manifest lacks release_id, backend.commit or digest-pinned owner images"
   eval "$RELEASE_VARS"
-  run_priv "$DOCKER" compose -p pantheon-production -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" \
+  run_priv_env "$DOCKER" compose -p pantheon-production -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" \
     --env-file "$PROD_COMPOSE_ENV_FILE" --profile stateful up -d --no-build \
     || fail STATEFUL_START "stateful services failed to start"
 fi

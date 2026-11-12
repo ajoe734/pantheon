@@ -1,0 +1,143 @@
+{
+  "task_id": "COLLECTOR-REAL-SOURCE-REPAIR-20261110",
+  "title": "Repair collector sources against real responses and pin the image",
+  "supersedes": [
+    "COLLECTOR-IMAGE-DEPENDENCY-RESOLUTION-20261110"
+  ],
+  "real_capture": {
+    "date": "2026-11-10",
+    "location": "dev machine only (mode 700, never committed)",
+    "committed_fixtures": "minimized, de-identified: social fixtures keep the real DOM/JSON shape with synthetic handles and text; public numeric data (CBC, DBnomics, NDC) is kept as-is"
+  },
+  "findings_and_fixes": [
+    {
+      "source": "collector-tw-macro-cbc",
+      "failure": "JSON served as text/plain parsed as dict; hard-coded date; real shape is data.dataSets rows [YYYYMMDD, values...] + structure columns",
+      "fix": "parse body ourselves, derive periods from rows, last 30 rows per series, '-' cells skipped"
+    },
+    {
+      "source": "collector-tw-macro-ndc",
+      "failure": "guessed ZIP URL; picked manifest.csv (first sorted csv)",
+      "fix": "resolve ZIP from data.gov.tw dataset 6099 distribution, read 景氣指標與燈號.csv, YYYYMM periods, rows without score skipped and counted"
+    },
+    {
+      "source": "collector-tw-macro-dgbas",
+      "failure": "403 Cloudflare challenge",
+      "fix": "enabled=false with disabled_reason; bypass is forbidden by policy"
+    },
+    {
+      "source": "collector-gdelt",
+      "failure": "2s interval (429); sleep function was a no-op by default; unencoded query; plain-text body crashed JSON parse",
+      "fix": "min_interval_seconds=5.0 (validated), fetcher now really sleeps (time.sleep), urlencode, non-JSON body skipped+counted"
+    },
+    {
+      "source": "collector-macro-dbnomics",
+      "failure": "400 on /v22/series?q=; series_code lost provider; 2 of 4 configured series return 404",
+      "fix": "documented /v22/series/{provider}/{dataset}/{series}?observations=1; policy lists the 2 verified series (FED, NBS) and records the dropped ECB and BOJ ids with reasons; latest 60 observations"
+    },
+    {
+      "source": "collector-tw-ptt-stock",
+      "failure": "parser targeted invented data-* attributes; a post without author aborted the batch",
+      "fix": "parse real r-ent markup; deleted/authorless entries skipped and counted"
+    },
+    {
+      "source": "collector-tw-threads / instagram / cmoney",
+      "failure": "parsers targeted invented markup; Threads/IG URL query not percent-encoded",
+      "fix": "parse real DOM (Threads post anchors + time), embedded IG JSON, CMoney article.articleContent; urls percent-encoded; incomplete items skipped and counted"
+    },
+    {
+      "source": "twse-t86 / price-history / tpex",
+      "failure": "hard-coded default dates",
+      "fix": "default dates derived from the run time (recent weekdays)"
+    },
+    {
+      "source": "collector-news-rss",
+      "failure": "route /cna/realtime not the captured route",
+      "fix": "/cna/aall"
+    },
+    {
+      "source": "collector-youtube-gemini-notes",
+      "failure": "model hard-coded gemini-2.0-flash; fake default video id; API keys never read from the *_FILE secrets",
+      "fix": "model from COLLECTOR_GEMINI_MODEL (default gemini-2.5-flash); no video id means no request; keys read from secret files and sent via x-goog-api-key header (also YouTube)"
+    },
+    {
+      "source": "runner/status",
+      "failure": "state/status written to /data but only bundles and state were mounted",
+      "fix": "compose mounts the whole data root at /data (library read-only); README chowns the root to 10001; status.json now carries skipped_items per source"
+    },
+    {
+      "source": "image",
+      "failure": "pip backtracking >15 min",
+      "fix": "requirements.lock generated with uv pip compile (torch 2.15.0+cpu, no nvidia/cuda/triton lines), Dockerfile installs it with --no-deps and the CPU wheel index"
+    },
+    {
+      "source": "live run 2026-11-11 (PR #7154 head 70157c5c3)",
+      "failure": "PTT Stock index lists pinned posts twice -> duplicate item_id aborted the bundle; T86/NDC/Threads/IG/CMoney ended 'complete' with 0 items; T86 asked for a day whose data is not yet published",
+      "fix": "parse_ptt_index de-duplicates by article id; runner marks a run with zero requests 'partial' reason=no_targets and zero items 'partial' reason=no_data_for_date (manifest.reason, status.json reason, CLI output); T86 targets latest_published_trading_date (before 15:00 Taiwan time = previous weekday)",
+      "note": "Through the CLI runner path with a fake transport every network source issues >=1 request (parametrized test), so the 0-item runs were real responses with nothing parseable (e.g. login-walled Threads/IG, unpublished T86 day) now surfaced as partial/no_data_for_date rather than complete"
+    }
+  ],
+  "verification": {
+    "offline_tests": "pytest deploy/collector -> 101 passed",
+    "real_capture_parser_smoke": "PTT 23 records + 1 skipped, Threads 1, Instagram 12, CMoney 10 parsed from the captured files (not committed)",
+    "lock_resolution": "uv pip compile resolved in ~6s with zero backtracking messages",
+    "dbnomics_live_check": "single GET per series on 2026-11-11: FED and NBS 200, ECB and BOJ 404",
+    "ndc_live_check": "single GET of the ZIP on 2026-11-11 confirmed member names and header"
+  },
+  "not_verified_here": [
+    "gemini-2.5-flash being listed for the configured key could not be checked (no key available); coordinator should confirm with GET /v1beta/models or set COLLECTOR_GEMINI_MODEL",
+    "Threads, Instagram and CMoney pages show relative times only; published_at falls back to fetched_at"
+  ],
+  "followup_20261111": {
+    "root_cause": "scrapling 0.2.99 imports browserforge/apify-fingerprint-datapoints (via camoufox); lock lacked them so 'import scrapling.fetchers' raised and LiveScraplingTransport silently fell back to urllib. 0.2.99 has PlayWrightFetcher, not DynamicFetcher.",
+    "fixes": [
+      "fetchers.py: ImportError/browser-launch failure now raises FetchBackendUnavailableError (no urllib fallback); runner writes a partial bundle with reason=fetch_failed and re-raises",
+      "requirements.lock/.txt: added browserforge==1.2.4, apify-fingerprint-datapoints==0.16.0 (+ explicit camoufox, playwright pins); browser class is PlayWrightFetcher",
+      "Dockerfile: playwright install --with-deps chromium into /ms-playwright (apt chromium removed)",
+      "runner: zero-item reasons are no_targets / fetch_failed (non-2xx or request error) / parse_zero; no_data_for_date only when collector sets no_data_confirmed",
+      "NDC: ZIP member was matched with endswith so schema-景氣指標與燈號.csv was parsed instead of 景氣指標與燈號.csv (0 items in 4s); now exact basename match. All requests are logged (logger collector_stack.fetch) and kept in fetcher.request_log"
+    ],
+    "verification": {
+      "unit_tests": "106 passed, 1 skipped (pytest deploy/collector/tests, local venv with chromium)",
+      "offline_browser_render": "tests/test_scrapling_backend.py::test_browser_path_renders_script_inserted_element passed (local http page, script-inserted text present)",
+      "built_image": "COLLECTOR_IMAGE_TEST=1 test_built_image_imports_scrapling_fetchers passed: docker build + python -c imports of Fetcher, PlayWrightFetcher, browserforge, camoufox, playwright and chromium executable exists",
+      "ndc_real_zip": "real ZIP downloaded from ws.ndc.gov.tw on 2026-11-11 contains manifest.csv, schema-*.csv and 景氣指標與燈號.csv (538 lines, Date=202609 latest)"
+    },
+    "not_verified_here": "live run of Threads/Instagram/CMoney on the collector host (sites may still block headless Chromium; that would now surface as fetch_failed/blocked or parse_zero, not no_data_for_date)"
+  },
+  "coordinator_live_verification_20261111": {
+    "by": "coordinator (not the worker's run)",
+    "when": "2026-11-11T04:0xZ",
+    "host": "real collector host",
+    "image": "built from commit 338b642aa (cached build)",
+    "path": "CLI runner, every enabled source except YouTube and books",
+    "complete": {
+      "collector-tw-macro-cbc": 450,
+      "collector-tw-macro-ndc": 24,
+      "twse-t86": 1349,
+      "twse-price-history": 1375,
+      "tpex-price-history": 6042,
+      "collector-macro-dbnomics": 60,
+      "papers": 70,
+      "arxiv": 10,
+      "openalex": 10,
+      "nber-rss": 50,
+      "news-rss": 20,
+      "collector-tw-ptt-stock": 19,
+      "collector-instagram": 12,
+      "collector-tw-cmoney": 9
+    },
+    "partial": {
+      "collector-gdelt": "http_429 (external rate limit on this IP after several runs today; pause behaviour is correct)",
+      "collector-tw-threads": "parse_zero on this run (previous run of same browser path returned 5 posts; logged-out Threads is intermittent)"
+    },
+    "status_json_sources": 16,
+    "privacy_check": "social items carry only a 64-hex hashed_author; no handle or display name field",
+    "known_intermittent_external_behaviour": [
+      "gdelt http_429 rate limit",
+      "threads logged-out intermittency (parse_zero)"
+    ],
+    "acceptance_1": "accepted by coordinator on this evidence; no further code change required",
+    "note": "source ids for ptt/instagram/cmoney/ndc/cbc/dbnomics/news names mapped from collector names; counts as reported by coordinator"
+  }
+}

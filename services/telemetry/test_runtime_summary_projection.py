@@ -3772,8 +3772,11 @@ class TestInstrumentAwarePositionProjection(unittest.TestCase):
         self.assertEqual(future["margin_reserved"], 46000.0)
         self.assertEqual(future["currency"], "TWD")
         self.assertEqual(future["average_price"], 2300.0)
-        # realized = 1 contract * 100 * (2350 - 2300)
-        self.assertEqual(future["realized_pnl"], 5000.0)
+        # gross realized = 1 contract * 100 * (2350 - 2300); the two fills
+        # recognized (40 + 10) each, so net realized is 5000 - 100.
+        self.assertEqual(future["gross_realized_pnl"], 5000.0)
+        self.assertEqual(future["costs"], 100.0)
+        self.assertEqual(future["realized_pnl"], 4900.0)
 
         # The futures mark is keyed by instrument_id but carries the same
         # Taiwan market-calendar provenance as its underlying's mark.
@@ -3883,7 +3886,9 @@ class TestInstrumentAwarePositionProjection(unittest.TestCase):
         self.assertEqual(row["quantity"], -2.0)
         self.assertEqual(row["average_price"], 2290.0)
         # closes 1 long contract: 1 * 100 * (2290 - 2300)
-        self.assertEqual(row["realized_pnl"], -1000.0)
+        self.assertEqual(row["gross_realized_pnl"], -1000.0)
+        self.assertEqual(row["costs"], 100.0)
+        self.assertEqual(row["realized_pnl"], -1100.0)
         self.assertEqual(row["margin_reserved"], 92000.0)
 
     def test_expiry_settlement_closes_the_contract_and_books_realized(self) -> None:
@@ -4157,3 +4162,222 @@ class TestPositionDecisionIdentityProjection(unittest.TestCase):
         row = summary["positions"][0]
         self.assertEqual(row["decision_id"], self._CASH_DECISION)
         self.assertEqual(row["reason_code"], "long_cash")
+
+
+class TestPositionNetPnlRecognizedCosts(unittest.TestCase):
+    """TELEMETRY-POSITION-NET-PNL-COSTS-20261111: net realized carries costs."""
+
+    _SRF = "ssf:SRF:202611"
+    _SRF_MARK_AS_OF = "2026-11-10T00:00:00Z"
+
+    @classmethod
+    def _fut_fill(cls, *, lfc: int, qty: float, price: float, **extra: Any) -> dict[str, Any]:
+        meta = {
+            "instrument_id": cls._SRF,
+            "kind": "stock_future",
+            "multiplier": 1000.0,
+            "contract_month": "202611",
+            "initial_margin_reserved": 17400.0,
+            "fee": 16.0,
+            "tax": 3.884,
+        }
+        meta.update(extra)
+        return TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol="0050.TWSE",
+            quantity=qty,
+            price=price,
+            ledger_fill_count=lfc,
+            created_at=f"2026-11-10T07:01:4{lfc}Z",
+            extra_metadata=meta,
+        )
+
+    @classmethod
+    def _mark(cls, price: float, fill_count: int) -> dict[str, Any]:
+        event = TestPositionCostCurrencyBrokerProjection._mark_snapshot(
+            symbol="0050.TWSE",
+            price=price,
+            fill_count=fill_count,
+            as_of=cls._SRF_MARK_AS_OF,
+            created_at="2026-11-10T08:00:00Z",
+        )
+        event["metadata"]["mark_refs"][0]["symbol"] = cls._SRF
+        return event
+
+    def test_hosted_real_shape_net_components_sum_to_net_total(self) -> None:
+        # Real sanitized rb-3516 shape: 2 contracts @ 97.1, x1000, fee 16 +
+        # tax 3.884, ledger cash 99980.116 from 100000, margin 17400.
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(self._fut_fill(lfc=1, qty=2.0, price=97.1))
+        summary = store.project_event(self._mark(97.1, 1))
+        row = summary["positions"][0]
+        self.assertEqual(row["instrument_id"], self._SRF)
+        self.assertEqual(row["gross_realized_pnl"], 0.0)
+        self.assertEqual(row["costs"], 19.884)
+        self.assertEqual(row["realized_pnl"], -19.884)
+        self.assertEqual(row["unrealized_pnl"], 0.0)
+        self.assertEqual(row["margin_reserved"], 17400.0)
+        net_total = (99980.116 + row["market_value"] * 0.0) - 100000.0
+        self.assertAlmostEqual(
+            row["realized_pnl"] + row["unrealized_pnl"], net_total, delta=0.01
+        )
+
+    def test_duplicate_and_replayed_fill_applies_cost_once(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        fill = self._fut_fill(lfc=1, qty=2.0, price=97.1)
+        store.project_event(fill)
+        store.project_event(dict(fill))
+        summary = store.project_event(self._mark(97.1, 1))
+        self.assertEqual(summary["positions"][0]["costs"], 19.884)
+        # Reload/restart: a fresh store replaying the same fill matches.
+        fresh = RuntimeSummaryProjectionStore()
+        fresh.project_event(fill)
+        again = fresh.project_event(self._mark(97.1, 1))
+        self.assertEqual(again["positions"][0]["realized_pnl"], -19.884)
+
+    def test_partial_close_and_reversal_keep_gross_and_costs_separate(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(self._fut_fill(lfc=1, qty=-2.0, price=100.0, fee=16.0, tax=4.0))
+        # Buy 1 @ 98 closes half a short: gross +2000, costs 20 + 10.
+        store.project_event(self._fut_fill(lfc=2, qty=1.0, price=98.0, fee=8.0, tax=2.0))
+        summary = store.project_event(
+            self._fut_fill(lfc=3, qty=3.0, price=99.0, fee=24.0, tax=6.0)
+        )
+        row = summary["positions"][0]
+        # Short 2 @100, cover 1 @98 (+2000), buy 3 @99 closes 1 short (+1000)
+        # and reverses to long 2 @99.
+        self.assertEqual(row["quantity"], 2.0)
+        self.assertEqual(row["average_price"], 99.0)
+        self.assertEqual(row["gross_realized_pnl"], 3000.0)
+        self.assertEqual(row["costs"], 60.0)
+        self.assertEqual(row["realized_pnl"], 2940.0)
+
+    def test_multi_instrument_costs_are_allocated_per_instrument(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(self._fut_fill(lfc=1, qty=2.0, price=97.1))
+        summary = store.project_event(
+            TestPositionCostCurrencyBrokerProjection._ledger_fill(
+                symbol="2330.TWSE",
+                quantity=43.0,
+                price=2285.0,
+                ledger_fill_count=2,
+                created_at="2026-11-10T07:01:48Z",
+                extra_metadata={"instrument_id": "eq:2330", "kind": "cash_share", "multiplier": 1.0},
+            )
+        )
+        rows = {r["instrument_id"]: r for r in summary["positions"]}
+        self.assertEqual(rows[self._SRF]["costs"], 19.884)
+        # Zero-cost cash fill: recorded zero, not copied from the runtime total.
+        self.assertEqual(rows["eq:2330"]["costs"], 0.0)
+        self.assertEqual(rows["eq:2330"]["realized_pnl"], 0.0)
+
+    def test_missing_or_nonfinite_future_cost_is_unknown_not_zero(self) -> None:
+        for bad in ({"fee": None, "tax": None}, {"fee": float("nan")}, {"tax": -1.0}):
+            store = RuntimeSummaryProjectionStore()
+            store.project_event(self._fut_fill(lfc=1, qty=2.0, price=97.1, **bad))
+            summary = store.project_event(self._mark(97.1, 1))
+            row = summary["positions"][0]
+            self.assertEqual(row["costs_status"], "unknown")
+            for absent in ("costs", "realized_pnl", "unrealized_pnl"):
+                self.assertNotIn(absent, row)
+            self.assertEqual(row["gross_realized_pnl"], 0.0)
+
+    def test_cash_fill_with_explicit_null_cost_is_unknown_not_zero(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        summary = store.project_event(
+            TestPositionCostCurrencyBrokerProjection._ledger_fill(
+                symbol="2330.TWSE",
+                quantity=2.0,
+                price=100.0,
+                ledger_fill_count=1,
+                created_at="2026-11-10T07:01:41Z",
+                extra_metadata={
+                    "instrument_id": "eq:2330", "kind": "cash_share",
+                    "multiplier": 1.0, "fee": None, "tax": 0.0,
+                },
+            )
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["costs_status"], "unknown")
+        self.assertNotIn("realized_pnl", row)
+
+    def _legacy_file(self, tmp: str, *, retained: bool):
+        path = Path(tmp) / "summary.json"
+        store = RuntimeSummaryProjectionStore(path=path)
+        fill = self._fut_fill(lfc=1, qty=2.0, price=97.1)
+        store.project_event(fill)
+        store._persist()
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        for summary in saved.values():
+            summary["ledger_fill_count"] = 1  # carried by runtime pnl snapshots
+            for entry in summary["_cost_by_symbol"].values():
+                entry.pop("costs", None)
+                entry.pop("costs_known", None)
+            for key in ("realized_pnl", "gross_realized_pnl", "costs", "costs_status"):
+                for row in summary.get("positions", []):
+                    row.pop(key, None)
+        path.write_text(json.dumps(saved), encoding="utf-8")
+
+        class _Retained:
+            def retained_paper_fill_events(self_inner, **_kw):
+                return [fill] if retained else []
+
+        return path, fill, _Retained()
+
+    def test_legacy_persisted_future_costs_stay_unknown_without_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, fill, retained = self._legacy_file(tmp, retained=False)
+            store = RuntimeSummaryProjectionStore(path=path)
+            store.backfill_open_position_costs(retained)
+            summary = store.project_event(dict(fill))  # duplicate event
+            summary = store.project_event(self._mark(97.1, 1))
+            row = summary["positions"][0]
+            self.assertEqual(row["costs_status"], "unknown")
+            self.assertNotIn("realized_pnl", row)
+
+    def test_legacy_persisted_future_costs_repaired_from_retained_fills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, fill, retained = self._legacy_file(tmp, retained=True)
+            store = RuntimeSummaryProjectionStore(path=path)
+            self.assertEqual(store.backfill_open_position_costs(retained), 1)
+            store.project_event(dict(fill))  # duplicate applies once
+            summary = store.project_event(self._mark(97.1, 1))
+            row = summary["positions"][0]
+            self.assertEqual(row["costs"], 19.884)
+            self.assertEqual(row["realized_pnl"], -19.884)
+            # Restart: reload from disk, nothing more to repair, cost not doubled.
+            again = RuntimeSummaryProjectionStore(path=path)
+            self.assertEqual(again.backfill_open_position_costs(retained), 0)
+            row = again.project_event(self._mark(97.1, 1))["positions"][0]
+            self.assertEqual(row["realized_pnl"], -19.884)
+
+    def test_stale_mark_keeps_costs_and_leaves_unrealized_unknown(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(self._fut_fill(lfc=1, qty=2.0, price=97.1))
+        summary = store.project_event(
+            TestPositionCostCurrencyBrokerProjection._mark_snapshot(
+                symbol="0050.TWSE", price=97.1, fill_count=1,
+                as_of="2026-11-01T00:00:00Z", created_at="2026-11-10T08:00:00Z",
+            )
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["realized_pnl"], -19.884)
+        self.assertNotIn("unrealized_pnl", row)
+
+    def test_settlement_cost_applies_once(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(self._fut_fill(lfc=1, qty=2.0, price=97.1))
+        settled = TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol="0050.TWSE", quantity=0.0, price=98.0, ledger_fill_count=None,
+            created_at="2026-11-18T05:30:00Z", event_id="evt-settle-net",
+            extra_metadata={
+                "instrument_id": self._SRF, "kind": "stock_future", "multiplier": 1000.0,
+                "realized_pnl": 1800.0, "settlement_fee": 5.0, "fee": 10.0, "tax": 4.0,
+            },
+        )
+        settled["event_type"] = "paper_futures_settled"
+        settled["metrics"] = {}
+        store.project_event(settled)
+        again = store.project_event(dict(settled))
+        entry = again["_cost_by_symbol"][self._SRF]
+        self.assertEqual(entry["realized_pnl"], 1800.0)
+        self.assertAlmostEqual(entry["costs"], 19.884 + 14.0, places=9)

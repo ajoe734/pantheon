@@ -1,0 +1,23 @@
+{
+  "task_id": "INTRADAY-MINUTE-BARS-SD-20261111",
+  "owner": "Claude",
+  "deliverable": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_INTRADAY_MINUTE_BARS_2026-11-11.md",
+  "read_from": "origin/dev 7b1f7f2a5",
+  "acceptance": {
+    "1_daily_assumption_inventory": "SD section 1",
+    "2_operator_decision": "SD section 2",
+    "3_storage_retention_backfill": "SD section 4 (98,000 requests, ~22 h at 4,500/h, ~26.6M rows, ~1.5 GB steady / 3 GB budget; hosted free space on pantheon-dev-deploy unmeasured, K2 measures)",
+    "4_point_in_time_session_backtest_grade_replicate_paper": "SD sections 5, 6, 7",
+    "5_task_split_and_dev_plan": "SD section 9; DEV_PLAN section 4 table K1-K8, W5"
+  },
+  "source_files_changed": [],
+  "unverified": [
+    "KBar date-range support",
+    "KBar volume unit and closing-auction bar",
+    "two-year KBar history per symbol",
+    "token quota scope across datasets",
+    "early-close calendar records",
+    "hosted pantheon-dev-deploy free space on the intraday store mount"
+  ],
+  "revision": "review-round-3: K4 minute snapshot writer, next-session timeline, hosted disk binding, exact artifact lists"
+}

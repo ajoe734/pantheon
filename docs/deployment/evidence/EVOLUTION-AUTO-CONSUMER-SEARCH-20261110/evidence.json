@@ -1,0 +1,82 @@
+{
+  "task_id": "EVOLUTION-AUTO-CONSUMER-SEARCH-20261110",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "scope": "source + local validation only; no hosted/provider/capital action performed",
+  "acceptance": {
+    "1_automated_gate": {
+      "implementation": "services/evolution/auto_consumer.py (evaluate_gate, AutoConsumer.tick)",
+      "behaviour": "proposed retrain/mutate/revalidate/retire decisions whose target resolves through the persona/registry owners to a paper-only, tenant-owned discovery persona artifact are reviewed then approved as automated_gate; each check is written to the review/approve note and to an append-only evidence sink before state moves. Any other action, risk, proposer, stage, tenant or an owner outage is left proposed for the operator.",
+      "decision_model": "evolution_decision.py: new MUTATE action (low risk); a paper-stage retire of a discovery target is low risk only with metadata.discovery_auto_scope=true, otherwise retire stays high (committee). validate() recomputes risk so a forged low retire fails.",
+      "tests": "services/evolution/test_auto_consumer.py (25, incl. end-to-end against the real evolution FastAPI app), services/control-plane/governance/test_evolution_decision.py TestDiscoveryAutoScopeRisk; services/evolution/test_auto_consumer_runtime.py (allocated persona resolves with no injected metadata; fail-closed cases)",
+      "startup": "services/evolution/auto_consumer_runtime.py: DiscoveryBindingScope resolves scope from the allocator's own records (Capital pcb-discovery-* paper binding with metadata.strategy_spec_registry_id -> Registry artifact lineage.source_strategy_spec_id -> Persona owner tenant/lifecycle); no persona metadata marker is read. Hooked into scheduler_worker behind EVOLUTION_AUTO_CONSUMER_ENABLED; fails closed. HttpDecisionPort now filters with decision_state. Review fix: HttpDecisionPort binds the configured scheduler tenant (EVOLUTION_SCHEDULER_TENANT_ID) as X-Tenant-Id on every decision read (token-mode Evolution otherwise answers 400); unbound => fail closed. test_decision_reads_bind_the_configured_tenant_without_transport_help; the runtime test transport no longer injects the header."
+    },
+    "2_random_search": {
+      "implementation": "services/research/alpha_replication/evolution_search.py (sample_variants, search_in_sample, make_in_sample_walk_forward_scorer); services/research/main.py _retrain_search_update",
+      "behaviour": "fixed budget (default 50, env RESEARCH_RETRAIN_SEARCH_BUDGET) of distinct on-grid variants inside declared mutation_surface ranges, scored by walk-forward folds carved from the in-sample window only; the OOS slice is never passed to the backend (test asserts every window ends before the OOS start). _retrain_parameter_update (2<->3 / 0<->0.01 toggle) deleted; no governed dataset => run ends no_candidate/in_sample_dataset_unavailable (fail closed, no fallback).",
+      "tests": "services/research/alpha_replication/test_evolution_search.py, services/research/tests/test_retrain_search_update.py"
+    },
+    "3_mutate_lineage": {
+      "implementation": "services/registry/factor_rule.py mutate_factor_rule_structure (change_window, swap_operator within same-type family, add_filter from governed feature catalogue with declared controls, remove_filter, change_exit); evolution_search.build_child_artifact",
+      "behaviour": "child is a validated factor_rule_v1 artifact, parent untouched, lineage.parent_registry_ids=[parent], source_run_ids include the decision; non-factor_rule parents refused.",
+      "tests": "services/registry/test_factor_rule.py (structural mutation tests), test_evolution_search.py; services/research/tests/test_evolution_gate_executor.py (approved mutate -> candidate_created; failed OOS -> no registration; revalidate; fail-closed dataset)",
+      "execution": "services/research/alpha_replication/evolution_executor.py + services/research/main.py _execute_evolution_gate: approved mutate/revalidate runs are started by the existing dispatch route (_trigger_retrain_execution), judged by the real section-10 ReplicationGate on a real backtest (run_replication_backtest_protocol, recorded in BacktestRunStore), passing children registered as candidates via POST /api/registry/strategy-artifacts with parent lineage, terminal outcome+receipt on the run and task. Failed OOS never registers.",
+      "versioning": "evolution_search.allocate_child_version: child revision = one minor above the highest version in the parent's Registry family (read fresh per child; siblings of one decision never share a revision); mutate and retrain retry on a lost revision race (409 with no child of this decision) by re-allocating, rebuilding and re-judging; a decision's own already-registered child is adopted. Tests: test_repeated_mutation_decisions_register_unique_family_revisions_in_the_real_registry (real Registry routes: 1.1.0/1.2.0/1.3.0, stale 1.1.0 => 409), test_evolution_gate_executor.py repeated-decision and lost-race tests."
+    },
+    "4_oos_and_trials": {
+      "implementation": "evolution_search.judge_child_out_of_sample / run_mutation_decision; search_in_sample increments FamilyTrialCounterStore once per evaluated variant",
+      "behaviour": "every child goes through the section-10 ReplicationGate (real OOS backtest, deflated Sharpe) and only passers are registered; the gate adds to the family trial count, and search variants are counted too, so counts accumulate per family across decisions. services/research/alpha_replication/shared_stores.py: SharedFamilyTrialCounterStore, SharedBacktestRunStore and SharedReplicationGate reload under an exclusive flock and write atomically; the revalidation worker (gate + run store), the retrain search and the mutate/revalidate executor all use them (gate.py itself is outside this task's artifact contract and unchanged), so the gate, revalidation worker and search can never lose each other's trials.",
+      "tests": "test_evolution_search.py (trial counts 50 -> 60; judged children register only on pass); test_gate_and_search_writers_interleave_without_losing_trials, test_trial_counter_concurrent_processes_do_not_lose_updates",
+      "retrain": "services/research/main.py _execute_retrain: after Training reports a passed, better whole-dataset proof, the retrain child (build_child_artifact kind=retrain) is judged by the real section-10 ReplicationGate on the untouched OOS window via _evolution_oos_context (shared with mutate/revalidate, family trial counter accumulates) BEFORE any Registry write; a rejected verdict ends no_candidate/children_failed_out_of_sample_gate with no registration. Tests: services/research/tests/test_retrain_oos_gate.py (real in-sample search + real gate + real vectorbt protocol on a negative-OOS dataset => nothing registered; trial count = search trials + OOS judgement); test_retrain_executor_real_auth.py (child registered only on a passed OOS verdict; rejected => 404 in Registry)."
+    },
+    "5_retire_on_decay": {
+      "implementation": "auto_consumer.evaluate_paper_decay, build_retire_proposal, AutoConsumer.retire_persona",
+      "behaviour": "persistent paper decay (3 under-baseline windows plus Sharpe<50% baseline or drawdown>1.25x) produces a discovery-scoped retire proposal; the gate approves it and the persona goes paper_owner -> frozen -> retired through the persona lifecycle port using the approval id as governance decision; idempotent; live/other states refused.",
+      "tests": "test_auto_consumer.py decay tests and test_decayed_strategy_is_retired_end_to_end_through_the_real_evolution_service; test_auto_consumer_runtime.py: paper decay telemetry drives governed retire through the real evolution service, retry after outage, replay idempotent, missing baseline never retires",
+      "governed_path": "services/evolution/governed_persona_lifecycle.py: each exact persona/from/to retire step is proposed (proposer token), reviewed and decided (distinct automated_gate token, low risk) through the existing /api/governance/approvals persona_lifecycle_transition API with deterministic ids and Idempotency-Keys, then the persona owner PATCH /lifecycle cites that real governance decision id; tenant read-back checked. No issuer/grant/MFA added; Governance unchanged.",
+      "runtime": "services/evolution/decay_monitor.py (DecayMonitor/WindowLedger), run by auto_consumer_runtime.run_consumer_tick on every scheduler tick before the consumer: telemetry runtime summaries of paper discovery bindings -> durable window ledger -> evaluate_paper_decay against approved baselines (expected_sharpe_ratio/expected_drawdown with policy_source; none = no retire) -> deterministic idempotent retire proposal -> automated gate -> governed persona retire. Failed proposals are retried next tick; replay is a no-op; evidence events recorded."
+    }
+  },
+  "validation": {
+    "interpreter": "/tmp/gfd-venv/bin/python",
+    "reviewer_set_plus_new": "119 passed (test_auto_consumer, runtime, governed lifecycle, evolution_decision/controller, factor_rule, test_evolution_search, retrain_search_update, evolution_gate_executor)",
+    "replication+retrain real-auth": "130 passed (services/research/alpha_replication incl. revalidation worker, replication/test_gate.py); earlier 104 passed incl. test_retrain_executor_real_auth (unchanged by the store swap)",
+    "rereview_fix": {
+      "interpreter": "/tmp/gfd-venv/bin/python",
+      "reviewer_set": "125 passed (test_auto_consumer, runtime, governed lifecycle, evolution_decision/controller, factor_rule, test_evolution_search, retrain_search_update, evolution_gate_executor)",
+      "real_auth_plus_oos": "23 passed (test_retrain_executor_real_auth.py + test_retrain_oos_gate.py), exit 0",
+      "alpha_replication": "93 passed; services/governance/test_governance_api.py errors at fixture setup (needs GOV_APPROVAL_TEST_DSN Postgres; file untouched by this task) - NOT counted as passed"
+    },
+    "persona_mismatch_fix": "Reviewer P1 fix: DiscoveryBindingScope.resolve fails closed on explicit artifact/decision persona mismatch (no fallback to other persona's discovery binding); regression test_explicit_persona_mismatch_fails_closed; auto_consumer_runtime/auto_consumer/governed_persona_lifecycle suites 38 passed.",
+    "governance_execution_approval_fix": {
+      "fix": "Reviewer P1: retrain/mutate/revalidate no longer bind synthetic auto-gate-<id>. AutoConsumer calls GovernedExecutionApproval.ensure_approved BEFORE the Evolution review: the Evolution owner files the deterministic evolution_execute request via the existing execution-approval-request route (propose-only principal), the automated_gate principal reviews+decides it in Governance with its own bearer token (vote expiry = request expiry), and the real id apv-evoexec-<decision>-<digest16> is bound on review/approve. Governance failure leaves the decision proposed; resume re-ensures idempotently (binding is the deterministic id, so it persists across processes). retire keeps its governed persona path. No new grant/issuer.",
+      "regression": "services/evolution/test_auto_consumer_dispatch.py: real Evolution API + production build_consumer ports + real dispatch_worker.run_poll/require_execution_approval; stateful Governance (principal from token, distinct decider, version) with NO injected approval snapshots; covers retrain/mutate/revalidate dispatch, Governance outage then fresh-consumer resume, retryable downstream retries re-reading approval, and synthetic auto-gate binding never dispatching.",
+      "result": "109 passed (test_auto_consumer_dispatch, test_auto_consumer, runtime, governed_persona_lifecycle, test_dispatch_worker), git diff --check exit 0"
+    }
+  },
+  "not_done_here": [
+    "GovernedPersonaLifecycle is tested against a faithful fake of Governance+persona owner, not a live Governance PG store (approval commands require PostgreSQL).",
+    "Operators must add approved expected_sharpe_ratio (with policy_source) to services/evolution/config/threshold_sweep_baselines.json per discovery artifact before decay retire can fire; none is fabricated.",
+    "New env for the consumer: AUTO_CONSUMER_CAPITAL_URL/TOKEN, AUTO_CONSUMER_REGISTRY_URL/TOKEN, optional AUTO_CONSUMER_TELEMETRY_TOKEN, AUTO_CONSUMER_DECAY_LEDGER_PATH.",
+    "No live provider/deploy performed; hosted validation is out of scope."
+  ],
+  "frozen_authority_fix": {
+    "defect": "frozen persona mapped to paper; fresh actions on externally/live-origin frozen persona were auto-approved",
+    "fix": "scope stage stays 'frozen'; gate admits frozen only for retire resume (state!=proposed) when persona last_lifecycle_governance_decision_id equals this decision's own paper_owner->frozen Governance id; retire_persona re-verifies owner binding and decided Governance record (verify_freeze)",
+    "tests": [
+      "test_fresh_proposal_on_externally_frozen_persona_is_operator_owned",
+      "test_partial_paper_retire_resume_requires_own_freeze_proof",
+      "test_externally_frozen_live_origin_persona_is_never_auto_retired"
+    ],
+    "focused_run": "services/evolution auto_consumer/runtime/dispatch/governed_persona_lifecycle: 52 passed; wider batch 204 passed, failures only from missing flask/asyncpg in venv"
+  },
+  "freeze_proof_contract_fix": {
+    "defect": "Reviewer P1 on head ac1b6284: verify_freeze read record.subject, but Governance GET serializes the exact-action binding under metadata.subject (ApprovalDecisionResponse); a valid own frozen approval returned False and retire stayed frozen forever.",
+    "fix": "services/evolution/governed_persona_lifecycle.py verify_freeze reads metadata.subject; own-freeze (last_lifecycle_governance_decision_id), tenant, decided/approved and exact persona/from/to checks preserved. FakeWorld now stores subject under metadata.",
+    "tests": [
+      "test_verify_freeze_against_production_response_shape_same_tick_and_resume (real ApprovalDecision.create_proposed/accept_review/decide serialized via ApprovalDecisionResponse; fails on the old record.subject read)",
+      "test_verify_freeze_rejects_external_freeze_and_wrong_tenant_on_production_shape"
+    ],
+    "focused_run": "/tmp/codex-replication-review-20261111/bin/python -m pytest governed_persona_lifecycle+auto_consumer+runtime+dispatch: 57 passed, exit 0; git diff --check clean"
+  }
+}

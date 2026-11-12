@@ -254,27 +254,10 @@ def test_finmind_price_identity_survives_bulk_compaction_and_jsonl_reload(client
     assert restored is not None
     assert restored.source_id == record.source_id
     assert restored.content_ref == record.content_ref
-    normalized_row = restored.metadata["normalized_row"]
-    assert normalized_row == {
-        "schema_version": "tw_price_daily.v1",
-        "target_table": "tw_price_daily",
-        "provider": "FinMind",
-        "market": "TW",
-        "symbol": "2330",
-        "symbol_canonical": "2330.TW",
-        "dataset": "tw_price_daily",
-        "source_dataset": "TaiwanStockPrice",
-        "trade_date": "2026-06-08",
-        "close": 955.0,
-    }
-    assert normalized_row["close"] == 955.0
-    assert (
-        normalized_row["provider"],
-        normalized_row["market"],
-        normalized_row["symbol_canonical"],
-        normalized_row["source_dataset"],
-        normalized_row["trade_date"],
-    ) == ("FinMind", "TW", "2330.TW", "TaiwanStockPrice", "2026-06-08")
+    # FinMind price is reference-only: TWSE/TPEx official owns tw_price_daily.
+    assert "normalized_row" not in restored.metadata
+    assert restored.metadata["normalized_target"] == "finmind_tw_price_reference"
+    assert restored.metadata["redistribution_allowed"] is False
     assert restored.metadata["raw_storage_refs"][0]["dataset"] == "TaiwanStockPrice"
 
 

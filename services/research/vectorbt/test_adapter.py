@@ -65,6 +65,34 @@ class TestGovernedVectorbtInputAdapter(unittest.TestCase):
         self.assertIn("BBB", ds.instruments)
         self.assertEqual(ds.total_bars, 35 * 2)
 
+    def test_mixed_dated_undated_feature_sequences_rejected(self) -> None:
+        n = 35
+        mixed = [{"value": 0, "event_time": "2022-12-01"}] + [float(i % 4) for i in range(1, n)]
+        for feats in (
+            {"rev_yoy": mixed},
+            {"rev": {"yoy": mixed}},
+            {"rev_yoy": [{"value": 0, "event_time": "2022-12-01"}, {"value": 1}]},
+            {"rev_yoy": [("2022-12-01", 0.0)] + [float(i % 4) for i in range(1, n)]},
+            {"rev_yoy": [["2022-12-01", 0.0]] + [float(i % 4) for i in range(1, n)]},
+            {"rev": {"yoy": [("2022-12-01", 0.0)] + [float(i % 4) for i in range(1, n)]}},
+        ):
+            bad = copy.deepcopy(MINIMAL_DATASET)
+            bad["features_by_instrument"] = {"AAA": feats}
+            with self.assertRaisesRegex(VectorbtWorkflowError, "mixes dated and undated"):
+                GovernedVectorbtInputAdapter().prepare(bad)
+
+    def test_fully_dated_feature_sequences_accepted(self) -> None:
+        ok = copy.deepcopy(MINIMAL_DATASET)
+        ok["features_by_instrument"] = {
+            "AAA": {"rev_yoy": [{"value": 1, "event_time": "2022-12-01"}]}
+        }
+        GovernedVectorbtInputAdapter().prepare(ok)
+
+    def test_fully_dated_pair_sequences_accepted(self) -> None:
+        ok = copy.deepcopy(MINIMAL_DATASET)
+        ok["features_by_instrument"] = {"AAA": {"rev_yoy": [("2022-12-01", 1.0), ["2023-01-01", 2.0]]}}
+        GovernedVectorbtInputAdapter().prepare(ok)
+
     def test_bars_per_instrument_counted_correctly(self) -> None:
         ds = GovernedVectorbtInputAdapter().prepare(MINIMAL_DATASET)
         self.assertEqual(ds.bars_per_instrument["AAA"], 35)
@@ -655,9 +683,21 @@ class TestFactorRuleBacktestAndPaperParity(unittest.TestCase):
         closes_2317 = [150.0 + (i % 5) * 1.5 for i in range(32)]
 
         raw_ds = _canonical_dataset(closes_2330, closes_2317)
+        # Governed inputs are timestamped observations: bar i's observation is published
+        # (event_time == available_time) ten days before the bar so the catalogue lag of 10
+        # days makes it visible exactly at bar i.
+        bar_start = date(2024, 1, 1)
+        rev_yoy_observations = [
+            {
+                "value": value,
+                "event_time": f"{(bar_start + timedelta(days=i - 10)).isoformat()}T00:00:00Z",
+                "available_time": f"{(bar_start + timedelta(days=i - 10)).isoformat()}T00:00:00Z",
+            }
+            for i, value in enumerate(rev_yoy_series)
+        ]
         raw_ds["features_by_instrument"] = {
-            "2330.TWSE": {"rev_yoy": rev_yoy_series},
-            "2317.TWSE": {"rev_yoy": rev_yoy_series},
+            "2330.TWSE": {"rev_yoy": rev_yoy_observations},
+            "2317.TWSE": {"rev_yoy": rev_yoy_observations},
         }
         prepared = GovernedVectorbtInputAdapter().prepare(raw_ds)
 
@@ -715,4 +755,389 @@ class TestFactorRuleBacktestAndPaperParity(unittest.TestCase):
                 self.assertTrue(math.isnan(paper_sizes[i]), f"bar {i} mismatch")
             else:
                 self.assertEqual(vbt_sizes[i], paper_sizes[i], f"bar {i} mismatch")
+
+
+class TestReplicationGateRealBacktestProtocol(unittest.TestCase):
+    """REPLICATION-GATE-REAL-BACKTEST-20261110 protocol, cost, benchmark, and history tests."""
+
+    def test_taiwan_commission_and_tax_applied_on_every_fill_and_cited(self) -> None:
+        from adapter.vectorbt_adapter import (
+            BacktestConfig,
+            TAIWAN_BROKER_COMMISSION_RATE,
+            TAIWAN_COST_RATE_CITATIONS,
+            TAIWAN_EQUITY_TRANSACTION_TAX_RATE,
+            TAIWAN_ETF_TRANSACTION_TAX_RATE,
+            build_canonical_tw_strategy_artifact,
+            build_governed_tw_replication_dataset,
+            run_replication_backtest_protocol,
+        )
+
+        self.assertEqual(TAIWAN_BROKER_COMMISSION_RATE, 0.001425)
+        self.assertEqual(TAIWAN_EQUITY_TRANSACTION_TAX_RATE, 0.003)
+        self.assertEqual(TAIWAN_ETF_TRANSACTION_TAX_RATE, 0.001)
+        self.assertIn("broker_commission", TAIWAN_COST_RATE_CITATIONS)
+        self.assertIn("securities_transaction_tax_equity", TAIWAN_COST_RATE_CITATIONS)
+        self.assertIn("securities_transaction_tax_etf", TAIWAN_COST_RATE_CITATIONS)
+
+        artifact = build_canonical_tw_strategy_artifact(
+            strategy_id="tw_cost_check",
+            symbols=["2330", "0050"],
+        )
+        dataset = build_governed_tw_replication_dataset(
+            symbols=["2330", "0050"],
+            trading_days=756,
+        )
+        evaluation = run_replication_backtest_protocol(
+            strategy_artifact=artifact,
+            dataset=dataset,
+            run_id="bt-cost-check-001",
+        )
+        self.assertEqual(evaluation["status"], "completed")
+        tx = evaluation["transaction_costs"]
+        self.assertEqual(tx["commission_rate"], 0.001425)
+        self.assertEqual(tx["equity_transaction_tax_rate"], 0.003)
+        self.assertEqual(tx["etf_transaction_tax_rate"], 0.001)
+        self.assertTrue(tx["applied_on_every_fill"])
+        self.assertGreater(tx["in_sample_commission_paid"], 0.0)
+        self.assertGreater(tx["in_sample_transaction_tax_paid"], 0.0)
+        self.assertGreater(tx["out_of_sample_commission_paid"], 0.0)
+        self.assertGreater(tx["out_of_sample_transaction_tax_paid"], 0.0)
+
+        # Verify zero-cost backtest produces strictly higher OOS return than statutory-cost backtest
+        zero_cost_eval = run_replication_backtest_protocol(
+            strategy_artifact=artifact,
+            dataset=dataset,
+            run_id="bt-zero-cost-001",
+            config=BacktestConfig(
+                strategy_artifact=dict(artifact),
+                commission_rate=0.0,
+                transaction_tax_rate=0.0,
+                etf_transaction_tax_rate=0.0,
+            ),
+        )
+        self.assertGreater(
+            zero_cost_eval["out_of_sample"]["total_return"],
+            evaluation["out_of_sample"]["total_return"],
+        )
+
+    def test_replication_backtest_protocol_70_30_split_3_walk_forward_and_benchmarks(self) -> None:
+        from adapter.vectorbt_adapter import (
+            build_canonical_tw_strategy_artifact,
+            build_governed_tw_replication_dataset,
+            run_replication_backtest_protocol,
+        )
+
+        artifact = build_canonical_tw_strategy_artifact(
+            strategy_id="tw_wf_check",
+            symbols=["2330", "2317"],
+        )
+        dataset = build_governed_tw_replication_dataset(
+            symbols=["2330", "2317"],
+            trading_days=756,
+        )
+        evaluation = run_replication_backtest_protocol(
+            strategy_artifact=artifact,
+            dataset=dataset,
+            run_id="bt-wf-check-001",
+        )
+        self.assertEqual(evaluation["status"], "completed")
+        self.assertAlmostEqual(evaluation["protocol"]["in_sample_ratio"], 0.70, places=2)
+        self.assertAlmostEqual(evaluation["protocol"]["out_of_sample_ratio"], 0.30, places=2)
+        self.assertEqual(len(evaluation["walk_forward_folds"]), 3)
+        positive_folds = [
+            fold for fold in evaluation["walk_forward_folds"] if fold["sharpe_ratio"] > 0.0
+        ]
+        self.assertGreaterEqual(len(positive_folds), 2)
+        self.assertIn("buy_and_hold_same_symbols", evaluation["benchmarks"])
+        self.assertIn("tw_0050", evaluation["benchmarks"])
+        self.assertIsNotNone(evaluation["benchmarks"]["buy_and_hold_same_symbols"]["sharpe_ratio"])
+        self.assertIsNotNone(evaluation["benchmarks"]["tw_0050"]["sharpe_ratio"])
+
+    def test_pit_history_measures_factor_rule_feature_refs(self) -> None:
+        from datetime import date, timedelta
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        start = date(2023, 1, 2)
+        records = [
+            {
+                "instrument": "2330.TWSE",
+                "date": (start + timedelta(days=i)).isoformat(),
+                "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0,
+            }
+            for i in range(760)
+        ]
+
+        def obs(first: str, n: int):
+            d0 = date.fromisoformat(first)
+            return [
+                {"event_time": (d0 + timedelta(days=30 * i)).isoformat(), "value": 1.0}
+                for i in range(n)
+            ]
+
+        short = {
+            "records": records,
+            "features_by_instrument": {"2330.TWSE": {"rev_yoy": obs("2025-01-01", 6)}},
+        }
+        days, _bars, details = _measure_pit_history(short, artifact)
+        self.assertLess(days, 730)
+        self.assertIn("rev_yoy", details["features"])
+
+        missing = {"records": records}
+        days, bars, details = _measure_pit_history(missing, artifact)
+        self.assertEqual(days, 0)
+        self.assertTrue(details["features"]["rev_yoy"].get("missing"))
+
+        long_ok = {
+            "records": records,
+            "features_by_instrument": {"2330.TWSE": {"rev_yoy": obs("2023-01-02", 30)}},
+        }
+        days, _bars, _d = _measure_pit_history(long_ok, artifact)
+        self.assertGreaterEqual(days, 730)
+
+    def test_pit_history_global_nested_equals_per_instrument_layout(self) -> None:
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+        from adapter.vectorbt_adapter import build_governed_tw_replication_dataset
+
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        base = build_governed_tw_replication_dataset(trading_days=756)
+        series = [float(i % 4) for i in range(756)]
+        global_layout = dict(base, features_by_instrument={"tw_monthly_revenue": {"yoy": series}})
+        inst_layout = dict(base, features_by_instrument={"2330.TWSE": {"tw_monthly_revenue": {"yoy": series}}})
+        g = _measure_pit_history(global_layout, artifact)
+        i = _measure_pit_history(inst_layout, artifact)
+        self.assertEqual(g[:2], i[:2])
+        self.assertGreater(g[1], 0)
+
+    def test_pit_history_uses_effective_availability_for_late_publication(self) -> None:
+        from datetime import date, timedelta
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        start = date(2023, 1, 2)
+        records = [
+            {
+                "instrument": "2330.TWSE",
+                "date": (start + timedelta(days=i)).isoformat(),
+                "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0,
+            }
+            for i in range(760)
+        ]
+        # Long event history, but everything only became available 5 days before the end.
+        late = [
+            {
+                "event_time": (start + timedelta(days=30 * i)).isoformat(),
+                "available_time": "2025-01-25T00:00:00Z",
+                "value": 1.0,
+            }
+            for i in range(26)
+        ]
+        dataset = {"records": records, "features_by_instrument": {"2330.TWSE": {"rev_yoy": late}}}
+        days, bars, details = _measure_pit_history(dataset, artifact)
+        self.assertLess(days, 30)
+        self.assertLess(bars, 30)
+        self.assertLess(details["features"]["rev_yoy"]["calendar_days"], 30)
+
+        # Observations whose effective availability is after the last decision are invisible.
+        future = [
+            {"event_time": "2023-01-02", "available_time": "2026-01-01T00:00:00Z", "value": 1.0}
+        ] * 3
+        dataset = {"records": records, "features_by_instrument": {"2330.TWSE": {"rev_yoy": future}}}
+        days, bars, details = _measure_pit_history(dataset, artifact)
+        self.assertLess(days, 730)
+        self.assertEqual(details["features"]["rev_yoy"]["observations"], 0)
+
+    def test_pit_history_feature_coverage_is_non_null_and_per_instrument(self) -> None:
+        from datetime import date, timedelta
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        start = date(2023, 1, 2)
+
+        def price_rows(inst: str):
+            return [
+                {
+                    "instrument": inst,
+                    "date": (start + timedelta(days=i)).isoformat(),
+                    "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0,
+                }
+                for i in range(760)
+            ]
+
+        # Feature present on only the last 10 rows must not inherit the full OHLCV span.
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        rows = price_rows("2330.TWSE")
+        for rec in rows[-10:]:
+            rec["rev_yoy"] = 1.0
+        days, bars, details = _measure_pit_history({"records": rows}, artifact)
+        self.assertLess(days, 730)
+        self.assertLessEqual(details["features"]["rev_yoy"]["observations"], 10)
+        self.assertLessEqual(bars, 10)
+
+        # Missing series for one required instrument must surface as insufficient.
+        artifact2 = _sample_factor_rule_artifact()
+        artifact2["parameters"]["symbols"] = ["2330.TW", "2317.TW"]
+        rows2 = price_rows("2330.TWSE") + price_rows("2317.TWSE")
+        long_series = [
+            {"event_time": (start + timedelta(days=30 * i)).isoformat(), "value": 1.0}
+            for i in range(30)
+        ]
+        dataset = {
+            "records": rows2,
+            "features_by_instrument": {"2330.TWSE": {"rev_yoy": long_series}, "2317.TWSE": {}},
+        }
+        days, bars, details = _measure_pit_history(dataset, artifact2)
+        self.assertEqual(days, 0)
+        self.assertTrue(details["features"]["rev_yoy"].get("missing"))
+        self.assertIn("2317", details["features"]["rev_yoy"]["missing_instruments"])
+
+    def test_pit_history_undated_bar_aligned_arrays_measure_non_null_or_fail_closed(self) -> None:
+        from datetime import date, timedelta
+        from adapter.vectorbt_adapter import _measure_pit_history
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        artifact = _sample_factor_rule_artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        start = date(2023, 1, 2)
+        records = [
+            {
+                "instrument": "2330.TWSE",
+                "date": (start + timedelta(days=i)).isoformat(),
+                "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0,
+            }
+            for i in range(1000)
+        ]
+        sparse = [None] * 500 + [float(i % 7) for i in range(500)]
+        dataset = {"records": records, "features_by_instrument": {"2330.TWSE": {"rev_yoy": sparse}}}
+        days, bars, details = _measure_pit_history(dataset, artifact)
+        self.assertLess(days, 730)
+        self.assertLessEqual(bars, 500)
+        self.assertEqual(details["features"]["rev_yoy"]["calendar_days"], 499)
+
+        short = [1.0] * 500
+        dataset = {"records": records, "features_by_instrument": {"2330.TWSE": {"rev_yoy": short}}}
+        days, bars, _details = _measure_pit_history(dataset, artifact)
+        self.assertLess(days, 730)
+        self.assertEqual(bars, 0)
+
+    def test_undated_mapping_observations_are_sliced_per_bar_no_future_leak(self) -> None:
+        from types import SimpleNamespace
+        from adapter.vectorbt_adapter import _bar_features_for_index
+
+        n = 756
+        start = date(2023, 1, 1)
+        bars = [(1.0, 1.0, 1.0, 1.0, 1.0)] * n
+        dates = [(start + timedelta(days=i)).isoformat() for i in range(n)]
+        obs = [{"value": 0.0} for _ in range(n)]
+        obs[-1] = {"value": 2.0}
+        dataset = SimpleNamespace(
+            ohlcv_by_instrument={"2330": bars},
+            dates_by_instrument={"2330": dates},
+            features_by_instrument={"2330": {"rev_yoy": obs}},
+        )
+        feats, _t = _bar_features_for_index(dataset, "2330", 0)
+        self.assertEqual(len(feats["rev_yoy"]), 1)
+        self.assertEqual(feats["rev_yoy"], [{"value": 0.0}])
+        feats_last, _t = _bar_features_for_index(dataset, "2330", n - 1)
+        self.assertEqual(len(feats_last["rev_yoy"]), n)
+
+    def test_undated_mapping_observations_sliced_in_windows_no_future_leak(self) -> None:
+        from types import SimpleNamespace
+        from adapter.vectorbt_adapter import _bar_features_for_index, _slice_prepared_dataset
+
+        n = 756
+        start = date(2023, 1, 1)
+        bars = tuple((1.0, 1.0, 1.0, 1.0, 1.0) for _ in range(n))
+        dates = tuple((start + timedelta(days=i)).isoformat() for i in range(n))
+
+        def make(last: float) -> SimpleNamespace:
+            obs = [{"value": 0.0} for _ in range(n)]
+            obs[-1] = {"value": last}
+            return SimpleNamespace(
+                dataset_id="d", strategy_id="s", source_dataset_refs=(),
+                source_strategy_spec_id=None, instruments=("2330",),
+                bars_per_instrument={"2330": n}, ohlcv_by_instrument={"2330": bars},
+                data_frequency="1d", num_instruments=1, total_bars=n,
+                dates_by_instrument={"2330": dates},
+                features_by_instrument={"2330": {"rev_yoy": obs}},
+            )
+
+        for lo, hi in ((0, 529), (529, n), (100, 300)):
+            a = _slice_prepared_dataset(make(0.0), lo, hi, "w")
+            b = _slice_prepared_dataset(make(2.0), lo, hi, "w")
+            self.assertEqual(len(a.features_by_instrument["2330"]["rev_yoy"]), hi - lo)
+            for idx in range(min(3, hi - lo)):
+                fa, _ = _bar_features_for_index(a, "2330", idx)
+                fb, _ = _bar_features_for_index(b, "2330", idx)
+                self.assertEqual(len(fa["rev_yoy"]), idx + 1)
+                if hi < n:
+                    self.assertEqual(fa["rev_yoy"], fb["rev_yoy"])
+
+    def test_nested_dataset_field_series_sliced_no_future_leak(self) -> None:
+        from types import SimpleNamespace
+        from adapter.vectorbt_adapter import _bar_features_for_index, _slice_prepared_dataset
+
+        n = 756
+        start = date(2023, 1, 1)
+        bars = tuple((1.0, 1.0, 1.0, 1.0, 1.0) for _ in range(n))
+        dates = tuple((start + timedelta(days=i)).isoformat() for i in range(n))
+
+        def make(last: float) -> SimpleNamespace:
+            scalars = [float(i % 4) for i in range(n)]
+            scalars[-1] = last
+            maps = [{"value": 0.0} for _ in range(n)]
+            maps[-1] = {"value": last}
+            return SimpleNamespace(
+                dataset_id="d", strategy_id="s", source_dataset_refs=(),
+                source_strategy_spec_id=None, instruments=("2330",),
+                bars_per_instrument={"2330": n}, ohlcv_by_instrument={"2330": bars},
+                data_frequency="1d", num_instruments=1, total_bars=n,
+                dates_by_instrument={"2330": dates},
+                features_by_instrument={
+                    "2330": {"rev": {"yoy": scalars, "obs": maps}}
+                },
+            )
+
+        for lo, hi in ((0, 529), (100, 300)):
+            a = _slice_prepared_dataset(make(0.0), lo, hi, "w")
+            b = _slice_prepared_dataset(make(100.0), lo, hi, "w")
+            self.assertEqual(len(a.features_by_instrument["2330"]["rev"]["yoy"]), hi - lo)
+            fa, _ = _bar_features_for_index(a, "2330", 10)
+            fb, _ = _bar_features_for_index(b, "2330", 10)
+            self.assertEqual(len(fa["rev"]["yoy"]), 11)
+            self.assertEqual(len(fa["rev"]["obs"]), 11)
+            self.assertEqual(fa["rev"], fb["rev"])
+
+    def test_replication_backtest_protocol_insufficient_history_under_two_years(self) -> None:
+        from adapter.vectorbt_adapter import (
+            INSUFFICIENT_HISTORY_STATUS,
+            build_canonical_tw_strategy_artifact,
+            build_governed_tw_replication_dataset,
+            run_replication_backtest_protocol,
+        )
+
+        artifact = build_canonical_tw_strategy_artifact(
+            strategy_id="tw_short_history",
+            symbols=["2330"],
+        )
+        short_dataset = build_governed_tw_replication_dataset(
+            symbols=["2330"],
+            trading_days=252,
+        )
+        evaluation = run_replication_backtest_protocol(
+            strategy_artifact=artifact,
+            dataset=short_dataset,
+            run_id="bt-short-001",
+        )
+        self.assertEqual(evaluation["status"], INSUFFICIENT_HISTORY_STATUS)
+        self.assertFalse(evaluation["history_check"]["sufficient"])
+        self.assertLess(evaluation["pit_history_days"], 730)
+
 

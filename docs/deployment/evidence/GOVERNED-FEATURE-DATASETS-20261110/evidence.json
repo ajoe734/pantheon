@@ -1,0 +1,226 @@
+{
+  "acceptance": {
+    "1_twse_openapi_fundamentals": {
+      "datasets": [
+        "tw_monthly_revenue",
+        "tw_financial_statement",
+        "tw_valuation_bwibbu",
+        "tw_margin_short_balance (pre-existing)"
+      ],
+      "endpoints": "OpenAPI only (openapi.twse.com.tw/v1, www.tpex.org.tw/openapi/v1); website endpoints rejected by _assert_twse_tpex_openapi_only_url",
+      "entrypoints": [
+        "normalize_monthly_revenue_rows",
+        "normalize_financial_statement_rows",
+        "normalize_valuation_rows",
+        "fetch_fundamental_rows",
+        "fundamental_rows_to_records",
+        "TaiwanOfficialMarketDatasetAdapter.fetch_payload (tw_financial_statement fetches and joins income+balance) via provider_adapters._taiwan_official"
+      ],
+      "live_pull": "not executed from this worktree (no egress/storage run); verified with fixture payloads",
+      "review_fix": "Rework 20261111: provider path fetches both statement endpoints; test_provider_entrypoint_fetches_and_joins_income_and_balance_statements uses no prewrapped payload",
+      "review_fix_rework_3": "tw-twse-tpex-official-market definition, config schema and financial catalog entry/template now declare tw_monthly_revenue, tw_financial_statement, tw_valuation_bwibbu; test_governed_fundamentals_are_creatable_through_management_and_stored drives SourceCommandEngine create -> provider fetch -> MarketDataStorageWriter -> measure_stored_history_depth for each.",
+      "review_fix_rework_4": "_records_from_normalized_rows stamps tw_margin_short_balance and tw_institutional_flow rows with event_time, offset-aware available_time (catalogue lag, 18:00 Asia/Taipei), ingest_time, availability_lag_days; test_daily_flow_pull_to_storage_to_training_carries_governed_times covers pull->storage->authority for both.",
+      "status": "implemented_unit_verified",
+      "times": "event_time, available_time (declared-lag deadline at 18:00 Asia/Taipei), ingest_time, availability_lag_days on every row"
+    },
+    "2_macro_and_community": {
+      "community": "community_daily_feature_rows (post_volume, attention_zscore, bull_bear_ratio; available after Taipei day close)",
+      "macro": "macro_feature_rows (CBC/NDC/DGBAS series via collector bundles, unknown series rejected)",
+      "review_fix": "Rework 20261111: CollectorBundleAdapter.pull emits governed macro/community records (macro by source_type, community by social source_type) through provider_adapters._collector_bundle; test_collector_definition_pull_to_storage_to_training_authority covers real definition datasets pull -> storage -> authority; test_storage_manifest_keeps_tw_price_daily_on_ohlcv_path covers OHLCV",
+      "review_fix_partial_bundle_cap": "Rework 20261111: a bundle with item_count above the effective cap is consumed partially via cursor '<key>|items=<n>' (CollectorBundleAdapter._select_raw); caps are not raised, raw bundle evidence is written once, derived rows stay ledger/marker-acked, fresh adapters restart durably. Tests: test_raw_only_bundle_larger_than_cap_makes_bounded_progress_across_bundles, test_public_cap_below_bundle_size_macro_progresses_across_bundles_and_fresh_adapters.",
+      "review_fix_public_resume_cursor": "Rework 20261111b: the public path discarded CollectorPullResult.next_cursor, so partial progress never survived real calls. CollectorBundleAdapter now persists a durable resume cursor (state/<connector>/resume_cursor.json) via load_resume_cursor/save_resume_cursor, used by provider_adapters._collector_bundle when no explicit cursor is given; cleared when a sweep completes. Caps unchanged, nothing acknowledged unless returned. Tests drive execute_provider_owned_adapter with request={}, fetch.max_records=1, fresh adapters: macro yields all 12 unique derived rows, 4 raw items, 2 bundle manifests; raw-only reaches 4 raw items/2 manifests. services/source_ingestion suite: 1255 passed, 13 skipped.",
+      "review_fix_public_pull_cap": "provider_adapters._collector_bundle forwards request[_effective_max_records] to CollectorBundleAdapter.pull; test_unequal_public_cap_macro_emission_neither_loses_nor_duplicates_across_restarts and test_unequal_public_cap_community_does_not_lose_unreturned_rows drive the public execute_provider_owned_adapter path with adapter cap 500 vs fetch cap 2 and fresh adapters per tick; both fail without the one-line fix. Durable macro markers from 4bec58d45 preserved.",
+      "review_fix_rework_3": "Collector definitions now declare derived tw_community_daily/tw_macro_series with normalized_datasets/feature_targets/raw_only_datasets routing; original collector_* items are raw-only (no feature rows, never parsed as OHLCV). test_unfiltered_collector_pull_materializes_through_source_authority runs the unfiltered pull -> storage -> materialize_source_dataset_version for social and macro.",
+      "review_fix_rework_4": "CollectorBundleAdapter.pull loads prior daily counts from stored normalized tw_community_daily rows (stored_community_daily_counts) so incremental pulls compute attention_zscore; test_incremental_community_pulls_use_persisted_history reproduces seven daily pulls -> 2.04939015319192.",
+      "review_fix_rework_5": "Macro: PROVIDER_SERIES_MAP maps the real poller identities (CBC:BP01D01:01 -> tw_macro_cbc.usd_twd, NDC:6099:MONITORING_SCORE expands to monitoring_score/leading_index/coincident_index, DGBAS_CPI_TOTAL/DGBAS_GDP_REAL_YOY) with month/quarter period-end normalization; real CbcMacroPoller/NdcIndicatorsPoller fixtures -> bundle pull -> storage -> materialize_source_dataset_version covered by test_unfiltered_collector_pull_materializes_through_source_authority (CBC 3 governed rows, NDC 6). Community: persisted per-post ledger (dedupe, first-seen knowledge time, closed-day revisions, replay-idempotent) so split same-day pulls give volume 3 / ratio 1.5; bare symbols resolve through stored tw_price_daily identities (2330 -> 2330.TWSE), ambiguous/unknown rejected explicitly.",
+      "review_fix_rework_6": "community_ledger_entries now reads canonical collector fields: author_id_hash (CollectorBundleAdapter._record) and metrics.sentiment_tag (CMoneySpider), so unique_authors, engagement_weighted_sentiment, bull_bear_ratio and single-author down-weighting populate for real bundle pulls; test_canonical_collector_fields_feed_authors_and_sentiment. Validation: test_feature_catalogue.py + test_collector_bundle_connector.py 60 passed (exit 0).",
+      "status": "implemented_unit_verified",
+      "training_path": "services/training-session/source_dataset_authority.py::feature_observations_from_wrappers (tw_price_daily stays on the OHLCV path)"
+    },
+    "3_feature_catalogue": {
+      "catalogue": "services/source_ingestion/feature_catalogue.py",
+      "dataset_count": 11,
+      "document": "generated on demand by services.source_ingestion.feature_catalogue.catalogue_document(); not committed (bulky)",
+      "document_sha256_of_removed_472_line_file": "408df3fcc9c3897b7c257bbc48b3e9c62676a8445762c23aaaa418c204e7c610",
+      "evaluator": "factor_rule lag floors pinned to catalogue by test_factor_rule_catalogue_lags_match_source_ingestion_catalogue",
+      "field_count": 41,
+      "paper_producer": "paper_signal_producer rejects factor-rule inputs outside the catalogue (feature_not_in_catalogue)",
+      "review_fix_rework_3": "evaluate_factor_rule_view (shared by research/vectorbt and paper) now calls assert_governed_feature_inputs/observations; timestamp-free non-price features and uncatalogued datasets are rejected, price built-ins retained (tests in services/registry/test_factor_rule.py).",
+      "schema": "docs/contracts/feature_catalogue.v1.schema.json",
+      "status": "implemented_unit_verified"
+    },
+    "4_history_depth": {
+      "fixture_demonstration": {
+        "daily_bar_dataset": "tw_price_daily",
+        "daily_bar_symbol_count": 2,
+        "datasets": {
+          "tw_monthly_revenue": {
+            "daily_bar_symbols_without_history": 1,
+            "distinct_event_dates": 3,
+            "entity_count": 1,
+            "first_event_date": "2026-08-31",
+            "last_event_date": "2026-10-31",
+            "per_daily_bar_symbol": {
+              "1101.TWSE": {
+                "distinct_event_dates": 0,
+                "first_event_date": null,
+                "last_event_date": null,
+                "span_days": 0
+              },
+              "2330.TWSE": {
+                "distinct_event_dates": 3,
+                "first_event_date": "2026-08-31",
+                "last_event_date": "2026-10-31",
+                "span_days": 62
+              }
+            },
+            "row_count": 3,
+            "rows_without_entity_or_event_time": 0,
+            "span_days": 62
+          },
+          "tw_price_daily": {
+            "distinct_event_dates": 1,
+            "entity_count": 2,
+            "first_event_date": "2026-11-04",
+            "last_event_date": "2026-11-04",
+            "per_entity": {
+              "1101.TWSE": {
+                "distinct_event_dates": 1,
+                "first_event_date": "2026-11-04",
+                "last_event_date": "2026-11-04",
+                "span_days": 1
+              },
+              "2330.TWSE": {
+                "distinct_event_dates": 1,
+                "first_event_date": "2026-11-04",
+                "last_event_date": "2026-11-04",
+                "span_days": 1
+              }
+            },
+            "row_count": 2,
+            "rows_without_entity_or_event_time": 0,
+            "span_days": 1
+          }
+        },
+        "schema_version": "feature_history_depth.v1",
+        "storage_root": "<fixture>"
+      },
+      "hosted_measurement": {
+        "absent_on_hosted": [
+          "fundamentals",
+          "flows",
+          "macro",
+          "community"
+        ],
+        "absent_reason": "these datasets arrive once collector egress is live",
+        "conclusion": "No symbol meets the two-year minimum history. Best case is 60 trading days (~3 months).",
+        "governed_coverage_file": {
+          "daily_bar_symbol_count": 104,
+          "daily_bar_symbol_depth_source": "hosted_history_depth_20261111.json datasets.tw_price_daily.per_entity",
+          "derived_from": "hosted_history_depth_20261111.json (verbatim hosted measurement, measured 2026-11-11)",
+          "format": "jsonl_one_line_per_dataset",
+          "line_count": 7,
+          "path": "hosted_governed_dataset_coverage_20261111.jsonl",
+          "schema_version": "feature_history_depth_governed_coverage.v1",
+          "sha256": "93610fd45a760677d3d44a75accc46b68325863564f95bf49f09a8f3bccaa336"
+        },
+        "governed_coverage_summary": {
+          "tw_community_daily": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_financial_statement": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_institutional_flow": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_macro_series": {
+            "daily_bar_symbols_without_history": null,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 0,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_margin_short_balance": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_monthly_revenue": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          },
+          "tw_valuation_bwibbu": {
+            "daily_bar_symbols_without_history": 104,
+            "distinct_event_dates": 0,
+            "entity_count": 0,
+            "per_symbol_entries_listed": 104,
+            "row_count": 0,
+            "status": "absent_on_hosted_store"
+          }
+        },
+        "internal_note": {
+          "note": "no entity or event time",
+          "row_count": 3
+        },
+        "market": {
+          "distinct_dates": 16,
+          "range": "2026-09-12..2026-10-09",
+          "row_count": 2830
+        },
+        "measured_by": "coordinator, read-only, 2026-11-11, standalone script of measure_stored_history_depth run in pantheon-source-ingest-1 against /data/source-ingest/market_data_store (SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT not set there)",
+        "source_file": "hosted_history_depth_20261111.json (verbatim hosted per-dataset/per-daily-bar-symbol measurement, committed) and hosted_governed_dataset_coverage_20261111.jsonl (JSON Lines, one compact line per governed dataset, full per-symbol map with explicit zeros)",
+        "taifex_ssf_contracts": {
+          "note": "no event time on any row",
+          "row_count": 177
+        },
+        "tw_price_daily": {
+          "0050.TWSE_distinct_days": 47,
+          "max_distinct_trading_days": 60,
+          "max_range": "2026-08-12..2026-11-10",
+          "median_distinct_days": 1,
+          "row_count": 5400,
+          "symbol_count": 104,
+          "symbols_at_max": [
+            "2330.TWSE",
+            "2317.TWSE"
+          ],
+          "symbols_with_two_years": 0
+        }
+      },
+      "note": "Real hosted measurement by coordinator supersedes the fixture demonstration, which remains shape-only. Acceptance 4 accepted on this evidence per coordinator.",
+      "status": "measured_on_hosted_minimum_not_met",
+      "tool": "python3 -m services.source_ingestion.market_data_storage <market_data_store root>"
+    },
+    "5_release_calendar": {
+      "file": "services/source_ingestion/calendars/tw_macro_release_calendar_2026.json",
+      "note": "Sources cited (CBC, NDC, DGBAS). Exact dates are confirmed only where agency-announced (CBC board meetings, two NDC releases); other entries are rule-only and must be promoted to confirmed from the DGBAS advance release calendar by the yearly manual review.",
+      "status": "implemented_partial_dates"
+    }
+  },
+  "schema_version": "governed_feature_datasets_evidence.v1",
+  "task_id": "GOVERNED-FEATURE-DATASETS-20261110"
+}

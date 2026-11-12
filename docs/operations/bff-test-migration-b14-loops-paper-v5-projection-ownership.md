@@ -745,7 +745,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(os.environ['PANTHEON_COMMAND_ROOT']) / '.orchestrator'))
 from rewrite.task_state_store import load_snapshot
-snapshot = load_snapshot(Path(os.environ['PANTHEON_TASK_STATE_EVENT_LOG']), refresh_checkpoint=False)
+snapshot = load_snapshot(Path(os.environ['PANTHEON_TASK_STATE_EVENT_LOG']), observational=True)
 state = snapshot['state']
 rows = {r['id']: r for r in state['tasks']}
 terminal = state['terminal_facts']

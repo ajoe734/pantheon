@@ -193,8 +193,9 @@
       "method": "POST",
       "path": "/bff/strategies/{strategyId}/actions/{actionId}",
       "family": "strategy-persona",
-      "status": "missing",
-      "task_id": "BFF-LUV-GAP-002"
+      "status": "superseded_with_reason",
+      "reason": "Notification-only 410 route removed by BFF-OLD-NOTIFICATION-RETIRE-20261111; use /bff/v1/commands.",
+      "task_id": "BFF-OLD-NOTIFICATION-RETIRE-20261111"
     },
     {
       "method": "POST",
@@ -645,8 +646,9 @@
       "method": "POST",
       "path": "/bff/deployments/{deploymentId}/actions/{actionId}",
       "family": "governance-runtime-risk-audit",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-005"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-005",
+      "reason": "Notification-only 410 route removed by BFF-OLD-NOTIFICATION-RETIRE-20261111; use /bff/v1/commands or the canonical /bff/mcp-servers and /bff/mcp-tools surfaces."
     },
     {
       "method": "GET",
@@ -666,8 +668,9 @@
       "method": "POST",
       "path": "/bff/runtimes/{runtimeId}/actions/{actionId}",
       "family": "governance-runtime-risk-audit",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-005"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-005",
+      "reason": "Notification-only 410 route removed by BFF-OLD-NOTIFICATION-RETIRE-20261111; use /bff/v1/commands or the canonical /bff/mcp-servers and /bff/mcp-tools surfaces."
     },
     {
       "method": "GET",
@@ -1121,17 +1124,17 @@
       "method": "POST",
       "path": "/bff/tools/{toolId}/actions/{actionId}",
       "family": "tools-mcp-skills",
-      "status": "implemented",
+      "status": "superseded_with_reason",
       "task_id": "BFF-LUV-GAP-008",
-      "commit": "777533ee"
+      "reason": "Notification-only 410 route removed by BFF-OLD-NOTIFICATION-RETIRE-20261111; use /bff/v1/commands or the canonical /bff/mcp-servers and /bff/mcp-tools surfaces."
     },
     {
       "method": "GET",
       "path": "/bff/mcp/servers",
       "family": "tools-mcp-skills",
-      "status": "implemented",
+      "status": "superseded_with_reason",
       "task_id": "BFF-LUV-GAP-008",
-      "commit": "777533ee"
+      "reason": "Notification-only 410 route removed by BFF-OLD-NOTIFICATION-RETIRE-20261111; use /bff/v1/commands or the canonical /bff/mcp-servers and /bff/mcp-tools surfaces."
     },
     {
       "method": "POST",
@@ -1145,9 +1148,9 @@
       "method": "GET",
       "path": "/bff/mcp/servers/{serverId}",
       "family": "tools-mcp-skills",
-      "status": "implemented",
+      "status": "superseded_with_reason",
       "task_id": "BFF-LUV-GAP-008",
-      "commit": "777533ee"
+      "reason": "Notification-only 410 route removed by BFF-OLD-NOTIFICATION-RETIRE-20261111; use /bff/v1/commands or the canonical /bff/mcp-servers and /bff/mcp-tools surfaces."
     },
     {
       "method": "POST",
@@ -1169,9 +1172,9 @@
       "method": "POST",
       "path": "/bff/mcp/tools/{toolId}/actions/{actionId}",
       "family": "tools-mcp-skills",
-      "status": "implemented",
+      "status": "superseded_with_reason",
       "task_id": "BFF-LUV-GAP-008",
-      "commit": "777533ee"
+      "reason": "Notification-only 410 route removed by BFF-OLD-NOTIFICATION-RETIRE-20261111; use /bff/v1/commands or the canonical /bff/mcp-servers and /bff/mcp-tools surfaces."
     },
     {
       "method": "GET",
@@ -1209,9 +1212,9 @@
       "method": "POST",
       "path": "/bff/skills/{skillId}/actions/{actionId}",
       "family": "tools-mcp-skills",
-      "status": "implemented",
+      "status": "superseded_with_reason",
       "task_id": "BFF-LUV-GAP-008",
-      "commit": "777533ee"
+      "reason": "Notification-only 410 route removed by BFF-OLD-NOTIFICATION-RETIRE-20261111; use /bff/v1/commands or the canonical /bff/mcp-servers and /bff/mcp-tools surfaces."
     },
     {
       "method": "POST",

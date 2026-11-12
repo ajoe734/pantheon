@@ -319,3 +319,225 @@ def test_cursor_skips_already_consumed_bundles(tmp_path):
     assert len(first.records) == 4
     assert len(adapter.pull(cursor=first.next_cursor).records) == 0
     assert len(adapter.pull(cursor="2026-11-10T02:05:00Z#r1").records) == 2
+
+
+def _multi_symbol_bundle(tmp_path):
+    files, entry, _ = make_bundle(source_id="collector-tw-cmoney-forum", run_id="cap1")
+    base = "bundles/collector-tw-cmoney-forum/2026-11-10/cap1"
+    rows = [json.loads(x) for x in files[f"{base}/items.jsonl"].decode().splitlines()]
+    for row in rows:
+        row["symbols"] = ["1101.TW", "2317.TW", "2330.TW"]
+        row["metrics"] = {"sentiment": "bullish"}
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    return files, entry
+
+
+def test_capped_community_expansion_flushes_across_empty_cursor_pulls(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    files, entry = _multi_symbol_bundle(tmp_path)
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setattr(
+        CollectorBundleAdapter, "_instrument_authority",
+        lambda self: {"1101": ("1101.TWSE",), "2317": ("2317.TWSE",), "2330": ("2330.TWSE",)},
+    )
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {
+        "source_id": "collector-tw-cmoney-forum", "source_type": "social", "dataset": "tw_community_daily",
+        "platform": "cmoney", "host": HOST, "max_records": 2,
+    }
+    adapter = CollectorBundleAdapter(connector_id="conn-cap", **{k: v for k, v in config.items() if k != "host"})
+    seen: set[str] = set()
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 2}
+    raw_returned = False
+    for _ in range(6):
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+        assert len(records) <= 2
+        seen |= {r.metadata["symbol"] for r in records if r.content_ref.startswith("collector-feature://")}
+        raw_returned = raw_returned or any(not r.content_ref.startswith("collector-feature://") for r in records)
+        if raw_returned:
+            break
+    assert seen == {"1101.TWSE", "2317.TWSE", "2330.TWSE"}
+    assert raw_returned
+    assert adapter.pull(cursor=None, max_records=2).next_cursor is not None
+
+
+def test_capped_macro_expansion_delivers_every_derived_field_across_pulls(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    files, entry, _ = make_bundle(source_id="collector-tw-macro-ndc", run_id="mac1")
+    base = "bundles/collector-tw-macro-ndc/2026-11-10/mac1"
+    rows = [json.loads(x) for x in files[f"{base}/items.jsonl"].decode().splitlines()]
+    for row, period in zip(rows, ("2026-09-30", "2026-08-31")):
+        row.update({"series_id": "NDC:6099:MONITORING_SCORE", "period_end": period, "value": 28.0,
+                    "metrics": {"leading_index": 101.0, "coincident_index": 99.0}})
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {"source_id": "collector-tw-macro-ndc", "source_type": "macro", "dataset": "tw_macro_series",
+              "platform": "ndc", "max_records": 2}
+    adapter = CollectorBundleAdapter(connector_id="conn-mac", **config)
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 2}
+    seen: set[tuple[str, str]] = set()
+    raw_returned = False
+    for _ in range(12):
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+        assert len(records) <= 2
+        for r in records:
+            if r.content_ref.startswith("collector-feature://"):
+                nr = r.metadata["normalized_row"]
+                seen.add((nr["field"], nr["event_time"]))
+            else:
+                raw_returned = True
+        if raw_returned:
+            break
+    fields = {"monitoring_score", "leading_index", "coincident_index"}
+    assert {f for f, _ in seen} == fields
+    assert len(seen) == 6
+    assert raw_returned
+
+
+def test_unequal_public_cap_macro_emission_neither_loses_nor_duplicates_across_restarts(tmp_path, monkeypatch):
+    """Adapter default cap (500) is larger than the public fetch cap (2): the public path must
+    forward the fetch cap, so unreturned derived rows stay pending and emitted ones never repeat."""
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    files, entry, _ = make_bundle(source_id="collector-tw-macro-ndc", run_id="mac2")
+    base = "bundles/collector-tw-macro-ndc/2026-11-10/mac2"
+    rows = [json.loads(x) for x in files[f"{base}/items.jsonl"].decode().splitlines()]
+    for row, period in zip(rows, ("2026-09-30", "2026-08-31")):
+        row.update({"series_id": "NDC:6099:MONITORING_SCORE", "period_end": period, "value": 28.0,
+                    "metrics": {"leading_index": 101.0, "coincident_index": 99.0}})
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {"source_id": "collector-tw-macro-ndc", "source_type": "macro", "dataset": "tw_macro_series",
+              "platform": "ndc"}  # adapter max_records stays at its default (500)
+    assert CollectorBundleAdapter(connector_id="conn-mac2", **config).max_records > 2
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 2}
+    emitted: list[tuple[str, str]] = []
+    raw_returned = False
+    for _ in range(12):  # a fresh adapter per tick models a process restart
+        adapter = CollectorBundleAdapter(connector_id="conn-mac2", **config)
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+        assert len(records) <= 2
+        for r in records:
+            if r.content_ref.startswith("collector-feature://"):
+                nr = r.metadata["normalized_row"]
+                emitted.append((nr["field"], nr["event_time"]))
+            else:
+                raw_returned = True
+        if raw_returned:
+            break
+    assert len(emitted) == len(set(emitted)), "already-emitted observation was duplicated"
+    assert {f for f, _ in emitted} == {"monitoring_score", "leading_index", "coincident_index"}
+    assert len(set(emitted)) == 6
+    assert raw_returned
+
+
+def test_unequal_public_cap_community_does_not_lose_unreturned_rows(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    files, entry = _multi_symbol_bundle(tmp_path)
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setattr(
+        CollectorBundleAdapter, "_instrument_authority",
+        lambda self: {"1101": ("1101.TWSE",), "2317": ("2317.TWSE",), "2330": ("2330.TWSE",)},
+    )
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {"source_id": "collector-tw-cmoney-forum", "source_type": "social", "dataset": "tw_community_daily",
+              "platform": "cmoney", "host": HOST}
+    kw = {k: v for k, v in config.items() if k != "host"}
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 2}
+    seen: set[str] = set()
+    raw_returned = False
+    for _ in range(8):
+        adapter = CollectorBundleAdapter(connector_id="conn-cap2", **kw)
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+        assert len(records) <= 2
+        seen |= {r.metadata["symbol"] for r in records if r.content_ref.startswith("collector-feature://")}
+        raw_returned = raw_returned or any(not r.content_ref.startswith("collector-feature://") for r in records)
+        if raw_returned:
+            break
+    assert seen == {"1101.TWSE", "2317.TWSE", "2330.TWSE"}
+    assert raw_returned
+
+
+def _two_bundles(source_id, *, macro=False):
+    files, entries = {}, []
+    for run_id, finished in (("cap-a", "2026-11-10T02:05:00Z"), ("cap-b", "2026-11-10T03:05:00Z")):
+        f, e, _ = make_bundle(source_id=source_id, run_id=run_id, finished=finished)
+        if macro:
+            base = f"bundles/{source_id}/2026-11-10/{run_id}"
+            rows = [json.loads(x) for x in f[f"{base}/items.jsonl"].decode().splitlines()]
+            periods = ("2026-09-30", "2026-08-31") if run_id == "cap-a" else ("2026-07-31", "2026-06-30")
+            for row, period in zip(rows, periods):
+                row.update({"series_id": "NDC:6099:MONITORING_SCORE", "period_end": period, "value": 28.0,
+                            "metrics": {"leading_index": 101.0, "coincident_index": 99.0}})
+            f[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+        files.update(f)
+        entries.append(e)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    return files, entries
+
+
+def test_raw_only_bundle_larger_than_cap_makes_bounded_progress_across_bundles(tmp_path):
+    files, entries = _two_bundles("collector-x")
+    cursor, delivered = None, []
+    for _ in range(10):
+        adapter = adapter_for(files, entries, tmp_path, source_id="collector-x", source_type="news",
+                              platform=None, publisher="cna")
+        result = adapter.pull(cursor=cursor, max_records=1)
+        assert len(result.records) <= 1
+        delivered.extend(r.source_id for r in result.records)
+        if result.next_cursor == cursor and not result.records:
+            break
+        cursor = result.next_cursor
+    assert len(delivered) == 4
+    assert cursor == "2026-11-10T03:05:00Z#cap-b"
+
+
+def _public_sweep(config, fetch_extra, tmp_path, monkeypatch, files, rounds=40):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {},
+             "max_records": 1, **fetch_extra}
+    derived, raw = [], set()
+    for _ in range(rounds):
+        adapter = CollectorBundleAdapter(connector_id="conn-capx", **config)  # fresh adapter every call
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+        assert len(records) <= 1
+        for r in records:
+            if r.content_ref.startswith("collector-feature://"):
+                nr = r.metadata["normalized_row"]
+                derived.append((nr["field"], nr["event_time"]))
+            else:
+                raw.add(r.metadata["raw_uri"])
+    return derived, raw
+
+
+def test_public_cap_below_bundle_size_macro_progresses_across_bundles_and_fresh_adapters(tmp_path, monkeypatch):
+    files, _ = _two_bundles("collector-tw-macro-ndc", macro=True)
+    config = {"source_id": "collector-tw-macro-ndc", "source_type": "macro", "dataset": "tw_macro_series",
+              "platform": "ndc"}
+    derived, raw = _public_sweep(config, {}, tmp_path, monkeypatch, files)
+    assert len(derived) == len(set(derived)), "derived observation duplicated"
+    assert len(set(derived)) == 12, "every item of every bundle must yield its derived rows"
+    assert {f for f, _ in derived} == {"monitoring_score", "leading_index", "coincident_index"}
+    assert len(raw) == 4, "raw evidence starved behind a bundle larger than the public cap"
+    manifests = list((tmp_path / "raw_store" / "raw").rglob("manifest.json"))
+    assert len(manifests) == 2
+
+
+def test_public_cap_raw_only_reaches_every_item_and_bundle_across_fresh_adapters(tmp_path, monkeypatch):
+    files, _ = _two_bundles("collector-x")
+    config = {"source_id": "collector-x", "source_type": "news", "publisher": "cna"}
+    _, raw = _public_sweep(config, {}, tmp_path, monkeypatch, files, rounds=12)
+    assert len(raw) == 4
+    assert len(list((tmp_path / "raw_store" / "raw").rglob("manifest.json"))) == 2

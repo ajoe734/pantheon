@@ -2414,6 +2414,7 @@ def test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar
             mark_provider=provider,
             poll_interval_seconds=3600,
         )
+        service._valuation_now = lambda: now_oct25
         assert service._algo.BindPerformanceBinding(h12_binding_id)
         service._algo._initial_cash = 100000.0
         service._algo._cash = 104800.0
@@ -2959,3 +2960,98 @@ def test_portfolio_holdings_stock_future_with_telemetry_mark_stale_stays_stale(m
     item = _ssf_holdings(monkeypatch, _ssf_hosted_summary(mark_stale=True))
     assert item["mark_status"] == "stale"
     assert item["telemetry_stale"] is True
+
+
+def test_portfolio_holdings_net_realized_plus_unrealized_equals_ledger_net_pnl(monkeypatch) -> None:
+    """TELEMETRY-POSITION-NET-PNL-COSTS-20261111: real rb-3516 owner shape.
+
+    2 ssf:SRF:202611 contracts @ 97.1 (x1000), fee 16 + tax 3.884, owner ledger
+    cash 99980.116 from 100000. Net realized + unrealized must equal the net
+    total (-19.884) within 0.01; margin 17400 is not a PnL expense.
+    """
+    from services.control_plane.bff.pm12 import service as pm12_service
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    runtime_id = "rt-3b65a843"
+    binding_id = "rb-3516fc86e6f84649a499fc89f3c562b3"
+    future_id = "ssf:SRF:202611"
+    runtime_record = {
+        "id": binding_id,
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "capital_pool_id": "pool-tw-equities-core",
+        "artifact_id": "artifact-tw-equities",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "persona_id": "persona-tw-swing-trader",
+        "strategy_id": "strat-tw-swing-breakout",
+        "status": "active",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+    scope = {
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "runtime_id": runtime_id,
+        "binding_id": binding_id,
+    }
+    store = RuntimeSummaryProjectionStore(path=None)
+    store.project_event(
+        {
+            **scope,
+            "event_id": "evt-net-fill-1",
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-11-10T07:01:46Z",
+            "metrics": {"fill_quantity": 2.0, "fill_price": 97.1},
+            "metadata": {
+                "symbol": "0050.TWSE",
+                "currency": "TWD",
+                "broker": "shioaji_paper",
+                "instrument_id": future_id,
+                "kind": "stock_future",
+                "multiplier": 1000.0,
+                "contract_month": "202611",
+                "initial_margin_reserved": 17400.0,
+                "fee": 16.0,
+                "tax": 3.884,
+                "ledger_cash": 99980.116,
+                "ledger_fill_count": 1,
+            },
+        }
+    )
+    summary = store.project_event(
+        {
+            **scope,
+            "event_id": "evt-net-pnl-1",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-11-10T08:00:00Z",
+            "pnl_as_of": "2026-11-10T00:00:00Z",
+            "metrics": {"pnl": -19.884, "fill_count": 1},
+            "metadata": {
+                "mark_refs": [
+                    {
+                        "symbol": future_id,
+                        "price": 97.1,
+                        "as_of": "2026-11-10T00:00:00Z",
+                        "source_ref": "source-ingest://snapshots/mss-ebac144b992fe0628a544f97",
+                        "observed_at": "2026-11-10T06:00:00Z",
+                        "lineage": {
+                            "source_ids": ["tw-official:tw_price_daily:TWSE:0050:test"],
+                            "connector_ids": ["tw-twse-tpex-official-market"],
+                        },
+                    }
+                ]
+            },
+        }
+    )
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-10T09:00:00Z")
+    body = _holdings_for(monkeypatch, [runtime_record], {runtime_id: summary})
+    (item,) = body["data"]["items"]
+    assert item["instrument_id"] == future_id
+    assert item["margin_reserved"] == 17400.0
+    assert item["unrealized_pnl"] == 0.0
+    assert item["realized_pnl"] == -19.884
+    net_total = 99980.116 - 100000.0
+    assert abs(item["realized_pnl"] + item["unrealized_pnl"] - net_total) <= 0.01

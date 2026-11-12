@@ -40,10 +40,8 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
     # The execute-plans final contract treats the approval list as the SSE
     # resync companion to /bff/actions and /bff/v1/commands.
     "GET /bff/approvals": {"family": "final-contract"},
-    # /bff/mcp-servers* and /bff/mcp-tools* are execute-plans compat aliases
-    # for the canonical /bff/mcp/* routes in the tools-mcp-skills family.
-    "GET /bff/mcp-servers": {"status": "alias", "covered_by": "GET /bff/mcp/servers"},
-    "GET /bff/mcp-servers/{id}": {"status": "alias", "covered_by": "GET /bff/mcp/servers/{server_id}"},
+    # /bff/mcp-servers* and /bff/mcp-tools* are the canonical read surfaces; the
+    # notification-only /bff/mcp/servers GET routes were removed.
     "GET /bff/mcp-tools": {"status": "alias", "covered_by": "GET /bff/mcp/servers/{server_id}/tools"},
     "GET /bff/mcp-tools/{id}": {"status": "alias", "covered_by": "GET /bff/mcp/servers/{server_id}/tools"},
     "POST /bff/mcp-servers/{server_id}/import-tools": {
@@ -60,11 +58,6 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
     "POST /bff/management/promotion-reviews/{review_id}/decisions": {
         "status": "superseded",
         "covered_by": "POST /bff/approvals/{decision_id}/decide",
-    },
-    # Retired DP-01 deployment-plan list route stays mounted only to return 410.
-    "GET /api/v1/deployment-plans": {
-        "status": "superseded",
-        "covered_by": "GET /bff/deployments",
     },
     # Track E OODA read routes are backend-owned first; frontend cards/drawer
     # activate in follow-on MGMT-OODA tasks.

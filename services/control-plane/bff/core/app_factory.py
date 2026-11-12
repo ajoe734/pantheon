@@ -767,9 +767,6 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name == "_read_surface_state":
         from ..personas.service import _read_surface_state
         return _read_surface_state
-    if name in {"_deprecated_bff_path_response", "deprecated_bff_path_response"}:
-        from ..personas.service import _deprecated_bff_path_response
-        return _deprecated_bff_path_response
 
     # 10. Capital owner boundary (POST /api/v1/bindings)
     if name == "_stable_capital_resource_id":
@@ -1222,7 +1219,6 @@ def mount_bff_routers(
                 "_composed_surface_status",
                 "_dataset_surface_status",
                 "_deployment_review_href",
-                "_deprecated_bff_path_response",
                 "_dry_run_success_response",
                 "_extract_identity",
                 "_gov_bff_action_command",
@@ -1282,7 +1278,6 @@ def mount_bff_routers(
         sse_buffers=sse_buffers,
         sse_subscribers=sse_subscribers,
         gov_bff_action_command=_dep("_gov_bff_action_command"),
-        deprecated_bff_path_response=_dep("_deprecated_bff_path_response"),
         sem_command_response=command_adapter_service.sem_command_response,
         stream_generic_events=_dep("stream_generic_events"),
         surface_degradation_reason=_dep("_surface_degradation_reason"),
@@ -1362,7 +1357,6 @@ def mount_bff_routers(
             list_governance_audit_events=_dep("_list_governance_audit_events"),
             ooda_packet_list_payload=_dep("_ooda_packet_list_payload"),
             require_ooda_packet_routes_enabled=_dep("_require_ooda_packet_routes_enabled"),
-            deprecated_bff_path_response=_dep("_deprecated_bff_path_response"),
             bff_me_tenant_payload=_dep("_bff_me_tenant_payload"),
             list_persona_records=_dep("_list_persona_records"),
             persona_directory_snapshot=_dep("_get_persona_directory_snapshot"),

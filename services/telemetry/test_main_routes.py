@@ -1416,7 +1416,9 @@ class TestTelemetryFuturesEpisodeStartupBackfill(unittest.TestCase):
                 return_value=(lambda *a, **k: None, fake_binding_events),
             ):
                 _main._build_service()
-            self.assertEqual(calls, [(self.BINDING, _TENANT_ID, 100)])
+            # Two canonical binding-history reads: episode backfill, then the
+            # open-position cost backfill (CanonicalFillHistoryReader).
+            self.assertEqual(calls, [(self.BINDING, _TENANT_ID, 100)] * 2)
             stored = json.loads(ev_file.read_text(encoding="utf-8"))
             self.assertEqual(list(stored), [expected_ep])
             self.assertEqual(len(stored[expected_ep]), 5)

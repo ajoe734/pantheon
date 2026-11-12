@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import math
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
@@ -478,9 +479,9 @@ def test_availability_lag_days_enforced_even_when_available_time_is_earlier() ->
     closes = [100.0, 101.0, 102.0, 103.0]
     # 4th observation has event_time 2026-04-30; lag is 10 days -> effective available 2026-05-10
     obs = [
-        {"event_time": "2026-01-31", "value": 10.0},
-        {"event_time": "2026-02-28", "value": 12.0},
-        {"event_time": "2026-03-31", "value": 11.0},
+        {"event_time": "2026-01-31", "available_time": "2026-01-31", "value": 10.0},
+        {"event_time": "2026-02-28", "available_time": "2026-02-28", "value": 12.0},
+        {"event_time": "2026-03-31", "available_time": "2026-03-31", "value": 11.0},
         {"event_time": "2026-04-30", "available_time": "2026-05-02T00:00:00Z", "value": 20.0},
     ]
     # On 2026-05-05, only 3 observations are visible, which is less than z_window=4
@@ -553,11 +554,21 @@ def test_max_holding_bars_triggers_exit_after_hold_window() -> None:
     series = [10.0, 10.0, 10.0, 20.0, 15.0, 15.0, 15.0]
     closes = [100.0] * len(series)
 
+    base = date(2026, 1, 1)
+    observations = [
+        {
+            "event_time": (base + timedelta(days=30 * i)).isoformat(),
+            "available_time": (base + timedelta(days=30 * i)).isoformat(),
+            "value": v,
+        }
+        for i, v in enumerate(series)
+    ]
     actions = [
         evaluate_factor_rule_action(
             artifact,
             closes[: i + 1],
-            features={"rev_yoy": series[: i + 1]},
+            features={"rev_yoy": observations[: i + 1]},
+            decision_time=(base + timedelta(days=30 * i + 15)).isoformat(),
         )
         for i in range(3, len(series))
     ]
@@ -596,3 +607,149 @@ def test_vwap_derivation_and_feature_catalogue() -> None:
     )
     assert env["vwap"] == (100.0, 100.0)
     assert required_history_bars(logic, {"th": 1.0}) == 1
+
+
+def test_shared_evaluator_rejects_timestamp_free_catalogued_feature() -> None:
+    artifact = _sample_factor_rule_artifact()
+    with pytest.raises(FactorRuleValidationError, match="event_time and available_time"):
+        evaluate_factor_rule_view(
+            artifact,
+            [100.0] * 4,
+            features={"rev_yoy": [10.0, 12.0, 11.0, 19.0]},
+            decision_time="2026-01-01",
+        )
+
+
+def test_shared_evaluator_rejects_uncatalogued_dataset() -> None:
+    artifact = _sample_factor_rule_artifact()
+    artifact["strategy_logic"]["inputs"][0]["dataset"] = "tw_not_in_catalogue"
+    with pytest.raises(FactorRuleValidationError, match="governed feature catalogue"):
+        evaluate_factor_rule_view(
+            artifact,
+            [100.0] * 4,
+            features={"rev_yoy": [10.0, 12.0, 11.0, 19.0]},
+            decision_time="2026-01-01",
+        )
+
+
+def test_price_only_factor_rule_does_not_require_decision_time() -> None:
+    artifact = _sample_factor_rule_artifact()
+    inp = artifact["strategy_logic"]["inputs"][0]
+    inp.update({"name": "close", "dataset": "tw_price_daily", "field": "close"})
+    inp["availability_lag_days"] = 0
+    artifact["strategy_logic"]["signal"]["args"][0] = {"ref": "close"}
+    view = evaluate_factor_rule_view(artifact, [10.0, 11.0, 10.5, 18.0])
+    assert view is not None
+    # Non-price inputs still require a decision_time.
+    artifact2 = _sample_factor_rule_artifact()
+    with pytest.raises(FactorRuleValidationError):
+        evaluate_factor_rule_view(
+            artifact2,
+            [100.0] * 4,
+            features={"rev_yoy": [{"value": 1.0, "event_time": "2026-01-01", "available_time": "2026-01-02"}]},
+        )
+
+
+# --- structural mutation operators (EVOLUTION-AUTO-CONSUMER-SEARCH) ---------
+
+def _mutate(operator: str | None, seed: int = 7, artifact: dict[str, Any] | None = None):
+    import random
+
+    from services.registry.factor_rule import mutate_factor_rule_structure
+
+    art = artifact or _sample_factor_rule_artifact()
+    return art, mutate_factor_rule_structure(
+        art["strategy_logic"],
+        art["parameters"],
+        art["mutation_surface"]["controls"],
+        rng=random.Random(seed),
+        operator=operator,
+    )
+
+
+@pytest.mark.parametrize("operator", ["change_window", "swap_operator", "add_filter", "change_exit"])
+def test_structural_mutation_produces_valid_artifact_and_leaves_parent_untouched(operator: str) -> None:
+    parent = _sample_factor_rule_artifact()
+    snapshot = copy.deepcopy(parent)
+    art, result = _mutate(operator, artifact=parent)
+    assert parent == snapshot
+    child = copy.deepcopy(parent)
+    child["strategy_logic"] = result["strategy_logic"]
+    child["parameters"] = result["parameters"]
+    child["mutation_surface"]["controls"] = result["controls"]
+    child["artifact_id"] = "strat-child"
+    child["version"] = "1.0.1"
+    child["lineage"]["parent_registry_ids"] = [parent["artifact_id"]]
+    validate_strategy_artifact(child)
+    assert result["mutation"]["operator"] == operator
+    assert (result["strategy_logic"], result["parameters"]) != (parent["strategy_logic"], parent["parameters"])
+
+
+def test_add_filter_uses_catalogue_feature_and_declared_controls_then_remove_restores() -> None:
+    parent, added = _mutate("add_filter")
+    desc = added["mutation"]
+    assert get_feature_definition(desc["dataset"], desc["field"]) is not None
+    keys = {c["parameter_key"] for c in added["controls"]}
+    assert set(desc["parameters"]) <= keys
+    lag = next(i for i in added["strategy_logic"]["inputs"] if i["name"] == desc["input"])
+    assert lag["availability_lag_days"] >= get_feature_definition(desc["dataset"], desc["field"]).min_availability_lag_days
+
+    import random
+
+    from services.registry.factor_rule import mutate_factor_rule_structure
+
+    removed = mutate_factor_rule_structure(
+        added["strategy_logic"], added["parameters"], added["controls"],
+        rng=random.Random(1), operator="remove_filter",
+    )
+    assert removed["strategy_logic"] == parent["strategy_logic"]
+    assert removed["parameters"] == parent["parameters"]
+
+
+def test_remove_filter_without_added_filter_is_refused() -> None:
+    from services.registry.factor_rule import FactorRuleMutationError
+
+    with pytest.raises(FactorRuleMutationError):
+        _mutate("remove_filter")
+
+
+def test_unseeded_choice_is_deterministic_for_a_seed() -> None:
+    assert _mutate(None, seed=3)[1] == _mutate(None, seed=3)[1]
+
+
+def test_repeated_mutation_decisions_register_unique_family_revisions_in_the_real_registry(monkeypatch) -> None:
+    """Siblings of one parent get distinct immutable versions; a stale allocation is a 409, a fresh one registers."""
+    from fastapi.testclient import TestClient
+
+    from services.governance.test_approval_authority import configure_registry_unit_auth, registry_unit_headers
+    from services.registry.service import app
+    from services.registry.storage import reset_store
+    from services.research.alpha_replication import evolution_search as es
+
+    configure_registry_unit_auth(monkeypatch)
+    reset_store()
+    try:
+        parent = _sample_factor_rule_artifact()
+        with TestClient(app, headers=registry_unit_headers()) as client:
+            def post(artifact: dict[str, Any]):
+                return client.post("/api/registry/strategy-artifacts", json={
+                    "registry_id": artifact["artifact_id"], "artifact_state": "candidate", "strategy_artifact": artifact})
+
+            assert post(parent).status_code == 200
+            versions = []
+            for n in range(3):
+                listed = client.get(f"/api/registry/strategies/{parent['strategy_id']}/strategy-artifacts").json()
+                known = [row["entry"]["version"] for row in listed]
+                child, _ = es.build_child_artifact(
+                    parent, decision_id=f"evd-real-{n}", kind="mutate", existing_versions=known,
+                    structural_operator="change_window")
+                response = post(child)
+                assert response.status_code == 200, response.text
+                versions.append(child["version"])
+            assert versions == ["1.1.0", "1.2.0", "1.3.0"]
+            stale, _ = es.build_child_artifact(parent, decision_id="evd-real-stale", kind="mutate",
+                                               structural_operator="change_window")  # no family view: 1.1.0 again
+            assert stale["version"] == "1.1.0"
+            assert post(stale).status_code == 409
+    finally:
+        reset_store()

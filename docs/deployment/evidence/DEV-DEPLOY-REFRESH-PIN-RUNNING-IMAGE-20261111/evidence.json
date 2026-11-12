@@ -1,0 +1,16 @@
+{
+  "task_id": "DEV-DEPLOY-REFRESH-PIN-RUNNING-IMAGE-20261111",
+  "failing_run": "https://github.com/ajoe734/pantheon/actions/runs/43000090552",
+  "change": "manage_source_ingest_refresh_runtime now writes a Compose override pinning source-ingest to the recorded running image ID (pull_policy never) for both the bounded refresh and its restore, so a stale pantheon-source-ingest tag no longer decides the image. The guard remains: it stops before recreating unless the pinned ID exists locally, and the post-up container image must still equal the recorded ID.",
+  "acceptance": {
+    "1_pin_running_image": "test_source_refresh_ignores_stale_plain_tag_and_recreates_from_running_image_id[bounded|restore]",
+    "2_stale_tag_not_blocking": "same test; fake docker tag resolves to a candidate ID, up succeeds on the baseline ID and never inspects the plain tag",
+    "3_guard_kept": "test_source_refresh_stops_when_recorded_running_image_is_not_available, test_source_refresh_still_fails_when_started_container_image_differs",
+    "4_compensation_repoints_tags": "already implemented in dev_release_artifacts.restore_images (compose_image_refs + docker tag); proven by existing test_restore_repoints_every_compose_image_name_to_the_baseline and test_restore_skips_digest_pinned_refs_and_still_repoints_the_rest (scripts/test_dev_release_artifacts.py); no source change needed"
+  },
+  "verification": {
+    "scripts/test_dev_release_artifacts.py": "114 passed, 1 skipped",
+    "scripts/test_deploy_nonprod_vm.py": "94 passed, 2 skipped, 1 failed (test_paper_signal_producer_binding_recovery_and_health_lifecycle, pre-existing: ModuleNotFoundError in services/execution/artifact_loader.py in this env, also fails without this change)"
+  },
+  "not_done": "One-time VM tag repair is handled by the coordinator; hosted deploy not verified here."
+}
