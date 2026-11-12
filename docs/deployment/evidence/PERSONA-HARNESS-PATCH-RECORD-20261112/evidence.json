@@ -1,0 +1,102 @@
+{
+  "task_id": "PERSONA-HARNESS-PATCH-RECORD-20261112",
+  "kind": "source_implementation_evidence",
+  "owner": "Codex2",
+  "assigned_reviewer": "Claude",
+  "independent_review": "pending",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md#68-harness-self-optimisation-c8",
+  "scope": "Paper-only versioned harness records, typed trajectory-cited patches, static precheck, CAS-backed owner routes, rollback and active-version runtime readback.",
+  "hosted_behavior_claimed": false,
+  "production_adoption_enabled": false,
+  "acceptance_evidence": {
+    "1_versioned_surface": [
+      "HarnessSurface/HarnessVersion strict contracts",
+      "test_real_owner_route_roundtrip_restart_and_rollback",
+      "test_versions_remain_append_only_after_rollback"
+    ],
+    "2_immutable_authority": [
+      "test_immutable_surface_rejected",
+      "test_generic_metadata_cannot_bypass_harness_owner",
+      "test_nonpaper_lifecycle_cannot_initialize"
+    ],
+    "3_cited_patch_provenance": [
+      "PersonaPatch strict contract",
+      "test_required_proposal_provenance",
+      "test_empty_or_unresolved_evidence_fails_closed"
+    ],
+    "4_static_precheck": [
+      "test_static_refusals_are_durable",
+      "test_machine_schemas_match_models",
+      "test_evidence_is_revalidated_at_activation"
+    ],
+    "5_recorded_rollback": [
+      "test_real_owner_route_roundtrip_restart_and_rollback",
+      "test_versions_remain_append_only_after_rollback"
+    ],
+    "6_one_experiment_and_readback": [
+      "test_parallel_activation_has_exactly_one_experiment",
+      "test_only_one_experiment_and_no_stale_precheck_replay",
+      "test_runtime_profile_invalid_harness_never_claims_ready"
+    ],
+    "7_real_owner_integration": [
+      "test_real_owner_route_roundtrip_restart_and_rollback",
+      "test_deployed_control_plane_mount_exposes_harness_routes",
+      "test_authentication_tenant_and_roles"
+    ]
+  },
+  "validation": [
+    {
+      "command": "COMPOSE_PROFILES=root timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/persona services/control-plane/persona",
+      "exit_code": 0,
+      "result": "354 passed, 1 skipped, 3 subtests passed in 102.87s",
+      "note": "Recovery verification after merging dev 0c1e435c6; includes final unknown-action guard. Checkout-scoped distribution provisioned through scripts/dev/provision_python_distribution.py. Skipped test is the opt-in hosted smoke."
+    },
+    {
+      "command": "COMPOSE_PROFILES=root timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/persona services/control-plane/persona",
+      "exit_code": 0,
+      "result": "353 passed, 1 skipped, 3 subtests passed",
+      "note": "Before final unknown-action guard; focused suite rerun afterward. Skipped test is the opt-in hosted smoke."
+    },
+    {
+      "command": "COMPOSE_PROFILES=root timeout 60 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/persona/test_harness.py services/persona/test_runtime_profile.py",
+      "exit_code": 0,
+      "result": "50 passed",
+      "note": "Includes final unknown-action guard."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/persona",
+      "exit_code": 1,
+      "result": "169 passed, 1 skipped, 1 failed",
+      "note": "Initial invocation omitted COMPOSE_PROFILES=root: rendered Compose excluded persona; corrected expanded invocation passed."
+    },
+    {
+      "command": "PYTHON=\"$PANTHEON_DEPENDENCY_PYTHON\" timeout 120 bash scripts/run-acceptance.sh smoke",
+      "exit_code": 1,
+      "result": "stage0-validate passed; stage0-baseline setup blocked",
+      "note": "Baseline invokes hardcoded system python3 -m pip; host PEP 668 rejects system pip installation. No --break-system-packages override used. Required GitHub Smoke acceptance remains a delivery gate."
+    }
+  ],
+  "composition": {
+    "record_store": "existing PersistentPersonaOwner.try_metadata_cas; no process-local overlay",
+    "evidence_verifier": "Default resolves schema-valid existing persona reflections with exact reflection id/facts snapshot; other reference kinds fail closed pending owning-service readers.",
+    "adoption_verifier": "Trusted read-only owner dependency bound to persona/tenant/proposal/candidate_digest/adoption_ref; absent/denied/unresolved records a refusal and keeps base.",
+    "downstream_owners": [
+      "PERSONA-HARNESS-SHADOW-EVAL-20261112",
+      "PERSONA-HARNESS-ADOPT-REVIEW-20261112"
+    ],
+    "not_delivered_here": [
+      "shadow evaluation",
+      "risk sign-off issuance",
+      "cooldown/observation/experiment completion",
+      "experience memory writeback",
+      "policy amendments",
+      "hosted deployment"
+    ],
+    "test_data_boundary": "Fixture provider and exact-binding adoption receipts are test-only; no fixture trajectories, members, memory, metrics or approvals in production code."
+  }
+}
