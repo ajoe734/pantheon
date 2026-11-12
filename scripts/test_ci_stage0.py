@@ -314,6 +314,46 @@ class ImportSmokeTests(unittest.TestCase):
         self.assertTrue(ci_stage0.image_affected(scoped, ["services/research/mlflow/requirements.txt"]))
         self.assertFalse(ci_stage0.image_affected(scoped, ["services/telemetry/module.py"]))
 
+    def test_dockerignored_orchestrator_sources_select_no_image_through_plan_and_cli(self) -> None:
+        recorded = [
+            ".orchestrator/supervisor.py",
+            ".orchestrator/worker_workspace.py",
+            ".orchestrator/task_archive.py",
+            ".orchestrator/dispatch_policy.py",
+            "docs/deployment/evidence/OPS-A/evidence.json",
+            "docs/deployment/evidence/OPS-B/evidence.json",
+        ]
+        images = {
+            "a": {"context": ".", "dockerfile": "services/telemetry/Dockerfile"},
+            "b": {"context": ".", "dockerfile": "services/telemetry/Dockerfile"},
+        }
+        args = SimpleNamespace(base="b", head="h", compose=ci_stage0.DEFAULT_COMPOSE_PATH, github_output=None)
+
+        def plan(changed: list[str]) -> list[str]:
+            out = mock.Mock()
+            with mock.patch("ci_stage0.compose_images", return_value=images), mock.patch(
+                "ci_stage0.diff_changed_files", return_value=(changed, False)
+            ), mock.patch("builtins.print", out):
+                self.assertEqual(ci_stage0.cmd_import_smoke_plan(args), 0)
+            return json.loads(out.call_args.args[0])
+
+        self.assertEqual(plan(recorded), [])
+        # mixed: only true product changes decide the selection
+        self.assertEqual(plan([*recorded, "services/telemetry/module.py"]), ["a", "b"])
+        self.assertEqual(plan([*recorded, "pyproject.toml"]), [])
+        self.assertEqual(plan([*recorded, ".dockerignore"]), ["a", "b"])
+        self.assertEqual(plan([*recorded, "services/telemetry/Dockerfile"]), ["a", "b"])
+        # explicit full sweep still selects everything
+        with mock.patch("ci_stage0.compose_images", return_value=images), mock.patch(
+            "ci_stage0.diff_changed_files", return_value=([], True)
+        ), mock.patch("builtins.print") as out:
+            ci_stage0.cmd_import_smoke_plan(args)
+        self.assertEqual(json.loads(out.call_args.args[0]), ["a", "b"])
+        # a Dockerfile that actually names a .orchestrator path keeps it selected
+        image = {"context": ".", "dockerfile": "services/telemetry/Dockerfile", "services": {"x": {"entrypoint": None, "command": ["python", ".orchestrator/tool.py"]}}}
+        self.assertTrue(ci_stage0.image_affected(image, [".orchestrator/tool.py"]))
+        self.assertFalse(ci_stage0.image_affected({"context": ".", "dockerfile": "services/telemetry/Dockerfile"}, [".orchestrator/supervisor.py"]))
+
     def test_image_affected_by_compose_file_dockerignore_and_service_command_scripts(self) -> None:
         image = {
             "context": ".",

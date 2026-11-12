@@ -171,6 +171,9 @@ def compose_images(compose_path: Path = DEFAULT_COMPOSE_PATH) -> dict[str, dict[
     return images
 
 
+DOCKERIGNORED_TOOLING_PREFIX = ".orchestrator/"
+
+
 def image_affected(image: dict[str, Any], changed_files: list[str], root: Path = ROOT) -> bool:
     """True when the diff touches the Dockerfile, the compose file, .dockerignore, a file the Dockerfile or a command names, or context source."""
     dockerfile_text = (root / image["dockerfile"]).read_text(encoding="utf-8")
@@ -180,7 +183,9 @@ def image_affected(image: dict[str, Any], changed_files: list[str], root: Path =
     context = posixpath.normpath(image["context"])
     for path in map(normalize_path, changed_files):
         relative = path if context == "." else path.removeprefix(context + "/")
-        is_source = path.endswith(".py") and not PurePosixPath(path).name.startswith("test_")
+        # Root-level .orchestrator/ is excluded from every root-context build by .dockerignore, so its sources never reach an image.
+        dockerignored_tooling = path.startswith(DOCKERIGNORED_TOOLING_PREFIX)
+        is_source = path.endswith(".py") and not PurePosixPath(path).name.startswith("test_") and not dockerignored_tooling
         in_context = context == "." or relative != path
         names_file = relative in dockerfile_text or relative in run_text or relative == ".dockerignore"
         if path in (image["dockerfile"], compose_name) or (in_context and (names_file or is_source)):
