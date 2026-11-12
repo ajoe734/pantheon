@@ -170,15 +170,17 @@ def _date_of(value: Any) -> Optional[str]:
 
 
 class InSampleMarket:
-    """Closing-price series per symbol, cut at the in-sample cutoff before any price is read.
+    """Closing-price series per symbol, cut at the protocol's in-sample window before any price is read.
 
-    The cutoff is the earliest, over all instruments, of the date at index
-    ``int(n * in_sample_fraction) - 1`` of that instrument's own sessions: never later
-    than the backtest protocol's own in-sample end, so no out-of-sample bar can enter.
+    Mirrors the backtest protocol (``vectorbt_adapter`` replication protocol): ``split_idx`` is
+    ``int(min target-instrument bar count * in_sample_fraction)`` and EVERY instrument (targets,
+    benchmark, others) keeps only its first ``split_idx`` sessions. Hence no bar the protocol
+    treats as out-of-sample can enter, whatever the lengths or start dates of the instruments.
     """
 
-    def __init__(self, dataset: Mapping[str, Any], in_sample_fraction: float):
-        by_symbol: Dict[str, List[Tuple[str, Any]]] = {}
+    def __init__(self, dataset: Mapping[str, Any], in_sample_fraction: float,
+                 target_symbols: Sequence[str] = ()):
+        by_symbol: Dict[str, Dict[str, Any]] = {}
         records = dataset.get("records")
         if isinstance(records, Sequence) and not isinstance(records, (str, bytes)) and records:
             for rec in records:
@@ -187,7 +189,7 @@ class InSampleMarket:
                 date = _date_of(rec.get("date") or rec.get("event_time"))
                 sym = _norm_symbol(rec.get("instrument") or rec.get("symbol"))
                 if date and sym:
-                    by_symbol.setdefault(sym, []).append((date, rec))
+                    by_symbol.setdefault(sym, {})[date] = rec
         else:
             pool = dataset.get("candidate_pool_market")
             symbols = pool.get("symbols") if isinstance(pool, Mapping) else None
@@ -195,22 +197,22 @@ class InSampleMarket:
                 for bar in (payload or {}).get("bars", []) if isinstance(payload, Mapping) else []:
                     date = _date_of(bar.get("event_time") if isinstance(bar, Mapping) else None)
                     if date:
-                        by_symbol.setdefault(_norm_symbol(sym), []).append((date, bar))
-        self.cutoff: Optional[str] = None
+                        by_symbol.setdefault(_norm_symbol(sym), {})[date] = bar
+        self.cutoff: Optional[str] = None  # latest in-sample session over all instruments
+        self.cutoffs: Dict[str, str] = {}
+        self.split_idx = 0
         self.series: Dict[str, List[Tuple[str, float]]] = {}
         if not by_symbol:
             return
-        cutoffs = []
-        for sym, rows in by_symbol.items():
-            rows.sort(key=lambda r: r[0])
-            idx = int(len(rows) * in_sample_fraction)
-            if idx < 1:
-                cutoffs.append("")
+        wanted = {_norm_symbol(s) for s in target_symbols if _norm_symbol(s)}
+        targets = [s for s in by_symbol if s in wanted] or list(by_symbol)
+        self.split_idx = int(min(len(by_symbol[s]) for s in targets) * in_sample_fraction)
+        for sym, by_date in by_symbol.items():
+            rows = sorted(by_date.items(), key=lambda r: r[0])
+            kept = rows[: self.split_idx]  # cut BEFORE reading a price
+            if not kept:
                 continue
-            cutoffs.append(rows[idx - 1][0])
-        self.cutoff = min(cutoffs)
-        for sym, rows in by_symbol.items():
-            kept = [(d, rec) for d, rec in rows if d <= self.cutoff]  # cut BEFORE reading a price
+            self.cutoffs[sym] = kept[-1][0]
             closes: List[Tuple[str, float]] = []
             for d, rec in kept:
                 try:
@@ -221,6 +223,8 @@ class InSampleMarket:
                     closes.append((d, close))
             if closes:
                 self.series[sym] = closes
+        if self.cutoffs:
+            self.cutoff = max(self.cutoffs.values())
 
     def symbols(self) -> List[str]:
         return sorted(self.series)
@@ -535,7 +539,7 @@ def run_mechanism_stage(
     preds = list(predictions or [])
     market: Optional[InSampleMarket] = None
     if isinstance(dataset, Mapping):
-        market = InSampleMarket(dataset, config.in_sample_ratio)
+        market = InSampleMarket(dataset, config.in_sample_ratio, target_symbols)
         if not market.series:
             market = None
     results: List[Dict[str, Any]] = []

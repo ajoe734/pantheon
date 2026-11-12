@@ -8,13 +8,13 @@
     "2": "test_contradicted_prediction_refuses_admission_with_recorded_reason (primary criteria compared with a baseline run)",
     "3": "test_supported_prediction_is_admitted_and_support_is_recorded_on_the_admission; persona test_mechanism_support_feeds_evidence_quality_and_untested_ranks_lower",
     "4": "test_baseline_without_predictions_is_admitted_as_mechanism_untested; test_predictions_without_data_are_admitted_as_mechanism_untested; persona ranking test",
-    "5": "test_mechanism_stage_reads_no_out_of_sample_bar (poisoned OOS closes raise on any read; identical result) and test_mechanism_stage_runs_before_the_backtest_and_the_backtest_is_not_used_by_it",
+    "5": "test_mechanism_stage_reads_no_out_of_sample_bar and test_no_out_of_sample_bar_with_unequal_lengths_and_staggered_starts: poison boundaries derived from the protocol rule (split_idx=int(min target bars*ratio), every instrument sliced by that index, as vectorbt_adapter) not from InSampleMarket; InSampleMarket now shares that window rule incl. target universe; plus test_mechanism_stage_runs_before_the_backtest_and_the_backtest_is_not_used_by_it",
     "6": "fixtures/recorded_mechanism_tw.json: recorded TWSE STOCK_DAY (2330, 2317, 0050, 2024-01..2026-10) and TWT49U ex-dividend rows with URLs and response sha256; test_production_module_synthesizes_no_data"
   },
   "production_path": "ReplicationGate.evaluate_candidate (gate.py) <- AlphaRevalidationWorker (revalidation_worker.py forwards hypothesis_predictions/mechanism_inputs/dataset); integration tests in tests/test_gate_mechanism.py and test_revalidation_worker.py::test_real_gate_records_mechanism_status_on_the_run",
   "verification": [
-    "/tmp/codex-replication-review-20261111/bin/python -m pytest services/research/replication services/control-plane/persona/test_persona_strategy_discovery.py -q  -> 76 passed",
-    "/tmp/codex-replication-review-20261111/bin/python -m pytest services/research/alpha_replication/test_revalidation_worker.py -q  -> 52 passed"
+    "worker-test-python -m pytest services/research/replication services/control-plane/persona/test_persona_strategy_discovery.py -q -> 77 passed (R2 fix, 181.88s)",
+    "alpha_replication/test_revalidation_worker.py 52 passed on prior head cddfca1; revalidation worker unchanged by R2 fix"
   ],
   "known_limits": [
     "Real recorded events (14 in-sample ex-dividend events) are too few to reach alpha 0.05: the recorded-data tests pin the measured inconclusive result; supported/contradicted admission tests loosen only mechanism_alpha (named in the test module). Default 0.05 is pinned.",
@@ -22,5 +22,6 @@
     "0050 prices before its 2025-06-18 4-for-1 split are divided by 4 by the test helper (recorded in fixture provenance).",
     "Carrying predictions from the compiled spec into hypothesis_predictions is not part of this task; the worker forwards them when the spec carries them.",
     "Hosted acceptance is DISCOVERY-W5-HOSTED-ACCEPTANCE."
-  ]
+  ],
+  "r2_fix": "Reopen P1: per-instrument earliest-date cutoff leaked protocol-OOS bars of longer instruments (65 0050 bars, 69 2317 bars on the reproduction). Fixed by sharing the protocol window; pinned event-window stats re-measured (t=-0.9711, p=0.3492)."
 }

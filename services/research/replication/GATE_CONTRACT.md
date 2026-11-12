@@ -163,10 +163,12 @@ produces the out-of-sample window. Implementation: `mechanism_tests.py`.
   `event_time`/`available_time` and the observable field). Nothing is generated: a
   prediction whose data is absent, too thin, malformed or `needs_data:*` is recorded
   `inconclusive` with `testable: false` and a reason, and never counts as support.
-* **In-sample only**: the series are cut at the in-sample cutoff (the earliest over all
-  instruments of the date at index `int(n * in_sample_ratio) - 1`, never later than the
-  protocol's own split) before any price is converted to a number; events and forward
-  windows reaching past the cutoff are dropped. The stage never calls the backtest.
+* **In-sample only**: the window is the backtest protocol's own: `split_idx =
+  int(min target-instrument bar count * in_sample_ratio)` and EVERY instrument (targets,
+  benchmark, others) keeps only its first `split_idx` sessions, whatever its length or start
+  date. The cut happens before any price is converted to a number; events and forward windows
+  reaching past an instrument's last in-sample session are dropped. `in_sample_cutoff` reports
+  the latest in-sample session. The stage never calls the backtest.
 * **Fixed test per `test_kind`**: `event_window` (abnormal window return vs the symbol's
   in-sample mean, one-sample t across events), `regime_split` (sign must hold in every
   regime with enough days; 0050 above/below its prior-200-session mean, or point-in-time

@@ -82,9 +82,9 @@ def test_statistics_match_reference_values():
 def test_event_window_on_recorded_ex_dividend_events_is_measured():
     result = stage([EVENT("-")])["predictions"][0]
     assert result["testable"] and result["n"] == 14  # in-sample ex-dividend events of 3 symbols
-    assert result["statistic"] == pytest.approx(-0.9679, abs=1e-3)
-    assert result["mean_abnormal_window_return"] == pytest.approx(-0.006357, abs=1e-5)
-    assert result["p_value"] == pytest.approx(0.3508, abs=1e-3)
+    assert result["statistic"] == pytest.approx(-0.9711, abs=1e-3)
+    assert result["mean_abnormal_window_return"] == pytest.approx(-0.006381, abs=1e-5)
+    assert result["p_value"] == pytest.approx(0.3492, abs=1e-3)
     # 14 events are too few to reach 0.05: recorded, not guessed
     assert result["status"] == "inconclusive" and result["holm_p_value"] == result["p_value"]
 
@@ -101,9 +101,9 @@ def test_regime_split_on_recorded_0050_200_day_mean_is_measured():
 def test_default_alpha_is_five_percent_and_holm_is_within_the_card():
     assert GateConfig().mechanism_alpha == 0.05
     one = stage([EVENT("-")], **LOOSE)
-    assert one["predictions"][0]["status"] == "supported"  # p=0.351 <= 0.5
+    assert one["predictions"][0]["status"] == "supported"  # p=0.349 <= 0.5
     two = stage([EVENT("-"), EVENT("-")], **LOOSE)  # same p twice: Holm doubles the larger
-    assert all(p["holm_p_value"] == pytest.approx(0.7015, abs=1e-3) for p in two["predictions"])
+    assert all(p["holm_p_value"] == pytest.approx(0.6984, abs=1e-3) for p in two["predictions"])
     assert all(p["status"] == "inconclusive" for p in two["predictions"])
     assert two["holm_family_size"] == 2
 
@@ -116,7 +116,7 @@ def test_contradicted_when_effect_is_significant_the_other_way():
 
 
 def test_mechanism_support_is_supported_over_testable():
-    # Holm over the 2 testable predictions: event 0.351 -> 0.702 (<= 0.75), regime 0.777 (> 0.75)
+    # Holm over the 2 testable predictions: event 0.349 -> 0.698 (<= 0.75), regime 0.777 (> 0.75)
     out = stage([EVENT("-"), REGIME("+"), pred("dose_response", "+", dataset="tw_unrecorded")],
                 mechanism_alpha=0.75)
     statuses = [p["status"] for p in out["predictions"]]
@@ -187,28 +187,72 @@ class _Poison:
         raise AssertionError("out-of-sample bar was read")
 
 
+def _protocol_split(records, targets, fraction):
+    """The backtest protocol's window rule, restated independently of InSampleMarket."""
+    by_inst = {}
+    for rec in records:
+        by_inst.setdefault(rec["instrument"].split(".")[0], []).append(rec)
+    for rows in by_inst.values():
+        rows.sort(key=lambda r: r["date"])
+    split_idx = int(min(len(by_inst[t]) for t in targets) * fraction)
+    return by_inst, split_idx
+
+
+def _poison_beyond_protocol(dataset, targets, fraction):
+    poisoned = copy.deepcopy(dataset)
+    by_inst, split_idx = _protocol_split(poisoned["records"], targets, fraction)
+    count = 0
+    for rows in by_inst.values():
+        for rec in rows[split_idx:]:
+            for key in ("open", "high", "low", "close"):
+                rec[key] = _Poison()
+            count += 1
+    return poisoned, count
+
+
+def _unequal(dataset):
+    """Target 2330 starts 100 sessions late; 0050 / 2317 keep their full history."""
+    ds = copy.deepcopy(dataset)
+    first = sorted(r["date"] for r in ds["records"] if r["instrument"].startswith("2330"))[:100]
+    drop = set(first)
+    ds["records"] = [r for r in ds["records"] if not (r["instrument"].startswith("2330") and r["date"] in drop)]
+    return ds
+
+
 def test_mechanism_stage_reads_no_out_of_sample_bar():
     dataset, inputs = recorded()
     config = GateConfig()
-    market = mt.InSampleMarket(dataset, config.in_sample_ratio)
-    cutoff = market.cutoff
-    clean = mt.run_mechanism_stage([EVENT("-"), REGIME("+")], dataset, inputs, config=config,
-                                   target_symbols=["2330"])
-    poisoned = copy.deepcopy(dataset)
-    out_of_sample = 0
-    for rec in poisoned["records"]:
-        if rec["date"] > cutoff:
-            for key in ("open", "high", "low", "close"):
-                rec[key] = _Poison()
-            out_of_sample += 1
+    preds = [EVENT("-"), REGIME("+")]
+    clean = mt.run_mechanism_stage(preds, dataset, inputs, config=config, target_symbols=["2330"])
+    poisoned, out_of_sample = _poison_beyond_protocol(dataset, ["2330"], config.in_sample_ratio)
     assert out_of_sample > 100
-    result = mt.run_mechanism_stage([EVENT("-"), REGIME("+")], poisoned, inputs, config=config,
+    result = mt.run_mechanism_stage(preds, poisoned, inputs, config=config,
                                     target_symbols=["2330"])  # raises if any OOS bar is touched
     assert json.dumps(result, sort_keys=True) == json.dumps(clean, sort_keys=True)
-    assert clean["in_sample_cutoff"] == cutoff
+    cutoff = clean["in_sample_cutoff"]
     # events after the cutoff are ignored too
     late = {"tw_ex_dividend": [e for e in inputs["tw_ex_dividend"] if e["available_time"][:10] > cutoff]}
     assert stage_with(dataset, late)["predictions"][0]["reason"] == "too_few_in_sample_events"
+
+
+def test_no_out_of_sample_bar_with_unequal_lengths_and_staggered_starts():
+    dataset, inputs = recorded()
+    config = GateConfig()
+    ds = _unequal(dataset)
+    by_inst, split_idx = _protocol_split(ds["records"], ["2330"], config.in_sample_ratio)
+    lengths = {k: len(v) for k, v in by_inst.items()}
+    assert len(set(lengths.values())) == 3 and lengths["2330"] == min(lengths.values())
+    assert len({rows[0]["date"] for rows in by_inst.values()}) > 1  # staggered starts
+    market = mt.InSampleMarket(ds, config.in_sample_ratio, ["2330"])
+    assert market.split_idx == split_idx
+    for sym, rows in by_inst.items():  # every instrument holds exactly the protocol's first split_idx bars
+        assert [d for d, _ in market.series[sym]] == [r["date"] for r in rows[:split_idx]]
+    preds = [EVENT("-"), REGIME("+")]
+    clean = mt.run_mechanism_stage(preds, ds, inputs, config=config, target_symbols=["2330"])
+    poisoned, out_of_sample = _poison_beyond_protocol(ds, ["2330"], config.in_sample_ratio)
+    assert out_of_sample > 100
+    result = mt.run_mechanism_stage(preds, poisoned, inputs, config=config, target_symbols=["2330"])
+    assert json.dumps(result, sort_keys=True) == json.dumps(clean, sort_keys=True)
 
 
 def stage_with(dataset, inputs):
