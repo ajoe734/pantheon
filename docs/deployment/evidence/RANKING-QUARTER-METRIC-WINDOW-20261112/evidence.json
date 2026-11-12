@@ -1,0 +1,88 @@
+{
+  "schema_version": "ranking-quarter-metric-window-evidence/v1",
+  "task_id": "RANKING-QUARTER-METRIC-WINDOW-20261112",
+  "owner": "Codex2",
+  "assigned_reviewer": "Claude",
+  "review_state": "blocked_before_independent_review_on_artifact_scope",
+  "base_commit": "ac4fd811d",
+  "source_anchor_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+  "formula_version": "pm12-return-on-capital-v2",
+  "formula_weights_and_sample_thresholds_changed": false,
+  "production_entry_point": "GET /bff/management/quarterly-ranking",
+  "acceptance_evidence": {
+    "1": "Retained owner quarter_equity.v1 valuations, runtime/binding identity, UTC [start,end) filtering and deduplication; real route covers quarter-open and exclusive end.",
+    "2": "Real projection -> restart -> HTTP route: 1000 opening, 800 decline, 1200 recovery gives maximum drawdown 0.2 despite current rolling drawdown 0; observations on both sides of quarter excluded.",
+    "3": "Real HTTP repeated-cumulative regression: duplicate final observations retain PnL 200, capital 1000, return 0.2 and one trade; older ledger subtracts quarter-open cumulative PnL.",
+    "4": "runtime_coverage, temporal_observation_coverage and trading_sample_sufficiency separate; no new sample threshold, weights or formula version. Snapshot digest binds quarter_window and diagnostics.",
+    "5": "HTTP null score/rank/allocation input and recorded reasons for missing marks, opening equity, series, conflicts, timezone or funding changes. Multi-runtime grid/currency and tenant/binding isolation tested.",
+    "6": "test_quarterly_http_route_retains_maximum_decline_after_recovery drives registered HTTP router using real persistent projection, reducer, scorer, adapter and snapshot identity; only owner input ports are local test data."
+  },
+  "validation": [
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/execution/lean_runtime/test_performance_telemetry.py services/telemetry/test_runtime_summary_projection.py services/rankings/test_store.py services/capital/test_allocation_lineage_integrity.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+      "exit_code": 0,
+      "result": "292 passed, 6 warnings, 28 subtests passed in 59.97s",
+      "tested_source_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/scoped-pytest.log",
+      "sha256": "51c02b1945212a1fbc91ea2c9ff94c3006ff3994a00296c7a6266927d2479920",
+      "raw_output_sha256": "51c02b1945212a1fbc91ea2c9ff94c3006ff3994a00296c7a6266927d2479920",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 1,
+      "result": "3 failed, 2 passed, 3 warnings in 8.51s",
+      "tested_source_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture-contract-pytest.log",
+      "sha256": "89e92e4b471619570d96c37a2c79bb5f1d88acc1dca942a9251211f00e11107c",
+      "raw_output_sha256": "6294ca0f28890a6421bce73f164f4c8be039126b6a3f182d22c39ef5479b0f9f",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture_diagnostic.py.txt",
+      "exit_code": 0,
+      "result": "5 passed, 3 warnings in 17.18s; proposed fixture function only, replaced in memory",
+      "tested_source_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/proposed-fixture-diagnostic.log",
+      "sha256": "d23c57c5ea1567c7c7eb4e5af6329094eb73cb33f0132a730e12e103bf18d965",
+      "raw_output_sha256": "d23c57c5ea1567c7c7eb4e5af6329094eb73cb33f0132a730e12e103bf18d965",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/rankings services/telemetry services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/execution/lean_runtime/test_performance_telemetry.py services/capital/test_allocation_lineage_integrity.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+      "exit_code": 124,
+      "result": "Timed out without a terminal pytest summary; NOT passed",
+      "tested_source_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/expanded-service-timeout.log",
+      "sha256": "286d885f4188b545af137e48b3edbfe026d9d235fdf5bdeae4c9ba9dde114fea",
+      "raw_output_sha256": "14fe54adea5e1f617779946093c9883eefe4e29e769841e26fad2670bdce1d80",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "scope_hold": {
+    "required_actor": "Human/Ops",
+    "required_artifact": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+    "reason": "Shared eligible-fixture builder lacks retained owner quarter series and per-metric timestamps; three real contract tests now correctly fail closed. Artifact is absent from this task contract.",
+    "candidate_patch": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/proposed-fixture-repair.patch",
+    "candidate_diagnostic": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture_diagnostic.py.txt",
+    "required_action": "Add exactly the fixture file through governed artifact-contract, then reopen this existing task. Owner applies prepared patch, validates fixture callers, updates same PR, and hands off exact delivery to Claude.",
+    "authority": [
+      "scripts/ai_status.py::command_artifact_contract (Human/Ops only; todo/blocked)",
+      ".orchestrator/rewrite/task_contract.py::validate_task_artifact_diff_scope"
+    ],
+    "dependency_blocker": false
+  },
+  "limitations": [
+    "No hosted deployment, allocation, capital mutation or hosted acceptance.",
+    "Existing latest-only summaries remain unknown; historical equity/marks are never reconstructed.",
+    "Maximum drawdown is over retained observed equity, not proof of complete intraday coverage.",
+    "Older ledgers require a real quarter-opening observation; external cash flows, currency mismatch and unsynchronized runtime grids fail closed.",
+    "Owner observations are retained without silent truncation; the projection JSON grows with actual valuation history.",
+    "Proposed shared-fixture repair is only a committed patch artifact, not applied repository source.",
+    "Review, integration, and owner done are pending; expanded whole-service timeout is not a passing result."
+  ]
+}
