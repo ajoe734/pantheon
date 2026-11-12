@@ -1,0 +1,17 @@
+{
+  "task": "DEV-ORIGINAL-PAIRED-READONLY-QA-CALLER-20261112",
+  "scope": "source-only caller; no real VM/SSH/hosted/provider/secret access; no CLI execution",
+  "cli_input_contract_sha256": "dedf42e580da8855a94ad93426162196c305b4beb5f18097d14a1d2f6aaf0727",
+  "files": [
+    ".github/workflows/nonprod-deploy.yml (two post-Root steps, continue-on-error, not read by the Root outcome gate)",
+    "scripts/run_dev_paired_readonly_qa.py",
+    "scripts/test_run_dev_paired_readonly_qa.py",
+    "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py (secret-reference counts +1 for the new step)"
+  ],
+  "local_verification": "12 caller fixture tests pass; env-parity, direct-ssh, bootstrap and strict-auth contract tests pass",
+  "remaining_for_actual_execution": [
+    "merged qualified CLI + this caller + reviewed transport in one exact accepted pair",
+    "repo/env vars DEV_ORIGINAL_QA_TENANT_ID, _PERSONA_ID, _EXPECTED_ROLES_JSON, _BASELINE_PATH, _BASELINE_SHA256 (missing => outcome unproven, never pass)",
+    "original Ops publisher executes the sole sequential 4-role/13-raw run"
+  ]
+}
