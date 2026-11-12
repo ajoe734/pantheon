@@ -20,4 +20,4 @@ services/control-plane/bff/tests/test_bff_pm12_persona_league.py::test_pm12_perf
   pm12_service.py:774: DeprecationWarning: __package__ != __spec__.parent
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-142 passed, 6 warnings in 33.99s
+142 passed, 6 warnings in 36.01s

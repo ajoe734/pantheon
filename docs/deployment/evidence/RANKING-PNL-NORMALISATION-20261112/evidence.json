@@ -3,7 +3,7 @@
   "task_id": "RANKING-PNL-NORMALISATION-20261112",
   "owner": "Codex2",
   "assigned_reviewer": "Claude",
-  "review_state": "blocked_fixture_artifact_contract",
+  "review_state": "ready_for_independent_review_with_adjacent_failures",
   "formula_version": "pm12-return-on-capital-v2",
   "previous_version": "pm12-default-v1",
   "governance_evidence": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/operator-decision.md",
@@ -24,10 +24,51 @@
     {
       "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/capital/test_allocation_policy.py services/capital/test_allocation_lineage_integrity.py services/rankings/test_store.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
       "exit_code": 0,
-      "result": "142 passed, 6 warnings in 33.99s",
+      "result": "142 passed, 6 warnings in 36.01s",
+      "tested_commit": "f396e819374f0873a1b4cf3e9df58c0767bf12ed",
       "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/functional-pytest.log",
-      "sha256": "b4ab0cf3683972cbd1257e16038f5b727c742cd4251affceb73558745d3d6d80",
-      "raw_output_sha256": "b4ab0cf3683972cbd1257e16038f5b727c742cd4251affceb73558745d3d6d80",
+      "sha256": "dbc21a64bb4db70b4e96090251b5b4b066e69f644fcab7358ad5f21c4e6ba130",
+      "raw_output_sha256": "dbc21a64bb4db70b4e96090251b5b4b066e69f644fcab7358ad5f21c4e6ba130",
+      "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_pm12_request_scoped_reads.py services/control-plane/bff/tests/test_ranking_snapshot_write_port.py services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 0,
+      "result": "66 passed, 3 warnings in 126.23s (0:02:06)",
+      "tested_commit": "f396e819374f0873a1b4cf3e9df58c0767bf12ed",
+      "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/bff-architecture-pytest.log",
+      "sha256": "1990cbdcc586e7342a451961c74414fff48c57814f937eb7d9a4eb024cf98f38",
+      "raw_output_sha256": "1990cbdcc586e7342a451961c74414fff48c57814f937eb7d9a4eb024cf98f38",
+      "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 0,
+      "result": "5 passed, 3 warnings in 9.79s",
+      "tested_commit": "f396e819374f0873a1b4cf3e9df58c0767bf12ed",
+      "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/fixture-contract-pytest.log",
+      "sha256": "9b6652c7f48912f24ea62e40b5ad4f22fccd5edd0c6f1a4310cc5b92cbade4cb",
+      "raw_output_sha256": "9b6652c7f48912f24ea62e40b5ad4f22fccd5edd0c6f1a4310cc5b92cbade4cb",
+      "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged."
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+      "exit_code": 1,
+      "result": "4 failed, 96 passed, 3 warnings in 38.20s",
+      "tested_commit": "f396e819374f0873a1b4cf3e9df58c0767bf12ed",
+      "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/fixture-callers-pytest.log",
+      "sha256": "3b5db223da5aa9b617dae369c44fc0a18a534964458fe982c5c1caf9dc6ac97d",
+      "raw_output_sha256": "19a4fb252d2f4a393bbbc4e8c8b46f4f7587cc49371134938f5b4b034aa06a1c",
+      "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 /tmp/ranking-fixture-baseline-check.py",
+      "exit_code": 1,
+      "result": "4 failed, 3 warnings in 11.23s",
+      "tested_commit": "f396e819374f0873a1b4cf3e9df58c0767bf12ed",
+      "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/fixture-baseline-diagnostic.log",
+      "sha256": "076c7dc866f6a83810df4a67b347b6124d53ebff18aeb1da7fbef32ad7fac417",
+      "raw_output_sha256": "5f3e16ef132a3ea5a0958cc77fb7a95dce37958e4306c5db93c71eda8b080410",
       "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged."
     },
     {
@@ -37,16 +78,8 @@
       "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/producer-projection-pytest.log",
       "sha256": "b8e394cce71e03e294639aaa9a76b8281b071269de25c760b1e6e258d9bd483e",
       "raw_output_sha256": "b8e394cce71e03e294639aaa9a76b8281b071269de25c760b1e6e258d9bd483e",
-      "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged."
-    },
-    {
-      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_pm12_request_scoped_reads.py services/control-plane/bff/tests/test_ranking_snapshot_write_port.py services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
-      "exit_code": 1,
-      "result": "3 failed, 63 passed, 3 warnings in 131.07s (0:02:11)",
-      "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/bff-architecture-pytest.log",
-      "sha256": "8ce4f924e461b0bc6c44fe79ac9911631e2767afdd56a2a724506e12d4000053",
-      "raw_output_sha256": "86c96bddf0e192da67515a07956d042f2145399804b89f62361c3b28aa83a1da",
-      "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged."
+      "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged.",
+      "note": "Inherited post-baseline-integration result; producer/projection source has not changed since that run. Not rerun for this fixture-only repair."
     },
     {
       "command": "git diff --check",
@@ -59,7 +92,7 @@
     "Audited risk/activity inputs are compatible test reconstruction, not original hosted row summaries",
     "Non-PnL risk/execution/activity metric semantics remain unchanged"
   ],
-  "verification_note": "All three bounded foreground batches reached terminal output after baseline integration: functional and producer batches exit 0; architecture/fixture batch exit 1 (3 failed, 63 passed). Only task evidence and owner-attribution documentation changed after these tests. Original read-only hosted observations remain historical; no fresh hosted deployment, scoring, or capital mutation is claimed.",
+  "verification_note": "Fixture contract, expanded BFF architecture and functional batches all reached terminal exit 0 after fixture repair. Additional full fixture-caller batch reached terminal exit 1 (96 passed, 4 failed); all four failures reproduced with the exact pre-repair helper restored in memory. This diagnostic isolates the fixture change, not every earlier implementation change or origin/dev. No tests or assertions were skipped or changed. Only evidence records changed after verification; producer/baseline verification is inherited as explicitly labelled.",
   "base_commit": "f9b9da399af3ad5c9699f403566d4effd84c672d",
   "acceptance_evidence": {
     "1": "Real quarterly HTTP route validates PnL/capital from matched observation, fraction unit and recorded start/as-of within quarter; atomic ledger -> telemetry projection transport is covered.",
@@ -78,7 +111,45 @@
     "integration_anchor": "d2807bada6ef034c951f9c08babcd1d473773660",
     "method": "Merged current dev after baseline source DONE; original implementation commits and authorship preserved."
   },
-  "blocker": {
+  "previous_validation": {
+    "source_commit": "ba42641b36e16a31cd45c376a955a56d61b70ec7",
+    "note": "Historical entries and output paths resolve at this commit, before the artifact-contract fixture repair.",
+    "validation": [
+      {
+        "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/capital/test_allocation_policy.py services/capital/test_allocation_lineage_integrity.py services/rankings/test_store.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+        "exit_code": 0,
+        "result": "142 passed, 6 warnings in 33.99s",
+        "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/functional-pytest.log",
+        "sha256": "b4ab0cf3683972cbd1257e16038f5b727c742cd4251affceb73558745d3d6d80",
+        "raw_output_sha256": "b4ab0cf3683972cbd1257e16038f5b727c742cd4251affceb73558745d3d6d80",
+        "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged."
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_runtime_summary_projection.py services/execution/lean_runtime/test_paper_runtime.py services/execution/lean_runtime/test_member_virtual_book.py services/evolution/test_approved_baselines.py",
+        "exit_code": 0,
+        "result": "246 passed, 67 warnings, 70 subtests passed in 47.26s",
+        "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/producer-projection-pytest.log",
+        "sha256": "b8e394cce71e03e294639aaa9a76b8281b071269de25c760b1e6e258d9bd483e",
+        "raw_output_sha256": "b8e394cce71e03e294639aaa9a76b8281b071269de25c760b1e6e258d9bd483e",
+        "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged.",
+        "note": "Inherited post-baseline-integration result; producer/projection source has not changed since that run. Not rerun for this fixture-only repair."
+      },
+      {
+        "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_pm12_request_scoped_reads.py services/control-plane/bff/tests/test_ranking_snapshot_write_port.py services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+        "exit_code": 1,
+        "result": "3 failed, 63 passed, 3 warnings in 131.07s (0:02:11)",
+        "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/bff-architecture-pytest.log",
+        "sha256": "8ce4f924e461b0bc6c44fe79ac9911631e2767afdd56a2a724506e12d4000053",
+        "raw_output_sha256": "86c96bddf0e192da67515a07956d042f2145399804b89f62361c3b28aa83a1da",
+        "output_normalization": "Trailing whitespace stripped from stored log; terminal output and exit codes unchanged."
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0
+      }
+    ]
+  },
+  "resolved_blocker": {
     "required_actor": "Human/Ops",
     "required_artifact": "services/control-plane/bff/test_bff_promotion_review_governance.py",
     "reason": "The shared build_pm12_eligible_persona_records fixture provides PnL without initial_cash, pnl_period_start_at or pnl_at. New fail-closed scoring correctly makes it ineligible, failing three existing fixture contract tests. Expand the artifact contract to permit fixture-only provenance repair, then reopen the same task and retain PR #7231.",
@@ -87,6 +158,25 @@
       "test_management_nl_assistant_provider_fixture_seeds_a_genuinely_eligible_persona",
       "test_builder_output_is_pm12_league_eligible_with_no_exclusion_reasons"
     ],
-    "evidence": "bff-architecture-pytest.log"
+    "evidence": "bff-architecture-pytest.log",
+    "resolution": "Human/Ops expanded the existing task artifact contract and reopened this task; fixture provenance repaired in f396e819374f0873a1b4cf3e9df58c0767bf12ed."
+  },
+  "fixture_repair": {
+    "source_file": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+    "anchor_commit": "f396e819374f0873a1b4cf3e9df58c0767bf12ed",
+    "test_capital": 1.0,
+    "test_currency": "USD",
+    "period_start_at": "2026-01-01T00:00:00Z",
+    "as_of_and_collected_at": "2026-01-15T00:00:00Z",
+    "reason": "Default fixture profit 0.85 on test capital 1.0 supplies an explicit 85% return; timestamps and persona lifetime align to the existing Q1 contract clock. Production defaults, admission logic, shared helper signature/callers and existing assertions are unchanged.",
+    "diagnostic_source": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/fixture-baseline-diagnostic.py.txt",
+    "diagnostic_method": "Load only the exact pre-repair helper AST from ba42641b3 into its module in memory and run the four failing node IDs against otherwise identical source; no working-tree mutation.",
+    "adjacent_failures": [
+      "test_human_inbox_degrades_cleanly_when_persona_readiness_blocks: elapsed about 1.24s exceeds 1s assertion",
+      "test_human_inbox_capacity_bound_rejects_late_submission_while_occupied: missing human_inbox reason",
+      "test_cockpit_timeout_degrades_without_blocking_health: missing management_cockpit reason",
+      "test_nl_ask_tenant_scopes_portfolio_summary: total_pnl None versus expected 1.25"
+    ],
+    "reviewer_note": "These adjacent failures are not claimed passed or repaired; independently assess them alongside required CI. The earlier three fixture-eligibility failures are now resolved."
   }
 }
