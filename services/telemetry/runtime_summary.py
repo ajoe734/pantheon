@@ -823,6 +823,152 @@ def _append_recent_lifecycle_event_id(
     return recent[-limit:]
 
 
+def _order_execution_observations(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Retain facts, not event-level fill rates or process-local counters."""
+    kind = event.get("event_type")
+    if kind not in {"order_submitted", "order_rejection", "paper_fill_simulated"}:
+        return []
+    metrics = event.get("metrics") or {}
+    metadata = event.get("metadata") or {}
+    event_id = event.get("event_id")
+    common = {
+        "runtime_id": event.get("runtime_id"),
+        "binding_id": event.get("binding_id") or event.get("runtime_binding_id"),
+        "order_id": metadata.get("order_id") or metadata.get("broker_order_id") or event_id,
+        "event_id": event_id,
+    }
+    facts = []
+    # New fill events carry the original request as a self-contained fact.
+    # Legacy fills lacking it remain unknown rather than assuming full fills.
+    if kind != "paper_fill_simulated" or "order_quantity" in metrics:
+        quantity = metrics.get("order_quantity", metrics.get("requested_quantity"))
+        quantity = _finite_number(quantity)
+        facts.append({**common, "kind": "submission",
+                      "as_of": metadata.get("order_submitted_at") or event.get("created_at"),
+                      "quantity": abs(quantity) if quantity is not None else None})
+    if kind == "paper_fill_simulated":
+        quantity = _finite_number(metrics.get("fill_quantity"))
+        facts.append({**common, "kind": "fill", "as_of": event.get("created_at"),
+                      "fill_id": metadata.get("fill_id") or event_id,
+                      "quantity": abs(quantity) if quantity is not None else None})
+    return facts
+
+
+def period_fill_rate(
+    runtime_ids: list[str], records: list[dict[str, Any]],
+    window: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Quantity-weighted completion of orders submitted in [start, end) UTC.
+
+    Includes rejected execution requests (including pre-broker risk rejects),
+    excludes no-op decisions, and counts only fills observed inside the same
+    window. Retried facts deduplicate by order/fill identity. Legacy scalar
+    rates, missing requests and conflicting evidence cannot supply a ratio.
+    """
+    details: dict[str, Any] = {
+        "status": "unknown", "reason": "no_submitted_orders",
+        "basis": "filled_quantity_over_submitted_quantity",
+        "unit": "absolute_order_quantity", "numerator": None, "denominator": None,
+        "window": window, "sources": [],
+    }
+    result = {"fill_rate": None, "fill_rate_details": details}
+    start = end = None
+    if window is not None:
+        _, start = _strict_rfc3339(window.get("start_at"))
+        _, end = _strict_rfc3339(window.get("end_exclusive_at"))
+        if start is None or end is None or start >= end:
+            details["reason"] = "invalid_fill_rate_window"
+            return result
+    orders: dict[tuple[str, str, str], dict[str, Any]] = {}
+    observed_runtimes = set()
+    all_times = []
+    for record in records:
+        runtime_id = record.get("runtime_id")
+        if runtime_id not in runtime_ids:
+            continue
+        for fact in record.get("order_execution_observations") or []:
+            if not isinstance(fact, dict):
+                details["reason"] = "invalid_order_execution_observation"
+                return result
+            _, at = _strict_rfc3339(fact.get("as_of"))
+            # Undated facts cannot be assigned safely to a period.
+            if at is None:
+                details["reason"] = "invalid_order_execution_timestamp"
+                return result
+            binding_id = fact.get("binding_id")
+            order_id = fact.get("order_id")
+            if (fact.get("runtime_id") != runtime_id or not binding_id or not order_id
+                    or not fact.get("event_id")
+                    or (record.get("binding_id") and record["binding_id"] != binding_id)):
+                details["reason"] = "order_execution_identity_mismatch"
+                return result
+            key = (runtime_id, binding_id, order_id)
+            order = orders.setdefault(key, {"submission": None, "fills": {}, "events": set()})
+            quantity = _finite_number(fact.get("quantity"))
+            value = (at, quantity)
+            if fact.get("kind") == "submission":
+                previous = order["submission"]
+                if previous is not None and previous != value:
+                    order["conflict"] = True
+                order["submission"] = value
+            elif fact.get("kind") == "fill" and fact.get("fill_id"):
+                fill_id = fact["fill_id"]
+                previous = order["fills"].get(fill_id)
+                if previous is not None and previous != value:
+                    order["conflict"] = True
+                order["fills"][fill_id] = value
+            else:
+                details["reason"] = "invalid_order_execution_observation"
+                return result
+            order["events"].add(fact["event_id"])
+    numerator = denominator = 0.0
+    for (runtime_id, binding_id, order_id), order in sorted(orders.items()):
+        submission = order["submission"]
+        in_window = lambda at: start is None or start <= at < end
+        fills = [(at, qty) for at, qty in order["fills"].values() if in_window(at)]
+        if submission is None:
+            if fills:
+                details["reason"] = "missing_submitted_quantity"
+                return result
+            continue
+        submitted_at, submitted = submission
+        if not in_window(submitted_at):
+            continue
+        if (order.get("conflict") or submitted is None or submitted <= 0
+                or any(qty is None or qty <= 0 or at < submitted_at for at, qty in fills)):
+            details["reason"] = "invalid_or_conflicting_order_quantities"
+            return result
+        filled = sum(qty for _, qty in fills)
+        if filled > submitted or not math.isfinite(filled):
+            details["reason"] = "filled_quantity_exceeds_submitted"
+            return result
+        numerator += filled
+        denominator += submitted
+        observed_runtimes.add(runtime_id)
+        all_times.extend([submitted_at, *(at for at, _ in fills)])
+        details["sources"].append({
+            "runtime_id": runtime_id, "binding_id": binding_id, "order_id": order_id,
+            "submitted_at": submitted_at.isoformat().replace("+00:00", "Z"),
+            "submitted_quantity": submitted, "filled_quantity": filled,
+            "event_ids": sorted(order["events"]),
+        })
+    if not runtime_ids or observed_runtimes != set(runtime_ids):
+        details["reason"] = "missing_runtime_submitted_orders" if observed_runtimes else "no_submitted_orders"
+        return result
+    if not math.isfinite(numerator) or not math.isfinite(denominator):
+        details["reason"] = "nonfinite_order_totals"
+        return result
+    if window is None:
+        details["window"] = {
+            "start_at": min(all_times).isoformat().replace("+00:00", "Z"),
+            "as_of": max(all_times).isoformat().replace("+00:00", "Z"),
+            "timezone": "UTC", "basis": "retained_order_observations",
+        }
+    details.update(status="known", reason=None, numerator=numerator, denominator=denominator)
+    result["fill_rate"] = numerator / denominator
+    return result
+
+
 class RuntimeSummaryProjectionStore:
     """Small telemetry-owned read model for BFF runtime status surfaces."""
 
@@ -983,6 +1129,7 @@ class RuntimeSummaryProjectionStore:
                     "drawdown", "drawdown_at", "drawdown_binding_id", "drawdown_event_id",
                     "sharpe_ratio", "sharpe_ratio_at", "sharpe_ratio_binding_id", "sharpe_ratio_event_id",
                     "fill_rate", "fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id",
+                    "fill_rate_details", "order_execution_observations",
                     "avg_slippage_bps", "avg_slippage_bps_at", "avg_slippage_bps_binding_id", "avg_slippage_bps_event_id",
                     "total_trades", "total_trades_at", "total_trades_binding_id", "total_trades_event_id",
                     "executed_trade_count", "member_virtual_books",
@@ -1164,7 +1311,6 @@ class RuntimeSummaryProjectionStore:
                 "pnl": ("pnl",),
                 "drawdown": ("drawdown", "drawdown_pct"),
                 "sharpe_ratio": ("sharpe_ratio",),
-                "fill_rate": ("fill_rate",),
                 "avg_slippage_bps": ("avg_slippage_bps", "slippage_bps"),
                 "total_trades": ("total_trades",),
             }
@@ -1211,6 +1357,15 @@ class RuntimeSummaryProjectionStore:
                         else:
                             current.pop(f"{target_key}_event_id", None)
                         break
+
+            if not is_derived_metric_echo:
+                facts = _order_execution_observations(event)
+                if facts:
+                    history = list(current.get("order_execution_observations") or [])
+                    history.extend(fact for fact in facts if fact not in history)
+                    current["order_execution_observations"] = history
+                # Recompute from retained facts, never from a heartbeat's scalar.
+                current.update(period_fill_rate([runtime_id], [{**current, "runtime_id": runtime_id}]))
 
             # Keep owner valuations independently of the latest-metric view.
             # A heartbeat or rolling-window eviction must not erase an earlier

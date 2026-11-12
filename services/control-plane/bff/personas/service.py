@@ -7506,6 +7506,10 @@ def _pm12_persona_league_ranking_item(
         else _pm12_persona_telemetry_metrics(row, telemetry_cache=telemetry_cache, quarter_window=quarter_window)
     )
     scores = _pm12_persona_league_scores(row, metrics)
+    # Admission of missing source data is separate from the score formula.
+    # The formula's historical neutral default must not invent fill evidence.
+    if metrics.get("fill_rate") is None:
+        scores.update(execution_score=None, overall_score=None)
     tier = _pm12_tier_for_score(scores["overall_score"])
     components = dict(scores)
 
@@ -7524,6 +7528,9 @@ def _pm12_persona_league_ranking_item(
 
     exclusion_codes: List[str] = []
     exclusion_reasons: List[str] = []
+    if metrics.get("fill_rate") is None:
+        exclusion_codes.append("unknown_fill_rate")
+        exclusion_reasons.append("Submitted order quantity or matching fill period is unknown")
     if scores["pnl_score"] is None:
         exclusion_codes.append("unknown_pnl_return")
         exclusion_reasons.append("PnL, capital or matching performance period is unknown")
@@ -13284,16 +13291,6 @@ def _pm12_telemetry_metrics_from_records(
         )
         if value is not None
     ]
-    fill_rate_values = [
-        value
-        for value in (
-            _pm12_finite_number(
-                _management_first_float(item, "fill_rate", "summary.fill_rate")
-            )
-            for item in telemetry
-        )
-        if value is not None
-    ]
     slippage_values = [
         value
         for value in (
@@ -13356,13 +13353,22 @@ def _pm12_telemetry_metrics_from_records(
         "telemetry_coverage_count": len(telemetry),
         "pnl": round(sum(pnl_values), 6) if pnl_values else None,
         "drawdown": max(drawdown_values) if drawdown_values else None,
-        "fill_rate": _management_avg(fill_rate_values),
+        **_pm12_fill_rate_metrics(runtime_ids, telemetry),
         "avg_slippage_bps": _management_avg(slippage_values),
         "total_trades": int(sum(trade_values)) if trade_values else 0,
         "latest_telemetry_at": latest_timestamp_iso,
         "telemetry_evidence_refs": telemetry_evidence_refs,
         **_pm12_pnl_return_metrics(runtime_ids, telemetry, quarter_window=quarter_window),
     }
+
+
+def _pm12_fill_rate_metrics(
+    runtime_ids: List[str], records: List[Dict[str, Any]],
+    window: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    from services.telemetry.runtime_summary import period_fill_rate
+
+    return period_fill_rate(runtime_ids, records, window)
 
 
 def _pm12_quarter_metrics(
@@ -13435,7 +13441,8 @@ def _pm12_quarter_metrics(
         "pnl_return_status": "unknown", "pnl_return_reason": "missing_quarter_series",
         "drawdown": None, "drawdown_status": "unknown", "drawdown_reason": "missing_quarter_series",
         "drawdown_basis": "quarter_maximum_equity_drawdown", "pnl_sources": [],
-        "fill_rate": None, "avg_slippage_bps": None, "total_trades": None,
+        **_pm12_fill_rate_metrics(runtime_ids, records, window),
+        "avg_slippage_bps": None, "total_trades": None,
         "latest_telemetry_at": None, "telemetry_evidence_refs": evidence,
         "runtime_coverage": {"observed": observed, "expected": len(runtime_ids),
                              "ratio": observed / len(runtime_ids) if runtime_ids else 0.0},
@@ -13516,7 +13523,7 @@ def _pm12_quarter_metrics(
                    "pnl_period": {"start_at": sources[0]["start_at"], "as_of": sources[0]["as_of"],
                                   "quarter": window["quarter"]}})
     result["trading_sample_sufficiency"]["total_trades"] = trades
-    for field in ("fill_rate", "avg_slippage_bps"):
+    for field in ("avg_slippage_bps",):
         per_runtime = []
         for runtime_id in runtime_ids:
             candidates = [(at, value) for record in records if record.get("runtime_id") == runtime_id
