@@ -13,7 +13,7 @@ This is a bounded version report. It is **not** hosted-version proof, not a prod
 | Frontend | `ajoe734/execute-plans` @ `aa17cd4fc390e2c311ef50cbd5f7d2160faea775`; package.json blob `1f2021e9cae4bd3973982823978cf457d6379c0c`, package-lock.json blob `a5b2f8f7ddbb50b3e74c5f1d63ab7d25d419fe22` |
 | Python | 56 manifest files; 504 declarations (144 are lock declarations); 232 unique distributions |
 | npm | 90 direct dependencies with exact lock versions |
-| Registries | `https://pypi.org/pypi/<name>/json`, `https://registry.npmjs.org/<name>/latest` (per-package URLs in evidence.json) |
+| Registries | `https://pypi.org/pypi/<name>/json`, `https://registry.npmjs.org/<name>/latest` (per-package URL templates in evidence.json) |
 | Lookup errors | 0 |
 
 Input SHA256 (verified): audit `454e2f23eb7258d74ad277dff4c724b4fdfc58a14400ab45ba56b913f293058b`, summary `a40bdf83c51ed5d6fa29fd241b18f9d08fa591a4d8bf5156be2e94ea101667ae`, original-19 dispositions `45b557fda1ae94268cf607d0fe488e365821f52992f10aeacc6a5a8715c488f3`. Backend manifest files all exist at the pinned commit; frontend blobs match the GitHub tree for the pinned commit.
