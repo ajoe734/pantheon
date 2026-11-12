@@ -6817,22 +6817,37 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
         row = _get_active_read_store().get_approval_decision(decision_id)
     except Exception:
         row = None
+    promotion = request.get("target_type") == "paper_canary_candidacy"
+    if promotion:
+        content = {k: saved.get(k) for k in ("persona_id", "quarter", "ranking_snapshot_id", "from_stage", "to_stage",
+                                            "rule_summary", "rationale", "evidence_ref_ids")}
+        digest = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+        subject = (row.get("metadata") or {}).get("subject") if isinstance(row, dict) else None
+        bound_subject = (
+            isinstance(subject, dict) and subject == request.get("subject")
+            and all(subject.get(k) == saved.get(k) for k in ("persona_id", "quarter", "ranking_snapshot_id", "from_stage", "to_stage"))
+            and subject.get("from_stage") == "paper" and subject.get("to_stage") == "canary_candidate"
+            and subject.get("proposal_content_digest") == digest
+            and row.get("target_version") == saved.get("ranking_snapshot_id")
+        )
+    else:
+        digest = hashlib.sha256(json.dumps({
+            "persona_id": str(saved.get("persona_id") or ""), "action_id": str(saved.get("action_id") or ""),
+            "from_state": str(saved.get("from_state") or ""), "rationale": str(saved.get("rationale") or "").strip(),
+            "evidence_ref_ids": sorted(saved.get("evidence_ref_ids") or []),
+        }, sort_keys=True).encode()).hexdigest()
+        subject = (row.get("metadata") or {}).get("subject") if isinstance(row, dict) else None
+        bound_subject = (isinstance(subject, dict) and subject.get("persona_id") == saved.get("persona_id")
+                         and subject.get("from_state") == saved.get("from_state")
+                         and subject.get("to_state") == request.get("to_state"))
     owned = (
         isinstance(row, dict)
         and str(row.get("decision_id") or "") == decision_id
         and str(row.get("tenant_id") or "") == tenant_id
         and str(row.get("target_id") or "") == str(saved.get("persona_id") or "")
         and row.get("proposal_id") == saved.get("recommendation_id")
-        and row.get("target_type") == "persona_lifecycle_transition"
-        and isinstance(subject := (row.get("metadata") or {}).get("subject"), dict)
-        and subject.get("persona_id") == saved.get("persona_id")
-        and subject.get("from_state") == saved.get("from_state")
-        and subject.get("to_state") == request.get("to_state")
-        and row.get("proposal_content_digest") == hashlib.sha256(json.dumps({
-            "persona_id": str(saved.get("persona_id") or ""), "action_id": str(saved.get("action_id") or ""),
-            "from_state": str(saved.get("from_state") or ""), "rationale": str(saved.get("rationale") or "").strip(),
-            "evidence_ref_ids": sorted(saved.get("evidence_ref_ids") or []),
-        }, sort_keys=True).encode()).hexdigest()
+        and row.get("target_type") == ("paper_canary_candidacy" if promotion else "persona_lifecycle_transition")
+        and bound_subject and row.get("proposal_content_digest") == digest
     )
     if not owned:
         return {**state, "submitted": True, "submit_status": "owner_unavailable", "status": "owner_unavailable",
@@ -6843,13 +6858,13 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
     pending = decision_state in ("", "proposed", "under_review")
     return {
         **state, "submitted": True, "submit_status": "owner_proposed",
-        "status": "pending_human_gate" if pending else "decision_accepted" if decided else f"decision_{decision_state}",
+        "status": "pending_human_gate" if pending else ("decision_rejected" if row.get("decision") == "rejected" else "decision_accepted") if decided else f"decision_{decision_state}",
         "decision_status": "pending" if pending else decision_state,
         "decision": row.get("decision") if decided else None,
         "decided_at": row.get("decided_at") if decided else None,
         "decided_by": row.get("actor_id") if decided else None,
         "owner_decision": {
-            "decision_id": decision_id, "available": True, "to_state": subject["to_state"],
+            "decision_id": decision_id, "available": True, "to_state": subject.get("to_stage") if promotion else subject["to_state"],
             "decision_state": row.get("decision_state"), "version": row.get("version"),
             "vote_count": len(votes) if isinstance(votes, list) else 0,
             "proposal_content_digest": row.get("proposal_content_digest"),
