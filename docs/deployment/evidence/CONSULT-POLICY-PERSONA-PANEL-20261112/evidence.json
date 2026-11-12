@@ -29,7 +29,7 @@
       "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (memo listed under the gated decision target; real governance handoff acknowledged with memo evidence ref; real memory service strict-auth writes initiator consultation_outcome + institutional cross_persona_observation)"
     ],
     "6_deployed_addresses": [
-      "services/consultation/test_compose_activation.py::test_root_compose_wires_consultation_service_boundary (governance sink, memory, evolution addresses; memory/governance start order; no compose depends_on cycle)"
+      "services/consultation/tests/test_panel_deployed_config.py::test_root_compose_wires_consultation_panel_addresses (governance sink, memory, evolution addresses; memory/governance start order; no compose depends_on cycle)"
     ],
     "7_protocol_document": ["CONSULTATION_SESSION_PROTOCOL.md"],
     "8_integration_real_entry_points": [
@@ -37,8 +37,8 @@
     ]
   },
   "verification": {
-    "command": "pytest services/consultation services/persona/test_consult_triggers.py; pytest services/control-plane/persona/test_persona_policy_resolver.py",
-    "result": "99 passed (consultation + triggers); 34 passed (policy resolver)"
+    "command": "pytest services/consultation services/persona/test_consult_triggers.py; pytest services/consultation/tests/test_panel_deployed_config.py (consultable resolver test included)",
+    "result": "101 passed (consultation + triggers + deployed-config); 33 passed (existing policy resolver suite)"
   },
   "not_claimed": [
     "Hosted/deployed run: no real hosted cycle or consultation was executed.",
