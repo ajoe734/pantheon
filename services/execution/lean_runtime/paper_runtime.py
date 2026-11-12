@@ -5571,7 +5571,7 @@ class PaperRuntimeService:
                     "recent_order_events": list(self._recent_order_events),
                     "futures_mark_diagnostic": self._algo.futures_mark_diagnostic(),
                     "performance_telemetry": dict(self._performance_telemetry),
-            "member_virtual_books": self._member_virtual_books.snapshot(),
+                    "member_virtual_books": self._member_virtual_books.snapshot(),
                     "last_error": self._last_error,
                 },
                 "stub_mode": False,

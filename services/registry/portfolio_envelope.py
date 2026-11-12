@@ -6,6 +6,7 @@ Registry approval, DeploymentPlan and RuntimeBinding still authorize the envelop
 from __future__ import annotations
 
 import copy
+from decimal import Decimal
 import math
 from typing import Any, Mapping
 
@@ -13,7 +14,8 @@ KIND = "persona_portfolio_v1"
 
 
 def is_portfolio(artifact: Mapping[str, Any]) -> bool:
-    return artifact.get("strategy_logic", {}).get("kind") == KIND
+    logic = artifact.get("strategy_logic")
+    return isinstance(logic, Mapping) and logic.get("kind") == KIND
 
 
 def _symbol_key(symbol: str) -> str:
@@ -65,7 +67,9 @@ def validate_portfolio_envelope(artifact: Mapping[str, Any]) -> None:
         for field in ("bar_frequency", "data_source", "market"):
             if child_params.get(field) != params.get(field):
                 raise Error(f"portfolio members must share {field}")
-        child_symbols = {_symbol_key(s) for s in child_params.get("symbols", [])}
+        if not isinstance(child_params.get("symbols"), list):
+            raise Error("portfolio member requires a symbol list")
+        child_symbols = {_symbol_key(s) for s in child_params["symbols"]}
         if not child_symbols or not child_symbols <= {_symbol_key(s) for s in symbols}:
             raise Error("member symbols must be inside the envelope universe")
         covered.update(child_symbols)
@@ -95,7 +99,7 @@ def required_portfolio_history(artifact: Mapping[str, Any]) -> int:
 
 
 def evaluate_portfolio_envelope(artifact, closes, *, features=None,
-                                decision_time=None, symbol=None):
+                                decision_time=None, symbol=None, holding_bars=None, current_direction=None):
     """Evaluate each member with its single-strategy interpreter, then net views.
 
     Legacy views without a strength represent a unit directional view. A full
@@ -126,14 +130,19 @@ def evaluate_portfolio_envelope(artifact, closes, *, features=None,
             continue
         assert_governed_feature_inputs(child["strategy_logic"])
         assert_governed_feature_observations(child["strategy_logic"], features, decision_time)
-        view = evaluate_strategy_view(child, closes, features=features, decision_time=decision_time)
+        singleton = len(artifact["strategy_logic"]["members"]) == 1 and member["risk_weight"] == 1
+        view = evaluate_strategy_view(
+            child, closes, features=features, decision_time=decision_time,
+            holding_bars=holding_bars if singleton else None,
+            current_direction=current_direction if singleton else None,
+        )
         views[member["member_id"]] = view
         if not member["virtual_only"]:
             strength = 1.0 if view["strength"] is None else view["strength"]
             sign = {"LONG": 1, "SHORT": -1, "FLAT": 0}[view["direction"]]
-            weighted.append(sign * strength * member["risk_weight"])
+            weighted.append(Decimal(sign) * Decimal(str(strength)) * Decimal(str(member["risk_weight"])))
     limit = artifact["strategy_logic"]["risk_limits"]["max_net_strength"]
-    net = max(-limit, min(limit, math.fsum(weighted)))
+    net = float(max(-Decimal(str(limit)), min(Decimal(str(limit)), sum(weighted, Decimal(0)))))
     view = {"action": "BUY" if net > 0 else "SELL" if net < 0 else "HOLD",
             "direction": "LONG" if net > 0 else "SHORT" if net < 0 else "FLAT",
             "strength": abs(net), "momentum": net}
@@ -160,7 +169,11 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
                        "version": child["version"], "checksum": strategy_artifact_checksum(child),
                        "risk_weight": member["risk_weight"],
                        "virtual_only": member.get("virtual_only", False), "artifact": child})
-    template["parameters"]["symbols"] = sorted({s for m in pinned for s in m["artifact"]["parameters"]["symbols"]})
+    symbols_by_underlying = {}
+    for member in pinned:
+        for symbol in member["artifact"]["parameters"]["symbols"]:
+            symbols_by_underlying.setdefault(_symbol_key(symbol), symbol)
+    template["parameters"]["symbols"] = sorted(symbols_by_underlying.values())
     template["strategy_logic"] = {"kind": KIND, "combination_rule": "clipped_weighted_sum_v1",
                                   "members": pinned, "risk_limits": {
                                       "max_net_strength": max_net_strength,

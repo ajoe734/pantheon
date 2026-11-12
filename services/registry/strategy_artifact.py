@@ -1145,6 +1145,7 @@ def evaluate_strategy_action(
         result = evaluate_portfolio_envelope(
             strategy_artifact, closes, features=features,
             decision_time=decision_time, symbol=symbol,
+            holding_bars=holding_bars, current_direction=current_direction,
         )
         return result["view"]["action"]
 
@@ -1214,6 +1215,7 @@ def evaluate_strategy_view(
         result = evaluate_portfolio_envelope(
             strategy_artifact, closes, features=features,
             decision_time=decision_time, symbol=symbol,
+            holding_bars=holding_bars, current_direction=current_direction,
         )
         return result["view"]
 

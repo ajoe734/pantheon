@@ -59,7 +59,8 @@ class MemberVirtualBooks:
                 "envelope_checksum": envelope_checksum, "member_id": member_id,
                 "artifact_id": member["artifact_id"], "version": member["version"],
                 "checksum": member["checksum"], "virtual_only": member["virtual_only"],
-                "symbol": symbol, "observations": []})
+                "symbol": symbol, "underlying_count": member.get("underlying_count", 1),
+                "observations": []})
             view = member["view"]
             strength = 1.0 if view["strength"] is None else view["strength"]
             if not isinstance(strength, (int, float)) or not math.isfinite(strength) or not 0 <= strength <= 1:
@@ -70,12 +71,13 @@ class MemberVirtualBooks:
             rows = book["observations"]
             if rows:
                 previous_at = datetime.fromisoformat(rows[-1]["event_time"].replace("Z", "+00:00"))
-                if at < previous_at:
+                if at <= previous_at:
+                    prior = next((row for row in rows if row["event_time"] == event_time), None)
+                    if prior is not None:
+                        if prior != observation:
+                            raise ValueError("conflicting virtual mark for the same bar")
+                        continue
                     raise ValueError("out-of-order virtual mark")
-                if at == previous_at:
-                    if rows[-1] != observation:
-                        raise ValueError("conflicting virtual mark for the same bar")
-                    continue
             rows.append(observation)
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,22 +89,49 @@ class MemberVirtualBooks:
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(temporary, self.path)
+                directory_fd = os.open(self.path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
             finally:
                 temporary.unlink(missing_ok=True)
         self.books = candidate
         return self.snapshot(binding_id=binding_id, envelope_checksum=envelope_checksum)
 
     def snapshot(self, *, binding_id=None, envelope_checksum=None):
-        result = []
+        groups = {}
         for book in self.books.values():
             if binding_id and book["binding_id"] != binding_id:
                 continue
             if envelope_checksum and book["envelope_checksum"] != envelope_checksum:
                 continue
             rows = book["observations"]
-            returns = [previous["exposure"] * (row["price"] / previous["price"] - 1)
-                       for previous, row in zip(rows, rows[1:])]
-            result.append({**{k: v for k, v in book.items() if k != "observations"},
-                           **virtual_book_metrics(returns),
-                           "as_of": rows[-1]["event_time"] if rows else None})
+            returns = {(previous["event_time"], row["event_time"]):
+                       previous["exposure"] * (row["price"] / previous["price"] - 1)
+                       for previous, row in zip(rows, rows[1:])}
+            key = (book["binding_id"], book["envelope_checksum"], book["member_id"])
+            groups.setdefault(key, []).append((book, returns))
+        result = []
+        for group in groups.values():
+            book = group[0][0]
+            count = book["underlying_count"]
+            if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+                raise ValueError("invalid virtual book underlying count")
+            all_underlyings = len(group) == count
+            complete = all_underlyings and len({b["observations"][-1]["event_time"] for b, _ in group}) == 1
+            # Only common, observed return intervals enter member metrics. A
+            # missing underlying mark never becomes a fabricated zero return.
+            dates = set.intersection(*(set(returns) for _, returns in group)) if all_underlyings else set()
+            dates = sorted(dates)
+            returns = [math.fsum(series[day] for _, series in group) / count for day in dates]
+            underlyings = [{"symbol": subbook["symbol"], **virtual_book_metrics(list(series.values())),
+                            "as_of": subbook["observations"][-1]["event_time"]}
+                           for subbook, series in group]
+            result.append({**{k: v for k, v in book.items()
+                              if k not in {"observations", "symbol", "underlying_count"}},
+                           **virtual_book_metrics(returns), "underlyings": underlyings,
+                           "aggregation": "equal_notional_per_underlying",
+                           "marks_complete": complete,
+                           "as_of": dates[-1][1] if dates else None})
         return result
