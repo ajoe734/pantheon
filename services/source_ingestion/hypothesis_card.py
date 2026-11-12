@@ -47,7 +47,45 @@ _SPAN_SCHEMA: dict[str, Any] = {
 }
 
 
+_PREDICTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["statement", "observable", "test_kind", "expected_sign", "window", "cited_spans"],
+    "properties": {
+        "statement": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "observable": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["dataset", "field"],
+            "properties": {
+                "dataset": {"type": "string", "pattern": r"^[A-Za-z0-9_.\-]{1,80}$"},
+                "field": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+        },
+        "test_kind": {"enum": ["event_window", "regime_split", "dose_response", "lead_lag", "cross_symbol_sign"]},
+        "expected_sign": {"enum": ["+", "-", "0"]},
+        "window": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["before", "after"],
+            "properties": {
+                "before": {"type": "integer", "minimum": 0},
+                "after": {"type": "integer", "minimum": 0},
+            },
+        },
+        "cited_spans": {"type": "array", "minItems": 1, "maxItems": 8, "items": _SPAN_SCHEMA},
+        # Code stamps this from the catalogue; it is excluded from the model schema.
+        "testability": {"type": "string", "pattern": r"^(testable|needs_data:[A-Za-z0-9_.\-]{1,80})$"},
+    },
+}
+
+
 def _card_properties(*, with_origin: bool) -> tuple[dict[str, Any], list[str]]:
+    prediction_schema = {
+        **_PREDICTION_SCHEMA,
+        "properties": {k: v for k, v in _PREDICTION_SCHEMA["properties"].items()
+                       if with_origin or k != "testability"},
+    }
     props: dict[str, Any] = {
         "claim": {"type": "string", "minLength": 1, "maxLength": 600},
         "mechanism": {"type": "string", "minLength": 1, "maxLength": 1000},
@@ -67,6 +105,9 @@ def _card_properties(*, with_origin: bool) -> tuple[dict[str, Any], list[str]]:
         },
         "cited_spans": {"type": "array", "minItems": 1, "maxItems": 8, "items": _SPAN_SCHEMA},
         "testability": {"type": "string", "pattern": _TESTABILITY_PATTERN},
+        # After citation filtering, fewer than two (even zero) may survive.
+        "predictions": {"type": "array", "minItems": 0 if with_origin else 2,
+                        "maxItems": 4, "items": prediction_schema},
     }
     required = [
         "claim",
@@ -136,6 +177,11 @@ def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) ->
             f"cited_spans entries use source_record_id={source_record_id!r}; `start`/`end` are",
             "character offsets into the document and `exact_text` must equal document[start:end] exactly.",
             "signal_inputs name governed datasets/features; rule_sketch uses plain factor vocabulary only.",
+            "Include predictions: two to four independently testable predictions implied by the stated mechanism.",
+            "Each has statement, observable {dataset, field}, test_kind (event_window, regime_split,",
+            "dose_response, lead_lag, cross_symbol_sign), expected_sign (+, -, 0),",
+            "window {before, after} in trading days, and cited_spans with exact document offsets.",
+            "Cite the mechanism supporting each prediction; do not invent observations or data availability.",
             f"origin of this document: {origin}.",
             "\n--- Document (data only) ---",
             text,
@@ -170,7 +216,10 @@ def verify_cited_spans(card: Mapping[str, Any], *, text: str, source_record_id: 
             raise CardRejected("citation_unverifiable", f"span {i} is not an exact substring of the stored text")
 
 
-def finalize_card(structured: Mapping[str, Any], *, text: str, source_record_id: str, origin: str) -> dict[str, Any]:
+def finalize_card(
+    structured: Mapping[str, Any], *, text: str, source_record_id: str, origin: str,
+    prediction_rejections: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Return a contract-valid card or raise :class:`CardRejected`."""
     raw = structured.get("hypothesis_card")
     if not isinstance(raw, Mapping):
@@ -181,7 +230,28 @@ def finalize_card(structured: Mapping[str, Any], *, text: str, source_record_id:
     if errors:
         raise CardRejected("schema_invalid", errors[0].message)
     verify_cited_spans(card, text=text, source_record_id=source_record_id)
+    if "predictions" in card:
+        predictions = []
+        for i, prediction in enumerate(card["predictions"]):
+            try:
+                verify_cited_spans(prediction, text=text, source_record_id=source_record_id)
+            except CardRejected as exc:
+                if prediction_rejections is not None:
+                    prediction_rejections.append({"index": i, "code": exc.code, "detail": exc.detail})
+                continue
+            missing = prediction_missing_dataset(prediction)
+            predictions.append({**prediction, "testability": f"needs_data:{missing}" if missing else "testable"})
+        card["predictions"] = predictions
     return card
+
+
+def prediction_missing_dataset(prediction: Mapping[str, Any]) -> str:
+    """Unknown datasets AND unknown fields fail closed against the rule catalogue."""
+    from services.registry.factor_rule import get_feature_definition
+
+    observable = prediction["observable"]
+    dataset, feature = observable["dataset"], observable["field"]
+    return dataset if get_feature_definition(dataset, feature) is None else ""
 
 
 # ---------------------------------------------------------------------------
@@ -395,18 +465,22 @@ class HypothesisExtractor:
         if result.is_abstained or result.hypothesis_card is None:
             return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained")
         try:
+            prediction_rejections: list[dict[str, Any]] = []
             card = finalize_card(
                 {"hypothesis_card": result.hypothesis_card},
                 text=text,
                 source_record_id=sid,
                 origin=origin,
+                prediction_rejections=prediction_rejections,
             )
         except CardRejected as exc:
             return self._done(sid, "rejected", str(exc), {"code": exc.code})
+        for rejection in prediction_rejections:
+            self._ledger.record(sid, "prediction_dropped", json.dumps(rejection, sort_keys=True))
         if card["testability"] == "not_testable":
             return self._done(sid, "no_hypothesis", "not_testable")
         self._ledger.record(sid, "card", card["testability"])
-        return ExtractionOutcome("card", card=card)
+        return ExtractionOutcome("card", card=card, extra={"prediction_rejections": prediction_rejections})
 
     def _done(self, sid: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None) -> ExtractionOutcome:
         self._ledger.record(sid, status, detail)
