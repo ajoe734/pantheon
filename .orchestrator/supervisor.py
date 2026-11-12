@@ -2236,7 +2236,7 @@ def _validate_auto_integrator_unblock_request(
     source_task_id = str(request.get("source_task_id") or "")
     reason = unblock_contract.validate_reason(request.get("reason"))
     if not (
-        unblock_contract.requires_repair_task(reason)
+        unblock_contract.requires_repair_task(reason, request.get("repository_id"))
         or unblock_contract.requires_source_reopen(reason, request.get("repository_id"))
     ):
         raise ValueError("authority/evidence blocker must be resolved on its source task")

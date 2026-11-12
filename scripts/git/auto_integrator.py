@@ -2246,7 +2246,7 @@ def open_unblock_task(
         )
         return None
     if not (
-        unblock_contract.requires_repair_task(reason)
+        unblock_contract.requires_repair_task(reason, candidate.repository_id)
         or unblock_contract.requires_source_reopen(reason, candidate.repository_id)
     ):
         print(

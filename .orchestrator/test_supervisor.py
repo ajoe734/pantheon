@@ -2602,6 +2602,36 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertIn("source-owned return (ci-red)", tasks[0]["next"])
         self.assertIn("required frontend CI is red", tasks[0]["next"])
 
+    def test_execute_plans_integration_environment_faults_leave_source_untouched(self) -> None:
+        for reason in ("missing-dedicated-integration-path", "integration-checkout-not-detached"):
+            with self.subTest(reason=reason):
+                fe = self._make_execute_plans_source()
+                self.assertFalse(
+                    supervisor.unblock_contract.requires_source_reopen(reason, "execute_plans")
+                )
+                self.assertFalse(
+                    supervisor.unblock_contract.requires_repair_task(reason, "execute_plans")
+                )
+                request = self._publish(
+                    reason=reason, detail="integration checkout fault",
+                    unblock_task_id=self._fe_task_id(reason), **fe,
+                )
+                calls: list[tuple[list[str], dict[str, str], str]] = []
+                with mock.patch.object(
+                    supervisor.subprocess, "run",
+                    side_effect=self._run_real_reopen_subprocess(calls),
+                ):
+                    self._materialize()
+                self.assertEqual(calls, [])
+                snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+                    self.config["task_state_store"]["event_log"]
+                )
+                tasks = snapshot["state"]["tasks"]
+                self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+                self.assertEqual(tasks[0]["status"], "review_approved")
+                self.assertEqual(tasks[0]["delivery_binding"]["pr"], 940)
+                self.assertFalse(request.exists())
+
     def test_pantheon_ci_red_still_materializes_one_level_repair(self) -> None:
         self.assertFalse(
             supervisor.unblock_contract.requires_source_reopen("ci-red", "pantheon")

@@ -111,7 +111,21 @@ def task_id(
     return f"{readable[: TASK_ID_LIMIT - len(suffix) - 1].rstrip('-')}-{suffix}"
 
 
-def requires_repair_task(reason: str) -> bool:
+# Integrator checkout/environment faults live in Pantheon's integration setup,
+# not in the delivered source. They never rework a non-Pantheon source task.
+INTEGRATION_ENVIRONMENT_REASONS = frozenset({
+    "dirty-repository-checkout", "git-common-dir-not-writable",
+    "integration-checkout-identity-mismatch", "integration-checkout-not-detached",
+    "integration-checkout-not-standalone", "invalid-git-common-dir",
+    "invalid-git-repository", "invalid-repository-root", "invalid-repository-scope",
+    "missing-dedicated-integration-path", "missing-origin-remote",
+    "missing-repository-checkout", "missing-repository-slug",
+    "repository-checkout-not-writable", "repository-origin-mismatch",
+    "repository-status-unavailable",
+})
+
+
+def requires_repair_task(reason: str, repository_id: str | None = None) -> bool:
     """Authority/evidence failures stay on the source; they are not code work.
 
     The candidate still reports blocked. This never grants approval or hides
@@ -120,6 +134,11 @@ def requires_repair_task(reason: str) -> bool:
     configuration repairs remain eligible.
     """
     validate_reason(reason)
+    if (
+        reason in INTEGRATION_ENVIRONMENT_REASONS
+        and repository_id not in (None, "", "pantheon")
+    ):
+        return False
     return not (reason.startswith("review-gate-") or reason in {
         "canonical-authority-lock-failed", "canonical-state-refresh-failed",
         EXACT_HEAD_BEHIND_BASE_REASON,
@@ -130,8 +149,8 @@ def requires_repair_task(reason: str) -> bool:
 def requires_source_reopen(reason: str, repository_id: str | None = None) -> bool:
     """Return the blocker to the source task instead of creating a child repair.
 
-    BEHIND always reopens its source. A repair-eligible blocker on a non-Pantheon
-    repository also reopens its source: a generated repair task declares Pantheon
+    BEHIND always reopens its source. A source-code repair-eligible blocker on a non-Pantheon
+    repository (not an integration-environment fault) also reopens its source: a generated repair task declares Pantheon
     integrator tooling and must not be bound to another repository's code.
     """
 
@@ -140,6 +159,7 @@ def requires_source_reopen(reason: str, repository_id: str | None = None) -> boo
         return True
     return (
         repository_id not in (None, "", "pantheon")
+        and reason not in INTEGRATION_ENVIRONMENT_REASONS
         and requires_repair_task(reason)
     )
 
