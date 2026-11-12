@@ -427,7 +427,7 @@ def observations_from_row(
                 "field": f.field,
                 "entity": entity,
                 "event_time": event_date,
-                "available_time": iso_utc(avail),
+                "available_time": avail.isoformat().replace("+00:00", "Z") if dataset == "tw_industry_classification" else iso_utc(avail),
                 "ingest_time": str(ingest),
                 "availability_lag_days": lag,
                 "value": value,

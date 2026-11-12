@@ -3307,10 +3307,10 @@ def normalize_industry_classification_rows(
     The exchange code is a numeric category (01 stays in industry_code_raw).
     Missing/invalid codes remain missing, never a shared 'unknown' sector.
     """
-    from ..feature_catalogue import iso_utc, parse_time
+    from ..feature_catalogue import parse_time
 
     canonical = _canonical_venue(venue)
-    observed = iso_utc(parse_time(ingest_time or _utc_now()))
+    observed = parse_time(ingest_time or _utc_now()).isoformat().replace("+00:00", "Z")
     symbol_key, industry_key = (
         ("公司代號", "產業別") if canonical == "TWSE"
         else ("SecuritiesCompanyCode", "SecuritiesIndustryCode")

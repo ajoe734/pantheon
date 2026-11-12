@@ -4,7 +4,7 @@ The feed supplies ``candidate_pool_market.v1``: a complete governed Taiwan
 symbol map, source references, dated daily bars (including traded_value and
 suspended), and timestamped catalogue features. A provisioned symbol list is
 never a substitute for that market. Missing inputs exclude, never impute.
-Industry grouping remains unavailable until its PIT dataset is catalogued.
+Industry grouping and demeaning require acquired, catalogued PIT classifications.
 """
 from __future__ import annotations
 
@@ -92,7 +92,15 @@ def validate_screen(screen: Any, inputs: Mapping[str, Any], parameters: Mapping[
             raise fr.FactorRuleValidationError("screen step kind must be filter/rank")
         if set(step) - {"group_by"} != expected or step.get("refresh") not in CADENCES:
             raise fr.FactorRuleValidationError("screen step keys or refresh cadence are invalid")
-        expr = fr.parse_factor_expression(step["expression"], allow_literal_constants=False)
+        expr = fr.parse_factor_expression(step["expression"], allow_literal_constants=False,
+                                          allow_industry_neutralize=True)
+        neutralize = expr.get("op") == "industry_neutralize"
+        # Demean the latest per-member time-series value. Temporal operators
+        # outside a cross-section require a different time-alignment contract.
+        inner = expr["args"][0] if neutralize else expr
+        fr.parse_factor_expression(inner, allow_literal_constants=False)
+        if neutralize and step.get("group_by") is None:
+            raise fr.FactorRuleValidationError("industry_neutralize requires governed group_by.industry_input")
         fr._validate_window_And_param_constraints(expr, parameters)
         step["expression"] = expr
         refs, _ = fr.collect_expression_refs_and_params(expr)
@@ -231,7 +239,10 @@ def _step_value(step: Mapping, logic: Mapping, payload: Mapping, parameters: Map
     features, closes = _features(payload, cutoff)
     features = _dated_input_features(inputs, features, cutoff)
     env = fr.resolve_point_in_time_inputs({"inputs": inputs}, closes, features=features, decision_time=cutoff)
-    score = fr.evaluate_factor_expression(step["expression"], env, parameters)
+    expression = step["expression"]
+    if expression.get("op") == "industry_neutralize":
+        expression = expression["args"][0]
+    score = fr.evaluate_factor_expression(expression, env, parameters)
     industry = env[group][-1] if group else None
     return score, industry
 
@@ -295,13 +306,31 @@ def build_candidate_pool_snapshot(artifact: Mapping, market: Mapping, decision_t
         if key in memo:
             return copy.deepcopy(memo[key])
         members, excluded, records = stage(index - 1, anchor)
+        from .sector_features import market_with_sector_features
+
+        stage_symbols = market_with_sector_features(symbols, validated["inputs"], decision_time=_cutoff(anchor))
         groups: dict[float | None, list[tuple[str, float]]] = {}
+        neutralize = step["expression"].get("op") == "industry_neutralize"
+        failed = False
         for symbol in sorted(members):
             try:
-                score, group = _step_value(step, validated, symbols[symbol], parameters, _cutoff(anchor))
+                score, group = _step_value(step, validated, stage_symbols[symbol], parameters, _cutoff(anchor))
                 groups.setdefault(group, []).append((symbol, score))
             except fr.FactorRuleValidationError as exc:
-                excluded[symbol] = f"step_{index}:missing_input:{exc}"
+                failed = True
+                governed_group = bool(step.get("group_by")) or any(i["dataset"] == "tw_sector_flows" for i in validated["inputs"])
+                reason = "needs_data" if governed_group else "missing_input"
+                excluded[symbol] = f"step_{index}:{reason}:{exc}"
+        if neutralize and failed:
+            # An unclassified/missing member can change every sector mean.
+            for symbol in members:
+                excluded[symbol] = f"step_{index}:needs_data:incomplete_industry_cross_section"
+            groups = {}
+        if neutralize:
+            import math
+
+            groups = {group: [(symbol, score - math.fsum(v for _, v in values) / len(values))
+                              for symbol, score in values] for group, values in groups.items()}
         kept = set()
         for values in groups.values():
             if step["kind"] == "filter":
@@ -338,6 +367,7 @@ def build_candidate_pool_snapshot(artifact: Mapping, market: Mapping, decision_t
         "filters_version": digest({"screen": screen, "parameters": parameters}),
         "source_refs": sorted(raw["source_refs"]), "steps": records,
         "survivorship_limited": limited,
+        "data_status": "needs_data" if any(":needs_data:" in reason for reason in excluded.values()) else "ok",
         "below_minimum": len(members) < _param(screen["min_size"], parameters, "min_size", integer=True),
     }
     return {**snapshot, "digest": digest(snapshot)}
@@ -352,7 +382,9 @@ def _member_view(artifact: Mapping, symbols: Mapping, snapshot: Mapping, symbol:
     """
     key = canonical_symbol(symbol)
     hold = {"action": "HOLD", "direction": "FLAT", "signal": 0.0, "momentum": 0.0, "strength": 0.0}
-    if snapshot["below_minimum"]:
+    if snapshot.get("data_status") == "needs_data":
+        view = {**hold, "hold_reason": "needs_data", "status": "needs_data"}
+    elif snapshot["below_minimum"]:
         view = {**hold, "hold_reason": "candidate_pool_below_minimum"}
     elif key not in snapshot["members"]:
         if current_direction in {"LONG", "SHORT"}:

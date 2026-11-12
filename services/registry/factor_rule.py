@@ -548,6 +548,7 @@ def parse_factor_expression(
     node: Any,
     *,
     allow_cross_sectional: bool = False,
+    allow_industry_neutralize: bool = False,
     allow_literal_constants: bool = False,
     _depth: int = 1,
 ) -> dict[str, Any]:
@@ -608,7 +609,7 @@ def parse_factor_expression(
         raise FactorRuleValidationError("factor expression op must be a non-empty string")
 
     if op in CROSS_SECTIONAL_OPERATORS:
-        if not allow_cross_sectional:
+        if not allow_cross_sectional and not (allow_industry_neutralize and op == "industry_neutralize"):
             raise FactorRuleValidationError(
                 f"cross-sectional operator '{op}' is not allowed in per-symbol factor_rule_v1 evaluation"
             )
@@ -629,6 +630,7 @@ def parse_factor_expression(
         parse_factor_expression(
             arg,
             allow_cross_sectional=allow_cross_sectional,
+            allow_industry_neutralize=allow_industry_neutralize,
             allow_literal_constants=allow_literal_constants,
             _depth=_depth + 1,
         )
