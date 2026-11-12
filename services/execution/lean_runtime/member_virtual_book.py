@@ -118,7 +118,21 @@ class MemberVirtualBooks:
             self.books = state["books"]
             self.snapshot()  # reject corrupt metrics before accepting new observations
 
-    def observe(self, *, binding_id, envelope_checksum, symbol, event_time,
+    def observe(self, **observation):
+        if self.path is None:
+            return self._observe(**observation)
+        import fcntl
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with Path(str(self.path) + ".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if self.path.exists():
+                    self.books = MemberVirtualBooks(self.path).books
+                return self._observe(**observation)
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def _observe(self, *, binding_id, envelope_checksum, symbol, event_time,
                 price, source_ref, members, bar_frequency):
         if not source_ref or not event_time or not members:
             raise ValueError("virtual book requires source, time and pinned member views")
@@ -133,6 +147,19 @@ class MemberVirtualBooks:
         candidate = copy.deepcopy(self.books)
         for member_id, member in members.items():
             key = json.dumps([binding_id, envelope_checksum, member_id, symbol])
+            if key not in candidate:
+                # A pool publication changes the envelope/binding, not an
+                # unchanged member's virtual strategy. Carry only the exact
+                # immutable member/symbol history in this persona-scoped store.
+                prior = [b for b in candidate.values() if b["member_id"] == member_id
+                         and b["artifact_id"] == member["artifact_id"] and b["checksum"] == member["checksum"]
+                         and b["version"] == member["version"] and b["symbol"] == symbol
+                         and b["underlying_count"] == member.get("underlying_count", 1)]
+                if prior:
+                    carried = copy.deepcopy(max(prior, key=lambda b: b["observations"][-1]["event_time"]))
+                    carried.update(binding_id=binding_id, envelope_checksum=envelope_checksum,
+                                   virtual_only=member["virtual_only"])
+                    candidate[key] = carried
             book = candidate.setdefault(key, {"binding_id": binding_id,
                 "envelope_checksum": envelope_checksum, "member_id": member_id,
                 "artifact_id": member["artifact_id"], "version": member["version"],
@@ -220,14 +247,18 @@ class MemberVirtualBooks:
             result.append({**{k: v for k, v in book.items()
                               if k not in {"observations", "symbol", "underlying_count"}},
                            **virtual_book_metrics(returns), "underlyings": underlyings,
-                           "net_of_costs": virtual_book_metrics(net_returns, basis=NET_BASIS),
+                           "dates": [end[:10] for _, end in dates],
+                           "returns": returns,
+                           "source_ref": sorted({r["source_ref"] for b, _, _ in group for r in b["observations"]}),
+                           "net_of_costs": {**virtual_book_metrics(net_returns, basis=NET_BASIS),
+                               "returns": net_returns},
                            "aggregation": "equal_notional_per_underlying",
                            "marks_complete": complete,
                            "as_of": dates[-1][1] if dates else None})
             if baseline_resolver is not None:
                 from services.evolution.approved_baselines import compare_member_book
                 member = result[-1]
-                baseline = baseline_resolver(member["artifact_id"], member["checksum"],
+                baseline = baseline_resolver(member["member_id"], member["checksum"],
                                              [u["symbol"] for u in member["underlyings"]])
                 member["baseline"] = baseline
                 if isinstance(baseline, dict) and baseline.get("status") == "approved":

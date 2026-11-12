@@ -472,6 +472,8 @@ def _deliver_one(
                     "target_stage", "action_type", "approval_decision_id")
     if any(payload.get(key) != decision.get(key) for key in bound_fields):
         raise ValueError("dispatch intent no longer matches the current proposal")
+    if payload.get("pool_member") != (decision.get("metadata") or {}).get("pool_member"):
+        raise ValueError("dispatch pool member no longer matches the approved proposal")
     boundary = _http_get(
         api_url.rstrip("/") + f"/api/evolution/proposals/{decision_id}/boundary",
         timeout_seconds, tenant_id=tenant_id, auth_token=auth_token,

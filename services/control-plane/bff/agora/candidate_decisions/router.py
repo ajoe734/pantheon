@@ -237,6 +237,7 @@ def create_candidate_decision_router(
                 expected_proposal_digest=body.expected_proposal_digest,
                 expected_etag=require_etag(if_match),
                 idempotency_key=require_idempotency(idempotency_key),
+                authorization=authorization,
             )
         except CandidateDecisionConflict as exc:
             raise HTTPException(409, detail=str(exc)) from exc
