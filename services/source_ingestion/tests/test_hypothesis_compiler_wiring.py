@@ -119,8 +119,8 @@ def test_screen_entry_recording_through_environment_controller(tmp_path, monkeyp
         assert len(seen) == 1 and res["reconcile"]["created"] == 0
         assert [s for s, _ in _outcomes(config)] == ["needs_data"]
         assert store.drafts() == []
+        # Industry is catalogued; the recorded net_inflow field is still unsupported.
         assert store.needs_data_report() == [
-            {"dataset": "tw_industry_classification", "count": 1},
             {"dataset": "tw_sector_flows", "count": 1}]
     else:
         assert len(seen) == 2 and res["reconcile"]["created"] == 1
