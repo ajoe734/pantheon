@@ -355,3 +355,22 @@ Every session MUST carry these fields for audit and replay:
 - Operator-facing persona management UI (APP-002)
 - Consultation session protocol details (CONSULTATION_SESSION_PROTOCOL.md)
 - Full capability resolution spec (CAPABILITY_RESOLUTION_SPEC.md)
+
+## Strategy pool record (`persona_strategy_pool.v1`)
+
+Schema: `docs/contracts/persona_strategy_pool.v1.schema.json`. Code: `persona_strategy_pool.py`; routes in `main.py`.
+Design: SD_PERSONA_STRATEGY_POOL_AUTONOMY_2026-11-12 §4.1.
+
+* One append-only record per persona; every change appends a version, earlier versions stay readable.
+* Members carry `artifact_ref`, `checksum`, `stage` (`trial|active|removed`), `risk_weight`, `baseline_ref`,
+  `joined_at`, `parent_ref`, `demand_ref`. Removed members stay in history; removing a member never changes
+  the persona lifecycle state. Execution reads members only through the envelope artifact (R6), not this store.
+* A non-removed member must be an `approved` registry entry whose checksum equals the supplied checksum
+  (read from the registry owner via `PERSONA_REGISTRY_BASE_URL` / `PERSONA_REGISTRY_SERVICE_TOKEN`). Otherwise the
+  change is refused (422) and the reason is appended to the record's `refusals`. An unreachable registry is 503; nothing is written.
+* Routes (tenant-scoped via `X-Tenant-Id` and verified claims; write needs a persona-plane/governance role):
+  `GET /api/personas/{id}/strategy-pool`, `GET .../strategy-pool/versions` (versions + refusals),
+  `GET .../strategy-pool/versions/{n}`, `POST .../strategy-pool/versions` (`expected_version` + full membership),
+  `POST .../strategy-pool/seed` (version 1 from the persona's single approved paper artifact in registry owner
+  records; zero/several candidates or no baseline reference is refused). Another tenant's persona: 403 on write, 404 on read.
+* Store: `PERSONA_POOL_STORE_BACKEND|PATH|DSN|TABLE`.
