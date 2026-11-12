@@ -42,6 +42,35 @@ INTRADAY_PRICE_VOLUME_DATASETS: frozenset[str] = frozenset(
     {"tw_price_1m", "tw_price_5m", "tw_price_15m", "tw_price_30m", "tw_price_60m"}
 )
 AVAILABILITY_LAG_UNITS: tuple[str, ...] = ("days", "minutes")
+# Declared ``parameters.bar_frequency`` -> governed intraday dataset (SD §6.1).
+# Mirrors strategy_artifact.BAR_FREQUENCY_DATASETS (a test pins equality).
+INTRADAY_FREQUENCY_DATASETS: dict[str, str] = {
+    "1m": "tw_price_1m",
+    "5m": "tw_price_5m",
+    "15m": "tw_price_15m",
+    "30m": "tw_price_30m",
+    "60m": "tw_price_60m",
+}
+_DAILY_BAR_FREQUENCY = "1d"
+
+
+def declared_intraday_frequency(parameters: Mapping[str, Any] | None) -> str | None:
+    """Return the declared intraday ``bar_frequency`` or None for daily/undeclared.
+
+    Any other declared value fails closed (SD §6.1: no frequencies outside the
+    governed set).
+    """
+    if not isinstance(parameters, Mapping) or "bar_frequency" not in parameters:
+        return None
+    freq = parameters["bar_frequency"]
+    if isinstance(freq, str) and freq in INTRADAY_FREQUENCY_DATASETS:
+        return freq
+    if freq == _DAILY_BAR_FREQUENCY:
+        return None
+    raise FactorRuleValidationError(
+        f"parameters.bar_frequency {freq!r} is not allowed; "
+        f"allowed: {_DAILY_BAR_FREQUENCY}, {', '.join(INTRADAY_FREQUENCY_DATASETS)}"
+    )
 
 PRICE_VOLUME_DATASETS: frozenset[str] = frozenset(
     {
@@ -765,7 +794,25 @@ def validate_factor_rule_logic(
         allow_literal_constants=False,
     )
     signal_refs, all_const_params = collect_expression_refs_and_params(signal_ast)
-    has_minute_input = any(
+    declared_freq = declared_intraday_frequency(parameters)
+    if declared_freq is not None:
+        # A declared minute frequency must read governed frequency-matching
+        # observations; zero/non-minute inputs would leave raw closes exposed.
+        freq_dataset = INTRADAY_FREQUENCY_DATASETS[declared_freq]
+        minute_datasets = {
+            d["dataset"] for d in declared_inputs.values() if d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS
+        }
+        if freq_dataset not in minute_datasets:
+            raise FactorRuleValidationError(
+                f"bar_frequency {declared_freq!r} requires at least one declared input "
+                f"from governed dataset {freq_dataset!r}; daily/generic closes are not allowed"
+            )
+        if minute_datasets - {freq_dataset}:
+            raise FactorRuleValidationError(
+                f"bar_frequency {declared_freq!r} contradicts declared minute input dataset(s) "
+                f"{sorted(minute_datasets - {freq_dataset})}"
+            )
+    has_minute_input = declared_freq is not None or any(
         d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS for d in declared_inputs.values()
     )
     # Minute strategies must read every price field through a declared governed input;
@@ -1232,8 +1279,12 @@ def resolve_point_in_time_inputs(
     *,
     features: Mapping[str, Any] | None = None,
     decision_time: str | datetime | date | None = None,
+    bar_frequency: str | None = None,
 ) -> dict[str, tuple[float, ...]]:
     """Resolve and point-in-time filter all inputs required by ``strategy_logic``."""
+    declared_freq = declared_intraday_frequency(
+        {"bar_frequency": bar_frequency} if bar_frequency is not None else None
+    )
     feature_map: Mapping[str, Any] = features if isinstance(features, Mapping) else {}
 
     close_series: tuple[float, ...] = ()
@@ -1253,10 +1304,17 @@ def resolve_point_in_time_inputs(
         )
 
     env: dict[str, tuple[float, ...]] = {}
-    minute_bound = any(
-        isinstance(i, Mapping) and i.get("dataset") in INTRADAY_PRICE_VOLUME_DATASETS
+    minute_datasets = {
+        i.get("dataset")
         for i in strategy_logic.get("inputs", ())
-    )
+        if isinstance(i, Mapping) and i.get("dataset") in INTRADAY_PRICE_VOLUME_DATASETS
+    }
+    if declared_freq is not None and minute_datasets != {INTRADAY_FREQUENCY_DATASETS[declared_freq]}:
+        raise FactorRuleValidationError(
+            f"bar_frequency {declared_freq!r} requires declared inputs from "
+            f"{INTRADAY_FREQUENCY_DATASETS[declared_freq]!r} only; daily/generic closes are not allowed"
+        )
+    minute_bound = declared_freq is not None or bool(minute_datasets)
     if minute_bound:
         # Never expose generic/raw closes or synthesized vwap to a minute strategy.
         close_series = ()
@@ -1783,6 +1841,7 @@ def evaluate_factor_rule_view(
         closes,
         features=features,
         decision_time=decision_time,
+        bar_frequency=parameters.get("bar_frequency"),
     )
 
     signal_series, _ = _eval_node_series(validated_logic["signal"], env, parameters)

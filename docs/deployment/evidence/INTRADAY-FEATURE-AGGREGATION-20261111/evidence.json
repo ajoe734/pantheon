@@ -84,5 +84,12 @@
     "tests": "public evaluator negative tests for generic/daily-tagged close and vwap, and naive/date-only/None decision_time",
     "validation": "timeout 300 python -m pytest <7 task test files> -q => 100 passed; services/registry/tests -k 'factor or strategy or minute or intraday' => 32 passed",
     "hosted": "not run; remains W5"
+  },
+  "review_reject_fix_round5": {
+    "finding": "P1: declared parameters.bar_frequency=1m with empty inputs and implicit close refs bypassed minute dataset/PIT/lag/session protection (BUY from raw generic closes)",
+    "fix": "services/registry/factor_rule.py: declared_intraday_frequency(parameters) (1d/undeclared=daily path unchanged; 1m/5m/15m/30m/60m minute; anything else fails closed). validate_factor_rule_logic requires >=1 declared input from the frequency's governed dataset, rejects contradicting minute datasets, and forbids implicit built-in price refs in all slots; resolve_point_in_time_inputs(bar_frequency=) never exposes generic closes/vwap and fails closed without matching inputs; evaluate_factor_rule_view passes parameters.bar_frequency.",
+    "tests": "services/registry/tests/test_strategy_artifact_bar_frequency.py: full-artifact validate_strategy_artifact + evaluate_strategy_view negatives for 1m/5m/15m/30m/60m with empty and daily inputs across signal/entry/exit/strength; mismatched/contradicting datasets; unknown frequencies; resolver; positive valid 1m artifact; daily regression; table mirror equality",
+    "source_test_results": "timeout 550 pytest services/registry services/research/tests/test_intraday_bars.py + 5 source_ingestion test files => 532 passed, 48 skipped, 7 subtests passed, exit 0",
+    "not_tested": "hosted remains W5"
   }
 }

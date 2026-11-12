@@ -290,3 +290,111 @@ def test_full_artifact_with_minute_lag_validates_and_registers(_restore_catalogu
     logic["inputs"][0]["availability_lag_minutes"] = -1  # schema minimum
     with pytest.raises(StrategyArtifactValidationError):
         validate_strategy_artifact(art)
+
+
+# --- declared bar_frequency enforced at the full-artifact boundary -----------
+def _declared_art(freq, *, inputs, slot="signal", ref="close"):
+    import copy
+
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+    art = copy.deepcopy(_sample_factor_rule_artifact())
+    art["parameters"]["bar_frequency"] = freq
+    logic = art["strategy_logic"]
+    logic["inputs"] = inputs
+    node = {"op": "ts_mean", "args": [{"ref": ref}, {"const_param": "z_window"}]}
+    gt = {"op": "gt", "args": [node, {"const_param": "entry_z"}]}
+    if slot == "signal":
+        logic["signal"] = node
+    elif slot == "entry":
+        logic["entry"]["long_when"] = gt
+    elif slot == "exit":
+        logic["exit"]["flat_when"] = gt
+    elif slot == "strength":
+        logic["strength"] = {"op": "clip01", "args": [node]}
+    return art
+
+
+def _min_input(freq, name="px"):
+    from services.registry.strategy_artifact import BAR_FREQUENCY_DATASETS
+
+    return {"name": name, "dataset": BAR_FREQUENCY_DATASETS[freq], "field": "close", "availability_lag_days": 0}
+
+
+@pytest.mark.parametrize("freq", ["1m", "5m", "15m", "30m", "60m"])
+@pytest.mark.parametrize("inputs", ["empty", "daily"])
+@pytest.mark.parametrize("slot", ["signal", "entry", "exit", "strength"])
+def test_declared_minute_frequency_rejects_missing_minute_inputs(freq, inputs, slot):
+    from services.registry.strategy_artifact import evaluate_strategy_view, validate_strategy_artifact
+
+    ins = [] if inputs == "empty" else [
+        {"name": "px", "dataset": "tw_price_daily", "field": "close", "availability_lag_days": 1}
+    ]
+    ref = "close" if inputs == "empty" else "px"
+    art = _declared_art(freq, inputs=ins, slot=slot, ref=ref)
+    with pytest.raises(StrategyArtifactValidationError):
+        validate_strategy_artifact(art)
+    with pytest.raises(StrategyArtifactValidationError):
+        evaluate_strategy_view(art, [100.0, 100.5, 100.1, 120.0])
+
+
+@pytest.mark.parametrize("freq", ["1m", "5m"])
+def test_declared_minute_frequency_rejects_mismatched_dataset_and_implicit_refs(freq):
+    from services.registry.strategy_artifact import validate_strategy_artifact
+
+    other = "5m" if freq == "1m" else "1m"
+    with pytest.raises(StrategyArtifactValidationError, match="bar_frequency"):
+        validate_strategy_artifact(_declared_art(freq, inputs=[_min_input(other)], ref="px"))
+    with pytest.raises(StrategyArtifactValidationError, match="contradicts"):
+        validate_strategy_artifact(
+            _declared_art(freq, inputs=[_min_input(freq), _min_input(other, "py")], ref="px")
+        )
+    for slot in ("signal", "entry", "exit", "strength"):
+        with pytest.raises(StrategyArtifactValidationError, match="undeclared"):
+            validate_strategy_artifact(
+                _declared_art(freq, inputs=[_min_input(freq)], slot=slot, ref="close")
+            )
+
+
+@pytest.mark.parametrize("bad", ["2m", "1h", "", None, 1, "1M"])
+def test_unknown_declared_frequency_fails_closed(bad):
+    from services.registry.strategy_artifact import validate_strategy_artifact
+
+    with pytest.raises(StrategyArtifactValidationError):
+        validate_strategy_artifact(_declared_art(bad, inputs=[]))
+
+
+def test_resolver_with_declared_minute_frequency_never_exposes_generic_closes(_restore_catalogue):
+    _register_minute_close()
+    logic = _minute_logic(lag_minutes=3)
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.resolve_point_in_time_inputs(
+            {**logic, "inputs": []}, [900.0, 1000.0], decision_time=DT, bar_frequency="1m"
+        )
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.resolve_point_in_time_inputs(
+            logic, [900.0], features={"px": _px_obs()}, decision_time=DT, bar_frequency="5m"
+        )
+    env = factor_rule.resolve_point_in_time_inputs(
+        logic, [900.0, 1000.0], features={"px": _px_obs()},
+        decision_time="2026-11-10T09:04:00+08:00", bar_frequency="1m",
+    )
+    assert set(env) == {"px"}
+
+
+def test_declared_minute_frequency_positive_and_daily_regression(_restore_catalogue):
+    from services.registry.strategy_artifact import evaluate_strategy_view, validate_strategy_artifact
+
+    _register_minute_close()
+    art = _declared_art("1m", inputs=[{**_min_input("1m"), "availability_lag_minutes": 3}], ref="px")
+    validate_strategy_artifact(art)
+    # daily closes are never consumed by a minute strategy: missing minute obs fail closed
+    with pytest.raises(StrategyArtifactValidationError):
+        evaluate_strategy_view(art, [100.0, 100.5, 100.1, 120.0], decision_time="2026-11-10T09:10:00+08:00")
+    # daily regression: unchanged behaviour, generic closes still accepted
+    daily = _declared_art("1d", inputs=[])
+    validate_strategy_artifact(daily)
+    assert evaluate_strategy_view(daily, [100.0, 100.5, 100.1, 120.0, 121.0])["action"] in {"BUY", "SELL", "HOLD"}
+    assert factor_rule.INTRADAY_FREQUENCY_DATASETS == {
+        k: v for k, v in __import__("services.registry.strategy_artifact", fromlist=["x"]).BAR_FREQUENCY_DATASETS.items() if k != "1d"
+    }
