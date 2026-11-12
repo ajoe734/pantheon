@@ -9,7 +9,6 @@ second pool version proves ``replace`` (not ``deploy``) moves the binding.
 from __future__ import annotations
 
 import copy
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -55,13 +54,13 @@ from services.registry.strategy_artifact import (
     strategy_artifact_checksum,
 )
 
-_DEPLOY_DIR = str(Path(__file__).resolve().parents[3] / "deployment")
-_PERSONA_DIR = str(Path(__file__).resolve().parents[2] / "persona")  # pool_policy is a sibling module
-for _dir in (_DEPLOY_DIR, _PERSONA_DIR):
-    if _dir not in sys.path:
-        sys.path.insert(0, _dir)
-from runtime_manager_dispatch_adapter import dispatch_to_runtime_manager  # noqa: E402
-from runtime_manager_client import RuntimeManagerClientError  # noqa: E402
+from services.deployment.runtime_manager_dispatch_adapter import (  # noqa: E402
+    RuntimeManagerClientError,
+    dispatch_to_runtime_manager,
+)
+
+# pool_policy is a top-level sibling module of persona_strategy_pool.
+_PERSONA_DIR = str(Path(__file__).resolve().parents[2] / "persona")
 
 TENANT = "tenant-a"
 PERSONA = "persona-a"
@@ -317,11 +316,10 @@ def world(monkeypatch) -> World:
     # pool_policy is a top-level sibling module of persona_strategy_pool; the
     # suite's import isolation resets sys.path per test, so add it here.
     monkeypatch.syspath_prepend(_PERSONA_DIR)
-    monkeypatch.syspath_prepend(_DEPLOY_DIR)
     return World()
 
 
-def _client(world: World, monkeypatch, tenant: str = TENANT) -> TestClient:
+def _client(world: World, monkeypatch, tmp_path, tenant: str = TENANT) -> TestClient:
     def identity(authorization, mfa_token=None, session_cookie=None):
         return OperatorIdentity(
             operator_id="operator-a", roles=["operator"], mfa_verified=False,
@@ -330,7 +328,7 @@ def _client(world: World, monkeypatch, tenant: str = TENANT) -> TestClient:
         )
 
     read_store = create_in_memory_read_surface_ports()
-    command_store = CommandStore(str(Path(__file__).parent / ".pool-publish-commands.jsonl"))
+    command_store = CommandStore(str(tmp_path / "commands.jsonl"))
     service = PersonaService(
         write_owner=read_store, read_store=read_store,
         ranking_write_owner=read_store, command_store=command_store,
@@ -363,8 +361,8 @@ def _live(world: World) -> list[dict[str, Any]]:
     return [b for b in world.runtime.bindings.values() if b["status"] == "active"]
 
 
-def test_two_pool_versions_move_binding_with_replace_not_deploy(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_two_pool_versions_move_binding_with_replace_not_deploy(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     boot_calls = list(world.runtime.calls)
     assert boot_calls == ["deploy"]
     boot = _live(world)[0]
@@ -419,8 +417,8 @@ def test_two_pool_versions_move_binding_with_replace_not_deploy(world, monkeypat
     assert decision["decision"] == "approved" and decision["actor_role"] == "automated_gate"
 
 
-def test_duplicate_publish_is_idempotent(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_duplicate_publish_is_idempotent(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
     assert client.post(PATH, json={}, headers=H).status_code == 200
     before_calls = list(world.runtime.calls)
@@ -442,8 +440,8 @@ def _refused(response, world, reason_fragment):
     assert world.runtime.calls == ["deploy"]
 
 
-def test_member_checksum_mismatch_refused_previous_keeps_running(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_member_checksum_mismatch_refused_previous_keeps_running(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
     key = ("registry", "/api/registry/strategy-artifacts/artifact-a")
     world.transport.objects[key]["entry"]["checksum"] = "sha256:" + "0" * 64
@@ -452,24 +450,24 @@ def test_member_checksum_mismatch_refused_previous_keeps_running(world, monkeypa
     assert refusals and "checksum" in refusals[-1]["reason"]
 
 
-def test_member_not_approved_refused(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_member_not_approved_refused(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
     key = ("registry", "/api/registry/strategy-artifacts/artifact-a")
     world.transport.objects[key]["entry"]["artifact_state"] = "candidate"
     _refused(client.post(PATH, json={}, headers=H), world, "not approved")
 
 
-def test_wrong_tenant_member_refused(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_wrong_tenant_member_refused(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
     key = ("registry", "/api/registry/strategy-artifacts/artifact-a")
     world.transport.objects[key]["entry"]["owner_tenant"] = "tenant-other"
     _refused(client.post(PATH, json={}, headers=H), world, "not a registry entry")
 
 
-def test_wrong_current_binding_refused(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_wrong_current_binding_refused(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
     # The running binding is retired out-of-band: nothing live to replace.
     for binding in world.runtime.bindings.values():
@@ -479,8 +477,8 @@ def test_wrong_current_binding_refused(world, monkeypatch):
     assert world.runtime.calls == ["deploy"]
 
 
-def test_beyond_paper_refused(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_beyond_paper_refused(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
     for stage in ("canary", "live"):
         response = client.post(PATH, json={"stage": stage}, headers=H)
@@ -488,8 +486,8 @@ def test_beyond_paper_refused(world, monkeypatch):
     assert world.runtime.calls == ["deploy"]
 
 
-def test_unapproved_envelope_never_reaches_deployment(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_unapproved_envelope_never_reaches_deployment(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
     original = world.transport._advance_registry_entry
 
@@ -504,8 +502,8 @@ def test_unapproved_envelope_never_reaches_deployment(world, monkeypatch):
     assert world.runtime.calls == ["deploy"]
 
 
-def test_dispatch_failure_records_reason_and_old_envelope_keeps_running(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_dispatch_failure_records_reason_and_old_envelope_keeps_running(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
     # Stale source: runtime-manager rejects replace (e.g. binding moved away).
     world.runtime.replace = lambda runtime_id, request: (_ for _ in ()).throw(
@@ -519,8 +517,8 @@ def test_dispatch_failure_records_reason_and_old_envelope_keeps_running(world, m
     assert "deploy" == world.runtime.calls[-1] or "replace" not in world.runtime.calls
 
 
-def test_older_pool_version_refused_after_newer_published(world, monkeypatch):
-    client = _client(world, monkeypatch)
+def test_older_pool_version_refused_after_newer_published(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
     world.append([world.member("artifact-a", 0.5), world.member("artifact-b", 0.5)], 1, policy=True)
     assert client.post(PATH, json={"pool_version": 2}, headers=H).status_code == 200
