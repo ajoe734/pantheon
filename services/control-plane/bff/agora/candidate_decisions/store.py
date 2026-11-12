@@ -528,6 +528,7 @@ class CandidateDecisionStore:
         receipt: dict[str, Any],
         idempotency_key: str,
         fingerprint: str,
+        consumer: Any = None,
     ) -> StoredMutation:
         if kind not in {"validation", "approval"}:
             raise ValueError("unknown canonical receipt kind")
@@ -561,6 +562,7 @@ class CandidateDecisionStore:
                         fingerprint, copy.deepcopy(existing_receipt)
                     )
                     return StoredMutation(copy.deepcopy(existing_receipt), True)
+                self._consume(current, consumer)
                 memory_bucket.setdefault(current["proposal_id"], []).append(copy.deepcopy(receipt))
                 self._idempotency[compound] = (fingerprint, copy.deepcopy(receipt))
                 return StoredMutation(copy.deepcopy(receipt), False)
@@ -585,6 +587,7 @@ class CandidateDecisionStore:
                 raise CandidateDecisionConflict("candidate scope is invalid")
             if latest[2] != expected_etag:
                 raise CandidateDecisionConflict("candidate ETag is stale")
+            self._consume(current, consumer, conn)
             inserted = conn.execute(
                 f"INSERT INTO {table} "
                 f"({id_field},proposal_id,revision,proposal_digest,tenant_id,owner_user_id,record_json) "
@@ -620,6 +623,39 @@ class CandidateDecisionStore:
                 (compound, fingerprint, json.dumps(receipt, default=str)),
             )
         return StoredMutation(copy.deepcopy(receipt), inserted is None if self.backend == "postgres" else False)
+
+    def _consume(self, current: dict[str, Any], consumer: Any, conn: Any = None) -> None:
+        if consumer is None:
+            return
+        key, fingerprint, deliver = consumer
+        compound = self._compound(current["tenant_id"], current["owner_user_id"], "consumer", key)
+        if conn is None:
+            if self._memory_replay(compound, fingerprint):
+                return
+            self._idempotency[compound] = (fingerprint, copy.deepcopy(deliver()))
+        else:
+            # Serialize even when two candidates reference the same measure.
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (compound,))
+            if self._pg_replay(conn, self._idempotency_table, compound, fingerprint):
+                return
+            receipt = deliver()
+            conn.execute(
+                f"INSERT INTO {self._idempotency_table} (scope_key,fingerprint,response_json) VALUES (%s,%s,%s::jsonb)",
+                (compound, fingerprint, json.dumps(receipt)),
+            )
+
+    def consumer_receipts(self, current: dict[str, Any]) -> list[dict[str, Any]]:
+        from .consumers import measure_key
+        compound = self._compound(current["tenant_id"], current["owner_user_id"], "consumer", measure_key(current))
+        if self.backend == "memory":
+            with self._lock:
+                result = self._idempotency.get(compound)
+                return [copy.deepcopy(result[1])] if result else []
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT response_json FROM {self._idempotency_table} WHERE scope_key=%s", (compound,)
+            ).fetchone()
+        return [_decode(row[0])] if row else []
 
     def record_validation(self, **kwargs: Any) -> StoredMutation:
         return self._record_receipt(kind="validation", **kwargs)

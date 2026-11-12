@@ -88,6 +88,8 @@ class CandidateDecisionService:
         self.validation_adapter = validation_adapter
         self.approval_store = approval_store
         self.clock = clock
+        from .consumers import RecommendedMeasureConsumers
+        self.consumers = RecommendedMeasureConsumers()
 
     def readback(
         self,
@@ -107,6 +109,7 @@ class CandidateDecisionService:
         readiness = self._readiness(current, validations, approvals)
         return {
             "candidate": current,
+            "downstream_receipts": self.store.consumer_receipts(current),
             "revisions": self.store.history(proposal_id, tenant_id, owner_user_id),
             "decisions": self.store.decisions(proposal_id, tenant_id, owner_user_id),
             "validation_receipts": validations,
@@ -241,6 +244,8 @@ class CandidateDecisionService:
         self._assert_current_binding(current, command.expected_revision, command.expected_proposal_digest)
         if current["state"] in _TERMINAL_STATES:
             raise CandidateDecisionConflict("candidate is terminal")
+        if any(row.get("outcome") == "approved" for row in self.store.approval_receipts(proposal_id, tenant_id, owner_user_id)):
+            raise CandidateDecisionConflict("approved measure is terminal; create a new measure for further changes")
         if command.action not in _ALLOWED_DAILY_ACTIONS.get(current["state"], frozenset()):
             raise CandidateDecisionConflict("candidate action is invalid for the current state")
         now = self.clock()
@@ -400,6 +405,7 @@ class CandidateDecisionService:
         expected_proposal_digest: str,
         expected_etag: str,
         idempotency_key: str,
+        authorization: str | None = None,
     ) -> StoredMutation:
         approval_store = self.approval_store
         fingerprint = canonical_sha256(
@@ -475,6 +481,7 @@ class CandidateDecisionService:
             receipt=receipt_dict,
             idempotency_key=idempotency_key,
             fingerprint=fingerprint,
+            consumer=(self.consumers.prepare(current, authorization) if receipt.outcome == "approved" else None),
         )
 
     def _readiness(
