@@ -57,6 +57,13 @@ SESSION_MINUTES = 270  # 09:00..13:30 regular session
 PENDING_RECORD_SUFFIX = "#intraday-pending"
 SETTLEMENT_RECORD_SUFFIX = "#intraday-settlement"
 GRADE_RECORD_SUFFIX = "#intraday-grade"
+ENQUEUED_RECORD_SUFFIX = "#intraday-enqueued"
+INDEX_RECORD_PREFIX = "intraday-pending-index"
+
+
+def index_slot_id(binding_id: str, decision_day: str, slot: int) -> str:
+    """First-write index slot: records are immutable, so a day's pending ids are slotted."""
+    return f"{INDEX_RECORD_PREFIX}-{binding_id}-{decision_day}-{slot}"
 
 INTRADAY_FREQUENCIES = tuple(f for f in BAR_FREQUENCY_DATASETS if f != "1d")
 
@@ -406,6 +413,7 @@ __all__ = [
     "ExecutionPlan",
     "IntradayWindowError",
     "advance_decision",
+    "index_slot_id",
     "bars_per_session",
     "grade",
     "is_intraday_frequency",

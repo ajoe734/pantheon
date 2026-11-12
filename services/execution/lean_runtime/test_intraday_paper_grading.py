@@ -344,35 +344,150 @@ def test_daily_declaration_rejects_minute_snapshot_and_keeps_daily_path():
     assert err.value.code == "market_input_frequency_mismatch"
 
 
+def _decision_ids(store):
+    return [k[: -len(isl.PENDING_RECORD_SUFFIX)] for k in store._decision_records
+            if k.endswith(isl.PENDING_RECORD_SUFFIX)]
+
+
+def _producer(store, reader=None):
+    return PaperSignalProducer(store_for=lambda _: store, strategy=CurrentArtifactStrategy(),
+                               intraday_bar_reader=reader or (lambda s, d, f, now: []))
+
+
+def _reader(bars_by_day=None, calls=None):
+    def read(symbol, day, freq, now):
+        if calls is not None:
+            calls.append((symbol, day, freq, now.isoformat()))
+        return (bars_by_day or {}).get(day, [])
+    return read
+
+
 def test_mixed_daily_and_minute_bindings_do_not_cross_contaminate():
     store = InMemoryPendingSignalStore()
-    producer = PaperSignalProducer(store_for=lambda _: store, strategy=CurrentArtifactStrategy())
-    assert producer.produce(_intraday_binding(), D_DECISION) == 1
+    producer = _producer(store)
+    assert producer.produce(_intraday_binding(), D_DECISION) == 0  # parked, never queued
     daily = _binding(_artifact(), binding_id="rb-daily-mixed", include_market_input=False)
     daily["market_input"] = {"symbol": "AAPL.US", "closes": [100.0, 110.0], "source_ref": "x",
                              "observed_at": "2026-06-12T10:30:00Z", "event_time": "2026-06-12T00:00:00+08:00"}
     assert producer.produce(daily, "2026-06-12T10:30:00Z") == 1
-    by_bar = {s["metadata"]["market_input_bar"]: s for s in store.get_pending()}
-    assert set(by_bar) == {D_EVENT, "2026-06-12"}
-    assert "settlement_status" in by_bar[D_EVENT]["metadata"]
-    assert "settlement_status" not in by_bar["2026-06-12"]["metadata"]
+    [only] = store.get_pending()
+    assert only["metadata"]["market_input_bar"] == "2026-06-12"
+    assert "settlement_status" not in only["metadata"]
+    assert len(_decision_ids(store)) == 1
 
 
-def test_enqueue_persists_pending_record_before_the_order():
+def test_pending_intraday_decision_is_never_executable_before_settlement():
+    """D close must never become an order: the queue stays empty and the consumer idle."""
+    from unittest.mock import MagicMock
+    from services.execution.lean_runtime.signal_consumer import SignalConsumer
+
     store = InMemoryPendingSignalStore()
-    producer = PaperSignalProducer(store_for=lambda _: store, strategy=CurrentArtifactStrategy())
-    assert producer.produce(_intraday_binding(), D_DECISION) == 1
-    [signal] = store.get_pending()
-    [decision_id] = [k[: -len(isl.PENDING_RECORD_SUFFIX)] for k in store._decision_records
-                     if k.endswith(isl.PENDING_RECORD_SUFFIX)]
-    assert decision_id.startswith("dec-rb-intraday-")
+    producer = _producer(store)
+    assert producer.produce(_intraday_binding(), D_DECISION) == 0
+    assert store.get_pending() == []
+    [decision_id] = _decision_ids(store)
     pend = store.get_decision_record(decision_id + isl.PENDING_RECORD_SUFFIX)
     assert pend["status"] == "pending_settlement" and pend["fill"] is None
-    assert "intraday_settlement" not in signal  # the sidecar is not part of the order payload
-    # the later job settles from real D+1 bars and grades
-    result = isl.advance_decision(store, decision_id, lambda s, d, f: _bars(f),
-                                  now="2026-06-15T17:00:00+08:00")
-    assert result["status"] == isl.GRADE_DONE
+    algo = MagicMock()
+    for _ in range(3):
+        SignalConsumer(store_client=store).drain(algo)
+    assert not algo.method_calls or all("Submit" not in c[0] and "Order" not in c[0]
+                                        for c in algo.method_calls)
+    # still pending through D+1 while no reconciled D+1 data exists
+    for now in ("2026-06-15T08:00:00+08:00", "2026-06-15T10:00:00+08:00", "2026-06-15T15:00:00+08:00"):
+        assert producer.settle_pending_intraday(_intraday_binding(), now) == 0
+    assert store.get_pending() == []
+    assert store.get_decision_record(decision_id + isl.SETTLEMENT_RECORD_SUFFIX) is None
+
+
+def test_settled_decision_is_released_once_at_the_real_d_plus_1_open():
+    store = InMemoryPendingSignalStore()
+    calls = []
+    producer = _producer(store, _reader({"2026-06-15": _bars("5m", opens={0: 101.25})}, calls))
+    binding = _intraday_binding()
+    assert producer.produce(binding, D_DECISION) == 0
+    [decision_id] = _decision_ids(store)
+    assert producer.settle_pending_intraday(binding, "2026-06-15T10:00:00+08:00") == 0
+    assert producer.settle_pending_intraday(binding, "2026-06-15T17:00:00+08:00") == 1
+    [signal] = store.get_pending()
+    md = signal["metadata"]
+    assert md["market_price"] == 101.25 and md["market_data"]["price"] == 101.25  # not D close 140
+    assert md["settlement_status"] == "settled" and md["settlement_mode"] == "delayed_simulated"
+    assert md["price_observed_at"] == D1_AVAILABLE
+    assert md["is_live_fill_evidence"] is False
+    from services.execution.lean_runtime.executor import _signal_market_price
+    assert _signal_market_price(signal) == 101.25
+    settled = store.get_decision_record(decision_id + isl.SETTLEMENT_RECORD_SUFFIX)
+    assert settled["status"] == "settled" and settled["fill"]["price"] == 101.25
+    grade = store.get_decision_record(decision_id + isl.GRADE_RECORD_SUFFIX)
+    assert grade["status"] == isl.GRADE_DONE and grade["entry_open"] == 101.25
+    assert ("2330.TW", "2026-06-15", "5m") == calls[-1][:3]
+    # idempotent: a later tick neither re-enqueues nor re-settles
+    assert producer.settle_pending_intraday(binding, "2026-06-15T17:30:00+08:00") == 0
+
+
+def test_missing_or_quarantined_d_plus_1_expires_without_an_order():
+    store = InMemoryPendingSignalStore()
+    producer = _producer(store, _reader({}))  # reconciled-only reader: nothing reconciled
+    binding = _intraday_binding()
+    assert producer.produce(binding, D_DECISION) == 0
+    [decision_id] = _decision_ids(store)
+    assert producer.settle_pending_intraday(binding, "2026-06-16T08:00:00+08:00") == 0
+    assert store.get_decision_record(decision_id + isl.SETTLEMENT_RECORD_SUFFIX) is None
+    assert producer.settle_pending_intraday(binding, "2026-06-16T08:56:00+08:00") == 0
+    expired = store.get_decision_record(decision_id + isl.SETTLEMENT_RECORD_SUFFIX)
+    assert expired["status"] == isl.STATUS_EXPIRED and expired["fill"] is None
+    assert store.get_pending() == []
+    assert store.get_decision_record(decision_id + isl.GRADE_RECORD_SUFFIX) is None
+
+
+def test_reader_fault_leaves_the_decision_pending_not_expired():
+    store = InMemoryPendingSignalStore()
+
+    def broken(symbol, day, freq, now):
+        raise RuntimeError("store root not configured")
+
+    producer = _producer(store, broken)
+    binding = _intraday_binding()
+    producer.produce(binding, D_DECISION)
+    [decision_id] = _decision_ids(store)
+    assert producer.settle_pending_intraday(binding, "2026-06-16T09:30:00+08:00") == 0
+    assert store.get_decision_record(decision_id + isl.SETTLEMENT_RECORD_SUFFIX) is None
+    assert "intraday_settlement_unavailable" in producer.degraded_bindings["rb-intraday"]
+
+
+def test_default_reader_is_reconciled_only_and_empty_without_reconciled_rows(tmp_path, monkeypatch):
+    from services.execution.lean_runtime.paper_signal_producer import reconciled_intraday_bar_reader
+
+    monkeypatch.setenv("INTRADAY_STORE_ROOT", str(tmp_path))
+    assert reconciled_intraday_bar_reader("2330.TW", "2026-06-15", "5m", _at("2026-06-15T17:00:00+08:00")) == []
+
+
+def test_source_snapshot_without_inline_features_reaches_settlement_and_grade():
+    """The public snapshot carries closes only; PIT feature tags are projected from it."""
+    binding = _intraday_binding()
+    del binding["market_input"]["features"]
+    store = InMemoryPendingSignalStore()
+    producer = _producer(store, _reader({"2026-06-15": _bars("5m", opens={0: 99.5})}))
+    assert producer.produce(binding, D_DECISION) == 0
+    assert "rb-intraday" not in producer.degraded_bindings
+    [decision_id] = _decision_ids(store)
+    pend = store.get_decision_record(decision_id + isl.PENDING_RECORD_SUFFIX)
+    assert pend["decision_out"]["metadata"]["market_input_feature_keys"]
+    assert producer.settle_pending_intraday(binding, "2026-06-15T17:00:00+08:00") == 1
+    grade = store.get_decision_record(decision_id + isl.GRADE_RECORD_SUFFIX)
+    assert grade["status"] == isl.GRADE_DONE and grade["entry_open"] == 99.5
+
+
+def test_projected_features_are_available_only_from_the_reconcile_stamp():
+    binding = _intraday_binding()
+    del binding["market_input"]["features"]
+    out = _produce(binding, D_DECISION)
+    keys = out["metadata"]["market_input_feature_keys"]
+    assert "px" in keys
+    binding["market_input"]["observed_at"] = D_AVAILABLE
+    with pytest.raises(SignalDecisionUnavailable):
+        _produce(binding, "2026-06-12T16:00:00+08:00")  # before the reconcile stamp
 
 
 def test_missing_intraday_bar_is_signal_decision_unavailable(monkeypatch):

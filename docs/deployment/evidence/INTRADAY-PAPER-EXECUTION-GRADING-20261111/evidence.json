@@ -18,20 +18,25 @@
         "A bar whose availability stamp is at/before its session close, or a D bar, can never settle D+1; D close and past D opens are never fill sources; a late-reconciled D+1 bar after expiry is still expired_no_price.",
         "paper_signal_producer: the snapshot is selected by the declared bar_frequency (snapshots/latest?frequency= only for intraday; the daily URL is unchanged), dataset/frequency isolation fails closed (market_input_frequency_mismatch), a missing stored bar is intraday_bar_missing, live-session decisions are no_live_intraday_feed, the feature clock is the real submission time, and the pending_settlement record is persisted before the order.",
         "instrument_candidates: next_trading_day, session_bounds, submission_cutoff, in_regular_session built on the existing governed calendar (is_trading_day); no new calendar.",
-        "The grading horizon is the artifact's hold_bars (the only existing, mutation-classified holding parameter); 1 bar if absent."
+        "The grading horizon is the artifact's hold_bars (the only existing, mutation-classified holding parameter); 1 bar if absent.",
+        "Review fix (P1 early execution): an intraday decision is parked as pending_settlement (record + per-binding first-write index slots) and is NOT enqueued; the consumer sees nothing before settlement.",
+        "Review fix (P1 no caller): PaperSignalProducer.produce/tick now runs settle_pending_intraday first: it reads the pending index, calls advance_decision with a reconciled-only reader (default: intraday_bars.load_bars over IntradayStore; missing/quarantined/unreconciled -> [] so the decision reaches expired_no_price at D+2 08:55; a reader fault leaves it pending), and only a settled decision is released into the ordinary queue with market_price/market_data = real D+1 first-bar open, delayed_simulated, price_observed_at, is_live_fill_evidence=false. Release is marked once (#intraday-enqueued).",
+        "Review fix (P1 source contract): the public snapshot carries closes/event_time/observed_at only; minute close inputs are projected as dataset-tagged PIT observations (event_time on the governed session grid ending at event_time, available_time = the reconcile stamp observed_at), non-close fields stay absent and fail closed."
       ],
       "verification": {
-        "command": "python -m pytest services/execution/lean_runtime/test_intraday_paper_grading.py (33 tests)",
-        "result": "33 passed",
-        "regression": "test_paper_signal_producer, test_instrument_candidates, test_current_artifact_signal, test_signal_isolation: 203 passed, 13 skipped, 1 failed. The single failure (ExpressionStartupReportTest::test_entrypoint_strategy_without_mount_reports_the_gap) also fails on the unmodified base and is unrelated."
-      }
+        "command": "pytest test_intraday_paper_grading test_paper_signal_producer test_instrument_candidates test_current_artifact_signal test_signal_isolation (+ consumer/-k wide lean_runtime selection)",
+        "result": "314 passed, 13 skipped in lean_runtime -k selection; test_intraday_paper_grading.py 39 passed"
+      },
+      "known_limits": [
+        "Older closes' event_time labels assume a contiguous session grid (the snapshot has no per-point time); availability is conservative (reconcile stamp).",
+        "Intraday expression-layer decisions are degraded (intraday_expression_unsupported), not parked."
+      ]
     },
     "hosted": {
       "status": "not_run",
       "gaps": [
         "No real-provider probe, hosted run or real D/D+1 timestamps were produced; hosted proof belongs to INTRADAY-HOSTED-ACCEPTANCE-20261111 (W5).",
-        "No scheduler job yet calls advance_decision for pending intraday decisions with a reconciled-only bar reader (intraday_bars.load_bars); that wiring and the pending-record index are outside this task's artifact list and are reported for W5.",
-        "snapshots/latest returns closes and observed_at only; the minute factor-rule PIT feature observations the evaluator requires are supplied inline in tests. Source-side projection of tagged feature observations is not part of this task.",
+        "Reconciled-only reader is wired in the producer tick; no real IntradayStore D/D+1 data or hosted run was exercised (INTRADAY-HOSTED-ACCEPTANCE-20261111, W5).",
         "Live intraday remains unavailable by design (no_live_intraday_feed); no feed authorisation path was added."
       ]
     }
