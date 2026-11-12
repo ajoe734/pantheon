@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from unittest import mock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from services.research import discovery_allocator as da
@@ -64,6 +66,22 @@ def test_setting_off_records_disabled_and_allocates_nothing() -> None:
             rec = _records(module)[0]
     assert rec["reason"] == "disabled"
     assert rec["bound"] == [] and calls == []
+
+
+def test_unset_setting_records_disabled_without_owner_calls() -> None:
+    module = _load_service_module()
+    ports = {name: mock.Mock() for name in module.discovery_allocator_ports}
+    module.discovery_allocator_ports.update(ports)
+    env = {key: value for key, value in os.environ.items() if key != "DISCOVERY_ALLOCATOR_ENABLED"}
+    with mock.patch.object(module.alpha_replication_admission_store, "list_admissions") as admissions, \
+         mock.patch.dict("os.environ", env, clear=True):
+        with TestClient(module.app):
+            rec = _records(module)[0]
+    assert rec["enabled"] is False and rec["reason"] == "disabled"
+    assert rec["bound"] == [] and rec["admitted_candidates_seen"] == 0
+    admissions.assert_not_called()
+    for port in ports.values():
+        port.assert_not_called()
 
 
 def test_no_personas_records_reason() -> None:
@@ -438,14 +456,15 @@ def _rendered_compose_env(host_env: dict) -> dict:
     return json.loads(out.stdout)["services"]["research-orchestrator-svc"]["environment"]
 
 
-def test_compose_rendered_flag_false_disables_and_default_enables() -> None:
+@pytest.mark.parametrize("host_env", [{}, {"DISCOVERY_ALLOCATOR_ENABLED": ""}, {"DISCOVERY_ALLOCATOR_ENABLED": "false"}])
+def test_compose_rendered_default_and_false_disable(host_env) -> None:
     import shutil
     if shutil.which("docker") is None:
         import pytest
         pytest.skip("docker compose unavailable")
-    assert da.allocator_enabled(_rendered_compose_env({})) is True
-    container_env = _rendered_compose_env({"DISCOVERY_ALLOCATOR_ENABLED": "false"})
+    container_env = _rendered_compose_env(host_env)
     assert container_env["DISCOVERY_ALLOCATOR_ENABLED"] == "false"
+    assert da.allocator_enabled(container_env) is False
     module = _load_service_module()
     calls: list = []
     _wire(module, calls)
@@ -456,3 +475,12 @@ def test_compose_rendered_flag_false_disables_and_default_enables() -> None:
             rec = _records(module)[0]
     assert rec["enabled"] is False and rec["reason"] == "disabled"
     assert rec["bound"] == [] and calls == []
+
+
+def test_compose_rendered_explicit_true_enables() -> None:
+    import shutil
+    if shutil.which("docker") is None:
+        pytest.skip("docker compose unavailable")
+    container_env = _rendered_compose_env({"DISCOVERY_ALLOCATOR_ENABLED": "true"})
+    assert container_env["DISCOVERY_ALLOCATOR_ENABLED"] == "true"
+    assert da.allocator_enabled(container_env) is True
