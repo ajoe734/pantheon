@@ -145,19 +145,16 @@ def requires_repair_task(reason: str, repository_id: str | None = None) -> bool:
 def requires_source_reopen(reason: str, repository_id: str | None = None) -> bool:
     """Return the blocker to the source task instead of creating a child repair.
 
-    BEHIND always reopens its source. A source-code repair-eligible blocker on a non-Pantheon
-    repository (not an integration-environment fault) also reopens its source: a generated repair task declares Pantheon
-    integrator tooling and must not be bound to another repository's code.
+    BEHIND always reopens its source. A demonstrated source-owned blocker on any
+    repository, Pantheon included, also reopens its source: a generated repair
+    task declares integrator tooling and must not take over source code work.
+    ``repository_id`` is kept for caller compatibility.
     """
 
     validate_reason(reason)
     if reason == EXACT_HEAD_BEHIND_BASE_REASON:
         return True
-    return (
-        repository_id not in (None, "", "pantheon")
-        and reason in SOURCE_OWNED_REASONS
-        and requires_repair_task(reason)
-    )
+    return reason in SOURCE_OWNED_REASONS and requires_repair_task(reason)
 
 
 def require_root_repair_source(source_task_id: str, source: Mapping[str, Any]) -> None:

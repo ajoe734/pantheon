@@ -1,0 +1,10 @@
+{
+  "task_id": "OPS-INTEGRATOR-SOURCE-REWORK-ROUTING-20261112",
+  "change": "requires_source_reopen no longer excludes Pantheon; SOURCE_OWNED_REASONS return to the same source task via the existing reopen path",
+  "unchanged": ["non-source-owned reasons keep exact-head approval / repair eligibility", "BEHIND semantics", "depth limit (1)"],
+  "verification": {
+    "test_supervisor": "417 tests OK (run from .orchestrator; one cwd-dependent .gitignore test passes from repo root)",
+    "scripts/git/test_auto_integrator": "181 tests OK"
+  },
+  "not_done": ["no activation/restart of runtime", "no canonical JSON rewrite"]
+}
