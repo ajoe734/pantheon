@@ -5,6 +5,7 @@ governed trading day), D+2 = 2026-06-16.  Everything is Asia/Taipei.
 """
 from __future__ import annotations
 
+import json
 import copy
 from datetime import datetime, timedelta, timezone
 
@@ -265,7 +266,7 @@ def _minute_artifact(frequency="5m"):
     return art
 
 
-def _intraday_binding(frequency="5m", **snapshot):
+def _intraday_binding(frequency="5m", day="2026-06-12", **snapshot):
     from services.registry.strategy_artifact import BAR_FREQUENCY_DATASETS
 
     binding = _binding(_minute_artifact(frequency), binding_id="rb-intraday", include_market_input=False)
@@ -274,12 +275,12 @@ def _intraday_binding(frequency="5m", **snapshot):
     binding["market_input"] = {
         "symbol": "2330.TW", "closes": [100.0, 110.0, 120.0, 130.0, 140.0], "dataset": dataset,
         "features": {"px": [
-            {"event_time": f"2026-06-12T13:{m:02d}:00+08:00", "available_time": D_AVAILABLE,
+            {"event_time": f"{day}T13:{m:02d}:00+08:00", "available_time": f"{day}T16:20:00+08:00",
              "value": 100.0 + m, "dataset": dataset, "field": "close"}
             for m in (15, 20, 25, 30)
         ]},
         "source_ref": "source-ingest://snapshots/s1", "snapshot_id": "s1",
-        "event_time": D_EVENT, "observed_at": D_AVAILABLE, **snapshot,
+        "event_time": f"{day}T13:30:00+08:00", "observed_at": f"{day}T16:20:00+08:00", **snapshot,
     }
     return binding
 
@@ -605,3 +606,97 @@ def test_features_available_after_the_decision_clock_are_not_visible():
     with pytest.raises(SignalDecisionUnavailable) as err:
         _produce(binding, D_DECISION)
     assert err.value.code == "market_input_invalid"
+
+
+# ---- review fixes: durable discovery across long holidays, 1m closing-auction horizon ----
+
+LONG_D = "2026-02-11"
+LONG_D1 = "2026-02-23"  # governed TWSE calendar: 12 calendar days later
+
+
+def _long_holiday_setup():
+    binding = _intraday_binding(day=LONG_D)
+    decision = f"{LONG_D}T18:00:00+08:00"
+    store = InMemoryPendingSignalStore()
+    return binding, decision, store
+
+
+def test_long_holiday_decision_is_settled_after_more_than_eight_calendar_days():
+    binding, decision, store = _long_holiday_setup()
+    bars = _bars(day=LONG_D1, available=f"{LONG_D1}T16:30:00+08:00")
+    producer = _producer(store, lambda s, d, f, now: bars if d == LONG_D1 else [])
+    assert producer.produce(binding, decision) == 0
+    [decision_id] = _decision_ids(store)
+    assert store.get_decision_record(decision_id + isl.PENDING_RECORD_SUFFIX)["plan"]["target_day"] == LONG_D1
+    assert producer.settle_pending_intraday(binding, f"{LONG_D1}T17:00:00+08:00") == 1
+    settled = store.get_decision_record(decision_id + isl.SETTLEMENT_RECORD_SUFFIX)
+    assert settled["status"] == isl.STATUS_SETTLED
+    assert store.get_decision_record(decision_id + isl.GRADE_RECORD_SUFFIX)["status"] == isl.GRADE_DONE
+
+
+def test_pending_decision_is_discovered_by_a_restarted_producer_beyond_eight_days():
+    binding, decision, store = _long_holiday_setup()
+    producer = _producer(store)
+    producer.produce(binding, decision)
+    [decision_id] = _decision_ids(store)
+    bars = _bars(day=LONG_D1, available=f"{LONG_D1}T16:30:00+08:00")
+    restarted = _producer(store, lambda s, d, f, now: bars if d == LONG_D1 else [])
+    assert restarted.settle_pending_intraday(binding, f"{LONG_D1}T17:00:00+08:00") == 1
+    assert store.get_decision_record(decision_id + isl.SETTLEMENT_RECORD_SUFFIX)["status"] == isl.STATUS_SETTLED
+
+
+def test_long_holiday_missing_price_expires_without_enqueue():
+    binding, decision, store = _long_holiday_setup()
+    producer = _producer(store)
+    producer.produce(binding, decision)
+    [decision_id] = _decision_ids(store)
+    assert producer.settle_pending_intraday(binding, "2026-02-24T09:00:00+08:00") == 0
+    settled = store.get_decision_record(decision_id + isl.SETTLEMENT_RECORD_SUFFIX)
+    assert settled["status"] == isl.STATUS_EXPIRED
+    assert len(store.get_pending()) == 0
+
+
+def _auction_bars(last_close, count):
+    out = []
+    for i in range(count):
+        begin = _at("2026-11-10T09:00:00+08:00") + timedelta(minutes=i)
+        out.append({"symbol": "2330", "bar_frequency": "1m", "bar_start": begin.isoformat(),
+                    "bar_end": (begin + timedelta(minutes=1)).isoformat(), "open": 100.0,
+                    "close": last_close if i == count - 1 else 100.5, "half_bucket": False, "partial": False,
+                    "bar_availability_ts": "2026-11-10T17:00:00+08:00"})
+    return out
+
+
+@pytest.mark.parametrize("horizon,count,expected_close,truncated", [
+    (270, 271, 100.5, False), (271, 271, 104.0, False), (999, 271, 104.0, True)])
+def test_1m_horizon_counts_the_real_closing_auction_bar(horizon, count, expected_close, truncated):
+    plan = isl.plan_next_session_decision(
+        event_time="2026-11-09T13:31:00+08:00", bar_availability_ts="2026-11-09T17:00:00+08:00",
+        decision_time="2026-11-09T18:00:00+08:00", bar_frequency="1m", horizon_bars=horizon)
+    pend = isl.pending_record(plan, decision_id="d1", symbol="2330", direction="LONG")
+    bars = _auction_bars(expected_close, count)
+    now = _at("2026-11-11T09:00:00+08:00")
+    settled = isl.settle(pend, bars, now=now)
+    assert settled["status"] == isl.STATUS_SETTLED
+    out = isl.grade(settled, bars, now=now)
+    assert out["status"] == isl.GRADE_DONE and out["exit_close"] == expected_close
+    assert out["truncated"] is truncated
+    assert out["gross_return"] == pytest.approx(expected_close / 100.0 - 1.0)
+
+
+def test_1m_horizon_271_through_real_reconciled_reader(tmp_path, monkeypatch):
+    from services.execution.lean_runtime.paper_signal_producer import reconciled_intraday_bar_reader
+
+    istore, _, _ = _reconciled_projection(tmp_path)
+    monkeypatch.setenv("INTRADAY_STORE_ROOT", str(istore.root))
+    now = _at("2026-11-12T00:00:00+08:00")
+    bars = reconciled_intraday_bar_reader("2330", "2026-11-10", "1m", now)
+    assert len(bars) == 271
+    for horizon, close in ((271, 104.0), (500, 104.0)):
+        plan = isl.plan_next_session_decision(
+            event_time="2026-11-09T13:31:00+08:00", bar_availability_ts="2026-11-09T17:00:00+08:00",
+            decision_time="2026-11-09T18:00:00+08:00", bar_frequency="1m", horizon_bars=horizon)
+        settled = isl.settle(isl.pending_record(plan, decision_id="d", symbol="2330", direction="LONG"),
+                             bars, now=now)
+        out = isl.grade(settled, bars, now=now)
+        assert out["status"] == isl.GRADE_DONE and out["exit_close"] == close == bars[-1]["close"]

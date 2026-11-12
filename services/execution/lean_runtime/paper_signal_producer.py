@@ -50,6 +50,7 @@ from services.execution.lean_runtime.intraday_settlement import (
     STATUS_SETTLED,
     PENDING_RECORD_SUFFIX,
     advance_decision,
+    PENDING_DISCOVERY_DAYS,
     index_slot_id,
     parse_ts,
     ExecutionPlan,
@@ -2115,7 +2116,10 @@ class PaperSignalProducer:
         def reader(symbol: str, session_date: str, frequency: str) -> Sequence[Any]:
             return self._intraday_bar_reader(symbol, session_date, frequency, now)
 
-        for back in range(0, 8):
+        # Discover every outstanding decision over the whole record-retention window (not a
+        # calendar-age guess): a decision whose D+1 is after a long holiday stays discoverable
+        # until settlement/grading is terminal or the store itself retires the record.
+        for back in range(0, PENDING_DISCOVERY_DAYS):
             day = (today - timedelta(days=back)).isoformat()
             slot = 0
             while True:

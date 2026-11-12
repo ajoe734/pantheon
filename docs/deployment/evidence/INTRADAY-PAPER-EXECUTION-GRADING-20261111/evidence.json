@@ -24,11 +24,13 @@
         "Review fix 2 (P1 closing auction): plan_next_session_decision accepts the governed K3/K4 closing-auction bar_end 13:31 (only one minute past close); availability is still required to be after the session close and never backdated. Tested through real IntradayStore -> reconcile_day -> LatestMarketSnapshotStore -> to_public_dict -> _market_input_for_binding.",
         "Review fix 2 (P1 symbol): reconciled_intraday_bar_reader normalises the execution symbol with normalize_underlying_code for the native shard read (2330/2330.TW/2330.TWSE all return 271 bars) and restores the validated execution symbol on every bar.",
         "Review fix 2 (P2 deferred grading): settle_pending_intraday no longer skips already-enqueued decisions before advance_decision; grading proceeds independently, the order is never re-enqueued. Two-tick test: first-open settles+enqueues once, horizon bar added, tick two writes #intraday-grade.",
-        "Review fix 2 (P2 no invented grid): _bar_end_grid removed. The snapshot only has the last real event_time, so only the last close is projected as a PIT observation; longer-history inputs fail closed (market_input_invalid) unless inline PIT features are supplied."
+        "Review fix 2 (P2 no invented grid): _bar_end_grid removed. The snapshot only has the last real event_time, so only the last close is projected as a PIT observation; longer-history inputs fail closed (market_input_invalid) unless inline PIT features are supplied.",
+        "Review fix 3 (P1 durable discovery): settle_pending_intraday scans the per-binding day index across PENDING_DISCOVERY_DAYS=45 (> the 30-day decision-record retention) instead of the last 8 calendar days, so D=2026-02-11 -> D+1=2026-02-23 settles; tests: long-holiday settlement, restart-by-new-producer beyond 8 days, long-holiday missing-price expired_no_price.",
+        "Review fix 3 (P2 1m horizon): for 1m the grading grid is 271 bars (09:00..13:30 closing-auction bar); horizon 270/271/overflow tested incl. the real reconciled reader (271 bars, last close 104)."
       ],
       "verification": {
         "command": "/tmp/bffvenv/bin/python -m pytest test_intraday_paper_grading test_current_artifact_signal test_paper_signal_producer test_intraday_snapshot_projection (PYTHONPATH=/tmp/agy-venv/lib/python3.12/site-packages)",
-        "result": "185 passed, 15 subtests passed; test_intraday_paper_grading.py 42 passed"
+        "result": "192 passed, 15 subtests passed; test_intraday_paper_grading.py 49 passed; the 3 long-holiday tests fail with an 8-day window"
       },
       "known_limits": [
         "Snapshot-only (no inline features) minute strategies needing more than one observation fail closed: the public snapshot carries no per-observation timestamps.",

@@ -59,6 +59,10 @@ SETTLEMENT_RECORD_SUFFIX = "#intraday-settlement"
 GRADE_RECORD_SUFFIX = "#intraday-grade"
 ENQUEUED_RECORD_SUFFIX = "#intraday-enqueued"
 INDEX_RECORD_PREFIX = "intraday-pending-index"
+# Decision records are retained 30 days by the durable store; discovery covers that window with margin.
+PENDING_DISCOVERY_DAYS = 45
+# The governed 1m contract carries a real 13:30 closing-auction bar as its own 271st bar.
+CLOSING_AUCTION_BAR_FREQUENCY = "1m"
 
 
 def index_slot_id(binding_id: str, decision_day: str, slot: int) -> str:
@@ -341,6 +345,8 @@ def grade(
     moment = parse_ts(now, field="now")
     usable = _session_bars(bars, plan, str(settled["symbol"]), moment)
     per_session = bars_per_session(plan["bar_frequency"])
+    if plan["bar_frequency"] == CLOSING_AUCTION_BAR_FREQUENCY:
+        per_session += 1  # 09:00..13:29 plus the real 13:30 closing-auction bar
     horizon = int(plan["horizon_bars"])
     index = min(horizon, per_session) - 1
     # The horizon bar is the horizon-th *grid* bucket; require the exact bucket, not the
@@ -416,6 +422,7 @@ __all__ = [
     "IntradayWindowError",
     "advance_decision",
     "index_slot_id",
+    "PENDING_DISCOVERY_DAYS",
     "bars_per_session",
     "grade",
     "is_intraday_frequency",
