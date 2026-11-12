@@ -1,9 +1,9 @@
 {
   "schema_version": "ranking-pnl-normalisation-evidence/v1",
   "task_id": "RANKING-PNL-NORMALISATION-20261112",
-  "owner": "Codex",
+  "owner": "Codex2",
   "assigned_reviewer": "Claude",
-  "review_state": "pending_independent_review",
+  "review_state": "blocked_fixture_artifact_contract",
   "formula_version": "pm12-return-on-capital-v2",
   "previous_version": "pm12-default-v1",
   "governance_evidence": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/operator-decision.md",
@@ -22,25 +22,25 @@
   ],
   "validation": [
     {
-      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/capital/test_allocation_policy.py services/capital/test_allocation_lineage_integrity.py services/rankings/test_store.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/capital/test_allocation_policy.py services/capital/test_allocation_lineage_integrity.py services/rankings/test_store.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
       "exit_code": 0,
-      "result": "142 passed, 6 warnings in 31.97s",
+      "result": "142 passed, 6 warnings in 33.99s",
       "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/functional-pytest.log",
-      "sha256": "8e86915f0d639380fa081adf854a32dd7de28df84914623a23180968b55d2bc9"
+      "sha256": "b4ab0cf3683972cbd1257e16038f5b727c742cd4251affceb73558745d3d6d80"
     },
     {
-      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_runtime_summary_projection.py services/execution/lean_runtime/test_paper_runtime.py",
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_runtime_summary_projection.py services/execution/lean_runtime/test_paper_runtime.py services/execution/lean_runtime/test_member_virtual_book.py services/evolution/test_approved_baselines.py",
       "exit_code": 0,
-      "result": "226 passed, 46 subtests passed in 30.57s",
+      "result": "246 passed, 67 warnings, 70 subtests passed in 47.26s",
       "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/producer-projection-pytest.log",
-      "sha256": "8f98a3535f757b497541303c39c6ce2abc6e5d2dcb1c4856faeefe4eff940a52"
+      "sha256": "b8e394cce71e03e294639aaa9a76b8281b071269de25c760b1e6e258d9bd483e"
     },
     {
-      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "exit_code": 0,
-      "result": "75 passed, 6 warnings in 68.58s",
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_pm12_request_scoped_reads.py services/control-plane/bff/tests/test_ranking_snapshot_write_port.py services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 1,
+      "result": "3 failed, 63 passed, 3 warnings in 131.07s (0:02:11)",
       "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/bff-architecture-pytest.log",
-      "sha256": "941c7736e5c232777f2b1af86919d5e49b7be50eef96dd2a151671228b98b3f6"
+      "sha256": "86c96bddf0e192da67515a07956d042f2145399804b89f62361c3b28aa83a1da"
     },
     {
       "command": "git diff --check",
@@ -53,8 +53,8 @@
     "Audited risk/activity inputs are compatible test reconstruction, not original hosted row summaries",
     "Non-PnL risk/execution/activity metric semantics remain unchanged"
   ],
-  "verification_note": "Functional and producer batches completed before the final recommendation-null presentation fix; the later BFF/architecture batch rechecks the changed presentation and all quarterly route regressions. Earlier intermediate expectation failures and the legacy snapshot-label regression were corrected before these passing batches.",
-  "base_commit": "890a97f3867185dbfeeb21a394ff3ac714771690",
+  "verification_note": "All three bounded foreground batches reached terminal output after baseline integration: functional and producer batches exit 0; architecture/fixture batch exit 1 (3 failed, 63 passed). Only task evidence and owner-attribution documentation changed after these tests. Original read-only hosted observations remain historical; no fresh hosted deployment, scoring, or capital mutation is claimed.",
+  "base_commit": "f9b9da399af3ad5c9699f403566d4effd84c672d",
   "acceptance_evidence": {
     "1": "Real quarterly HTTP route validates PnL/capital from matched observation, fraction unit and recorded start/as-of within quarter; atomic ledger -> telemetry projection transport is covered.",
     "2": "Formula endpoint v2, v1 version-history entry, operator decision record; legacy v1 exact digest and BFF snapshot reader tests.",
@@ -63,5 +63,24 @@
     "5": "Capital adapter accepts v1/v2 and rejects unknown versions and null/nonfinite score; BFF durable snapshot reader accepts both.",
     "6": "Audited PnLs plus hosted recorded 100000 capital and actual ledger starts produce PnL scores 62.880116 (衡岳 R2), 54.73 (青禾 R3), 50.207 (澄川 R2) through registered quarterly HTTP route."
   },
-  "scope_extension_rationale": "The scoped scorer had no capital/period provenance because telemetry discarded it, and snapshot identity/BFF snapshot admission hardcoded v1. Minimal changes to paper event production, telemetry projection, snapshot identity and BFF snapshot admission are necessary to make the requested production flow work; no allocation parameters or execution authority changed."
+  "scope_extension_rationale": "The scoped scorer had no capital/period provenance because telemetry discarded it, and snapshot identity/BFF snapshot admission hardcoded v1. Minimal changes to paper event production, telemetry projection, snapshot identity and BFF snapshot admission are necessary to make the requested production flow work; no allocation parameters or execution authority changed.",
+  "original_implementation_owner": "Codex",
+  "source_composition": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/7231",
+    "original_head": "2301f2777000585ee4c853d51a49969ade169b73",
+    "baseline_pr": "https://github.com/ajoe734/pantheon/pull/7228",
+    "integration_anchor": "d2807bada6ef034c951f9c08babcd1d473773660",
+    "method": "Merged current dev after baseline source DONE; original implementation commits and authorship preserved."
+  },
+  "blocker": {
+    "required_actor": "Human/Ops",
+    "required_artifact": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+    "reason": "The shared build_pm12_eligible_persona_records fixture provides PnL without initial_cash, pnl_period_start_at or pnl_at. New fail-closed scoring correctly makes it ineligible, failing three existing fixture contract tests. Expand the artifact contract to permit fixture-only provenance repair, then reopen the same task and retain PR #7231.",
+    "failing_tests": [
+      "test_b6_security_hardening_fixture_seeds_a_genuinely_eligible_persona",
+      "test_management_nl_assistant_provider_fixture_seeds_a_genuinely_eligible_persona",
+      "test_builder_output_is_pm12_league_eligible_with_no_exclusion_reasons"
+    ],
+    "evidence": "bff-architecture-pytest.log"
+  }
 }

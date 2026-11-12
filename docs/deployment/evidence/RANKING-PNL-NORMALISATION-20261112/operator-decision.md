@@ -1,6 +1,8 @@
 # PnL return-on-capital formula decision — 2026-11-12
 
-Task: `RANKING-PNL-NORMALISATION-20261112`; owner Codex; reviewer Claude.
+Task: `RANKING-PNL-NORMALISATION-20261112`; owner Codex2; reviewer Claude.
+Original implementation: Codex (commits preserved); Codex2 resumed integration
+after `POOL-MEMBER-BASELINE-20261112` source completion.
 
 The canonical task records the operator's 2026-11-12 decision, 「1 同意」,
 approving PnL scoring as return = PnL ÷ persona capital. This record transcribes
