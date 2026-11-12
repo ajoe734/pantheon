@@ -74,3 +74,9 @@ interpreter lacks `pyarrow`, so that unrelated path returns
 `dependency_unavailable`. The backfill module, FinMind connector and failing test
 are byte-identical to dev. The isolated failing-test replay and dependency probe
 are retained; this source task does not change the shared dependency environment.
+
+Review revision: `broad-diagnostic-summary.log` retains the failed broad batch
+result and failure excerpt. Its original 440-line log is referenced by exact
+Git commit, path, byte count and SHA256 in both the summary and `evidence.json`.
+The digest covers the previously committed, whitespace-normalized bytes.
+Routine passing-test rows are omitted to satisfy the evidence-file line cap.

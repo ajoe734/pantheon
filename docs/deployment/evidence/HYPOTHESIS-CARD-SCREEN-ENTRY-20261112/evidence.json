@@ -58,7 +58,15 @@
       "bounded_timeout_seconds": 180,
       "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -vv services/source_ingestion/tests -x --tb=short",
       "result": "404 passed, 1 failed, 3 warnings in 144.44 seconds. FinMind broker backfill returns dependency_unavailable: worker dependency environment lacks pyarrow.",
-      "log": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/broad-diagnostic.log"
+      "log": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/broad-diagnostic-summary.log",
+      "original_log": {
+        "commit": "80058569e71c53686cf07a0757e5bb1f9b739982",
+        "path": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/broad-diagnostic.log",
+        "sha256": "5aa412b2d40684121bd86cabcb23f29658cb3d270073fa4a8fa5768aa0c1b634",
+        "bytes": 60937,
+        "lines": 440,
+        "digest_scope": "Committed whitespace-normalized bytes before summary replacement"
+      }
     },
     {
       "status": "failed",
@@ -71,7 +79,7 @@
     }
   ],
   "additional_check": "git diff --check",
-  "log_normalization": "Captured stdout/stderr with trailing whitespace removed; result text preserved.",
+  "log_normalization": "Captured stdout/stderr with trailing whitespace removed; broad diagnostic summarized with failure excerpt and digest of the recoverable committed original.",
   "acceptance_evidence": {
     "1": [
       "test_contract_file_matches_code",
