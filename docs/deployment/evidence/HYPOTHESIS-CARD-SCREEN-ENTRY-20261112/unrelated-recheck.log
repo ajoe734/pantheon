@@ -1,0 +1,12 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_backfill_writes_governed_datasets_with_times_and_licence _________
+services/source_ingestion/tests/test_finmind_broker_backfill.py:72: in test_backfill_writes_governed_datasets_with_times_and_licence
+    assert result.status == "ok" and result.completed == ["2026-06-08"]
+E   AssertionError: assert ('dependency_unavailable' == 'ok'
+E     
+E     - ok
+E     + dependency_unavailable)
+=========================== short test summary info ============================
+FAILED services/source_ingestion/tests/test_finmind_broker_backfill.py::test_backfill_writes_governed_datasets_with_times_and_licence
+1 failed in 1.21s

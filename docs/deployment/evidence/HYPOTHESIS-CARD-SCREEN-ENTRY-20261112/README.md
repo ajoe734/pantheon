@@ -65,3 +65,12 @@ deployment or trading acceptance is claimed by this source task.
 
 See `evidence.json` and the committed validation logs for exact commands,
 results and acceptance mapping. Independent review is pending at handoff.
+
+Validation: 230 affected-path tests passed, followed by 121 focused tests after
+rebasing onto dev `421c13abc87a44e2b05d1bf638d9a5866e4d8400`. Broad suite
+attempts did not pass: bounded batches timed out, then a fail-fast diagnostic
+reported 404 passes and a FinMind broker backfill failure. The worker dependency
+interpreter lacks `pyarrow`, so that unrelated path returns
+`dependency_unavailable`. The backfill module, FinMind connector and failing test
+are byte-identical to dev. The isolated failing-test replay and dependency probe
+are retained; this source task does not change the shared dependency environment.
