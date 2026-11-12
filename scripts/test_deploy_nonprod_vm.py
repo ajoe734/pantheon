@@ -3459,3 +3459,54 @@ def test_source_ingest_compose_env_supplies_tenant_for_finmind_readback() -> Non
 
     env = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))["services"]["source-ingest"]["environment"]
     assert env["PANTHEON_TENANT_ID"].startswith("${PANTHEON_TENANT_ID:-")
+
+
+def test_finmind_prepare_payload_passes_real_typed_configure_request_and_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real preparation payload must validate against the strict DTO (old source: 6 extra_forbidden)."""
+    import dataclasses
+
+    from pydantic import ValidationError
+
+    from services.source_ingestion import provider_adapters
+    from services.source_ingestion.api_models import ConfigureConnectorRequest
+    from services.source_ingestion.connectors.base import SourceConnector
+
+    _, posted = _prepare_finmind_dataset(51)
+    registration = next(item for item in posted if item["path"].endswith("/connectors"))
+    payload = {"connector": registration["connector"], "fetch": registration["fetch"]}
+
+    request = ConfigureConnectorRequest.model_validate(payload)  # strict: raises on forbidden keys
+    fetch = request.fetch.to_config()
+    assert fetch["mode"] == "provider_owned_adapter"
+    assert fetch["adapter"] == "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload"
+    assert fetch["adapter_config"]["secret_ref_id"] == "env://FINMIND_API_TOKEN"
+    assert fetch["adapter_config"]["max_rank"] == 20
+    assert fetch["request"]["dataset"] == "tw_broker_top"
+    assert len(fetch["request"]["symbols"]) == 25
+    assert fetch["max_records"] == 1000
+    assert registration["connector"]["secret_ref_id"] == "env://FINMIND_API_TOKEN"
+
+    # The exact six fields the hosted API rejected must be rejected by the strict DTO.
+    forbidden = {"base_url": "x", "endpoint": "x", "secret_ref_id": "x", "dataset": "x", "history_start": "x", "max_rank": 1}
+    with pytest.raises(ValidationError) as excinfo:
+        ConfigureConnectorRequest.model_validate({**payload, "fetch": {**payload["fetch"], **forbidden}})
+    rejected = {tuple(err["loc"])[-1] for err in excinfo.value.errors() if err["type"] == "extra_forbidden"}
+    assert rejected == set(forbidden)
+
+    # Dispatch with a deterministic fake fetcher; every scheduled batch's symbols override request.symbols.
+    seen: list[dict[str, Any]] = []
+    spec = provider_adapters.ALLOWED_PROVIDER_ADAPTERS[fetch["adapter"]]
+
+    def fake_handler(adapter: Any, req: Any, trace_id: str) -> tuple[Any, ...]:
+        seen.append(dict(req))
+        return ()
+
+    monkeypatch.setitem(provider_adapters.ALLOWED_PROVIDER_ADAPTERS, fetch["adapter"], dataclasses.replace(spec, handler=fake_handler))
+    connector = SourceConnector.from_dict(payload["connector"])
+    batch2 = ["9999.TW"]
+    provider_adapters.execute_provider_owned_adapter(
+        connector=connector, fetch=fetch, trace_id="t", job_parameters={"symbols": batch2}
+    )
+    assert seen[0]["symbols"] == batch2
+    assert seen[0]["dataset"] == "tw_broker_top"
+    assert seen[0]["max_rank"] == 20
