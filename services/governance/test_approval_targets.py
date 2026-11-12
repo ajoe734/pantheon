@@ -391,7 +391,10 @@ def test_scheduled_paper_candidacy_inbox_decision_journey(owner_env, monkeypatch
         headers = {'Authorization': 'Bearer ' + decider}
         inbox = bff.get('/bff/management/human-inbox', headers=headers)
         assert inbox.status_code == 200, inbox.text
-        assert any(i.get('approval_decision_id') == decision_id for i in inbox.json()['data']['items']), inbox.text
+        approval = next(i for i in inbox.json()['data']['items'] if i.get('approval_decision_id') == decision_id)
+        assert 'observed_trading_days' in approval['summary']
+        detail = bff.get(f'/bff/approvals/{decision_id}', headers=headers)
+        assert detail.json()['data']['allowedActions']['canApprove'] is True, detail.text
         reviews = bff.get('/bff/management/promotion-reviews?quarter=2026-Q3', headers=headers)
         assert reviews.status_code == 200, reviews.text
         assert reviews.json()['data']['items'], (reviews.text, [(c[0], c[2]) for c in calls])
@@ -404,6 +407,7 @@ def test_scheduled_paper_candidacy_inbox_decision_journey(owner_env, monkeypatch
         review = reviews.json()['data']['items'][0]
         assert review['status'] == ('decision_accepted' if outcome == 'approved' else 'decision_rejected'), reviews.text
         assert review['human_inbox_id'] is None
+        assert reviews.json()['data']['summary']['decision_' + ('accepted' if outcome == 'approved' else 'rejected') + '_count'] == 1
         pea.main()  # rerun uses the same proposal, including after a reject
         assert evaluator_store.load()['last_promotion']['reused'] is True
         assert len([c for c in calls if c[:3] == ('gov.test', 'POST', '/api/governance/approvals')]) == 1

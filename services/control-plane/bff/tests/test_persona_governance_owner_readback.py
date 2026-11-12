@@ -260,3 +260,39 @@ def test_signed_caller_tenant_scope_ignores_environment_default(saved_proposal, 
             else:
                 assert response.status_code in (200, 403) and not (response.json().get("data") or {}).get("items")
         assert bool(reads) is visible
+
+
+@pytest.mark.parametrize('change', [
+    {}, {'tenant_id': 'foreign'}, {'target_version': 'other-snapshot'},
+    {'proposal_content_digest': '0' * 64},
+    {'subject': {'from_stage': 'canary'}}, {'subject': {'to_stage': 'live'}},
+    {'subject': {'quarter': '2026-Q2'}}, {'subject': {'ranking_snapshot_id': 'other'}},
+])
+def test_candidacy_readback_checks_the_frozen_quarter_stage_and_snapshot(saved_proposal, monkeypatch, change):
+    with gov_test._isolated_client() as (client, store, _commands):
+        ref = saved_proposal(client, None)
+        first = _items(client)[0]
+        saved = {**ref, 'quarter': '2026-Q1', 'ranking_snapshot_id': first['ranking_snapshot_id'],
+                 'from_stage': 'paper', 'to_stage': 'canary_candidate', 'action_id': 'promote_to_canary_candidate',
+                 'rule_summary': {'rank': 1, 'observed_trading_days': 30, 'filled_orders': 20},
+                 'rationale': 'Fixed rule summary.', 'evidence_ref_ids': []}
+        content = {k: saved[k] for k in ('persona_id', 'quarter', 'ranking_snapshot_id', 'from_stage', 'to_stage',
+                                        'rule_summary', 'rationale', 'evidence_ref_ids')}
+        digest = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+        subject = {k: saved[k] for k in ('persona_id', 'quarter', 'ranking_snapshot_id', 'from_stage', 'to_stage')}
+        subject['proposal_content_digest'] = digest
+        saved['governance_request'] = {'decision_id': 'pcc-1', 'target_type': 'paper_canary_candidacy', 'subject': subject}
+        monkeypatch.setattr(evaluator_results, 'saved_evaluator_result', lambda *a, **k: {
+            'run_id': 'fixed-rule', 'evaluated_at': 't', 'items': [saved]})
+        row = ApprovalDecision.create_proposed(
+            decision_id='pcc-1', target_type='paper_canary_candidacy', target_id=saved['persona_id'],
+            target_version=saved['ranking_snapshot_id'], risk_level='low', tenant_id=TENANT, owner_user_id='evaluator',
+            proposal_id=saved['recommendation_id'], proposal_content_digest=digest, subject=subject,
+        ).to_dict()
+        row.update({k: v for k, v in change.items() if k != 'subject'})
+        if 'subject' in change:
+            row['metadata'] = {'subject': {**subject, **change['subject']}}
+        store.get_approval_decision = lambda _id: row
+        rec, review = _both(client)
+        assert rec['human_review_state']['status'] == review['status'] == ('owner_unavailable' if change else 'pending_human_gate')
+        assert bool(review['human_inbox_id']) is (not change)

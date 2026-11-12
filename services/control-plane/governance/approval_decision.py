@@ -324,7 +324,7 @@ class ApprovalDecision:
             decision_state=DecisionState.PROPOSED,
             actor_role=None,
             actor_id=None,
-            rationale=None,
+            rationale=(subject or {}).get("rationale") if approval_targets.target_name(target_type) == "paper_canary_candidacy" else None,
             created_at=now,
             decided_at=None,
             risk_level=risk_level,

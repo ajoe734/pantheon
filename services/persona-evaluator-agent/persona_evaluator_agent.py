@@ -645,7 +645,8 @@ def promotion_once(
             if request is None:
                 owner = ranking_store if ranking_store is not None else build_rankings_store()
                 snapshot = owner.get_ranking_snapshot(snapshot_id)
-                if snapshot is None or snapshot.period != quarter or snapshot.surface != "quarterly":
+                if (snapshot is None or snapshot.ranking_snapshot_id != snapshot_id
+                        or snapshot.period != quarter or snapshot.surface != "quarterly"):
                     raise Degraded("closed_quarter_snapshot_unavailable")
                 from services.rankings.snapshots import snapshot_content_digest, SUPPORTED_FORMULA_VERSIONS
                 snapshot_items = snapshot.to_canonical_dict()["items"]

@@ -731,3 +731,21 @@ def test_agent_cannot_choose_promotion():
     assert "promote_to_canary_candidate" not in pea.ACTIONS
     fetch, _ = _fetch([_item("p1")], [_rec("p1", "promote_to_canary_candidate")])
     assert pea.ask_agent([{"persona_id": "p1", "evidence_ref_ids": ["ev-p1"]}], "http://ad", "t", fetch) == []
+
+
+@pytest.mark.parametrize('metadata', [{'data_scope': 'acceptance'}, {'is_acceptance': 'true'}, {'release_probe': True}])
+def test_canonical_test_scope_always_excludes_nomination(metadata):
+    assert pea._probe_persona({'persona_id': 'ordinary-name', 'metadata': metadata})
+    assert not pea._probe_persona({'persona_id': 'ordinary-name', 'metadata': {'acceptance_probe': False}})
+
+
+def test_promotion_threshold_environment_is_configurable_and_invalid_values_fail_closed(tmp_path, monkeypatch):
+    store, _ = _seed_promotion(tmp_path, [_promotion_item(days=2, orders=1)])
+    monkeypatch.setenv('PERSONA_EVALUATOR_PROMOTION_MIN_TRADING_DAYS', '2')
+    monkeypatch.setenv('PERSONA_EVALUATOR_PROMOTION_MIN_FILLED_ORDERS', '1')
+    assert _promote(store, _promotion_fetch([]))['status'] == 'proposed'
+    store, _ = _seed_promotion(tmp_path / 'invalid')
+    monkeypatch.setenv('PERSONA_EVALUATOR_PROMOTION_MIN_FILLED_ORDERS', '0')
+    log = []
+    assert _promote(store, _promotion_fetch(log))['reason'] == 'invalid_sample_thresholds'
+    assert _proposals(log) == []
