@@ -1,0 +1,269 @@
+{
+  "task_id": "DISCOVERY-DATA-HOSTED-GAP-AUDIT-20261112",
+  "kind": "read_only_investigation",
+  "design_ref": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_STRATEGY_SCREEN_ENTRY_EXIT_2026-11-12.md#6",
+  "repo_base": {
+    "branch": "dev",
+    "head": "890a97f38",
+    "steady_core_pr": "7225/54fc",
+    "caller_pr": "7227/04e9"
+  },
+  "private_evidence_used": [
+    {
+      "observation": "owner_registry_get",
+      "at": "2026-11-12T09:22:17Z",
+      "wire_bytes": 808246,
+      "wire_sha256": "becb36c5b753a98c9d9ad9017a9e0c7103c44239badd570abe0f3f9dc73c644b",
+      "bff_sha": "bee62bc2978618539984aff9db136b064adc14a0",
+      "fe_sha": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
+      "writes": "login/logout only"
+    },
+    {
+      "observation": "normalized_store_and_service_env",
+      "at": "2026-11-12T08:50:18Z",
+      "source_ingest_image": "sha256:238782113a721db91a65486ad79652510e3857fa44ab4ad4375a714208b0d5ef",
+      "files_scanned": 4771,
+      "scan_truncated": false,
+      "provider_requests": 0,
+      "writes": 0,
+      "module_hashes_match_last_accepted_bee": {
+        "controller_worker.py": "d63473bf55790f0a86d04dde14c2c39ea52bac7460ecb5e08b7292e8d8ca0d66",
+        "controller_state.py": "f709543ce70ec0d30357d215830b4f5d8d47da2b91289a5dbbcf36ee83800d3c",
+        "pipeline.py": "97f665e4df4d675511861c37ab83a6281bc7561371853edd7a504ece2fd8b5b7",
+        "runtime.py": "6fe277379259cb005012ca879746d6cfbc23235c88a7ccf0f1bf5de0f6e4486b",
+        "connectors/finmind_taiwan.py": "d3def6d3080c46c1480e9e43f8461f030baca73f3c1b163ccd71843560f66ebb",
+        "hypothesis_card.py": "73a7fe28ceba01c114ac00185957e88fc6a6fd1ef3033e41e06993806aa3dd6c",
+        "hypothesis_compiler.py": "1da5b1c1290c0a7e4228e09ca3a7c98122da45ed7b52bc3af371345c15ed03cc"
+      },
+      "module_path_authority": "/workspace (corrected 08:50Z proof); the 08:40Z /app path audit is not used"
+    },
+    {
+      "observation": "combined_runtime_registry_summary",
+      "at": "2026-11-12T09:27:33Z",
+      "observation_at": "2026-11-12T09:22:17Z"
+    }
+  ],
+  "private_evidence_copied_wholesale": false,
+  "service_posture_0850Z": {
+    "source_ingest_egress": "allowlist, one host (collector)",
+    "scheduler_mode": "reconcile_only",
+    "steady_collector_pull_env": null
+  },
+  "registry_0922Z": {
+    "connector_count": 8,
+    "collector_definition_bound_instances": 0,
+    "connectors": [
+      {
+        "id": "tw-twse-tpex-official-market",
+        "status": "enabled",
+        "definition_bound": false,
+        "schedule_enabled": true,
+        "interval_seconds": 86400,
+        "request_keys": [
+          "dataset",
+          "venues"
+        ],
+        "request_dataset": "tw_price_daily",
+        "max_records": 100,
+        "latest_run": {
+          "ingest_run_id": "ingest-69c252b7ee0b",
+          "finished_at": "2026-11-12T09:21:26Z",
+          "raw_count": 100,
+          "normalized_count": 100,
+          "admission_keys": 100,
+          "venues": {
+            "TWSE": 100,
+            "TPEx": 0
+          },
+          "first_symbol": "00400A",
+          "last_symbol": "2330"
+        },
+        "attempts": 92,
+        "successes": 62,
+        "failures": 30,
+        "last_typed_failure": {
+          "at": "2026-11-11T19:17:57Z",
+          "code": "host_not_allowlisted",
+          "host": "www.twse.com.tw",
+          "caller": "source_ingest.taiwan_official"
+        }
+      },
+      {
+        "id": "tw-taifex-futures-options-chip",
+        "status": "disabled",
+        "definition_bound": false
+      },
+      {
+        "id": "tw-finmind-broker-daily-report",
+        "status": "disabled",
+        "definition_bound": false
+      },
+      {
+        "id": "dev-paper-us-equity-simulation",
+        "status": "disabled",
+        "definition_bound": false
+      },
+      {
+        "id": "4 simulation/e2e static_records connectors",
+        "status": "enabled",
+        "definition_bound": false
+      }
+    ],
+    "catalog_status": "template_only_not_live_ingestion_claim",
+    "catalog_entries": 18
+  },
+  "normalized_store_0850Z": {
+    "tw_price_daily": {
+      "partition_labels": 61,
+      "first": "2026-08-12",
+      "last": "2026-11-11",
+      "files": 1923
+    },
+    "taifex_ssf_contracts": {
+      "partition_labels": 5,
+      "first": "2026-11-08",
+      "last": "2026-11-12"
+    },
+    "tw_broker_top": {
+      "partition_labels": 1,
+      "label": "2026-11-12"
+    },
+    "market": {
+      "partition_labels": 15,
+      "note": "simulation era"
+    },
+    "internal_note": {
+      "partition_labels": 3
+    },
+    "absent": [
+      "tw_monthly_revenue",
+      "tw_financial_statement",
+      "tw_valuation_bwibbu",
+      "tw_margin_short_balance",
+      "tw_institutional_flow",
+      "tw_securities_lending",
+      "tw_day_trading",
+      "tw_holiday_calendar",
+      "tdcc_shareholding_distribution",
+      "tw_macro_series",
+      "tw_community_daily",
+      "collector_*",
+      "industry"
+    ],
+    "labels_are_path_labels_not_publication_times": true
+  },
+  "definitions": {
+    "collector_definitions": 14,
+    "collector_definition_ids_source": "services/source_ingestion/connector_definitions.py:326",
+    "fetch_policy_entries": 22,
+    "fetch_policy_enabled_true": 19,
+    "fetch_policy_without_definition": [
+      "collector-macro-dbnomics",
+      "collector-paper-arxiv",
+      "collector-paper-nber-rss",
+      "collector-paper-openalex",
+      "collector-papers",
+      "collector-tw-ptt-mirrors",
+      "collector-tw-twse-openapi",
+      "collector-youtube-gemini-notes"
+    ],
+    "host_status_json_source_count_20261110": 16,
+    "host_16_names_known": false,
+    "rule": "do not equate 16 raw host entries with 14 definitions; read live /status.json and intersect before proposing an instance"
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "claim": "Legacy official connector is bounded to max_records=100; last run was 100 TWSE rows, 0 TPEx",
+      "sources": [
+        "services/source_ingestion/provider_adapters.py:103-130",
+        "services/source_ingestion/provider_adapters.py:453",
+        "observed registry 09:22:17Z"
+      ],
+      "status": "observed"
+    },
+    {
+      "id": "F2",
+      "claim": "Fundamentals are implemented but no instance requests them; reconcile cannot bind them to the official connector; the bounded refresh script rejects non-tw_price_daily official datasets",
+      "sources": [
+        "services/source_ingestion/connectors/taiwan_official.py:3172,3449",
+        "services/source_ingestion/persona_source_reconciler.py:75,241",
+        "scripts/deploy_nonprod_vm.sh:1364",
+        ".github/workflows/dev-tw-market-refresh.yml:211"
+      ],
+      "status": "source-verified"
+    },
+    {
+      "id": "F3",
+      "claim": "Zero definition-bound Collector instances, so collector_steady_pull selects nothing",
+      "sources": [
+        "services/source_ingestion/controller_worker.py:1268,1312",
+        "observed registry 09:22:17Z"
+      ],
+      "status": "observed+source-verified"
+    },
+    {
+      "id": "F4",
+      "claim": "Management canary provider_read/source_normalized are fixed-value stages; passing canary is not data evidence",
+      "sources": [
+        "services/source_ingestion/source_management_commands.py:595"
+      ],
+      "status": "source-verified"
+    },
+    {
+      "id": "F5",
+      "claim": "require_connector_approved gate cannot pass for management-created connectors",
+      "sources": [
+        "services/source_ingestion/persona_source_reconciler.py:375-384",
+        "services/source_ingestion/source_management_commands.py:1490"
+      ],
+      "status": "source-verified"
+    },
+    {
+      "id": "F6",
+      "claim": "Collector pull is cursored and capped (default max_records 500, daily cadence); two-year per-date bundles cannot be caught up at defaults",
+      "sources": [
+        "services/source_ingestion/connectors/collector_bundle.py:467-540",
+        "docs/deployment/evidence/COLLECTOR-PRICE-HISTORY-BACKFILL-20261111/evidence.json"
+      ],
+      "status": "source-verified; required cap unknown"
+    },
+    {
+      "id": "F7",
+      "claim": "Industry in monthly revenue rows is a filing snapshot, not PIT classification; no industry dataset",
+      "sources": [
+        "services/source_ingestion/connectors/taiwan_official.py:3327",
+        "services/registry/factor_rule.py:281,392"
+      ],
+      "status": "source-verified"
+    }
+  ],
+  "unknown": [
+    "names of the 16 host source entries and live raw bundle coverage per source",
+    "rows per Collector bundle and fundamentals payload sizes (needed for max_records)",
+    "per-day symbol coverage inside the 61 tw_price_daily labels",
+    "cause of host_not_allowlisted on 2026-11-11T19:17:57Z and how the 09:21Z scheduled run obtained egress",
+    "hosted values of SOURCE_MANAGEMENT_COMMANDS_ENABLED and PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED",
+    "whether TWSE/TPEx fundamentals endpoints respond from the dev VM",
+    "industry classification source, point-in-time history, delisted/suspended history",
+    "any watchdog or GitHub outage cause (no evidence read; none asserted)"
+  ],
+  "activation_repair_matrix_ref": "report.md section 6 (steps 0-10); executed only by original W1 / sole COMPAT publisher in the existing exact-pair gate-before-switch/rollback flow",
+  "not_claimed": [
+    "hosted ingestion",
+    "W1 three governed days",
+    "W5 twenty clean minutes",
+    "financial-statement new-fill",
+    "exact-pair QA",
+    "current publication",
+    "PIT availability",
+    "two-year history imported",
+    "raw collector coverage"
+  ],
+  "authority": {
+    "runtime_writes": false,
+    "provider_calls": false,
+    "credentials_used": false,
+    "business_writes": false
+  }
+}
