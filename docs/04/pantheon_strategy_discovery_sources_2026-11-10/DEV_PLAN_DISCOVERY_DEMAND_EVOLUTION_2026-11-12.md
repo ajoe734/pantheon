@@ -47,9 +47,9 @@ discovery personas only).
 | `COLLECTOR-DEMAND-QUERY-PLAN-20261112` | Codex2 → Claude | demand record | §3.1.2 with O-14 (a), O-20 (a) |
 | `DISCOVERY-EVOLUTION-SCHEDULER-20261112` | Codex → Claude | baseline task; demand record | §3.3 with O-16, O-17, O-18 |
 | `GATE-MECHANISM-STAGE-20261112` | Claude → Codex2 | card predictions; baseline task | §3.2 gate with O-15 (b) |
-| `TEMPLATE-DEMAND-SEARCH-20261112` | Claude2 → Codex | query plan; evolution scheduler | §3.1.3 |
-| `FINDING-SPONSOR-PERSONA-20261112` | Claude2 → Codex | mechanism stage; evolution scheduler | §3.5 |
-| `FE-RESEARCH-DEMAND-VIEW-20261112` (`execute-plans`) | Claude2 → Codex2 | demand record; query plan | §3.1 read surface |
+| `TEMPLATE-DEMAND-SEARCH-20261112` | Claude → Codex | query plan; evolution scheduler | §3.1.3 |
+| `FINDING-SPONSOR-PERSONA-20261112` | Codex2 → Codex | mechanism stage; evolution scheduler | §3.5 |
+| `FE-RESEARCH-DEMAND-VIEW-20261112` (`execute-plans`) | Codex → Codex2 | demand record; query plan | §3.1 read surface |
 | `DISCOVERY-W5-HOSTED-ACCEPTANCE-20261112` | operator → Claude | all above; W4 acceptance | SD §5 last row |
 
 Ordering added to existing tasks: `INTRADAY-REPLICATION-GATE-20261111` and `INTRADAY-EVOLUTION-SEARCH-20261111` now
