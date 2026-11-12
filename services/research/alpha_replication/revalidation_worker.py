@@ -540,7 +540,7 @@ class AlphaRevalidationWorker:
         )
         spec = self._validate_registry_binding(entry, registry_entry)
         attempt_number = int(entry.get("attempt_count") or 0) + 1
-        task = self._build_experiment_task(entry, spec)
+        task = self._build_experiment_task(entry, spec, attribution=registry_entry.get("metadata"))
         task_receipt = self._authority.ensure_task(
             task,
             approval_decision_id=str(entry["approval_decision_id"]),
@@ -673,6 +673,7 @@ class AlphaRevalidationWorker:
         self,
         entry: Mapping[str, Any],
         spec: Mapping[str, Any],
+        attribution: Mapping[str, Any] | None = None,
     ) -> ExperimentTask:
         tenant_id = str(entry["tenant_id"])
         strategy_spec_id = str(entry["strategy_spec_id"])
@@ -704,6 +705,8 @@ class AlphaRevalidationWorker:
                 "strategy_spec_checksum": entry["checksum"],
                 "production_activation": "disabled",
                 "research_authority_required": True,
+                **{key: value for key, value in dict(attribution or {}).items()
+                   if key in {"persona_id", "sponsor_persona_id", "research_demand", "pool_member"}},
             },
         )
 
@@ -872,6 +875,7 @@ class AlphaRevalidationWorker:
             ResearchMemoryOutboxRecord,
             ResearchMemoryOutboxStore,
             get_outbox_store,
+            resolve_memory_sponsor,
         )
 
         tx_costs = (
@@ -910,7 +914,9 @@ class AlphaRevalidationWorker:
             artifact_id=str(backtest_summary.get("backtest_run_id") or "") or None,
             source_event_type="research_finding_published",
             source_event_id=run_id,
-            sponsor_persona_id="persona-tw-equity",
+            sponsor_persona_id=resolve_memory_sponsor(
+                dict(task.metadata), dict(entry), dict(entry.get("metadata") or {}),
+            ),
             summary=gate_response.summary,
             headline=f"Replicated Taiwan strategy {entry['strategy_id']}",
             confidence=1.0,
@@ -937,14 +943,12 @@ class AlphaRevalidationWorker:
                 "artifact_refs": artifact_refs,
             },
         )
+        default_store = get_outbox_store()
+        if default_store.data_dir.resolve() == self._data_dir.resolve():
+            return default_store.create_record(outbox_record).to_dict()
         worker_outbox = ResearchMemoryOutboxStore(self._data_dir)
         saved = worker_outbox.create_record(outbox_record)
-        try:
-            default_store = get_outbox_store()
-            if default_store.path.resolve() != worker_outbox.path.resolve():
-                default_store.create_record(outbox_record)
-        except Exception:
-            pass
+        default_store.create_record(outbox_record)
         return saved.to_dict()
 
     def _evaluate(
@@ -987,6 +991,9 @@ class AlphaRevalidationWorker:
             "strategy_artifact",
             "skip_backtest",
             "history_trading_days",
+            "hypothesis_card",
+            "hypothesis_predictions",
+            "mechanism_inputs",
         ):
             evaluation_spec.pop(non_schema_key, None)
 
@@ -1046,6 +1053,23 @@ class AlphaRevalidationWorker:
             handoff_payload["strategy_artifact"] = dict(raw_artifact)
             if isinstance(raw_dataset, Mapping):
                 handoff_payload["backtest_dataset"] = dict(raw_dataset)
+
+        raw_card = raw_spec.get("hypothesis_card")
+        raw_predictions = raw_spec.get("hypothesis_predictions")
+        if raw_predictions is None and isinstance(raw_card, Mapping):
+            raw_predictions = raw_card.get("predictions")
+        if isinstance(raw_predictions, list) and raw_predictions:
+            # The gate's mechanism stage tests the card's predictions on the in-sample
+            # window of the same governed dataset the approved run used, with the
+            # observable datasets the spec carries. Nothing is generated here: absent
+            # data leaves a prediction untestable in the gate.
+            handoff_payload["hypothesis_predictions"] = [
+                dict(p) for p in raw_predictions if isinstance(p, Mapping)
+            ]
+            if isinstance(raw_dataset, Mapping):
+                handoff_payload.setdefault("backtest_dataset", dict(raw_dataset))
+            if isinstance(raw_spec.get("mechanism_inputs"), Mapping):
+                handoff_payload["mechanism_inputs"] = dict(raw_spec["mechanism_inputs"])
 
         request = ReplicationRequest(
             candidate_id=run_id,
@@ -1113,6 +1137,8 @@ class AlphaRevalidationWorker:
         artifact_refs = [backtest_ref] if backtest_ref else []
 
         run_metadata: dict[str, Any] = {
+            **{key: value for key, value in dict(task.metadata).items()
+               if key in {"persona_id", "sponsor_persona_id", "research_demand", "pool_member"}},
             "dispatch_mode": "authoritative",
             "configured_mode": self._configured_mode,
             "production_activation": "disabled",
@@ -1127,6 +1153,12 @@ class AlphaRevalidationWorker:
             "approval_decision_id": entry["approval_decision_id"],
             "strategy_spec_checksum": entry["checksum"],
             "replication_gate": gate_response.to_dict(),
+            "mechanism_status": (gate_metadata or {}).get("mechanism_status")
+            if isinstance(gate_metadata, Mapping)
+            else None,
+            "mechanism_support": (gate_metadata or {}).get("mechanism_support")
+            if isinstance(gate_metadata, Mapping)
+            else None,
             "backtest_run_id": backtest_run_id,
             "backtest_summary": dict(backtest_summary),
         }
@@ -1185,15 +1217,19 @@ class AlphaRevalidationWorker:
                     )
                     run_metadata["promotion_request"] = promotion_request.to_dict()
                     run_metadata["promotion_gate_entry"] = draft_entry
-            finding_record = self._publish_research_finding(
-                run_id=run_id,
-                task=task,
-                entry=entry,
-                gate_response=gate_response,
-                backtest_summary=backtest_summary,
-                backtest_ref=backtest_ref,
-            )
-            run_metadata["research_finding_outbox_id"] = finding_record.get("outbox_id")
+            from services.research.research_memory_outbox import ResearchMemoryEligibilityError
+            try:
+                finding_record = self._publish_research_finding(
+                    run_id=run_id,
+                    task=task,
+                    entry=entry,
+                    gate_response=gate_response,
+                    backtest_summary=backtest_summary,
+                    backtest_ref=backtest_ref,
+                )
+                run_metadata["research_finding_outbox_id"] = finding_record.get("outbox_id")
+            except ResearchMemoryEligibilityError as exc:
+                run_metadata["memory_writeback_error"] = str(exc)
 
         common = {
             "run_id": run_id,

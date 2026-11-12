@@ -3108,6 +3108,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     **meta["traits"],
                     **{k: v for k, v in inner_meta["traits"].items() if v is not None},
                 }
+            # Replication-gate admission-time mechanism record: stored on the entry's
+            # replication_proof (and entry top level), projected so candidate readers see it.
+            proof = entry.get("replication_proof") if isinstance(entry.get("replication_proof"), dict) else {}
+            for mkey in ("mechanism", "mechanism_status", "mechanism_support"):
+                if merged_meta.get(mkey) is not None:
+                    continue
+                for holder in (entry, proof):
+                    if holder.get(mkey) is not None:
+                        merged_meta[mkey] = holder[mkey]
+                        break
             ver_dict: Dict[str, Any] = {
                 **inner, "strategy_id": entry_sid, "tenant_id": entry_tenant or caller_tenant,
                 "strategy_spec_registry_id": reg_id, "spec_version_id": reg_id,

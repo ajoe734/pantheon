@@ -68,7 +68,9 @@
         "research_finding_published",
         "governance_review_closed",
         "committee_resolution_published",
-        "consultation_closed"
+        "consultation_closed",
+        "pool_outcome",
+        "harness_experience"
       ],
       "description": "The class of platform event that produced this entry."
     },
@@ -93,6 +95,7 @@
         "incident-svc",
         "evolution-svc",
         "research-svc",
+        "persona-svc",
         "governance-svc",
         "consultation-svc"
       ],

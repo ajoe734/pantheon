@@ -74,6 +74,7 @@ def _setup_completed_run_and_artifact(client: TestClient) -> tuple[str, str]:
             "title": "TW Equity Alpha Strategy Research",
             "objective": "Evaluate mean reversion signals on Taiwan market",
             "actor_id": "operator",
+            "constraints": {"persona_id": "persona-tw-equity"},
         },
     )
     assert t_resp.status_code == 201, t_resp.text
