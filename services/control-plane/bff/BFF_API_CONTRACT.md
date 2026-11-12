@@ -1161,3 +1161,13 @@ keeps unknown scores/contributions null. Zero PnL with valid capital scores 50.
 Historical v1 snapshots keep their stored values and digest; the allocation
 input adapter and durable snapshot reader accept both formula versions and
 reject unsupported versions.
+
+## Publish a persona strategy-pool version (POOL-ENVELOPE-PUBLISH-20261112)
+
+`POST /bff/personas/{persona_id}/strategy-pool/publish` — operator role. Body (optional): `{"pool_version": <int>, "stage": "paper"}`; omitted `pool_version` publishes the current pool version. Any other field is `422`.
+
+Each pool version becomes one new immutable envelope artifact in the existing Registry: it pins every non-removed member's version, checksum and weight plus `pool_version`/`pool_digest`, with lineage to the previous envelope. Approval (automated, paper scope), the DeploymentPlan and the runtime binding move all use the existing Registry / Governance / Deployment owner paths; the BFF never calls RuntimeManager. Deployment moves the binding with the existing runtime-manager `replace` route, so the persona keeps one capital pool, one runtime, and its positions and ledger.
+
+Responses: `200 {data: {status: "published"|"dispatched", pool_version, envelope_artifact_id, envelope_version, approval_decision_id, deployment_plan_id, deployment_saga_id, source_binding_id, runtime_id, capital_pool_id, members[], idempotent_replay}}`. `published` means a separate RuntimeBinding readback shows the new envelope live; `dispatched` means Deployment admitted it but the binding has not moved yet (re-publish to reconcile). Publishing the same pool version again is idempotent.
+
+Fail-closed `409` (reason recorded in the publish history, previous envelope keeps running): member not approved / checksum mismatch / other-tenant artifact, pool digest differs from an already published snapshot, pool version not newer than the running envelope, not exactly one live RuntimeBinding, owner-chain readback mismatch. `403`: any stage other than `paper`. `404`: no pool. `503`: owner unavailable.
