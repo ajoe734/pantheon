@@ -387,3 +387,69 @@ def test_intraday_ic_unavailable_rather_than_daily_fallback():
     broken["2330"]["factor_values"].pop()
     with pytest.raises(IntradayEvaluationUnavailable):
         compute_intraday_ic_metrics(broken, bar_frequency="5m")
+
+
+# --- replay-scoped governed observation bridge: canonical minute factor_rule_v1, real backend -------
+
+def _minute_art(freq="5m", **params):
+    from services.registry.tests.test_strategy_artifact_bar_frequency import _declared_art, _min_input
+
+    art = _declared_art(freq, inputs=[_min_input(freq)], ref="px")
+    art["parameters"].update(params)
+    for key in params:  # every parameter must be classified
+        art["mutation_surface"]["immutable_parameters"].append(key)
+    return art
+
+
+def test_canonical_minute_factor_rule_runs_on_real_backend_from_reconciled_store(tmp_path, monkeypatch):
+    pytest.importorskip("vectorbt")
+    from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
+
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    store = _reconciled_store(tmp_path)
+    ds = build_intraday_replay_dataset(
+        store, dataset_id="d", strategy_id="s", symbols=["2330", "2317"], session_dates=[DAY],
+        bar_frequency="5m", availability_ceiling=CEILING,
+    )
+    # real bar_availability_ts is post-close (after every bar_end): the replay clock is bar_end
+    def _dt(v):
+        return v if isinstance(v, datetime) else datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+    assert all(_dt(r["bar_availability_ts"]) > _dt(r["bar_end"]) for r in ds["records"])
+    cfg = BacktestConfig(strategy_artifact=_minute_art("5m"), fees=0.002)
+    res = run_vectorbt_workflow(ds, config=cfg, backend=VectorbtBackend())
+    agg = res.backtest_result.aggregate_metrics
+    assert agg["evidence_mode"] == "replay" and agg["live_or_paper_evidence"] is False
+    assert agg["source_snapshot"]["reconciled_only"] is True
+    for m in res.backtest_result.per_instrument_metrics.values():
+        assert m["fill_rule"] == "next_bar_open" and m["trade_count"] > 0 and m["trade_count"] % 2 == 0
+
+
+def test_bridge_keeps_real_availability_and_never_emits_later_bars():
+    prepared = GovernedVectorbtInputAdapter().prepare(_dataset(avail="2026-11-10T08:00:00Z"))
+    feats, decision = _bar_features_for_index(prepared, "2330", 7)
+    obs = feats["tw_price_5m"]["close"]
+    assert len(obs) == 8 and obs[-1]["event_time"] == decision == obs[-1]["available_time"]
+    assert all(o["real_available_time"] == "2026-11-10T08:00:00+00:00" for o in obs)
+    assert all(o["availability_basis"] == "replay_simulated_bar_end" and o["evidence_mode"] == "replay" for o in obs)
+    assert all(o["available_time"] <= decision for o in obs)  # no future bar at bar 7
+
+
+def test_future_available_bar_is_unavailable_not_bridged():
+    with pytest.raises(IntradayDataUnavailable) as exc:
+        GovernedVectorbtInputAdapter().prepare(_dataset(avail="2099-01-01T00:00:00Z"))
+    assert exc.value.reason == "bar_not_available_at_replay_ceiling"
+
+
+def test_bridge_session_reset_and_cross_session_for_minute_factor_rule():
+    from services.research.vectorbt.adapter.vectorbt_adapter import _artifact_action_sequence
+
+    prepared = GovernedVectorbtInputAdapter().prepare(_dataset())
+    acts = _artifact_action_sequence(prepared, _minute_art("5m"))["2330"]  # z_window=4 -> needs 4 in-session bars
+    n = 54
+    assert acts[:3] == [None] * 3 and acts[3] is not None
+    assert acts[n:n + 3] == [None] * 3 and acts[n + 3] is not None  # session 2 resets its lookback
+    # cross_session is governed by the feature catalogue, not an artifact parameter: the governed
+    # evaluator keeps the session reset, so a bare parameter can never leak overnight observations.
+    crossing = _artifact_action_sequence(prepared, _minute_art("5m", cross_session=True))["2330"]
+    assert crossing[n] is None

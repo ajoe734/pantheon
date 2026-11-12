@@ -240,6 +240,8 @@ class PreparedVectorbtDataset:
     # Intraday only: simulated decision clock (= bar_end) per bar and the replay declaration.
     decision_clock_by_instrument: dict[str, tuple[str, ...]] = field(default_factory=dict)
     replay: dict[str, Any] | None = None
+    # Intraday only: REAL bar_availability_ts per bar (provenance; never used as the simulated clock).
+    real_availability_by_instrument: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def is_intraday(self) -> bool:
@@ -333,6 +335,7 @@ class GovernedVectorbtInputAdapter:
                 raise IntradayDataUnavailable("no_records", "no governed minute bars; no daily/synthetic substitute")
             raise VectorbtWorkflowError("dataset.records must be a non-empty list of OHLCV dicts")
         clocks_raw: dict[str, dict[str, str]] = {}
+        avail_raw: dict[str, dict[str, str]] = {}
 
         # Collect normalized ISO dates plus OHLCV tuples so sorting does not depend on input order.
         instrument_pairs: dict[
@@ -343,7 +346,7 @@ class GovernedVectorbtInputAdapter:
                 raise VectorbtWorkflowError("Each record must be a mapping")
             instrument = self._req_str(rec, "instrument")
             if intraday:
-                date_val = self._intraday_key(rec, instrument, data_frequency, replay, clocks_raw)
+                date_val = self._intraday_key(rec, instrument, data_frequency, replay, clocks_raw, avail_raw)
             else:
                 date_val = self._req_iso_date(rec, "date", instrument)
             bar: list[float] = []
@@ -379,6 +382,7 @@ class GovernedVectorbtInputAdapter:
         ohlcv_by_instrument: dict[str, tuple[tuple[float, float, float, float, float], ...]] = {}
         dates_by_instrument: dict[str, tuple[str, ...]] = {}
         decision_clock_by_instrument: dict[str, tuple[str, ...]] = {}
+        real_availability_by_instrument: dict[str, tuple[str, ...]] = {}
         features_by_instrument: dict[str, dict[str, Any]] = {}
         for inst in instruments:
             # Daily keys are YYYY-MM-DD (lexical == chronological); intraday keys are normalised
@@ -386,6 +390,7 @@ class GovernedVectorbtInputAdapter:
             sorted_pairs = sorted(instrument_pairs[inst], key=lambda p: p[0])
             if intraday:
                 decision_clock_by_instrument[inst] = tuple(clocks_raw[inst][p[0]] for p in sorted_pairs)
+                real_availability_by_instrument[inst] = tuple(avail_raw[inst][p[0]] for p in sorted_pairs)
             dates = [p[0] for p in sorted_pairs]
             bars = [p[1] for p in sorted_pairs]
             extras = [p[2] for p in sorted_pairs]
@@ -437,6 +442,7 @@ class GovernedVectorbtInputAdapter:
             candidate_pool_market=copy.deepcopy(dataset.get("candidate_pool_market")),
             decision_clock_by_instrument=decision_clock_by_instrument,
             replay=replay,
+            real_availability_by_instrument=real_availability_by_instrument,
         )
 
     def _require_replay(self, dataset: Mapping[str, Any], frequency: str) -> dict[str, Any]:
@@ -468,6 +474,7 @@ class GovernedVectorbtInputAdapter:
         frequency: str,
         replay: Mapping[str, Any] | None,
         clocks_raw: dict[str, dict[str, str]],
+        avail_raw: dict[str, dict[str, str]],
     ) -> str:
         """Key a bar by its real ``bar_start`` (several bars may share a date); enforce PIT inputs."""
         if rec.get("bar_start") in (None, ""):
@@ -497,6 +504,7 @@ class GovernedVectorbtInputAdapter:
         if key in seen:
             raise VectorbtWorkflowError(f"duplicate bar for ({instrument}, {key})")
         seen[key] = end.astimezone(TAIPEI_TZ).isoformat()  # replay decision clock = bar_end
+        avail_raw.setdefault(instrument, {})[key] = avail.astimezone(timezone.utc).isoformat()
         return key
 
     def _normalize_refs(self, dataset: Mapping[str, Any]) -> list[str]:
@@ -1156,10 +1164,51 @@ def _bar_features_for_index(
         clocks = (getattr(dataset, "decision_clock_by_instrument", None) or {}).get(instrument)
         if not clocks or index >= len(clocks):
             raise IntradayDataUnavailable("missing_replay_clock", f"{instrument} bar {index}")
+        _attach_replay_minute_observations(dataset, instrument, index, bar_features)
         return bar_features, clocks[index]
     dates = dataset.dates_by_instrument.get(instrument)
     decision_time = dates[index] if dates and index < len(dates) else None
     return bar_features, decision_time
+
+
+def _attach_replay_minute_observations(
+    dataset: PreparedVectorbtDataset, instrument: str, index: int, bar_features: dict[str, Any]
+) -> None:
+    """Replay-scoped governed observation bridge (SD §6.3).
+
+    Each bar ``<= index`` becomes a dataset-bound, timezone-aware observation of the governed
+    minute dataset (e.g. ``tw_price_5m.close``).  ``event_time`` is the bar close; the evaluator's
+    ``available_time`` is the explicit *simulated* replay clock (bar_end) and is marked as such, while the
+    bar's REAL ``bar_availability_ts`` is retained as ``real_available_time`` provenance.  Real
+    availability must already be at or before the replay ceiling (enforced in ``prepare``); live
+    point-in-time rules are untouched and later bars are never emitted.
+    """
+    replay = dataset.replay or {}
+    ds_name = INTRADAY_DATASETS[dataset.data_frequency]
+    clocks = dataset.decision_clock_by_instrument[instrument]
+    reals = (getattr(dataset, "real_availability_by_instrument", None) or {}).get(instrument)
+    if not reals or index >= len(reals):
+        raise IntradayDataUnavailable("missing_bar_availability", f"{instrument} bar {index}")
+    snapshot_sha = (replay.get("source_snapshot") or {}).get("content_sha256")
+    bars = dataset.ohlcv_by_instrument[instrument]
+    fields = ("open", "high", "low", "close", "volume")
+    observations: dict[str, list[dict[str, Any]]] = {f: [] for f in fields}
+    for i in range(index + 1):
+        for k, name in enumerate(fields):
+            observations[name].append({
+                "value": bars[i][k],
+                "event_time": clocks[i],
+                "available_time": clocks[i],
+                "dataset": ds_name,
+                "field": name,
+                "entity": instrument,
+                "bar_start": dataset.dates_by_instrument[instrument][i],
+                "real_available_time": reals[i],
+                "availability_basis": "replay_simulated_bar_end",
+                "evidence_mode": REPLAY_LABEL,
+                "source_snapshot_sha256": snapshot_sha,
+            })
+    bar_features[ds_name] = observations
 
 
 def _artifact_cross_session(artifact: Mapping[str, Any]) -> bool:
@@ -1692,6 +1741,7 @@ def _slice_prepared_dataset(
     ohlcv_by_inst: dict[str, tuple[tuple[float, float, float, float, float], ...]] = {}
     dates_by_inst: dict[str, tuple[str, ...]] = {}
     clock_by_inst: dict[str, tuple[str, ...]] = {}
+    avail_by_inst: dict[str, tuple[str, ...]] = {}
     features_by_inst: dict[str, dict[str, Any]] = {}
 
     for inst in dataset.instruments:
@@ -1704,6 +1754,8 @@ def _slice_prepared_dataset(
         dates_by_inst[inst] = full_dates[start_idx:end_idx] if full_dates else ()
         full_clock = (getattr(dataset, "decision_clock_by_instrument", None) or {}).get(inst) or ()
         clock_by_inst[inst] = full_clock[start_idx:end_idx] if full_clock else ()
+        full_avail = (getattr(dataset, "real_availability_by_instrument", None) or {}).get(inst) or ()
+        avail_by_inst[inst] = full_avail[start_idx:end_idx] if full_avail else ()
 
         inst_features: dict[str, Any] = {
             "open": [b[0] for b in sliced_bars],
@@ -1735,6 +1787,7 @@ def _slice_prepared_dataset(
         candidate_pool_market=copy.deepcopy(getattr(dataset, "candidate_pool_market", None)),
         decision_clock_by_instrument=clock_by_inst,
         replay=copy.deepcopy(getattr(dataset, "replay", None)),
+        real_availability_by_instrument=avail_by_inst,
     )
 
 
