@@ -8,7 +8,7 @@
     "scripts/test_run_dev_paired_readonly_qa.py",
     "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py (secret-reference counts +1 for the new step)"
   ],
-  "local_verification": "12 caller fixture tests pass; env-parity, direct-ssh, bootstrap and strict-auth contract tests pass",
+  "local_verification": "after merging current dev: 57 passed (12 caller fixture tests, strict-auth count contract incl. +1 VIEWER/OPERATOR_A and +1 OPERATOR_B/TEST_ADMIN caller refs, env-parity); bootstrap and source-sha contracts 115 passed 2 skipped; workflow YAML parses; no real CLI/VM/SSH/secret access",
   "remaining_for_actual_execution": [
     "merged qualified CLI + this caller + reviewed transport in one exact accepted pair",
     "repo/env vars DEV_ORIGINAL_QA_TENANT_ID, _PERSONA_ID, _EXPECTED_ROLES_JSON, _BASELINE_PATH, _BASELINE_SHA256 (missing => outcome unproven, never pass)",
