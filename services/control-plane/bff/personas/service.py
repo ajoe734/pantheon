@@ -13909,7 +13909,7 @@ def _pm12_quarterly_recommendation_item(
 ) -> Dict[str, Any]:
     action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
-    score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
+    score = _management_number(item.get("overall_score"))
     evidence_sample = list(item.get("evidence_refs") or [])[:5]
     evidence_ref_ids = list(saved.get("evidence_ref_ids") or [])
     recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"

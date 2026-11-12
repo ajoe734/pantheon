@@ -20,11 +20,48 @@
     "Paper PnL event and telemetry projection propagate existing ledger capital/start without changing capital",
     "Snapshot version identity and BFF/allocation adapter accept historical v1 and v2"
   ],
-  "validation": [],
+  "validation": [
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/capital/test_allocation_policy.py services/capital/test_allocation_lineage_integrity.py services/rankings/test_store.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+      "exit_code": 0,
+      "result": "142 passed, 6 warnings in 31.97s",
+      "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/functional-pytest.log",
+      "sha256": "8e86915f0d639380fa081adf854a32dd7de28df84914623a23180968b55d2bc9"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_runtime_summary_projection.py services/execution/lean_runtime/test_paper_runtime.py",
+      "exit_code": 0,
+      "result": "226 passed, 46 subtests passed in 30.57s",
+      "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/producer-projection-pytest.log",
+      "sha256": "8f98a3535f757b497541303c39c6ce2abc6e5d2dcb1c4856faeefe4eff940a52"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "75 passed, 6 warnings in 68.58s",
+      "output": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/bff-architecture-pytest.log",
+      "sha256": "941c7736e5c232777f2b1af86919d5e49b7be50eef96dd2a151671228b98b3f6"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
   "limitations": [
     "No hosted deployment or allocation/capital mutation",
     "Quarter opening equity is not reconstructed for a ledger started before the requested quarter; such PnL remains unknown",
     "Audited risk/activity inputs are compatible test reconstruction, not original hosted row summaries",
     "Non-PnL risk/execution/activity metric semantics remain unchanged"
-  ]
+  ],
+  "verification_note": "Functional and producer batches completed before the final recommendation-null presentation fix; the later BFF/architecture batch rechecks the changed presentation and all quarterly route regressions. Earlier intermediate expectation failures and the legacy snapshot-label regression were corrected before these passing batches.",
+  "base_commit": "890a97f3867185dbfeeb21a394ff3ac714771690",
+  "acceptance_evidence": {
+    "1": "Real quarterly HTTP route validates PnL/capital from matched observation, fraction unit and recorded start/as-of within quarter; atomic ledger -> telemetry projection transport is covered.",
+    "2": "Formula endpoint v2, v1 version-history entry, operator decision record; legacy v1 exact digest and BFF snapshot reader tests.",
+    "3": "HTTP route equal-capital discrimination, scale invariance, real zero PnL and losses.",
+    "4": "HTTP route unknown capital/PnL/nonfinite/bool/zero/negative/invalid period, null overall/rank/adapter; drilldown and recommendation preserve null; multi-runtime completeness/currency guards.",
+    "5": "Capital adapter accepts v1/v2 and rejects unknown versions and null/nonfinite score; BFF durable snapshot reader accepts both.",
+    "6": "Audited PnLs plus hosted recorded 100000 capital and actual ledger starts produce PnL scores 62.880116 (衡岳 R2), 54.73 (青禾 R3), 50.207 (澄川 R2) through registered quarterly HTTP route."
+  },
+  "scope_extension_rationale": "The scoped scorer had no capital/period provenance because telemetry discarded it, and snapshot identity/BFF snapshot admission hardcoded v1. Minimal changes to paper event production, telemetry projection, snapshot identity and BFF snapshot admission are necessary to make the requested production flow work; no allocation parameters or execution authority changed."
 }

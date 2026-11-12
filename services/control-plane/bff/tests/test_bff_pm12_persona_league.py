@@ -1027,6 +1027,7 @@ def test_pm12_quarterly_ranking_recommendations_are_governance_only() -> None:
             assert "humanGateDecisionCount" not in summary
             assert "liveCapitalMutationCount" not in summary
             for recommendation in items:
+                assert recommendation["score"] is None
                 assert recommendation["action_id"] in allowed
                 assert recommendation["recommendation_type"] == "governance_advisory"
                 assert recommendation["requires_human_gate_decision"] is True
@@ -1496,11 +1497,18 @@ def test_pnl_projection_reaches_quarterly_http_route(monkeypatch, tmp_path):
 @pytest.mark.parametrize("version", ["pm12-default-v1", "pm12-return-on-capital-v2"])
 def test_bff_allocation_reader_accepts_both_snapshot_versions(version):
     from services.rankings.snapshots import snapshot_record
-    from services.control_plane.bff.pm12.service import _pm12_allocation_snapshot_record
+    from services.rankings.snapshots import SUPPORTED_FORMULA_VERSIONS, _stable_json_hash
     snapshot = snapshot_record([{"persona_id": "p", "formula_version": version}],
                                surface="quarterly", period="2026-Q4").to_canonical_dict()
     store = SimpleNamespace(get_ranking_snapshot=lambda snapshot_id: snapshot)
-    assert _pm12_allocation_snapshot_record(snapshot["ranking_snapshot_id"], read_store=store) == snapshot
+    # Reuse this suite's established PM-12 source namespace, supplying its
+    # explicit read port. The legacy service's optional main fallback is never
+    # imported or exercised by an application-layer test.
+    namespace = _compile_pm12_namespace(store)
+    namespace.update(SUPPORTED_FORMULA_VERSIONS=SUPPORTED_FORMULA_VERSIONS, _stable_json_hash=_stable_json_hash)
+    assert namespace["_pm12_allocation_snapshot_record"](
+        snapshot["ranking_snapshot_id"], bff_error_fn=lambda *a, **kw: HTTPException(status_code=422)
+    ) == snapshot
 
 
 def test_pnl_return_requires_all_runtime_denominators_and_compatible_windows():
