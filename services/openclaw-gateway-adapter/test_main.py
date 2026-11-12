@@ -1715,6 +1715,36 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         self.assertEqual(replay.json(), first.json())
         ensure.assert_called_once()
 
+    def test_agent_ensure_initializes_fresh_nested_ledger_directory(self):
+        nested = Path(self._temp_dir.name) / "fresh" / "nested" / "ledger.sqlite3"
+        agent = {
+            "status": "created",
+            "agent_id": self._PERSONA_ID,
+            "workspace_ref": self._PAYLOAD["workspace_ref"],
+        }
+        self.assertFalse(nested.parent.exists())
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_OPENCLAW_AGENT_IDEMPOTENCY_DB", nested),
+            patch.object(adapter_main, "ensure_agora_servant_agent", return_value=agent) as ensure,
+        ):
+            first = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers=self._HEADERS,
+            )
+            replay = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers={**self._HEADERS, "X-Request-Id": "request-agent-retry"},
+            )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(replay.status_code, 201, replay.text)
+        self.assertEqual(replay.json(), first.json())
+        self.assertTrue(nested.parent.is_dir())
+        ensure.assert_called_once()
+
     def test_agent_ensure_rejects_same_key_with_a_different_payload(self):
         agent = {
             "status": "created",

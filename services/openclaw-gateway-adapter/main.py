@@ -3207,6 +3207,7 @@ def _ensure_agent_locked(
     postcondition_fn: Optional[Any],
     replay_fn: Optional[Any],
 ) -> tuple[int, Dict[str, Any]]:
+    _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(
         str(_OPENCLAW_AGENT_IDEMPOTENCY_DB),
         timeout=130.0,
