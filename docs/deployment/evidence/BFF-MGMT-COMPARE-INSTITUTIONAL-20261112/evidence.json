@@ -51,10 +51,12 @@
   },
   "validation": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
       "status": "passed",
       "exit_status": 0,
-      "result": "85 passed, 4 warnings in 16.06s"
+      "result": "85 passed, 4 warnings in 26.45s after rebase",
+      "tested_base": "4042386ef7b11cee46343ba2cad53033239c1ced",
+      "additional_checks": "git diff --check origin/dev...HEAD; manifest JSON parsed; current dev is an ancestor of HEAD"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py",
