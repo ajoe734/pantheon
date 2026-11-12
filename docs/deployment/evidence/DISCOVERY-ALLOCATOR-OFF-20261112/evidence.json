@@ -23,6 +23,11 @@
       "compose_version": "Docker Compose v5.5.0"
     },
     {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/test_discovery_allocator.py services/research/tests/test_discovery_allocator_schedule.py",
+      "exit_code": 0,
+      "result": "39 passed, 73 warnings in 22.38s after merging current dev 55a2f1e70ff41941c94d1b133c404fbe09989518."
+    },
+    {
       "command": "git diff --check",
       "exit_code": 0,
       "result": "Passed."
