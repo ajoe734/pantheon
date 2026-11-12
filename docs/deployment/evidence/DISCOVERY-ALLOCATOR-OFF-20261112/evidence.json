@@ -1,0 +1,46 @@
+{
+  "task_id": "DISCOVERY-ALLOCATOR-OFF-20261112",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "scope": "Discovery allocation is disabled by default in Python and the research orchestrator Compose environment; explicit true opts in.",
+  "behavior": {
+    "unset_empty_false_or_invalid": "disabled",
+    "explicit_true": "enabled; whitespace and case are normalized",
+    "legacy_truthy_aliases": "1, yes, and on do not enable allocation",
+    "disabled_run": "Records enabled=false, reason=disabled, no candidates read, and no bindings; no owner ports or allocator factory are called.",
+    "enabled_run": "Existing paper-only allocation, persona and capital caps, scoring, durable binding reconciliation, and provisioning behavior are retained."
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped editable distribution provisioned and import mapping verified from a foreign cwd."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/research/test_discovery_allocator.py services/research/tests/test_discovery_allocator_schedule.py",
+      "exit_code": 0,
+      "result": "39 passed, 73 deprecation warnings in 18.07s; no skipped tests.",
+      "compose_version": "Docker Compose v5.5.0"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Passed."
+    }
+  ],
+  "acceptance_evidence": {
+    "default_disabled_record": "test_unset_setting_records_disabled_without_owner_calls executes application startup with the setting removed and checks the persisted disabled run.",
+    "explicit_true_and_compose": "test_allocator_disabled_without_explicit_true and test_allocator_enabled_with_explicit_true cover flag parsing; test_compose_rendered_default_and_false_disable renders unset, empty and false settings as false; test_compose_rendered_explicit_true_enables renders true.",
+    "no_pool_or_binding_creation": "The unset startup test asserts every discovery owner port, including allocator_factory, is uncalled and bound is empty; the false startup and Compose tests also assert no provisioning calls.",
+    "enabled_behavior": "Existing allocator unit and scheduling tests pass, including startup paper-only cap five, production owner wiring, and durable-write cap reconciliation."
+  },
+  "delivery_boundaries": {
+    "hosted_verification": "Not performed; local tests and Compose rendering do not establish hosted activation.",
+    "pool_design": "Allocator retained; strategy pool autonomy remains owned by SD-PERSONA-STRATEGY-POOL-AUTONOMY-20261112.",
+    "existing_state": "No existing pools or bindings are removed by this source change."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "decision_source": "Canonical exact-head handoff and assigned reviewer approval."
+  }
+}
