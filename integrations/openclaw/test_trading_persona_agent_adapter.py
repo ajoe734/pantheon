@@ -267,3 +267,29 @@ def test_standalone_cli_reconcile_and_http_ensure_share_one_registry_lock(env, t
     for agent in by_id.values():
         assert agent["tools"]["allow"] == ["read", "persona_proposal_submit"]
         assert agent["tools"]["exec"]["security"] == "deny"
+
+
+def test_servant_ensure_initializes_fresh_nested_ledger_dir_and_replays(env, tmp_path):
+    """The shared registry lock must not replace creating the idempotency DB parent."""
+    root, cli, client = env
+    nested = tmp_path / "fresh" / "nested" / "ledger" / "agents.sqlite3"
+    pid = "agora-servant-0123456789abcdefabcd"
+    payload = {
+        "persona_registry_ref": f"persona:{pid}",
+        "workspace_ref": str(root / pid),
+        "capability_snapshot": {"allowed_capabilities": ["persona_opinion"],
+                                "persona_class": "agora_servant"},
+    }
+    agent = {"status": "created", "agent_id": pid, "workspace_ref": payload["workspace_ref"]}
+    assert not nested.parent.exists()
+    with patch.object(adapter_main, "_OPENCLAW_AGENT_IDEMPOTENCY_DB", nested), patch.object(
+        adapter_main, "ensure_agora_servant_agent", return_value=agent
+    ) as ensure:
+        first = client.post("/api/openclaw-adapter/agents/ensure", headers=HEADERS, json=payload)
+        replay = client.post("/api/openclaw-adapter/agents/ensure", headers=HEADERS, json=payload)
+
+    assert first.status_code == 201, first.text
+    assert replay.status_code == 201, replay.text
+    assert replay.json() == first.json()
+    assert nested.exists()
+    ensure.assert_called_once()
