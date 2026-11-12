@@ -43,6 +43,25 @@ from services.execution.lean_runtime.symbol_parser import (
     is_taiwan_venue_symbol,
     validate_executable_symbol,
 )
+from services.execution.lean_runtime.intraday_settlement import (
+    ENQUEUED_RECORD_SUFFIX,
+
+    SETTLEMENT_RECORD_SUFFIX,
+    STATUS_SETTLED,
+    PENDING_RECORD_SUFFIX,
+    advance_decision,
+    PENDING_DISCOVERY_DAYS,
+    index_slot_id,
+    parse_ts,
+    ExecutionPlan,
+    IntradayWindowError,
+    STATUS_PENDING,
+    is_intraday_frequency,
+    pending_record,
+    plan_next_session_decision,
+)
+from services.registry.strategy_artifact import BAR_FREQUENCY_DATASETS
+from services.execution.lean_runtime.instrument_candidates import TAIPEI_TZ
 from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
     admit_market_snapshot,
@@ -726,6 +745,10 @@ class CurrentArtifactStrategy:
             or market_input.get("observed_at")
             or now_iso
         )
+        if market_input.get("intraday_plan") is not None:
+            # The real submission clock, not the bar end: a bar fetched and reconciled
+            # after the close is visible only from its own availability stamp.
+            decision_time = market_input["intraday_plan"]["decision_time"]
         holding_bars = market_input.get("holding_bars")
         current_direction = market_input.get("current_direction")
         try:
@@ -914,6 +937,17 @@ class CurrentArtifactStrategy:
                 "is_real_capital": False,
             },
         }
+        intraday_plan = market_input.get("intraday_plan")
+        if intraday_plan is not None:
+            out["metadata"]["market_input_bar_frequency"] = market_input["bar_frequency"]
+            out["metadata"]["bar_availability_ts"] = market_input.get("bar_availability_ts")
+            out["metadata"]["decision_time"] = intraday_plan["decision_time"]
+            out["metadata"]["execution_target_bar_start"] = intraday_plan["execution_target_bar_start"]
+            out["metadata"]["settlement_status"] = STATUS_PENDING
+            out["metadata"]["settlement_mode"] = "delayed_simulated"
+            out["intraday_settlement"] = pending_record(
+                ExecutionPlan(**intraday_plan), decision_id=decision_id, symbol=symbol, direction=direction
+            )
         if portfolio_result is not None:
             out["metadata"]["portfolio_member_views"] = {
                 member["member_id"]: {
@@ -1196,6 +1230,8 @@ def _market_input_for_binding(
 
     raw = binding.get("market_input") or metadata.get("market_input")
     policy = _market_input_policy(binding, metadata)
+    declared_frequency = _declared_bar_frequency(strategy_artifact)
+    intraday_frequency = declared_frequency if is_intraday_frequency(declared_frequency) else None
     if raw is None:
         if policy is None:
             binding_id = str(binding.get("binding_id") or "<unknown>")
@@ -1234,6 +1270,10 @@ def _market_input_for_binding(
                 f"{source_ingest_url}/api/source-ingest/snapshots/latest"
                 f"?symbol={urllib.parse.quote(symbol, safe='')}"
             )
+            if intraday_frequency is not None:
+                # Daily URLs stay byte-identical; only a declared intraday cadence
+                # asks for the dataset-isolated minute snapshot.
+                url += f"&frequency={urllib.parse.quote(intraday_frequency, safe='')}"
             req = urllib.request.Request(
                 url,
                 headers={"Accept": "application/json"},
@@ -1242,6 +1282,12 @@ def _market_input_for_binding(
             with urllib.request.urlopen(req, timeout=5) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
         except Exception as exc:
+            if intraday_frequency is not None and getattr(exc, "code", None) == 404:
+                raise SignalDecisionUnavailable(
+                    "intraday_bar_missing",
+                    f"no reconciled {intraday_frequency} bar is stored for {symbol}; "
+                    "no previous, daily or synthetic bar is substituted",
+                ) from exc
             raise SignalDecisionUnavailable(
                 "market_input_unavailable",
                 f"Source stored snapshot is unavailable for {symbol}: {exc}",
@@ -1303,7 +1349,13 @@ def _market_input_for_binding(
             "market_input_invalid",
             f"Source snapshot symbol {snapshot_symbol!r} does not match binding symbol {requested_symbol!r}",
         )
-    if policy is not None:
+    _assert_snapshot_frequency_isolation(raw, declared_frequency, binding)
+    intraday_plan = None
+    if intraday_frequency is not None:
+        intraday_plan = _admit_intraday_snapshot(
+            raw, binding, metadata, strategy_artifact, intraday_frequency, now_iso
+        )
+    if policy is not None and intraday_frequency is None:
         decision = admit_market_snapshot(
             raw,
             expected_symbol=requested_symbol or None,
@@ -1337,6 +1389,10 @@ def _market_input_for_binding(
         if pv_key not in feature_map and raw.get(pv_key) is not None:
             feature_map[pv_key] = raw.get(pv_key)
     feature_map.setdefault("close", normalized_closes)
+    if intraday_frequency is not None:
+        _project_snapshot_closes_as_features(
+            feature_map, strategy_artifact, intraday_frequency, normalized_closes, raw
+        )
 
     return {
         "closes": normalized_closes,
@@ -1357,7 +1413,114 @@ def _market_input_for_binding(
         "market_code": raw.get("market_code"),
         "exchange": raw.get("exchange"),
         "country": raw.get("country"),
+        "bar_frequency": declared_frequency,
+        **(
+            {"intraday_plan": intraday_plan, "bar_availability_ts": raw.get("observed_at")}
+            if intraday_plan is not None
+            else {}
+        ),
     }
+
+
+def _project_snapshot_closes_as_features(
+    feature_map: dict[str, Any],
+    strategy_artifact: Mapping[str, Any] | None,
+    frequency: str,
+    closes: Sequence[float],
+    raw: Mapping[str, Any],
+) -> None:
+    """Tag the stored snapshot closes as PIT observations for minute ``close`` inputs.
+
+    The public snapshot carries only ordered closes plus the real ``event_time`` (the
+    last bar end) and ``observed_at`` (the reconciled availability stamp); it does not
+    carry per-observation timestamps.  Only the last close, whose event time is real, is
+    projected -- available from ``observed_at``, never earlier than the reconcile.  No
+    earlier event time or session identity is invented, so inputs needing a longer
+    history (and non-close fields / other datasets) stay absent and fail closed in the
+    evaluator; such strategies must supply inline point-in-time features.
+    """
+    logic = (strategy_artifact or {}).get("strategy_logic") if isinstance(strategy_artifact, Mapping) else None
+    inputs = logic.get("inputs") if isinstance(logic, Mapping) else None
+    dataset = BAR_FREQUENCY_DATASETS.get(frequency)
+    if not isinstance(inputs, Sequence) or not closes:
+        return
+    try:
+        last_end = parse_ts(raw.get("event_time"), field="event_time")
+        available = parse_ts(raw.get("observed_at"), field="observed_at").astimezone(TAIPEI_TZ).isoformat()
+    except (IntradayWindowError, ValueError):
+        return
+    for item in inputs:
+        if not isinstance(item, Mapping) or item.get("dataset") != dataset or item.get("field") != "close":
+            continue
+        name = str(item.get("name"))
+        if name in feature_map:
+            continue
+        feature_map[name] = [
+            {
+                "event_time": last_end.astimezone(TAIPEI_TZ).isoformat(),
+                "available_time": available,
+                "value": float(closes[-1]),
+                "dataset": dataset,
+                "field": "close",
+            }
+        ]
+
+
+def _declared_bar_frequency(strategy_artifact: Mapping[str, Any] | None) -> str | None:
+    params = strategy_artifact.get("parameters") if isinstance(strategy_artifact, Mapping) else None
+    value = params.get("bar_frequency") if isinstance(params, Mapping) else None
+    text = str(value or "").strip().lower()
+    return {"d": "1d", "1day": "1d", "daily": "1d"}.get(text, text) or None
+
+
+def _assert_snapshot_frequency_isolation(
+    raw: Mapping[str, Any], declared_frequency: str | None, binding: Mapping[str, Any]
+) -> None:
+    """A snapshot of one dataset can never feed a strategy declaring another frequency."""
+    binding_id = str(binding.get("binding_id") or "<unknown>")
+    carried = raw.get("dataset")
+    if declared_frequency is None:
+        expected = None
+    else:
+        expected = BAR_FREQUENCY_DATASETS.get(declared_frequency)
+    if is_intraday_frequency(declared_frequency):
+        if carried != expected:
+            raise SignalDecisionUnavailable(
+                "market_input_frequency_mismatch",
+                f"binding {binding_id} declares {declared_frequency} ({expected}) but the "
+                f"snapshot dataset is {carried!r}; no daily or other-frequency substitute",
+            )
+    elif carried not in (None, "", "tw_price_daily") and declared_frequency in (None, "1d"):
+        raise SignalDecisionUnavailable(
+            "market_input_frequency_mismatch",
+            f"binding {binding_id} is daily but the snapshot dataset is {carried!r}",
+        )
+
+
+def _admit_intraday_snapshot(
+    raw: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    strategy_artifact: Mapping[str, Any] | None,
+    frequency: str,
+    now_iso: str,
+) -> dict[str, Any]:
+    """Next-session admission of a reconciled intraday bar (SD 6.4 step 3)."""
+    params = (strategy_artifact or {}).get("parameters") or {}
+    # The grading horizon is the artifact's own holding horizon in bars (hold_bars, the
+    # factor-rule max_holding_bars parameter); one bar when the artifact declares none.
+    horizon = params.get("hold_bars") or binding.get("horizon_bars") or metadata.get("horizon_bars") or 1
+    try:
+        plan = plan_next_session_decision(
+            event_time=raw.get("event_time"),
+            bar_availability_ts=raw.get("observed_at"),
+            decision_time=now_iso,
+            bar_frequency=frequency,
+            horizon_bars=horizon,
+        )
+    except IntradayWindowError as exc:
+        raise SignalDecisionUnavailable(exc.reason, exc.detail) from exc
+    return plan.to_dict()
 
 
 def _market_input_policy(
@@ -1850,6 +2013,31 @@ def collect_counterfactual_grading(
     return rows, diagnostics, to_mark
 
 
+def reconciled_intraday_bar_reader(
+    symbol: str, session_date: str, bar_frequency: str, now: datetime
+) -> Sequence[Any]:
+    """Reconciled-only bars of one session; missing/quarantined/unreconciled days -> [].
+
+    Built on ``intraday_bars.load_bars`` over the governed ``IntradayStore``; an
+    unconfigured store raises (the decision stays pending, it is not expired by a
+    deployment fault).
+    """
+    from services.research.intraday_bars import InsufficientCleanHistory, load_bars
+    from services.source_ingestion.intraday_store import IntradayStore
+
+    from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
+
+    store = IntradayStore.from_env()
+    # The store is keyed by the native code (2330); the execution identity (2330.TW) is
+    # normalised for the read and restored on every returned bar.
+    native = normalize_underlying_code(symbol)
+    try:
+        bars = load_bars(store, native, [session_date], bar_frequency, decision_time=now)
+    except InsufficientCleanHistory:
+        return []
+    return [{**bar.to_dict(), "symbol": symbol} for bar in bars]
+
+
 class PaperSignalProducer:
     """Generate signals for paper bindings and enqueue them onto their queues.
 
@@ -1857,10 +2045,17 @@ class PaperSignalProducer:
     keys and validation per binding.
     """
 
-    def __init__(self, store_for: Callable[[Any], Any], strategy: Any) -> None:
+    def __init__(
+        self,
+        store_for: Callable[[Any], Any],
+        strategy: Any,
+        intraday_bar_reader: Callable[[str, str, str, datetime], Sequence[Any]] | None = None,
+    ) -> None:
         self._store_for = store_for
         self._strategy = strategy
         self._degraded_by_binding: dict[str, str] = {}
+        # (symbol, session_date, bar_frequency, now) -> reconciled-only bars of that session.
+        self._intraday_bar_reader = intraday_bar_reader or reconciled_intraday_bar_reader
 
     @property
     def degraded_bindings(self) -> dict[str, str]:
@@ -1868,10 +2063,114 @@ class PaperSignalProducer:
 
         return dict(self._degraded_by_binding)
 
+    def _park_pending_intraday(
+        self, store: Any, binding_id: str, decision_id: str, pending: Mapping[str, Any], out: Mapping[str, Any]
+    ) -> int:
+        putter = getattr(store, "put_decision_record", None)
+        getter = getattr(store, "get_decision_record", None)
+        if not callable(putter) or not callable(getter) or not decision_id:
+            self._degraded_by_binding[binding_id] = "intraday_settlement_store_unsupported"
+            return 0
+        if isinstance(out.get("expression"), Mapping):
+            self._degraded_by_binding[binding_id] = "intraday_expression_unsupported"
+            return 0
+        try:
+            record = {**dict(pending), "binding_id": binding_id, "decision_out": json.loads(json.dumps(out))}
+        except (TypeError, ValueError):
+            self._degraded_by_binding[binding_id] = "intraday_decision_not_serialisable"
+            return 0
+        # Index first, pending second: an interruption between the two leaves a discoverable
+        # index entry with no pending record (settlement skips it), never an undiscoverable
+        # pending record.  Both steps are idempotent so a restart/retry completes them, and a
+        # retry after the submission cutoff (which never reaches here) cannot strand a record.
+        existing_pending = getter(decision_id + PENDING_RECORD_SUFFIX)
+        day = str((existing_pending if isinstance(existing_pending, Mapping) else pending)["plan"]["decision_day"])
+        slot = 0
+        while True:
+            existing = getter(index_slot_id(binding_id, day, slot))
+            if existing is None:
+                putter(index_slot_id(binding_id, day, slot), {"decision_id": decision_id})
+                break
+            if existing.get("decision_id") == decision_id:
+                break
+            slot += 1
+        if existing_pending is None:
+            putter(decision_id + PENDING_RECORD_SUFFIX, record)
+        log.info("intraday decision %s parked as pending_settlement for %s", decision_id, binding_id)
+        return 0
+
+    def settle_pending_intraday(self, binding: Any, now_iso: str) -> int:
+        """Advance parked intraday decisions; enqueue only those whose fill is real.
+
+        Reads the per-binding pending index, asks the reconciled-only reader for the D+1
+        bars, writes the immutable settlement/grade records through ``advance_decision``
+        and only then releases a settled decision into the ordinary execution queue with
+        the real first-bar open.  Expired (missing/quarantined/late data) decisions are
+        closed ``expired_no_price`` and never enqueued.
+        """
+        b_dict = _binding_dict_from_obj(binding)
+        binding_id = b_dict["binding_id"]
+        store = self._store_for(binding)
+        getter = getattr(store, "get_decision_record", None)
+        if not callable(getter) or not callable(getattr(store, "put_decision_record", None)):
+            return 0
+        now = parse_ts(now_iso, field="now")
+        today = now.astimezone(TAIPEI_TZ).date()
+        released = 0
+
+        def reader(symbol: str, session_date: str, frequency: str) -> Sequence[Any]:
+            return self._intraday_bar_reader(symbol, session_date, frequency, now)
+
+        # Discover every outstanding decision over the whole record-retention window (not a
+        # calendar-age guess): a decision whose D+1 is after a long holiday stays discoverable
+        # until settlement/grading is terminal or the store itself retires the record.
+        for back in range(0, PENDING_DISCOVERY_DAYS):
+            day = (today - timedelta(days=back)).isoformat()
+            slot = 0
+            while True:
+                entry = getter(index_slot_id(binding_id, day, slot))
+                slot += 1
+                if entry is None:
+                    break
+                decision_id = str(entry["decision_id"])
+                already_enqueued = getter(decision_id + ENQUEUED_RECORD_SUFFIX) is not None
+                try:
+                    advance_decision(store, decision_id, reader, now=now)
+                except Exception as exc:  # noqa: BLE001 - a reader fault leaves the decision pending
+                    self._degraded_by_binding[binding_id] = f"intraday_settlement_unavailable: {exc}"
+                    continue
+                if already_enqueued:
+                    # Order already admitted; advance_decision above still graded it (deferred grading).
+                    continue
+                settled = getter(decision_id + SETTLEMENT_RECORD_SUFFIX)
+                if not isinstance(settled, Mapping) or settled.get("status") != STATUS_SETTLED:
+                    continue
+                pending = getter(decision_id + PENDING_RECORD_SUFFIX) or {}
+                decision_out = pending.get("decision_out")
+                if not isinstance(decision_out, Mapping):
+                    continue
+                count = self._enqueue_output(
+                    binding, now_iso, json.loads(json.dumps(decision_out)), settled_fill=settled["fill"]
+                )
+                # Marked even when dedup skipped the enqueue: the order is already admitted.
+                store.put_decision_record(
+                    decision_id + ENQUEUED_RECORD_SUFFIX, {"decision_id": decision_id, "enqueued": count}
+                )
+                released += count
+        return released
+
     def produce(self, binding: Any, now_iso: str) -> int:
         """Emit + enqueue signals for one binding; return the count enqueued."""
         b_dict = _binding_dict_from_obj(binding)
         binding_id = b_dict["binding_id"]
+        try:
+            released = self.settle_pending_intraday(binding, now_iso)
+        except Exception as exc:  # noqa: BLE001 - a settlement-index fault must not block daily production
+            log.warning("intraday settlement pass failed for %s: %s", binding_id, exc)
+            released = 0
+        return released + self._produce_current(binding, binding_id, now_iso)
+
+    def _produce_current(self, binding: Any, binding_id: str, now_iso: str) -> int:
 
         # Generate strategy output
         try:
@@ -1891,7 +2190,14 @@ class PaperSignalProducer:
                        for decision in out["portfolio_decisions"])
         return self._enqueue_output(binding, now_iso, out)
 
-    def _enqueue_output(self, binding: Any, now_iso: str, out: Any) -> int:
+    def _enqueue_output(
+        self,
+        binding: Any,
+        now_iso: str,
+        out: Any,
+        *,
+        settled_fill: Mapping[str, Any] | None = None,
+    ) -> int:
         b_dict = _binding_dict_from_obj(binding)
         binding_id = b_dict["binding_id"]
         store = self._store_for(binding)
@@ -1965,6 +2271,16 @@ class PaperSignalProducer:
                 )
                 return 0
 
+            intraday_pending = out.pop("intraday_settlement", None)
+            if isinstance(intraday_pending, Mapping) and settled_fill is None:
+                # Step 4: the decision is only a durable pending_settlement record.  It is
+                # NOT enqueued: no order may reach the consumer before the D+1 first bar
+                # is reconciled and the delayed settlement fills it (see
+                # ``settle_pending_intraday``).
+                return self._park_pending_intraday(
+                    store, binding_id, str(out.get("decision_id") or ""), intraday_pending, out
+                )
+
             expression = out.pop("expression", None)
             if isinstance(expression, Mapping):
                 # The instrument decision is durable before any order exists. A
@@ -2028,6 +2344,25 @@ class PaperSignalProducer:
                 out["metadata"].setdefault(
                     "environment", str(environment).strip().lower()
                 )
+
+            if settled_fill is not None and isinstance(out.get("metadata"), dict):
+                # Delayed settlement: the only price is the real, reconciled D+1 first-bar
+                # open (never D's close); the stale decision-bar market_data is replaced.
+                fill_price = float(settled_fill["price"])
+                out["metadata"].pop("close", None)
+                out["metadata"]["market_price"] = fill_price
+                out["metadata"]["market_data"] = {
+                    "price": fill_price,
+                    "event_time": settled_fill.get("bar_start"),
+                    "source_ref": out["metadata"].get("market_input_ref"),
+                    "price_observed_at": settled_fill.get("price_observed_at"),
+                    "settlement_mode": "delayed_simulated",
+                }
+                out["metadata"]["settlement_status"] = STATUS_SETTLED
+                out["metadata"]["settlement_mode"] = "delayed_simulated"
+                out["metadata"]["price_observed_at"] = settled_fill.get("price_observed_at")
+                out["metadata"]["is_live_fill_evidence"] = False
+                out["timestamp"] = now_iso
 
             grading_to_mark: list[tuple[str, dict[str, Any]]] = []
             grading_input = expression.get("grading") if isinstance(expression, Mapping) else None
