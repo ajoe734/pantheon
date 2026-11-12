@@ -107,8 +107,30 @@
         "command": "git diff --check",
         "result": "passed",
         "exit_code": 0
+      },
+      {
+        "command": "python3 -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision (after current-dev merge)",
+        "result": "26 tests passed in 0.955s",
+        "exit_code": 0
+      },
+      {
+        "command": "timeout 180 /tmp/finmind-review-20261111-venv/bin/python -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_controller_readback.py services/source_ingestion/tests/test_controller_worker_manual_once.py",
+        "result": "158 passed in 43.20s after current-dev merge",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 inline comparison against origin/dev:.github/workflows/branch-ci.yml and git diff --exit-code a53cf176e862262307a3717c7c63c18e445ecab3 HEAD -- existing DLQ implementation/test paths",
+        "result": "Exact single timeout substitution from current dev; all six declared DLQ implementation/test paths unchanged from a53; evidence JSON parsed.",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --task-id SOURCE-BOUNDED-DLQ-SCOPE-20261112 --skip-merge; python3 scripts/git/check_commit_trailers.py --rev HEAD --task-id SOURCE-BOUNDED-DLQ-SCOPE-20261112; git diff --check origin/dev...HEAD",
+        "result": "passed",
+        "exit_code": 0
       }
     ],
-    "delivery_boundary": "New head requires fresh assigned Claude frozen-head review, genuine CI and native supervisor integration. No old-head third rerun, manual status, approval artifact or hosted completion claim. Original sole publisher retains joint #7203/#7204 release and protected-pair, four GUI, performance and thirteen parity acceptance. Separate test-file race remains with existing 7CAF followup."
+    "delivery_boundary": "New head requires fresh assigned Claude frozen-head review, genuine CI and native supervisor integration. No old-head third rerun, manual status, approval artifact or hosted completion claim. Original sole publisher retains joint #7203/#7204 release and protected-pair, four GUI, performance and thirteen parity acceptance. Separate test-file race remains with existing 7CAF followup.",
+    "integration_base": "3ac1a1a31b63f321431c293af26c713ce503d9e5",
+    "integration_merge": "f9d5214eec42197a5f22213ac6bb5bf9366e525a"
   }
 }
