@@ -408,7 +408,17 @@ def _pending(store: IntradayStore, res: ReconciliationResult, write: bool, reaso
     if write and drop_record:
         stale = record_path(store, res.symbol, res.session_date)
         if stale.exists():
-            stale.unlink()
+            rec = read_record(store, res.symbol, res.session_date)
+            if rec and rec.get("kind") == "readmitted":
+                # The quarantine generation is already resolved, so a refetch can never
+                # re-run. Keep the bound sidecar but withhold it: the loader stays closed
+                # and the next reconcile with official data present can re-pass it.
+                if not rec.get("withheld"):
+                    rec["withheld"] = True
+                    rec["withheld_reason"] = reason
+                    _atomic_write(stale, (_canonical(rec) + "\n").encode("utf-8"))
+            else:
+                stale.unlink()
     return res
 
 
@@ -490,7 +500,7 @@ def reconcile_symbol_day(
     if fetched is None:
         return _pending(store, res, write, "fetched_at_unknown", drop_record=True)
     prior = read_record(store, sym, day)
-    if (prior and prior.get("kind") == kind and prior.get("shard_sha256") == shard_hash
+    if (prior and not prior.get("withheld") and prior.get("kind") == kind and prior.get("shard_sha256") == shard_hash
             and prior.get("official_row_hash") == row.ref.get("line_sha256")
             and prior.get("config_hash") == cfg.config_hash):
         res.outcome, res.unchanged = OUTCOME_PASS, True
@@ -660,7 +670,7 @@ def read_reconciled_rows(
     """
     sym, day = _safe_symbol(symbol), _safe_date(session_date)
     rec = read_record(store, sym, day)
-    if not rec:
+    if not rec or rec.get("withheld"):
         return []
     entry = ((store.read_manifest(day) or {}).get("symbols") or {}).get(sym) or {}
     kind, status = rec.get("kind"), entry.get("status")

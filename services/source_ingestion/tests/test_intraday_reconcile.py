@@ -368,3 +368,34 @@ def test_recovered_day_reconciles_as_pass_with_real_timestamps(tmp_path):
     assert read_reconciled_rows(store, "2330", DAY)
     assert _run(store, bad).outcome == "fail"
     assert read_reconciled_rows(store, "2330", DAY) == []
+
+
+def test_readmitted_pending_absent_partition_then_official_restored_recovers(tmp_path):
+    store, off, later = _recovered(tmp_path)
+    assert _run(store, OfficialDaily([], [])).outcome == "pending_official"
+    assert read_reconciled_rows(store, "2330", DAY) == []  # loader closed while pending
+    res = reconcile_symbol_day(store, off, "2330", DAY, CFG, clock=lambda: later)
+    assert res.outcome == "pass" and not res.unchanged
+    assert len(read_reconciled_rows(store, "2330", DAY)) == 271
+
+
+def test_readmitted_future_official_then_restored_recovers(tmp_path):
+    store, off, later = _recovered(tmp_path)
+    late = OfficialDaily([_official(avail="2999-01-01T00:00:00Z")], [DAY])
+    assert _run(store, late).outcome == "pending_official"
+    assert read_reconciled_rows(store, "2330", DAY) == []
+    assert reconcile_symbol_day(store, off, "2330", DAY, CFG, clock=lambda: later).outcome == "pass"
+    assert len(read_reconciled_rows(store, "2330", DAY)) == 271
+
+
+def test_readmitted_pending_then_failing_official_requarantines_and_refetch_recovers(tmp_path):
+    store, off, later = _recovered(tmp_path)
+    assert _run(store, OfficialDaily([], [])).outcome == "pending_official"
+    bad = OfficialDaily([_official(c=999.0)], [DAY])
+    assert reconcile_symbol_day(store, bad, "2330", DAY, CFG, clock=lambda: later).outcome == "fail"
+    assert read_reconciled_rows(store, "2330", DAY) == []
+    much_later = later + timedelta(hours=2)
+    ok = readmit_after_refetch(store, off, "2330", DAY, _bars(fetched="2026-11-10T12:00:00Z"), CFG,
+                               clock=lambda: much_later)
+    assert ok.outcome == "pass"
+    assert len(read_reconciled_rows(store, "2330", DAY)) == 271
