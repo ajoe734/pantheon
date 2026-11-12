@@ -1025,9 +1025,27 @@ def _validate_terminal_readback(
                     collector_meta = (
                         record_meta.get("collector") if isinstance(record_meta.get("collector"), Mapping) else {}
                     )
-                    if not connector_meta.get("tenant_id") or provenance.get("tenant_id") != connector_meta.get("tenant_id"):
+                    from .persona_source_reconciler import RECONCILIATION_METADATA_KEY
+
+                    expected_tenant = connector_meta.get("tenant_id")
+                    reconciliation = connector_meta.get(RECONCILIATION_METADATA_KEY)
+                    if not expected_tenant and isinstance(reconciliation, Mapping) and isinstance(
+                        controller_state, Mapping
+                    ):
+                        # A controller-provisioned Collector connector carries no tenant of its own:
+                        # the runtime stamps its records with the controller's tenant.
+                        expected_tenant = controller_state.get("tenant_id")
+                    if not expected_tenant or provenance.get("tenant_id") != expected_tenant:
                         invalid.append(f"{connector_id}:record_tenant_mismatch")
-                    if collector_meta.get("source_id") != connector_meta.get("definition_id"):
+                    from .connector_definitions import get_connector_definition
+
+                    # The definition id is not always the Collector's source id
+                    # (strategy-seed-paper-corpus is served as collector-papers).
+                    definition = get_connector_definition(str(connector_meta.get("definition_id") or ""))
+                    expected_source_id = (
+                        (definition.metadata.get("collector") or {}).get("source_id") if definition else None
+                    ) or connector_meta.get("definition_id")
+                    if collector_meta.get("source_id") != expected_source_id:
                         invalid.append(f"{connector_id}:record_collector_definition_mismatch")
                     if collector_meta.get("bundle_status") != "complete":
                         invalid.append(f"{connector_id}:collector_bundle_incomplete")
@@ -1353,6 +1371,34 @@ def select_collector_pull_connectors(
             continue
         selected.add(connector_id)
     return sorted(selected)
+
+
+def _attempt_sort_key(value: Any) -> str:
+    parsed = parse_utc(str(value)) if value else None
+    return parsed.isoformat() if parsed is not None else ""
+
+
+def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str], *, limit: int) -> list[str]:
+    """Bound one steady tick to what the scheduler can claim (its max concurrency).
+
+    The scheduler claims at most ``limit`` exclusively selected connectors per tick and reports the
+    rest as failed, so more due Collector sources than slots must be spread over ticks. The
+    least recently attempted sources go first (latest of last success and last failure from the
+    readback), so a source that keeps failing rotates behind the others instead of monopolising
+    the slots; the remainder stay due and are picked up on the next tick.
+    """
+
+    last_attempt: dict[str, str] = {}
+    for item in actual.get("connectors") or []:
+        if isinstance(item, Mapping):
+            freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
+            attempts = [
+                _attempt_sort_key(freshness.get("last_success_at")),
+                _attempt_sort_key(freshness.get("last_failure_at")),
+            ]
+            last_attempt[str(item.get("connector_id") or "")] = max(attempts)
+    ranked = sorted(selected, key=lambda connector_id: (last_attempt.get(connector_id, ""), connector_id))
+    return sorted(ranked[: max(int(limit), 1)])
 
 
 def build_loop_writer(*, dsn: str, state: ControllerState) -> LoopControllerWriterLike:
@@ -1848,9 +1894,13 @@ def run_controller_tick(
         )
         steady_pull_ids: list[str] = []
         if config.mode == COLLECTOR_STEADY_PULL_MODE:
-            steady_pull_ids = select_collector_pull_connectors(
-                read_actual_state_with_fetch_bindings(api_url=config.api_url, timeout_seconds=config.timeout_seconds),
-                reconcile,
+            steady_actual = read_actual_state_with_fetch_bindings(
+                api_url=config.api_url, timeout_seconds=config.timeout_seconds
+            )
+            steady_pull_ids = limit_collector_pull_batch(
+                steady_actual,
+                select_collector_pull_connectors(steady_actual, reconcile),
+                limit=config.max_concurrency,
             )
         provider_egress_attempted = config.mode == RECONCILE_AND_PULL_MODE or bool(steady_pull_ids)
         if config.mode == RECONCILE_ONLY_MODE or (
