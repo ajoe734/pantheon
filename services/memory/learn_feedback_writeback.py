@@ -83,6 +83,13 @@ def write_learn_feedback(
         write_authority=normalized["write_authority"],
         active_only=False,
     )
+    # A replay must not reuse another tenant's receipt or reassign its owner.
+    for entry in [*existing_persona_entries, *existing_institutional_entries]:
+        if entry.tenant_id != normalized["tenant_id"]:
+            raise LearnFeedbackUnauthorizedError("Source event already belongs to a different tenant")
+    for entry in existing_institutional_entries:
+        if set(entry.contributing_persona_ids) != set(normalized["institutional_persona_ids"]):
+            raise LearnFeedbackWritebackError("Source event persona attribution cannot change on replay")
     persona_entries = _build_persona_entries(normalized)
     institutional_entry = _build_institutional_entry(normalized)
     existing_persona = {entry.memory_id: entry for entry in existing_persona_entries}

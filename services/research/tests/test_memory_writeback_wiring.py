@@ -238,6 +238,21 @@ def test_replay_repairs_partial_pair_through_http(runtime):
     assert len(memory._store().list()) == len(memory._persona_store().list()) == 1
 
 
+def test_replay_cannot_rebind_tenant_or_persona(runtime):
+    mc, _, _, _ = runtime
+    payload = {"source_event_type": "pool_outcome", "source_event_id": "owned-event",
+               "write_authority": "persona-svc", "sponsor_persona_id": "persona-alpha",
+               "summary": "Observed removal", "evidence_refs": ["event:remove"]}
+    path = "/api/memory/writebacks/learn-feedback"
+    headers = {"Authorization": f"Bearer {_make_jwt(roles=['persona-svc'])}"}
+    assert mc.post(path, json=payload, headers=headers).status_code == 201
+    other_tenant = {"Authorization": f"Bearer {_make_jwt(tenant_id='tenant-beta', roles=['persona-svc'])}"}
+    assert mc.post(path, json=payload, headers=other_tenant).status_code == 403
+    payload["sponsor_persona_id"] = "persona-other"
+    assert mc.post(path, json=payload, headers=headers).status_code == 422
+    assert len(memory._store().list()) == len(memory._persona_store().list()) == 1
+
+
 def test_learning_bridge_records_missing_results_and_attribution(runtime):
     _, _, _, source = runtime
     source["decisions"] = [
@@ -250,3 +265,40 @@ def test_learning_bridge_records_missing_results_and_attribution(runtime):
     assert len(report["errors"]) == 2
     assert report["processed_decisions"] == 0
     assert memory._persona_store().list() == []
+
+
+@pytest.mark.parametrize("passed", [True, False])
+def test_gate_completion_entry_queues_attributed_finding_and_delivers(runtime, passed):
+    _, rc, _, _ = runtime
+    task = rc.post("/api/research-orchestrator/tasks", json={
+        "title": "Owned demand", "objective": "Evaluate a demand-owned finding",
+        "constraints": {"pool_member": {"persona_id": "persona-pool-owner"}},
+    })
+    assert task.status_code == 201, task.text
+    run = rc.post(f"/api/research-orchestrator/tasks/{task.json()['task_id']}/runs", json={
+        "parameters": {"record_type": "ExperimentRun", "experiment_run": {
+            "tenant_id": "tenant-alpha", "strategy_id": "strategy-owned",
+            "dataset_version_id": "dataset:owned", "metadata": {
+                "replication_gate": {"passed": passed},
+                "backtest_summary": {"backtest_run_id": "backtest-owned"},
+            },
+        }},
+    })
+    assert run.status_code == 201, run.text
+    run_id = run.json()["run_id"]
+    for _ in range(2):
+        response = rc.post(f"/api/research-orchestrator/runs/{run_id}/complete", json={
+            "summary": "Completed gate evaluation with measured outcome",
+        })
+        assert response.status_code == 200, response.text
+    records = get_outbox_store().list_records()
+    if not passed:
+        assert records == []
+        assert "gate has not passed" in response.json()["memory_writeback_error"]
+        return
+    assert len(records) == 1
+    assert records[0].sponsor_persona_id == "persona-pool-owner"
+    assert MemoryWritebackWorker().drain()["delivered"] == 1
+    assert MemoryWritebackWorker().drain()["total_processed"] == 0
+    assert len(memory._store().list()) == len(memory._persona_store().list()) == 1
+    assert memory._persona_store().list()[0].persona_id == "persona-pool-owner"
