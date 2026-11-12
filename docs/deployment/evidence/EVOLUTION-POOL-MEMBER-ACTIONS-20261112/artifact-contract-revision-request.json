@@ -1,0 +1,40 @@
+{
+  "schema_version": "artifact_contract_revision_request.v1",
+  "task_id": "EVOLUTION-POOL-MEMBER-ACTIONS-20261112",
+  "requester": "Codex2",
+  "required_actor": "Human/Ops",
+  "status": "resolved_by_governed_contract_revision",
+  "resolution": {
+    "actor": "Human/Ops",
+    "contract_updated_at": "2026-11-12T19:55:36Z",
+    "reopened_at": "2026-11-12T19:55:50Z",
+    "source": "Governed ai-status.sh show EVOLUTION-POOL-MEMBER-ACTIONS-20261112; contract_revision and review_requeue_intent",
+    "result": "All 14 requested exact paths are admitted; same task, owner Codex2, reviewer Claude and original seven acceptance criteria. Scope admission is not review approval."
+  },
+  "pr": "https://github.com/ajoe734/pantheon/pull/7265",
+  "guard_source": "scripts/ai_status.py:command_artifact_contract",
+  "guard_rule": "Only Human/Ops can revise task artifact contracts; task must be todo or blocked.",
+  "reason": "The implemented real production path needs existing pool-owner trial/competition actions, immutable empty-pool publication, dated member-book continuity and governed dispatch context. The original task artifact list omits these necessary owner/runtime/schema seams.",
+  "requested_artifact_additions": [
+    "services/control-plane/bff/persona_pool_publisher.py",
+    "services/control-plane/bff/tests/test_persona_pool_publish_route.py",
+    "services/control-plane/persona/persona_strategy_pool.py",
+    "services/evolution/dispatch_outbox.py",
+    "services/evolution/dispatch_receipts.py",
+    "services/evolution/dispatch_worker.py",
+    "services/evolution/main.py",
+    "services/evolution/test_auto_consumer_dispatch.py",
+    "services/execution/lean_runtime/member_virtual_book.py",
+    "services/execution/lean_runtime/paper_runtime.py",
+    "services/execution/lean_runtime/test_member_virtual_book.py",
+    "services/registry/portfolio_envelope.py",
+    "services/registry/strategy_artifact.schema.json",
+    "services/registry/test_portfolio_envelope.py"
+  ],
+  "next_steps": [
+    "Keep this existing task and PR; do not create a replacement task.",
+    "Under Human/Ops authority, use the existing artifact-contract add command for each exact requested path while the task is blocked.",
+    "Reopen the existing task after the audited contract revision; retain Codex2 ownership and Claude independent review.",
+    "Owner refreshes current dev if needed and repeats exact PR/head/manifest handoff. Supervisor integrates only after independent approval; owner finalizes done only after merge."
+  ]
+}

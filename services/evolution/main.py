@@ -868,6 +868,7 @@ def _dispatch_intent_for(decision: EvolutionDecision) -> DispatchIntent | None:
         target_stage=decision.target_stage,
         approval_decision_id=decision.approval_decision_id,
         command_id=f"dispatch-{decision.decision_id}",
+        pool_member=(decision.metadata or {}).get("pool_member"),
     )
 
 
