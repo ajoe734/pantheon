@@ -47,6 +47,10 @@ class PoolPublishRefused(RuntimeError):
         self.step = step
 
 
+class _PendingUncertain(Exception):
+    """An owner read failed while an earlier dispatch may still be queued."""
+
+
 class OwnerPoolReader:
     """Read pool versions from the persona owner API (never from BFF state).
 
@@ -227,16 +231,26 @@ class PersonaPoolPublisher:
             ) from exc
         return _registry_entry(receipt) if receipt is not None else None
 
-    def _guarded(self, tenant_id, persona_id, number, fn):
-        """Run an authoritative pre-dispatch owner read; fail closed on error."""
+    def _guarded(self, tenant_id, persona_id, number, fn, pending=None):
+        """Run an authoritative pre-dispatch owner read; fail closed on error.
+
+        With ``pending`` (an earlier accepted dispatch that may still execute)
+        an owner read failure cannot prove anything: keep the uncertainty.
+        """
         try:
             return fn()
         except PoolPublishRefused as exc:
             if exc.step != "owner_unavailable":
                 raise
+            if pending is not None:
+                raise _PendingUncertain(exc.reason) from exc
             self._refuse(tenant_id, persona_id, number, exc.reason,
                          status_code=exc.status_code, step=exc.step)
         except Exception as exc:
+            if pending is not None:
+                raise _PendingUncertain(
+                    f"owner read unavailable: {type(exc).__name__}: {exc}"
+                ) from exc
             self._refuse(
                 tenant_id, persona_id, number,
                 f"owner read unavailable: {type(exc).__name__}: {exc}",
@@ -257,6 +271,11 @@ class PersonaPoolPublisher:
             raise PoolPublishRefused(
                 "pool envelope publication is limited to paper scope", status_code=403, step="scope"
             )
+        record = ProvisioningRecord(
+            tenant_id=tenant_id, idempotency_key="pool-publish", request_hash="",
+            normalized_name="", persona_id=persona_id, request_payload={},
+        )
+        ids = deterministic_provisioning_ids(record)
         try:
             pool = (
                 self.pool_store.current(persona_id, tenant_id)
@@ -268,89 +287,97 @@ class PersonaPoolPublisher:
                 tenant_id, persona_id, pool_version, str(exc), exc.status_code, "pool"
             )
         except PoolPublishRefused as exc:
+            if exc.step == "owner_unavailable":
+                return self._pool_read_unavailable(tenant_id, persona_id, pool_version, ids, exc.reason)
             self._refuse_pool_read(
                 tenant_id, persona_id, pool_version, exc.reason, exc.status_code, exc.step
             )
         except Exception as exc:  # owner HTTP/transport failure: nothing moved
-            self._refuse_pool_read(
-                tenant_id, persona_id, pool_version,
+            return self._pool_read_unavailable(
+                tenant_id, persona_id, pool_version, ids,
                 f"persona owner pool read unavailable: {type(exc).__name__}: {exc}",
-                503, "owner_unavailable",
             )
         number = int(pool["pool_version"])
         digest = canonical_digest(pool)
         history = self._load(tenant_id, persona_id)
         done = history["published"].get(str(number))
-        record = ProvisioningRecord(
-            tenant_id=tenant_id, idempotency_key="pool-publish", request_hash="",
-            normalized_name="", persona_id=persona_id, request_payload={},
-        )
-        ids = deterministic_provisioning_ids(record)
         artifact_id = f"artifact-persona-pool-{ids.token}-v{number}"
         version = f"1.{number}.0"
-        # Authoritative owner state, never the local record: the live binding
-        # says what runs now and the Registry says what each envelope is.
-        reader = self.coordinator.runtime_binding_reader
-        bindings = self._guarded(
-            tenant_id, persona_id, number,
-            lambda: reader(ids.deployment_plan_id, ids.capital_pool_id) if reader else [],
-        )
-        live = [
-            b for b in bindings
-            if b.get("capital_pool_id") == ids.capital_pool_id
-            and b.get("status") not in TERMINAL_RUNTIME_BINDING_STATUSES
-        ]
-        if len(live) != 1:
-            self._refuse(
+        pending = done if (done or {}).get("status") == "dispatched" else None
+        live_binding: Mapping[str, Any] = {}
+        try:
+            # Authoritative owner state, never the local record: the live binding
+            # says what runs now and the Registry says what each envelope is.
+            reader = self.coordinator.runtime_binding_reader
+            bindings = self._guarded(
                 tenant_id, persona_id, number,
-                f"expected exactly one live RuntimeBinding for the persona pool, got {len(live)}",
-                status_code=409, step="binding",
+                lambda: reader(ids.deployment_plan_id, ids.capital_pool_id) if reader else [],
+                pending,
             )
-        live_binding = live[0]
-        existing = self._guarded(
-            tenant_id, persona_id, number, lambda: self._registry_view(artifact_id)
-        )
-        if existing is not None:
-            meta = existing.get("metadata") or {}
-            if meta.get("pool_digest") != digest:
+            live = [
+                b for b in bindings
+                if b.get("capital_pool_id") == ids.capital_pool_id
+                and b.get("status") not in TERMINAL_RUNTIME_BINDING_STATUSES
+            ]
+            if len(live) != 1:
                 self._refuse(
                     tenant_id, persona_id, number,
-                    "pool version content differs from the already published snapshot",
-                    status_code=409, step="digest",
+                    f"expected exactly one live RuntimeBinding for the persona pool, got {len(live)}",
+                    status_code=409, step="binding",
                 )
-            previous = {
-                "artifact_id": meta.get("previous_envelope_id"),
-                "version": meta.get("previous_envelope_version"),
-            }
-        else:
-            live_entry = self._guarded(
-                tenant_id, persona_id, number,
-                lambda: self._registry_view(live_binding.get("artifact_id") or ""),
+            live_binding = live[0]
+            existing = self._guarded(
+                tenant_id, persona_id, number, lambda: self._registry_view(artifact_id), pending
             )
-            live_pool = int(((live_entry or {}).get("metadata") or {}).get("pool_version") or 0)
-            if number <= live_pool:
-                self._refuse(
+            if existing is not None:
+                meta = existing.get("metadata") or {}
+                if meta.get("pool_digest") != digest:
+                    self._refuse(
+                        tenant_id, persona_id, number,
+                        "pool version content differs from the already published snapshot",
+                        status_code=409, step="digest",
+                    )
+                previous = {
+                    "artifact_id": meta.get("previous_envelope_id"),
+                    "version": meta.get("previous_envelope_version"),
+                }
+            else:
+                live_entry = self._guarded(
                     tenant_id, persona_id, number,
-                    f"pool version {number} is not newer than the running envelope (pool version {live_pool})",
-                    status_code=409, step="order",
+                    lambda: self._registry_view(live_binding.get("artifact_id") or ""),
+                    pending,
                 )
-            previous = {
-                "artifact_id": live_binding.get("artifact_id"),
-                "version": live_binding.get("artifact_version"),
-            }
-        if not previous["artifact_id"] or not previous["version"]:
-            self._refuse(
-                tenant_id, persona_id, number, "previous envelope cannot be identified",
-                status_code=409, step="previous",
+                live_pool = int(((live_entry or {}).get("metadata") or {}).get("pool_version") or 0)
+                if number <= live_pool:
+                    self._refuse(
+                        tenant_id, persona_id, number,
+                        f"pool version {number} is not newer than the running envelope (pool version {live_pool})",
+                        status_code=409, step="order",
+                    )
+                previous = {
+                    "artifact_id": live_binding.get("artifact_id"),
+                    "version": live_binding.get("artifact_version"),
+                }
+            if not previous["artifact_id"] or not previous["version"]:
+                self._refuse(
+                    tenant_id, persona_id, number, "previous envelope cannot be identified",
+                    status_code=409, step="previous",
+                )
+
+            try:
+                envelope, member_pins = self._build_envelope(
+                    tenant_id, ids, pool, artifact_id, version, number, digest, previous
+                )
+            except PoolPublishRefused as exc:
+                if exc.step == "owner_unavailable" and pending is not None:
+                    raise _PendingUncertain(exc.reason) from exc
+                self._refuse(tenant_id, persona_id, number, exc.reason,
+                             status_code=exc.status_code, step=exc.step)
+        except _PendingUncertain as exc:
+            return self._uncertain_from_history(
+                tenant_id, persona_id, number, ids, exc.args[0], done=done
             )
 
-        try:
-            envelope, member_pins = self._build_envelope(
-                tenant_id, ids, pool, artifact_id, version, number, digest, previous
-            )
-        except PoolPublishRefused as exc:
-            self._refuse(tenant_id, persona_id, number, exc.reason,
-                         status_code=exc.status_code, step=exc.step)
         request_hash = canonical_digest(
             {"pool_digest": digest, "envelope": artifact_id, "previous": previous}
         )
@@ -451,6 +478,49 @@ class PersonaPoolPublisher:
         return {**receipt, **{k: entry[k] for k in ("status", "members", "pool_digest")},
                 **({"note": dispatch_note} if dispatch_note else {}),
                 "idempotent_replay": done is not None and done["status"] == "published"}
+
+    def _pending_dispatch(self, tenant_id, persona_id, pool_version):
+        """The recorded dispatched entry an unreadable pool read might refer to."""
+        published = self._load(tenant_id, persona_id)["published"]
+        if pool_version is not None:
+            entry = published.get(str(int(pool_version)))
+            return entry if entry and entry.get("status") == "dispatched" else None
+        pending = [e for e in published.values() if e.get("status") == "dispatched"]
+        return max(pending, key=lambda e: e["pool_version"]) if pending else None
+
+    def _pool_read_unavailable(self, tenant_id, persona_id, pool_version, ids, reason):
+        if self._pending_dispatch(tenant_id, persona_id, pool_version) is not None:
+            return self._uncertain_from_history(
+                tenant_id, persona_id, pool_version, ids, reason
+            )
+        self._refuse_pool_read(tenant_id, persona_id, pool_version, reason, 503, "owner_unavailable")
+
+    def _uncertain_from_history(self, tenant_id, persona_id, pool_version, ids, reason, done=None):
+        """Report an earlier accepted dispatch as unconfirmed; assert nothing else."""
+        done = done or self._pending_dispatch(tenant_id, persona_id, pool_version)
+        number = int(done["pool_version"])
+        previous = done.get("previous") or {}
+        receipt = {
+            "persona_id": persona_id,
+            "pool_version": number,
+            "envelope_artifact_id": done["envelope_artifact_id"],
+            "envelope_version": done["envelope_version"],
+            "approval_decision_id": done["approval_decision_id"],
+            "deployment_plan_id": done["deployment_plan_id"],
+            "previous_envelope_id": previous.get("artifact_id"),
+            "capital_pool_id": ids.capital_pool_id,
+            "persona_capital_binding_id": ids.persona_capital_binding_id,
+            "saga_status": None,
+        }
+        return {
+            **receipt,
+            "status": "dispatched",
+            "members": done.get("members"),
+            "pool_digest": done.get("pool_digest"),
+            "note": f"dispatch outcome unconfirmed (earlier accepted dispatch; "
+                    f"owner read unavailable: {reason}); reconcile via owners",
+            "idempotent_replay": False,
+        }
 
     def _previous_still_live(self, ids, receipt, previous) -> bool:
         """True only when owner readback proves the previous envelope still runs."""

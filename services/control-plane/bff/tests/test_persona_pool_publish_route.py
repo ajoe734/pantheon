@@ -756,3 +756,61 @@ def test_retry_while_queued_and_saga_get_unavailable_preserves_uncertainty(
         run()
     assert world.runtime.calls == ["deploy", "replace"]
     assert _live(world)[0]["artifact_id"] == data["envelope_artifact_id"]
+
+
+@pytest.mark.parametrize("failing", ["binding", "registry", "member", "pool"])
+def test_retry_preserves_dispatch_uncertainty_across_earlier_owner_read_failures(
+    world, monkeypatch, tmp_path, failing
+):
+    import urllib.error
+
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 0.5)], 0)
+    world.transport.queue_dispatch = True
+    real_get = world.transport.get
+
+    def lossy_get(owner, path):
+        if owner == "deployment" and "/sagas/" in path and world.transport.queued:
+            raise urllib.error.URLError("readback lost")
+        return real_get(owner, path)
+
+    world.transport.get = lossy_get
+    first = client.post(PATH, json={}, headers=H)
+    assert first.status_code == 200, first.text
+    assert first.json()["data"]["status"] == "dispatched"
+    world.transport.get = real_get
+
+    real_reader = world.coordinator.runtime_binding_reader
+    real_pool_current = world.publisher.pool_store.current
+    if failing == "binding":
+        def boom(*a, **k):
+            raise OSError("binding owner down")
+        world.coordinator.runtime_binding_reader = boom
+    elif failing == "pool":
+        def boom_pool(*a, **k):
+            raise OSError("pool owner down")
+        world.publisher.pool_store.current = boom_pool
+    else:
+        def boom_get(owner, path):
+            if owner == "registry" and "/strategy-artifacts/" in path:
+                raise urllib.error.URLError("registry down")
+            return real_get(owner, path)
+        world.transport.get = boom_get
+        if failing == "registry":
+            # fail only the envelope/live-envelope reads, not member reads
+            pass
+    try:
+        retry = client.post(PATH, json={}, headers=H)
+    finally:
+        world.coordinator.runtime_binding_reader = real_reader
+        world.publisher.pool_store.current = real_pool_current
+        world.transport.get = real_get
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["data"]["status"] == "dispatched"
+    history = world.publisher.history(TENANT, PERSONA)
+    assert not history["refusals"]
+    assert history["published"]["1"]["status"] == "dispatched"
+    assert len(world.transport.queued) == 1
+    for run in world.transport.queued:
+        run()
+    assert world.runtime.calls == ["deploy", "replace"]
