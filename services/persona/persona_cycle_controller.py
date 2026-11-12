@@ -190,6 +190,11 @@ class PersonaCycleController:
     def reconcile_once(self) -> dict[str, Any]:
         personas = self.owners.personas()  # fail closed before any cron deletion
         report = self.registrar.reconcile_daily_cycles(personas)
+        report["tenant_scopes"] = {
+            tenant: [p["persona_id"] for p in personas if p.get("tenant_id") == tenant
+                     and p.get("lifecycle_state") in ELIGIBLE_STATES and p.get("status", "active") == "active"]
+            for tenant in {p["tenant_id"] for p in personas if p.get("tenant_id")}
+        }
         runtime = self.registrar._get_runtime()
         by_id = {p["persona_id"]: p for p in personas}
         report["personas"] = {}
@@ -373,13 +378,12 @@ async def run_controller(controller: PersonaCycleController, stop: asyncio.Event
     while not stop.is_set():
         try:
             report = await asyncio.to_thread(controller.reconcile_once)
-            personas = controller.owners.personas()
-            for tenant in sorted({p["tenant_id"] for p in personas if p.get("tenant_id")}):
+            for tenant in sorted(set(report["tenant_scopes"]) | set(writers)):
                 if tenant not in writers:
                     writers[tenant] = importlib.import_module("services.loop-control").LoopControllerWriter(
                         os.environ["DATABASE_URL"], tenant_id=tenant, controller_name=CONTROLLER_NAME,
                         lease_duration_seconds=300)
-                owned = {p["persona_id"] for p in personas if p.get("tenant_id") == tenant}
+                owned = set(report["tenant_scopes"].get(tenant, []))
                 health = {pid: h for pid, h in report["personas"].items() if pid in owned}
                 failures = [f for f in report["failures"] if f.get("persona_id") in owned]
                 now = _utc_now()

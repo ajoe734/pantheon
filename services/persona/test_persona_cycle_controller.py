@@ -300,6 +300,28 @@ def test_human_teaching_refs_use_actual_owner_consent_and_scope_without_private_
     assert "Private human correction" not in json.dumps(packet)
 
 
+def test_teaching_cursor_preserves_same_timestamp_remainder(system):
+    controller, _, owner, _ = system
+    evidence_owner = controller.owners.feedback_owner
+    service = AgoraEvidenceWriteService(evidence_owner)
+    now = datetime.now(timezone.utc)
+    for number in range(101):
+        eid = f"same-time-{number:03d}"
+        service.submit("signal_feedback", HumanEvidenceRequest(
+            evidence_id=eid, persona_id="persona-cycle-test", subject_ref="signal://fixture",
+            content={"text": "Learning fixture"}, captured_at=now, consent_granted=True),
+            scope=SimpleNamespace(roles=["operator"], operator_id="human", user_id="human", tenant_id="tenant-a"),
+            idempotency_key=eid, admitted_at=now.isoformat())
+    # Model a transaction whose admissions share one database timestamp.
+    for row in evidence_owner.inbox._inbox.values():
+        row["created_at"] = now.isoformat()
+    first = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    assert len(first["observe"]["human_feedback_refs"]) == 100
+    assert first["persona_cycle"]["observe_bundle"]["human_feedback"]["status"] == "truncated"
+    second = controller.consume_run(owner.list_json()[0], "job-1", run(2))
+    assert second["observe"]["human_feedback_refs"] == ["/bff/agora/human-evidence/same-time-100"]
+
+
 def test_management_cycle_health_and_private_packet_tenant_fencing(system):
     from services.control_plane.bff.core.owner_reads import selected_tenant
     from services.control_plane.bff.loop_inventory import list_loop_health_entries, project_persona_cycle_health
