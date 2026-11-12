@@ -40,6 +40,7 @@ GET  /api/openclaw-adapter/broker/audit              — paper intent/result aud
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import hmac
@@ -3148,6 +3149,22 @@ def _agent_ensure_fingerprint(req: BaseModel) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+@contextlib.contextmanager
+def _agent_registry_lock() -> Any:
+    """Cross-process exclusive lock serializing every agents.list writer."""
+
+    _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = _OPENCLAW_AGENT_IDEMPOTENCY_DB.with_name(
+        _OPENCLAW_AGENT_IDEMPOTENCY_DB.name + ".ensure.lock"
+    )
+    with open(lock_path, "a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def _ensure_agent_idempotently(
     req: BaseModel,
     *,
@@ -3173,26 +3190,18 @@ def _ensure_agent_idempotently(
     """
 
     fingerprint = _agent_ensure_fingerprint(req)
-    _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = _OPENCLAW_AGENT_IDEMPOTENCY_DB.with_name(
-        _OPENCLAW_AGENT_IDEMPOTENCY_DB.name + ".ensure.lock"
-    )
-    with open(lock_path, "a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            return _ensure_agent_locked(
-                req,
-                fingerprint=fingerprint,
-                idempotency_key=idempotency_key,
-                request_id=request_id,
-                sync_fn=sync_fn,
-                preflight_fn=preflight_fn,
-                commit_fn=commit_fn,
-                postcondition_fn=postcondition_fn,
-                replay_fn=replay_fn,
-            )
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    with _agent_registry_lock():
+        return _ensure_agent_locked(
+            req,
+            fingerprint=fingerprint,
+            idempotency_key=idempotency_key,
+            request_id=request_id,
+            sync_fn=sync_fn,
+            preflight_fn=preflight_fn,
+            commit_fn=commit_fn,
+            postcondition_fn=postcondition_fn,
+            replay_fn=replay_fn,
+        )
 
 
 def _ensure_agent_locked(
@@ -3427,7 +3436,8 @@ def ensure_trading_persona_agent(
     try:
         # No replay cache: the sync is idempotent and re-renders SOUL/memory from
         # current owner state, so a retry must observe the latest harness/memory.
-        agent = _sync_trading_persona_agent(req)
+        with _agent_registry_lock():
+            agent = _sync_trading_persona_agent(req)
     except ValueError as exc:
         return JSONResponse(
             status_code=400,

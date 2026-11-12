@@ -98,6 +98,7 @@ def env(tmp_path, monkeypatch):
 
     monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory.test")
     with patch.multiple(adapter_main, _OPENCLAW_AGENT_WORKSPACE_ROOT=root,
+                        _OPENCLAW_AGENT_IDEMPOTENCY_DB=tmp_path / "state" / "agents.sqlite3",
                         _ASSISTANT_SERVICE_TOKEN="adapter-secret", _ASSISTANT_SERVICE_AUTH_REQUIRED=True,
                         _gateway_state_agent_runner=cli, _gateway_state_soul_writer=soul_writer):
         yield root, cli, TestClient(adapter_main.app)
@@ -180,3 +181,36 @@ def test_on_request_memory_refresh_before_a_cycle_turn_is_private_and_bound(env)
     text = (root / "persona-a" / "MEMORY.md").read_text(encoding="utf-8")
     assert "persona_memory:mem-new" in text and "LEAK" not in text
     assert foreign.status_code == 400
+
+
+def test_concurrent_persona_syncs_do_not_lose_each_others_tool_policy(env):
+    """Registry read-modify-write is serialized: both profiles keep read+proposal, exec denied."""
+    import threading
+    import time
+
+    root, cli, client = env
+    def slow(args):
+        proc = FakeCli.__call__(cli, args)  # snapshot is taken before the delay
+        if args[:3] == ["openclaw", "config", "get"]:
+            time.sleep(0.3)
+        return proc
+
+    results: dict = {}
+
+    def run(pid):
+        with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen",
+                   return_value=_Memory({"hits": []})):
+            results[pid] = _post(TestClient(adapter_main.app), root, _persona(pid)).status_code
+
+    with patch.object(adapter_main, "_gateway_state_agent_runner", slow):
+        threads = [threading.Thread(target=run, args=(p,)) for p in ("persona-a", "persona-b")]
+        [t.start() for t in threads]
+        [t.join(30) for t in threads]
+
+    assert results == {"persona-a": 201, "persona-b": 201}
+    by_id = {a["id"]: a for a in cli.agents}
+    assert set(by_id) == {"persona-a", "persona-b"}
+    for pid in by_id:
+        tools = by_id[pid]["tools"]
+        assert tools["allow"] == ["read", "persona_proposal_submit"]
+        assert tools["exec"]["security"] == "deny"
