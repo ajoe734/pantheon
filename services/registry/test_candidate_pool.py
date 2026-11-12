@@ -174,7 +174,8 @@ def test_survivorship_defaults_to_limited_and_filter_identity_changes_digest():
     assert third["digest"] != second["digest"]
 
 
-def test_uncatalogued_industry_grouping_fails_closed():
+def test_uncatalogued_industry_grouping_fails_closed(monkeypatch):
+    monkeypatch.delitem(fr._FEATURE_CATALOGUE, ("tw_industry_classification", "industry_code"))
     artifact = screen_artifact()
     artifact["strategy_logic"]["inputs"].append({"name": "industry", "dataset": "tw_industry_classification",
                                                    "field": "industry_code", "availability_lag_days": 0})
