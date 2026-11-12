@@ -351,9 +351,11 @@ COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
     {"id": "collector-tw-twse-t86", "provider": "TWSE T86 institutional flows (web, collector host)", "type": "market",
      "class": "taiwan_chip", "dataset": "tw_institutional_flow", "attribution": True, "cadence": 86400},
     {"id": "collector-tw-twse-price-history", "provider": "TWSE daily price history MI_INDEX (web, collector host)", "type": "market",
-     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 600,
+     "max_records": 1000},
     {"id": "collector-tw-tpex-price-history", "provider": "TPEx daily price history dailyQuotes (web, collector host)", "type": "market",
-     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 600,
+     "max_records": 1000},
     {"id": "collector-library-books", "provider": "Operator book library (collector host)", "type": "paper", "class": ("news", "book"),
      "dataset": "collector_book_sections", "cadence": 2678400},
 )
