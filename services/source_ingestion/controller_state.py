@@ -212,6 +212,15 @@ def summarize_actual_readback(actual: Mapping[str, Any] | None) -> dict[str, Any
         "pending_dlq_count": _bounded_int(payload.get("pending_dlq_count")),
         "unresolved_dlq_count": _bounded_int(payload.get("unresolved_dlq_count")),
         "dlq_status_counts": dlq_status_counts,
+        "dlq_status_counts_by_connector": {
+            str(connector_id): _scalar_summary(counts)
+            for connector_id, counts in (
+                payload.get("dlq_status_counts_by_connector", {}).items()
+                if isinstance(payload.get("dlq_status_counts_by_connector"), Mapping)
+                else ()
+            )
+            if isinstance(counts, Mapping)
+        },
         "frontier_backlog": _bounded_int(payload.get("frontier_backlog")),
         "max_lag_seconds": _bounded_int(payload.get("max_lag_seconds")),
         "terminal_connectors": {

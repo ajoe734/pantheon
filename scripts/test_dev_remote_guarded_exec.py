@@ -375,7 +375,8 @@ PY
     time.sleep(0.03)
     process.kill()
     process.wait(timeout=2)
-    wait_until(result.exists)
+    # open(..., "w") creates the file before the child writes it; wait for contents.
+    wait_until(lambda: result.exists() and result.read_text())
     assert result.read_text() == "EOF-before-mutation"
 
 

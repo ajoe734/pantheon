@@ -5130,6 +5130,11 @@ class PaperRuntimeService:
                 Path("/data/runtime/lifecycle-outbox")
                 / f"{lifecycle_scope}.json"
             )
+        from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
+
+        self._member_virtual_books = MemberVirtualBooks(
+            str(resolved_lifecycle_path) + ".member-books.json"
+        )
         self._lifecycle_outbox = LifecycleTelemetryOutbox(resolved_lifecycle_path)
         try:
             self._lifecycle_chains = self._lifecycle_outbox.chains()
@@ -5566,6 +5571,7 @@ class PaperRuntimeService:
                     "recent_order_events": list(self._recent_order_events),
                     "futures_mark_diagnostic": self._algo.futures_mark_diagnostic(),
                     "performance_telemetry": dict(self._performance_telemetry),
+                    "member_virtual_books": self._member_virtual_books.snapshot(),
                     "last_error": self._last_error,
                 },
                 "stub_mode": False,
@@ -5923,6 +5929,17 @@ class PaperRuntimeService:
     def _handle_order_event(self, event: OrderEvent, *, replay: bool = False) -> None:
         if event.event_type == "signal_generation":
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
+            member_views = signal_metadata.get("portfolio_member_views")
+            if isinstance(member_views, dict):
+                mark = signal_metadata.get("market_data") or {}
+                signal_metadata["member_virtual_books"] = self._member_virtual_books.observe(
+                    binding_id=signal_metadata["binding_id"],
+                    envelope_checksum=signal_metadata["artifact_checksum"],
+                    symbol=event.symbol, event_time=mark.get("event_time"),
+                    price=mark.get("close"), source_ref=mark.get("source_ref"),
+                    members=member_views,
+                    bar_frequency=signal_metadata["portfolio_bar_frequency"],
+                )
             signal_metadata.setdefault("symbol", event.symbol)
             signal_metadata.setdefault("order_type", event.metadata.get("order_type", "MARKET"))
             occurred_at = str(event.metadata.get("timestamp") or event.created_at)
@@ -6273,6 +6290,7 @@ class PaperRuntimeService:
             "sim_fill_flag": False,
             "capital_scale_pct": 0,
             "performance_telemetry": dict(self._performance_telemetry),
+            "member_virtual_books": self._member_virtual_books.snapshot(),
             "runtime_heartbeat": {"connectivity_status": "connected" if self._last_error is None else "degraded", "broker_status": "not_applicable", **lags},
             **lags,
         }

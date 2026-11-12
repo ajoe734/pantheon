@@ -983,7 +983,7 @@ class RuntimeSummaryProjectionStore:
                     "fill_rate", "fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id",
                     "avg_slippage_bps", "avg_slippage_bps_at", "avg_slippage_bps_binding_id", "avg_slippage_bps_event_id",
                     "total_trades", "total_trades_at", "total_trades_binding_id", "total_trades_event_id",
-                    "executed_trade_count",
+                    "executed_trade_count", "member_virtual_books",
                     "last_fill",
                     "_positions_by_symbol", "_marks_by_symbol", "_valuation_failure", "_valuation_attempt_at", "positions", "position_count",
                     "ledger_fill_count", "positions_status", "positions_unavailable_reason",
@@ -1510,6 +1510,11 @@ class RuntimeSummaryProjectionStore:
             # The producer reports a failed/expired valuation attempt through its
             # heartbeat performance_telemetry. Only its own attempt time orders
             # it; a heartbeat never refreshes a mark, it can only withdraw one.
+            member_books = metadata.get("member_virtual_books")
+            if isinstance(member_books, list) and event_type in {"heartbeat", "signal_generation"}:
+                safe_books = _json_safe_object({"books": member_books})
+                if safe_books is not None:
+                    current["member_virtual_books"] = safe_books["books"]
             perf = metadata.get("performance_telemetry")
             if event_type == "heartbeat" and isinstance(perf, dict):
                 # The heartbeat reports the same authoritative ledger fill_count

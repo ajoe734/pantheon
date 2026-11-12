@@ -100,6 +100,8 @@ FAILURE_VALUES = {
     "STARTUP_FAILURE",
 }
 IGNORABLE_DIAGNOSTIC_WORKFLOWS = frozenset({"Canonical Review Attestation Audit"})
+CANONICAL_REVIEW_PUBLISHER_CHECK = "Publish canonical review status"
+CANONICAL_REVIEW_PUBLISHER_WORKFLOW = "Canonical Review Gate"
 ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNSTABLE", "UNKNOWN"}
 ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNSTABLE", "UNKNOWN"}
 BEHIND_MERGE_STATE = "BEHIND"
@@ -778,7 +780,21 @@ def is_ignorable_diagnostic(
     if is_check_required(item) is not False:
         return False
     workflow_name = str(item.get("workflowName") or "").strip()
-    return workflow_name in IGNORABLE_DIAGNOSTIC_WORKFLOWS
+    if workflow_name in IGNORABLE_DIAGNOSTIC_WORKFLOWS:
+        return True
+    # The canonical-review metadata publisher is optional and only mirrors the
+    # authoritative canonical context; its cancellation (superseded run) is not
+    # substantive CI. Only the cancelled state of this exact issuer is ignored.
+    if (
+        name == CANONICAL_REVIEW_PUBLISHER_CHECK
+        and workflow_name == CANONICAL_REVIEW_PUBLISHER_WORKFLOW
+    ):
+        values = {
+            normalize_state(item.get("conclusion")),
+            normalize_state(item.get("state")),
+        } - {""}
+        return bool(values) and values <= {"CANCELLED", "CANCELED"}
+    return False
 
 
 def check_start_time(item: Mapping[str, Any]) -> str:
@@ -2230,8 +2246,8 @@ def open_unblock_task(
         )
         return None
     if not (
-        unblock_contract.requires_repair_task(reason)
-        or unblock_contract.requires_source_reopen(reason)
+        unblock_contract.requires_repair_task(reason, candidate.repository_id)
+        or unblock_contract.requires_source_reopen(reason, candidate.repository_id)
     ):
         print(
             f"auto-integrator: {candidate.task_id} remains blocked by {reason}; "
