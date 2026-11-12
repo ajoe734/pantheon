@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from jsonschema import Draft7Validator, FormatChecker
@@ -234,8 +235,35 @@ def strategy_artifact_checksum(artifact: Mapping[str, Any]) -> str:
 @lru_cache(maxsize=1)
 def _strategy_artifact_schema() -> dict[str, Any]:
     schema = json.loads(STRATEGY_ARTIFACT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    # SD §6.3: minute-unit inputs carry ``availability_lag_minutes``; the portable
+    # contract must admit it (scoped here because the schema file is not a task artifact).
+    try:
+        input_props = schema["$defs"]["factor_rule_strategy_logic"]["properties"]["inputs"]["items"]["properties"]
+    except KeyError:
+        input_props = _find_input_properties(schema)
+    input_props.setdefault("availability_lag_minutes", {"type": "integer", "minimum": 0})
     Draft7Validator.check_schema(schema)
     return schema
+
+
+def _find_input_properties(node: Any) -> dict[str, Any]:
+    if isinstance(node, dict):
+        items = node.get("items")
+        if (
+            isinstance(items, dict)
+            and "availability_lag_days" in (items.get("properties") or {})
+        ):
+            return items["properties"]
+        for v in node.values():
+            found = _find_input_properties(v)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for v in node:
+            found = _find_input_properties(v)
+            if found is not None:
+                return found
+    return None  # type: ignore[return-value]
 
 
 def _json_path(error: Any) -> str:
@@ -308,6 +336,27 @@ def _validate_control_value(control: Mapping[str, Any], value: Any) -> None:
         raise StrategyArtifactValidationError(
             f"parameter {key!r} value {value!r} is not aligned to step "
             f"{control['step']!r} from minimum {allowed_range['min']!r}"
+        )
+
+
+def _enforce_declared_bar_frequency(artifact: Mapping[str, Any]) -> None:
+    """SD §6.1/§6.3: reject unknown frequencies; fail closed for unsupported minute logic.
+
+    close_to_close_momentum consumes a raw ``closes`` sequence with no dataset
+    binding or PIT stamps, so it can only run at the daily default until
+    dataset-bound minute support exists.
+    """
+    params = artifact.get("parameters")
+    if not isinstance(params, Mapping) or "bar_frequency" not in params:
+        return
+    freq = params["bar_frequency"]
+    dataset_for_bar_frequency(freq)  # unknown/non-string -> fail closed
+    logic = artifact.get("strategy_logic")
+    kind = logic.get("kind") if isinstance(logic, Mapping) else None
+    if freq != "1d" and kind == "close_to_close_momentum":
+        raise StrategyArtifactValidationError(
+            f"close_to_close_momentum does not support bar_frequency {freq!r}; "
+            "minute evaluation requires dataset-bound PIT inputs (fail closed)"
         )
 
 
@@ -385,6 +434,8 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         raise StrategyArtifactValidationError(
             f"StrategyArtifact schema validation failed: {detail}"
         )
+
+    _enforce_declared_bar_frequency(artifact)
 
     for identifier in ("artifact_id", "strategy_id"):
         value = artifact[identifier]
@@ -1315,6 +1366,29 @@ _EXECUTION_RECIPE_KEYS: frozenset[str] = frozenset({
     "order_quantity",
     "quantity_type",
 })
+# SD_INTRADAY_MINUTE_BARS §6.1: the only governed bar frequencies and the
+# dataset each one reads.  No other value is accepted and no fallback exists.
+BAR_FREQUENCY_DATASETS: Mapping[str, str] = MappingProxyType({
+    "1d": "tw_price_daily",
+    "1m": "tw_price_1m",
+    "5m": "tw_price_5m",
+    "15m": "tw_price_15m",
+    "30m": "tw_price_30m",
+    "60m": "tw_price_60m",
+})
+ALLOWED_BAR_FREQUENCIES: tuple[str, ...] = tuple(BAR_FREQUENCY_DATASETS)
+
+
+def dataset_for_bar_frequency(bar_frequency: Any) -> str:
+    """Map a declared ``bar_frequency`` to its governed dataset or fail closed."""
+    if not isinstance(bar_frequency, str) or bar_frequency not in BAR_FREQUENCY_DATASETS:
+        raise StrategyArtifactValidationError(
+            f"bar_frequency {bar_frequency!r} is not allowed; "
+            f"allowed: {', '.join(ALLOWED_BAR_FREQUENCIES)}"
+        )
+    return BAR_FREQUENCY_DATASETS[bar_frequency]
+
+
 _EXECUTION_RECIPE_ACTIONS = ("BUY", "SELL", "HOLD")
 _EXECUTION_RECIPE_QUANTITY_TYPES = ("SHARES", "CASH_VALUE", "PERCENT_PORTFOLIO")
 
@@ -1360,6 +1434,7 @@ def validate_execution_recipe(recipe: Any) -> dict[str, Any]:
             raise StrategyArtifactValidationError(
                 f"execution_recipe.{field} must be a canonical non-blank string"
             )
+    dataset_for_bar_frequency(recipe["bar_frequency"])
     lookback = recipe["lookback_bars"]
     if not _is_integer(lookback) or lookback < 2:
         raise StrategyArtifactValidationError(
