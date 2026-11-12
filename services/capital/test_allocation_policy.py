@@ -228,3 +228,12 @@ def test_paper_simulation_fails_closed_outside_paper_authority(
 
     with pytest.raises(ValueError, match=message):
         calculate_paper_simulation_allocations([row])
+
+
+@pytest.mark.parametrize("version", ["pm12-default-v1", "pm12-return-on-capital-v2"])
+def test_pm12_adapter_accepts_historical_and_return_on_capital_versions(version):
+    adapted = build_pm12_allocation_policy_input({"formula_version": version, "tier": "tier-3", "overall_score": 60.2})
+    assert adapted["source_formula_version"] == version
+    assert adapted["rank_score"] == 60.2
+    with pytest.raises(ValueError):
+        build_pm12_allocation_policy_input({"formula_version": version, "tier": "tier-3", "overall_score": None})

@@ -27,7 +27,11 @@ from ..api_models import (
     TriggerIngestJobRequest,
 )
 from ..connectors import SourceEvidenceError
-from ..requirement_state import MarketSnapshotStateError, RequirementStateError
+from ..requirement_state import (
+    MarketSnapshotStateError,
+    RequirementStateError,
+    snapshot_dataset_for_frequency,
+)
 
 if TYPE_CHECKING:
     from ..runtime import SourceIngestionRuntime
@@ -144,14 +148,25 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
     router = APIRouter(tags=["ingest-operations"])
 
     @router.get("/api/source-ingest/snapshots/latest")
-    def get_latest_market_snapshot(symbol: str) -> dict[str, Any]:
+    def get_latest_market_snapshot(symbol: str, frequency: str = "1d") -> dict[str, Any]:
         """Return the one Source-owned, already-stored normalized snapshot.
 
         This is intentionally a read-only projection lookup. It does not invoke
         a connector, call any provider, or schedule ingestion work.
+
+        ``frequency`` selects the dataset-isolated snapshot (default ``1d``, the
+        unchanged daily behaviour). Unknown values are rejected; a frequency with no
+        projected snapshot is a 404 and never falls back to another frequency.
         """
         try:
-            snapshot = runtime.latest_market_snapshot_store.get(symbol)
+            dataset = snapshot_dataset_for_frequency(frequency)
+        except MarketSnapshotStateError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "unsupported_snapshot_frequency", "frequency": frequency, "detail": str(exc)},
+            ) from exc
+        try:
+            snapshot = runtime.latest_market_snapshot_store.get(symbol, dataset)
         except (MarketSnapshotStateError, RequirementStateError) as exc:
             raise HTTPException(
                 status_code=503,
@@ -167,6 +182,7 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                 detail={
                     "code": "market_snapshot_not_found",
                     "symbol": str(symbol or "").strip().upper(),
+                    **({} if frequency == "1d" else {"frequency": frequency}),
                 },
             )
         return snapshot.to_public_dict(requested_symbol=symbol)
