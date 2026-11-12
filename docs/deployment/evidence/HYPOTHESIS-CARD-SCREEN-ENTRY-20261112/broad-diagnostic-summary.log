@@ -1,0 +1,47 @@
+Summary of historical broad diagnostic (failed; not acceptance evidence)
+Command: timeout 180 .venv-pantheon/bin/python3 -m pytest -vv services/source_ingestion/tests -x --tb=short
+Exit status: 1
+Result: 1 failed, 404 passed, 3 warnings in 144.44s (0:02:24)
+Failure: FinMind broker backfill returned dependency_unavailable instead of ok.
+Dependency probe: pyarrow import spec is None; see dependency-check.log.
+Backfill, connector and failing test are unchanged from the tested dev base.
+The full historical log remains recoverable from the Git object below.
+Original commit: 80058569e71c53686cf07a0757e5bb1f9b739982
+Original path: docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/broad-diagnostic.log
+Original SHA256 (committed, whitespace-normalized bytes): 5aa412b2d40684121bd86cabcb23f29658cb3d270073fa4a8fa5768aa0c1b634
+Original byte count: 60937
+Original line count: 440
+The routine passing-test rows are omitted here; failure excerpt follows.
+
+services/source_ingestion/tests/test_financial_source_catalog.py::test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_sources PASSED [ 25%]
+services/source_ingestion/tests/test_financial_source_catalog.py::test_catalog_embeds_active_universe_scheduling_policy PASSED [ 25%]
+services/source_ingestion/tests/test_financial_source_catalog.py::test_taifex_ssf_contracts_dataset_is_cataloged_with_its_storage_policy PASSED [ 25%]
+services/source_ingestion/tests/test_finmind_broker_backfill.py::test_no_token_records_reason_and_fetches_nothing PASSED [ 25%]
+services/source_ingestion/tests/test_finmind_broker_backfill.py::test_backfill_writes_governed_datasets_with_times_and_licence FAILED [ 25%]
+
+=================================== FAILURES ===================================
+________ test_backfill_writes_governed_datasets_with_times_and_licence _________
+services/source_ingestion/tests/test_finmind_broker_backfill.py:72: in test_backfill_writes_governed_datasets_with_times_and_licence
+    assert result.status == "ok" and result.completed == ["2026-06-08"]
+E   AssertionError: assert ('dependency_unavailable' == 'ok'
+E
+E     - ok
+E     + dependency_unavailable)
+=============================== warnings summary ===============================
+../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+services/research/strategy_spec/normalizer.py:21
+services/research/strategy_spec/normalizer.py:21
+  /tmp/pantheon-worker-worktrees/pantheon/hypothesis-card-screen-entry-20261112/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED services/source_ingestion/tests/test_finmind_broker_backfill.py::test_backfill_writes_governed_datasets_with_times_and_licence - AssertionError: assert ('dependency_unavailable' == 'ok'
+
+  - ok
+  + dependency_unavailable)
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+============ 1 failed, 404 passed, 3 warnings in 144.44s (0:02:24) =============
