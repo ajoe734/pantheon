@@ -514,12 +514,51 @@ def _default_committee_memory_fetcher(
         session_id=session_id,
         scope="both",
         limit=COMMITTEE_MEMORY_LIMIT,
-        auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN") or None,
+        auth_token=_memory_auth_token(),
     )
 
 
+def _memory_auth_token() -> str | None:
+    from services.runtime_auth import resolve_runtime_manager_auth
+
+    token = resolve_runtime_manager_auth(
+        token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
+        token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+        default_token="",
+    ).token
+    return token or None
+
+
+def _tenant_bound_retrieval(
+    retrieval: Mapping[str, Any], tenant_id: str
+) -> dict[str, Any]:
+    """Drop hits whose entry is bound to a different tenant (fail closed).
+
+    Persona entries must carry exactly the requested tenant; institutional
+    entries may be unscoped (global) but never bound to another tenant.
+    """
+
+    kept: list[Any] = []
+    for raw in retrieval.get("hits") or []:
+        if not isinstance(raw, Mapping):
+            continue
+        entry = raw.get("entry")
+        if not isinstance(entry, Mapping):
+            continue
+        entry_tenant = str(entry.get("tenant_id") or "").strip()
+        if raw.get("type") == "persona":
+            if entry_tenant != tenant_id:
+                continue
+        elif entry_tenant and entry_tenant != tenant_id:
+            continue
+        kept.append(raw)
+    return {"hits": kept}
+
+
 def committee_visible_memory(
-    retrieval: Mapping[str, Any] | None, persona_id: str
+    retrieval: Mapping[str, Any] | None,
+    persona_id: str,
+    tenant_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Keep only committee-visible hits; persona_private never enters a panel.
 
@@ -527,8 +566,9 @@ def committee_visible_memory(
     must belong to this persona *and* carry the persona_and_committee scope.
     """
 
-    if not isinstance(retrieval, Mapping):
+    if not isinstance(retrieval, Mapping) or not tenant_id:
         return []
+    retrieval = _tenant_bound_retrieval(retrieval, tenant_id)
     hits, _rejected = normalize_retrieval_hits(retrieval, persona_id=persona_id)
     visible: list[dict[str, Any]] = []
     for hit in hits:
@@ -801,7 +841,9 @@ def create_app(
                     _persona_prompt(
                         payload,
                         persona_id,
-                        committee_visible_memory(retrieval, persona_id),
+                        committee_visible_memory(
+                            retrieval, persona_id, payload.tenant_id
+                        ),
                     ),
                     agent_id=panel_agent_id,
                     mode="user",

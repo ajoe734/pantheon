@@ -192,7 +192,7 @@ def test_other_tenant_agent_is_not_admitted(tmp_path: Path) -> None:
 
 def _hit_persona(mid: str, persona: str, scope: str, summary: str) -> dict[str, Any]:
     return {"type": "persona", "relevance_score": 1.0, "entry": {
-        "memory_id": mid, "persona_id": persona, "relevance_scope": scope,
+        "memory_id": mid, "tenant_id": TENANT, "persona_id": persona, "relevance_scope": scope,
         "memory_type": "lesson", "content": {"summary": summary}}}
 
 
@@ -213,6 +213,20 @@ def test_committee_memory_excludes_private_and_includes_committee(tmp_path: Path
     assert "INSTITUTIONAL-SENTINEL" in prompt
     assert "PRIVATE-SENTINEL" not in prompt
     assert "OTHER-PERSONA-SENTINEL" not in prompt
+
+
+def test_committee_memory_drops_other_tenant_hits(tmp_path: Path) -> None:
+    other = _hit_persona("m9", "persona-risk-officer", "persona_and_committee", "XT-SENTINEL")
+    other["entry"]["tenant_id"] = "tenant-else"
+    inst = {"type": "institutional", "relevance_score": 1.0, "entry": {
+        "entry_id": "i9", "tenant_id": "tenant-else", "knowledge_type": "obs",
+        "content": {"headline": "XT-INST-SENTINEL", "body": "b"}}}
+    fake = _Fake(answer_as="persona-risk-officer")
+    resp = _post(fake, tmp_path, "persona-risk-officer",
+                 memory=lambda *a: {"hits": [other, inst]})
+    assert resp.status_code == 200, resp.text
+    assert "XT-SENTINEL" not in fake.prompts[0]
+    assert "XT-INST-SENTINEL" not in fake.prompts[0]
 
 
 def test_memory_fetch_failure_degrades_without_leaking(tmp_path: Path) -> None:
