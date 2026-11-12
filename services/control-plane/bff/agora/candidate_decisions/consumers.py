@@ -9,7 +9,10 @@ from uuid import NAMESPACE_URL, uuid5
 
 from .models import canonical_sha256
 from .store import CandidateDecisionConflict
-from ...research.client import default_http_request
+try:
+    from ...research.client import default_http_request
+except ImportError:  # standalone BFF module imports
+    from research.client import default_http_request
 
 
 SUPPORTED_MEASURES = frozenset({"research_request", "memory_candidate", "persona_mutation_review"})
@@ -17,7 +20,7 @@ SUPPORTED_MEASURES = frozenset({"research_request", "memory_candidate", "persona
 
 def measure_key(candidate: Mapping[str, Any]) -> str:
     return "agora-measure:" + canonical_sha256({
-        key: candidate[key] for key in ("tenant_id", "persona_id", "measure_id")
+        key: candidate[key] for key in ("tenant_id", "owner_user_id", "persona_id", "interaction_id", "opinion_id", "measure_id")
     })
 
 
@@ -67,6 +70,8 @@ class RecommendedMeasureConsumers:
                 raise CandidateDecisionConflict("Harness proposal requires base_version, patch_type, proposed_change and evidence_refs")
             if candidate["target_id"] != persona or candidate["target_kind"] != "persona":
                 raise CandidateDecisionConflict("Harness patch must target the recommending persona")
+            if str(value["base_version"]) != candidate["target_version"]:
+                raise CandidateDecisionConflict("Harness patch base_version must match the reviewed target_version")
             envs = ("PERSONA_URL", "PANTHEON_PERSONA_URL", "PANTHEON_PERSONA_API_URL")
             path = f"/api/personas/{quote(persona, safe='')}/harness/patches"
             resource_id = identity
@@ -78,6 +83,13 @@ class RecommendedMeasureConsumers:
         if not base:
             raise CandidateDecisionConflict(f"{kind} owner is not configured")
         headers = {"Authorization": authorization, "X-Tenant-Id": candidate["tenant_id"], "Idempotency-Key": key}
+        if kind == "persona_mutation_review":
+            # The existing Persona proposal endpoint requires persona.admin.
+            # Use its already configured BFF service principal only after the
+            # canonical human approval gate, and only for draft creation.
+            service_token = os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN") or os.getenv("PERSONA_SERVICE_TOKEN")
+            if service_token:
+                headers["Authorization"] = "Bearer " + service_token
         fingerprint = canonical_sha256({"kind": kind, "payload": payload})
 
         def deliver():
@@ -99,8 +111,14 @@ class RecommendedMeasureConsumers:
             record = body.get("proposal") if kind == "persona_mutation_review" and isinstance(body, dict) else body
             if code not in {200, 201} or not isinstance(record, dict):
                 raise CandidateDecisionConflict(f"{kind} owner delivery failed (HTTP {code}); retry the approval")
-            if any(record.get(field) != expected for field, expected in payload.items()):
+            compared = {field: expected for field, expected in payload.items()
+                        if not (kind == "research_request" and field == "actor_id")}
+            if any(record.get(field) != expected for field, expected in compared.items()):
                 raise CandidateDecisionConflict(f"{kind} owner receipt does not match the reviewed measure")
+            if kind == "research_request":
+                history = record.get("lifecycle_history") or []
+                if not history or history[0].get("transitioned_by") != payload["actor_id"]:
+                    raise CandidateDecisionConflict("research_request owner receipt actor does not match the reviewed measure")
             return {"measure_id": candidate["measure_id"], "persona_id": persona,
                 "consumer": kind, "resource_id": record[id_field], "resource_path": path + "/" + resource_id,
                 "idempotency_key": key, "request_sha256": fingerprint,

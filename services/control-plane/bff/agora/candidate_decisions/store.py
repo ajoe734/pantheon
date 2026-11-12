@@ -445,6 +445,8 @@ class CandidateDecisionStore:
                     raise CandidateDecisionConflict("candidate ETag is stale or scope is invalid")
                 if next_record["revision"] != rows[-1]["revision"] + 1:
                     raise CandidateDecisionConflict("candidate revision is not the next immutable revision")
+                if any(row.get("outcome") == "approved" for row in self._approvals.get(current["proposal_id"], [])):
+                    raise CandidateDecisionConflict("approved measure is terminal")
                 rows.append(copy.deepcopy(next_record))
                 self._decisions.setdefault(current["proposal_id"], []).append(copy.deepcopy(decision))
                 self._idempotency[compound] = (fingerprint, copy.deepcopy(response))
@@ -480,6 +482,12 @@ class CandidateDecisionStore:
                 raise CandidateDecisionConflict("candidate ETag is stale or scope is invalid")
             if next_record["revision"] != latest[0] + 1:
                 raise CandidateDecisionConflict("candidate revision is not the next immutable revision")
+            approved = conn.execute(
+                f"SELECT 1 FROM {self._approval_table} WHERE proposal_id=%s AND record_json->>'outcome'='approved' LIMIT 1",
+                (current["proposal_id"],),
+            ).fetchone()
+            if approved:
+                raise CandidateDecisionConflict("approved measure is terminal")
             conn.execute(
                 f"INSERT INTO {self._candidate_table} "
                 "(proposal_id,revision,tenant_id,owner_user_id,record_json,etag) "

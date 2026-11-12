@@ -475,6 +475,8 @@ class CandidateDecisionService:
             proposal_expiry=proposal_expiry,
         )
         receipt_dict = receipt.model_dump(mode="json")
+        if self.store.etag(current) != expected_etag:
+            raise CandidateDecisionConflict("candidate ETag is stale")
         return self.store.record_approval(
             current=current,
             expected_etag=expected_etag,
@@ -492,9 +494,10 @@ class CandidateDecisionService:
     ) -> dict[str, Any]:
         now = self.clock()
         expired = _parse_time(current["expires_at"], "expires_at") <= now
+        delivered = any(row.get("outcome") == "approved" for row in approvals)
         allowed = sorted(
             _ALLOWED_DAILY_ACTIONS.get(str(current.get("state")), frozenset())
-        ) if not expired else []
+        ) if not expired and not delivered else []
         try:
             validation_status = dict(self.validation_adapter.readiness(candidate=current))
         except Exception:
@@ -519,8 +522,8 @@ class CandidateDecisionService:
         ), None)
         return {
             "candidate": {
-                "ready": not expired and current.get("state") not in _TERMINAL_STATES,
-                "reason": "candidate_expired" if expired else None,
+                "ready": not expired and not delivered and current.get("state") not in _TERMINAL_STATES,
+                "reason": "candidate_expired" if expired else "measure_delivered" if delivered else None,
                 "allowed_actions": allowed,
             },
             "validation": {
@@ -530,6 +533,7 @@ class CandidateDecisionService:
                 "can_run": (
                     current.get("state") == "review_requested"
                     and not expired
+                    and not delivered
                     and validation_status.get("ready") is True
                 ),
                 "current_passed": current_passed is not None,
@@ -545,12 +549,14 @@ class CandidateDecisionService:
                     and current_passed is not None
                     and reviewer_status.get("ready") is True
                     and not expired
+                    and not delivered
                 ),
                 "can_link_formal_approval": (
                     current_passed is not None
                     and reviewer_status.get("ready") is True
                     and current_approval is None
                     and not expired
+                    and not delivered
                 ),
                 "current_formal_approval_id": (
                     current_approval.get("approval_decision_id") if current_approval else None
