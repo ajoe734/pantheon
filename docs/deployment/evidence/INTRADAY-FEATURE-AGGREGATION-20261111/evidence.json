@@ -34,9 +34,10 @@
         "review fix P1: minute-unit lag enforced in validation (availability_lag_minutes) and point-in-time resolution (registered 3-minute lag hides 09:01 bar at 09:02, visible at 09:04)",
         "review fix P2: cross_session=false resets windows to the latest visible Taipei session; true keeps prior session",
         "review fix P1: minute-bound strategies (any declared tw_price_*m input) reject implicit built-in close/open/high/low/volume/vwap refs in signal/entry/exit/strength at validation, and resolve_point_in_time_inputs exposes no generic closes/synthetic vwap; public-evaluator regressions in test_strategy_artifact_bar_frequency.py",
-        "review fix P2: strategy_artifact schema load admits optional integer availability_lag_minutes>=0 on inputs; full-artifact validate + registry payload tests for lag 3/5 accepted, 2 and -1 rejected"
+        "review fix P2: strategy_artifact schema load admits optional integer availability_lag_minutes>=0 on inputs; full-artifact validate + registry payload tests for lag 3/5 accepted, 2 and -1 rejected",
+        "review fix P1 (2nd): a minute-bound factor_rule strategy rejects any daily/generic price input at validation and resolution, so a placeholder tw_price_1m input cannot admit a tw_price_daily.close alias; close_to_close_momentum with non-1d bar_frequency fails closed in validate/evaluate_strategy_view/evaluate_strategy_action; unknown frequencies rejected for momentum artifacts; daily behavior unchanged (full-artifact regressions in test_strategy_artifact_bar_frequency.py)"
       ],
-      "rereview_result": "439 passed, 48 skipped (exit 0) after addressing review REJECT of PR #7234",
+      "rereview_result": "545 passed, 48 skipped, 7 subtests passed (exit 0, 82s) after the second review REJECT of PR #7234",
       "bounded_rerun": "timeout 550 python -m pytest services/registry/test_factor_rule.py services/registry/test_strategy_artifact.py services/registry/tests services/research/tests/test_intraday_bars.py services/source_ingestion/tests/test_snapshot_frequency_isolation.py services/source_ingestion/tests/test_intraday_snapshot_projection.py => 163 passed, exit 0"
     },
     "merged": {
