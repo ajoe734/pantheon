@@ -231,9 +231,6 @@ class RunScheduledRequest(StrictBaseModel):
     max_concurrency: int | None = None
     force_connector_ids: list[str] = Field(default_factory=list)
     exclusive_connector_ids: list[str] = Field(default_factory=list)
-    # Steady Collector pull: keep the exclusive selection but honour each
-    # connector's schedule cadence instead of forcing it due.
-    respect_cadence: bool = False
 
 
 class ReplayFrontierRequest(StrictBaseModel):

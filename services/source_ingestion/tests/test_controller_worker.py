@@ -3018,6 +3018,7 @@ def _collector_actual(
     status: str = "enabled",
     schedule_enabled: bool = True,
     extra_direct_connector: bool = False,
+    is_due: bool = True,
     sequence_no: int = 1,
 ) -> dict[str, Any]:
     actual = json.loads(json.dumps(_actual_readback()).replace(CONNECTOR_ID, connector_id))
@@ -3025,6 +3026,7 @@ def _collector_actual(
     item = actual["connectors"][0]
     item["connector"].update({"status": status, "metadata": {"definition_id": definition_id}})
     item["schedule"]["enabled"] = schedule_enabled
+    item["freshness"]["is_due"] = is_due
     if extra_direct_connector:
         direct = deepcopy(item)
         direct["connector_id"] = "collector-looks-like-direct-provider"
@@ -3120,9 +3122,10 @@ def test_selection_uses_registered_collector_definition_not_name_prefix() -> Non
         {"schedule_enabled": False},
         {"definition_id": "tw-twse-tpex-official-market"},
         {"definition_id": None},
+        {"is_due": False},
     ],
 )
-def test_selection_excludes_disabled_unscheduled_and_non_collector(kwargs: dict[str, Any]) -> None:
+def test_selection_excludes_disabled_unscheduled_not_due_and_non_collector(kwargs: dict[str, Any]) -> None:
     assert (
         controller_worker.select_collector_pull_connectors(
             _collector_actual(**kwargs), _collector_reconcile(COLLECTOR_CONNECTOR_ID)
@@ -3168,7 +3171,7 @@ def _patch_steady(
     monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
 
 
-def test_successive_steady_ticks_invoke_scheduler_for_collector_only_and_respect_cadence(
+def test_successive_steady_ticks_invoke_scheduler_for_collector_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = _config(tmp_path, truth_level="scheduled_tick", mode=STEADY)
@@ -3186,7 +3189,6 @@ def test_successive_steady_ticks_invoke_scheduler_for_collector_only_and_respect
     for call in calls:
         assert call["exclusive_connector_ids"] == [COLLECTOR_CONNECTOR_ID]
         assert call["force_connector_ids"] == []
-        assert call["respect_cadence"] is True
     for result in (first, second):
         assert result["status"] == "ok"
         assert result["controller_mode"] == STEADY
@@ -3194,14 +3196,17 @@ def test_successive_steady_ticks_invoke_scheduler_for_collector_only_and_respect
     assert [c["truth_level"] for c in writer.calls if c["name"] == "success"] == ["scheduled_tick"] * 2
 
 
-def test_steady_tick_without_collector_connector_pulls_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "actual_kwargs", [{"definition_id": "tw-twse-tpex-official-market"}, {"is_due": False}]
+)
+def test_steady_tick_without_due_collector_connector_pulls_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, actual_kwargs: dict[str, Any]
 ) -> None:
     config = _config(tmp_path, truth_level="scheduled_tick", mode=STEADY)
     state = _state()
     store = RecordingStateStore(config.state_path, [])
     calls: list[dict[str, Any]] = []
-    _patch_steady(monkeypatch, state, {"definition_id": "tw-twse-tpex-official-market"}, calls)
+    _patch_steady(monkeypatch, state, actual_kwargs, calls)
     # Without terminal pulls the due-state (no execution counts changed) path applies.
     result = run_controller_tick(config=config, state=state, store=store, writer=RecordingWriter([]))
     assert calls == []

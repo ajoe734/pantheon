@@ -127,15 +127,12 @@ def run_schedule_tick(
     force_connector_ids: Sequence[str] | None = None,
     exclusive_connector_ids: Sequence[str] | None = None,
     controller_token: str | None = None,
-    respect_cadence: bool = False,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
+    payload = {
         "max_concurrency": max_concurrency,
         "force_connector_ids": sorted(set(force_connector_ids or ())),
         "exclusive_connector_ids": sorted(set(exclusive_connector_ids or ())),
     }
-    if respect_cadence:
-        payload["respect_cadence"] = True
     return _request_json(
         api_url.rstrip("/") + "/api/source-ingest/run-scheduled",
         method="POST",
@@ -1210,7 +1207,10 @@ def _validate_due_state_readback(
 def select_collector_pull_connectors(
     actual: Mapping[str, Any], reconcile: Mapping[str, Any]
 ) -> list[str]:
-    """Pick enabled, scheduled connectors whose registered definition is the Collector bundle adapter.
+    """Pick enabled, scheduled, currently due connectors whose registered definition is the Collector bundle adapter.
+
+    The scheduler forces every exclusively selected connector, so cadence is applied here:
+    a connector whose readback freshness is not due is left out and nothing is pulled for it.
 
     Selection uses the connector's registered definition (adapter token), never the
     connector-id name, and only connectors the current desired-state reconcile admitted.
@@ -1240,6 +1240,9 @@ def select_collector_pull_connectors(
             continue
         schedule = item.get("schedule") if isinstance(item.get("schedule"), Mapping) else {}
         if schedule.get("enabled") is not True or int(schedule.get("interval_seconds") or 0) <= 0:
+            continue
+        freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
+        if freshness.get("is_due") is not True:
             continue
         selected.add(connector_id)
     return sorted(selected)
@@ -1787,7 +1790,6 @@ def run_controller_tick(
                 force_connector_ids=forced_connector_ids,
                 exclusive_connector_ids=exclusive_connector_ids,
                 controller_token=config.controller_token,
-                respect_cadence=steady,
             )
             actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
             validated_frontier_backlog = _validate_terminal_readback(

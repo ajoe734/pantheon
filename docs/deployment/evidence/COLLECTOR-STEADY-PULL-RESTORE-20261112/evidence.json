@@ -2,9 +2,9 @@
   "task_id": "COLLECTOR-STEADY-PULL-RESTORE-20261112",
   "scope": "source-only; no hosted activation, no provider or collector egress, no governed ingestion days claimed",
   "change": {
-    "controller_mode": "collector_steady_pull (unbounded, scheduled_tick truth, selects registered Collector bundle definitions that are enabled, scheduled and reconcile-admitted; calls run-scheduled with exclusive ids and respect_cadence=true)",
+    "controller_mode": "collector_steady_pull (unbounded, scheduled_tick truth, selects registered Collector bundle definitions that are enabled, scheduled, reconcile-admitted and currently due per readback freshness.is_due; calls run-scheduled only for those, with exclusive ids and no force ids)",
     "unchanged": ["reconcile_only never pulls", "reconcile_and_pull stays 1..24 ticks with explicit connector ids", "run_controller_once rejects the new mode", "bounded TWSE/TPEx/TAIFEX/FinMind host sets and quotas"],
-    "scheduler": "RunScheduledRequest.respect_cadence keeps exclusive scope without forcing due; requires exclusive ids, rejects force ids; cadence suppression is an accounted outcome",
+    "scheduler": "no server change: the controller applies cadence by only selecting due connectors, because exclusive selection forces them; no due connector means no scheduler call and no provider egress",
     "deploy": "SOURCE_INGEST_STEADY_COLLECTOR_PULL=true plus PANTHEON_COLLECTOR_HOST selects collector_steady_pull; egress stays allowlist of exactly the collector host; restore (success, failure, interruption trap) returns to the recorded steady scheduler mode, else reconcile_only"
   },
   "activation_instructions_for_H1_W1_owners": [
@@ -13,7 +13,7 @@
     "bounded refresh restore will keep the recorded steady mode automatically"
   ],
   "local_verification": {
-    "controller_and_scheduler_tests": "services/source_ingestion/tests/test_controller_worker.py, test_scheduled_connector.py, test_scheduler.py, test_controller_worker_manual_once.py: all pass except 5 pre-existing failures from missing uvicorn/asyncpg in the local venv",
+    "controller_and_scheduler_tests": "services/source_ingestion/tests/test_controller_worker.py, test_scheduler.py, test_controller_worker_manual_once.py: all pass except 5 pre-existing failures from missing uvicorn/asyncpg in the local venv",
     "deploy_tests": "scripts/test_dev_tw_market_refresh.py 69 pass after fix; scripts/test_deploy_nonprod_vm.py steady tests pass; test_deploy_nonprod_env_parity.py has 1 failure that also fails on the parent commit"
   },
   "not_claimed": ["hosted activation", "three actual governed ingestion days", "whole W1 acceptance"]
