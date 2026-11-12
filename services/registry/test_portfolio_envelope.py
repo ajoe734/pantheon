@@ -31,6 +31,23 @@ def envelope(members=None, **limits):
 
 
 class PortfolioEnvelopeTests(unittest.TestCase):
+    def test_last_member_removal_publishes_a_pinned_flat_envelope(self):
+        from services.registry.portfolio_envelope import required_portfolio_history
+        previous = envelope()
+        empty = build_portfolio_envelope(
+            artifact_id="empty-v2", strategy_id=previous["strategy_id"], version="1.2.0",
+            members=[], empty_template=previous,
+            pool_snapshot={"pool_version": 2, "pool_digest": "sha256:empty-pool"},
+            parent_envelope_id=previous["artifact_id"])
+        result = evaluate_portfolio_envelope(empty, [100, 101])
+        self.assertEqual(result["view"]["direction"], "FLAT")
+        self.assertEqual(result["member_views"], {})
+        self.assertEqual(required_portfolio_history(empty), 1)
+        self.assertEqual(empty["parameters"]["pool_version"], 2)
+        self.assertEqual(empty["strategy_logic"]["members"], [])
+        with self.assertRaises(ValueError):
+            build_portfolio_envelope(artifact_id="unproven", strategy_id="s", version="1.0.0", members=[])
+
     def test_revision_pins_pool_snapshot_and_lineage_to_previous_envelope(self):
         members = [{"member_id": "long", "artifact": member_artifact(), "risk_weight": 1}]
         first = build_portfolio_envelope(

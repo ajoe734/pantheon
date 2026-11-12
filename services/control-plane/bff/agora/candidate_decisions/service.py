@@ -88,6 +88,8 @@ class CandidateDecisionService:
         self.validation_adapter = validation_adapter
         self.approval_store = approval_store
         self.clock = clock
+        from .consumers import RecommendedMeasureConsumers
+        self.consumers = RecommendedMeasureConsumers()
 
     def readback(
         self,
@@ -107,6 +109,7 @@ class CandidateDecisionService:
         readiness = self._readiness(current, validations, approvals)
         return {
             "candidate": current,
+            "downstream_receipts": self.store.consumer_receipts(current),
             "revisions": self.store.history(proposal_id, tenant_id, owner_user_id),
             "decisions": self.store.decisions(proposal_id, tenant_id, owner_user_id),
             "validation_receipts": validations,
@@ -241,6 +244,8 @@ class CandidateDecisionService:
         self._assert_current_binding(current, command.expected_revision, command.expected_proposal_digest)
         if current["state"] in _TERMINAL_STATES:
             raise CandidateDecisionConflict("candidate is terminal")
+        if any(row.get("outcome") == "approved" for row in self.store.approval_receipts(proposal_id, tenant_id, owner_user_id)):
+            raise CandidateDecisionConflict("approved measure is terminal; create a new measure for further changes")
         if command.action not in _ALLOWED_DAILY_ACTIONS.get(current["state"], frozenset()):
             raise CandidateDecisionConflict("candidate action is invalid for the current state")
         now = self.clock()
@@ -400,6 +405,7 @@ class CandidateDecisionService:
         expected_proposal_digest: str,
         expected_etag: str,
         idempotency_key: str,
+        authorization: str | None = None,
     ) -> StoredMutation:
         approval_store = self.approval_store
         fingerprint = canonical_sha256(
@@ -469,12 +475,15 @@ class CandidateDecisionService:
             proposal_expiry=proposal_expiry,
         )
         receipt_dict = receipt.model_dump(mode="json")
+        if self.store.etag(current) != expected_etag:
+            raise CandidateDecisionConflict("candidate ETag is stale")
         return self.store.record_approval(
             current=current,
             expected_etag=expected_etag,
             receipt=receipt_dict,
             idempotency_key=idempotency_key,
             fingerprint=fingerprint,
+            consumer=(self.consumers.prepare(current, authorization) if receipt.outcome == "approved" else None),
         )
 
     def _readiness(
@@ -485,9 +494,10 @@ class CandidateDecisionService:
     ) -> dict[str, Any]:
         now = self.clock()
         expired = _parse_time(current["expires_at"], "expires_at") <= now
+        delivered = any(row.get("outcome") == "approved" for row in approvals)
         allowed = sorted(
             _ALLOWED_DAILY_ACTIONS.get(str(current.get("state")), frozenset())
-        ) if not expired else []
+        ) if not expired and not delivered else []
         try:
             validation_status = dict(self.validation_adapter.readiness(candidate=current))
         except Exception:
@@ -512,8 +522,8 @@ class CandidateDecisionService:
         ), None)
         return {
             "candidate": {
-                "ready": not expired and current.get("state") not in _TERMINAL_STATES,
-                "reason": "candidate_expired" if expired else None,
+                "ready": not expired and not delivered and current.get("state") not in _TERMINAL_STATES,
+                "reason": "candidate_expired" if expired else "measure_delivered" if delivered else None,
                 "allowed_actions": allowed,
             },
             "validation": {
@@ -523,6 +533,7 @@ class CandidateDecisionService:
                 "can_run": (
                     current.get("state") == "review_requested"
                     and not expired
+                    and not delivered
                     and validation_status.get("ready") is True
                 ),
                 "current_passed": current_passed is not None,
@@ -538,12 +549,14 @@ class CandidateDecisionService:
                     and current_passed is not None
                     and reviewer_status.get("ready") is True
                     and not expired
+                    and not delivered
                 ),
                 "can_link_formal_approval": (
                     current_passed is not None
                     and reviewer_status.get("ready") is True
                     and current_approval is None
                     and not expired
+                    and not delivered
                 ),
                 "current_formal_approval_id": (
                     current_approval.get("approval_decision_id") if current_approval else None
