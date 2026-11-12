@@ -173,6 +173,19 @@ def build_pm12_eligible_persona_records(
                     owner_observation("2026-01-02T00:00:00Z", -drawdown, 1),
                     owner_observation("2026-01-15T00:00:00Z", pnl, 120),
                 ],
+                # Explicit local order facts for the fixture's fill-quality input.
+                # Partial completion is quantity based; no legacy scalar fallback.
+                "order_execution_observations": [
+                    {"kind": "submission", "runtime_id": runtime_id, "binding_id": binding_id,
+                     "order_id": f"fixture-order-{runtime_id}",
+                     "event_id": f"fixture-submitted-{runtime_id}",
+                     "as_of": "2026-01-14T00:00:00Z", "quantity": 100.0},
+                    {"kind": "fill", "runtime_id": runtime_id, "binding_id": binding_id,
+                     "order_id": f"fixture-order-{runtime_id}",
+                     "fill_id": f"fixture-fill-{runtime_id}",
+                     "event_id": f"fixture-filled-{runtime_id}",
+                     "as_of": "2026-01-15T00:00:00Z", "quantity": 100.0 * fill_rate},
+                ],
                 "fill_rate_at": "2026-01-15T00:00:00Z",
                 "avg_slippage_bps_at": "2026-01-15T00:00:00Z",
                 "drawdown": drawdown,
