@@ -2079,18 +2079,23 @@ class PaperSignalProducer:
         except (TypeError, ValueError):
             self._degraded_by_binding[binding_id] = "intraday_decision_not_serialisable"
             return 0
-        if getter(decision_id + PENDING_RECORD_SUFFIX) is None:
+        # Index first, pending second: an interruption between the two leaves a discoverable
+        # index entry with no pending record (settlement skips it), never an undiscoverable
+        # pending record.  Both steps are idempotent so a restart/retry completes them, and a
+        # retry after the submission cutoff (which never reaches here) cannot strand a record.
+        existing_pending = getter(decision_id + PENDING_RECORD_SUFFIX)
+        day = str((existing_pending if isinstance(existing_pending, Mapping) else pending)["plan"]["decision_day"])
+        slot = 0
+        while True:
+            existing = getter(index_slot_id(binding_id, day, slot))
+            if existing is None:
+                putter(index_slot_id(binding_id, day, slot), {"decision_id": decision_id})
+                break
+            if existing.get("decision_id") == decision_id:
+                break
+            slot += 1
+        if existing_pending is None:
             putter(decision_id + PENDING_RECORD_SUFFIX, record)
-            day = str(pending["plan"]["decision_day"])
-            slot = 0
-            while True:
-                existing = getter(index_slot_id(binding_id, day, slot))
-                if existing is None:
-                    putter(index_slot_id(binding_id, day, slot), {"decision_id": decision_id})
-                    break
-                if existing.get("decision_id") == decision_id:
-                    break
-                slot += 1
         log.info("intraday decision %s parked as pending_settlement for %s", decision_id, binding_id)
         return 0
 

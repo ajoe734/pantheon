@@ -700,3 +700,40 @@ def test_1m_horizon_271_through_real_reconciled_reader(tmp_path, monkeypatch):
                              bars, now=now)
         out = isl.grade(settled, bars, now=now)
         assert out["status"] == isl.GRADE_DONE and out["exit_close"] == close == bars[-1]["close"]
+
+
+def test_interrupted_pending_persistence_recovers_on_restart_and_settles():
+    binding = _intraday_binding()
+    store = InMemoryPendingSignalStore()
+    real_put = store.put_decision_record
+    state = {"armed": True}
+
+    def put(key, value):  # fault between the index write and the pending write
+        if state["armed"] and key.endswith(isl.PENDING_RECORD_SUFFIX):
+            state["armed"] = False
+            raise RuntimeError("injected persistence fault")
+        return real_put(key, value)
+    store.put_decision_record = put
+    with pytest.raises(RuntimeError):
+        _producer(store).produce(binding, D_DECISION)
+    assert _decision_ids(store) == []
+    # restart + retry completes both idempotent writes
+    _producer(store).produce(binding, D_DECISION)
+    [decision_id] = _decision_ids(store)
+    bars = {"2026-06-15": _bars("5m", opens={0: 101.25})}
+    restarted = _producer(store, _reader(bars))
+    assert restarted.settle_pending_intraday(binding, "2026-06-15T17:00:00+08:00") == 1
+    assert store.get_decision_record(decision_id + isl.SETTLEMENT_RECORD_SUFFIX)["status"] == isl.STATUS_SETTLED
+
+
+def test_pending_without_index_from_old_ordering_is_repaired_on_retry():
+    binding = _intraday_binding()
+    store = InMemoryPendingSignalStore()
+    _producer(store).produce(binding, D_DECISION)
+    [decision_id] = _decision_ids(store)
+    for k in [k for k in store._decision_records if k.startswith(isl.INDEX_RECORD_PREFIX)]:
+        del store._decision_records[k]
+    producer = _producer(store, _reader({"2026-06-15": _bars("5m", opens={0: 101.25})}))
+    assert producer.settle_pending_intraday(binding, "2026-06-15T17:00:00+08:00") == 0
+    producer.produce(binding, D_DECISION)
+    assert producer.settle_pending_intraday(binding, "2026-06-15T17:00:00+08:00") == 1
