@@ -1171,7 +1171,20 @@ def _validate_terminal_readback(
                 if isinstance(record, Mapping):
                     provenance = record.get("provenance") if isinstance(record.get("provenance"), Mapping) else {}
                     if provenance.get("source_ingest_run_id") != latest_run.get("ingest_run_id"):
-                        invalid.append(f"{connector_id}:record_run_mismatch")
+                        # A retained collector close may predate a later healthy backfill run.
+                        # It is accepted only when its OWN run is attested by a completed
+                        # receipt (covered_collector_close_session verified that); the
+                        # current-run completed/health checks above still apply.
+                        retained_close_attested = (
+                            is_collector
+                            and collector_close_cover is not None
+                            and any(
+                                entry.get("collector_source_id") == connector_id
+                                for entry in collector_close_cover["lineage"]
+                            )
+                        )
+                        if not retained_close_attested:
+                            invalid.append(f"{connector_id}:record_run_mismatch")
     if invalid:
         raise ControllerTickError(
             "actual_readback",

@@ -231,3 +231,67 @@ def test_cover_binds_receipt_to_the_covered_record_run_and_never_borrows_freshne
     bad = _collector_item(TPEX, "2026-06-11", DAILY_QUOTES_URL)
     bad["latest_source_record"]["provenance"]["event_time"] = "2026-06-10T06:30:00Z"
     assert covered_collector_close_session([both[0], bad]) is None
+
+
+# --- retained collector close after a later healthy backfill run (terminal readback) ---
+
+def _terminal_collector_actual(*, close_run="run-close", receipt_run=None, backfill_run="run-backfill", finished="2026-06-11T07:00:00Z"):
+    from services.source_ingestion.tests import test_controller_worker as tcw
+
+    base = tcw._collector_actual()
+    base["captured_at"] = "2026-06-11T08:00:00Z"
+    template = base["connectors"][0]
+    connectors = []
+    for cid, url in ((TWSE, MI_INDEX_URL), (TPEX, DAILY_QUOTES_URL)):
+        item = json.loads(json.dumps(template))
+        close = _collector_item(cid, "2026-06-11", url, run_id=close_run, receipt_run_id=receipt_run, finished=finished)
+        item["connector_id"] = cid
+        item["connector"]["connector_id"] = cid
+        item["connector"]["metadata"]["definition_id"] = cid
+        item["schedule"]["connector_id"] = cid
+        item["source_health"]["source_id"] = cid
+        item["source_health"]["metadata"]["last_ingest_run_id"] = backfill_run
+        item["freshness"].update(
+            {"status": "fresh", "last_success_at": "2026-06-11T07:40:00Z",
+             "latest_run": {"ingest_run_id": backfill_run, "status": "completed"}}
+        )
+        rec = item["latest_source_record"]
+        rec["connector_id"] = cid
+        rec["status"] = "normalized"
+        rec["metadata"] = close["latest_source_record"]["metadata"]
+        rec["provenance"].update(close["latest_source_record"]["provenance"])
+        rec["provenance"]["tenant_id"] = "tenant-a"
+        item["latest_source_record_receipt"] = close["latest_source_record_receipt"]
+        connectors.append(item)
+    base["connectors"] = connectors
+    return base, tcw
+
+
+def _run_terminal(actual, tcw):
+    reconcile = tcw._collector_reconcile(TWSE, TPEX)
+    cs = actual["controller_state"]
+    return controller_worker._validate_terminal_readback(
+        reconcile=reconcile, schedule=tcw._schedule(), actual=actual,
+        expected_controller_id=cs["controller_id"], expected_sequence_no=cs["sequence_no"],
+        expected_deployment=cs["deployment"], collector_connector_ids=(TWSE, TPEX),
+        now=datetime(2026, 6, 11, 8, 0, tzinfo=timezone.utc),
+    )
+
+
+def test_terminal_accepts_retained_close_after_later_healthy_backfill():
+    actual, tcw = _terminal_collector_actual()
+    _run_terminal(actual, tcw)
+
+
+@pytest.mark.parametrize("kwargs", [{"receipt_run": "run-other"}, {"finished": "2026-06-11T06:40:00Z"}])
+def test_terminal_rejects_retained_close_without_own_run_receipt(kwargs):
+    actual, tcw = _terminal_collector_actual(**kwargs)
+    with pytest.raises(controller_worker.ControllerTickError, match="record_run_mismatch"):
+        _run_terminal(actual, tcw)
+
+
+def test_terminal_still_rejects_unhealthy_current_run_with_retained_close():
+    actual, tcw = _terminal_collector_actual()
+    actual["connectors"][0]["freshness"]["latest_run"]["status"] = "failed"
+    with pytest.raises(controller_worker.ControllerTickError, match="latest_run_not_completed"):
+        _run_terminal(actual, tcw)
