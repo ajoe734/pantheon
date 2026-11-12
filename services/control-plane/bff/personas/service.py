@@ -4995,6 +4995,12 @@ def _persona_record_for_provisioning(
     updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
     if existing is None:
         existing = _get_active_read_store().get_persona(record.persona_id)
+    # The OpenClaw agent status is recorded on the owner Persona after create;
+    # every later readback/lifecycle rebuild of this metadata must carry it.
+    _prior_meta = (existing or {}).get("metadata") if isinstance(existing, Mapping) else None
+    _prior_agent = _prior_meta.get("openclaw_agent") if isinstance(_prior_meta, Mapping) else None
+    if isinstance(_prior_agent, Mapping) and "openclaw_agent" not in metadata:
+        metadata["openclaw_agent"] = deepcopy(dict(_prior_agent))
     if existing is None:
         if mutate_store:
             if not callable(creator):
@@ -5149,6 +5155,8 @@ def _persona_create_response(
         "live_capital_side_effects": False,
         "human_review_required_for_live": True,
     }
+    if isinstance(metadata.get("openclaw_agent"), Mapping):
+        meta["openclaw_agent"] = deepcopy(dict(metadata["openclaw_agent"]))
     if ooda_packet:
         meta["ooda_packet_id"] = ooda_packet.get("packet_id")
         meta["ooda_loop_status"] = ooda_packet.get("status")
@@ -5268,7 +5276,27 @@ def _coordinate_persona_create(
         mutate_store=True,
     )
     ooda_packet = None
-    if active.state not in {"failed", "compensated"}:
+    if active.state not in {"failed", "compensated", "retired"}:
+        # Only after the owner Persona record exists (AC1/AC6), and never
+        # blocking paper: failure becomes a readable degraded status that is
+        # persisted on the Persona so readbacks and the response expose it.
+        agent_status = coordinator.provision_persona_agent(active.persona_id)
+        metadata["openclaw_agent"] = agent_status
+        persona = {
+            **persona,
+            "metadata": {**(persona.get("metadata") or {}), "openclaw_agent": agent_status},
+        }
+        try:
+            _updater = getattr(_get_active_write_owner(), "update_persona", None)
+            if callable(_updater):
+                _updater(
+                    active.persona_id,
+                    lifecycle_state=persona.get("owner_lifecycle_state")
+                    or persona.get("lifecycle_state"),
+                    metadata=metadata,
+                )
+        except Exception as exc:  # noqa: BLE001 - status persistence is best effort
+            log.warning("Persona openclaw_agent status persistence failed: %s", exc)
         ooda_packet = _ensure_persona_ooda_packet(
             active.persona_id,
             deterministic_provisioning_ids(active).capital_pool_id,
@@ -6817,22 +6845,37 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
         row = _get_active_read_store().get_approval_decision(decision_id)
     except Exception:
         row = None
+    promotion = request.get("target_type") == "paper_canary_candidacy"
+    if promotion:
+        content = {k: saved.get(k) for k in ("persona_id", "quarter", "ranking_snapshot_id", "from_stage", "to_stage",
+                                            "rule_summary", "rationale", "evidence_ref_ids")}
+        digest = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+        subject = (row.get("metadata") or {}).get("subject") if isinstance(row, dict) else None
+        bound_subject = (
+            isinstance(subject, dict) and subject == request.get("subject")
+            and all(subject.get(k) == saved.get(k) for k in ("persona_id", "quarter", "ranking_snapshot_id", "from_stage", "to_stage"))
+            and subject.get("from_stage") == "paper" and subject.get("to_stage") == "canary_candidate"
+            and subject.get("proposal_content_digest") == digest
+            and row.get("target_version") == saved.get("ranking_snapshot_id")
+        )
+    else:
+        digest = hashlib.sha256(json.dumps({
+            "persona_id": str(saved.get("persona_id") or ""), "action_id": str(saved.get("action_id") or ""),
+            "from_state": str(saved.get("from_state") or ""), "rationale": str(saved.get("rationale") or "").strip(),
+            "evidence_ref_ids": sorted(saved.get("evidence_ref_ids") or []),
+        }, sort_keys=True).encode()).hexdigest()
+        subject = (row.get("metadata") or {}).get("subject") if isinstance(row, dict) else None
+        bound_subject = (isinstance(subject, dict) and subject.get("persona_id") == saved.get("persona_id")
+                         and subject.get("from_state") == saved.get("from_state")
+                         and subject.get("to_state") == request.get("to_state"))
     owned = (
         isinstance(row, dict)
         and str(row.get("decision_id") or "") == decision_id
         and str(row.get("tenant_id") or "") == tenant_id
         and str(row.get("target_id") or "") == str(saved.get("persona_id") or "")
         and row.get("proposal_id") == saved.get("recommendation_id")
-        and row.get("target_type") == "persona_lifecycle_transition"
-        and isinstance(subject := (row.get("metadata") or {}).get("subject"), dict)
-        and subject.get("persona_id") == saved.get("persona_id")
-        and subject.get("from_state") == saved.get("from_state")
-        and subject.get("to_state") == request.get("to_state")
-        and row.get("proposal_content_digest") == hashlib.sha256(json.dumps({
-            "persona_id": str(saved.get("persona_id") or ""), "action_id": str(saved.get("action_id") or ""),
-            "from_state": str(saved.get("from_state") or ""), "rationale": str(saved.get("rationale") or "").strip(),
-            "evidence_ref_ids": sorted(saved.get("evidence_ref_ids") or []),
-        }, sort_keys=True).encode()).hexdigest()
+        and row.get("target_type") == ("paper_canary_candidacy" if promotion else "persona_lifecycle_transition")
+        and bound_subject and row.get("proposal_content_digest") == digest
     )
     if not owned:
         return {**state, "submitted": True, "submit_status": "owner_unavailable", "status": "owner_unavailable",
@@ -6843,13 +6886,13 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
     pending = decision_state in ("", "proposed", "under_review")
     return {
         **state, "submitted": True, "submit_status": "owner_proposed",
-        "status": "pending_human_gate" if pending else "decision_accepted" if decided else f"decision_{decision_state}",
+        "status": "pending_human_gate" if pending else ("decision_rejected" if row.get("decision") == "rejected" else "decision_accepted") if decided else f"decision_{decision_state}",
         "decision_status": "pending" if pending else decision_state,
         "decision": row.get("decision") if decided else None,
         "decided_at": row.get("decided_at") if decided else None,
         "decided_by": row.get("actor_id") if decided else None,
         "owner_decision": {
-            "decision_id": decision_id, "available": True, "to_state": subject["to_state"],
+            "decision_id": decision_id, "available": True, "to_state": subject.get("to_stage") if promotion else subject["to_state"],
             "decision_state": row.get("decision_state"), "version": row.get("version"),
             "vote_count": len(votes) if isinstance(votes, list) else 0,
             "proposal_content_digest": row.get("proposal_content_digest"),
@@ -16244,7 +16287,8 @@ class PersonaService:
             "review_count": total,
             "returned_count": len(page_items),
             "pending_count": len([item for item in reviews if item.get("decision_status") == "pending"]),
-            "decision_accepted_count": len([item for item in reviews if item.get("decision_status") == "accepted"]),
+            "decision_accepted_count": len([item for item in reviews if item.get("status") == "decision_accepted"]),
+            "decision_rejected_count": len([item for item in reviews if item.get("status") == "decision_rejected"]),
             "live_capital_mutation_count": 0,
             "requires_human_gate_decision": True,
                 "policy": "promotion_governance_human_gate_no_direct_live_capital",
