@@ -1,0 +1,19 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-HEALTH-INCIDENT-DELIVERY-RETRY-WINDOW-20261112-CI-RED-4AAA76317B7C",
+  "source_pr": 7235,
+  "source_branch": "task/BFF-HEALTH-INCIDENT-DELIVERY-RETRY-WINDOW-20261112",
+  "source_pr_files": [
+    "services/control-plane/bff/downstream_health_monitor.py",
+    "services/control-plane/bff/test_bff_downstream_health_monitor.py",
+    "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py"
+  ],
+  "root_cause": {
+    "persona_provisioning_owner_contracts": "scripts/test_dev_remote_guarded_exec.py::test_ssh_startup_exit_is_not_replaced_by_generic_capture_failure returned 75 instead of 255 (EPIPE / process-exit race in scripts/dev_remote_guarded_exec.py). 2110 other tests passed. The source PR does not touch these files, so this is a pre-existing timing flake, not a regression from the PR.",
+    "service_suites_heavy_installs": "The 'Run incidents service tests' step failed. Run logs were unavailable at inspection time because the run was still in progress; cause not confirmed. The PR does not touch services/incidents."
+  },
+  "not_verified": [
+    "incidents service test failure cause",
+    "local reproduction of the flake (pytest not installed in this worker environment)"
+  ],
+  "blocker": "The only needed fix is in scripts/dev_remote_guarded_exec.py or its test, outside this task's artifact contract (scripts/git/auto_integrator.py plus this evidence file). No code change was made."
+}
