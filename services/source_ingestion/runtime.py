@@ -135,6 +135,46 @@ from .pipeline import IngestPipelineService
 from .strategy_seed_store import StrategySpecSeedStore
 
 
+def _receipt_summary(receipt: IngestReceipt) -> dict[str, Any]:
+    """Fixed-field read projection; full evidence stays on the receipt endpoint.
+
+    Read attributes directly so projecting freshness never serializes or copies
+    snapshot batches, admission maps, or storage manifests from the receipt.
+    """
+    refs = receipt.evidence_refs
+    snapshots = refs.get("market_snapshots")
+    snapshots = snapshots if isinstance(snapshots, Mapping) else {}
+    return {
+        "schema_version": "source_ingest_receipt_summary.v1",
+        "ingest_run_id": receipt.ingest_run_id,
+        "connector_id": receipt.connector_id,
+        "status": receipt.status,
+        "trigger_type": receipt.trigger_type,
+        "trace_id": receipt.trace_id,
+        "started_at": receipt.started_at,
+        "finished_at": receipt.finished_at,
+        "created_at": receipt.created_at,
+        "source_timestamp": receipt.source_timestamp,
+        "source_timestamp_status": receipt.source_timestamp_status,
+        "raw_count": receipt.raw_count,
+        "normalized_count": receipt.normalized_count,
+        "rejected_count": receipt.rejected_count,
+        "watermark": receipt.watermark,
+        "evidence_refs": {
+            "evidence_bundle_id": refs.get("evidence_bundle_id"),
+            "source_id_count": len(refs.get("source_ids") or ()),
+            "evidence_item_id_count": len(refs.get("evidence_item_ids") or ()),
+            "knowledge_object_id_count": len(refs.get("knowledge_object_ids") or ()),
+            "distillation_admission_count": len(refs.get("distillation_admissions") or {}),
+            "market_snapshots": {
+                "accepted_record_count": snapshots.get("accepted_record_count", 0),
+                "updated_snapshot_count": snapshots.get("updated_snapshot_count", 0),
+                "snapshot_count": len(snapshots.get("snapshots") or ()),
+            },
+        },
+    }
+
+
 def _resolve_data_dir() -> Path:
     data_dir = Path(os.getenv("SOURCE_INGEST_DATA_DIR", "/tmp/pantheon/source-ingest"))
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -673,7 +713,7 @@ class SourceIngestionRuntime:
             "last_watermark": watermark.value if watermark else None,
             "last_ingest_run_id": watermark.last_ingest_run_id if watermark else None,
             "latest_run": latest_run_payload,
-            "latest_receipt": latest_receipt.to_dict() if latest_receipt is not None else None,
+            "latest_receipt": _receipt_summary(latest_receipt) if latest_receipt is not None else None,
             "staleness_seconds": staleness_seconds,
             "next_due_at": next_due_at,
             "next_run_at": next_due_at,
