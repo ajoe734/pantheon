@@ -3,7 +3,7 @@
   "owner": "Codex2",
   "reviewer": "Claude",
   "scope": "Source codec and existing retained-artifact qualification; isolated local validation only",
-  "source_delivery": "local implementation and validation complete; assigned independent review, required CI and native integration pending",
+  "source_delivery": "Local fixture repair and shallow-checkout validation complete; fresh-head CI, renewed Claude exact-head review and native integration pending at manifest commit",
   "hosted_recovery": "Supplied original-publisher receipts prove temporary compatible-image forward recovery and runtime availability. Exact Bee rollback and accepted full release remain unproved; this worker performed no hosted operations.",
   "sanitized_inputs": [
     {
@@ -141,6 +141,18 @@
       "exit_status": 0,
       "summary": "147 passed in 71.45s after merging dev 50990c35a83ee884097c3371bc52436f0e9b5249; prior focused codec/artifact inputs unchanged",
       "output_sha256": "b08e6a0255827090670306753837019ea29457ed178a2c26d41e68fefb34e5c5"
+    },
+    {
+      "command": "timeout 240 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_requirement_state.py services/source_ingestion/tests/test_tw_close_reconcile.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_snapshot_frequency_isolation.py services/source_ingestion/tests/test_pipeline_snapshot_dataset_isolation.py services/source_ingestion/tests/test_registry_receipt_summary.py services/source_ingestion/tests/test_scheduled_connector.py",
+      "exit_status": 0,
+      "summary": "147 passed, 1 warning in 69.19s; real shallow checkout at fixture anchor 5ec4745b4a4b40fdcf582bb39d0cde7f676e6849",
+      "output_sha256": "bca82e63c4dbfb001a3a3d9cfc416f08851893bbcfb0114d19afb3e4a818fe61"
+    },
+    {
+      "command": "timeout 600 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_state.py scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py",
+      "exit_status": 0,
+      "summary": "450 passed, 1 skipped in 247.97s in the real shallow checkout at fixture anchor 5ec4745b4a4b40fdcf582bb39d0cde7f676e6849; full real new-old-new, line-4883, artifact and guarded-driver suites",
+      "output_sha256": "ef932fea88f133f7d494a2d784738542dfbfe3d0e6c08fe9944449ce9b581c59"
     }
   ],
   "limits": [
@@ -149,7 +161,7 @@
     "No runtime.py or catalog_controller.py edit by this task. Independently delivered registry receipt work is composed from dev 50990c35a; producer tasks stay completed.",
     "Source qualification must be shipped through the existing pinned publisher/controller delivery before it can protect real operations; local source changes do not activate a live controller."
   ],
-  "validation_interpreter": "CPython 3.11.16 in task-local .venv; required repository CI uses Python 3.12",
+  "validation_interpreter": "Original validation: CPython 3.11.16 task-local venv. Fixture rework: CPython 3.12.3 /tmp/codex2-collector-steady-review-venv/bin/python; repository CI uses Python 3.12.",
   "validation_failures_corrected": [
     "Initial system python3 pytest invocation exited 1 because pytest was absent; installed dependencies in a task-local venv and reran.",
     "First guarded-seal regression run: 1 failed, 2 passed due to missing copy import in test; fixed.",
@@ -317,6 +329,45 @@
   "base_refresh": {
     "base_sha": "50990c35a83ee884097c3371bc52436f0e9b5249",
     "composition_commit": "e4f18fed7",
-    "reason": "First handoff rejected because dev advanced to the independently delivered registry receipt task; merged current dev without rewriting published history and ran actual composed Source regressions."
+    "reason": "First handoff rejected because dev advanced to the independently delivered registry receipt task; merged current dev without rewriting published history and ran actual composed Source regressions.",
+    "fixture_rework_base": "b59cc3d8ff86eac63e0e9951a7f033aa03308009",
+    "fixture_rework_composition_commit": "b2c6a1ac9"
+  },
+  "historical_delivery": {
+    "head": "6160a167ab87c873ed31a8247577f90569521a29",
+    "review": "Claude COMMENTED review 5882483693 at 2026-11-12T21:43:29Z; 443 passed, 1 skipped; applies only to that historical head",
+    "failed_ci": "https://github.com/ajoe734/pantheon/actions/runs/43311872350/job/131509715059",
+    "failed_ci_summary": "exit 1: 7 failed, 2125 passed, 1 skipped; all seven fail at git show for absent Bee/70a historical objects",
+    "failed_ci_log_sha256": "22ffd67a7b060e1b683cf34c6368f5a178b3c09794691133bfe1fe1b5e681e1c",
+    "isolated_before": "/tmp/source7272-shallow-codex2-20261112 at 6160: depth=1, is-shallow-repository=true; unchanged old helper failed for both refs with git show exit 128",
+    "disposition": "Preserved genuine failure and earlier review; no unchanged CI rerun, skipped compatibility proof or waiver"
+  },
+  "frozen_codec_fixtures": {
+    "source_path": "services/source_ingestion/requirement_state.py",
+    "provenance_verification": "git rev-parse <full-commit>:<source_path> and git show <full-commit>:<source_path>; byte length, Git blob SHA1 and content SHA256 verified before writing verbatim fixtures",
+    "bee": {
+      "commit": "bee62bc2978618539984aff9db136b064adc14a0",
+      "fixture": "services/source_ingestion/tests/fixtures/requirement_state_bee62bc.py",
+      "bytes": 43183,
+      "blob": "5c52524ec58fb555b7af101a495bce825fc10595",
+      "sha256": "f0f68702dfef8c3ecc9e7345ea547d15c6574853a417bc6d1d5017bf3f33617c"
+    },
+    "70a": {
+      "commit": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
+      "fixture": "services/source_ingestion/tests/fixtures/requirement_state_70a5bb8.py",
+      "bytes": 57615,
+      "blob": "16f31f4e38bcd39e10d2a3a8e82a96b18fa59f44",
+      "sha256": "358258b3a4f67ba0b243e6b499fabb60342cabd572b6d98e6cd10b6bc9f6dbfe"
+    },
+    "loader": "services/source_ingestion/tests/frozen_source_codec.py; test-only stdlib loader; validates full commit allowlist, length, Git blob and SHA256 before compile/exec; used by Source state and shared artifact/driver transport tests",
+    "boundary": "No production imports, workflow changes, historical-object fetch at test time, simplified parser or mocked compatibility; missing/tampered fixtures fail closed"
+  },
+  "shallow_fixture_validation": {
+    "checkout": "/tmp/source7272-shallow-codex2-20261112",
+    "head": "5ec4745b4a4b40fdcf582bb39d0cde7f676e6849",
+    "method": "Reused original git clone --no-local --depth=1 reproduction; fetched task branch with --depth=1 and checked out FETCH_HEAD detached after ff-only merge correctly rejected disconnected shallow roots",
+    "is_shallow_repository": true,
+    "historical_objects": "git cat-file -e <full Bee/70a commit> both exit 1 before tests; no historical objects or network fetch required by codec tests",
+    "integrity_tests": "7 passed, 21 deselected in 2.47s in task worktree; truncation, same-length tampering, missing files and unknown abbreviated commit rejected"
   }
 }
