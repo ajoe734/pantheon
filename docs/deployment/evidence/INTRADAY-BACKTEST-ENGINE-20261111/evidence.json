@@ -20,19 +20,36 @@
         "Every intraday run is labelled evidence_mode=replay (aggregate, bundle, registry metadata, dataset summary) with live_or_paper_evidence=false and the source snapshot (content sha256, sessions, bars per symbol). Replay requires an explicit availability_ceiling and clock=bar_end declaration.",
         "build_intraday_replay_dataset reads only reconciled tw_price_1m days via the K4 loader; missing/quarantined/waived/not-yet-available data raises IntradayDataUnavailable (reason code). No daily or synthetic fallback; screen strategies fail closed on intraday.",
         "Gross and net returns are both reported for intraday runs (costs dominate).",
-        "Alpha evaluator: INTRADAY_EVALUATION_HORIZONS=(1,5,15,30) bars; compute_intraday_ic_metrics uses open[t+1]->close[t+h] within session, labelled replay; attach_intraday_metrics reports it next to the unchanged daily 1d/5d/20d set. Unavailable data raises IntradayEvaluationUnavailable."
+        "Alpha evaluator: INTRADAY_EVALUATION_HORIZONS=(1,5,15,30) bars; compute_intraday_ic_metrics uses open[t+1]->close[t+h] within session, labelled replay; attach_intraday_metrics reports it next to the unchanged daily 1d/5d/20d set. Unavailable data raises IntradayEvaluationUnavailable.",
+        "Review REOPEN fix 1: replay-scoped governed observation bridge (_attach_replay_minute_observations) turns bars <= i into dataset-bound tz-aware tw_price_<N>m observations; available_time is the explicit simulated bar_end clock (availability_basis=replay_simulated_bar_end) while the REAL bar_availability_ts is retained as real_available_time with source_snapshot_sha256; bars with real availability after the replay ceiling are rejected in prepare; live PIT in factor_rule is untouched; later bars are never emitted.",
+        "Review REOPEN fix 2: evaluate_single_alpha_template / evaluate_alpha_template_library take intraday_replay_dataset and attach a governed 'intraday' block (1/5/15/30-bar IC, replay) beside the unchanged daily output (omitted -> identical to before). Templates are rebound onto the minute dataset only for price/volume inputs; others report available=false.",
+        "Review REOPEN fix 3: govern_intraday_replay_dataset and compute_intraday_ic_metrics enforce reconciled source_snapshot (hash must match records), replay label/clock, availability ceiling and no quarantined/partial/waived flags; failures raise IntradayEvaluationUnavailable."
       ]
     },
     "tests": {
       "command": "python -m pytest services/research/tests/test_vectorbt_intraday.py services/research/vectorbt/test_adapter.py services/research/tests/test_alpha_template_evaluation.py services/research/tests/test_intraday_bars.py services/research/tests/test_portfolio_envelope_parity.py services/research/tests/test_candidate_pool_parity.py services/research/tests/test_backtest_owner_readback.py services/research/tests/test_retrain_search_update.py services/research/tests/test_alpha_template_snapshot_loader.py services/research/replication/test_gate.py -q",
-      "result": "test_vectorbt_intraday.py 22 passed; test_adapter.py + intraday 79 passed; test_alpha_template_evaluation.py 21 passed; test_intraday_bars.py passed; parity/readback/retrain/snapshot/replication-gate group 63 passed. Run in a pre-existing venv with numpy/pandas (/tmp/persona-portfolio-venv).",
-      "covers": ["no-look-ahead positive/negative (availability ceiling, bar_end clock, future-bar perturbation)", "next-bar-open sensitivity", "session lookback reset", "flat by 13:25", "replay label + snapshot", "unavailable not substituted", "daily behaviour unchanged"]
+      "result": "Owner-listed 10-file batch: 177 passed, 5 subtests passed (299s, .venv-pantheon with real vectorbt 1.1.1). test_vectorbt_intraday.py 29 passed including real VectorbtBackend end-to-end positive on reconciled-store minute factor_rule_v1, session-reset/cross_session, future-available negative, quarantined/future/unsnapshotted/tampered IC negatives, and evaluator entry-point wiring.",
+      "covers": [
+        "no-look-ahead positive/negative (availability ceiling, bar_end clock, future-bar perturbation)",
+        "next-bar-open sensitivity",
+        "session lookback reset",
+        "flat by 13:25",
+        "replay label + snapshot",
+        "unavailable not substituted",
+        "daily behaviour unchanged",
+        "real-backend canonical minute factor_rule_v1 end-to-end; evaluator entry-point minute IC wiring; governed-boundary negatives"
+      ]
     },
-    "merged": {"status": "not_yet_merged"},
-    "hosted": {"status": "not_applicable_source_only", "note": "Historical replay only. Not live/paper hosted acceptance; no provider probe, backfill or production action was performed."}
+    "merged": {
+      "status": "not_yet_merged"
+    },
+    "hosted": {
+      "status": "not_applicable_source_only",
+      "note": "Historical replay only. Not live/paper hosted acceptance; no provider probe, backfill or production action was performed."
+    }
   },
   "gaps": [
-    "vectorbt is not installed in the verification environment: the real VectorbtBackend intraday branch (from_orders price=open, gross rerun, returns-based Sharpe) is source-only and was NOT executed; the stub engine, order planning, annualisation and PIT paths are tested.",
+    "cross_session for minute factor_rule_v1 is governed by the feature catalogue (FeatureDefinition.cross_session), not an artifact parameter; no catalogue entry declares it, so the cross-session positive path is not exercised end-to-end.",
     "Real backend intraday supports canonical strategy artifacts only; the unbound MA-crossover path on the real backend raises for intraday.",
     "Replication protocol (run_replication_backtest_protocol) windows remain day-based; session/trade-count thresholds belong to K6 (INTRADAY-REPLICATION-GATE-20261111).",
     "No replay was run on real reconciled KBar data in this task; tests use synthetic bars through the real reconcile store."

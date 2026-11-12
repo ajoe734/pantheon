@@ -340,12 +340,22 @@ def _ic_panel(n_days=2, width=5, noise=0.0):
             entry["closes"].append(c)
             entry["opens"].append(c)
             entry["factor_values"].append(math.cos(k / 3.0) + noise * ((k * 7919) % 13))
+            entry.setdefault("bar_availability_ts", []).append("2026-11-11T08:00:00+00:00")
             k += 1
     return {"2330": entry}
 
 
+_SNAP = {"source_dataset": "tw_price_1m", "reconciled_only": True, "content_sha256": "a" * 64}
+
+
+def _ic(panel, **kw):
+    kw.setdefault("source_snapshot", _SNAP)
+    kw.setdefault("availability_ceiling", CEILING)
+    return compute_intraday_ic_metrics(panel, **kw)
+
+
 def test_intraday_ic_horizons_are_bars_and_reported_next_to_daily():
-    metrics = compute_intraday_ic_metrics(_ic_panel(), bar_frequency="5m")
+    metrics = _ic(_ic_panel(), bar_frequency="5m")
     assert INTRADAY_EVALUATION_HORIZONS == (1, 5, 15, 30)
     assert list(metrics["pooled_ic"]) == ["1b", "5b", "15b", "30b"]
     assert metrics["evidence_mode"] == "replay" and metrics["bars_per_year"] == 252 * 54
@@ -357,36 +367,36 @@ def test_intraday_ic_horizons_are_bars_and_reported_next_to_daily():
 
 
 def test_intraday_forward_returns_never_cross_the_session_end():
-    metrics = compute_intraday_ic_metrics(_ic_panel(n_days=1), bar_frequency="5m", horizons=(30,))
+    metrics = _ic(_ic_panel(n_days=1), bar_frequency="5m", horizons=(30,))
     # 2 sessions x 54 bars; a 30-bar window starting at bar t must end inside the same session
     assert metrics["observations_by_horizon"]["30b"] == 2 * (54 - 1 - 29)  # entry at t+1 .. exit at t+30
-    crossing = compute_intraday_ic_metrics(_ic_panel(n_days=1), bar_frequency="5m", horizons=(30,), cross_session=True)
+    crossing = _ic(_ic_panel(n_days=1), bar_frequency="5m", horizons=(30,), cross_session=True)
     assert crossing["observations_by_horizon"]["30b"] > metrics["observations_by_horizon"]["30b"]
 
 
 def test_intraday_ic_is_a_function_of_the_next_bar_open_not_the_signal_bar():
     panel = _ic_panel()
-    base = compute_intraday_ic_metrics(panel, bar_frequency="5m")
+    base = _ic(panel, bar_frequency="5m")
     shifted = _ic_panel()
     # opens[0] is never an entry (entries are open[t+1], t>=0): moving it changes nothing
     shifted["2330"]["opens"][0] += 25.0
-    assert compute_intraday_ic_metrics(shifted, bar_frequency="5m")["pooled_ic"] == base["pooled_ic"]
+    assert _ic(shifted, bar_frequency="5m")["pooled_ic"] == base["pooled_ic"]
     # but perturbing a bar that IS an entry (open[t+1]) moves the metric
     moved = _ic_panel()
     for i in range(1, len(moved["2330"]["opens"]), 2):
         moved["2330"]["opens"][i] += 7.0 * (1 if i % 4 else -1)
-    assert compute_intraday_ic_metrics(moved, bar_frequency="5m")["pooled_ic"] != base["pooled_ic"]
+    assert _ic(moved, bar_frequency="5m")["pooled_ic"] != base["pooled_ic"]
 
 
 def test_intraday_ic_unavailable_rather_than_daily_fallback():
     with pytest.raises(IntradayEvaluationUnavailable):
-        compute_intraday_ic_metrics({}, bar_frequency="5m")
+        _ic({}, bar_frequency="5m")
     with pytest.raises(IntradayEvaluationUnavailable):
-        compute_intraday_ic_metrics(_ic_panel(), bar_frequency="1d")
+        _ic(_ic_panel(), bar_frequency="1d")
     broken = _ic_panel()
     broken["2330"]["factor_values"].pop()
     with pytest.raises(IntradayEvaluationUnavailable):
-        compute_intraday_ic_metrics(broken, bar_frequency="5m")
+        _ic(broken, bar_frequency="5m")
 
 
 # --- replay-scoped governed observation bridge: canonical minute factor_rule_v1, real backend -------
@@ -453,3 +463,79 @@ def test_bridge_session_reset_and_cross_session_for_minute_factor_rule():
     # evaluator keeps the session reset, so a bare parameter can never leak overnight observations.
     crossing = _artifact_action_sequence(prepared, _minute_art("5m", cross_session=True))["2330"]
     assert crossing[n] is None
+
+
+# --- governed evaluator boundary + production entry-point wiring ----------------------------------
+
+def test_standalone_minute_ic_rejects_quarantined_future_unavailable_and_unsnapshotted():
+    good = _ic_panel()
+    assert _ic(good, bar_frequency="5m")["source_snapshot"]["reconciled_only"] is True
+    quarantined = _ic_panel()
+    quarantined["2330"]["quarantined"] = True
+    future = _ic_panel()
+    future["2330"]["bar_availability_ts"] = ["2099-01-01T00:00:00+00:00"] * len(future["2330"]["bar_starts"])
+    no_avail = _ic_panel()
+    del no_avail["2330"]["bar_availability_ts"]
+    for bad in (quarantined, future, no_avail):
+        with pytest.raises(IntradayEvaluationUnavailable):
+            _ic(bad, bar_frequency="5m")
+    with pytest.raises(IntradayEvaluationUnavailable):
+        compute_intraday_ic_metrics(good, bar_frequency="5m")  # no source_snapshot / ceiling
+    with pytest.raises(IntradayEvaluationUnavailable):
+        _ic(good, bar_frequency="5m", source_snapshot={"reconciled_only": False, "content_sha256": "x"})
+
+
+def _replay_ds(tmp_path, days=("2026-11-10",)):
+    store = _reconciled_store(tmp_path)
+    return build_intraday_replay_dataset(
+        store, dataset_id="d", strategy_id="s", symbols=["2330", "2317"], session_dates=list(days),
+        bar_frequency="5m", availability_ceiling=CEILING,
+    )
+
+
+def _kmid():
+    from services.registry.alpha_template import load_library_templates
+
+    return next(t for t in load_library_templates() if t["template_id"] == "qlib_alpha158:KMID")
+
+
+def test_evaluate_single_alpha_template_reports_minute_ic_next_to_daily(tmp_path):
+    from services.research.alpha_templates.evaluator import evaluate_single_alpha_template
+    from services.research.alpha_templates.evaluator import build_taiwan_point_in_time_universe
+
+    universe = build_taiwan_point_in_time_universe()
+    daily = evaluate_single_alpha_template(_kmid(), universe)
+    assert "intraday" not in daily  # daily output unchanged without a replay dataset
+    both = evaluate_single_alpha_template(_kmid(), universe, intraday_replay_dataset=_replay_ds(tmp_path))
+    assert {k: v for k, v in both.items() if k != "intraday"} == daily
+    intra = both["intraday"]
+    assert intra["available"] and intra["horizons"] == [1, 5, 15, 30] and intra["horizon_unit"] == "bars"
+    assert intra["evidence_mode"] == "replay" and intra["source_snapshot"]["reconciled_only"] is True
+    assert set(intra["pooled_ic"]) == {"1b", "5b", "15b", "30b"}
+
+
+def test_evaluate_library_attaches_intraday_and_refuses_ungoverned_dataset(tmp_path):
+    from services.research.alpha_templates.evaluator import (
+        build_taiwan_point_in_time_universe,
+        evaluate_alpha_template_library,
+    )
+
+    universe = build_taiwan_point_in_time_universe()
+    ds = _replay_ds(tmp_path)
+    out = evaluate_alpha_template_library([_kmid()], universe=universe, intraday_replay_dataset=ds)
+    assert out["evaluations"]["qlib_alpha158:KMID"]["intraday"]["available"] is True
+    assert "intraday" not in evaluate_alpha_template_library([_kmid()], universe=universe)["evaluations"]["qlib_alpha158:KMID"]
+    import copy
+
+    tampered = copy.deepcopy(ds)
+    tampered["records"][0]["close"] += 1.0  # content hash no longer matches the snapshot
+    quarantined = copy.deepcopy(ds)
+    quarantined["records"][0]["quarantined"] = True
+    future = copy.deepcopy(ds)
+    for r in future["records"]:
+        r["bar_availability_ts"] = "2099-01-01T00:00:00+00:00"
+    no_snapshot = copy.deepcopy(ds)
+    del no_snapshot["replay"]["source_snapshot"]
+    for bad in (tampered, quarantined, future, no_snapshot):
+        with pytest.raises(IntradayEvaluationUnavailable):
+            evaluate_alpha_template_library([_kmid()], universe=universe, intraday_replay_dataset=bad)
