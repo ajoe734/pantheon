@@ -366,10 +366,29 @@ class IntradayStore:
         content_hash = _sha256(_canonical([[r["bar_start"], *_content_of(r)] for r in ordered]))
         # Raw first, then shard, then manifest: a crash leaves the day incomplete and
         # therefore re-fetched, never claimed complete without its data.
+        raw_responses = list((entry or {}).get("raw_responses") or [])
+        if not raw_responses and entry and entry.get("raw_response_hash"):
+            raw_responses.append({
+                "hash": entry["raw_response_hash"],
+                "path": str(self.raw_path(sym, day).relative_to(self.root)),
+            })
         if raw_envelope is not None:
-            self._write_raw(sym, day, raw_envelope)
+            raw_main = self.raw_path(sym, day)
+            in_hash = str(raw_envelope.get("response_content_hash") or "")
+            if raw_main.exists() and raw_responses:
+                # Additive refetch: never overwrite the immutable original raw response;
+                # keep the new one beside it under its own hash.
+                suffix = (in_hash or _sha256(_canonical(raw_envelope)))[:16]
+                raw_target = raw_main.with_name(f"{sym}.raw.add-{suffix}.jsonl.gz")
+            else:
+                raw_target = raw_main
+            self._write_raw(sym, day, raw_envelope, path=raw_target)
+            ref = {"hash": in_hash or None, "path": str(raw_target.relative_to(self.root))}
+            if ref not in raw_responses:
+                raw_responses.append(ref)
         _atomic_write(self.shard_path(sym, day), payload)
         manifest["symbols"][sym] = {
+            "raw_responses": raw_responses,
             "status": STATUS_ACCEPTED,
             "shard": self.shard_path(sym, day).name,
             "row_count": len(ordered),
@@ -377,8 +396,8 @@ class IntradayStore:
             "last_bar_start": ordered[-1]["bar_start"],
             "content_hash": content_hash,
             "shard_sha256": _sha256(payload),
-            "raw_response_hash": (raw_envelope or {}).get("response_content_hash")
-            or (entry or {}).get("raw_response_hash"),
+            "raw_response_hash": (entry or {}).get("raw_response_hash")
+            or (raw_envelope or {}).get("response_content_hash"),
             "stored_at": _iso(self.clock()),
         }
         self._write_manifest(day, manifest)

@@ -174,6 +174,28 @@ def test_conflict_preserves_original_raw_and_keeps_incoming_separately(tmp_path)
         assert "999" in fh.read()
 
 
+def test_additive_refetch_preserves_every_raw_response(tmp_path):
+    store = _store(tmp_path)
+    store.put_symbol_day("2330", DAY, _rows(n=2), raw_envelope={
+        "raw_rows": [{"a": "first"}], "response_content_hash": "h1"})
+    res = store.put_symbol_day("2330", DAY, _rows(n=3), raw_envelope={
+        "raw_rows": [{"a": "second"}], "response_content_hash": "h2"})
+    assert res.status == "added"
+    with gzip.open(store.raw_path("2330", DAY), "rt") as fh:
+        text = fh.read()
+    assert "first" in text and "second" not in text
+    entry = json.loads(store.manifest_path(DAY).read_text())["symbols"]["2330"]
+    assert entry["raw_response_hash"] == "h1"
+    refs = {r["hash"]: r["path"] for r in entry["raw_responses"]}
+    assert set(refs) == {"h1", "h2"}
+    with gzip.open(tmp_path / refs["h2"], "rt") as fh:
+        assert "second" in fh.read()
+    before = store.manifest_path(DAY).read_bytes()
+    assert store.put_symbol_day("2330", DAY, _rows(n=3), raw_envelope={
+        "raw_rows": [{"a": "second"}], "response_content_hash": "h2"}).status == "unchanged"
+    assert store.manifest_path(DAY).read_bytes() == before
+
+
 def test_prune_retains_whole_day_with_unresolved_quarantine(tmp_path):
     t = {"now": datetime(2026, 11, 12, tzinfo=timezone.utc)}
     store = _store(tmp_path, clock=lambda: t["now"])
