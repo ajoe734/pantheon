@@ -351,9 +351,11 @@ COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
     {"id": "collector-tw-twse-t86", "provider": "TWSE T86 institutional flows (web, collector host)", "type": "market",
      "class": "taiwan_chip", "dataset": "tw_institutional_flow", "attribution": True, "cadence": 86400},
     {"id": "collector-tw-twse-price-history", "provider": "TWSE daily price history MI_INDEX (web, collector host)", "type": "market",
-     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 1800,
+     "max_records": 1000, "priority_latest": True},
     {"id": "collector-tw-tpex-price-history", "provider": "TPEx daily price history dailyQuotes (web, collector host)", "type": "market",
-     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 1800,
+     "max_records": 1000, "priority_latest": True},
     {"id": "collector-library-books", "provider": "Operator book library (collector host)", "type": "paper", "class": ("news", "book"),
      "dataset": "collector_book_sections", "cadence": 2678400},
 )
@@ -395,6 +397,7 @@ def _collector_definition(
     attribution_required: bool = False,
     cadence_seconds: int = 86400,
     max_records: int = 500,
+    priority_latest: bool = False,
     extra_config: Mapping[str, Any] | None = None,
 ) -> ConnectorDefinition:
     host = collector_host()
@@ -436,6 +439,7 @@ def _collector_definition(
                 "token_env": COLLECTOR_BUNDLE_TOKEN_ENV,
                 "license_scope": "collector_public_web",
                 "redistribution_allowed": False,
+                "priority_latest": priority_latest,
             }
         },
     )
@@ -1151,6 +1155,7 @@ _CANONICAL_DEFINITIONS = _CANONICAL_DEFINITIONS + tuple(
         attribution_required=spec.get("attribution", False),
         cadence_seconds=spec["cadence"],
         max_records=spec.get("max_records", 500),
+        priority_latest=bool(spec.get("priority_latest")),
         collector_source_id=spec["id"],
     )
     for spec in COLLECTOR_SOURCE_SPECS

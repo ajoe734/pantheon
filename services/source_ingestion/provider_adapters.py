@@ -1292,7 +1292,7 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         handler=_collector_bundle,
         config_keys=(
             "source_id", "source_type", "platform", "publisher", "trust_score", "attribution_required",
-            "license_scope", "cadence_seconds", "dataset", "host", "max_records",
+            "license_scope", "cadence_seconds", "dataset", "host", "max_records", "priority_latest",
         ),
     ),
     "ExternalAlphaDbAdapter.records_from_payload": ProviderAdapterSpec(

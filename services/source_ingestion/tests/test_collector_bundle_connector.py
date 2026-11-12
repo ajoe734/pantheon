@@ -703,3 +703,63 @@ def test_multi_bundle_history_pull_reads_only_what_the_cap_can_return(tmp_path):
         for _ in range(6):
             r = adapter.pull(cursor=cursor)
             cursor = r.next_cursor
+
+
+# TW-SAME-DAY-CLOSE-VIA-COLLECTOR-20261112: newest trading day is delivered ahead of the backfill sweep ----
+def _priority_setup(tmp_path, *, priority=True):
+    source_id = "collector-tw-twse-price-history"
+    files, entries = {}, []
+    for n in (1, 2, 3):  # run3 = newest trade date (2024-11-03); the sweep is oldest-first
+        f, e = _day_bundle(source_id, n, 600)
+        files.update(f)
+        entries.append(e)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+
+    def make():
+        return CollectorBundleAdapter(
+            connector_id="conn-p", raw_root=str(tmp_path / "store"), transport=FakeTransport(files), host=HOST,
+            source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+            max_records=1000, priority_latest=priority,
+        )
+    return make
+
+
+def test_newest_trade_date_is_delivered_first_even_when_backfill_is_pending(tmp_path):
+    make = _priority_setup(tmp_path)
+    first = make().pull()
+    # newest session first; the remaining cap goes to the oldest-first sweep
+    assert {r.metadata["trade_date"] for r in first.records[:600]} == {"2024-11-03"}
+    assert {r.metadata["trade_date"] for r in first.records[600:]} == {"2024-11-01"}
+    close = first.records[0].metadata["collector_close"]
+    assert close["provisional"] is True and close["official"] is False
+    assert close["collector_source_id"] == "collector-tw-twse-price-history"
+    assert close["exchange_endpoint"].startswith("https://") and len(close["bundle_sha256"]) == 64
+    assert first.priority_key and first.priority_done
+
+
+def test_priority_not_redelivered_after_save_and_sweep_continues(tmp_path):
+    make = _priority_setup(tmp_path)
+    adapter = make()
+    first = adapter.pull(cursor=adapter.load_resume_cursor())
+    adapter.save_resume_cursor(first)
+    second_adapter = make()
+    second = second_adapter.pull(cursor=second_adapter.load_resume_cursor())
+    dates = [r.metadata["trade_date"] for r in second.records]
+    assert second.priority_key is None  # nothing new to prioritise; the ordinary sweep runs
+    assert dates and dates[0] == "2024-11-01"
+
+
+def test_priority_disabled_keeps_oldest_first_cursor_order(tmp_path):
+    make = _priority_setup(tmp_path, priority=False)
+    result = make().pull()
+    assert result.priority_key is None
+    assert result.records[0].metadata["trade_date"] == "2024-11-01"
+
+
+def test_definitions_enable_priority_for_price_history_at_30_minutes():
+    from services.source_ingestion.connector_definitions import DEPLOYED_CONNECTOR_DEFINITIONS
+    defs = {d.definition_id: d for d in DEPLOYED_CONNECTOR_DEFINITIONS}
+    for sid in ("collector-tw-twse-price-history", "collector-tw-tpex-price-history"):
+        meta = defs[sid].metadata["collector"]
+        assert meta["cadence_seconds"] <= 1800 and meta["priority_latest"] is True
+    assert not defs["collector-tw-twse-t86"].metadata["collector"]["priority_latest"]

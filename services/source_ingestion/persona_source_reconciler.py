@@ -246,6 +246,7 @@ class CollectorDefinitionProvider:
             cadence_seconds=self.cadence_seconds,
             dataset=str(collector.get("dataset") or "collector_bundle_items"),
             max_records=int(definition.default_limits.get("max_records") or 500),
+            priority_latest=bool(collector.get("priority_latest")),
         )
 
     def connector(self) -> SourceConnector:
@@ -272,6 +273,7 @@ class CollectorDefinitionProvider:
             "dataset": adapter.dataset,
             "host": collector_host(),
             "max_records": adapter.max_records,
+            "priority_latest": adapter.priority_latest or None,
         }
         fetch["adapter_config"] = {key: value for key, value in config.items() if value is not None}
         return fetch
