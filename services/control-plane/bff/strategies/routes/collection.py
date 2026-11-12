@@ -1,6 +1,7 @@
 """Strategy collection routes (list, create)."""
 from __future__ import annotations
 
+from concurrent.futures import Future
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
@@ -20,8 +21,18 @@ from .common import (
 
 try:
     from services.control_plane.bff.models import ErrorCode
+    from services.control_plane.bff.core.owner_reads import (
+        remaining_management_read_budget,
+        request_read_cache,
+        submit_owner_read,
+    )
 except (ImportError, ValueError):
     from models import ErrorCode
+    from core.owner_reads import (
+        remaining_management_read_budget,
+        request_read_cache,
+        submit_owner_read,
+    )
 
 
 def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
@@ -40,6 +51,58 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         ]
         page, next_token = ctx.page_slice(kept, page_token, page_size)
         return page, next_token, len(kept), len(summaries) - len(kept)
+
+    def _prefetch_independent_owner_reads(
+        *,
+        norm_state: Optional[str],
+        norm_exclude_state: Optional[str],
+        persona_id: Optional[str],
+        hide_retired_personas: bool,
+        page_token: Optional[str],
+        page_size: int,
+    ) -> Any:
+        """Overlap the independent owner reads with the Persona directory read.
+
+        The Persona directory, the registry summary page and the ranking
+        snapshot do not depend on each other, yet were awaited one after
+        another. Each prefetch runs in a copy of the request context and lands
+        in the per-request read cache, so the handler's own call below joins
+        the in-flight read (value or failure, under the request deadline). It
+        is only done when a request cache exists; without one a prefetch would
+        be a second, uncoordinated read.
+
+        The registry page port may be uncached, so the page read is not left to
+        the cache: its Future is returned and the handler consumes that single
+        result or failure (HTTPException included) instead of reading again.
+        """
+        service = ctx.service
+        if service is None:
+            return None
+        from services.control_plane.bff.personas.service import _PERSONA_FLEET_READ_EXECUTOR
+
+        if request_read_cache.get() is not None:
+            submit_owner_read(
+                _PERSONA_FLEET_READ_EXECUTOR,
+                service.get_latest_ranking_snapshot,
+                warm_key="strategy_list_ranking_snapshot",
+            )
+        if hide_retired_personas:
+            return None
+        try:
+            return submit_owner_read(
+                _PERSONA_FLEET_READ_EXECUTOR,
+                lambda: service.list_strategy_summaries_page(
+                    state=norm_state,
+                    exclude_state=norm_exclude_state,
+                    persona_id=persona_id,
+                    page_token=page_token,
+                    page_size=page_size,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - submission failure is an owner failure
+            failed: Future = Future()
+            failed.set_exception(exc)
+            return failed
 
     @router.get("/bff/strategies")
     def bff_list_strategies(
@@ -73,6 +136,14 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         state_counts: Optional[Dict[str, int]] = None
         # One Persona directory read for the whole request: every row's
         # personaStates, operationalStatus and the hide filter come from it.
+        page_future = _prefetch_independent_owner_reads(
+            norm_state=norm_state,
+            norm_exclude_state=norm_exclude_state,
+            persona_id=persona_id,
+            hide_retired_personas=hide_retired_personas,
+            page_token=page_token,
+            page_size=page_size,
+        )
         persona_lookup = ctx.read_persona_state_lookup(identity, snapshot_at)
         # Full candidate set selected by state / exclude_state / persona_id,
         # before the hide filter. None until a path has loaded it.
@@ -112,17 +183,29 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             if (ctx.service and hide_retired_personas and bounded_hide is None)
             else None
         )
-        owner_page = (
-            ctx.service.list_strategy_summaries_page(
+        if not (ctx.service and bounded_hide is None and owner_walk is None):
+            owner_page = None
+        elif page_future is not None:
+            def _join_page() -> Any:
+                # Bounded by the request deadline; a timeout is translated by
+                # the owner-error envelope and the owner read is not retried.
+                try:
+                    return page_future.result(
+                        timeout=remaining_management_read_budget()
+                    )
+                except BaseException:
+                    page_future.cancel()
+                    raise
+
+            owner_page = ctx.service._invoke_read_owner(_join_page)
+        else:
+            owner_page = ctx.service.list_strategy_summaries_page(
                 state=norm_state,
                 exclude_state=norm_exclude_state,
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=page_size,
             )
-            if (ctx.service and bounded_hide is None and owner_walk is None)
-            else None
-        )
         if bounded_hide is not None:
             page_summaries = list(bounded_hide["page_summaries"])
             next_page_token = bounded_hide["next_page_token"]
@@ -291,9 +374,15 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             else:
                 total = len(summaries)
                 page_summaries, next_page_token = ctx.page_slice(summaries, page_token, page_size)
-        ranking_snapshot, ranking_read_failed = (
-            ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
-        )
+        try:
+            ranking_snapshot, ranking_read_failed = (
+                ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
+            )
+        except TimeoutError:
+            # Joining the warmed ranking read ran out of request budget. Same
+            # truthful outcome as an owner read failure: telemetry missing,
+            # no retry and no second owner read.
+            ranking_snapshot, ranking_read_failed = None, True
         ranking_index = _build_ranking_strategy_index(
             ranking_snapshot if isinstance(ranking_snapshot, dict) else None
         )

@@ -867,3 +867,165 @@ def test_detail_failed_directory_read_is_unknown_but_detail_is_200(
     assert body["data"]["operationalStatus"] == "unknown"
     assert body["meta"]["surfaces"]["persona_states"]["status"] == "unavailable"
     assert world.directory_reads == [TENANT]
+
+
+def test_default_list_overlaps_persona_directory_and_registry_page_reads(
+    monkeypatch: pytest.MonkeyPatch, world: _World
+) -> None:
+    """The Persona directory and the registry summary page are independent
+    owner reads. They must overlap, each be read exactly once, and the page
+    must be unchanged."""
+    import threading
+    import time
+
+    delay = 0.4
+    persona_directory = world.persona_directory
+    spans: Dict[str, Tuple[float, float]] = {}
+    lock = threading.Lock()
+
+    def _slow_owner(url: str, **kwargs: Any) -> Any:
+        start = time.monotonic()
+        time.sleep(delay)
+        out = owner_http(url, **kwargs)
+        with lock:
+            spans.setdefault("registry", (start, time.monotonic()))
+        return out
+
+    def _slow_directory(*args: Any, **kwargs: Any) -> Any:
+        start = time.monotonic()
+        time.sleep(delay)
+        out = persona_directory(*args, **kwargs)
+        with lock:
+            spans["directory"] = (start, time.monotonic())
+        return out
+
+    monkeypatch.setattr(world, "persona_directory", _slow_directory)
+    app, _ = _build_app(monkeypatch, world)
+    owner_http = adapter_base.http_request_json
+    monkeypatch.setattr(adapter_base, "http_request_json", _slow_owner)
+    with TestClient(app) as c:
+        resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    first_page_reads = [c for c in world.owner_summary_calls if "page_size=20" in c[0] and "page_size=200" not in c[0]]
+    assert len(first_page_reads) == 1
+    assert len(world.directory_reads) == 1
+    (r0, r1), (d0, d1) = spans["registry"], spans["directory"]
+    assert max(r0, d0) < min(r1, d1), "registry page and persona directory reads did not overlap"
+
+
+def test_default_list_owner_page_failure_is_read_once_and_not_retried(
+    monkeypatch: pytest.MonkeyPatch, world: _World
+) -> None:
+    """An uncached page port must be read once: the prefetch and the handler
+    share that single result or failure, never a hidden second read."""
+    from fastapi import HTTPException
+
+    app, _ = _build_app(monkeypatch, world)
+    service_cls = strategies_service_mod.StrategiesService
+    real_page = service_cls.list_strategy_summaries_page
+    calls: List[int] = []
+
+    def _uncached_flaky_page(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            raise HTTPException(status_code=503, detail="strategy_store_unavailable")
+        return real_page(self, *args, **kwargs)
+
+    monkeypatch.setattr(service_cls, "list_strategy_summaries_page", _uncached_flaky_page)
+    with TestClient(app) as c:
+        resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+    assert resp.status_code == 503, resp.text
+    assert len(calls) == 1
+
+
+def test_default_list_pool_contention_fails_truthfully_within_request_deadline(
+    monkeypatch: pytest.MonkeyPatch, world: _World
+) -> None:
+    """With the shared read pool saturated past the request deadline, the page
+    join must stop at the deadline and answer the dependency envelope, not wait
+    for the pool or surface a raw 500."""
+    import threading
+    import time
+
+    from services.control_plane.bff.core.owner_reads import management_read_deadline
+    from services.control_plane.bff.personas.service import (
+        _PERSONA_FLEET_READ_EXECUTOR as pool,
+    )
+
+    class _Deadline:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            tok = management_read_deadline.set(time.monotonic() + 0.1)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                management_read_deadline.reset(tok)
+
+    app, _ = _build_app(monkeypatch, world)
+    app.add_middleware(_Deadline)
+    release = threading.Event()
+    ready = [threading.Event() for _ in range(pool._max_workers)]
+
+    def _occupy(event: threading.Event) -> None:
+        event.set()
+        release.wait(3)
+
+    blockers = [pool.submit(_occupy, e) for e in ready]
+    try:
+        assert all(e.wait(1) for e in ready)
+        timer = threading.Timer(0.8, release.set)
+        timer.start()
+        with TestClient(app, raise_server_exceptions=False) as c:
+            started = time.monotonic()
+            resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+            elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        timer.cancel()
+        for f in blockers:
+            f.result(timeout=2)
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+    assert elapsed < 0.6
+
+
+def test_default_list_ranking_join_timeout_is_ranking_unavailable_not_500(
+    monkeypatch: pytest.MonkeyPatch, world: _World
+) -> None:
+    """A ranking read still in flight at the request deadline must keep the
+    prior behaviour: 200 with ranking telemetry unavailable, one owner read."""
+    import time
+
+    from services.control_plane.bff.core.owner_reads import (
+        management_read_deadline,
+        remaining_management_read_budget,
+    )
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    class _Deadline:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            tok = management_read_deadline.set(time.monotonic() + 0.3)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                management_read_deadline.reset(tok)
+
+    calls: List[int] = []
+
+    def _slow_ranking(self: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        time.sleep((remaining_management_read_budget(default=0.3) or 0.3) + 0.05)
+        raise TimeoutError("ranking owner deadline exceeded")
+
+    monkeypatch.setattr(ReadSurfacePorts, "get_latest_ranking_snapshot", _slow_ranking)
+    app, _ = _build_app(monkeypatch, world)
+    app.add_middleware(_Deadline)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    assert len(calls) == 1
