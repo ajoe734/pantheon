@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 
-from gate import ExecutionProjection, PromotionError, PromotionGate, PromotionState
+from services.registry.promotion.gate import ExecutionProjection, PromotionError, PromotionGate, PromotionState
 
 
 def build_candidate_entry() -> dict:
@@ -117,6 +119,102 @@ class TestPromotionGate(unittest.TestCase):
         )
         self.assertEqual(projection.metadata["rollback"]["target_version"], "0.9.0")
         self.assertEqual(projection.metadata["lineage"]["source_run_ids"], ["replication-run-001"])
+
+    def test_promotion_gate_receives_real_replication_and_sharpe_from_replication_gate(self):
+        from services.research.replication.gate import (
+            ReplicationGate,
+            create_promotion_request,
+        )
+        from services.research.replication.gate_schema import ReplicationRequest
+        # Recorded output of run_replication_backtest_protocol (real vectorbt
+        # run, see services/research/replication/fixtures/); the registry suite must not
+        # require the vectorbt backend.
+        fixture = (
+            Path(__file__).resolve().parents[2]
+            / "research"
+            / "replication"
+            / "fixtures"
+            / "recorded_backtest_tw_2330.json"
+        )
+        bt_eval = json.loads(fixture.read_text(encoding="utf-8"))
+        req = ReplicationRequest(
+            candidate_id="cand-promo-001",
+            source_task_id="RS-002",
+            research_handoff={
+                "source_metadata": {
+                    "api_endpoint": "https://api.openalex.org/works/W123",
+                    "retrieved_at": "2026-11-10T00:00:00Z",
+                    "governance_context": "Approved structured source",
+                },
+                "normalized_findings": {
+                    "strategy_spec": {"name": "tw_momentum"},
+                    "replication_notes": "Real TW backtest",
+                    "evaluation_hypotheses": "H1: OOS Sharpe > deflated threshold",
+                },
+            },
+            proposed_strategy_spec={
+                "name": "tw_momentum",
+                "description": "Taiwan momentum",
+                "signals": ["momentum"],
+                "parameters": {"lookback": 2},
+                "governance": {
+                    "approval_required": True,
+                    "policy_id": "oc-001-research-normalization",
+                },
+            },
+            backtest_evaluation=bt_eval,
+            metadata={
+                "strategy_artifact_checksum": bt_eval["strategy_artifact"]["checksum"],
+                "dataset_version_id": bt_eval["dataset_id"],
+            },
+        )
+        rep_gate = ReplicationGate()
+        # The recorded fixture stands in for the persisted run the protocol wrote.
+        rep_gate.backtest_run_store.record(bt_eval)
+        rep_response = rep_gate.evaluate_candidate(req)
+        self.assertTrue(rep_response.passed)
+
+        # An unpersisted / unbound copy of the same evaluation must not be admitted.
+        req.backtest_evaluation = {**bt_eval, "backtest_run_id": "nonexistent-run-review-probe"}
+        self.assertFalse(rep_gate.evaluate_candidate(req).passed)
+        req.backtest_evaluation = bt_eval
+
+        promo_req = create_promotion_request(rep_response, req.proposed_strategy_spec)
+        self.assertIsNotNone(promo_req)
+        draft_entry = PromotionGate.build_draft_entry_from_replication_request(
+            promo_req,
+            strategy_id="strat-tw-momentum-001",
+        )
+        self.assertTrue(draft_entry["replication_success"])
+        self.assertGreater(draft_entry["evaluation_summary"]["sharpe_ratio"], 0.5)
+        self.assertEqual(
+            draft_entry["lineage"]["source_run_ids"],
+            ["bt-promo-gate-001"],
+        )
+
+        candidate_entry = self.gate.promote(draft_entry, PromotionState.CANDIDATE)
+        self.assertEqual(candidate_entry["lifecycle_state"], "candidate")
+
+        candidate_entry["evaluation_summary"]["risk_review_passed"] = True
+        paper_entry = self.gate.promote(candidate_entry, PromotionState.PAPER)
+        self.assertEqual(paper_entry["lifecycle_state"], "paper")
+
+    def test_promotion_gate_rejects_negative_or_below_threshold_sharpe(self):
+        entry = build_candidate_entry()
+        entry["evaluation_summary"] = {
+            "sharpe_ratio": -0.35,
+            "deflated_sharpe_threshold": 0.50,
+        }
+        with self.assertRaises(PromotionError):
+            self.gate.promote(entry, PromotionState.CANDIDATE)
+
+        entry_marginal = build_candidate_entry()
+        entry_marginal["evaluation_summary"] = {
+            "sharpe_ratio": 0.85,
+            "deflated_sharpe_threshold": 1.112,
+        }
+        with self.assertRaises(PromotionError):
+            self.gate.promote(entry_marginal, PromotionState.CANDIDATE)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 REG-002 smoke test.
 Validates governed promotions and EX-001 execution projection generation.
 """
-from gate import PromotionError, PromotionGate, PromotionState
+from services.registry.promotion.gate import PromotionError, PromotionGate, PromotionState
 
 
 def test_promotion_gate() -> None:

@@ -9,6 +9,7 @@ independent authority readback succeeds.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -207,6 +208,10 @@ class AlphaRevalidationWorker:
             or "http://research-orchestrator-svc:8101",
             actor_id=self._worker_id,
         )
+        self._trial_counter_path = self._data_dir / "family_trial_counts.json"
+        self._backtest_run_store_path = self._data_dir / "backtest_runs.json"
+        self._backtest_run_store = self._new_backtest_run_store()
+        self._outbox_path = self._data_dir / "research_memory_outbox.jsonl"
         self._metrics = self._load_metrics()
         self._loop_records = self._load_loop_records()
 
@@ -232,6 +237,7 @@ class AlphaRevalidationWorker:
         created_loop_records: list[dict[str, Any]] = []
         authority_receipts: list[dict[str, Any]] = []
         skipped_run_ids: list[str] = []
+        insufficient_history_strategy_spec_ids: list[str] = []
         errors: list[dict[str, Any]] = []
         processed_count = 0
         attempted: set[tuple[str, str]] = set()
@@ -264,6 +270,36 @@ class AlphaRevalidationWorker:
                         run_id = run_receipt.run.run_id
                         authority_task_id = task_receipt.authority_task_id
                         authority_run_id = run_receipt.authority_run_id
+                        if (
+                            run_receipt.run.metadata.get("candidate_status")
+                            == "insufficient_history"
+                        ):
+                            acknowledged = self._queue.mark_insufficient_history(
+                                tenant,
+                                entry["strategy_spec_id"],
+                                claim_token=entry["claim_token"],
+                                reason=(
+                                    run_receipt.run.failure_reason
+                                    or "insufficient_history"
+                                ),
+                                authority_task_id=authority_task_id,
+                                authority_run_id=authority_run_id,
+                                experiment_task_id=task_id,
+                                experiment_run_id=run_id,
+                            )
+                            if not acknowledged:
+                                raise RevalidationAttemptError(
+                                    "claim lease expired before insufficient_history acknowledgement",
+                                    task_id=task_id,
+                                    run_id=run_id,
+                                    authority_task_id=authority_task_id,
+                                    authority_run_id=authority_run_id,
+                                )
+                            skipped_run_ids.append(run_id)
+                            insufficient_history_strategy_spec_ids.append(
+                                str(entry["strategy_spec_id"])
+                            )
+                            continue
                         if run_receipt.run.status != "completed":
                             raise RevalidationAttemptError(
                                 run_receipt.run.failure_reason
@@ -430,6 +466,7 @@ class AlphaRevalidationWorker:
             "authority_receipts": authority_receipts,
             "loop_records": created_loop_records,
             "skipped_run_ids": skipped_run_ids,
+            "insufficient_history_strategy_spec_ids": insufficient_history_strategy_spec_ids,
             "errors": errors,
             "dispatch_mode": self._dispatch_mode,
             "configured_mode": self._configured_mode,
@@ -669,6 +706,156 @@ class AlphaRevalidationWorker:
             },
         )
 
+    def _new_backtest_run_store(self) -> Any:
+        from services.research.alpha_replication.shared_stores import SharedBacktestRunStore
+
+        return SharedBacktestRunStore(self._backtest_run_store_path)
+
+    def _resolve_backtest_evaluation(
+        self,
+        *,
+        run_id: str,
+        task: ExperimentTask,
+        entry: Mapping[str, Any],
+        raw_spec: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Run the real protocol on the candidate's own approved inputs.
+
+        Fails closed (returns ``None``) when the exact candidate artifact or the
+        governed dataset version it was approved against is absent or unbound.
+        No artifact, dataset or cached result is ever generated or reused here.
+        """
+        from services.registry.strategy_artifact import strategy_artifact_checksum
+        from services.research.vectorbt.adapter.vectorbt_adapter import (
+            run_replication_backtest_protocol,
+        )
+
+        if raw_spec.get("skip_backtest") is True or raw_spec.get("backtest_evaluation") is False:
+            return None
+
+        provided_eval = raw_spec.get("backtest_evaluation")
+        if isinstance(provided_eval, Mapping):
+            # Never trusted: ReplicationGate accepts it only if it matches a
+            # persisted run bound to the candidate artifact and dataset.
+            return dict(provided_eval)
+
+        strategy_artifact = raw_spec.get("strategy_artifact")
+        dataset = raw_spec.get("backtest_dataset")
+        if not isinstance(strategy_artifact, Mapping) or not isinstance(dataset, Mapping):
+            return None
+        strategy_artifact = dict(strategy_artifact)
+        dataset = dict(dataset)
+
+        requested_dataset = str(task.dataset_version_id or "").strip()
+        if not requested_dataset or dataset.get("dataset_id") != requested_dataset:
+            return None
+        if strategy_artifact.get("strategy_id") != entry.get("strategy_id"):
+            return None
+        expected_checksum = raw_spec.get("strategy_artifact_checksum")
+        try:
+            actual_checksum = strategy_artifact_checksum(strategy_artifact)
+        except Exception:
+            return None
+        if isinstance(expected_checksum, str) and expected_checksum != actual_checksum:
+            return None
+
+        evaluated = run_replication_backtest_protocol(
+            strategy_artifact=strategy_artifact,
+            dataset=dataset,
+            run_id=f"bt-{run_id}",
+        )
+        self._backtest_run_store.record(evaluated)
+        return evaluated
+
+    def _publish_research_finding(
+        self,
+        *,
+        run_id: str,
+        task: ExperimentTask,
+        entry: Mapping[str, Any],
+        gate_response: Any,
+        backtest_summary: Mapping[str, Any],
+        backtest_ref: str | None,
+    ) -> dict[str, Any]:
+        from services.research.research_memory_outbox import (
+            ResearchMemoryOutboxRecord,
+            ResearchMemoryOutboxStore,
+            get_outbox_store,
+        )
+
+        tx_costs = (
+            backtest_summary.get("transaction_costs")
+            if isinstance(backtest_summary.get("transaction_costs"), Mapping)
+            else {}
+        )
+        metrics = {
+            "sharpe_ratio": backtest_summary.get("out_of_sample_sharpe_ratio"),
+            "in_sample_sharpe_ratio": backtest_summary.get("in_sample_sharpe_ratio"),
+            "out_of_sample_sharpe_ratio": backtest_summary.get("out_of_sample_sharpe_ratio"),
+            "deflated_sharpe_ratio": backtest_summary.get("deflated_sharpe_ratio"),
+            "deflated_sharpe_threshold": backtest_summary.get("deflated_sharpe_threshold"),
+            "trial_count": backtest_summary.get("trial_count"),
+            "max_drawdown": backtest_summary.get("out_of_sample_max_drawdown"),
+            "total_return": backtest_summary.get("out_of_sample_total_return"),
+            "round_trips": backtest_summary.get("out_of_sample_round_trips"),
+            "buy_and_hold_sharpe_ratio": backtest_summary.get("buy_and_hold_sharpe_ratio"),
+            "tw_0050_sharpe_ratio": backtest_summary.get("tw_0050_sharpe_ratio"),
+            "walk_forward_fold_sharpes": backtest_summary.get("walk_forward_fold_sharpes"),
+            "commission_rate": tx_costs.get("commission_rate"),
+            "equity_transaction_tax_rate": tx_costs.get("equity_transaction_tax_rate"),
+            "etf_transaction_tax_rate": tx_costs.get("etf_transaction_tax_rate"),
+            "backtest_run_id": backtest_summary.get("backtest_run_id"),
+        }
+        artifact_refs = (
+            [{"artifact_type": "backtest_run", "uri": backtest_ref}]
+            if backtest_ref
+            else []
+        )
+        now = _utc_now()
+        outbox_record = ResearchMemoryOutboxRecord(
+            outbox_id=f"mout-alpha-{run_id}",
+            run_id=run_id,
+            task_id=task.task_id,
+            artifact_id=str(backtest_summary.get("backtest_run_id") or "") or None,
+            source_event_type="research_finding_published",
+            source_event_id=run_id,
+            sponsor_persona_id="persona-tw-equity",
+            summary=gate_response.summary,
+            headline=f"Replicated Taiwan strategy {entry['strategy_id']}",
+            confidence=1.0,
+            evidence_refs=[backtest_ref] if backtest_ref else [f"strategy_spec:{entry['strategy_spec_id']}"],
+            dataset_refs=[task.dataset_version_id],
+            license_scope="governed_tw_market",
+            allowed_use=["research_memory", "replication_evidence"],
+            supersedes=[],
+            contradicts=[],
+            expires_at=None,
+            trace_id=task.trace_id,
+            status="pending",
+            created_at=now,
+            updated_at=now,
+            metadata={
+                "event_type": "research_finding_published",
+                "tenant_id": str(entry["tenant_id"]),
+                "strategy_spec_id": str(entry["strategy_spec_id"]),
+                "strategy_id": str(entry["strategy_id"]),
+                "family_id": backtest_summary.get("family_id"),
+                "trial_count": backtest_summary.get("trial_count"),
+                "transaction_costs": dict(tx_costs),
+                "metrics": metrics,
+                "artifact_refs": artifact_refs,
+            },
+        )
+        worker_outbox = ResearchMemoryOutboxStore(self._data_dir)
+        saved = worker_outbox.create_record(outbox_record)
+        try:
+            default_store = get_outbox_store()
+            if default_store.path.resolve() != worker_outbox.path.resolve():
+                default_store.create_record(outbox_record)
+        except Exception:
+            pass
+        return saved.to_dict()
+
     def _evaluate(
         self,
         task: ExperimentTask,
@@ -678,8 +865,16 @@ class AlphaRevalidationWorker:
         *,
         tick_at: str,
     ) -> ExperimentRun:
-        from services.research.replication.gate import ReplicationGate
-        from services.research.replication.gate_schema import ReplicationRequest
+        from services.registry.promotion.gate import PromotionGate, PromotionState
+        from services.registry.strategy_artifact import strategy_artifact_checksum
+        from services.research.alpha_replication.shared_stores import (
+            SharedReplicationGate as ReplicationGate,
+        )
+        from services.research.replication.gate import create_promotion_request
+        from services.research.replication.gate_schema import (
+            CandidateAdmissionStatus,
+            ReplicationRequest,
+        )
 
         run_hash = _short_hash(
             str(entry["tenant_id"]),
@@ -688,54 +883,191 @@ class AlphaRevalidationWorker:
             str(attempt_number),
         )
         run_id = f"erun-alpha-{run_hash}"
+        raw_spec = dict(spec)
         evaluation_spec = dict(spec)
         # Registry approval is validated against the immutable envelope above.
         # ReplicationGate is a candidate-content validator and intentionally
         # rejects lifecycle_state=approved as a direct promotion attempt, so do
         # not project registry lifecycle state into its candidate payload.
-        evaluation_spec.pop("lifecycle_state", None)
+        for non_schema_key in (
+            "lifecycle_state",
+            "backtest_evaluation",
+            "backtest_dataset",
+            "strategy_artifact",
+            "skip_backtest",
+            "history_trading_days",
+        ):
+            evaluation_spec.pop(non_schema_key, None)
+
+        artifact_checksum: str | None = None
+        if isinstance(raw_spec.get("strategy_artifact"), Mapping):
+            try:
+                artifact_checksum = strategy_artifact_checksum(raw_spec["strategy_artifact"])
+            except Exception:
+                artifact_checksum = None
+
+        backtest_eval = self._resolve_backtest_evaluation(
+            run_id=run_id,
+            task=task,
+            entry=entry,
+            raw_spec=raw_spec,
+        )
+
+        # Do NOT write self-attested grok_processing_notes (normalization_confidence,
+        # governance_compliance, downstream_readiness) that the worker did not check.
+        handoff_payload: dict[str, Any] = {
+            "source_metadata": {
+                "api_endpoint": (
+                    f"{self._registry_url}/api/registry/strategy-specs/"
+                    f"{entry['strategy_spec_id']}"
+                ),
+                "retrieved_at": tick_at,
+                "governance_context": (
+                    "Approved immutable StrategySpec review "
+                    f"{entry['approval_decision_id']}"
+                ),
+            },
+            "normalized_findings": {
+                "strategy_spec": {
+                    "strategy_spec_id": entry["strategy_spec_id"],
+                    "strategy_id": entry["strategy_id"],
+                },
+                "replication_notes": (
+                    "Authoritative alpha revalidation with tenant-scoped lineage and real Taiwan backtest."
+                ),
+                "evaluation_hypotheses": (
+                    "H1: candidate strategy artifact achieves positive deflated out-of-sample Sharpe on governed Taiwan market data after commission and tax."
+                ),
+            },
+        }
+        if isinstance(raw_spec.get("family_id"), str):
+            handoff_payload["family_id"] = raw_spec["family_id"]
+
         request = ReplicationRequest(
             candidate_id=run_id,
             source_task_id=task.task_id,
-            research_handoff={
-                "source_metadata": {
-                    "api_endpoint": (
-                        f"{self._registry_url}/api/registry/strategy-specs/"
-                        f"{entry['strategy_spec_id']}"
-                    ),
-                    "retrieved_at": tick_at,
-                    "governance_context": (
-                        "Approved immutable StrategySpec review "
-                        f"{entry['approval_decision_id']}"
-                    ),
-                },
-                "normalized_findings": {
-                    "strategy_spec": {
-                        "strategy_spec_id": entry["strategy_spec_id"],
-                        "strategy_id": entry["strategy_id"],
-                    },
-                    "replication_notes": (
-                        "Authoritative alpha revalidation with tenant-scoped lineage."
-                    ),
-                    "evaluation_hypotheses": (
-                        "H1: approved StrategySpec schema and governance constraints remain valid."
-                    ),
-                },
-                "grok_processing_notes": {
-                    "normalization_confidence": "high",
-                    "governance_compliance": "verified",
-                    "downstream_readiness": "ready_for_replication",
-                },
-            },
+            research_handoff=handoff_payload,
             proposed_strategy_spec=evaluation_spec,
+            backtest_evaluation=backtest_eval,
             metadata={
                 "tenant_id": entry["tenant_id"],
                 "strategy_spec_id": entry["strategy_spec_id"],
                 "approval_decision_id": entry["approval_decision_id"],
+                "dataset_version_id": task.dataset_version_id,
+                **({"strategy_artifact_checksum": artifact_checksum} if artifact_checksum else {}),
             },
             timestamp=tick_at,
         )
-        gate_response = ReplicationGate().evaluate_candidate(request)
+        gate = ReplicationGate(
+            trial_counter_path=self._trial_counter_path,
+            backtest_run_store=self._backtest_run_store,
+        )
+        gate_response = gate.evaluate_candidate(request)
+
+        gate_metadata = getattr(gate_response, "metadata", None)
+        backtest_summary: dict[str, Any] = (
+            dict(gate_metadata.get("backtest_summary"))
+            if isinstance(gate_metadata, Mapping)
+            and isinstance(gate_metadata.get("backtest_summary"), Mapping)
+            else {}
+        )
+        if not backtest_summary and isinstance(backtest_eval, Mapping):
+            is_data = backtest_eval.get("in_sample") if isinstance(backtest_eval.get("in_sample"), Mapping) else {}
+            oos_data = backtest_eval.get("out_of_sample") if isinstance(backtest_eval.get("out_of_sample"), Mapping) else {}
+            backtest_summary = {
+                "backtest_run_id": backtest_eval.get("backtest_run_id"),
+                "in_sample_sharpe_ratio": is_data.get("sharpe_ratio"),
+                "out_of_sample_sharpe_ratio": oos_data.get("sharpe_ratio"),
+                "out_of_sample_max_drawdown": oos_data.get("max_drawdown"),
+                "out_of_sample_total_return": oos_data.get("total_return"),
+                "out_of_sample_round_trips": oos_data.get("round_trips"),
+                "transaction_costs": backtest_eval.get("transaction_costs") or {},
+            }
+        backtest_run_id = (
+            backtest_summary.get("backtest_run_id")
+            or (backtest_eval.get("backtest_run_id") if isinstance(backtest_eval, Mapping) else None)
+        )
+        backtest_ref = f"backtest://{backtest_run_id}" if backtest_run_id else None
+        artifact_refs = [backtest_ref] if backtest_ref else []
+
+        run_metadata: dict[str, Any] = {
+            "dispatch_mode": "authoritative",
+            "configured_mode": self._configured_mode,
+            "production_activation": "disabled",
+            "worker_id": self._worker_id,
+            "attempt_number": attempt_number,
+            "replay_count": int(entry.get("replay_count") or 0),
+            "idempotency_key": (
+                f"alpha-run:{entry['tenant_id']}:"
+                f"{entry['strategy_spec_id']}:"
+                f"{int(entry.get('replay_count') or 0)}:{attempt_number}"
+            ),
+            "approval_decision_id": entry["approval_decision_id"],
+            "strategy_spec_checksum": entry["checksum"],
+            "replication_gate": gate_response.to_dict(),
+            "backtest_run_id": backtest_run_id,
+            "backtest_summary": dict(backtest_summary),
+        }
+
+        admission_status = getattr(gate_response, "admission_status", None)
+        if admission_status == CandidateAdmissionStatus.INSUFFICIENT_HISTORY:
+            run_metadata["candidate_status"] = "insufficient_history"
+            run_metadata["replication_status"] = "insufficient_history"
+            common_insufficient = {
+                "run_id": run_id,
+                "task_id": task.task_id,
+                "tenant_id": task.tenant_id,
+                "strategy_spec_id": task.strategy_spec_id,
+                "strategy_id": task.strategy_id,
+                "strategy_spec_version": task.strategy_spec_version,
+                "backend_id": DEFAULT_BACKEND_ID,
+                "runtime_env": DEFAULT_RUNTIME_ENV,
+                "dataset_version_id": task.dataset_version_id,
+                "code_version": task.code_version,
+                "input_manifest_ref": (
+                    f"registry://{entry['strategy_spec_id']}?checksum={entry['checksum']}"
+                ),
+                "artifact_refs": artifact_refs,
+                "trace_id": f"{task.trace_id}:attempt:{attempt_number}",
+                "created_at": tick_at,
+                "started_at": tick_at,
+                "finished_at": _utc_now(),
+                "metadata": run_metadata,
+            }
+            return ExperimentRun(
+                **common_insufficient,
+                status="cancelled",
+                failure_reason=gate_response.summary,
+            )
+
+        if gate_response.passed:
+            if hasattr(gate_response, "candidate_id"):
+                promotion_request = create_promotion_request(
+                    gate_response,
+                    evaluation_spec,
+                )
+                if promotion_request is not None:
+                    draft_entry = PromotionGate.build_draft_entry_from_replication_request(
+                        promotion_request,
+                        strategy_id=str(entry["strategy_id"]),
+                        checksum=str(entry["checksum"]),
+                    )
+                    PromotionGate().check_requirements(
+                        PromotionState.CANDIDATE,
+                        draft_entry,
+                    )
+                    run_metadata["promotion_request"] = promotion_request.to_dict()
+                    run_metadata["promotion_gate_entry"] = draft_entry
+            finding_record = self._publish_research_finding(
+                run_id=run_id,
+                task=task,
+                entry=entry,
+                gate_response=gate_response,
+                backtest_summary=backtest_summary,
+                backtest_ref=backtest_ref,
+            )
+            run_metadata["research_finding_outbox_id"] = finding_record.get("outbox_id")
+
         common = {
             "run_id": run_id,
             "task_id": task.task_id,
@@ -750,27 +1082,12 @@ class AlphaRevalidationWorker:
             "input_manifest_ref": (
                 f"registry://{entry['strategy_spec_id']}?checksum={entry['checksum']}"
             ),
-            "artifact_refs": [],
+            "artifact_refs": artifact_refs,
             "trace_id": f"{task.trace_id}:attempt:{attempt_number}",
             "created_at": tick_at,
             "started_at": tick_at,
             "finished_at": _utc_now(),
-            "metadata": {
-                "dispatch_mode": "authoritative",
-                "configured_mode": self._configured_mode,
-                "production_activation": "disabled",
-                "worker_id": self._worker_id,
-                "attempt_number": attempt_number,
-                "replay_count": int(entry.get("replay_count") or 0),
-                "idempotency_key": (
-                    f"alpha-run:{entry['tenant_id']}:"
-                    f"{entry['strategy_spec_id']}:"
-                    f"{int(entry.get('replay_count') or 0)}:{attempt_number}"
-                ),
-                "approval_decision_id": entry["approval_decision_id"],
-                "strategy_spec_checksum": entry["checksum"],
-                "replication_gate": gate_response.to_dict(),
-            },
+            "metadata": run_metadata,
         }
         if gate_response.passed:
             return ExperimentRun(

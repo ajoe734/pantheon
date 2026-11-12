@@ -125,13 +125,14 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
         connector_id="tw-finmind-datasets",
         datasets=(
             _dataset(
-                "tw_price_daily",
+                "finmind_tw_price_reference",
                 "market_daily",
-                storage_tier="normalized/features",
+                storage_tier="raw/reference",
                 update_profile="daily_after_close",
-                storage_targets=("normalized/tw_price_daily", "features/returns"),
+                storage_targets=("raw/finmind/TaiwanStockPrice",),
                 universe_tiers=("core_universe", "candidate_universe", "archive_universe"),
                 backup_source="TWSE/TPEx official market data",
+                notes="Reference only; Taiwan daily OHLCV truth stays TWSE/TPEx official.",
             ),
             _dataset(
                 "tw_daily_price_and_chip",
@@ -155,6 +156,15 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
                 storage_targets=("normalized/tw_broker_top", "features/broker_top_concentration"),
                 backup_source="Yahoo Taiwan broker top15 public-web fallback; TEJ AMTOP1/ABSR20 for paid backfill",
                 metadata={"max_rank": 20, "source_dataset": "TaiwanStockTradingDailyReport"},
+            ),
+            _dataset(
+                "tw_broker_branch_detail",
+                "taiwan_chip",
+                storage_tier="normalized",
+                update_profile="daily_after_close",
+                storage_targets=("normalized/tw_broker_branch_detail",),
+                notes="Per-branch daily buy/sell detail; FinMind licence is not redistributable.",
+                metadata={"source_dataset": "TaiwanStockTradingDailyReport", "redistribution_allowed": False},
             ),
             _dataset(
                 "tw_news_metadata",
@@ -204,6 +214,33 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
                     "normalized/tw_securities_lending",
                 ),
                 notes="Official chip summaries; detailed broker top N remains active/candidate only.",
+            ),
+            _dataset(
+                "tw_monthly_revenue",
+                "financial_fundamental",
+                storage_tier="normalized/features",
+                update_profile="daily_scan_monthly_event_facts",
+                storage_targets=("normalized/tw_monthly_revenue",),
+                universe_tiers=("core_universe",),
+                notes="TWSE/TPEx OpenAPI monthly revenue with declared availability lag.",
+            ),
+            _dataset(
+                "tw_financial_statement",
+                "financial_fundamental",
+                storage_tier="normalized/features",
+                update_profile="daily_scan_quarterly_event_facts",
+                storage_targets=("normalized/tw_financial_statement",),
+                universe_tiers=("core_universe",),
+                notes="TWSE/TPEx OpenAPI income and balance statements with declared availability lag.",
+            ),
+            _dataset(
+                "tw_valuation_bwibbu",
+                "financial_fundamental",
+                storage_tier="normalized/features",
+                update_profile="daily_after_close",
+                storage_targets=("normalized/tw_valuation_bwibbu",),
+                universe_tiers=("core_universe",),
+                notes="TWSE BWIBBU_ALL daily P/E, P/B and dividend yield.",
             ),
         ),
         metadata={
@@ -1065,7 +1102,13 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
         "fetch": {
             "mode": "provider_owned_adapter",
             "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
-            "datasets": ["tw_price_daily", "tw_exchange_chip_summary"],
+            "datasets": [
+                "tw_price_daily",
+                "tw_exchange_chip_summary",
+                "tw_monthly_revenue",
+                "tw_financial_statement",
+                "tw_valuation_bwibbu",
+            ],
         },
         "schedule": {
             "cadence": "daily_after_close",

@@ -26,7 +26,6 @@ import pytest
 
 from services.control_plane.bff.governance import approval_owner
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
-from services.control_plane.bff.tools_integrations.service import deprecated_bff_path_response
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -95,7 +94,6 @@ def _make_client(store: Any) -> TestClient:
         sse_buffers={},
         sse_subscribers={},
         gov_bff_action_command=lambda *a, **kw: {},
-        deprecated_bff_path_response=deprecated_bff_path_response,
         sem_command_response=lambda *a, **kw: {},
         stream_generic_events=lambda *a, **kw: iter(()),
         surface_degradation_reason=lambda *a, **kw: None,
@@ -169,19 +167,13 @@ def test_pkt004_deployment_approval_drilldowns_filters_follow_canonical_contract
         "/api/v1/deployment-plans?status=approved&capital_pool_id=pool-main",
         headers=headers,
     )
-    assert plans.status_code == 410, plans.text
-    assert plans.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
-    plan_payload = plans.json()
-    assert plan_payload["detail"]["error"]["details"]["route"] == "/api/v1/deployment-plans"
-    assert plan_payload["detail"]["error"]["details"]["replacement"] == "/bff/deployments"
-    assert plan_payload["meta"]["deprecation"]["replacement"] == "/bff/deployments"
+    assert plans.status_code == 405, plans.text
 
     no_plans = client.get(
         "/api/v1/deployment-plans?status=rejected&capital_pool_id=pool-main",
         headers=headers,
     )
-    assert no_plans.status_code == 410, no_plans.text
-    assert no_plans.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
+    assert no_plans.status_code == 405, no_plans.text
     assert list_calls == 0
 
     bff_deployments = client.get(

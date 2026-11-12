@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import time
 import urllib.request
 from pathlib import Path
 
@@ -24,6 +25,12 @@ def forbid_all_network_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket.socket, "connect_ex", _blocked)
     monkeypatch.setattr(socket, "create_connection", _blocked)
     monkeypatch.setattr(urllib.request, "urlopen", _blocked)
+
+
+@pytest.fixture(autouse=True)
+def no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rate-limit sleeps are real in production; tests must not actually wait."""
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
 
 
 @pytest.fixture()

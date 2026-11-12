@@ -1,0 +1,61 @@
+{
+  "task": "BFF-HOSTED-READ-LATENCY-RESIDUAL-20261111",
+  "source_only": true,
+  "hosted_performance_accepted": false,
+  "measured_input": "/tmp/pantheon-root01a15322-resume-20261111/strategy-readonly-19JTI6/result.json (pair BFF d9c730ea / FE acf3efae; all samples retained there, not altered)",
+  "residuals_from_measurement": {
+    "fleet_browser_p95_ms": {
+      "measured": 1036.7,
+      "required": 1000,
+      "addressed_by_this_change": false
+    },
+    "strategies_default_first_page_p50_ms": {
+      "measured": 1397.46,
+      "required": 1200,
+      "addressed_by_this_change": "attempted"
+    },
+    "strategies_per_persona_p50_ms": {
+      "measured": 1322.52,
+      "required": 1200,
+      "addressed_by_this_change": "attempted"
+    }
+  },
+  "identified_critical_path": "GET /bff/strategies awaited three independent owner reads serially on the request thread: Persona directory (read_persona_state_lookup), registry summary page (HTTP), latest ranking snapshot. Cause is from code reading of existing primitives; no hosted SQL/network timing was available to the source author.",
+  "change": [
+    "strategies/routes/collection.py: prefetch the registry summary page (non-hide path) and ranking snapshot with the existing submit_owner_read + existing fleet read executor. The page prefetch Future is consumed by the handler (single result or failure, HTTPException included; works for uncached page ports); the ranking prefetch only runs with a per-request read cache and is joined via that cache. Tenant/auth, deadline and result content are unchanged. No cross-request cache, no new pool.",
+    "strategies/routes/collection.py: page Future join bounded by remaining_management_read_budget and routed through service._invoke_read_owner; submission failure becomes a failed Future so it translates through the same envelope; Future cancelled on timeout, owner read never retried.",
+    "strategies/routes/collection.py: ranking prefetch join that exhausts the request budget (TimeoutError from cached_owner_call) is handled as ranking read failure (snapshot None, ranking_read_failed True), restoring the base 200 ranking-unavailable behavior instead of 500; no retry, one ranking read."
+  ],
+  "not_changed": [
+    "Persona fleet read path (no profiled avoidable work identified)",
+    "operational-count full page walk",
+    "data-source legacy projection (stays degraded, commands disabled)",
+    "row filtering/ranking/classification"
+  ],
+  "tests": {
+    "new_old_fails_new_passes_2": "tests/test_strategy_operational_status.py::test_default_list_owner_page_failure_is_read_once_and_not_retried (uncached page port failing once: old review head 200 with 2 calls, fixed 503 with 1 call)",
+    "new_old_fails_new_passes": "tests/test_strategy_operational_status.py::test_default_list_overlaps_persona_directory_and_registry_page_reads (fails on HEAD collection.py, passes with change)",
+    "suites_passed": [
+      "test_strategy_list_latency",
+      "test_strategy_list_default_view",
+      "test_strategy_operational_status",
+      "test_strategy_metrics_truth",
+      "test_strategy_registry_owner_prerequisite",
+      "test_kw05_strategy_spec_contract",
+      "strategies/"
+    ],
+    "preexisting_failures_identical_on_HEAD": [
+      "test_bff_strategy_persona_contract.py::test_bff_personas_list_returns_200_and_dto_shape",
+      "test_bff_strategy_persona_contract.py::test_bff_personas_create_then_subresources_round_trip",
+      "test_bff_strategy_persona_contract.py::test_bff_personas_actions_route_through_command_envelope",
+      "tests/test_strategy_ranking_router.py::test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation"
+    ],
+    "deadline_regression": "tests/test_strategy_operational_status.py::test_default_list_pool_contention_fails_truthfully_within_request_deadline (shared pool saturated 0.8s under 0.1s deadline: old review head 500 raw, fixed 503 DEPENDENCY_UNAVAILABLE under 0.6s, no retry)",
+    "ranking_join_timeout": "tests/test_strategy_operational_status.py::test_default_list_ranking_join_timeout_is_ranking_unavailable_not_500 (fails without fix: 500; passes: 200, one ranking read). Reviewer repro /tmp/bff-residual-review-ranking.py: base 200/0.249s, head now 200/0.208s, 1 read."
+  },
+  "limitations": [
+    "Source-only; the improvement is unproven on hosted data until the original hosted owner retests the final pair.",
+    "Fleet p95 residual (1036.7ms vs 1000ms) is not addressed: no concrete avoidable work was demonstrated; needs Root-supplied bounded timing/SQL evidence.",
+    "Real gain depends on Persona directory and registry page latencies being comparable; unmeasured."
+  ]
+}

@@ -38,7 +38,8 @@ from collector_stack.spiders import (
 def _build_ndc_zip_bytes(csv_bytes: bytes) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("ndc_business_indicators_6099.csv", csv_bytes)
+        zf.writestr("manifest.csv", b"name,schema,description\n")
+        zf.writestr("景氣指標與燈號.csv", csv_bytes)
     return buf.getvalue()
 
 
@@ -50,6 +51,10 @@ def _build_fixture_transport(fixtures_dir: Path) -> FixtureTransport:
     transport.register(
         "https://cpx.cbc.gov.tw/API/DataAPI/Get",
         (fixtures_dir / "cbc_bp01d01.json").read_bytes(),
+    )
+    transport.register(
+        "https://data.gov.tw/api/v2/rest/dataset/6099",
+        (fixtures_dir / "ndc_dataset_6099.json").read_bytes(),
     )
     transport.register(
         "https://ws.ndc.gov.tw/Download.ashx",
@@ -129,13 +134,13 @@ def _build_fixture_transport(fixtures_dir: Path) -> FixtureTransport:
         (fixtures_dir / "youtube_videos.json").read_bytes(),
     )
     transport.register(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
         (fixtures_dir / "gemini_video_summary.json").read_bytes(),
     )
 
     # §5.5 News via RSSHub
     transport.register(
-        "http://rsshub:1200/cna/realtime",
+        "http://rsshub:1200/cna/aall",
         (fixtures_dir / "rsshub_cna.xml").read_bytes(),
     )
     return transport
@@ -203,6 +208,9 @@ def test_every_section_5_source_runs_on_captured_fixture_with_no_network_call(
         started_at="2026-11-10T09:00:00Z",
         finished_at="2026-11-10T09:00:10Z",
         allow_disabled=True,
+        collect_kwargs=(
+            {"video_id": "fixture_vid_001"} if source_id == "collector-youtube-gemini-notes" else None
+        ),
     )
     assert outcome.status == "complete"
     manifest = verify_bundle_directory(outcome.bundle.bundle_dir)

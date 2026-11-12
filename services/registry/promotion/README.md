@@ -28,20 +28,24 @@ pytest services/registry/test_service.py -v
 
 ## Legacy Promotion Gate (REG-002)
 
-The following files implement the earlier legacy model with `lifecycle_state` / `promotion_state`:
+The following files implement the earlier legacy model with `lifecycle_state` entry input:
 
 - `gate.py`: lifecycle transition and metadata checks
 - `cli.py`: CLI entrypoint for promoting a registry entry JSON document
 - `test_gate.py`: service-local unit coverage for transition and projection behavior
 - `smoke_test_gate.py`: end-to-end local smoke test for candidate/paper/live flow
 
-Legacy compatibility files remain at repo root:
+The root `gate.py` and `cli.py` forwarding aliases are retired. Python callers
+use `services.registry.promotion.gate`; the installed module CLI is
+`python3 -m services.registry.promotion.cli`. Direct execution of this directory's
+`cli.py` remains supported and resolves its adjacent gate, not a root alias.
 
-- `gate.py`
-- `cli.py`
+From the repository root, run the local and Stage 0 smoke with
+`python3 -m services.registry.promotion.smoke_test_gate`.
 
-Those wrappers exist to avoid breaking older commands while task-board artifacts converge on the
-service-local path.
+`services/research/alpha_replication/revalidation_worker.py` uses the canonical
+`PromotionGate`, including `build_draft_entry_from_replication_request()` and
+candidate requirements. This is retained business logic.
 
 ## Scope
 
@@ -55,10 +59,11 @@ Canonical target semantics after `REG-004`:
 
 Current implementation note:
 
-- `gate.py` and its tests still implement the earlier legacy model with `lifecycle_state` /
-  `promotion_state`
-- this README now documents the canonical target contract
-- follow-on tasks `GOV-001`, `DEP-001`, and execution-side metadata migration will bring the code path into full alignment
+- `gate.py` and its CLI retain `lifecycle_state` entry input and governed
+  `candidate -> paper -> canary -> live` transitions
+- its execution projection emits canonical `artifact_state` and `deployment_stage`
+- the split Registry API separately owns artifact-state transitions; removing
+  forwarding aliases does not merge these domain models or change approvals
 
 ## Canonical Artifact-State Rules
 
@@ -163,12 +168,17 @@ Canonical target metadata should include:
 - `approver` only as a compatibility hint while approval is not yet first-class
 - `rollback` for approved artifacts that may be deployed or rebound
 
-Current implementation compatibility:
+Current implementation after `REGISTRY-LEGACY-METADATA-RETIRE-20261111`:
 
-- `build_execution_projection()` in `gate.py` still emits legacy `promotion_state`
-- current loader behavior still checks `promotion_state=paper|live`
-- until those consumers migrate, treat `promotion_state` as a legacy alias and do not use it as
-  canonical registry truth in new contracts
+- `build_execution_projection()` and the experiment adapter emit `artifact_state`
+  and `deployment_stage`, without the retired artifact `promotion_state` alias
+- the loader requires `artifact_state=approved` and an exact `paper`, `canary`,
+  or `live` deployment-stage match; it does not read `promotion_state`
+- `lifecycle_state` remains entry input for this gate/CLI and is normalized by
+  the experiment adapter; its `compat` metadata is separate from artifact projection
+- telemetry `target.promotion_state` remains a separate event/query field
+- optional archived schema fields and stored metadata are preserved; no dual
+  write, data migration, or archive deletion is required
 
 ## CLI
 
@@ -177,16 +187,16 @@ Current executable CLI behavior still follows the legacy `gate.py` target states
 Promote an entry without overwriting the source file:
 
 ```bash
-python3 services/registry/promotion/cli.py \
+python3 -m services.registry.promotion.cli \
   --entry-file /tmp/registry-entry.json \
   --to paper \
   --approver "risk-committee"
 ```
 
-Overwrite the registry entry in place:
+Advance a canary entry with approval and rollback metadata, overwriting it in place:
 
 ```bash
-python3 services/registry/promotion/cli.py \
+python3 -m services.registry.promotion.cli \
   --entry-file /tmp/registry-entry.json \
   --to live \
   --approver "risk-committee" \

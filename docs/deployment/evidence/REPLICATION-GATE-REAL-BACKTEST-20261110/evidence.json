@@ -1,0 +1,98 @@
+{
+  "task_id": "REPLICATION-GATE-REAL-BACKTEST-20261110",
+  "title": "Admission requires a real backtest with out-of-sample and trial accounting",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "hosted_behavior_claimed": false,
+  "scope": [
+    "services/research/alpha_replication/queue.py",
+    "services/research/alpha_replication/revalidation_worker.py",
+    "services/research/alpha_replication/test_revalidation_worker.py",
+    "services/research/replication/gate_schema.py",
+    "services/research/replication/gate_config.py",
+    "services/research/replication/gate.py",
+    "services/research/replication/test_gate.py",
+    "services/research/replication/smoke_test.py",
+    "services/research/main.py",
+    "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "services/research/vectorbt/test_adapter.py",
+    "services/registry/promotion/gate.py",
+    "services/registry/promotion/test_gate.py",
+    "docs/deployment/evidence/REPLICATION-GATE-REAL-BACKTEST-20261110/evidence.json"
+  ],
+  "statutory_rate_citations": {
+    "commission_rate": {
+      "rate": 0.001425,
+      "applied_on": "every buy and sell fill",
+      "citation": "TWSE Operating Rules Art. 85 / TPEx Brokerage Fee Schedule statutory ceiling: 0.1425% (0.001425) per fill on buy and sell orders."
+    },
+    "equity_transaction_tax_rate": {
+      "rate": 0.003,
+      "applied_on": "every common stock sell fill",
+      "citation": "Taiwan Securities Transaction Tax Act Art. 2 (證券交易稅條例第2條): 0.3% (0.003) on corporate stock sell fills."
+    },
+    "etf_transaction_tax_rate": {
+      "rate": 0.001,
+      "applied_on": "every beneficiary certificate / ETF (e.g. 0050) sell fill",
+      "citation": "Taiwan Securities Transaction Tax Act Art. 2-2: 0.1% (0.001) on beneficiary certificate / ETF (e.g. 0050) sell fills."
+    }
+  },
+  "acceptance_criteria_verification": {
+    "no_self_attested_governance_values": "AlphaRevalidationWorker._evaluate in services/research/alpha_replication/revalidation_worker.py no longer writes grok_processing_notes (normalization_confidence, governance_compliance, downstream_readiness) that the worker did not check; verified by test_worker_does_not_write_self_attested_governance_values.",
+    "real_taiwan_backtest_70_30_and_3_walk_forward": "run_replication_backtest_protocol in services/research/vectorbt/adapter/vectorbt_adapter.py executes a real vectorbt backtest on governed Taiwan market data with a 70% in-sample / 30% out-of-sample split, 3 walk-forward folds, buy-and-hold same-symbol and 0050 benchmarks, and ReplicationGate._check_real_backtest_validation refuses admission when backtest_evaluation is missing or fails protocol checks.",
+    "commission_and_tax_on_every_fill_with_citations": "VectorbtBackend.run and run_replication_backtest_protocol apply statutory Taiwan brokerage commission (0.001425 on every buy and sell fill) and securities transaction tax (0.003 on equity sell fills, 0.001 on ETF sell fills) and include statutory citations in transaction_costs.citations.",
+    "family_trial_counter_and_deflated_sharpe_threshold": "FamilyTrialCounterStore in services/research/replication/gate.py increments the per-family trial counter on each evaluated variant and GateConfig.compute_deflated_sharpe_threshold deflates the admission Sharpe threshold by trial count; verified by test_deflated_sharpe_threshold_increases_with_family_trial_count.",
+    "insufficient_history_under_two_years": "run_replication_backtest_protocol, ReplicationGate, AlphaReplicationQueue, and AlphaRevalidationWorker record candidates with < 2 years (< 730 calendar days / < 480 trading bars) of point-in-time history as insufficient_history without admitting or failing them.",
+    "experiment_run_backtest_ref_and_promotion_gate_sharpe": "ExperimentRun carries backtest://<backtest_run_id> in artifact_refs, create_promotion_request and PromotionGate.build_draft_entry_from_replication_request populate real replication_success, out-of-sample sharpe_ratio, deflated_sharpe_threshold, and source_run_ids, and research_finding_published is recorded in the research memory outbox."
+  },
+  "commands": [
+    {
+      "cmd": "PANTHEON_VECTORBT_BACKEND=real .venv-pantheon/bin/python3 -m pytest services/research/alpha_replication/ services/research/replication/ services/research/vectorbt/test_adapter.py services/registry/promotion/test_gate.py -q",
+      "result": "157 passed, 5 subtests passed"
+    },
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest services/research/tests/test_reviewed_memory_writeback.py services/research/tests/test_research_orchestrator_http_service.py -q",
+      "result": "39 passed"
+    }
+  ],
+  "ci_remediation_2026_11_11": {
+    "problem": "Registry and source_ingestion suites raised VectorbtWorkflowError because the vectorbt backend is not installed there.",
+    "fix": "Those suites use recorded real-vectorbt backtest outputs from services/research/replication/fixtures/recorded_backtest_tw_2330.json (sha256 0dc3496aa93fe472e6694af88a913974ef546f60f6fa9a549a39ad0893770897); the real vectorbt run stays in the research suite.",
+    "verification": "python3 -m unittest services.registry.promotion.test_gate -> 8 tests OK"
+  },
+  "reopen_fix_20261111": {
+    "worker": "revalidation_worker no longer generates artifact/dataset or reuses cached results; requires candidate strategy_artifact + backtest_dataset whose dataset_id equals the pinned dataset_version_id and artifact checksum/strategy_id binding, else fails closed; insufficient_history derived from actual PIT inputs only.",
+    "gate": "ReplicationGate verifies evaluation against a persisted BacktestRunStore record (digest, completed status, artifact checksum, dataset version, source refs) and requires a PIT history_check proof; unbound/forged/edited evaluations are rejected.",
+    "regression_tests": [
+      "test_gate: fabricated run id, edited evaluation, other artifact, other dataset, missing binding, missing history proof",
+      "test_gate: supplied artifact or dataset conflicting with metadata binding refused (candidate_binding_conflict)",
+      "test_adapter: _measure_pit_history resolves ref graph across signal/entry/exit/strength/filters; short or missing PIT feature history yields insufficient_history",
+      "test_revalidation_worker: absent inputs, wrong dataset, wrong checksum, no cache"
+    ],
+    "validation": "pytest alpha_replication + replication + registry/promotion + loop_closure_r2 with vectorbt 1.2.0: all passed; smoke_test 5/5"
+  },
+  "review_fix_pit_coverage_20261111": {
+    "fix": "_measure_pit_history now measures non-null dated feature coverage per required instrument/input (series or per-record values); a feature present on only a few rows no longer inherits the full OHLCV span; missing per-instrument series is recorded as missing (missing_instruments) -> insufficient_history.",
+    "regression_tests": [
+      "test_adapter.test_pit_history_feature_coverage_is_non_null_and_per_instrument (sparse last-10-rows feature; 2330 long + 2317 empty)"
+    ],
+    "validation": "unittest -k pit_history: 2 OK (pytest stubbed; pytest/vectorbt not installed in this env). Full test_adapter: 48 run, 2 errors only from 'vectorbt backend unavailable', 6 skipped. No full-suite pass claimed."
+  },
+  "review_fix_mixed_dated_undated_20261111": {
+    "finding": "Mixed dated/undated feature sequence left index-aligned scalars unsliced; future observation changed earlier action.",
+    "fix": "GovernedVectorbtInputAdapter.prepare rejects (fail closed) any sequence, including nested dataset.field mappings, that mixes dated and undated observations; fully timestamped PIT filtering unchanged.",
+    "tests": [
+      "test_mixed_dated_undated_feature_sequences_rejected",
+      "test_fully_dated_feature_sequences_accepted"
+    ],
+    "validation_note": "Local env lacks pytest/numpy/vectorbt; unittest run of test_adapter.py: new tests pass, 7 errors are all missing-dependency (numpy/vectorbt) and pre-existing environmental; CI is authoritative."
+  },
+  "review_fix_instrument_map_identity_20261111": {
+    "finding": "Global nested dataset.field feature mappings (e.g. tw_monthly_revenue) were misclassified as per-instrument maps in _measure_pit_history, falsely yielding insufficient_history.",
+    "fix": "Per-instrument maps are recognized only when the normalized key matches an actual dataset/required instrument; other mappings stay global.",
+    "tests": [
+      "test_pit_history_global_nested_equals_per_instrument_layout"
+    ],
+    "validation_note": "venv with pytest/pandas/numpy/jsonschema: pit_history/mixed/nested/dated adapter selection 11 passed, 46 deselected. Real-vectorbt full suite not run; no full-suite pass claimed."
+  }
+}

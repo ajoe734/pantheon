@@ -19,7 +19,7 @@ def _ctx() -> StrategyRouteContext:
         strategy_persona_idempotency={}, strategy_seed_replication_idempotency={},
         strategy_seed_review_idempotency={}, list_governance_audit_events=None,
         ooda_packet_list_payload=None, require_ooda_packet_routes_enabled=None,
-        deprecated_bff_path_response=None, bff_me_tenant_payload=None,
+        bff_me_tenant_payload=None,
         list_persona_records=None, list_strategy_summaries=None,
     )
 

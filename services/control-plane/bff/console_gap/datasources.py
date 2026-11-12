@@ -15,6 +15,7 @@ except ImportError:  # pragma: no cover
         def calculate_source_allowed_actions(*args: Any, **kwargs: Any) -> Dict[str, Any]:  # type: ignore[misc]
             raise RuntimeError("Source action policy is unavailable")
 
+from services.control_plane.bff.research import discovery_projection
 from services.control_plane.bff.source_management_client import SourceManagementClient, SourceManagementClientError
 from services.source_ingestion.source_management_models import assert_no_raw_secrets
 from .contracts import (
@@ -310,6 +311,10 @@ def create_datasources_router(
                     "lineage_summary": {
                         "datasets": inst.get("datasets") or [],
                         "markets": inst.get("markets") or [],
+                        "health": discovery_projection.project_source_health(desired, observed),
+                        "attribution": discovery_projection.attribution_block(
+                            inst.get("provider"), defn.get("provider"), inst.get("datasets")
+                        ),
                     },
                 }
                 composed_items.append(redact_sensitive_values(dto))
@@ -372,6 +377,11 @@ def create_datasources_router(
         source: str = str(registry.get("source") or "missing")
         raw_items: List[Dict[str, Any]] = list(registry.get("connectors") or [])
         items: List[Dict[str, Any]] = [_sanitize_legacy_projection_row(item) for item in raw_items]
+        for _row in items:
+            if isinstance(_row, dict) and "attribution" not in _row:
+                _attr = discovery_projection.attribution_block(_row)
+                if _attr is not None:  # legacy rows keep their exact key set otherwise
+                    _row["attribution"] = _attr
 
         is_empty_v2_legacy_projection = (
             v2_store_empty

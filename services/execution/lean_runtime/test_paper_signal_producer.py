@@ -3277,3 +3277,69 @@ class TestFactorRulePaperSignalProducer(unittest.TestCase):
             strategy(bad_binding, "2026-05-15T06:05:00Z")
         self.assertEqual(ctx.exception.code, "artifact_interpreter_unsupported")
 
+    def test_paper_producer_rejects_inputs_outside_governed_catalogue(self) -> None:
+        import copy
+        from services.execution.lean_runtime.paper_signal_producer import (
+            CurrentArtifactStrategy,
+            SignalDecisionUnavailable,
+        )
+        from services.execution.lean_runtime.test_current_artifact_signal import _binding
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        art = copy.deepcopy(_sample_factor_rule_artifact())
+        art["artifact_id"] = "strat-tw-ungoverned-feature"
+        art["strategy_logic"]["inputs"][0]["dataset"] = "tw_ungoverned_dataset"
+        binding = _binding(art, binding_id="rb-factor-rule-ungoverned", include_market_input=False)
+        binding["symbol"] = "2330.TW"
+        binding["market_input"] = {
+            "symbol": "2330.TW",
+            "closes": [500.0, 505.0, 510.0, 515.0],
+            "features": {"rev_yoy": [10.0, 12.0, 11.0, 19.0]},
+            "source_ref": "source-ingest://normalized/tw-price/2330",
+            "observed_at": "2026-05-15T06:00:00Z",
+            "event_time": "2026-05-15T05:30:00Z",
+        }
+        with self.assertRaises(SignalDecisionUnavailable) as ctx:
+            CurrentArtifactStrategy(expression_layer=False)(binding, "2026-05-15T06:05:00Z")
+        self.assertEqual(ctx.exception.code, "feature_not_in_catalogue")
+
+    def _factor_rule_binding_with_features(self, features):
+        from services.execution.lean_runtime.test_current_artifact_signal import _binding
+        from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+        binding = _binding(_sample_factor_rule_artifact(), binding_id="rb-factor-rule-pit", include_market_input=False)
+        binding["symbol"] = "2330.TW"
+        binding["market_input"] = {
+            "symbol": "2330.TW",
+            "closes": [500.0, 505.0, 510.0, 515.0],
+            "features": features,
+            "source_ref": "source-ingest://normalized/tw-price/2330",
+            "observed_at": "2026-05-15T06:00:00Z",
+            "event_time": "2026-05-15T05:30:00Z",
+        }
+        return binding
+
+    def test_paper_producer_requires_catalogued_timestamped_observations(self) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import (
+            CurrentArtifactStrategy,
+            SignalDecisionUnavailable,
+        )
+
+        strategy = CurrentArtifactStrategy(expression_layer=False)
+        ok = {"event_time": "2026-01-31", "available_time": "2026-02-10T09:00:00Z", "value": 10.0}
+        bad_features = {
+            "untimestamped": {"rev_yoy": [10.0, 12.0, 11.0, 19.0]},
+            "missing_event_time": {"rev_yoy": [{"available_time": "2026-02-10T09:00:00Z", "value": 10.0}]},
+            "missing_available_time": {"rev_yoy": [{"event_time": "2026-01-31", "value": 10.0}]},
+            "absent": {},
+            "all_future": {"rev_yoy": [{"event_time": "2026-05-31", "available_time": "2026-06-10T09:00:00Z", "value": 99.0}]},
+            "inside_lag": {"rev_yoy": [{"event_time": "2026-05-10", "available_time": "2026-05-10T00:00:00Z", "value": 99.0}]},
+        }
+        for label, features in bad_features.items():
+            with self.subTest(label), self.assertRaises(SignalDecisionUnavailable):
+                strategy(self._factor_rule_binding_with_features(features), "2026-05-15T06:05:00Z")
+        # a valid observation still reaches the evaluator past the guard
+        try:
+            strategy(self._factor_rule_binding_with_features({"rev_yoy": [ok]}), "2026-05-15T06:05:00Z")
+        except SignalDecisionUnavailable as exc:
+            self.assertNotEqual(exc.code, "feature_not_in_catalogue")

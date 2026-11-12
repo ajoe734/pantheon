@@ -1552,3 +1552,421 @@ def test_semantic_authority_changes_are_rejected_on_rematerialization(tmp_path: 
     with pytest.raises(SourceDatasetAuthorityError, match="differing authority bindings"):
         _materialize(case3)
 
+
+
+def _load_authority_module():
+    return _load_module("source_dataset_authority_feature_test")
+
+
+def _feature_wrapper(row: dict[str, Any], dataset: str = "tw_monthly_revenue") -> dict[str, Any]:
+    return {
+        "connector_id": "tw-test",
+        "dataset": dataset,
+        "source_id": "s1",
+        "content_ref": "ref",
+        "metadata": {"symbol_canonical": "2330.TWSE", "normalized_row": row},
+    }
+
+
+def test_feature_observations_read_catalogued_fields_with_declared_lag() -> None:
+    authority = _load_authority_module()
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.feature_catalogue import catalogue_document
+    finally:
+        sys.path.remove(str(repo))
+    catalogue = catalogue_document()
+    row = {
+        "dataset": "tw_monthly_revenue", "event_time": "2026-06-30",
+        "available_time": "2026-07-10T10:00:00Z", "ingest_time": "2026-07-11T00:00:00Z",
+        "availability_lag_days": 10, "yoy": 12.5, "mom": None, "revenue": 100.0,
+    }
+    obs = authority.feature_observations_from_wrappers(
+        [_feature_wrapper(row)], catalogue=catalogue, connector_id="tw-test",
+        dataset_id="tw_monthly_revenue", trusted_now=NOW,
+    )
+    assert {o["field"]: o["value"] for o in obs} == {"yoy": 12.5, "revenue": 100.0}
+    assert all(o["availability_lag_days"] == 10 and o["entity"] == "2330.TWSE" for o in obs)
+
+    for bad in (
+        {**row, "available_time": "2026-07-10"},  # not offset aware
+        {**row, "available_time": "2026-06-01T00:00:00Z"},  # before event
+        {**row, "event_time": "2026-12-31"},  # future event
+        {k: v for k, v in row.items() if k != "ingest_time"},
+    ):
+        with pytest.raises(authority.SourceDatasetAuthorityError):
+            authority.feature_observations_from_wrappers(
+                [_feature_wrapper(bad)], catalogue=catalogue, connector_id="tw-test",
+                dataset_id="tw_monthly_revenue", trusted_now=NOW,
+            )
+    with pytest.raises(authority.SourceDatasetAuthorityError):
+        authority.feature_observations_from_wrappers(
+            [_feature_wrapper(row, "tw_unknown")], catalogue=catalogue, connector_id="tw-test",
+            dataset_id="tw_unknown", trusted_now=NOW,
+        )
+
+
+def test_storage_manifest_reads_governed_feature_datasets_not_ohlcv(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.connectors.base import SourceConnector, SourceType
+        from services.source_ingestion.connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+    finally:
+        sys.path.remove(str(repo))
+    authority = _load_authority_module()
+    adapter = TaiwanOfficialMarketDatasetAdapter(connector_id="tw-test")
+    connector = SourceConnector(
+        connector_id="tw-test", source_type=SourceType.MARKET, provider="p", license_scope="official_reference",
+        metadata={"feature_targets": ["tw_feature_rows"]},
+    )
+    rows = [{"資料年月": "11509", "公司代號": "2330", "營業收入-當月營收": "100", "營業收入-去年同月增減(%)": "12.5"}]
+    records = adapter.records_from_payload("tw_monthly_revenue", "TWSE", rows)
+    manifest = MarketDataStorageWriter(tmp_path).write_run(
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id="run-1")),
+        connector=connector,
+    ).to_dict()
+    storage = authority._validate_and_read_storage_manifest(
+        manifest, source_root=tmp_path, connector_id="tw-test",
+        normalized_targets={"tw_monthly_revenue"}, run_id="run-1", expected_market="TW",
+        trusted_now=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    assert storage["records"] == []
+    by_field = {o["field"]: o for o in storage["feature_observations"]}
+    assert by_field["yoy"]["value"] == 12.5 and by_field["yoy"]["entity"] == "2330.TWSE"
+    assert by_field["yoy"]["availability_lag_days"] == 10
+
+
+@pytest.mark.parametrize(
+    ("dataset", "rows", "field", "value"),
+    [
+        ("tw_margin_short_balance",
+         [{"Date": "1151110", "Code": "2330", "MarginPurchaseBalance": "100", "ShortSaleBalance": "10"}],
+         "margin_balance", 100.0),
+        ("tw_institutional_flow",
+         [{"Date": "1151110", "Code": "2330", "ForeignInvestorsIncludeMainlandAreaInvestors-Difference": "500"}],
+         "foreign_net_shares", 500.0),
+    ],
+)
+def test_daily_flow_pull_to_storage_to_training_carries_governed_times(
+    tmp_path: Path, dataset: str, rows: list[dict[str, str]], field: str, value: float
+) -> None:
+    from types import SimpleNamespace
+
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.connectors.base import SourceConnector, SourceType
+        from services.source_ingestion.connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+    finally:
+        sys.path.remove(str(repo))
+    authority = _load_authority_module()
+    adapter = TaiwanOfficialMarketDatasetAdapter(connector_id="tw-test")
+    connector = SourceConnector(
+        connector_id="tw-test", source_type=SourceType.MARKET, provider="p", license_scope="official_reference",
+        metadata={"feature_targets": ["tw_feature_rows"]},
+    )
+    records = adapter.records_from_payload(dataset, "TWSE", rows)
+    meta = records[0].metadata
+    assert len(meta["available_time"]) > 10 and meta["ingest_time"] and meta["availability_lag_days"] == 0
+    manifest = MarketDataStorageWriter(tmp_path).write_run(
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id="run-1")),
+        connector=connector,
+    ).to_dict()
+    storage = authority._validate_and_read_storage_manifest(
+        manifest, source_root=tmp_path, connector_id="tw-test",
+        normalized_targets={dataset}, run_id="run-1", expected_market="TW",
+        trusted_now=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    by_field = {o["field"]: o for o in storage["feature_observations"]}
+    assert by_field[field]["value"] == value and by_field[field]["entity"] == "2330.TWSE"
+
+
+def test_storage_manifest_keeps_tw_price_daily_on_ohlcv_path(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.connectors.base import SourceConnector, SourceType
+        from services.source_ingestion.connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+    finally:
+        sys.path.remove(str(repo))
+    authority = _load_authority_module()
+    adapter = TaiwanOfficialMarketDatasetAdapter(connector_id="tw-test")
+    connector = SourceConnector(
+        connector_id="tw-test", source_type=SourceType.MARKET, provider="p", license_scope="official_reference",
+        metadata={"normalized_target": "tw_price_daily", "feature_targets": ["returns"]},
+    )
+    rows = [
+        {"Date": "1150610", "Code": "2330", "Name": "TSMC", "TradeVolume": "1000", "TradeValue": "1",
+         "OpeningPrice": "100", "HighestPrice": "105", "LowestPrice": "99", "ClosingPrice": "104",
+         "Change": "1", "Transaction": "10"},
+    ]
+    records = adapter.records_from_payload("tw_price_daily", "TWSE", rows, trade_date="2026-06-10")
+    manifest = MarketDataStorageWriter(tmp_path).write_run(
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id="run-1")),
+        connector=connector,
+    ).to_dict()
+    storage = authority._validate_and_read_storage_manifest(
+        manifest, source_root=tmp_path, connector_id="tw-test",
+        normalized_targets={"tw_price_daily"}, run_id="run-1", expected_market="TW",
+        trusted_now=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    assert storage["feature_observations"] == []
+    assert len(storage["records"]) == 1
+    assert storage["records"][0]["instrument"] == "2330.TWSE"
+    assert storage["records"][0]["close"] == 104.0
+
+
+def _collector_files(source_id: str, rows_extra: list[dict[str, Any]]) -> dict[str, bytes]:
+    import hashlib
+
+    from services.source_ingestion.connectors.collector_bundle import compute_bundle_sha256
+
+    raw = {r["id"]: f"<html>{r['id']}</html>".encode() for r in rows_extra}
+    items, rows = [], []
+    for extra in rows_extra:
+        body = raw[extra["id"]]
+        sha = hashlib.sha256(body).hexdigest()
+        items.append({"item_id": extra["id"], "url": f"https://example.test/{extra['id']}", "http_status": 200,
+                      "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
+        rows.append({"url": f"https://example.test/{extra['id']}", "fetched_at": "2026-11-10T02:00:00Z",
+                     "published_at": "2026-11-10T01:00:00Z", "hashed_author": "hmac-a", "metrics": {}, **extra})
+    manifest = {
+        "schema_version": "collector_bundle.v1", "source_id": source_id, "run_id": "run1",
+        "collector_version": "1.0.0", "started_at": "2026-11-10T02:00:00Z", "finished_at": "2026-11-10T02:05:00Z",
+        "fetch_policy_hash": "fph", "robots_decision": "allowed", "terms_ref": "https://example.test/terms",
+        "items": items, "status": "complete", "attribution": "source: test",
+        "bundle_sha256": compute_bundle_sha256([i["content_sha256"] for i in items]),
+    }
+    base = f"bundles/{source_id}/2026-11-10/run1"
+    files = {f"{base}/manifest.json": json.dumps(manifest).encode(),
+             f"{base}/items.jsonl": "\n".join(json.dumps(r) for r in rows).encode(),
+             "bundles/index.json": json.dumps({"bundles": [
+                 {"source_id": source_id, "date": "2026-11-10", "run_id": "run1",
+                  "finished_at": "2026-11-10T02:05:00Z"}]}).encode()}
+    for body in raw.values():
+        files[f"{base}/raw/{hashlib.sha256(body).hexdigest()}.html"] = body
+    return files
+
+
+@pytest.mark.parametrize(
+    ("source_id", "rows", "dataset", "expected_fields"),
+    [
+        (
+            "collector-tw-cmoney-forum",
+            [
+                {"id": "a", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bullish"}},
+                {"id": "b", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bearish"}},
+            ],
+            "tw_community_daily",
+            {"post_volume", "unique_authors", "bull_bear_ratio", "engagement_weighted_sentiment"},
+        ),
+        (
+            "collector-tw-macro-cbc",
+            [
+                {"id": "a", "series_id": "cbc_policy_rate", "value": 2.0, "unit": "percent",
+                 "period_end": "2026-09-17T00:00:00Z", "available_time": "2026-09-17T08:00:00Z"},
+            ],
+            "tw_macro_series",
+            {"policy_rate"},
+        ),
+    ],
+)
+def test_collector_definition_pull_to_storage_to_training_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_id: str, rows: list[dict[str, Any]],
+    dataset: str, expected_fields: set[str],
+) -> None:
+    from types import SimpleNamespace
+
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.connector_definitions import COLLECTOR_SOURCE_SPECS, collector_host
+        from services.source_ingestion.connectors.collector_bundle import (
+            COLLECTOR_BUNDLE_ADAPTER_TOKEN, BundleTransport, CollectorBundleAdapter,
+        )
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+        from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+    finally:
+        sys.path.remove(str(repo))
+
+    spec = next(s for s in COLLECTOR_SOURCE_SPECS if s["id"] == source_id)
+    files = _collector_files(source_id, rows)
+
+    class _Transport(BundleTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            return files[relative_path]
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: _Transport())
+    config = {
+        "source_id": source_id, "source_type": spec["type"], "dataset": spec["dataset"],
+        "platform": spec.get("platform"), "attribution_required": bool(spec.get("attribution")),
+        "host": collector_host(), "max_records": 50,
+    }
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    adapter = CollectorBundleAdapter(connector_id="coll-1", **{k: v for k, v in config.items() if k != "host"})
+    records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 50},
+        trace_id="t",
+    )
+    assert any(r.metadata.get("dataset") == dataset for r in records), (
+        "production provider path must emit normalized governed feature records"
+    )
+    # The managed definition (not a test-built connector) declares the routing, and the
+    # full unfiltered pull (derived + original items) is what gets stored and read.
+    from services.source_ingestion.connector_definitions import get_connector_definition
+
+    definition = get_connector_definition(source_id)
+    assert dataset in definition.datasets
+    assert dataset in definition.metadata["normalized_datasets"]
+    connector = adapter.connector()
+    assert dataset in connector.metadata["normalized_datasets"]
+    manifest = MarketDataStorageWriter(tmp_path / "store").write_run(
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id="run-1")),
+        connector=connector,
+    ).to_dict()
+    assert {r["dataset"] for r in manifest["normalized_refs"]} == {dataset, spec["dataset"]}
+    authority = _load_authority_module()
+    storage = authority._validate_and_read_storage_manifest(
+        manifest, source_root=tmp_path / "store", connector_id="coll-1",
+        normalized_targets=set(connector.metadata["normalized_datasets"]), run_id="run-1", expected_market="TW",
+        trusted_now=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    assert storage["records"] == []
+    assert {o["field"] for o in storage["feature_observations"]} == expected_fields
+
+
+def _real_poller_files(source_id: str, tmp_path: Path) -> dict[str, bytes]:
+    """Run the real collector pollers on the committed fixtures and return the bundle tree."""
+    import io
+    import zipfile
+
+    repo = SERVICE_DIR.parents[1]
+    fixtures = repo / "deploy/collector/tests/fixtures"
+    sys.path.insert(0, str(repo / "deploy/collector"))
+    try:
+        from collector_stack.config import DEFAULT_POLICY_PATH, load_collector_config
+        from collector_stack.fetchers import FixtureTransport
+        from collector_stack.privacy import AuthorHasher
+        from collector_stack.runner import CollectorRunner
+    finally:
+        sys.path.remove(str(repo / "deploy/collector"))
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("manifest.csv", "name\n")
+        zf.writestr("景氣指標與燈號.csv", (fixtures / "ndc_6099.csv").read_bytes())
+    transport = FixtureTransport()
+    transport.register("https://cpx.cbc.gov.tw/API/DataAPI/Get", (fixtures / "cbc_bp01d01.json").read_bytes())
+    transport.register("https://data.gov.tw/api/v2/rest/dataset/6099", (fixtures / "ndc_dataset_6099.json").read_bytes())
+    transport.register("https://ws.ndc.gov.tw/Download.ashx", archive.getvalue())
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    salt = tmp_path / "salt"
+    salt.write_bytes(b"real-poller-test-salt-0123456789abcdef-0123456789")
+    root = tmp_path / "collector_root"
+    runner = CollectorRunner(load_collector_config(DEFAULT_POLICY_PATH, env={}), root_dir=root,
+                             hasher=AuthorHasher.from_file(salt), transport=transport)
+    assert runner.run_source(source_id, run_id="real1").status == "complete"
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize(
+    ("source_id", "source_type", "raw_dataset", "derived", "rows", "fields"),
+    [
+        ("collector-tw-cmoney-forum", "social", "collector_social_posts", "tw_community_daily",
+         [{"id": "a", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bullish"}},
+          {"id": "b", "text": "t", "symbols": ["2330.TW"], "metrics": {"sentiment": "bearish"}}],
+         {"post_volume", "bull_bear_ratio", "engagement_weighted_sentiment"}),
+        ("collector-tw-macro-cbc", "macro", "collector_macro_series", "tw_macro_series",
+         [{"id": "a", "series_id": "cbc_policy_rate", "value": 2.0, "unit": "percent",
+           "period_end": "2026-09-17T00:00:00Z", "available_time": "2026-09-17T08:00:00Z"}],
+         {"policy_rate"}),
+        ("collector-tw-macro-cbc", "macro", "collector_macro_series", "tw_macro_series",
+         lambda tmp: _real_poller_files("collector-tw-macro-cbc", tmp), {"usd_twd"}),
+        ("collector-tw-macro-ndc", "macro", "collector_macro_series", "tw_macro_series",
+         lambda tmp: _real_poller_files("collector-tw-macro-ndc", tmp),
+         {"monitoring_score", "leading_index", "coincident_index"}),
+    ],
+)
+def test_unfiltered_collector_pull_materializes_through_source_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_id: str, source_type: str,
+    raw_dataset: str, derived: str, rows: list[dict[str, Any]], fields: set[str],
+) -> None:
+    """Managed pull (derived + original items) -> storage -> materialize_source_dataset_version."""
+    from types import SimpleNamespace
+
+    repo = SERVICE_DIR.parents[1]
+    sys.path.insert(0, str(repo))
+    try:
+        from services.source_ingestion.connector_definitions import collector_host
+        from services.source_ingestion.connectors.collector_bundle import (
+            COLLECTOR_BUNDLE_ADAPTER_TOKEN, BundleTransport, CollectorBundleAdapter,
+        )
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+        from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+    finally:
+        sys.path.remove(str(repo))
+
+    files = rows(tmp_path / "real") if callable(rows) else _collector_files(source_id, rows)
+
+    class _Transport(BundleTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            return files[relative_path]
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: _Transport())
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {"source_id": source_id, "source_type": source_type, "dataset": raw_dataset, "max_records": 50}
+    adapter = CollectorBundleAdapter(connector_id=CONNECTOR_ID, **config)
+    records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": {**config, "host": collector_host()},
+               "request": {}, "max_records": 50},
+        trace_id="t",
+    )
+    assert {r.metadata.get("dataset") for r in records} == {derived, raw_dataset}
+
+    case = _make_tw_case(tmp_path)
+    storage_root = tmp_path / "collector_storage"
+    case.source_root = storage_root
+    manifest = MarketDataStorageWriter(storage_root).write_run(
+        result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id=RUN_ID)),
+        connector=adapter.connector(),
+    ).to_dict()
+    manifest["created_at"] = case.responses[f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"]["run"]["finished_at"]
+    total = manifest["summary"]["normalized_row_count"]
+    readback = case.responses[READBACK_URL]
+    entry = readback["connectors"][0]
+    entry["connector"]["metadata"] = dict(adapter.connector().metadata)
+    entry["desired_state"] = {**DESIRED_STATE, "market": "TW", "dataset": derived}
+    entry["desired_state_sha256"] = _desired_digest(entry["desired_state"])
+    entry["latest_source_record"]["provenance"]["dataset"] = derived
+    entry["source_health"]["metadata"]["storage_refs"] = manifest
+    entry["source_health"]["raw_count"] = total
+    entry["source_health"]["normalized_count"] = total
+    entry["source_health"]["row_count_last_run"] = total
+    readback["source_record_count"] = total
+    run = case.responses[f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"]["run"]
+    run["raw_count"] = total
+    run["normalized_count"] = total
+    case.responses[CATALOG_URL]["config_templates"][0]["fetch"] = {"dataset": derived}
+    case.responses[CATALOG_URL]["entries"][0]["datasets"] = [
+        {"dataset_id": ds, "dataset_class": "social", "storage_targets": [f"normalized/{ds}"]}
+        for ds in (derived, raw_dataset)
+    ]
+    later = NOW + timedelta(days=200)
+    readback["captured_at"] = (later - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    result = AUTHORITY.materialize_source_dataset_version(
+        http_get=case.get, source_api_url=BASE_URL, connector_id=CONNECTOR_ID, dataset_id=DATASET_ID,
+        source_volume_root=case.source_root, output_root=case.output_root,
+        trusted_now=later,
+    )
+    assert {o["field"] for o in result.payload["feature_observations"]} >= fields
+    assert result.payload["records"] == []

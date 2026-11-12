@@ -5,6 +5,7 @@ import json
 import json as _json
 import logging
 import os
+from pathlib import Path
 import re
 import sys
 import threading
@@ -24,6 +25,13 @@ logger = logging.getLogger("research-orchestrator")
 from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthError, TenantBoundaryError, authenticate_tenant
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.registry.alpha_template import (
+    ALPHA_TEMPLATE_METADATA_KEY,
+    AlphaTemplateValidationError,
+    alpha_template_registry_id,
+    ensure_builtin_alpha_templates,
+)
+from services.registry.models import ArtifactType
 from services.registry.split_api import RegistryService
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
@@ -1296,7 +1304,10 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     if is_retrain_dispatch:
         # The executor runs real Training evaluations; the run is labelled by that
         # work, not by the payload's default stub identity.
-        adapter, requested_mode, dispatch_mode = _RETRAIN_ADAPTER, _RETRAIN_MODE, _RETRAIN_MODE
+        if _evolution_action(body.parameters) == "retrain":
+            adapter, requested_mode, dispatch_mode = _RETRAIN_ADAPTER, _RETRAIN_MODE, _RETRAIN_MODE
+        else:
+            adapter, requested_mode, dispatch_mode = _EVOLUTION_GATE_ADAPTER, _EVOLUTION_GATE_MODE, _EVOLUTION_GATE_MODE
 
     events: List[Dict[str, Any]] = []
     if rejected:
@@ -1310,7 +1321,11 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     else:
         status = "queued"
         if is_retrain_dispatch:
-            summary = "Retrain run queued for Training evaluation of the baseline and the candidate."
+            summary = (
+                "Retrain run queued for Training evaluation of the baseline and the candidate."
+                if adapter == _RETRAIN_ADAPTER
+                else f"{_evolution_action(body.parameters).capitalize()} run queued for the out-of-sample replication gate."
+            )
         elif is_stage_backend:
             summary = f"Stage execution adapter '{adapter}' queued for authentic dispatch."
         else:
@@ -1325,6 +1340,19 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
                 stage_id_val = str(ref["id"])
                 break
 
+    initial_artifact_refs: List[Dict[str, Any]] = []
+    if (
+        isinstance(body.parameters.get("experiment_run"), dict)
+        and isinstance(body.parameters["experiment_run"].get("artifact_refs"), list)
+    ):
+        for ref in body.parameters["experiment_run"]["artifact_refs"]:
+            if isinstance(ref, str) and ref.strip():
+                initial_artifact_refs.append(
+                    {"artifact_type": "backtest_run", "uri": ref.strip()}
+                )
+            elif isinstance(ref, dict):
+                initial_artifact_refs.append(dict(ref))
+
     run: Dict[str, Any] = {
         "id": run_id, "run_id": run_id, "task_id": task_id, "stage_id": stage_id_val,
         "attempt_number": 1, "parent_run_id": None, "root_run_id": run_id,
@@ -1334,7 +1362,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         "tenant_id": body.parameters.get("tenant_id") or getattr(body, "tenant_id", None) or task.get("tenant_id"),
         "user_id": body.parameters.get("user_id") or body.actor_id or getattr(body, "user_id", None) or task.get("user_id"),
         "created_at": timestamp, "updated_at": timestamp, "idempotency_key": body.idempotency_key,
-        "rejection": rejection, "events": events, "artifact_refs": [],
+        "rejection": rejection, "events": events, "artifact_refs": initial_artifact_refs,
         "proposal_refs": [], "registry_writebacks": [],
     }
     if gateway_ref is not None:
@@ -1586,17 +1614,27 @@ _RETRAIN_SOURCE_SERVICE = "research-orchestrator"
 _RETRAIN_OUTCOMES = frozenset({"candidate_created", "no_candidate", "evaluation_rejected"})
 
 
+_EVOLUTION_EXEC_ACTIONS = frozenset({"retrain", "mutate", "revalidate"})
+# Mutate / revalidate runs are labelled by the work they do: the §10 gate on the real OOS backtest.
+_EVOLUTION_GATE_ADAPTER = "evolution_oos_gate"
+_EVOLUTION_GATE_MODE = "evolution_oos_gate"
+
+
+def _evolution_action(params: Dict[str, Any]) -> str:
+    """The executable evolution action carried by run parameters, else ``""``."""
+    if "decision_id" not in params or "target_artifact_id" not in params:
+        return ""
+    action = str(params.get("action_type") or "retrain").strip().lower()
+    return action if action in _EVOLUTION_EXEC_ACTIONS else ""
+
+
 def _is_retrain_action(params: Dict[str, Any]) -> bool:
-    """Only a retrain decision runs the retrain executor.
+    """Approved retrain / mutate / revalidate decisions run an executor.
 
     Any other action type stays queued: a stub-labelled run is never reported
     completed for work this service did not perform.
     """
-    return (
-        "decision_id" in params
-        and "target_artifact_id" in params
-        and str(params.get("action_type") or "retrain").strip().lower() == _RETRAIN_ACTION_TYPE
-    )
+    return bool(_evolution_action(params))
 
 
 class _RetrainFailure(Exception):
@@ -1746,16 +1784,92 @@ def _retrain_finite(value: Any) -> Optional[float]:
     return number if number == number and number not in (float("inf"), float("-inf")) else None
 
 
-def _retrain_parameter_update(parent_artifact: Dict[str, Any]) -> Dict[str, Any]:
-    """The existing bounded rule: change exactly one declared parameter."""
-    current_params = parent_artifact.get("parameters") or {}
-    if "lookback_bars" in current_params:
-        current_lookback = int(current_params["lookback_bars"])
-        return {"lookback_bars": 3 if current_lookback == 2 else 2}
-    if "momentum_threshold" in current_params:
-        current_threshold = float(current_params["momentum_threshold"])
-        return {"momentum_threshold": 0.01 if current_threshold == 0.0 else 0.0}
-    return {"momentum_threshold": 0.01}
+# Governed in-sample dataset for the retrain search: the same admitted
+# DatasetVersion authority Training evaluates against (canonical dataset +
+# threshold policy, validated by ``load_evaluation_authority``).  A decision may
+# also carry ``parameters["dataset"]``.  With neither, the search fails closed
+# instead of falling back to a fixed toggle.
+_RETRAIN_SEARCH_BUDGET_ENV = "RESEARCH_RETRAIN_SEARCH_BUDGET"
+_RETRAIN_TRIAL_COUNTER_ENV = "RESEARCH_REPLICATION_TRIAL_COUNTER_PATH"
+
+
+def _retrain_trial_counter_path() -> Path:
+    """Authoritative family counter: the file OOS admission's gate also uses."""
+    explicit = os.environ.get(_RETRAIN_TRIAL_COUNTER_ENV)
+    return Path(explicit) if explicit else Path(ALPHA_REPLICATION_DATA_DIR) / "family_trial_counts.json"
+
+
+def _default_retrain_dataset_loader(parent_artifact: Dict[str, Any], params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    dataset_path = os.environ.get("RESEARCH_RETRAIN_CANONICAL_DATASET_PATH") or os.environ.get("TRAINING_SESSION_CANONICAL_DATASET_PATH")
+    policy_path = os.environ.get("RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH") or os.environ.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH")
+    if not dataset_path or not policy_path:
+        return None
+    training_dir = str(Path(__file__).resolve().parent.parent / "training-session")
+    sys.path.insert(0, training_dir)
+    try:
+        import evaluation_authority as _authority  # type: ignore
+
+        pinned = os.environ.get("RESEARCH_RETRAIN_TRUSTED_NOW")
+        trusted_now = datetime.fromisoformat(pinned.replace("Z", "+00:00")) if pinned else datetime.now(timezone.utc)
+        snapshot = _authority.load_evaluation_authority(
+            dataset_path, policy_path, trusted_now=trusted_now,
+            strategy_id=str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id")),
+        )
+        return dict(snapshot.vectorbt_dataset)
+    except Exception:  # governance rejection / unreadable authority: fail closed
+        return None
+    finally:
+        if training_dir in sys.path:
+            sys.path.remove(training_dir)
+
+
+_RETRAIN_DATASET_LOADER: Optional[Any] = _default_retrain_dataset_loader
+
+
+def _retrain_search_update(
+    parent_artifact: Dict[str, Any], params: Dict[str, Any], run_id: str
+) -> Dict[str, Any]:
+    """Fixed-budget random search over the declared mutation ranges (design §12.2).
+
+    Scored by walk-forward folds on the in-sample window only (the out-of-sample
+    window is never loaded into the scorer) and counted per family.  Replaces the
+    former lookback 2<->3 / threshold 0<->0.01 toggle.  Returns the best
+    parameter update, or finishes the run ``no_candidate``.
+    """
+    from services.research.alpha_replication import evolution_search as search
+
+    dataset = params.get("dataset") if isinstance(params.get("dataset"), dict) else None
+    if dataset is None and callable(_RETRAIN_DATASET_LOADER):
+        dataset = _RETRAIN_DATASET_LOADER(parent_artifact, params)
+    if not isinstance(dataset, dict):
+        raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
+    budget = int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
+    family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
+    from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
+
+    prev = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+    os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+    try:
+        scorer = search.make_in_sample_walk_forward_scorer(dataset, backend=VectorbtBackend())
+        outcome = search.search_in_sample(
+            parent_artifact,
+            score_fn=scorer,
+            decision_id=str(params.get("decision_id") or run_id),
+            family_id=family_id,
+            budget=budget,
+            trial_counter=search.shared_family_trial_counter(_retrain_trial_counter_path()),
+        )
+    except search.EvolutionSearchError as exc:
+        raise _RetrainFinished("no_candidate", f"search_unavailable: {exc}") from None
+    finally:
+        if prev is None:
+            os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+        else:
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = prev
+    _retrain_record(run_id, search=outcome.to_dict())
+    if outcome.best is None:
+        raise _RetrainFinished("no_candidate", "search_found_no_in_sample_improvement")
+    return dict(outcome.best.parameter_updates)
 
 
 def _retrain_evaluate(
@@ -1938,7 +2052,7 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
 
     # 3. Baseline of the original, before any control change.
     controls_url = f"{training_url}/api/training/sessions/{urllib.parse.quote(session_id, safe='')}/controls"
-    proposed = state.get("parameter_updates") or _retrain_parameter_update(parent_artifact)
+    proposed = state.get("parameter_updates") or _retrain_search_update(parent_artifact, params, run_id)
     if not state.get("baseline_metrics"):
         baseline_job = _retrain_evaluate(
             run_id=run_id, step="baseline", training_url=training_url, tenant_id=tenant_id, session_id=session_id,
@@ -1997,10 +2111,15 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     if not candidate_metrics.get("sharpe_defined") or candidate_sharpe is None or not candidate_sharpe > baseline_sharpe:
         raise _RetrainFinished("no_candidate", "not_better_than_baseline")
 
-    # 7. Register the candidate child through the existing Registry mutate route.
+    # 7. Every retrain child is judged on the untouched out-of-sample window by the real
+    #    §10 ReplicationGate (family trial counts accumulate, deflated Sharpe) BEFORE any
+    #    Registry write.  Training's whole-dataset preview proof alone never registers a child.
+    from services.research.alpha_replication import evolution_search as search
+
     suffix = hashlib.sha256(decision_id.encode("utf-8")).hexdigest()[:10]
     new_artifact_id = f"{target_artifact_id}-retrain-{suffix}"
     child_url = f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(new_artifact_id, safe='')}"
+    family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
 
     def read_child() -> Optional[Dict[str, Any]]:
         try:
@@ -2013,41 +2132,66 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
 
     child_view = read_child()  # an earlier attempt of this decision already registered it: adopt, never duplicate
     if child_view is None:
-        def semver(value: Any) -> tuple:
-            try:
-                parts = tuple(int(part) for part in str(value).split("."))
-            except ValueError:
-                return (0, 0, 0)
-            return parts if len(parts) == 3 else (0, 0, 0)
+        def registry_read(step: str, path: str) -> Any:
+            return _retrain_call(
+                step=step, service="registry", method="GET", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+                url=f"{registry_url}{path}", tenant_id=tenant_id,
+            )
 
-        highest = semver(parent_artifact.get("version") or "1.0.0")
-        try:
-            family = _retrain_call(
-                step="register_candidate", service="registry", method="GET",
-                token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
-                url=f"{registry_url}/api/registry/strategies/{urllib.parse.quote(str(parent_artifact.get('strategy_id') or ''), safe='')}/strategy-artifacts",
+        gate, factory = _evolution_oos_context(
+            parent=parent_artifact, entry_meta=metadata, params=params, tenant_id=tenant_id,
+            decision_id=decision_id, family_id=family_id, read=registry_read,
+        )
+        source_runs = [session_id, proof_ref]
+        child_view = None
+        for _attempt in range(3):
+            new_version = search.allocate_child_version(
+                parent_artifact.get("version") or "1.0.0",
+                _registry_family_versions(registry_url, tenant_id, parent_artifact),
             )
-        except _OwnerRejection:
-            family = []
-        for view in family if isinstance(family, list) else []:
-            highest = max(highest, semver(((view or {}).get("entry") or {}).get("version")))
-        new_version = f"{highest[0]}.{highest[1] + 1}.0"
-        try:
-            child_view = _retrain_call(
-                step="register_candidate", service="registry", method="POST", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
-                url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate",
-                tenant_id=tenant_id,
-                body={
-                    "new_artifact_id": new_artifact_id,
-                    "new_version": new_version,
-                    "parameter_updates": proposed,
-                    "source_run_ids": [decision_id, session_id, proof_ref],
-                },
-            )
-        except _OwnerRejection as exc:
-            child_view = read_child() if exc.status == 409 else None
-            if child_view is None:
-                raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+            try:
+                child, _descriptor = search.build_child_artifact(
+                    parent_artifact, decision_id=decision_id, kind="retrain", parameter_updates=proposed,
+                    source_run_ids=source_runs, child_version=new_version,
+                )
+            except search.EvolutionSearchError as exc:
+                raise _RetrainFinished("no_candidate", f"retrain_child_invalid: {exc}") from None
+            prev_backend = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+            try:
+                verdict = search.judge_child_out_of_sample(child, gate=gate, request_factory=factory, family_id=family_id)
+            except search_errors() as exc:
+                raise _RetrainFinished("evaluation_rejected", f"oos_evaluation_unavailable: {exc}") from None
+            finally:
+                if prev_backend is None:
+                    os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+                else:
+                    os.environ["PANTHEON_VECTORBT_BACKEND"] = prev_backend
+            _retrain_record(run_id, out_of_sample_gate=verdict, family_trial_count=verdict.get("trial_count_after"))
+            if not verdict["passed"]:
+                raise _RetrainFinished("no_candidate", "children_failed_out_of_sample_gate")
+            try:
+                child_view = _retrain_call(
+                    step="register_candidate", service="registry", method="POST", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+                    url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate",
+                    tenant_id=tenant_id,
+                    body={
+                        "new_artifact_id": new_artifact_id,
+                        "new_version": new_version,
+                        "parameter_updates": proposed,
+                        "source_run_ids": [decision_id, *source_runs],
+                    },
+                )
+                break
+            except _OwnerRejection as exc:
+                if exc.status != 409:
+                    raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+                child_view = read_child()
+                if child_view is not None:
+                    break  # this decision's own child already exists: adopt
+                # the revision was taken by another registration: allocate a fresh one and re-judge
+        if child_view is None:
+            raise _RetrainFinished("evaluation_rejected", "candidate_version_allocation_conflict")
     child_entry = child_view.get("entry") if isinstance(child_view, dict) else {}
     child_id = str((child_entry or {}).get("registry_id") or new_artifact_id)
     if str((child_entry or {}).get("artifact_state") or "") != "candidate":
@@ -2057,6 +2201,196 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
     _retrain_record(run_id, candidate_artifact_id=child_id, registry_writebacks=writebacks)
     raise _RetrainFinished("candidate_created", "candidate_passed_gate_and_beat_baseline")
+
+
+def _registry_family_versions(registry_url: str, tenant_id: str, parent: Dict[str, Any]) -> List[str]:
+    """Every version already registered for the parent's strategy family (read fresh per allocation)."""
+    try:
+        family = _retrain_call(
+            step="register_candidate", service="registry", method="GET",
+            token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
+            url=f"{registry_url}/api/registry/strategies/{urllib.parse.quote(str(parent.get('strategy_id') or ''), safe='')}/strategy-artifacts",
+        )
+    except _OwnerRejection:
+        return []
+    return [
+        str(((view or {}).get("entry") or {}).get("version") or "")
+        for view in (family if isinstance(family, list) else [])
+    ]
+
+
+def _evolution_oos_context(
+    *, parent: Dict[str, Any], entry_meta: Dict[str, Any], params: Dict[str, Any], tenant_id: str,
+    decision_id: str, family_id: str, read: Any,
+) -> tuple:
+    """Real §10 ReplicationGate + request factory bound to the governed dataset (shared by every child kind)."""
+    from services.research.alpha_replication import evolution_executor as executor
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
+
+    # The admitted StrategySpec the gate validates the candidate content against.
+    spec_id = str((parent.get("lineage") or {}).get("source_strategy_spec_id") or entry_meta.get("strategy_spec_id") or "")
+    if not spec_id:
+        raise _RetrainFinished("evaluation_rejected", "strategy_spec_unavailable")
+    try:
+        spec_view = read("read_strategy_spec", f"/api/registry/strategy-specs/{urllib.parse.quote(spec_id, safe='')}")
+    except _OwnerRejection as exc:
+        raise _RetrainFinished("evaluation_rejected", f"strategy_spec_unavailable: {exc.detail}") from None
+    spec_entry = (spec_view or {}).get("entry") or {}
+    spec = (spec_entry.get("metadata") or {}).get("strategy_spec")
+    if (
+        spec_entry.get("artifact_state") != "approved"
+        or str(spec_entry.get("owner_tenant") or (spec_entry.get("metadata") or {}).get("tenant_id") or "") != tenant_id
+        or not isinstance(spec, dict)
+    ):
+        raise _RetrainFinished("evaluation_rejected", "strategy_spec_not_approved_for_tenant")
+
+    dataset = params.get("dataset") if isinstance(params.get("dataset"), dict) else None
+    if dataset is None and callable(_RETRAIN_DATASET_LOADER):
+        dataset = _RETRAIN_DATASET_LOADER(parent, params)
+    if not isinstance(dataset, dict):
+        raise _RetrainFinished("evaluation_rejected", "governed_dataset_unavailable")
+
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
+    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    factory = executor.build_gate_request_factory(
+        spec=spec, dataset=dataset, decision_id=decision_id, tenant_id=tenant_id,
+        record_backtest=backtests.record, family_id=family_id, timestamp=utc_now(),
+    )
+
+    return gate, factory
+
+
+def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
+    """Approved ``mutate`` / ``revalidate`` decision -> real OOS gate -> lineage registration.
+
+    Mutate builds structural children of a ``factor_rule_v1`` parent and judges
+    each on the untouched out-of-sample window with the §10 ReplicationGate
+    (real backtest, deflated Sharpe, family trial counts); only passing children
+    are registered as candidates with lineage to the parent.  Revalidate judges
+    the existing artifact the same way and registers nothing.  Every path ends
+    in a terminal ``outcome`` on the run.
+    """
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    from services.research.alpha_replication import evolution_executor as executor
+
+    action = _evolution_action(params)
+    decision_id = str(params["decision_id"])
+    target_artifact_id = str(params["target_artifact_id"])
+    tenant_id = str(params.get("tenant_id") or "").strip()
+    registry_url = os.getenv("REGISTRY_URL", "http://registry:8087").rstrip("/")
+    _retrain_record(run_id, status="running")
+    if not tenant_id:
+        raise _RetrainFailure("resolve_tenant", "run parameters carry no decision tenant_id")
+    prior = [
+        r for r in get_store().list_runs()
+        if r.get("run_id") != run_id
+        and str((r.get("parameters") or {}).get("decision_id") or "") == decision_id
+        and str(r.get("tenant_id") or (r.get("parameters") or {}).get("tenant_id") or "") == tenant_id
+        and r.get("outcome") in {"candidate_created", "no_candidate", "revalidation_passed", "revalidation_failed"}
+    ]
+    if prior:  # an earlier attempt of this decision already reached its terminal outcome: adopt it
+        done = max(prior, key=lambda r: str(r.get("updated_at") or ""))
+        raise _RetrainFinished(str(done["outcome"]), str(done.get("outcome_reason") or "resumed_from_recorded_outcome"))
+
+    def read(step: str, path: str) -> Any:
+        return _retrain_call(
+            step=step, service="registry", method="GET", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+            url=f"{registry_url}{path}", tenant_id=tenant_id,
+        )
+
+    try:
+        view = read("read_target_artifact", f"/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}")
+    except _OwnerRejection as exc:
+        raise _RetrainFinished("evaluation_rejected", f"target artifact rejected by Registry: {exc.detail}") from None
+    entry = (view or {}).get("entry") if isinstance(view, dict) else None
+    entry_meta = (entry or {}).get("metadata") if isinstance(entry, dict) else None
+    parent = (entry_meta or {}).get("strategy_artifact") if isinstance(entry_meta, dict) else None
+    if not isinstance(parent, dict):
+        raise _RetrainFailure("read_target_artifact", "Registry entry carries no strategy_artifact")
+    family_id = str(parent.get("strategy_id") or parent.get("artifact_id"))
+
+    gate, factory = _evolution_oos_context(
+        parent=parent, entry_meta=entry_meta, params=params, tenant_id=tenant_id, decision_id=decision_id,
+        family_id=family_id, read=read,
+    )
+
+    def register_child(child: Dict[str, Any], verdict: Dict[str, Any]) -> Any:
+        child_id = str(child["artifact_id"])
+
+        def read_existing(artifact_id: str) -> Any:
+            try:
+                return read("register_candidate", f"/api/registry/strategy-artifacts/{urllib.parse.quote(artifact_id, safe='')}")
+            except _OwnerRejection:
+                return None
+
+        existing = read_existing(child_id)
+        if existing is None:
+            try:
+                existing = _retrain_call(
+                    step="register_candidate", service="registry", method="POST",
+                    token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
+                    url=f"{registry_url}/api/registry/strategy-artifacts",
+                    body={
+                        "registry_id": child_id,
+                        "artifact_state": "candidate",
+                        "strategy_artifact": child,
+                        "producer_run_id": run_id,
+                        "evaluation_summary": {"out_of_sample_gate": verdict, "decision_id": decision_id},
+                        "metadata": {k: v for k, v in entry_meta.items() if k == "persona_id"},
+                    },
+                )
+            except _OwnerRejection as exc:
+                if exc.status == 409:
+                    again = read_existing(child_id)
+                    if again is not None:  # an earlier attempt already registered this very child: adopt it
+                        existing = again
+                    else:  # immutable (strategy, version, type) taken by another registration: re-allocate
+                        from services.research.alpha_replication.evolution_search import RegistryVersionConflict
+
+                        raise RegistryVersionConflict(str(exc.detail)) from None
+                else:
+                    raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+        if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") != "candidate":
+            raise _RetrainFailure("register_candidate", "Registry did not report the child as a candidate")
+        run = get_store().get_run(run_id) or {}
+        writebacks = list(run.get("registry_writebacks") or [])
+        writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
+        _retrain_record(run_id, registry_writebacks=writebacks, candidate_artifact_id=child_id)
+        return existing
+
+    prev = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+    os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+    try:
+        if action == "mutate":
+            result = executor.execute_mutate(
+                parent, decision_id=decision_id, family_id=family_id, gate=gate,
+                request_factory=factory, register_child=register_child,
+                family_versions=lambda: _registry_family_versions(registry_url, tenant_id, parent),
+            )
+        else:
+            result = executor.execute_revalidate(parent, family_id=family_id, gate=gate, request_factory=factory)
+    except executor.ExecutorRefusal as refusal:
+        raise _RetrainFinished(refusal.outcome, refusal.reason) from None
+    except search_errors() as exc:  # noqa: B030 - bounded, named below
+        raise _RetrainFinished("evaluation_rejected", f"oos_evaluation_unavailable: {exc}") from None
+    finally:
+        if prev is None:
+            os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+        else:
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = prev
+    _retrain_record(
+        run_id, evolution_result=result.get("detail") or result.get("verdict"),
+        parent_artifact_checksum=strategy_artifact_checksum(parent),
+        family_trial_count=gate.get_family_trial_count(family_id),
+    )
+    raise _RetrainFinished(result["outcome"], result["reason"])
+
+
+def search_errors() -> tuple:
+    from services.research.alpha_replication.evolution_search import EvolutionSearchError
+
+    return (EvolutionSearchError, ValueError)
 
 
 _retrain_active_runs: set = set()
@@ -2072,7 +2406,10 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
     def run_worker():
         rstore = get_store()
         try:
-            _execute_retrain(run_id, params)
+            if _evolution_action(params) == "retrain":
+                _execute_retrain(run_id, params)
+            else:
+                _execute_evolution_gate(run_id, params)
         except _RetrainFinished as done:
             _retrain_record(run_id, outcome=done.outcome, outcome_reason=done.reason)
             _finish_run(
@@ -2103,6 +2440,76 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
                 _retrain_active_runs.discard(run_id)
 
     threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
+
+
+# --- Discovery allocator: daily paper-only run inside this orchestrator ---
+DISCOVERY_ALLOCATOR_TENANT = os.getenv("DISCOVERY_ALLOCATOR_TENANT_ID", "default")
+def _discovery_owner_call(service: str, method: str, url: str, body: Optional[Dict[str, Any]]) -> Any:
+    from services.research import discovery_allocator as _da
+
+    token_variable = {
+        "persona": "RESEARCH_PERSONA_SERVICE_TOKEN",
+        "provisioning": "RESEARCH_BFF_SERVICE_TOKEN",
+        "registry": "RESEARCH_REGISTRY_SERVICE_TOKEN",
+        "capital": "RESEARCH_CAPITAL_SERVICE_TOKEN",
+    }[service]
+    try:
+        return _retrain_call(
+            step=f"discovery_allocator_{service}", service=service, method=method, url=url,
+            tenant_id=DISCOVERY_ALLOCATOR_TENANT, token_variable=token_variable, body=body,
+        )
+    except _OwnerRejection as exc:
+        raise _da.OwnerRejected(service, int(getattr(exc, "status", None) or getattr(exc, "code", 0) or 0), str(getattr(exc, "detail", exc))) from None
+    except _RetrainFailure as exc:
+        raise _da.OwnerUnreachable(service, str(exc)) from None
+
+
+def _build_discovery_allocator_ports() -> Dict[str, Any]:
+    from services.research import discovery_allocator as _da
+
+    return _da.make_production_ports(
+        call=_discovery_owner_call,
+        persona_url=os.getenv("DISCOVERY_ALLOCATOR_PERSONA_URL", "http://persona:8002"),
+        provisioning_url=os.getenv("DISCOVERY_ALLOCATOR_BFF_URL", "http://operator-bff:8001"),
+        registry_url=os.getenv("REGISTRY_URL", "http://registry:8087"),
+        capital_url=os.getenv("DISCOVERY_ALLOCATOR_CAPITAL_URL", "http://capital:8092"),
+        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
+        paper_capital_cap=float(os.getenv("DISCOVERY_ALLOCATOR_PAPER_CAPITAL_CAP", "50000")),
+        per_persona_capital=float(os.getenv("DISCOVERY_ALLOCATOR_PER_PERSONA_CAPITAL", "10000")),
+    )
+
+
+# Module-level so tests can inject; the default is the real production wiring
+# (persona service reader, active-binding reader, scorer, BFF provisioner).
+discovery_allocator_ports: Dict[str, Any] = _build_discovery_allocator_ports()
+
+
+def run_discovery_allocator_once() -> Dict[str, Any]:
+    from services.research import discovery_allocator as _da
+
+    return _da.run_scheduled_allocation(
+        enabled=_da.allocator_enabled(os.environ),
+        allocator_factory=discovery_allocator_ports["allocator_factory"],
+        list_admitted=lambda: [
+            e for e in alpha_replication_admission_store.list_admissions(DISCOVERY_ALLOCATOR_TENANT)
+            if e.get("status") == "admitted"
+        ],
+        list_personas=discovery_allocator_ports["list_personas"],
+        list_active_bindings=discovery_allocator_ports["list_active_bindings"],
+        resolve_admitted=discovery_allocator_ports.get("resolve_admitted"),
+        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
+        record_path=store.data_dir / "discovery_allocator_runs.jsonl",
+    )
+
+
+@app.on_event("startup")
+def start_discovery_allocator_schedule() -> None:
+    from services.research import discovery_allocator as _da
+
+    _da.start_daily_scheduler(
+        run_discovery_allocator_once,
+        interval_seconds=float(os.getenv("DISCOVERY_ALLOCATOR_INTERVAL_SECONDS", str(_da.DAILY_INTERVAL_SECONDS))),
+    )
 
 
 @app.on_event("startup")
@@ -2221,6 +2628,87 @@ def _finish_run(
     _set_task_terminal(run["task_id"], status, timestamp)
     store.put_run(run)
     store.append_event(events[-1])
+    params = run.get("parameters")
+    if (
+        status == "completed"
+        and isinstance(params, dict)
+        and params.get("record_type") == "ExperimentRun"
+        and isinstance(params.get("experiment_run"), dict)
+    ):
+        exp_run = params["experiment_run"]
+        exp_meta = exp_run.get("metadata") if isinstance(exp_run.get("metadata"), dict) else {}
+        bt_summary = (
+            exp_meta.get("backtest_summary")
+            if isinstance(exp_meta.get("backtest_summary"), dict)
+            else {}
+        )
+        if bt_summary:
+            tx_costs = (
+                bt_summary.get("transaction_costs")
+                if isinstance(bt_summary.get("transaction_costs"), dict)
+                else {}
+            )
+            try:
+                outbox_store = get_outbox_store()
+                outbox_id = _next_id(
+                    "mout",
+                    timestamp,
+                    {r.outbox_id for r in outbox_store.list_records()},
+                )
+                outbox_record = ResearchMemoryOutboxRecord(
+                    outbox_id=outbox_id,
+                    run_id=str(exp_run.get("run_id") or run_id),
+                    task_id=str(exp_run.get("task_id") or run["task_id"]),
+                    artifact_id=str(bt_summary.get("backtest_run_id") or "") or None,
+                    source_event_type="research_finding_published",
+                    source_event_id=str(exp_run.get("run_id") or run_id),
+                    sponsor_persona_id="persona-tw-equity",
+                    summary=summary,
+                    headline=f"Replicated Taiwan strategy {exp_run.get('strategy_id') or ''}",
+                    confidence=1.0,
+                    evidence_refs=list(run.get("artifact_refs") or run.get("input_refs") or []),
+                    dataset_refs=[str(exp_run.get("dataset_version_id") or "")],
+                    license_scope="governed_tw_market",
+                    allowed_use=["research_memory", "replication_evidence"],
+                    supersedes=[],
+                    contradicts=[],
+                    expires_at=None,
+                    trace_id=str(exp_run.get("trace_id") or run_id),
+                    status="pending",
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    metadata={
+                        "event_type": "research_finding_published",
+                        "tenant_id": exp_run.get("tenant_id"),
+                        "strategy_spec_id": exp_run.get("strategy_spec_id"),
+                        "strategy_id": exp_run.get("strategy_id"),
+                        "family_id": bt_summary.get("family_id"),
+                        "trial_count": bt_summary.get("trial_count"),
+                        "transaction_costs": dict(tx_costs),
+                        "metrics": {
+                            "sharpe_ratio": bt_summary.get("out_of_sample_sharpe_ratio"),
+                            "in_sample_sharpe_ratio": bt_summary.get("in_sample_sharpe_ratio"),
+                            "out_of_sample_sharpe_ratio": bt_summary.get("out_of_sample_sharpe_ratio"),
+                            "deflated_sharpe_ratio": bt_summary.get("deflated_sharpe_ratio"),
+                            "deflated_sharpe_threshold": bt_summary.get("deflated_sharpe_threshold"),
+                            "trial_count": bt_summary.get("trial_count"),
+                            "max_drawdown": bt_summary.get("out_of_sample_max_drawdown"),
+                            "total_return": bt_summary.get("out_of_sample_total_return"),
+                            "round_trips": bt_summary.get("out_of_sample_round_trips"),
+                            "buy_and_hold_sharpe_ratio": bt_summary.get("buy_and_hold_sharpe_ratio"),
+                            "tw_0050_sharpe_ratio": bt_summary.get("tw_0050_sharpe_ratio"),
+                            "walk_forward_fold_sharpes": bt_summary.get("walk_forward_fold_sharpes"),
+                            "commission_rate": tx_costs.get("commission_rate"),
+                            "equity_transaction_tax_rate": tx_costs.get("equity_transaction_tax_rate"),
+                            "etf_transaction_tax_rate": tx_costs.get("etf_transaction_tax_rate"),
+                            "backtest_run_id": bt_summary.get("backtest_run_id"),
+                        },
+                        "artifact_refs": list(run.get("artifact_refs") or []),
+                    },
+                )
+                outbox_store.create_record(outbox_record)
+            except Exception:
+                pass
     return run
 
 
@@ -3751,3 +4239,104 @@ def get_research_note(note_id: str) -> Dict[str, Any]:
     if not result:
         raise HTTPException(status_code=404, detail=f"Research note '{note_id}' not found")
     return result
+
+
+class EvaluateAlphaTemplatesBody(BaseModel):
+    template_ids: Optional[List[str]] = None
+    market_data: Optional[Dict[str, Any]] = None
+    run_id: Optional[str] = None
+    task_id: Optional[str] = None
+    strict_stepwise: bool = False
+    redundancy_threshold: float = 0.9
+
+
+@app.post("/api/research-orchestrator/alpha-templates/evaluate", status_code=201)
+@app.post("/api/research/alpha-templates/evaluate", status_code=201)
+def evaluate_alpha_templates_endpoint(
+    body: Optional[EvaluateAlphaTemplatesBody] = Body(default=None),
+) -> Dict[str, Any]:
+    # Lazy import: the evaluator needs numpy/pandas, which are not installed in
+    # every environment that imports this module (e.g. evolution/policy-learning
+    # test suites); only the evaluate endpoint requires them.
+    from services.research.alpha_templates import run_alpha_template_evaluation
+
+    req = body or EvaluateAlphaTemplatesBody()
+    registry_service = RegistryService(get_registry_store())
+    try:
+        return run_alpha_template_evaluation(
+            research_store=get_store(),
+            registry_service=registry_service,
+            template_ids=req.template_ids,
+            universe=req.market_data,
+            run_id=req.run_id,
+            task_id=req.task_id,
+            strict_stepwise=req.strict_stepwise,
+            redundancy_threshold=req.redundancy_threshold,
+        )
+    except (AlphaTemplateValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/research-orchestrator/alpha-templates/evaluations")
+@app.get("/api/research/alpha-templates/evaluations")
+def list_alpha_template_evaluations_endpoint(
+    family: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    registry_service = RegistryService(get_registry_store())
+    ensure_builtin_alpha_templates(registry_service)
+    entries = [
+        v
+        for v in registry_service.list_all_entries()
+        if v.entry.artifact_type == ArtifactType.ALPHA_TEMPLATE
+    ]
+    items: List[Dict[str, Any]] = []
+    for view in entries:
+        meta = view.entry.metadata or {}
+        tmpl = meta.get(ALPHA_TEMPLATE_METADATA_KEY)
+        if not isinstance(tmpl, dict):
+            continue
+        if family and tmpl.get("family") != family:
+            continue
+        if status and tmpl.get("status") != status:
+            continue
+        eval_meta = meta.get("alpha_template_evaluation")
+        items.append(
+            {
+                "registry_id": view.entry.registry_id,
+                "template_id": tmpl.get("template_id"),
+                "name": tmpl.get("name"),
+                "family": tmpl.get("family"),
+                "scope": tmpl.get("scope"),
+                "status": tmpl.get("status"),
+                "evaluation_ref": tmpl.get("evaluation_ref"),
+                "duplicate_of": tmpl.get("duplicate_of"),
+                "evaluation": eval_meta,
+            }
+        )
+    return {"count": len(items), "items": items}
+
+
+@app.get("/api/research-orchestrator/alpha-templates/evaluations/{template_id:path}")
+@app.get("/api/research/alpha-templates/evaluations/{template_id:path}")
+def get_alpha_template_evaluation_endpoint(template_id: str) -> Dict[str, Any]:
+    registry_service = RegistryService(get_registry_store())
+    ensure_builtin_alpha_templates(registry_service)
+    reg_id = alpha_template_registry_id(template_id)
+    entry = registry_service.store.get(reg_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"AlphaTemplate '{template_id}' not found")
+    meta = entry.metadata or {}
+    tmpl = meta.get(ALPHA_TEMPLATE_METADATA_KEY) or {}
+    eval_ref = tmpl.get("evaluation_ref")
+    run_record = get_store().get_run(str(eval_ref)) if eval_ref else None
+    return {
+        "registry_id": entry.registry_id,
+        "template_id": tmpl.get("template_id"),
+        "status": tmpl.get("status"),
+        "evaluation_ref": eval_ref,
+        "duplicate_of": tmpl.get("duplicate_of"),
+        "template": tmpl,
+        "evaluation": meta.get("alpha_template_evaluation"),
+        "research_run": run_record,
+    }

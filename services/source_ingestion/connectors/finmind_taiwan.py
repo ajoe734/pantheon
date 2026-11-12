@@ -14,7 +14,7 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlencode
 
@@ -42,11 +42,16 @@ FINMIND_BROKER_REPORT_HISTORY_START = "2021-06-30"
 BROKER_TOP_SCHEMA_HASH = "tw_broker_top.v1"
 FINMIND_DATASET_SCHEMA_HASH = "finmind_taiwan_dataset.v1"
 FINMIND_STORAGE_OBJECT_SCHEMA_HASH = "finmind_storage_object_manifest.v1"
+BROKER_BRANCH_DETAIL_DATASET = "tw_broker_branch_detail"
+BROKER_BRANCH_DETAIL_SCHEMA_HASH = "tw_broker_branch_detail.v1"
+# Taiwan daily OHLCV truth is TWSE/TPEx official; FinMind price rows are a
+# research reference only and must never land in normalized/tw_price_daily.
+FINMIND_PRICE_REFERENCE_DATASET = "finmind_tw_price_reference"
 
 FINMIND_TAIWAN_DATASETS: tuple[dict[str, Any], ...] = (
     {
         "dataset": "TaiwanStockPrice",
-        "normalized_dataset": "tw_price_daily",
+        "normalized_dataset": FINMIND_PRICE_REFERENCE_DATASET,
         "minimum_tier": "free_by_symbol_backer_all_market",
         "history_start": "1994-10-01",
         "cadence": "daily_after_close",
@@ -101,6 +106,35 @@ FINMIND_TAIWAN_DATASETS: tuple[dict[str, Any], ...] = (
         "cadence": "daily_after_close",
     },
 )
+
+
+
+# FinMind notice 2026-10-06: broker daily reports are published 18:00 Asia/Taipei.
+FINMIND_BROKER_PUBLICATION_TIME_TAIPEI = time(18, 0)
+_TAIPEI_TZ = timezone(timedelta(hours=8))
+
+
+def latest_published_broker_session(
+    now: datetime,
+    *,
+    is_session_day: Any = None,
+    max_lookback_days: int = 20,
+) -> date:
+    """Latest trading date whose FinMind broker report is already published.
+
+    ``now`` must be timezone-aware; the Taipei calendar date/time is derived from
+    it so UTC/Taipei boundaries are handled. Today counts only at/after 18:00
+    Taipei; otherwise walk back over weekends and ``is_session_day`` closures.
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now_t = now.astimezone(_TAIPEI_TZ)
+    cursor = now_t.date() if now_t.timetz().replace(tzinfo=None) >= FINMIND_BROKER_PUBLICATION_TIME_TAIPEI else now_t.date() - timedelta(days=1)
+    for _ in range(max_lookback_days):
+        if cursor.weekday() < 5 and (is_session_day is None or is_session_day(cursor)):
+            return cursor
+        cursor -= timedelta(days=1)
+    raise ValueError("no published broker session found within lookback window")
 
 
 def _utc_now() -> str:
@@ -223,7 +257,6 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
                 "source_plan": "finmind_first_low_cost_paid_layer",
                 "does_not_replace_official_reference_truth": True,
                 "primary_for": [
-                    "tw_price_daily",
                     "tw_institutional_flow",
                     "tw_margin_short_balance",
                     "tw_securities_lending",
@@ -281,22 +314,6 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
         for row in _rows_from_payload(payload)[: self.max_records]:
             symbol = _text(_first(row, "stock_id", "data_id", "coid", "symbol", "stock_code"))
             as_of_date = _text(_first(row, "date", "mdate", "資料日", "published_at"))
-            normalized_price_row: dict[str, Any] | None = None
-            if dataset == "TaiwanStockPrice":
-                close = _number(_first(row, "close", "Close", "收盤價"))
-                if symbol and as_of_date and close is not None and close > 0:
-                    normalized_price_row = {
-                        "schema_version": "tw_price_daily.v1",
-                        "target_table": "tw_price_daily",
-                        "provider": "FinMind",
-                        "market": "TW",
-                        "symbol": symbol,
-                        "symbol_canonical": f"{symbol}.TW",
-                        "dataset": "tw_price_daily",
-                        "source_dataset": dataset,
-                        "trade_date": as_of_date,
-                        "close": close,
-                    }
             row_hash = _stable_hash({"dataset": dataset, "row": row})
             content_ref = f"finmind://data/{dataset}/{symbol or 'market'}/{as_of_date or row_hash}/{row_hash}"
             records.append(
@@ -318,11 +335,10 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
                         "available_time": as_of_date or _utc_now(),
                         "api_endpoint": endpoint,
                         "raw_row": dict(row),
-                        **(
-                            {"normalized_row": normalized_price_row}
-                            if normalized_price_row is not None
-                            else {}
+                        "normalized_target": (
+                            FINMIND_PRICE_REFERENCE_DATASET if dataset == "TaiwanStockPrice" else None
                         ),
+                        "redistribution_allowed": False,
                         "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
                         "access_scope": ["research"],
                         "license_scope": "vendor_research",
@@ -390,7 +406,7 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                 "source_profile": "broker_top20_from_full_daily_report",
                 "history_start": FINMIND_BROKER_REPORT_HISTORY_START,
                 "history_depth": f"{FINMIND_BROKER_REPORT_HISTORY_START}_to_now",
-                "update_cadence": "daily_after_close_21_00_taipei",
+                "update_cadence": "daily_after_close_18_00_taipei",
                 "completeness": "top20_buy_sell_aggregated_from_full_branch_daily_report",
                 "entitlement_tier": self.entitlement_tier,
                 "active_universe_tiers": ["core_universe", "candidate_universe"],
@@ -551,9 +567,68 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                         "body": json.dumps(row, ensure_ascii=False, sort_keys=True),
                         "access_scope": ["research"],
                         "license_scope": "vendor_research",
+                        "redistribution_allowed": False,
                         "entitlement_tier": self.entitlement_tier,
                         "active_universe_tiers": ["core_universe", "candidate_universe"],
                         "schema_hash": BROKER_TOP_SCHEMA_HASH,
+                    },
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(records)
+
+    def branch_detail_records_from_payload(
+        self,
+        payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        available_time: str | None = None,
+        trace_id: str = "",
+    ) -> tuple[SourceRecord, ...]:
+        """Emit one governed ``tw_broker_branch_detail`` record per branch/symbol/date."""
+        grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for row in _rows_from_payload(payload):
+            symbol = _text(_first(row, "stock_id", "data_id", "symbol", "stock_code")).upper()
+            date = _text(_first(row, "date", "mdate"))
+            broker = _text(_first(row, "securities_trader", "broker", "券商"))
+            broker_id = _text(_first(row, "securities_trader_id", "broker_id", "券商代號"))
+            if not symbol or not date or not (broker or broker_id):
+                continue
+            bucket = grouped.setdefault(
+                (date, symbol, broker_id, broker),
+                {"date": date, "symbol": symbol, "broker": broker, "broker_id": broker_id or None,
+                 "buy_qty": 0, "sell_qty": 0, "price_levels": 0},
+            )
+            bucket["buy_qty"] += _int(_first(row, "buy", "buy_qty", "買進"))
+            bucket["sell_qty"] += _int(_first(row, "sell", "sell_qty", "賣出"))
+            bucket["price_levels"] += 1
+        stamp = available_time or _utc_now()
+        records: list[SourceRecord] = []
+        for (date, symbol, broker_id, broker), row in sorted(grouped.items()):
+            row["net_qty"] = row["buy_qty"] - row["sell_qty"]
+            row_hash = _stable_hash({"symbol": symbol, "date": date, "broker_id": broker_id, "broker": broker})
+            records.append(
+                SourceRecord(
+                    source_id=f"finmind-broker-branch:{symbol}:{date}:{row_hash}",
+                    connector_id=self.connector_id,
+                    source_type="market",
+                    title=f"FinMind broker branch {symbol} {date} {broker or broker_id}",
+                    content_ref=f"finmind://broker-branch/{symbol}/{date}/{row_hash}",
+                    metadata={
+                        "source_class": "research_grade",
+                        "provider": "FinMind",
+                        "dataset": BROKER_BRANCH_DETAIL_DATASET,
+                        "source_dataset": FINMIND_BROKER_REPORT_DATASET,
+                        "symbol": symbol,
+                        "trade_date": date,
+                        "event_time": date,
+                        "available_time": stamp,
+                        **row,
+                        "body": json.dumps(row, ensure_ascii=False, sort_keys=True),
+                        "access_scope": ["research"],
+                        "license_scope": "vendor_research",
+                        "redistribution_allowed": False,
+                        "entitlement_tier": self.entitlement_tier,
+                        "schema_hash": BROKER_BRANCH_DETAIL_SCHEMA_HASH,
                     },
                     trace_id=trace_id,
                 )
@@ -763,6 +838,9 @@ def _extract_quota_meta(headers: Any) -> dict[str, Any]:
 
 _FINMIND_FETCH_TIMEOUT_SECONDS: float = 30.0
 _FINMIND_MAX_RESPONSE_BYTES: int = 20_000_000
+# Bulk storage_objects parquet bodies legitimately exceed the JSON cap.
+_FINMIND_MAX_BULK_RESPONSE_BYTES: int = 512_000_000
+_FINMIND_READ_CHUNK_BYTES: int = 1 << 20
 
 
 @dataclass
@@ -872,6 +950,21 @@ class FinMindLiveFetcher:
         url = _finmind_url(FINMIND_STORAGE_OBJECTS_ENDPOINT, params)
         return self._get(url, token=token)
 
+    def fetch_storage_objects_raw(
+        self,
+        dataset: str,
+        date: str,
+    ) -> tuple[bytes, dict[str, Any]]:
+        """Fetch storage_objects response bytes (parquet body or JSON), undecoded.
+
+        FinMind serves TaiwanStockTradingDailyReport storage_objects as a parquet
+        body; errors/manifests arrive as JSON. Same credential, quota, egress
+        and redaction handling as ``_get`` (token only in Authorization header).
+        """
+        token = self._require_token()
+        url = _finmind_url(FINMIND_STORAGE_OBJECTS_ENDPOINT, {"dataset": dataset, "date": date})
+        return self._get_raw(url, token=token, max_bytes=_FINMIND_MAX_BULK_RESPONSE_BYTES)
+
     # ------------------------------------------------------------------
     # internal helpers
     # ------------------------------------------------------------------
@@ -892,10 +985,20 @@ class FinMindLiveFetcher:
         token: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """HTTP GET against FinMind API. Token is sent only as Authorization header."""
+        raw, quota_meta = self._get_raw(url, token=token)
+        return self.parse_json_payload(raw, quota_meta)
+
+    def _get_raw(
+        self,
+        url: str,
+        *,
+        token: str,
+        max_bytes: int = _FINMIND_MAX_RESPONSE_BYTES,
+    ) -> tuple[bytes, dict[str, Any]]:
         request = urllib.request.Request(
             url,
             headers={
-                "Accept": "application/json",
+                "Accept": "application/json, application/octet-stream",
                 "Authorization": f"Bearer {token}",
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
@@ -909,7 +1012,24 @@ class FinMindLiveFetcher:
             ) as response:
                 quota_meta.update(_extract_quota_meta(response.headers))
                 quota_meta["http_status"] = response.status
-                raw = response.read(_FINMIND_MAX_RESPONSE_BYTES)
+                if max_bytes <= _FINMIND_MAX_RESPONSE_BYTES:
+                    raw = response.read(max_bytes)
+                else:
+                    # read(n) may return short chunks; loop to the full body,
+                    # bounded by max_bytes (fail loudly instead of truncating).
+                    chunks: list[bytes] = []
+                    total = 0
+                    while True:
+                        chunk = response.read(_FINMIND_READ_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > max_bytes:
+                            raise FinMindFetchError(
+                                f"FinMind response exceeds {max_bytes} bytes bulk limit"
+                            )
+                        chunks.append(chunk)
+                    raw = b"".join(chunks)
         except urllib.error.HTTPError as exc:
             quota_meta.update(_extract_quota_meta(exc.headers))
             quota_meta["http_status"] = exc.code
@@ -926,7 +1046,13 @@ class FinMindLiveFetcher:
             raise FinMindFetchError(f"FinMind API error HTTP {exc.code}: {exc.reason}") from exc
         except urllib.error.URLError as exc:
             raise FinMindFetchError(f"FinMind connection error: {exc.reason}") from exc
+        return raw, quota_meta
 
+    def parse_json_payload(
+        self,
+        raw: bytes,
+        quota_meta: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:

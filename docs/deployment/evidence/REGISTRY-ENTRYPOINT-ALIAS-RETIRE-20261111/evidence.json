@@ -1,0 +1,230 @@
+{
+  "task_id": "REGISTRY-ENTRYPOINT-ALIAS-RETIRE-20261111",
+  "owner": "Codex",
+  "assigned_reviewer": "Codex2",
+  "delivery_scope": "Source retirement only; independent review and merge are recorded by canonical handoff/approval/integrator, not asserted here.",
+  "base_commit": "6547ff3493dc110b1537941f3ddf24c61495d0a0",
+  "base_adoption": {
+    "original_base": "9ce4f3396f44b402290cd94578d20ba628b0ac48",
+    "previous_delivery_head": "c9c98fa77e4590f4fd5e9de38aaf02a335d40fbd",
+    "shared_ci_repair_pr": 7183,
+    "shared_ci_repair_merge": "6547ff3493dc110b1537941f3ddf24c61495d0a0",
+    "adoption_merge": "d5361c36880d7160e13822f28fd211929672ed07",
+    "method": "Normal merge of fetched current origin/dev into the same original task branch; no force push or replacement PR.",
+    "scope": "Adopts already-reviewed CI provisioning repair and fixture from dev unchanged. Registry business implementation, export policy and actual matrix module caller are unchanged from previous delivery.",
+    "historical_verification": "The verification and followup_verification arrays below record work before this base adoption. New-base focused results are separately recorded; unchanged 117-test coverage is not claimed to have been rerun."
+  },
+  "dependency": {
+    "task_id": "REGISTRY-LEGACY-METADATA-RETIRE-20261111",
+    "canonical_status": "done",
+    "pr": 7173,
+    "merge_commit": "9ce4f3396f44b402290cd94578d20ba628b0ac48",
+    "ancestry_check": "git merge-base --is-ancestor 9ce4f3396f44b402290cd94578d20ba628b0ac48 HEAD; exit 0"
+  },
+  "caller_audit": {
+    "removed": [
+      "gate.py: re-export of canonical promotion classes only",
+      "cli.py: forwarding canonical main only"
+    ],
+    "maintained_root_caller": "README.md Python sample now imports services.registry.promotion.gate; module CLI documented.",
+    "local_callers": "test_gate.py previously inserted its service directory before bare gate import; smoke/direct CLI resolved adjacent service-local gate. These were not evidence of root alias use. Tests/smoke now import canonical package; direct CLI retains existing adjacent-gate fallback.",
+    "retained_business_consumer": "services/research/alpha_replication/revalidation_worker.py imports canonical PromotionGate/PromotionState, builds drafts with build_draft_entry_from_replication_request and validates candidate requirements; implementation unchanged.",
+    "retained_implementations": [
+      "services/registry/promotion/gate.py",
+      "services/registry/promotion/cli.py"
+    ],
+    "search_scope": "Follow-up git grep covers ALL tracked files, including hidden .github JSON, for bare gate/cli imports, cli.py/gate.py references and Registry gate/CLI/smoke paths. Initial extension-filtered audit missed .github/pantheon-stage0-matrix.json. Historical review/evidence records were left intact; other service-local cli/gate names are distinct.",
+    "maintained_ci_caller": ".github/pantheon-stage0-matrix.json baseline.commands now invokes python3 -m services.registry.promotion.smoke_test_gate from repository root. Only this existing command changes; schema, setup, all other commands and actual gate are preserved.",
+    "ci_correction": "The original direct service-local smoke resolved adjacent gate, not necessarily the root forwarding alias. This task changed smoke to import the canonical package, causing unprovisioned direct-script CI to fail with ModuleNotFoundError: services. The missed CI caller is now migrated to module execution; it is not evidence of a business root-alias consumer.",
+    "historical_references": "Task archives, support/evidence/EX-002-RB, review records and the dated namespace migration map retain historical invocations. The deployment design document lists the smoke file without invoking it. The replication README bare ReplicationGate example refers to its own separate service gate; canonical alpha_replication and execution consumers remain intact.",
+    "limit": "No claim that every historical or external caller is globally unused."
+  },
+  "packaging": {
+    "exports": [
+      "services",
+      "scripts",
+      "integrations"
+    ],
+    "policy": "Explicit packages.find allowlist, namespace discovery and dependency-free metadata unchanged; no console script or top-level cli/gate export exists.",
+    "guard": "Retired cli/gate names remain in telemetry UNEXPORTED_ROOT_MODULES. Static presence contract permits these two removed aliases only and explicitly checks all guarded names against package allowlist; installed-distribution negative export tests pass.",
+    "telemetry_source_changed": false
+  },
+  "documentation": {
+    "updated": [
+      "README.md",
+      "services/registry/promotion/README.md",
+      "services/registry/contract.md",
+      "services/registry/lineage/contract.md",
+      "services/registry/lineage/read_model_contract.md",
+      "services/registry/experiments/WANDB_ACTIVATION.md"
+    ],
+    "current_projection": "Promotion/experiment artifact producers emit artifact_state and deployment_stage without promotion_state. Loader requires approved state and an exact paper/canary/live stage.",
+    "retained_fields": "Gate/CLI lifecycle_state input, experiment adapter normalization and compat metadata, telemetry target.promotion_state event/query field, and optional archived schema fields remain distinct.",
+    "schema_alias": "Lineage contract now points to service-local promoted_artifact_metadata.schema.json; already-retired root schema is not described as present.",
+    "no_dual_write": "Removed false still-required artifact promotion_state migration-window instructions."
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --print-python",
+      "exit_status": 0,
+      "result": "Checkout-scoped .venv-pantheon provisioned; imports verified from foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/registry/promotion/test_gate.py services/registry/promotion/smoke_test_gate.py services/execution/test_artifact_loader.py services/registry/experiments/test_adapter.py services/research/alpha_replication/test_revalidation_worker.py",
+      "exit_status": 0,
+      "result": "94 passed, 4 subtests passed in 118.29s; existing deprecation warnings only."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/dev/test_provision_python_distribution.py",
+      "exit_status": 0,
+      "result": "20 passed, 8 subtests passed in 11.46s after final guard update."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_discovery_imports.py::TestInstalledDistributionIsCanonical",
+      "exit_status": 0,
+      "result": "3 passed in 1.19s; generic root exports remain absent."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m services.registry.promotion.smoke_test_gate",
+      "exit_status": 0,
+      "result": "candidate/paper/canary/live flow, forbidden skips and rollback rejection pass."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 services/registry/promotion/smoke_test_gate.py",
+      "exit_status": 0,
+      "result": "Passed only in the provisioned installed-distribution venv; this did not cover unprovisioned CI. Direct execution fails without installation and has been replaced by module invocation in the maintained baseline caller."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 services/execution/smoke_test_artifact_loader.py",
+      "exit_status": 0,
+      "result": "Canonical projection and in-memory Object Store loading pass."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m services.registry.promotion.cli --help",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 services/registry/promotion/cli.py --help",
+      "exit_status": 0
+    },
+    {
+      "command": "Foreign-cwd subprocess probe using absolute provisioned Python, no PYTHONPATH, TemporaryDirectory and build_candidate_entry fixture",
+      "exit_status": 0,
+      "result": "Canonical module help exit 0; draft->candidate exit 0 with JSON lifecycle_state=candidate; source fixture unchanged without --inplace; candidate->live rejected with exit 2 and Forbidden transition."
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0
+    }
+  ],
+  "followup_verification": [
+    {
+      "command": "timeout 20 python3 -m venv --without-pip /tmp/registry-entrypoint-ci-20261111",
+      "exit_status": 0,
+      "result": "Fresh isolated interpreter; importlib.metadata.distributions() is empty, sys.prefix differs from sys.base_prefix. No distribution or dependencies installed."
+    },
+    {
+      "command": "timeout 60 env -u PYTHONPATH PYTHONNOUSERSITE=1 PATH=/tmp/registry-entrypoint-ci-20261111/bin:/usr/bin:/bin /tmp/registry-entrypoint-ci-20261111/bin/python3 -c 'import importlib.metadata, json, sys; from scripts import ci_stage0; assert not list(importlib.metadata.distributions()), \"Expected empty fresh venv\"; assert sys.prefix != sys.base_prefix; print(\"Fresh venv: no installed distributions; no PYTHONPATH\"); config=ci_stage0.load_config(); command=next(c for c in config[\"baseline\"][\"commands\"] if \"registry.promotion.smoke_test_gate\" in c); ci_stage0.run_shell_command(command)'",
+      "exit_status": 0,
+      "result": "Loads and validates actual matrix, selects its new Registry smoke command and runs through the existing Stage 0 shell runner at repo root. Candidate/paper/canary/live, forbidden skips, execution projection and invalid rollback checks pass. No injected PYTHONPATH, installed checkout distribution, new import shim or smoke dependency."
+    },
+    {
+      "command": "Fresh-venv subprocess.run([sys.executable, 'services/registry/promotion/smoke_test_gate.py'], capture_output=True, text=True) with no PYTHONPATH and PYTHONNOUSERSITE=1",
+      "exit_status": 1,
+      "expected_failure": true,
+      "result": "Reproduces ModuleNotFoundError: No module named 'services' for the old direct invocation after this task's canonical-import change. Enclosing probe asserts exit 1 and expected error, exits 0."
+    },
+    {
+      "command": "timeout 120 env -u PYTHONPATH PYTHONNOUSERSITE=1 /tmp/registry-entrypoint-ci-20261111/bin/python3 -m unittest scripts.test_ci_stage0 scripts.test_check_service_lock_shared_deps services.registry.promotion.test_gate",
+      "exit_status": 1,
+      "result": "Initial combined test attempt: 38 tests, one error because the intentionally empty venv lacks jsonschema required by the replication integration test. This attempt is not counted as passed. Stage 0 tests rerun independently below; domain tests use the existing provisioned environment."
+    },
+    {
+      "command": "timeout 120 env -u PYTHONPATH PYTHONNOUSERSITE=1 /tmp/registry-entrypoint-ci-20261111/bin/python3 -m unittest scripts.test_ci_stage0 scripts.test_check_service_lock_shared_deps",
+      "exit_status": 0,
+      "result": "30 tests passed in 34.766s."
+    },
+    {
+      "command": "timeout 30 env -u PYTHONPATH PYTHONNOUSERSITE=1 /tmp/registry-entrypoint-ci-20261111/bin/python3 scripts/ci_stage0.py validate",
+      "exit_status": 0,
+      "result": "schema_version=1, 11 global path rules, 22 targets; deployment inventory synchronized. JSON comparison with origin/dev confirms only the one Registry baseline command differs."
+    },
+    {
+      "command": "timeout 30 env -u PYTHONPATH PYTHONNOUSERSITE=1 /tmp/registry-entrypoint-ci-20261111/bin/python3 -m services.registry.promotion.cli --help",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/dev/test_provision_python_distribution.py services/telemetry/test_discovery_imports.py::TestInstalledDistributionIsCanonical",
+      "exit_status": 0,
+      "result": "23 passed, 8 subtests passed in 14.68s."
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/registry/promotion/test_gate.py services/registry/promotion/smoke_test_gate.py services/execution/test_artifact_loader.py services/registry/experiments/test_adapter.py services/research/alpha_replication/test_revalidation_worker.py",
+      "exit_status": 0,
+      "result": "94 passed, 4 subtests passed in 106.79s; existing deprecation warnings only."
+    },
+    {
+      "command": "git diff origin/dev --check",
+      "exit_status": 0
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD",
+      "exit_status": 0
+    }
+  ],
+  "github_validation": {
+    "pr": 7182,
+    "previous_head": "f6233150d8848679bf7c1f883c522b6121948368",
+    "previous_ci_gap": "Previous head's Run baseline stage-0 gate failed (run 43037639869). Provisioned local success did not cover that CI environment. Smoke acceptance also failed; unrelated package/APT/DNS repair remains owned by its existing task.",
+    "historical_reviewed_head": "c9c98fa77e4590f4fd5e9de38aaf02a335d40fbd",
+    "historical_smoke_failure": "https://github.com/ajoe734/pantheon/actions/runs/43049245642/job/130634942575",
+    "historical_review_gate": "https://github.com/ajoe734/pantheon/actions/runs/43050731930",
+    "historical_evidence_boundary": "The c9c98fa review and green review gate apply only to that old head. Its APT/DNS Smoke acceptance failure remains a failure, not a new-head pass.",
+    "current_delivery": "After adopting dev's merged PR #7183, this new head requires actual fresh GitHub CI and an independent exact-head Codex2 review before canonical supervisor integration. Local results do not assert either; canonical delivery binding and GitHub retain the final head/check/review/merge receipts."
+  },
+  "new_base_verification": [
+    {
+      "command": "git merge-base --is-ancestor 6547ff3493dc110b1537941f3ddf24c61495d0a0 HEAD",
+      "exit_status": 0,
+      "result": "Fetched current dev and reviewed CI repair are ancestors of the resumed original source branch."
+    },
+    {
+      "command": "timeout 60 python3 scripts/dev/provision_python_distribution.py --print-python",
+      "exit_status": 0,
+      "result": "Checkout-scoped interpreter verified from foreign cwd with no PYTHONPATH using the supervisor-provided dependency interpreter."
+    },
+    {
+      "command": "timeout 20 python3 -m venv --without-pip /tmp/registry-entrypoint-ci-base-20261111",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 60 env -u PYTHONPATH PYTHONNOUSERSITE=1 PATH=/tmp/registry-entrypoint-ci-base-20261111/bin:/usr/bin:/bin /tmp/registry-entrypoint-ci-base-20261111/bin/python3 -c 'import importlib.metadata, sys; from scripts import ci_stage0; assert not list(importlib.metadata.distributions()); assert sys.prefix != sys.base_prefix; config=ci_stage0.load_config(); command=next(c for c in config[\"baseline\"][\"commands\"] if \"registry.promotion.smoke_test_gate\" in c); print(\"Actual empty-venv matrix command:\", command, flush=True); ci_stage0.run_shell_command(command)'",
+      "exit_status": 0,
+      "result": "Actual matrix command passes through Stage 0 runner in an empty venv: governed transitions, forbidden skips, canonical execution projection and invalid rollback rejection. No installation, PYTHONPATH or shim."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/registry/promotion/test_gate.py services/execution/test_artifact_loader.py::TestEX002RBLoaderMetadataMigration services/research/alpha_replication/test_revalidation_worker.py::test_worker_end_to_end_real_backtest_promotion_gate_and_research_finding_outbox services/research/alpha_replication/test_revalidation_worker.py::test_worker_refuses_artifact_not_matching_approved_checksum services/research/alpha_replication/test_revalidation_worker.py::test_worker_refuses_admission_without_real_backtest",
+      "exit_status": 0,
+      "result": "21 passed in 26.37s, no skips; existing deprecation warnings. Covers retained real alpha-replication gate/backtest consumer, checksum and absent-backtest rejection, canonical loader metadata, approvals and paper/canary/live/rollback boundaries."
+    },
+    {
+      "command": "timeout 30 env -u PYTHONPATH PYTHONNOUSERSITE=1 /tmp/registry-entrypoint-ci-base-20261111/bin/python3 -m services.registry.promotion.cli --help",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 30 env -u PYTHONPATH PYTHONNOUSERSITE=1 /tmp/registry-entrypoint-ci-base-20261111/bin/python3 scripts/ci_stage0.py validate",
+      "exit_status": 0,
+      "result": "schema_version=1, 11 global path rules, 22 targets; inventory synchronized."
+    },
+    {
+      "command": "git diff origin/dev --check; python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD",
+      "exit_status": 0
+    }
+  ],
+  "boundaries": [
+    "No business mutation or deployment; tests use in-memory/temporary fixtures.",
+    "No data/schema migration, archive deletion, or active telemetry edits.",
+    "Real gate approvals, paper/canary/live transitions, candidate and rollback checks are unchanged.",
+    "Hosted acceptance is not performed or claimed; final report task owns hosted proof and actual merge ancestry."
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-REPLICATION-GATE-REAL-BACKTEST-20261110-CI-RED-08A05514A0C4",
+  "root_cause": "Registry promotion test_gate required the research-only vectorbt backend, which the registry service suite does not install, so CI went red for PR #7145. Code was already delivered via PR #7152; the remaining recorded-fixture change conflicted with dev.",
+  "fix": "Registry test consumes recorded output of run_replication_backtest_protocol (services/research/replication/fixtures/recorded_backtest_tw_2330*.json); the real vectorbt run stays covered by the Research suite. source_ingestion r2 smoke keeps dev's vectorbt-absent fallback.",
+  "validation": "python3 -m unittest services.registry.promotion.test_gate (no vectorbt installed): 8 tests OK"
+}

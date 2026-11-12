@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import pytest
+
 from services.research.discovery_allocator import (
     MAX_DISCOVERY_PERSONAS,
     DiscoveryAllocator,
+    allocator_enabled,
 )
+
+
+@pytest.mark.parametrize("value", [None, "", " ", "false", "0", "1", "yes", "on", "invalid"])
+def test_allocator_disabled_without_explicit_true(value) -> None:
+    env = {} if value is None else {"DISCOVERY_ALLOCATOR_ENABLED": value}
+    assert allocator_enabled(env) is False
+
+
+@pytest.mark.parametrize("value", ["true", "TRUE", " true "])
+def test_allocator_enabled_with_explicit_true(value) -> None:
+    assert allocator_enabled({"DISCOVERY_ALLOCATOR_ENABLED": value}) is True
 
 
 def _scorer(persona, artifact):

@@ -15787,6 +15787,96 @@ class RuntimeWorkerLivenessTests(unittest.TestCase):
         self.assertFalse(workers[0]["pid_alive"])
         self.assertEqual(workers[0]["pid_state"], "Z")
 
+    @staticmethod
+    def _running_worker_state(pid_namespace: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
+        state = {
+            "tasks": [
+                {
+                    "id": "TASK-001",
+                    "title": "Sandboxed status command",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "next": "Implement",
+                    "last_update": "2026-11-10T15:08:00Z",
+                }
+            ]
+        }
+        supervisor_block: dict[str, Any] = {"pid": 1185385}
+        if pid_namespace is not None:
+            supervisor_block["pid_namespace"] = pid_namespace
+        orchestrator_state = {
+            "supervisor": supervisor_block,
+            "workers": {
+                "antigravity-run": {
+                    "task_id": "TASK-001",
+                    "provider": "antigravity",
+                    "logical_agent_id": "antigravity",
+                    "status": "running",
+                    "pid": 963338,
+                    "last_event_at": "2026-11-10T15:08:00Z",
+                    "request_snapshot": {"reason": "owned_ready_dispatch"},
+                }
+            },
+        }
+        return state, orchestrator_state
+
+    def test_worker_pids_from_another_pid_namespace_are_not_reported_dead(self) -> None:
+        # A governed status command run inside a worker sandbox has a private
+        # PID namespace: every host PID is absent from its /proc.
+        state, orchestrator_state = self._running_worker_state("pid:[4026531836]")
+
+        with (
+            mock.patch.object(status_projection, "current_pid_namespace", return_value="pid:[4026532999]"),
+            mock.patch.object(status_projection, "proc_pid_state", return_value=None) as proc_state,
+        ):
+            workers = ai_status.normalize_runtime_workers(state, orchestrator_state)
+
+        proc_state.assert_not_called()
+        self.assertEqual(workers[0]["bucket"], "running")
+        self.assertTrue(workers[0]["is_live_runtime"])
+        self.assertIsNone(workers[0]["pid_alive"])
+        self.assertIsNone(workers[0]["pid_state"])
+        self.assertFalse(workers[0]["pid_observable"])
+
+    def test_worker_pid_gone_in_the_supervisor_pid_namespace_is_still_stale(self) -> None:
+        state, orchestrator_state = self._running_worker_state("pid:[4026531836]")
+
+        with (
+            mock.patch.object(status_projection, "current_pid_namespace", return_value="pid:[4026531836]"),
+            mock.patch.object(status_projection, "proc_pid_state", return_value=None),
+        ):
+            workers = ai_status.normalize_runtime_workers(state, orchestrator_state)
+
+        self.assertEqual(workers[0]["bucket"], "stale")
+        self.assertFalse(workers[0]["is_live_runtime"])
+        self.assertTrue(workers[0]["pid_observable"])
+
+    def test_state_without_a_recorded_pid_namespace_keeps_proc_liveness(self) -> None:
+        state, orchestrator_state = self._running_worker_state(None)
+
+        with (
+            mock.patch.object(status_projection, "current_pid_namespace", return_value="pid:[4026532999]"),
+            mock.patch.object(status_projection, "proc_pid_state", return_value=None),
+        ):
+            workers = ai_status.normalize_runtime_workers(state, orchestrator_state)
+
+        self.assertEqual(workers[0]["bucket"], "stale")
+        self.assertTrue(workers[0]["pid_observable"])
+
+    def test_unreadable_own_pid_namespace_does_not_match_a_recorded_one(self) -> None:
+        state, orchestrator_state = self._running_worker_state("pid:[4026531836]")
+
+        with (
+            mock.patch.object(status_projection, "current_pid_namespace", return_value=None),
+            mock.patch.object(status_projection, "proc_pid_state", return_value=None),
+        ):
+            workers = ai_status.normalize_runtime_workers(state, orchestrator_state)
+
+        self.assertEqual(workers[0]["bucket"], "running")
+        self.assertFalse(workers[0]["pid_observable"])
+
 
 class PortableStateRenderingTests(unittest.TestCase):
     def setUp(self) -> None:

@@ -35,7 +35,12 @@ W&B is justified when:
    - Follow-on implementation may generalize the existing adapter or add a backend-neutral sibling, but W&B cannot activate while the repo still exposes only an MLflow-first registry adapter.
 
 4. **Canonical State Mapping Landed**: The experiment bridge must mirror canonical registry `artifact_state` and derived `deployment_stage`, not treat `paper` / `live` as registry lifecycle states.
-   - If legacy `lifecycle_state` or `promotion_state` fields remain during the migration window, they must be generated as compatibility projections only.
+   - The adapter may normalize `lifecycle_state` entry input and retain it in
+     `pantheon.compat.lifecycle_state` / `promoted_metadata.compat`.
+   - Current artifact projections do not emit `promotion_state`, and the loader
+     does not read it. There is no required dual-write window. Telemetry
+     `target.promotion_state` and optional archived schema fields are separate
+     and remain supported.
    - W&B activation is blocked until this semantic split is explicit in the experiment bridge plan.
 
 5. **W&B SDK Compatibility**: W&B SDK (`wandb>=0.16.0` recommended) and its dependencies do not conflict with already-integrated packages (MLflow, DSPy, imitation, Qlib, TRL).

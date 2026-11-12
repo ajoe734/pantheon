@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/contracts/feature_catalogue.v1.schema.json",
+  "title": "Governed feature catalogue v1",
+  "description": "Lists every governed point-in-time feature dataset field with its declared availability lag. Produced by services.source_ingestion.feature_catalogue.catalogue_document().",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "datasets"],
+  "properties": {
+    "schema_version": {"const": "feature_catalogue.v1"},
+    "datasets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/dataset"}
+    }
+  },
+  "$defs": {
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset", "normalized_dataset", "key_kind", "granularity", "event_time_key",
+        "default_availability_lag_days", "sources", "description", "fields"
+      ],
+      "properties": {
+        "dataset": {"type": "string", "minLength": 1},
+        "normalized_dataset": {"type": "string", "minLength": 1},
+        "key_kind": {"enum": ["symbol", "series", "market"]},
+        "granularity": {"enum": ["daily", "monthly", "quarterly"]},
+        "event_time_key": {"type": "string", "minLength": 1},
+        "default_availability_lag_days": {"type": "integer", "minimum": 0},
+        "venue": {"type": "string"},
+        "sources": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "description": {"type": "string"},
+        "fields": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/field"}}
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "source_field", "unit", "dtype", "availability_lag_days", "description"],
+      "properties": {
+        "field": {"type": "string", "minLength": 1},
+        "source_field": {"type": "string", "minLength": 1},
+        "unit": {"type": "string", "minLength": 1},
+        "dtype": {"const": "float"},
+        "availability_lag_days": {"type": "integer", "minimum": 0},
+        "description": {"type": "string"}
+      }
+    }
+  }
+}

@@ -62,7 +62,6 @@ from services.control_plane.bff.ports import (
     create_persona_registry_write_owner,
 )
 from services.control_plane.bff.runtime.router import create_runtime_router
-from services.control_plane.bff.tools_integrations.service import deprecated_bff_path_response
 
 _sse_buffers: dict[str, list[tuple[int, dict[str, Any]]]] = {
     "signal": [],
@@ -767,7 +766,6 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
             "_composed_surface_status": lambda *a, **kw: {"status": "ok"},
             "_dataset_surface_status": lambda *a, **kw: {"status": "ok"},
             "_deployment_review_href": lambda *a, **kw: "",
-            "_deprecated_bff_path_response": lambda *a, **kw: None,
             "_dry_run_success_response": lambda *a, **kw: {},
             "_extract_identity": _extract_identity,
             "_gov_bff_action_command": lambda *a, **kw: {},
@@ -1006,7 +1004,6 @@ def _isolated_deployment_plan_bff() -> Iterator[TestClient]:
         sse_buffers=_sse_buffers,
         sse_subscribers=_sse_subscribers,
         gov_bff_action_command=lambda *a, **kw: {},
-        deprecated_bff_path_response=deprecated_bff_path_response,
         sem_command_response=lambda **kwargs: reject_retired_command(kwargs["command_type"].value),
         stream_generic_events=lambda *a, **kw: None,
         surface_degradation_reason=lambda *a, **kw: None,
@@ -1037,9 +1034,7 @@ def test_deployment_plan_create_routes_are_retired_without_side_effects(path: st
     error = response.json()["error"]
     assert error["code"] == "ACTION_RETIRED"
     assert "POST /api/deployment/plans/validate" in error["details"]["replacement"]
-    assert plans.status_code == 410, plans.text
-    assert plans.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
-    assert plans.json()["detail"]["error"]["details"]["replacement"] == "/bff/deployments"
+    assert plans.status_code == 405, plans.text
     assert deployments.status_code == 200, deployments.text
     assert deployments.json()["data"] == []
     assert _sse_buffers["audit"] == []
@@ -1178,8 +1173,8 @@ def test_post_bff_confirm_by_token_valid_returns_202_and_publishes_audit() -> No
 # actual JWTs, real confirmation records, mounted entry points and owner readback.
 
 
-def test_advance_lifecycle_unregistered_action_id_still_returns_410() -> None:
-    """Other action_ids not yet registered still return 410 with replacement hint."""
+def test_advance_lifecycle_unregistered_action_id_returns_404() -> None:
+    """Unknown persona action ids return the 404 envelope with no replacement hint."""
     with _stub_auth():
         client = _client()
         response = client.post(
@@ -1190,14 +1185,12 @@ def test_advance_lifecycle_unregistered_action_id_still_returns_410() -> None:
                 "Idempotency-Key": _idempotency_key(),
             },
         )
-    assert response.status_code == 410, response.text
+    assert response.status_code == 404, response.text
     body = response.json()
-    detail = body.get("detail") or {}
+    detail = body.get("detail") or body
     error = detail.get("error") or {}
-    details = error.get("details") or {}
-    assert details.get("replacement"), (
-        f"410 response missing details.replacement: {body}"
-    )
+    assert error.get("code") == "RESOURCE_NOT_FOUND", body
+    assert "replacement" not in (error.get("details") or {}), body
 
 
 # ---------------------------------------------------------------------------
