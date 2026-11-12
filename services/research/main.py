@@ -2253,9 +2253,16 @@ def _evolution_oos_context(
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
     backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
     gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+
+    def _record_owned(evaluation: Dict[str, Any]) -> Optional[str]:
+        run_id = backtests.record(evaluation)
+        if run_id:
+            _bind_backtest_run_owner(data_dir, run_id, tenant_id=tenant_id, decision_id=decision_id)
+        return run_id
+
     factory = executor.build_gate_request_factory(
         spec=spec, dataset=dataset, decision_id=decision_id, tenant_id=tenant_id,
-        record_backtest=backtests.record, family_id=family_id, timestamp=utc_now(),
+        record_backtest=_record_owned, family_id=family_id, timestamp=utc_now(),
     )
 
     return gate, factory
@@ -4105,6 +4112,68 @@ def _visible_saved_artifacts(tenant_id: str) -> List[Dict[str, Any]]:
 _ARTIFACT_READ_ROLES = tuple(dict.fromkeys(
     ("viewer", "view_only", "operator", "approver", "admin", "reviewer", *AUTHENTICATED_SERVICE_ROLES)
 ))
+
+
+_BACKTEST_OWNER_READ_ROLES = tuple(dict.fromkeys(("registry-writer", *AUTHENTICATED_SERVICE_ROLES)))
+
+
+def _backtest_owner_path(data_dir: Path) -> Path:
+    return Path(data_dir) / "backtest_run_owners.json"
+
+
+def _bind_backtest_run_owner(data_dir: Path, run_id: str, *, tenant_id: str, decision_id: str) -> None:
+    """Server-side tenant/decision binding written by the code that ran the protocol."""
+    path = _backtest_owner_path(data_dir)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        loaded = {}
+    loaded = loaded if isinstance(loaded, dict) else {}
+    loaded[run_id] = {"tenant_id": tenant_id, "decision_id": decision_id}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(loaded, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+@app.get("/api/research-orchestrator/backtest-runs/{run_id}/owner-binding")
+def read_backtest_run_owner_binding(
+    run_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    """Read-only producer proof of a recorded backtest run, bound to the authenticated tenant.
+
+    The caller bearer is verified by the strict Research verifier (viewer roles are
+    not admitted).  The run is returned only when the server-owned run owner record
+    names the same tenant; foreign or unbound runs are 404, never disclosed.
+    """
+    try:
+        verified = authenticate_tenant(
+            authorization=authorization, tenant_id=x_tenant_id, service_prefix="RESEARCH",
+            required_roles=_BACKTEST_OWNER_READ_ROLES,
+        ).tenant_id
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except TenantBoundaryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore
+
+    record = SharedBacktestRunStore(data_dir / "backtest_runs.json").get(run_id)
+    try:
+        owners = json.loads(_backtest_owner_path(data_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        owners = {}
+    owner = owners.get(run_id) if isinstance(owners, dict) else None
+    if not record or not isinstance(owner, dict) or owner.get("tenant_id") != verified:
+        raise HTTPException(status_code=404, detail="backtest run not found for tenant")
+    return {
+        "backtest_run_id": run_id, "tenant_id": verified, "decision_id": owner.get("decision_id"),
+        "status": record.get("status"), "artifact_checksum": record.get("artifact_checksum"),
+        "dataset_id": record.get("dataset_id"), "source_dataset_refs": record.get("source_dataset_refs"),
+        "artifact_ref": record.get("artifact_ref"), "evaluation_digest": record.get("evaluation_digest"),
+    }
 
 
 def _authenticated_artifact_tenant(

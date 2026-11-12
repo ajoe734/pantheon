@@ -19,6 +19,9 @@ import json
 import logging
 import os
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Literal, Optional
@@ -996,12 +999,44 @@ def _strategy_artifact_registration(
     }
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # never forward the bearer to another origin
+        return None
+
+
+def _verify_research_run_owner(
+    authorization: Optional[str], tenant: Optional[str], run_id: str, *, digest: str, checksum: str,
+) -> None:
+    """Confirm with the Research run owner that this tenant's run has this exact digest/checksum.
+
+    Forwards the already-verified caller bearer (RAM only, never logged/stored) to the single
+    configured Research origin; any missing config, transport error or mismatch fails closed.
+    """
+    base = os.environ.get("RESEARCH_ORCHESTRATOR_API_URL", "").strip().rstrip("/")
+    if not base or not authorization or not tenant:
+        raise RegistryError("producer run owner verification is not configured; gate proof refused.")
+    url = f"{base}/api/research-orchestrator/backtest-runs/{urllib.parse.quote(run_id, safe='')}/owner-binding"
+    request = urllib.request.Request(
+        url, headers={"Authorization": authorization, "X-Tenant-Id": tenant, "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(request, timeout=5) as response:
+            owned = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - every failure refuses the proof; no token in message
+        raise RegistryError(f"producer run owner verification failed: {type(exc).__name__}") from None
+    if (not isinstance(owned, dict) or owned.get("backtest_run_id") != run_id
+            or owned.get("tenant_id") != tenant or owned.get("status") != "completed"
+            or owned.get("evaluation_digest") != digest or owned.get("artifact_checksum") != checksum):
+        raise RegistryError("producer run owner record does not match the gate proof.")
+
+
 def _register_strategy_artifact(
     registry_service: RegistryService,
     registration: dict[str, Any],
     *,
     ctx: AuthContext,
     actor: Optional[dict[str, Any]] = None,
+    authorization: Optional[str] = None,
 ) -> RegistryEntryView:
     registration = dict(registration)
     replication_proof = registration.pop("replication_proof", None)
@@ -1017,6 +1052,12 @@ def _register_strategy_artifact(
                 artifact_checksum=strategy_artifact_checksum(registration["strategy_artifact"]),
                 producer_run_id=create_payload.producer_run_id or "",
             )
+            binding = create_payload.replication_proof["owner_verified_binding"]
+            _verify_research_run_owner(
+                authorization, _caller_tenant(ctx), binding["backtest_run_id"],
+                digest=binding["evaluation_digest"], checksum=binding["artifact_checksum"],
+            )
+            binding["producer_verified"] = True
         except PromotionError as exc:
             raise RegistryError(str(exc)) from exc
         create_payload.replication_success = True
@@ -1794,6 +1835,7 @@ def register_strategy_artifact(
             _strategy_artifact_registration(payload),
             ctx=ctx,
             actor=_actor_context(ctx),
+            authorization=authorization,
         )
     except RegistryConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))

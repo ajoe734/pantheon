@@ -3990,13 +3990,42 @@ def _real_gate_registration():
             "replication_proof": promo.replication_proof, "backtest_evaluation": bt_eval}
 
 
-def test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery(strict_client):
+class _FakeResearchOwner:
+    """Stands in for the Research owner-binding route: serves a tenant-bound run record."""
+
+    def __init__(self, bt_eval, tenant, **override):
+        import hashlib, json as _j
+        digest = "sha256:" + hashlib.sha256(
+            _j.dumps(bt_eval, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+        self.record = {"backtest_run_id": bt_eval["backtest_run_id"], "tenant_id": tenant, "status": "completed",
+                       "artifact_checksum": bt_eval["strategy_artifact"]["checksum"], "evaluation_digest": digest}
+        self.record.update(override)
+        self.requests = []
+
+    def install(self, monkeypatch):
+        import io, json as _j, urllib.error
+        owner = self
+
+        class _Opener:
+            def open(self, request, timeout=None):
+                owner.requests.append((request.full_url, dict(request.header_items()), timeout))
+                if owner.record is None:
+                    raise urllib.error.HTTPError(request.full_url, 404, "nf", {}, io.BytesIO(b"{}"))
+                return io.BytesIO(_j.dumps(owner.record).encode())
+
+        monkeypatch.setenv("RESEARCH_ORCHESTRATOR_API_URL", "http://research.test:8101")
+        monkeypatch.setattr("services.registry.service.urllib.request.build_opener", lambda *a: _Opener())
+        return self
+
+
+def test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery(strict_client, monkeypatch):
     import copy as _copy
     from services.evolution.approved_baselines import resolve_member_baseline
     token = _jwt(subject="gate-owner", tenant="tenant-a")
     other = _jwt(subject="gate-other", tenant="tenant-b")
     reg = _real_gate_registration()
     rid = reg["registry_id"]
+    owner = _FakeResearchOwner(reg["backtest_evaluation"], "tenant-a").install(monkeypatch)
 
     # Forged / altered / foreign submissions are refused before anything is persisted.
     def forged(mutate):
@@ -4017,8 +4046,21 @@ def test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery(stric
     assert forged(lambda r: r["replication_proof"].update(admission_status="rejected")) == 400
     assert forged(lambda r: r["backtest_evaluation"]["strategy_artifact"].update(checksum="sha256:other")) == 400
 
+    # Producer owner disagreement (foreign tenant, changed digest, unknown run, unconfigured) refuses the proof.
+    for override in ({"tenant_id": "tenant-b"}, {"evaluation_digest": "sha256:changed"}, {"status": "failed"}, None):
+        owner.record = None if override is None else {**_FakeResearchOwner(reg["backtest_evaluation"], "tenant-a").record, **override}
+        assert strict_client.post("/api/registry/strategy-artifacts", json=reg, headers=_bearer(token)).status_code == 400
+    owner.record = _FakeResearchOwner(reg["backtest_evaluation"], "tenant-a").record
+    monkeypatch.delenv("RESEARCH_ORCHESTRATOR_API_URL")
+    assert strict_client.post("/api/registry/strategy-artifacts", json=reg, headers=_bearer(token)).status_code == 400
+    monkeypatch.setenv("RESEARCH_ORCHESTRATOR_API_URL", "http://research.test:8101")
+    owner.requests.clear()
+
     created = strict_client.post("/api/registry/strategy-artifacts", json=reg, headers=_bearer(token))
     assert created.status_code == 200, created.text
+    url, hdrs, timeout = owner.requests[-1]
+    assert hdrs["Authorization"] == _bearer(token)["Authorization"] and hdrs["X-tenant-id"] == "tenant-a"
+    assert url.endswith(f"/backtest-runs/{reg['producer_run_id']}/owner-binding") and timeout and timeout <= 10
     approved = advance_registry_http(
         strict_client, f"/api/registry/strategy-artifacts/{rid}/advance",
         json={"target_state": "approved", "approver": "gate-reviewer", "expected_artifact_state": "candidate"},
@@ -4030,7 +4072,7 @@ def test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery(stric
     assert entry["replication_success"] is True
     binding = entry["replication_proof"]["owner_verified_binding"]
     assert binding["artifact_checksum"] == entry["checksum"]
-    assert binding["evaluation_digest"].startswith("sha256:")
+    assert binding["evaluation_digest"].startswith("sha256:") and binding["producer_verified"] is True
     # The persisted GET entry is what the resolver consumes: approved, with the genuine numbers.
     baseline = resolve_member_baseline(
         tenant_id="tenant-a", persona_id="p1", artifact_ref=rid, checksum=entry["checksum"],
