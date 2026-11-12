@@ -1,0 +1,5 @@
+{"task":"PYTEST-IMPORT-ISOLATION-COST-20261112","original_conftest_blob":"4c30ee249ab05572d07b81e289d48199214fec65",
+"change":"_is_transient_local_module uses os.path.realpath + string prefix containment instead of Path.resolve + relative_to; uncached, same semantics",
+"measurement":{"interpreter":"/tmp/gfd-venv/bin/python","modules":796,"transient_count":1,"classifications_identical":true,
+"original_seconds":[0.2123,0.2160,0.2320],"new_seconds":[0.0271,0.0247,0.0253]},
+"not_claimed":"No full required-CI result is claimed; CI must run unchanged."}

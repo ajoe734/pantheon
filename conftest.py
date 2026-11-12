@@ -48,13 +48,47 @@ def _module_file(module: ModuleType) -> Path | None:
         return None
 
 
+_SEP = os.sep
+_SERVICES_STR = str(SERVICES_DIR)
+_SCRIPTS_STR = str(SCRIPTS_DIR)
+_TESTS_STR = str(TESTS_DIR)
+
+
+def _under(path: str, root: str) -> bool:
+    # Plain string containment on already-resolved paths; equivalent to
+    # Path.is_relative_to without per-module Path object construction.
+    return path == root or path.startswith(root + _SEP)
+
+
+def _module_realpath(module: ModuleType) -> str | None:
+    """Resolve a module file freshly (symlinks included) as a string.
+
+    Deliberately uncached so mutated ``__file__`` values and changed symlinks
+    are always classified from their current identity.
+    """
+
+    filename = getattr(module, "__file__", None)
+    if not filename:
+        return None
+    try:
+        return os.path.realpath(filename)
+    except OSError:
+        return None
+
+
 def _is_transient_local_module(name: str, module: ModuleType) -> bool:
     root_name = name.partition(".")[0]
-    path = _module_file(module)
+    path = _module_realpath(module)
+    if path is None:
+        return False
+
+    local = (
+        _under(path, _SERVICES_STR)
+        or _under(path, _SCRIPTS_STR)
+        or _under(path, _TESTS_STR)
+    )
 
     if root_name in _STABLE_REPO_PACKAGES:
-        if path is None:
-            return False
         # A stable package name is only genuinely stable when it actually
         # resolves under its canonical repo-root package directory. A stray
         # module cached under a stable name but resolved from a service-local
@@ -62,23 +96,11 @@ def _is_transient_local_module(name: str, module: ModuleType) -> bool:
         # between the root ``integrations`` package and a same-named
         # service-local subpackage) is a poisoned cache entry, not a stable
         # package: treat it as transient so it gets cleared and re-resolved.
-        canonical_root = ROOT / root_name
-        if path == canonical_root or _is_relative_to(path, canonical_root):
+        if _under(path, str(ROOT / root_name)):
             return False
-        return (
-            _is_relative_to(path, SERVICES_DIR)
-            or _is_relative_to(path, SCRIPTS_DIR)
-            or _is_relative_to(path, TESTS_DIR)
-        )
+        return local
 
-    if path is None:
-        return False
-
-    return (
-        _is_relative_to(path, SERVICES_DIR)
-        or _is_relative_to(path, SCRIPTS_DIR)
-        or _is_relative_to(path, TESTS_DIR)
-    )
+    return local
 
 
 def _clear_transient_local_modules() -> None:
