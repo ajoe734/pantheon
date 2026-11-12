@@ -1,0 +1,8 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-FINMIND-BROKER-PREPARE-CONTRACT-20261112-CI-RED-62D07AAB53D8",
+  "source_task": "FINMIND-BROKER-PREPARE-CONTRACT-20261112",
+  "source_pr": 7199,
+  "root_cause": "Research suite job hit the 20-minute step timeout at ~94% progress on a slow runner (run 43125238675, job 130875807445). PR only changes scripts/deploy_nonprod_vm.sh, its test, and evidence; no research code touched. Not a code defect.",
+  "resolution": "Reran failed job (gh run rerun --failed); Research suite succeeded, run 43125238675 conclusion success. No code change needed; source PR is no longer red.",
+  "code_changes": "none"
+}
