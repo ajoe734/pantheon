@@ -1981,6 +1981,8 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://runtime-manager:8081}
       PANTHEON_DEPLOYMENT_API_URL: ${PANTHEON_DEPLOYMENT_API_URL:-http://deployment:8095}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      # Existing Research owner-binding readback origin (strict caller auth forwarded).
+      RESEARCH_ORCHESTRATOR_API_URL: ${RESEARCH_ORCHESTRATOR_API_URL:-http://research-orchestrator-svc:8101}
     volumes:
       - dev-paper-registry-tokens:/run/pantheon-principals:ro
     depends_on:

@@ -31,6 +31,23 @@ def envelope(members=None, **limits):
 
 
 class PortfolioEnvelopeTests(unittest.TestCase):
+    def test_revision_pins_pool_snapshot_and_lineage_to_previous_envelope(self):
+        members = [{"member_id": "long", "artifact": member_artifact(), "risk_weight": 1}]
+        first = build_portfolio_envelope(
+            artifact_id="env-v1", strategy_id="s", version="1.1.0", members=members,
+            pool_snapshot={"pool_version": 1, "pool_digest": "sha256:a"})
+        second = build_portfolio_envelope(
+            artifact_id="env-v2", strategy_id="s", version="1.2.0", members=members,
+            pool_snapshot={"pool_version": 2, "pool_digest": "sha256:b"},
+            parent_envelope_id="env-v1")
+        self.assertNotIn("env-v1", first["lineage"]["parent_registry_ids"])
+        self.assertIn("env-v1", second["lineage"]["parent_registry_ids"])
+        self.assertIn("artifact-long", second["lineage"]["parent_registry_ids"])
+        self.assertEqual(second["parameters"]["pool_version"], 2)
+        self.assertEqual(second["parameters"]["pool_digest"], "sha256:b")
+        self.assertNotEqual(strategy_artifact_checksum(first), strategy_artifact_checksum(second))
+        validate_strategy_artifact(second)
+
     def test_singleton_preserves_exact_view_and_actions(self):
         artifact = member_artifact()
         portfolio = envelope([{"member_id": "long", "artifact": artifact, "risk_weight": 1}])
