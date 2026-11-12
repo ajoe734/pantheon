@@ -69,5 +69,46 @@
     "ordering_request": "Canonical progress requests existing local Human/Ops dependency-contract maintenance: the registry task must follow this DLQ correction before resuming shared runtime.py work. That command is explicitly local Human/Ops-only and cannot be invoked by this auto worker. The registry design hold and acceptance remain unchanged.",
     "delivery": "Assigned Claude frozen-head independent review, required repository CI, and native supervisor integration remain required. Owner must finalize only after the exact reviewed head merges.",
     "hosted": "NOT_RUN. Original sole publisher must verify the exact served source version and original normal bounded refresh afterwards. Keep all original official431339 failures and global source-health acceptance; local source tests do not prove hosted completion."
+  },
+  "ci_budget_followup": {
+    "implementation_head_before_followup": "a53cf176e862262307a3717c7c63c18e445ecab3",
+    "same_pr": "https://github.com/ajoe734/pantheon/pull/7204",
+    "authorization": "Canonical artifact-contract addition by Human/Ops at 2026-11-12T03:09:53Z; existing Run research suite step only, 20 to 25 minutes.",
+    "prior_ci": [
+      {
+        "run_id": 43138734368,
+        "attempt": 1,
+        "job_id": 130920917367,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/43138734368/job/130920917367",
+        "result": "FAILURE: GitHub timed out Run research suite after 20 minutes; last progress was 94%. No completed pytest summary; not passed."
+      },
+      {
+        "run_id": 43138734368,
+        "attempt": 2,
+        "job_id": 130933368126,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/43138734368/job/130933368126",
+        "pytest_summary": "833 passed, 2 skipped, 1335 warnings, 5 subtests passed in 1200.56s (0:20:00)",
+        "result": "FAILURE: GitHub timed out Run research suite after 20 minutes, after pytest printed its summary. This CI job did not pass."
+      }
+    ],
+    "change": "Only Run research suite timeout-minutes increases from 20 to 25. Existing research job timeout 30 and install timeout 15 remain. All workflow commands, tests, assertions, deselection/skips and product latency acceptance remain unchanged. Source DLQ implementation is unchanged.",
+    "validation": [
+      {
+        "command": "python3 -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision",
+        "result": "26 tests passed in 0.932s",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 inline YAML/byte comparison against HEAD:.github/workflows/branch-ci.yml",
+        "result": "PyYAML 6.0.1 parsed; exact single 20->25 substitution; job30/install15 and exact pytest command verified; all other workflow bytes identical.",
+        "exit_code": 0
+      },
+      {
+        "command": "git diff --check",
+        "result": "passed",
+        "exit_code": 0
+      }
+    ],
+    "delivery_boundary": "New head requires fresh assigned Claude frozen-head review, genuine CI and native supervisor integration. No old-head third rerun, manual status, approval artifact or hosted completion claim. Original sole publisher retains joint #7203/#7204 release and protected-pair, four GUI, performance and thirteen parity acceptance. Separate test-file race remains with existing 7CAF followup."
   }
 }
