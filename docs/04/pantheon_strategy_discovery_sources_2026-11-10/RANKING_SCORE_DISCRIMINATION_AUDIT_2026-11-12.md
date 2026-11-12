@@ -86,7 +86,7 @@ Recommended order: provenance and fill-quality correctness → accepted quarterl
 
 Both bounded local commands completed with exit 0:
 
-1. `timeout 60 .venv-pantheon/bin/python3 /tmp/ranking_audit_reproduce.py` — quarterly HTTP 200, three identical component sets/62.5/tier-3/coverage 0.1; actual projection fill→rejection zero; counter reset; profitable high-water zero; missing metrics stay unknown. The exact script and JSON output are embedded in `evidence.json` for replay.
+1. `timeout 60 .venv-pantheon/bin/python3 /tmp/ranking_audit_reproduce.py` — quarterly HTTP 200, three identical component sets/62.5/tier-3/coverage 0.1; actual projection fill→rejection zero; counter reset; profitable high-water zero; missing metrics stay unknown. The exact script and concise JSON results are embedded in `evidence.json` for replay; a SHA-256-bound reference to the immutable prior manifest preserves the full output.
 2. `timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/capital/test_allocation_policy.py services/capital/test_allocation_lineage_integrity.py services/persona-evaluator-agent/test_persona_evaluator_agent.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py -k 'quarterly or score_alone or paper_simulation or lineage or target or pm12_adapter'` — **29 passed, 49 deselected**, 14.35 s; three dependency deprecation warnings. Existing tests include real quarterly routes, paper isolation/lineage and score-alone recommendation behaviour. They establish local source behaviour, not hosted activation.
 
 Only this report and its evidence manifest are delivery artifacts. Independent review and supervisor integration remain required; this report does not record its own approval or claim hosted remediation.
