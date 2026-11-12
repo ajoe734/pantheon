@@ -17,8 +17,13 @@ the gateway `/v1/responses` endpoint (same path Management AI uses for `main`).
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
+import os
 import subprocess
+import tempfile
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
@@ -504,7 +509,80 @@ def _existing_agent_ids(runner: CliRunner) -> set[str]:
     return set(_existing_agents(runner))
 
 
+_REGISTRY_LOCK_ENV = "PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK"
+_registry_thread_lock = threading.RLock()
+_registry_depth = threading.local()
+
+
+def agent_registry_lock_path() -> str:
+    """Lock identity shared by every agents.list writer (CLI, adapter HTTP).
+
+    Lives in the shared OpenClaw state dir (parent of the workspace root), not
+    beside any process-local DB, so the standalone reconciler and the adapter
+    contend on the same inode.
+    """
+
+    override = os.getenv(_REGISTRY_LOCK_ENV, "").strip()
+    if override:
+        return override
+    return os.path.join(os.path.dirname(PERSONA_WORKSPACE_ROOT), ".pantheon-agent-registry.lock")
+
+
+@contextlib.contextmanager
+def agent_registry_lock() -> Any:
+    """Reentrant cross-process exclusive lock around agents.list read-modify-write."""
+
+    with _registry_thread_lock:
+        depth = getattr(_registry_depth, "n", 0)
+        if depth:
+            _registry_depth.n = depth + 1
+            try:
+                yield
+            finally:
+                _registry_depth.n -= 1
+            return
+        path = agent_registry_lock_path()
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            handle = open(path, "a+b")
+        except OSError:
+            if os.getenv(_REGISTRY_LOCK_ENV, "").strip():
+                raise
+            handle = open(os.path.join(tempfile.gettempdir(), ".pantheon-agent-registry.lock"), "a+b")
+        with handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            _registry_depth.n = 1
+            try:
+                yield
+            finally:
+                _registry_depth.n = 0
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def sync_persona_agents(
+    personas: Sequence[Mapping[str, Any]],
+    *,
+    runner: Optional[CliRunner] = None,
+    soul_writer: Optional[SoulWriter] = None,
+    memory_materializer: Optional[MemoryMaterializer] = None,
+    skip_persona: Optional[Callable[[Mapping[str, Any]], bool]] = None,
+    route_policy_resolver: Optional[Callable[[Mapping[str, Any]], Optional[Mapping[str, Any]]]] = None,
+    runtime_policy: Optional[Mapping[str, Any]] = None,
+) -> SyncReport:
+    """Reconcile personas; the whole read-modify-write runs under the shared registry lock."""
+    with agent_registry_lock():
+        return _sync_persona_agents_locked(
+            personas,
+            runner=runner,
+            soul_writer=soul_writer,
+            memory_materializer=memory_materializer,
+            skip_persona=skip_persona,
+            route_policy_resolver=route_policy_resolver,
+            runtime_policy=runtime_policy,
+        )
+
+
+def _sync_persona_agents_locked(
     personas: Sequence[Mapping[str, Any]],
     *,
     runner: Optional[CliRunner] = None,

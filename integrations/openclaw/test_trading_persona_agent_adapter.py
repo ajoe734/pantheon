@@ -214,3 +214,56 @@ def test_concurrent_persona_syncs_do_not_lose_each_others_tool_policy(env):
         tools = by_id[pid]["tools"]
         assert tools["allow"] == ["read", "persona_proposal_submit"]
         assert tools["exec"]["security"] == "deny"
+
+
+def test_standalone_cli_reconcile_and_http_ensure_share_one_registry_lock(env, tmp_path, monkeypatch):
+    """CLI (scripts/openclaw-sync-persona-agents.py) vs adapter HTTP: neither restores a stale snapshot."""
+    import importlib.util
+    import threading
+    import time
+
+    monkeypatch.setenv("PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK", str(tmp_path / "shared" / "registry.lock"))
+    root, cli, client = env
+    spec = importlib.util.spec_from_file_location(
+        "cli_sync", ROOT / "scripts" / "openclaw-sync-persona-agents.py")
+    cli_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli_mod)
+
+    from integrations.openclaw import persona_agent_sync as lib
+
+    def slow(args):
+        proc = FakeCli.__call__(cli, args)  # snapshot taken before the delay
+        if args[:3] == ["openclaw", "config", "get"]:
+            time.sleep(0.3)
+        return proc
+
+    def cli_runner(personas, **kw):
+        return lib.sync_persona_agents(
+            personas, runner=slow,
+            soul_writer=lambda w, s: None,  # default workspace root is gateway-only
+            runtime_policy=lib.persona_agent_runtime_policy(),
+        ).to_dict()
+
+    results: dict = {}
+
+    def run_cli():
+        results["cli"] = cli_runner([_persona("persona-a")])
+
+    def run_http():
+        time.sleep(0.1)  # CLI is mid read-modify-write
+        with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen",
+                   return_value=_Memory({"hits": []})):
+            results["http"] = _post(TestClient(adapter_main.app), root, _persona("persona-b")).status_code
+
+    with patch.object(adapter_main, "_gateway_state_agent_runner", slow):
+        threads = [threading.Thread(target=run_cli), threading.Thread(target=run_http)]
+        [t.start() for t in threads]
+        [t.join(30) for t in threads]
+
+    assert results["cli"]["failed"] == [] and results["http"] == 201
+    assert callable(cli_mod.reconcile)
+    by_id = {a["id"]: a for a in cli.agents}
+    assert set(by_id) == {"persona-a", "persona-b"}
+    for agent in by_id.values():
+        assert agent["tools"]["allow"] == ["read", "persona_proposal_submit"]
+        assert agent["tools"]["exec"]["security"] == "deny"

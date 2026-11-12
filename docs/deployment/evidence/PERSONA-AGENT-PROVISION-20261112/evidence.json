@@ -24,7 +24,8 @@
     ],
     "4_read_only_plus_proposal_tools": [
       "integrations/openclaw/test_persona_agent_sync.py::test_tool_profile_is_read_only_plus_proposal_and_validator_fails_closed",
-      "integrations/openclaw/test_trading_persona_agent_adapter.py::test_concurrent_persona_syncs_do_not_lose_each_others_tool_policy (two concurrent persona ensures under the shared agent registry flock keep read+proposal, exec denied; fails without the lock)"
+      "integrations/openclaw/test_trading_persona_agent_adapter.py::test_concurrent_persona_syncs_do_not_lose_each_others_tool_policy (two concurrent persona ensures under the shared agent registry flock keep read+proposal, exec denied; fails without the lock)",
+      "integrations/openclaw/test_trading_persona_agent_adapter.py::test_standalone_cli_reconcile_and_http_ensure_share_one_registry_lock (CLI reconcile library path vs adapter HTTP ensure; both profiles stay restricted)"
     ],
     "5_degraded_never_blocks_paper": [
       "services/control-plane/bff/tests/test_persona_agent_provision_integration.py::test_agent_failure_is_readable_degraded_and_never_blocks_paper",
@@ -63,7 +64,8 @@
     "persona_proposal_submit is a contract name; the proposal-submission tool is delivered with the C1 controller",
     "backfill of the three hosted personas and hosted memory materialization were not executed",
     "personas/service.py and openclaw_ops_client.py are unchanged to stay inside the artifact contract; the coordinator's default provisioner lazily reuses service._get_active_write_owner and the existing ops client via integrations/openclaw/persona_agent_client.py",
-    "review P1 fixed: /agents/persona/ensure now runs under _agent_registry_lock shared with agents/ensure; AC1 backfill remains an operator step requiring hosted adapter access, not executed by this worker"
+    "review P1 (CLI-vs-HTTP) fixed: persona_agent_sync.agent_registry_lock (reentrant flock in the shared OpenClaw state dir, override PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK) wraps the whole sync_persona_agents read-modify-write; the standalone CLI and every adapter ensure route (via _agent_registry_lock) use that one lock identity. Hosted AC1/AC3 backfill of the three personas and hosted private-memory proof remain external_wait; not executed, not claimed from local fixtures",
+    "unverified locally: test_dev_gates.py::test_sync_persona_agents_reconciliation_and_model_drift and test_bff_persona_memory_gate_fails_when_not_returning_canonical_memory failed in a combined local run (dev_gates needs a Postgres DSN); not confirmed pre-existing at f90f863"
   ],
   "review_rejection_fixes": [
     "P1: agent sync moved out of coordinator.coordinate into _coordinate_persona_create, after the owner Persona record is persisted (provision_persona_agent).",

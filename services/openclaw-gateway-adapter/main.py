@@ -113,6 +113,7 @@ from assistant_provider_runtime import (
 )
 from integrations.openclaw.adapter.agora_servant import ensure_agora_servant_agent
 from integrations.openclaw.persona_agent_sync import (
+    agent_registry_lock,
     desired_agent_spec,
     persona_agent_runtime_policy,
     sync_persona_agents,
@@ -3149,20 +3150,10 @@ def _agent_ensure_fingerprint(req: BaseModel) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-@contextlib.contextmanager
 def _agent_registry_lock() -> Any:
-    """Cross-process exclusive lock serializing every agents.list writer."""
+    """Shared (CLI + adapter) reentrant lock serializing every agents.list writer."""
 
-    _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = _OPENCLAW_AGENT_IDEMPOTENCY_DB.with_name(
-        _OPENCLAW_AGENT_IDEMPOTENCY_DB.name + ".ensure.lock"
-    )
-    with open(lock_path, "a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    return agent_registry_lock()
 
 
 def _ensure_agent_idempotently(
