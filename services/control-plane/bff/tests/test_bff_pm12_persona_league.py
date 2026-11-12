@@ -1367,6 +1367,14 @@ def _return_ranking(monkeypatch, tmp_path, observations, *, quarter="2026-Q4", r
     for index, (name, metrics) in enumerate(observations):
         runtime_id = f"return-runtime-{index}"
         metrics = dict(metrics)
+        if "order_execution_observations" not in metrics and "fill_rate_details" not in metrics:
+            # Explicit rejected test order preserves the zero-execution tuple
+            # used by return/equity tests. No scalar-rate production fallback.
+            metrics["order_execution_observations"] = [{
+                "kind": "submission", "runtime_id": runtime_id, "binding_id": "test-binding",
+                "order_id": f"test-rejected-{index}", "event_id": f"test-request-{index}",
+                "as_of": "2026-11-12T04:10:00Z", "quantity": 1.0,
+            }]
         if "quarter_equity_observations" not in metrics and "pnl_period_start_at" in metrics:
             # Explicit local owner-valued flat-ledger fixtures for the return
             # normalisation tests. No production fallback reconstructs history.
@@ -1641,6 +1649,7 @@ def test_quarterly_route_uses_offset_instant_and_per_metric_quarter_time(monkeyp
     sample["as_of"] = "2027-01-01T07:59:59+08:00"
     item = _return_ranking(monkeypatch, tmp_path, [("offset", {
         "quarter_equity_observations": [sample], "fill_rate": 0.0, "avg_slippage_bps": 99,
+        "order_execution_observations": [],
         "fill_rate_at": "2027-01-01T00:00:00Z", "avg_slippage_bps_at": "2026-09-30T23:59:59Z",
     })])["items"][0]
     assert item["metrics"]["pnl"] == 100.0
@@ -1674,3 +1683,73 @@ def test_quarterly_route_legacy_summary_never_supplies_quarter_equity(monkeypatc
                           "initial_cash": 1000, "total_trades": 10})])["items"][0]
     assert item["metrics"]["pnl"] is None and item["metrics"]["drawdown"] is None
     assert item["metrics"]["pnl_return_reason"] == "missing_quarter_series"
+
+
+def test_fill_rate_runtime_restart_reaches_real_quarterly_ranking_route(monkeypatch, tmp_path):
+    from services.execution.lean_runtime.test_paper_runtime import _fill_rate_runtime_scenario
+
+    summary, partial, events, runtime = _fill_rate_runtime_scenario(tmp_path, monkeypatch)
+    # Local equity-owner fixture isolates execution input from mark availability.
+    # Orders, partial quantities, rejection, no-op and restart all came through
+    # the real runtime consumer, emitter, outbox and persistent projection above.
+    sample = _quarter_test_observation("return-runtime-0", _period_pnl(0.0, 100000.0))
+    sample["binding_id"] = summary["binding_id"]
+    summary["quarter_equity_observations"] = [sample]
+    item = _return_ranking(monkeypatch, tmp_path, [("runtime-fill-reject", summary)])["items"][0]
+    assert partial["fill_rate"] == 0.4
+    assert item["metrics"]["fill_rate"] == 0.25
+    details = item["metrics"]["fill_rate_details"]
+    assert details["numerator"] == 4 and details["denominator"] == 16
+    assert details["window"]["quarter"] == "2026-Q4"
+    assert details["window"]["start_at"] == "2026-10-01T00:00:00Z"
+    assert details["window"]["end_exclusive_at"] == "2027-01-01T00:00:00Z"
+    assert item["components"]["execution_score"] == 25.0
+    assert "unknown_fill_rate" not in item["exclusion_codes"]
+    assert len(details["sources"]) == 2
+    source_events = {eid for source in details["sources"] for eid in source["event_ids"]}
+    assert {e["event_id"] for e in events if e["event_type"] in {"paper_fill_simulated", "order_rejection"}} <= source_events
+
+
+@pytest.mark.parametrize("case,expected", [("reject_only", 0.0), ("noop", None), ("legacy_rate", None), ("missing_quantity", None), ("out_of_quarter", None)])
+def test_quarterly_fill_rate_zero_and_unknown_admission(monkeypatch, tmp_path, case, expected):
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+    from services.telemetry.test_runtime_summary_projection import _order_fact_event
+
+    projection = RuntimeSummaryProjectionStore(path=str(tmp_path / "fill-rate.json"))
+    event = _order_fact_event("order_rejection", "reject", "2026-11-12T04:10:00Z", 10)
+    if case in {"noop", "legacy_rate"}:
+        event["event_type"] = "paper_order_simulated" if case == "noop" else "heartbeat"
+        event["metrics"] = {"fill_rate": 0.0}
+    elif case == "missing_quantity":
+        event["metrics"] = {"fill_rate": 0.0}
+    elif case == "out_of_quarter":
+        event["created_at"] = "2027-01-01T00:00:00Z"
+    summary = projection.project_event(event)
+    sample = _quarter_test_observation("return-runtime-0", _period_pnl(0.0, 1000.0))
+    summary["quarter_equity_observations"] = [sample]
+    item = _return_ranking(monkeypatch, tmp_path, [(case, summary)])["items"][0]
+    assert item["metrics"]["fill_rate"] == expected
+    if expected is None:
+        assert item["components"]["execution_score"] is None
+        assert item["score"] is None and item["rank"] is None
+        assert item["eligible"] is False and item["allocation_policy_input"] is None
+        assert "unknown_fill_rate" in item["exclusion_codes"]
+    else:
+        assert item["components"]["execution_score"] == 0.0
+        assert item["metrics"]["fill_rate_details"]["denominator"] == 10
+
+
+def test_fill_rate_aggregates_quantities_across_runtimes_not_average_rates(tmp_path):
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+    from services.telemetry.test_runtime_summary_projection import _order_fact_event
+    records = []
+    for rid, submitted, filled in [("r1", 100, 50), ("r2", 10, 10)]:
+        store = RuntimeSummaryProjectionStore(path=str(tmp_path / f"{rid}.json"))
+        store.project_event(_order_fact_event("order_submitted", rid, "2026-11-01T00:00:00Z", submitted, runtime_id=rid))
+        records.append(store.project_event(_order_fact_event("paper_fill_simulated", rid, "2026-11-02T00:00:00Z", filled=filled, runtime_id=rid)))
+    window = personas_service._pm12_quarter_window("2026-Q4", "2026-11-12T00:00:00Z")
+    result = personas_service._pm12_telemetry_metrics_from_records(["r1", "r2"], records, quarter_window=window)
+    assert result["fill_rate"] == 60 / 110
+    assert result["fill_rate"] != (0.5 + 1.0) / 2
+    assert result["fill_rate_details"]["numerator"] == 60
+    assert result["fill_rate_details"]["denominator"] == 110
