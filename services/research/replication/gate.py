@@ -46,7 +46,6 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
     _slice_prepared_dataset,
     _summarize_window_result,
     bars_per_session,
-    run_vectorbt_workflow,
     TAIWAN_BROKER_COMMISSION_RATE,
     VECTORBT_VERSION_PIN,
     TAIWAN_COST_RATE_CITATIONS,
@@ -82,13 +81,14 @@ def run_intraday_replication_protocol(
     mandate_max_drawdown: float = 0.25,
     run_id: Optional[str] = None,
     backend: Any = None,
+    run_windows: Any = None,
 ) -> Dict[str, Any]:
     """Session-based replication protocol on a governed minute replay dataset (K6).
 
     Same 70/30 IS/OOS + walk-forward shape, statutory costs and benchmarks as the daily C2
     protocol, but windows are cut on SESSION boundaries and sizes are counted in clean sessions
     and round-trip trades.  Fills, annualisation, flatten-by-13:25 and the replay label come from
-    the K5 engine (``run_vectorbt_workflow`` / ``VectorbtBackend``); nothing is reconstructed.
+    the K5 engine (``VectorbtBackend``, real vectorbt); nothing is reconstructed.
     Only reconciled ``tw_price_1m`` replay data is accepted (the K5 governed boundary enforces
     it); there is no daily or synthetic fallback.
     """
@@ -112,6 +112,11 @@ def run_intraday_replication_protocol(
     frequency = prepared.data_frequency
     if frequency not in INTRADAY_FREQUENCY_MINUTES:
         raise VectorbtWorkflowError(f"{frequency!r} is not an intraday frequency")
+    declared = parameters.get("bar_frequency")
+    if declared is not None and declared != frequency:
+        raise VectorbtWorkflowError(
+            f"strategy bar_frequency {declared!r} != replay dataset frequency {frequency!r}"
+        )
     snapshot = dict((prepared.replay or {}).get("source_snapshot") or {})
 
     wanted = {normalize_taiwan_symbol(s) for s in parameters.get("symbols", [])}
@@ -185,6 +190,22 @@ def run_intraday_replication_protocol(
     if not history_sufficient:
         return {
             **base,
+            "intraday": {
+                "bar_frequency": frequency,
+                "evidence_mode": REPLAY_LABEL,
+                "live_or_paper_evidence": False,
+                "replay_clock": "bar_end",
+                "availability_ceiling": (prepared.replay or {}).get("availability_ceiling"),
+                "source_snapshot": snapshot,
+                "clean_sessions": n_sessions,
+                "unclean_sessions": len(unclean),
+                "in_sample_sessions": is_sessions,
+                "out_of_sample_sessions": oos_sessions,
+                "in_sample_trades": 0,
+                "out_of_sample_trades": 0,
+                "trade_unit": "round_trips",
+                "not_run": True,
+            },
             "status": INSUFFICIENT_HISTORY_STATUS,
             "reason": (
                 f"intraday replay has {n_sessions} clean sessions ({len(unclean)} unclean, "
@@ -225,19 +246,25 @@ def run_intraday_replication_protocol(
         storage_backend=base_cfg.storage_backend,
         storage_path_template=base_cfg.storage_path_template,
     )
+    windows = [("full", prepared), ("in_sample", is_ds), ("out_of_sample", oos_ds)] + [
+        (f"wf_fold_{k + 1}", d) for k, d in enumerate(fold_ds)
+    ]
     previous = os.environ.get("PANTHEON_VECTORBT_BACKEND")
     os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
     try:
-        runner = backend or VectorbtBackend()
-        full = run_vectorbt_workflow(dataset, backend=runner, config=bt_config)
-        is_res = runner.run(is_ds, bt_config)
-        oos_res = runner.run(oos_ds, bt_config)
-        fold_res = [runner.run(d, bt_config) for d in fold_ds]
+        if run_windows is not None:
+            results = list(run_windows([d for _, d in windows], bt_config))
+        else:
+            runner = backend or VectorbtBackend()
+            results = [runner.run(d, bt_config) for _, d in windows]
     finally:
         if previous is None:
             os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
         else:
             os.environ["PANTHEON_VECTORBT_BACKEND"] = previous
+    if len(results) != len(windows):
+        raise VectorbtWorkflowError("window runner returned a different number of results")
+    full_res, is_res, oos_res, *fold_res = results
     is_sum = _summarize_window_result(is_ds, is_res, window_fraction=config.in_sample_ratio)
     oos_sum = _summarize_window_result(oos_ds, oos_res, window_fraction=round(1.0 - config.in_sample_ratio, 4))
     folds = []
@@ -248,7 +275,7 @@ def run_intraday_replication_protocol(
     sharpes = [float(f["sharpe_ratio"]) for f in folds]
     bh_same = _compute_buy_and_hold_benchmark(oos_ds, targets, bt_config)
     bh_0050 = _compute_buy_and_hold_benchmark(oos_ds, bench_0050, bt_config)
-    agg = full.backtest_result.aggregate_metrics
+    agg = full_res.aggregate_metrics
     costs = {
         "applied_on_every_fill": True,
         "commission_rate": round(float(bt_config.commission_rate), 6),
@@ -305,8 +332,6 @@ def run_intraday_replication_protocol(
             "benchmark_0050": bh_0050,
             "tw_0050": bh_0050,
         },
-        "artifact_bundle": full.artifact_bundle,
-        "registry_entry": full.registry_entry,
     }
 
 

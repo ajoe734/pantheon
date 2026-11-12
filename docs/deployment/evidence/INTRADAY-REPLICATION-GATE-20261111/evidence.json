@@ -1,0 +1,45 @@
+{
+  "task": "INTRADAY-REPLICATION-GATE-20261111",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "plan_ref": "DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10 \u00a74 K6; SD_INTRADAY_MINUTE_BARS_2026-11-11 \u00a77, \u00a79 K6",
+  "base_commit": "000ebdb12608e8fe66554b758ff4b7604723c442",
+  "tracks": {
+    "source": {
+      "status": "implemented_pending_independent_review",
+      "artifacts": [
+        "services/research/replication/gate.py",
+        "services/research/replication/gate_config.py",
+        "services/research/replication/GATE_CONTRACT.md",
+        "services/research/replication/tests/test_gate_intraday.py",
+        "services/research/replication/fixtures/recorded_backtest_5m_2330.json",
+        "services/research/replication/fixtures/recorded_backtest_5m_2330_2317.json"
+      ],
+      "summary": [
+        "GateConfig: min_clean_sessions=60, min_in_sample_trades=300, min_oos_sessions=20, min_oos_trades=100 as floors; lowering raises ValueError.",
+        "gate.run_intraday_replication_protocol: session-boundary 70/30 IS/OOS + 3 walk-forward folds on the K5 engine (real vectorbt), statutory costs, benchmarks; unclean/thin history -> insufficient_history, engine not run.",
+        "ReplicationGate: minute evaluations take an intraday branch (_intraday_refusal): replay label, bar_end clock, reconciled tw_price_1m snapshot hash, frequency equals declared strategy frequency, no waived/quarantined/isolated flags, no unclean sessions, counts >= thresholds; otherwise refused/insufficient. Daily path unchanged.",
+        "Trades are counted as closed round trips. 70/30 with a 20-OOS-session floor implies >= 66 clean sessions in practice (documented in GATE_CONTRACT \u00a73c)."
+      ]
+    },
+    "tests": {
+      "command": "python -m pytest services/research/replication/tests/test_gate_intraday.py services/research/replication/test_gate.py services/research/replication/tests/test_gate_mechanism.py services/research/replication/tests/test_gate_screen_contribution.py -q",
+      "result": "99 passed (102s, real vectorbt 1.1.1); adjacent consumers test_backtest_owner_readback/test_admission/test_evolution_gate_executor/test_retrain_oos_gate: 17 passed",
+      "note": "Positive gate case applies named test-side performance injections to the recorded evaluation because the recorded synthetic runs lose after costs; counts/labels/snapshot are as recorded."
+    },
+    "merged": {
+      "status": "not_yet_merged"
+    },
+    "hosted": {
+      "status": "not_applicable_source_only",
+      "note": "No provider probe, backfill, or production action performed."
+    }
+  },
+  "gaps": [
+    "Fixtures are recorded_backtest_5m_*.json, NOT the scoped recorded_backtest_1m_*.json: the K5 engine cost is quadratic in bars per session; a 66+ session 1m protocol run (IS window alone ~15 min single process) did not complete inside bounded foreground batches (10 min cap). The gate and protocol are frequency-generic (1m accepted); 1m fixtures remain a gap.",
+    "Fixture bars are deterministic synthetic AR(1) bars in the reconciled tw_price_1m replay shape, not market data: no reconciled real tw_price_1m history of >= 66 sessions exists yet (only probe days). No replication claim is made on real minute history.",
+    "Recorded runs lose after costs (OOS Sharpe < 0); the passing gate case uses explicit test-side injections.",
+    "run_replication_backtest_protocol (daily, adapter) was not changed; intraday protocol lives in gate.py (adapter is out of the K6 artifact scope). Screen strategies stay daily-only.",
+    "Merged, hosted (W5) evidence not produced here."
+  ]
+}

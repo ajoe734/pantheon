@@ -198,6 +198,39 @@ produces the out-of-sample window. Implementation: `mechanism_tests.py`.
   forwards `raw_spec.hypothesis_predictions` / `hypothesis_card.predictions` /
   `mechanism_inputs` and the approved run's dataset.
 
+## 3c. Intraday (Minute) Replication (SD_INTRADAY_MINUTE_BARS §7, §9 K6)
+
+Minute candidates (`bar_frequency` in 1m/5m/15m/30m/60m) use the same criterion
+`real_backtest_validation`, but windows and minimum samples are counted in **clean sessions and
+trades**, not days.
+
+| Threshold (GateConfig) | Default / floor |
+|---|---|
+| `min_clean_sessions` | 60 |
+| `min_in_sample_trades` | 300 (closed round trips) |
+| `min_oos_sessions` | 20 |
+| `min_oos_trades` | 100 (closed round trips) |
+
+* Defaults are **floors**: `GateConfig` raises `ValueError` if any value is set lower. Thin minute
+  history is reported as `insufficient_history` with the exact shortfall; it never relaxes the gate.
+* With the 70/30 split, `floor(0.7 n)` in-sample sessions leave `n - floor(0.7 n)` out-of-sample
+  sessions, so the 20-OOS-session floor means in practice **n >= 66 clean sessions**; 60 is a floor,
+  not sufficient on its own.
+* A *clean session* has the full regular bar count for every target instrument. Any unclean session in
+  the window refuses the evidence (`intraday_evidence_unqualified`); sessions are not silently dropped.
+* Windows (IS, OOS, 3 walk-forward folds) are cut on session boundaries by
+  `run_intraday_replication_protocol`, which runs the K5 engine (next-bar-open fills, flat by 13:25,
+  frequency-correct annualisation, statutory costs on every fill). No daily or synthetic fallback.
+* Identity is preserved and checked: `evidence_mode == "replay"`, `live_or_paper_evidence == false`,
+  `replay_clock == "bar_end"`, availability ceiling, `source_snapshot` (`tw_price_1m`,
+  `reconciled_only`, `content_sha256`), `bar_frequency` equal to the strategy's declared frequency.
+  Quarantined / waived / isolated / unreconciled data (any such flag) is **not** replication evidence.
+* Replay is never live/paper evidence. The admission record reports `details.intraday` (counts,
+  thresholds, snapshot hash).
+* Trials: every evaluated variant (each frequency and wrapper) increments the family trial counter,
+  so the deflated Sharpe threshold counts them; no walk-forward longer than 12 + 6 months is claimed.
+* Screen strategies remain daily-only.
+
 ## 4. Admission Decisions
 
 ### ADMITTED
