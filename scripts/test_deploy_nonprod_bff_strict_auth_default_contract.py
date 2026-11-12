@@ -483,20 +483,23 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
             # chain phase job selects it through an indexed secrets[...]
             # expression (E_close uses the admin-test principal), so that
             # site is not a literal secrets.<NAME> reference.
-            assert workflow.count(secret_ref) == 6
+            assert workflow.count(secret_ref) == 7  # +1: post-Root original read-only QA caller step
         elif identity == "VIEWER":
             # Exact artifact readback uses only the dedicated viewer login to
             # prove strict authenticated tenant/session behavior after restore;
             # it must not receive any write-capable identity.
             assert artifact_capture.count(secret_ref) == 1
-            assert workflow.count(secret_ref) == 6
+            assert workflow.count(secret_ref) == 7  # +1: post-Root original read-only QA caller step
         else:
             assert secret_ref not in hosted_probe
             assert secret_ref not in artifact_capture
             # Bootstrap runs the same strict identity gate before the
             # candidate switch, so each non-operator secret is wired once
             # there as well.
-            assert workflow.count(secret_ref) == 5
+            # The post-Root original read-only QA caller also wires OPERATOR_B and TEST_ADMIN.
+            assert workflow.count(secret_ref) == (
+                6 if identity in {"OPERATOR_B", "TEST_ADMIN"} else 5
+            )
 
 
 def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
