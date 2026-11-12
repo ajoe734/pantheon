@@ -91,6 +91,29 @@
       "result": "43 passed, 129 warnings in 13.52s",
       "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/memory-composition.txt",
       "note": "Final composition on immutable merge parent caec3f40727c6bf7dd73c710625deff81b5fd4eb; research/main.py is the only previously hashed source changed by inherited Memory writeback."
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped .venv-pantheon provisioned from supervisor PANTHEON_DEPENDENCY_PYTHON; foreign-cwd imports verified."
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_code": 0,
+      "result": "Foreign-cwd imports and pytest availability verified."
+    },
+    {
+      "command": "timeout 180 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 .venv-pantheon/bin/python3 -m pytest services/evolution/test_auto_consumer.py services/evolution/test_pool_evolution_scheduler.py services/evolution/test_auto_consumer_runtime.py services/evolution/test_auto_consumer_dispatch.py services/evolution/test_approved_baselines.py services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py services/control-plane/bff/tests/test_persona_pool_publish_route.py services/research/alpha_replication/test_evolution_search.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_pool_evolution_integration.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "147 passed, 283 warnings, 31 subtests passed in 80.22s (0:01:20)",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/resume-focused.txt",
+      "source_commit": "e433138a10e374d9c2f2947cd6d2e6440b7cb320",
+      "note": "Resumption core regression on the exact implementation and consumer comments submitted for review; subsequent commit only refreshes evidence. Earlier broad resumption timeout is retained and is not counted as a pass."
+    },
+    {
+      "command": "git diff --check origin/dev...HEAD",
+      "exit_code": 0,
+      "result": "passed on resumed anchor; final evidence diff checked before commit."
     }
   ],
   "nonpassing_batches": [
@@ -108,6 +131,12 @@
       "command": "Initial registry-reference/runtime batch with timeout 60",
       "exit_code": 124,
       "result": "timed out, not counted as passed; completed timeout-90 batch above replaces it"
+    },
+    {
+      "command": "timeout 210 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/evolution/test_auto_consumer.py services/evolution/test_pool_evolution_scheduler.py services/evolution/test_auto_consumer_runtime.py services/evolution/test_auto_consumer_dispatch.py services/evolution/test_dispatch_worker.py services/evolution/test_approved_baselines.py services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py services/execution/lean_runtime/test_paper_runtime.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/persona/test_pool_policy.py services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/bff/test_persona_pool_publisher.py services/research/alpha_replication/test_evolution_search.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_pool_evolution_integration.py services/research/tests/test_retrain_search_update.py services/research/tests/test_memory_writeback_wiring.py services/research/replication/tests/test_gate_mechanism.py -q --disable-warnings --maxfail=2",
+      "exit_code": 124,
+      "result": "Resumption broad regression reached its bound before pytest terminal summary; not counted as passed. A smaller resumption batch is collected separately.",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/resume-broad-timeout.txt"
     }
   ],
   "acceptance": {
@@ -216,7 +245,9 @@
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/mechanism-context.txt": "4632cffac63226f80d83b54d6e699119c7a9724ebe65690934837be94c77c02e",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/composition-final.txt": "bbfe27d1034f241ba5d6a07371f3f9658c095cb74bfeb3190fb0736bddf9cc33",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/memory-composition.txt": "149f0f98795e4c32cdb737701e87cb0497f2eb1b6e7c67bc3a649ab61ae08976",
-    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/artifact-contract-revision-request.json": "2188aa91071aa8913557889d1399b4d77bb0f28d99649a1976d99bc7e044221c"
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/artifact-contract-revision-request.json": "2188aa91071aa8913557889d1399b4d77bb0f28d99649a1976d99bc7e044221c",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/resume-focused.txt": "e121f4b5d28580f6a9e2269631d35c41154da4f663613bd97e91f5e7cdb1e51a",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/resume-broad-timeout.txt": "41301970a3cc35ff48c12da0db79f175faccc1a76699f4d66d93cf9107e26d16"
   },
   "base_refresh": {
     "previous_base": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
