@@ -812,6 +812,21 @@ def validate_factor_rule_logic(
                 f"bar_frequency {declared_freq!r} contradicts declared minute input dataset(s) "
                 f"{sorted(minute_datasets - {freq_dataset})}"
             )
+    minute_bound_strategy = declared_freq is not None or bool({
+        d["dataset"] for d in declared_inputs.values() if d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS
+    })
+    if minute_bound_strategy:
+        # Frequency isolation: a minute strategy may not read any daily/generic price
+        # input (a placeholder minute input must not admit raw daily prices).
+        daily_price_inputs = sorted(
+            n
+            for n, d in declared_inputs.items()
+            if d["dataset"] in PRICE_VOLUME_DATASETS and d["dataset"] not in INTRADAY_PRICE_VOLUME_DATASETS
+        )
+        if daily_price_inputs:
+            raise FactorRuleValidationError(
+                f"minute strategy must not declare daily/generic price input(s): {daily_price_inputs}"
+            )
     has_minute_input = declared_freq is not None or any(
         d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS for d in declared_inputs.values()
     )
@@ -1316,6 +1331,17 @@ def resolve_point_in_time_inputs(
         )
     minute_bound = declared_freq is not None or bool(minute_datasets)
     if minute_bound:
+        daily_price_inputs = sorted(
+            str(i.get("name"))
+            for i in strategy_logic.get("inputs", ())
+            if isinstance(i, Mapping)
+            and i.get("dataset") in PRICE_VOLUME_DATASETS
+            and i.get("dataset") not in INTRADAY_PRICE_VOLUME_DATASETS
+        )
+        if daily_price_inputs:
+            raise FactorRuleValidationError(
+                f"minute strategy must not read daily/generic price input(s): {daily_price_inputs}"
+            )
         # Never expose generic/raw closes or synthesized vwap to a minute strategy.
         close_series = ()
     if close_series:

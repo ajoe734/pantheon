@@ -339,6 +339,27 @@ def _validate_control_value(control: Mapping[str, Any], value: Any) -> None:
         )
 
 
+def _enforce_declared_bar_frequency(artifact: Mapping[str, Any]) -> None:
+    """SD §6.1/§6.3: reject unknown frequencies; fail closed for unsupported minute logic.
+
+    close_to_close_momentum consumes a raw ``closes`` sequence with no dataset
+    binding or PIT stamps, so it can only run at the daily default until
+    dataset-bound minute support exists.
+    """
+    params = artifact.get("parameters")
+    if not isinstance(params, Mapping) or "bar_frequency" not in params:
+        return
+    freq = params["bar_frequency"]
+    dataset_for_bar_frequency(freq)  # unknown/non-string -> fail closed
+    logic = artifact.get("strategy_logic")
+    kind = logic.get("kind") if isinstance(logic, Mapping) else None
+    if freq != "1d" and kind == "close_to_close_momentum":
+        raise StrategyArtifactValidationError(
+            f"close_to_close_momentum does not support bar_frequency {freq!r}; "
+            "minute evaluation requires dataset-bound PIT inputs (fail closed)"
+        )
+
+
 def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
     """Validate both the JSON Schema and mutation-specific invariants.
 
@@ -413,6 +434,8 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         raise StrategyArtifactValidationError(
             f"StrategyArtifact schema validation failed: {detail}"
         )
+
+    _enforce_declared_bar_frequency(artifact)
 
     for identifier in ("artifact_id", "strategy_id"):
         value = artifact[identifier]

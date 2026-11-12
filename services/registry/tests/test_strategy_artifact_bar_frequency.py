@@ -398,3 +398,75 @@ def test_declared_minute_frequency_positive_and_daily_regression(_restore_catalo
     assert factor_rule.INTRADAY_FREQUENCY_DATASETS == {
         k: v for k, v in __import__("services.registry.strategy_artifact", fromlist=["x"]).BAR_FREQUENCY_DATASETS.items() if k != "1d"
     }
+
+
+# --- review P1: placeholder minute input must not admit daily prices; momentum fails closed
+def test_placeholder_minute_input_cannot_admit_daily_price_alias(_restore_catalogue):
+    import copy
+
+    from services.registry.strategy_artifact import evaluate_strategy_view, validate_strategy_artifact
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+    _register_minute_close()
+    art = copy.deepcopy(_sample_factor_rule_artifact())
+    art["parameters"]["bar_frequency"] = "1m"
+    art["strategy_logic"]["inputs"] = [
+        {"name": "minute_guard", "dataset": "tw_price_1m", "field": "close", "availability_lag_days": 0},
+        {"name": "rev_yoy", "dataset": "tw_price_daily", "field": "close", "availability_lag_days": 0},
+    ]
+    feats = {
+        "minute_guard": [{"value": 10, "event_time": "2026-11-10T09:01:00+08:00",
+                          "available_time": "2026-11-10T09:01:00+08:00"}],
+        "rev_yoy": [100, 100.5, 100.1, 120],
+    }
+    with pytest.raises(StrategyArtifactValidationError):
+        validate_strategy_artifact(art)
+    with pytest.raises(StrategyArtifactValidationError):
+        evaluate_strategy_view(art, None, features=feats, decision_time="2026-11-10T09:05:00+08:00")
+
+
+@pytest.mark.parametrize("freq", ["1m", "5m", "15m", "30m", "60m"])
+def test_close_to_close_momentum_minute_fails_closed(freq):
+    import copy
+
+    from services.registry.strategy_artifact import (
+        evaluate_strategy_action,
+        evaluate_strategy_view,
+        validate_strategy_artifact,
+    )
+    from services.registry.test_strategy_artifact import _artifact
+
+    art = copy.deepcopy(_artifact())
+    art["parameters"]["bar_frequency"] = freq
+    closes = [100.0] * 30 + [120.0]
+    with pytest.raises(StrategyArtifactValidationError, match="fail closed"):
+        validate_strategy_artifact(art)
+    with pytest.raises(StrategyArtifactValidationError):
+        evaluate_strategy_view(art, closes)
+    with pytest.raises(StrategyArtifactValidationError):
+        evaluate_strategy_action(art, closes)
+
+
+@pytest.mark.parametrize("bad", ["2m", "1h", "daily", "1D", None, 5])
+def test_unknown_frequency_rejected_for_momentum_artifact(bad):
+    import copy
+
+    from services.registry.strategy_artifact import validate_strategy_artifact
+    from services.registry.test_strategy_artifact import _artifact
+
+    art = copy.deepcopy(_artifact())
+    art["parameters"]["bar_frequency"] = bad
+    with pytest.raises(StrategyArtifactValidationError):
+        validate_strategy_artifact(art)
+
+
+def test_close_to_close_momentum_daily_unchanged():
+    import copy
+
+    from services.registry.strategy_artifact import evaluate_strategy_view
+    from services.registry.test_strategy_artifact import _artifact
+
+    art = copy.deepcopy(_artifact())
+    base = evaluate_strategy_view(art, [100.0] * 30 + [120.0])
+    art["parameters"]["bar_frequency"] = "1d"
+    assert evaluate_strategy_view(art, [100.0] * 30 + [120.0]) == base
