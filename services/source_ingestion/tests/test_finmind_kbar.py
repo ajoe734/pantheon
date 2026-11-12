@@ -222,6 +222,60 @@ def test_after_hours_1430_bar_excluded_and_counted():
     assert all("14:30" not in r.metadata["normalized_row"]["bar_start"] for r in res.records)
 
 
+def test_complete_raw_response_survives_filtering_and_rejection():
+    rows = [_row("09:00:00"), _row("09:00:00"), _row("13:33:00"),
+            _row("14:30:00"), _row("bad")]
+    adapter = FinMindTaiwanKBarAdapter()
+    kwargs = dict(symbol="2330", session_date=DAY, fetched_at="2026-11-10T08:30:00Z")
+    res = adapter.normalize_kbar_payload({"data": rows}, **kwargs)
+    assert res.raw_rows == tuple(rows)
+    assert res.kept_bars == 1 and res.dropped_outside_session == 2
+    assert res.dropped_malformed == 1 and res.identical_duplicates == 1
+    assert res.unsupported_session_minutes == ("2026-11-10T13:33:00+08:00",)
+    assert res.response_content_hash == res.records[0].metadata["response_content_hash"]
+    assert res.records[0].metadata["normalization_summary"]["dropped_outside_session"] == 2
+    rejected = adapter.normalize_kbar_payload(rows, **kwargs, is_trading_day=lambda _: False)
+    assert rejected.records == () and rejected.raw_rows == tuple(rows)
+    assert rejected.response_content_hash == res.response_content_hash
+    # Even a change to an excluded row must change the full-response hash.
+    changed = adapter.normalize_kbar_payload([*rows[:-1], _row("bad", v=99)], **kwargs)
+    assert changed.response_content_hash != res.response_content_hash
+
+
+def test_dispatch_quarantines_unsupported_delayed_close_without_widening_session():
+    from services.source_ingestion import provider_adapters as pa
+
+    rows = [_row("09:00:00"), _row("13:30:00"), _row("13:33:00")]
+    request = {"symbol": "2330", "date": DAY, "payload": {"data": rows},
+               "fetched_at": "2026-11-10T08:30:00Z"}
+    with pytest.raises(pa.SourceEvidenceError, match="unsupported session shape"):
+        pa._finmind_kbar(FinMindTaiwanKBarAdapter(), request, "t")
+
+
+@pytest.mark.parametrize("minute", ["09x00:00", "09:00:59", "09:00:00.1", "09:00:00+08:00"])
+def test_invalid_minute_is_retained_raw_without_rounding(minute):
+    row = _row(minute)
+    res = FinMindTaiwanKBarAdapter().normalize_kbar_payload(
+        [row], symbol="2330", session_date=DAY, fetched_at="2026-11-10T08:30:00Z")
+    assert res.records == () and res.dropped_malformed == 1 and res.raw_rows == (row,)
+
+
+@pytest.mark.parametrize("total,official,residual", [
+    (34201, 36575797, 0.06492809985794705),
+    (30457, 33056476, 0.07863742039532587),
+    (44604, 45344218, 0.016324418694352607),
+    (23834, 24491770, 0.02685677678665119),
+])
+def test_observed_unit_inference_does_not_approve_daily_reconciliation(total, official, residual):
+    # Aggregates from the permitted nonsecret receipt include 14:30 after-hours;
+    # they cannot establish regular-session reconciliation, even below 2 %.
+    result = measure_volume_unit([{"volume": total}], official)
+    assert result["unit_factor"] == 1000
+    assert result["relative_error"] == pytest.approx(residual)
+    assert result["inference_scope"] == "sample_only"
+    assert result["reconciliation_status"] == "not_evaluated"
+
+
 def test_kbar_not_in_shared_catalog_and_generic_adapter_fails_closed():
     from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanDatasetAdapter
     from services.source_ingestion import persona_source_reconciler as psr

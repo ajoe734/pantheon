@@ -1284,6 +1284,11 @@ class KBarNormalization:
     conflicting_duplicates: tuple[str, ...]  # bar_start ISO values -> caller quarantines the day
     identical_duplicates: int
     rejected_non_trading_day: bool
+    # Retain the complete response for K2's raw/provenance writer, including
+    # excluded, malformed and duplicate rows; records contain regular bars only.
+    raw_rows: tuple[Mapping[str, Any], ...] = ()
+    response_content_hash: str = ""
+    unsupported_session_minutes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1398,6 +1403,11 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
                 f"FinMind KBar {symbol} {session_date}: conflicting duplicate minute bars "
                 f"{list(result.conflicting_duplicates)}; symbol-day quarantined, no records emitted"
             )
+        if result.unsupported_session_minutes:
+            raise SourceEvidenceError(
+                f"FinMind KBar {symbol} {session_date}: unsupported session shape "
+                f"{list(result.unsupported_session_minutes)}; symbol-day quarantined, no records emitted"
+            )
         return result.records
 
     def normalize_kbar_payload(
@@ -1428,18 +1438,20 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
         published = _parse_utc(provider_published_at)
         day = _date_cls.fromisoformat(session_date)
         rows = _rows_from_payload(payload)
+        raw_hash_total = _stable_hash({"rows": [dict(r) for r in rows]})
 
         if is_trading_day is not None and not is_trading_day(day):
-            return KBarNormalization((), len(rows), 0, 0, 0, (), 0, True)
+            return KBarNormalization((), len(rows), 0, 0, 0, (), 0, True,
+                                     raw_rows=rows, response_content_hash=raw_hash_total)
 
         open_t = KBAR_SESSION_OPEN
         last_t = KBAR_SESSION_LAST_BAR_START
         outside = malformed = identical = 0
         by_start: dict[str, tuple[dict[str, Any], Mapping[str, Any]]] = {}
         conflicts: list[str] = []
+        unsupported: list[str] = []
         quota = {k: v for k, v in dict(quota_meta or {}).items() if k != "request_url"}
         request_id = _stable_hash({"dataset": FINMIND_KBAR_DATASET, "symbol": symbol, "date": session_date})
-        raw_hash_total = _stable_hash({"rows": [dict(r) for r in rows]})
 
         for row in rows:
             row_symbol = _text(_first(row, "stock_id", "data_id", "symbol")).upper()
@@ -1451,13 +1463,21 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
                 continue
             minute = _text(row.get("minute"))
             try:
-                hh, mm = int(minute[0:2]), int(minute[3:5])
+                parsed_minute = time.fromisoformat(minute)
+                if parsed_minute.tzinfo is not None or parsed_minute.second or parsed_minute.microsecond:
+                    raise ValueError("KBar minute must be an exact local minute")
+                hh, mm = parsed_minute.hour, parsed_minute.minute
                 start_local = datetime(day.year, day.month, day.day, hh, mm, tzinfo=TAIPEI_TZ)
             except (ValueError, IndexError):
                 malformed += 1
                 continue
             if (hh, mm) < open_t or (hh, mm) > last_t:
                 outside += 1
+                # A delayed closing auction (e.g. 13:33) can be valid provider
+                # data, but is outside the approved regular-session contract.
+                # Retain it raw and quarantine; never silently widen the session.
+                if last_t < (hh, mm) < (13, 40):
+                    unsupported.append(start_local.isoformat())
                 continue
             prices = [_number(row.get(k)) for k in ("open", "high", "low", "close")]
             volume = _number(row.get("volume"))
@@ -1518,6 +1538,15 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
                         "request_id": request_id,
                         "source_hash": row_hash,
                         "response_content_hash": raw_hash_total,
+                        "normalization_summary": {
+                            "raw_row_count": len(rows),
+                            "kept_bars": len(by_start),
+                            "dropped_outside_session": outside,
+                            "dropped_malformed": malformed,
+                            "identical_duplicates": identical,
+                            "conflicting_duplicates": list(conflicts),
+                            "unsupported_session_minutes": list(unsupported),
+                        },
                         "raw_row": dict(raw),
                         "normalized_row": normalized,
                         "quota_meta": quota,
@@ -1540,6 +1569,9 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
             conflicting_duplicates=tuple(conflicts),
             identical_duplicates=identical,
             rejected_non_trading_day=False,
+            raw_rows=rows,
+            response_content_hash=raw_hash_total,
+            unsupported_session_minutes=tuple(unsupported),
         )
 
 
@@ -1574,16 +1606,24 @@ def measure_volume_unit(
     *,
     tolerance: float = 0.15,
 ) -> dict[str, Any]:
-    """Compare summed KBar volume with official daily volume; infer the unit factor.
+    """Infer a volume unit for this sample only; never approve reconciliation.
 
     ``unit_factor`` = kbar_sum * factor ≈ official shares; 1 = shares, 1000 = lots.
     Returns ``unit_factor=None`` (undetermined) when no candidate is within tolerance.
-    Real probe (2026-11-12): factor 1000 (lots) with a 1.7-8.5 % unexplained residual of
-    official volume absent from KBar, hence the 15 % tolerance (units differ by 1000x, so
-    this cannot confuse them); the residual is reported, never assumed explained.
+    The 15 % candidate tolerance distinguishes units separated by 1000x. It is
+    not SD §5's 2 % daily-volume reconciliation tolerance and must not widen it.
+    Two observed symbols do not establish a factor for every market/instrument.
+    Residuals are relative to official volume and remain unexplained; this helper
+    cannot prove regular-session coverage, OHLC agreement or a clean day.
     """
     total = sum(v for v in (_number(r.get("volume")) for r in kbar_rows) if v is not None)
-    result: dict[str, Any] = {"kbar_volume_sum": total, "official_volume_shares": official_daily_volume_shares}
+    result: dict[str, Any] = {
+        "kbar_volume_sum": total,
+        "official_volume_shares": official_daily_volume_shares,
+        "inference_scope": "sample_only",
+        "reconciliation_status": "not_evaluated",
+        "unit_inference_tolerance": tolerance,
+    }
     if total <= 0 or official_daily_volume_shares <= 0:
         return {**result, "unit_factor": None, "relative_error": None, "reason": "no_volume"}
     best: tuple[float, int] | None = None
