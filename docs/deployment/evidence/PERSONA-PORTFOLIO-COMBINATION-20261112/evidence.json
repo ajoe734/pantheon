@@ -4,7 +4,7 @@
   "reviewer": "Claude",
   "status": "owner_validation_complete_pending_independent_review",
   "implementation_commit": "b694049573cb6a10740c1d02cfefa235fb8b10ea",
-  "base_commit": "91249d9ea5cd225e9734e61368d2efc936b53aad",
+  "base_commit": "8d19981d78a8122841fb926b357a1dae15ec4a4b",
   "review": {
     "decision": "pending",
     "authority": "assigned reviewer via canonical exact-head handoff; this manifest is owner evidence, not approval"
@@ -79,6 +79,12 @@
       "exit_status": 0,
       "result": "14 passed, 7 subtests passed",
       "terminal_output": "docs/deployment/evidence/PERSONA-PORTFOLIO-COMBINATION-20261112/acceptance-tests.log"
+    },
+    {
+      "command": "timeout 300 /tmp/persona-portfolio-venv/bin/python -m pytest -q services/registry/test_strategy_artifact.py services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py services/execution/lean_runtime/test_current_artifact_signal.py services/research/vectorbt/test_adapter.py services/research/tests/test_portfolio_envelope_parity.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_paper_runtime.py services/execution/lean_runtime/test_performance_telemetry.py services/telemetry/test_runtime_summary_projection.py services/runtime_manager/test_runtime_binding.py tests/test_pytest_import_isolation.py --durations=5",
+      "exit_status": 0,
+      "result": "609 passed, 82 subtests passed in 270.10s",
+      "terminal_output": "docs/deployment/evidence/PERSONA-PORTFOLIO-COMBINATION-20261112/refreshed-base-tests.log"
     }
   ],
   "prior_nonpassing_batches": {
@@ -92,5 +98,14 @@
   ],
   "warnings": [
     "Upstream vectorbt/pandas and fastapi/httpx deprecations; no test failures in final batches."
-  ]
+  ],
+  "base_refresh": {
+    "commit": "bd0ccb56d96fae90c8d12286d115904cbc3be6d6",
+    "upstream_prs": [
+      7219,
+      7211
+    ],
+    "portfolio_source": "git diff --exit-code b69404957 -- portfolio implementation and test files passed; source unchanged",
+    "reason": "current dev includes OSS audit evidence and pytest import isolation cost changes"
+  }
 }

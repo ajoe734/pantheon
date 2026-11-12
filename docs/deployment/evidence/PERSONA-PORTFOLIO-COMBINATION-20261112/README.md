@@ -66,3 +66,7 @@ membership or weights change belongs to wave 2. Intraday virtual-book
 annualisation remains for the ordered intraday task; this implementation accepts
 daily virtual marks only. Canonical review and supervisor integration must finish
 before owner closeout can mark the task done.
+
+Final validation after integrating dev through PRs #7219 and #7211: 609 tests
+and 82 subtests passed in the bounded 300-second foreground batch (270.10s).
+See `refreshed-base-tests.log` and the exact command in `evidence.json`.
