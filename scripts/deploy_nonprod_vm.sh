@@ -3303,7 +3303,17 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
     fi
     return "${rc}"
   }
-  trap restore_bounded_source_refresh EXIT INT TERM
+  # A terminating signal must run the same restore, then really exit non-zero
+  # (128+signal) so the script never resumes into the projector launch or a
+  # later success outcome. restore clears the EXIT trap, so exit is not re-run.
+  handle_bounded_refresh_signal() {
+    local signal_rc="$1"
+    restore_bounded_source_refresh "${signal_rc}" || true
+    exit "${signal_rc}"
+  }
+  trap restore_bounded_source_refresh EXIT
+  trap 'handle_bounded_refresh_signal 130' INT
+  trap 'handle_bounded_refresh_signal 143' TERM
 
   # Stop (not remove) the steady controller/projector so only one controller owns the window.
   (( ${#steady_ids[@]} )) && docker stop "${steady_ids[@]}" >/dev/null

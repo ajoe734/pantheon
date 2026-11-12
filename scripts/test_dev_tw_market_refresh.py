@@ -2908,3 +2908,54 @@ def test_bounded_refresh_restore_drops_steady_pull_without_collector_host(tmp_pa
     )
     restore = _last_restore_up(events, "deny")
     assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "reconcile_only"
+
+
+@pytest.mark.parametrize(("sig_name", "expected_rc"), [("INT", 130), ("TERM", 143)])
+def test_bounded_refresh_terminating_signal_restores_and_exits_nonzero(tmp_path: Path, sig_name: str, expected_rc: int):
+    # COLLECTOR-STEADY-PULL-RESTORE-20261112 (Codex2 P1): a terminating INT/TERM must
+    # restore the steady Collector pull, exit with 128+signal, and never go on to
+    # launch the projector or write a completed outcome.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "steady_lease_env": [
+            "SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull",
+            "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=1",
+            "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1",
+        ],
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+    docker = bin_dir / "docker"
+    delegate = bin_dir / "original-owned-docker-stub"
+    docker.rename(delegate)
+    docker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os,sys,json,signal\n"
+        "from pathlib import Path\n"
+        "a=sys.argv[1:]\n"
+        'if "run" in a and "--name" in a and "pantheon-bounded-refresh-source-ingest-scheduler" in a:\n'
+        f"    Path({repr(str(events_file))}).open('a').write(json.dumps({{'event':'QA_signal_sent'}})+'\\n')\n"
+        f"    os.kill(os.getppid(), signal.SIG{sig_name})\n"
+        "    sys.exit(0)\n"
+        f"os.execv({repr(str(delegate))}, [{repr(str(delegate))}]+a)\n"
+    )
+    docker.chmod(0o755)
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    test_env["PANTHEON_COLLECTOR_HOST"] = _COLLECTOR_TEST_HOST
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert proc.returncode == expected_rc, f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    assert any(e.get("event") == "QA_signal_sent" for e in events)
+    restore = _last_restore_up(events, "allowlist")
+    assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "collector_steady_pull"
+    sent = next(i for i, e in enumerate(events) if e.get("event") == "QA_signal_sent")
+    assert not any("projector" in json.dumps(e) and e.get("event") in {"docker_run", "run"} for e in events[sent + 1:])
+    assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
