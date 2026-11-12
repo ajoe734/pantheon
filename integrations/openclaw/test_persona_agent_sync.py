@@ -566,3 +566,103 @@ def test_sync_refuses_primary_model_drift_without_config_rewrite_or_set_identity
     assert config_writes == []
     assert calls == [["openclaw", "agents", "list", "--json"]]
     assert souls_written == {}
+
+
+# --- PERSONA-AGENT-PROVISION-20261112 -------------------------------------------------
+
+def test_soul_stages_memory_candidates_and_never_tells_agent_to_edit_memory_md():
+    soul = sync.build_persona_soul(PERSONA_CRYPTO)
+    assert "update MEMORY.md" not in soul
+    assert "stage a memory candidate" in soul
+    assert "Do **not** edit MEMORY.md" in soul
+    assert sync.PERSONA_PROPOSAL_TOOL in soul
+
+
+def test_tool_profile_is_read_only_plus_proposal_and_validator_fails_closed():
+    policy = sync.persona_agent_runtime_policy()["tools"]
+    assert policy["allow"] == ["read", sync.PERSONA_PROPOSAL_TOOL]
+    for forbidden in ("broker_place_order", "capital_allocate", "lifecycle_promote", "exec"):
+        bad = {**policy, "allow": [*policy["allow"], forbidden]}
+        try:
+            sync.assert_persona_agent_tool_profile(bad)
+        except ValueError as exc:
+            assert "forbidden_tool" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError(f"{forbidden} must be refused")
+    try:
+        sync.assert_persona_agent_tool_profile({**policy, "exec": {"security": "allow"}})
+    except ValueError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("exec must stay denied")
+
+
+def test_invalid_harness_digest_is_reported_not_rendered():
+    persona = {**PERSONA_CRYPTO, "metadata": {"persona_harness": {"active_version": 1, "versions": [{"x": 1}]}}}
+    version, reason = sync.active_harness_version(persona)
+    assert version is None and reason == "invalid_harness_record"
+    assert "invalid_harness_record" in sync.build_persona_soul(persona)
+
+
+def test_runtime_policy_is_written_to_agents_list_on_create_and_update():
+    state: Dict[str, Any] = {"agents": []}
+
+    def runner(args: List[str]):
+        if args[:3] == ["openclaw", "agents", "list"]:
+            return _cp(json.dumps([{"id": a["id"]} for a in state["agents"]]))
+        if args[:3] == ["openclaw", "agents", "add"]:
+            state["agents"].append({"id": args[3]})
+            return _cp("{}")
+        if args[:3] == ["openclaw", "config", "get"]:
+            return _cp(json.dumps(state["agents"]))
+        if args[:3] == ["openclaw", "config", "set"]:
+            state["agents"] = json.loads(args[4])
+            return _cp()
+        return _cp()
+
+    policy = sync.persona_agent_runtime_policy()
+    for expected in ("created", "updated"):
+        report = sync.sync_persona_agents(
+            [PERSONA_CRYPTO], runner=runner, soul_writer=lambda ws, s: None, runtime_policy=policy,
+        )
+        assert getattr(report, expected) == ["persona-crypto"]
+        assert state["agents"][0]["tools"] == policy["tools"]
+
+
+def test_deploy_script_delegates_to_library_and_backfills_selected_personas(monkeypatch, capsys, tmp_path):
+    script = _load_deploy_script()
+    seen: Dict[str, Any] = {}
+
+    def fake_sync(personas, **kwargs):
+        seen["ids"] = [p["id"] for p in personas]
+        seen["policy"] = kwargs["runtime_policy"]
+        report = sync.SyncReport(created=[p["id"] for p in personas])
+        return report
+
+    monkeypatch.setattr(script, "_shared_sync", fake_sync)
+    personas = tmp_path / "p.json"
+    personas.write_text(json.dumps([
+        {**PERSONA_CRYPTO, "id": "persona-a"}, {**PERSONA_CRYPTO, "id": "persona-b"},
+        {**PERSONA_CRYPTO, "id": "persona-c"}, {**PERSONA_CRYPTO, "id": "other"},
+    ]))
+    monkeypatch.setattr("sys.argv", ["x", "--personas-file", str(personas),
+                                     "--persona-id", "persona-a", "--persona-id", "persona-b",
+                                     "--persona-id", "persona-c"])
+    assert script.main() == 0
+    assert seen["ids"] == ["persona-a", "persona-b", "persona-c"]
+    assert seen["policy"]["tools"]["allow"] == ["read", sync.PERSONA_PROPOSAL_TOOL]
+    assert json.loads(capsys.readouterr().out)["counts"]["created"] == 3
+
+
+def test_deploy_script_fails_closed_without_shared_library(monkeypatch):
+    script = _load_deploy_script()
+    monkeypatch.setattr(script, "_shared_sync", None)
+    report = script.reconcile([PERSONA_CRYPTO])
+    assert report["failed"][0]["error"] == "shared_reconciler_unavailable"
+    monkeypatch.setattr(script, "_shared_build_soul", None)
+    try:
+        script.build_soul(PERSONA_CRYPTO)
+    except RuntimeError as exc:
+        assert "shared_soul_renderer_unavailable" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("no second renderer is permitted")

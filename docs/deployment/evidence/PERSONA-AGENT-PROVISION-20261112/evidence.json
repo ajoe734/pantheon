@@ -1,0 +1,47 @@
+{
+  "task_id": "PERSONA-AGENT-PROVISION-20261112",
+  "kind": "source_implementation_evidence",
+  "owner": "Claude",
+  "assigned_reviewer": "Codex2",
+  "independent_review": "pending",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md#62-persona-agent-per-trading-persona-c2",
+  "hosted_behavior_claimed": false,
+  "acceptance_evidence": {
+    "1_own_agent_and_backfill": [
+      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py::test_provisioning_entry_creates_persona_own_agent_from_owner_record",
+      "integrations/openclaw/test_persona_agent_sync.py::test_deploy_script_delegates_to_library_and_backfills_selected_personas",
+      "integrations/openclaw/test_persona_agent_sync.py::test_runtime_policy_is_written_to_agents_list_on_create_and_update"
+    ],
+    "2_shared_soul_with_harness": [
+      "services/openclaw-gateway-adapter/tests/test_trading_persona_agent_ensure.py::test_trading_persona_agent_soul_tools_and_private_memory",
+      "integrations/openclaw/test_persona_agent_sync.py::test_soul_stages_memory_candidates_and_never_tells_agent_to_edit_memory_md",
+      "integrations/openclaw/test_persona_agent_sync.py::test_invalid_harness_digest_is_reported_not_rendered",
+      "integrations/openclaw/test_persona_agent_sync.py::test_deploy_script_fails_closed_without_shared_library"
+    ],
+    "3_private_memory_materialization": [
+      "services/openclaw-gateway-adapter/tests/test_trading_persona_agent_ensure.py::test_trading_persona_agent_soul_tools_and_private_memory",
+      "services/openclaw-gateway-adapter/tests/test_trading_persona_agent_ensure.py::test_on_request_memory_refresh_before_a_cycle_turn_is_private_and_bound"
+    ],
+    "4_read_only_plus_proposal_tools": [
+      "integrations/openclaw/test_persona_agent_sync.py::test_tool_profile_is_read_only_plus_proposal_and_validator_fails_closed"
+    ],
+    "5_degraded_never_blocks_paper": [
+      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py::test_agent_failure_is_readable_degraded_and_never_blocks_paper",
+      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py::test_unconfigured_provisioner_is_degraded_with_reason",
+      "services/openclaw-gateway-adapter/tests/test_trading_persona_agent_ensure.py::test_missing_harness_is_explicit_not_synthesized_and_memory_failure_degrades"
+    ],
+    "6_integration_through_real_entry": [
+      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py (real coordinator + service._provision_persona_agent + OpenClawOpsClient; only urllib urlopen to the adapter faked)"
+    ]
+  },
+  "verification": [
+    {"command": "pytest integrations/openclaw services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_agent_provision_integration.py services/control-plane/bff/tests/test_openclaw_ops_service_auth.py services/persona/test_harness.py", "result": "264 passed, 2 failed (test_dev_gates.py x2; identical failures on dev 7b685a15d, pre-existing)"},
+    {"command": "pytest services/openclaw-gateway-adapter --ignore=test_compose_activation.py", "result": "597 passed, 4 skipped (before the added memory-refresh test); new file 5 passed"},
+    {"command": "test_compose_activation.py / test_persona_provisioning_compose_contract.py", "result": "not run: venv lacks PyYAML"}
+  ],
+  "known_limits": [
+    "persona_proposal_submit is a contract name; the proposal-submission tool is delivered with the C1 controller",
+    "backfill of the three hosted personas and hosted memory materialization were not executed",
+    "service.py, openclaw_ops_client.py and the adapter tests directory are outside the declared artifact list but required by the real entry"
+  ]
+}
