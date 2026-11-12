@@ -15033,6 +15033,12 @@ def _build_persona_health_items_impl(
         if cpid and cpid not in runtime_by_pool:
             runtime_by_pool[cpid] = rt
     routed_strategy_counts = _routed_strategy_counts_by_persona() if personas_list else {}
+    from ..loop_inventory import project_persona_cycle_health
+    packet_reader = getattr(read_store, "list_ooda_packets", None)
+    try:
+        cycle_packets = list(packet_reader() or []) if callable(packet_reader) else []
+    except Exception:
+        cycle_packets = []
     items: List[Dict[str, Any]] = []
     for persona in personas_list:
         persona_id = _persona_id(persona)
@@ -15355,6 +15361,7 @@ def _build_persona_health_items_impl(
             "deploymentStage": deployment_stage,
             "ooda_stage": ooda_stage,
             "oodaStage": ooda_stage,
+            "persona_cycle_health": project_persona_cycle_health(persona, cycle_packets),
             "recommendation": recommendation,
             "governance_required": governance_required,
             "governanceRequired": governance_required,

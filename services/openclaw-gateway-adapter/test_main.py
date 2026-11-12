@@ -248,6 +248,11 @@ class TestAssistantServiceAuthentication(unittest.TestCase):
 
 class TestCronServiceAuthentication(unittest.TestCase):
     _CRON_CONTRACTS = {
+        "pantheon.persona.daily-cycle": {
+            "schedule": "0 10 * * 1-5",
+            "policy_id": "oc002.cron.persona-daily-cycle",
+            "upstream_entrypoint": "persona.daily-cycle",
+        },
         "pantheon.ingest": {
             "schedule": "0 */6 * * *",
             "policy_id": "oc002.cron.ingest",
@@ -514,7 +519,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         gateway_call.assert_called_once_with("cron.add", params)
 
-    def test_cron_add_accepts_exact_five_workflow_catalog(self):
+    def test_cron_add_accepts_exact_workflow_catalog(self):
         self.assertEqual(adapter_main._PERSONA_CRON_CATALOG, self._CRON_CONTRACTS)
 
         for workflow_id in self._CRON_CONTRACTS:
@@ -815,6 +820,36 @@ class TestCronServiceAuthentication(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403, response.text)
         gateway_call.assert_not_called()
+
+    def test_cron_runs_reads_only_exact_daily_cycle_job_with_bounded_pagination(self):
+        daily = self._persona_job(workflow_id="pantheon.persona.daily-cycle")
+        for params, allowed in (({"id": daily["id"], "limit": 100}, True),
+                                ({"id": daily["id"], "limit": 101}, False),
+                                ({"id": daily["id"], "scope": "all"}, False),
+                                ({"id": "another-job", "limit": 10}, False)):
+            calls = []
+            def gateway(method, body):
+                calls.append(method)
+                return {"jobs": [daily]} if method == "cron.list" else {"entries": []}
+            with (self.subTest(params=params), self._auth_config(token="cron-secret"),
+                  patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "gateway_cron_call", side_effect=gateway)):
+                response = client.post("/api/openclaw-adapter/gateway/cron",
+                    json={"method": "cron.runs", "params": params},
+                    headers={"X-Pantheon-Service-Token": "cron-secret"})
+            self.assertEqual(response.status_code, 200 if allowed else 403, response.text)
+            self.assertEqual("cron.runs" in calls, allowed)
+
+    def test_cron_runs_refuses_legacy_workflow_and_drifted_daily_job(self):
+        for job in (self._persona_job(),
+                    {**self._persona_job(workflow_id="pantheon.persona.daily-cycle"), "enabled": False}):
+            with (self.subTest(job=job), self._auth_config(token="cron-secret"),
+                  patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "gateway_cron_call",
+                               return_value={"jobs": [job]}) as gateway):
+                response = client.post("/api/openclaw-adapter/gateway/cron",
+                    json={"method": "cron.runs", "params": {"id": job["id"], "limit": 100}},
+                    headers={"X-Pantheon-Service-Token": "cron-secret"})
+            self.assertEqual(response.status_code, 403, response.text)
+            self.assertEqual(gateway.call_count, 1)
 
     def test_cron_remove_is_fenced_to_persona_owned_namespace(self):
         calls = []

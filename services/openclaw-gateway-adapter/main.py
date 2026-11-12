@@ -2135,6 +2135,11 @@ def _invoke_gateway_cron_call(
 
 
 _PERSONA_CRON_CATALOG: Dict[str, Dict[str, str]] = {
+    "pantheon.persona.daily-cycle": {
+        "schedule": "0 10 * * 1-5",
+        "policy_id": "oc002.cron.persona-daily-cycle",
+        "upstream_entrypoint": "persona.daily-cycle",
+    },
     "pantheon.ingest": {
         "schedule": "0 */6 * * *",
         "policy_id": "oc002.cron.ingest",
@@ -2258,7 +2263,17 @@ def _assert_persona_owned_cron_call(
                 error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
             )
         return
-    if method not in {"cron.update", "cron.remove"}:
+    if method == "cron.runs":
+        if (set(request_params) - {"id", "limit", "offset"}
+                or type(request_params.get("limit", 100)) is not int
+                or not 1 <= request_params.get("limit", 100) <= 100
+                or type(request_params.get("offset", 0)) is not int
+                or request_params.get("offset", 0) < 0):
+            raise GatewayOpenClawProviderError(
+                "cron.runs requires a bounded persona job read.",
+                status_code=403, error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+            )
+    if method not in {"cron.update", "cron.remove", "cron.runs"}:
         raise GatewayOpenClawProviderError(
             f"{method} is outside the Persona cron proxy contract.",
             status_code=403,
@@ -2342,6 +2357,15 @@ def _assert_persona_owned_cron_call(
             error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
         )
     current_owner = _pantheon_persona_cron_owner(matches[0])
+    if method == "cron.runs" and (
+        current_owner is None
+        or current_owner[1] != "pantheon.persona.daily-cycle"
+        or not _is_well_formed_persona_cron_job(matches[0])
+    ):
+        raise GatewayOpenClawProviderError(
+            "cron.runs is restricted to an exact persona daily-cycle job.",
+            status_code=403, error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+        )
     reserved_name = str(matches[0].get("name") or "").startswith("pantheon-")
     if current_owner is None and not (method == "cron.remove" and reserved_name):
         raise GatewayOpenClawProviderError(

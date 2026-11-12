@@ -14,6 +14,7 @@ import importlib
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote
@@ -23,7 +24,7 @@ from integrations.openclaw.persona_agent_sync import active_harness_version
 from integrations.openclaw.persona_ooda_runtime import (
     CycleTurnOutput, build_daily_cycle_prompt, run_persona_ooda_turn,
 )
-from services.control_plane.cron.persona_cron_registrar import AdapterCronRuntime, PersonaCronRegistrar
+from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
 from services.control_plane.cron.workflows import PERSONA_DAILY_CYCLE_WORKFLOW_ID as WORKFLOW_ID
 from services.control_plane.ooda.jsonl_store import OodaJsonlAppendStore
 from services.control_plane.ooda.ooda_loop_packet import OodaLoopPacket
@@ -89,7 +90,8 @@ class PersonaCycleController:
         # lease that could permit a second model turn after a slow response.
         with self.path.with_suffix(self.path.suffix + ".cycles.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            existing = read_packets(self.path).get(packet_id)
+            snapshots = read_packets(self.path)
+            existing = snapshots.get(packet_id)
             if existing:
                 if existing.get("persona_cycle", {}).get("phase") == "claimed":
                     existing["persona_cycle"].update(phase="terminal", failure_reason="interrupted_cycle_outcome_unknown")
@@ -112,7 +114,14 @@ class PersonaCycleController:
             observe: dict[str, Any] = {}
             failure = None
             try:
-                observe = self.owners.observe(persona)
+                prior = [p.get("persona_cycle", {}).get("observe_bundle", {}).get("human_feedback", {}).get("cursor")
+                         for p in snapshots.values()
+                         if p.get("tenant_id") == persona["tenant_id"]
+                         and persona["persona_id"] in p.get("persona_ids", [])
+                         and p.get("persona_cycle", {}).get("phase") == "terminal"]
+                cursors = [c for c in prior if c]
+                since = max(cursors, key=lambda c: (c["at"], c["id"])) if cursors else None
+                observe = self.owners.observe(persona, since=since)
                 cycle["observe_bundle"] = observe
                 for key in ("telemetry_refs", "incident_refs", "human_feedback_refs"):
                     packet["observe"][key].extend(observe.get(key, []))
@@ -184,20 +193,45 @@ class PersonaCycleController:
         runtime = self.registrar._get_runtime()
         by_id = {p["persona_id"]: p for p in personas}
         report["personas"] = {}
+        known = read_packets(self.path)
         for pid, job_id in report["jobs"].items():
             try:
-                listing = runtime.gateway_call("cron.runs", {"id": job_id, "limit": 100})
-                if listing.get("hasMore"):
+                runs = []
+                offset = 0
+                for _ in range(10):
+                    listing = runtime.gateway_call("cron.runs", {"id": job_id, "limit": 100, "offset": offset})
+                    entries = listing.get("entries")
+                    if not isinstance(entries, list):
+                        raise ValueError("invalid cron.runs payload")
+                    runs.extend(entries)
+                    if not listing.get("hasMore"):
+                        break
+                    # Records are newest-first. A durable earlier claim is a
+                    # replay watermark; already consumed history needs no turn.
+                    if any(packet_identity(by_id[pid], job_id, r) in known for r in entries
+                           if r.get("status") in {"ok", "error", "skipped"}):
+                        break
+                    next_offset = listing.get("nextOffset", offset + len(entries))
+                    if type(next_offset) is not int or next_offset <= offset:
+                        raise ValueError("cron.runs pagination did not advance")
+                    offset = next_offset
+                else:
                     raise RuntimeError("cron_run_backlog_exceeds_bounded_batch")
-                runs = listing.get("entries")
-                if not isinstance(runs, list):
-                    raise ValueError("invalid cron.runs payload")
                 packets = []
+                consumed = 0
                 for run in sorted(runs, key=lambda r: r.get("runAtMs", 0)):
                     if run.get("status") in {"ok", "error", "skipped"}:
-                        packets.append(self.consume_run(by_id[pid], job_id, run))
+                        identity = packet_identity(by_id[pid], job_id, run)
+                        if identity in known:
+                            packets.append(self.consume_run(by_id[pid], job_id, run))
+                        elif consumed < 1:
+                            packets.append(self.consume_run(by_id[pid], job_id, run))
+                            consumed += 1
                 latest = packets[-1] if packets else None
                 report["personas"][pid] = cycle_health(latest)
+                if latest and latest["persona_cycle"].get("failure_reason"):
+                    report["failures"].append({"persona_id": pid,
+                        "reason": latest["persona_cycle"]["failure_reason"]})
             except Exception as exc:
                 report["failures"].append({"persona_id": pid, "reason": str(exc)[:300]})
         return report
@@ -205,9 +239,11 @@ class PersonaCycleController:
 
 class CycleOwners:
     """Fixed product-owner ports. No caller/model-selected URLs or command routes."""
-    def __init__(self, persona_owner: Any, pool_store: Any, env=None):
+    def __init__(self, persona_owner: Any, pool_store: Any, env=None, *, telemetry_reader=None, feedback_owner=None):
         self.persona_owner, self.pool_store = persona_owner, pool_store
         self.env = os.environ if env is None else env
+        self.telemetry_reader = telemetry_reader
+        self.feedback_owner = feedback_owner
 
     def personas(self):
         return self.persona_owner.list_json()
@@ -219,7 +255,7 @@ class CycleOwners:
         with urlopen(request, timeout=10) as response:
             return json.load(response)
 
-    def observe(self, persona):
+    def observe(self, persona, *, since=None):
         pid, tenant = persona["persona_id"], persona["tenant_id"]
         version, reason = active_harness_version(persona)
         bundle = {"persona_id": pid, "tenant_id": tenant, "harness": version,
@@ -228,6 +264,25 @@ class CycleOwners:
                   "human_feedback_refs": [], "unavailable": []}
         if not version:
             bundle["unavailable"].append(reason)
+        try:
+            if self.feedback_owner is None:
+                from services.agora.store import AgoraEvidenceStore
+                from services.control_plane.bff.agora.dataset_extraction.extractor import AgoraDatasetStore
+                self.feedback_owner = AgoraEvidenceStore(AgoraDatasetStore(
+                    backend="postgres", dsn=self.env["DATABASE_URL"],
+                    schema=self.env.get("AGORA_DATASET_STORE_SCHEMA", "agora")))
+            read_at = datetime.now(timezone.utc).isoformat()
+            feedback = self.feedback_owner.cycle_references(tenant_id=tenant, persona_id=pid,
+                since=datetime.fromisoformat(since["at"]) if since else None,
+                after_id=since["id"] if since else "")
+            bundle["human_feedback_refs"] = ["/bff/agora/human-evidence/" + quote(r["evidence_id"], safe="")
+                                             for r in feedback[:100]]
+            bundle["human_feedback"] = {"status": "truncated" if len(feedback) > 100 else "observed",
+                "scope": "consented_persona_learning_references", "since": since,
+                "cursor": ({"at": feedback[99]["created_at"], "id": feedback[99]["evidence_id"]}
+                           if len(feedback) > 100 else {"at": read_at, "id": ""})}
+        except Exception:
+            bundle["human_feedback"] = {"status": "unavailable", "reason": "agora_owner_unavailable"}
         # Canonical private memory is refreshed on the Gateway workspace before
         # every turn, using the already-authenticated adapter materializer.
         try:
@@ -243,11 +298,27 @@ class CycleOwners:
             bundle["retrieved_memory"] = memory["memory"]
         except Exception:
             bundle["unavailable"].append("canonical_memory")
+        if persona["lifecycle_state"] == "consultable":
+            bundle["telemetry"] = {"status": "not_applicable", "reason": "non_trading_persona"}
+            return bundle
         try:
+            # Runtime summaries carry the capital binding, not persona_id.
+            # Resolve that binding from the registry's persona-owned artifacts;
+            # never join unrelated same-tenant summaries or guess from a name.
+            entries = self.pool_store._lister(pid, tenant)
+            bindings = {(e.get("metadata") or {}).get("persona_capital_binding_id")
+                        for e in entries if e.get("owner_tenant") == tenant
+                        and (e.get("metadata") or {}).get("persona_id") == pid}
+            if len(bindings) != 1 or not next(iter(bindings)):
+                raise ValueError("ambiguous persona paper binding")
+            binding = next(iter(bindings))
+            bundle["persona_capital_binding_id"] = binding
             base = self.env.get("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
-            payload = self._get(base + "/api/telemetry/runtime-summaries",
-                                self.env.get("PANTHEON_TELEMETRY_SERVICE_TOKEN"), tenant)
-            rows = [r for r in payload["summaries"] if r.get("persona_id") == pid and r.get("tenant_id") == tenant]
+            payload = ({"summaries": self.telemetry_reader(tenant)} if self.telemetry_reader else
+                       self._get(base + "/api/telemetry/runtime-summaries",
+                                 self.env.get("PANTHEON_TELEMETRY_SERVICE_TOKEN"), tenant))
+            rows = [r for r in payload["summaries"] if r.get("persona_capital_binding_id") == binding
+                    and r.get("tenant_id") == tenant]
             bundle["telemetry"] = rows
             if len(rows) != 1 or rows[0].get("deployment_stage") != "paper":
                 raise ValueError("ambiguous or missing own paper telemetry")
@@ -256,8 +327,19 @@ class CycleOwners:
             books = row.get("member_virtual_books") or []
             bundle["books"] = {b.get("member_id") or b["artifact_id"]: {**b, **b.get("net_of_costs", {})} for b in books}
             bundle["observations"] = row.get("pool_observations") or []
-            bundle["incident_refs"] = row.get("incident_refs") or []
-            bundle["human_feedback_refs"] = row.get("human_feedback_refs") or []
+            try:
+                incidents_url = self.env.get("PANTHEON_INCIDENTS_API_URL", "").rstrip("/")
+                if not incidents_url or not row.get("runtime_binding_id"):
+                    raise ValueError("incident owner or runtime binding unavailable")
+                incidents = self._get(incidents_url + "/api/incidents?open_only=true&binding_id="
+                                      + quote(row["runtime_binding_id"], safe=""),
+                                      self.env.get("PANTHEON_TELEMETRY_SERVICE_TOKEN"), tenant)
+                bundle["incident_refs"] = ["/api/incidents/" + quote(r["incident_id"], safe="")
+                    for r in incidents if r.get("binding_id") == row["runtime_binding_id"]
+                    and r.get("tenant_id", tenant) == tenant]
+                bundle["incidents"] = {"status": "observed"}
+            except Exception:
+                bundle["incidents"] = {"status": "unavailable", "reason": "incident_owner_unavailable"}
         except Exception:
             bundle["unavailable"].append("own_telemetry")
         if persona["lifecycle_state"] != "consultable":

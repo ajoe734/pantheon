@@ -1463,7 +1463,8 @@ class PersonaCronRegistrar:
                 failures.append({"persona_id": pid, "reason": str(exc)[:300]})
         for job in jobs:
             event = self._decode_job_event(job) if isinstance(job, dict) else None
-            if not event or event.get("kind") != "pantheon.workflow.dispatch":
+            if (not event or event.get("kind") != "pantheon.workflow.dispatch"
+                    or not str(job.get("name") or "").startswith("pantheon-")):
                 continue
             pid, wid = event.get("persona_id"), event.get("workflow_id")
             orphan = wid == workflow.workflow_id and pid not in eligible

@@ -186,6 +186,11 @@ class OodaJsonlAppendStore:
                 handle.write(json.dumps(record_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
                 handle.flush()
                 os.fsync(handle.fileno())
+            directory = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
             self._apply_record(record_payload)
 
     def _build_record(self, *, record_type: str, packet_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:

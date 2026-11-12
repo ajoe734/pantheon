@@ -30,7 +30,7 @@ class CycleProposal(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     kind: Literal["demand", "admit", "reweight", "mutate_request", "remove",
                   "widen_universe", "consult_request", "harness_patch", "no_action"]
-    reason: str = Field(min_length=1, max_length=4000)
+    reason: str = Field(min_length=1, max_length=4000, pattern=r"\S")
     evidence_refs: list[str] = Field(max_length=100)
     parameters: dict[str, Any] = Field(default_factory=dict)
 
@@ -38,7 +38,7 @@ class CycleProposal(BaseModel):
 class CycleTurnOutput(BaseModel):
     """The model proposes; no model-produced command or gate verdict is accepted."""
     model_config = ConfigDict(extra="forbid", strict=True)
-    orient: str = Field(min_length=1, max_length=12000)
+    orient: str = Field(min_length=1, max_length=12000, pattern=r"\S")
     proposals: list[CycleProposal] = Field(min_length=1, max_length=20)
     memory_candidates: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
 
