@@ -3002,3 +3002,249 @@ def test_scoped_readback_requires_complete_map_even_when_globally_empty(owner_dl
     with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
         _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
     assert _validate_owner_dlq(actual, reconcile, schedule, now, ()) == 0
+
+
+# --- COLLECTOR-STEADY-PULL-RESTORE-20261112: continuous Collector-only pull ---
+
+STEADY = controller_worker.COLLECTOR_STEADY_PULL_MODE
+COLLECTOR_CONNECTOR_ID = "collector-papers-main"
+COLLECTOR_DEFINITION_ID = "strategy-seed-paper-corpus"
+
+
+def _collector_actual(
+    *,
+    connector_id: str = COLLECTOR_CONNECTOR_ID,
+    definition_id: str | None = COLLECTOR_DEFINITION_ID,
+    status: str = "enabled",
+    schedule_enabled: bool = True,
+    extra_direct_connector: bool = False,
+    is_due: bool = True,
+    sequence_no: int = 1,
+    fetch_binding: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    from services.source_ingestion.connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
+    actual = json.loads(json.dumps(_actual_readback()).replace(CONNECTOR_ID, connector_id))
+    actual["controller_state"]["sequence_no"] = sequence_no
+    item = actual["connectors"][0]
+    item["fetch_binding"] = fetch_binding or {"mode": "provider_owned_adapter", "adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN}
+    item["connector"].update({"status": status, "metadata": {"definition_id": definition_id, "tenant_id": "tenant-a"}})
+    # Registered Collector records carry bundle provenance (tenant/PIT), not direct-provider provenance.
+    record = item["latest_source_record"]
+    record["provenance"] = {
+        key: value
+        for key, value in record["provenance"].items()
+        if key not in {"provider", "dataset", "api_endpoint", "schema_hash"}
+    }
+    record["provenance"].setdefault("event_time", record["provenance"]["available_time"])
+    record["provenance"]["tenant_id"] = "tenant-a"
+    record["metadata"] = {**(record.get("metadata") or {}), "collector": {"source_id": definition_id, "bundle_status": "complete"}}
+    item["schedule"]["enabled"] = schedule_enabled
+    item["freshness"]["is_due"] = is_due
+    if extra_direct_connector:
+        direct = deepcopy(item)
+        direct["connector_id"] = "collector-looks-like-direct-provider"
+        direct["connector"]["metadata"] = {"definition_id": "tw-twse-tpex-official-market"}
+        actual["connectors"].append(direct)
+    return actual
+
+
+def _collector_reconcile(*connector_ids: str) -> dict[str, Any]:
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"] = [
+        {"dataset": DATASET, "connector_id": cid, "status": "satisfied"} for cid in connector_ids
+    ]
+    return reconcile
+
+
+def _steady_env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
+    values = {
+        "SOURCE_INGEST_CONTROLLER_MODE": STEADY,
+        "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "scheduled_tick",
+        "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
+    }
+    values.update(overrides)
+    for key in (
+        "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS",
+        "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS",
+        "SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(
+        controller_worker,
+        "load_controller_token",
+        lambda **kwargs: "controller-test-token-that-is-at-least-32-characters",
+    )
+
+
+def test_config_accepts_unbounded_collector_steady_pull_without_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _steady_env(monkeypatch)
+    config = controller_worker.config_from_env()
+    assert config.mode == STEADY
+    assert config.max_ticks == 0
+    assert config.truth_level == "scheduled_tick"
+    assert config.exclusive_connector_ids == ()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"SOURCE_INGEST_CONTROLLER_MAX_TICKS": "3"},
+        {"SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS": "tw-twse-tpex-official-market"},
+        {"SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": COLLECTOR_CONNECTOR_ID},
+        {"SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS": COLLECTOR_CONNECTOR_ID},
+        {"SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "reconciled_live_proof"},
+    ],
+)
+def test_config_rejects_steady_pull_with_bounds_or_provider_selection(
+    monkeypatch: pytest.MonkeyPatch, override: dict[str, str]
+) -> None:
+    _steady_env(monkeypatch, **override)
+    with pytest.raises(ValueError):
+        controller_worker.config_from_env()
+
+
+def test_ordinary_reconcile_and_pull_stays_finite_and_selected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _steady_env(
+        monkeypatch,
+        SOURCE_INGEST_CONTROLLER_MODE="reconcile_and_pull",
+        SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="reconciled_live_proof",
+    )
+    with pytest.raises(ValueError, match="MAX_TICKS between 1 and 24"):
+        controller_worker.config_from_env()
+
+
+def test_one_shot_entry_rejects_steady_pull_mode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="invalid controller mode"):
+        controller_worker.run_controller_once(mode=STEADY, state_path=tmp_path / "state.json")
+
+
+def test_selection_uses_registered_collector_definition_not_name_prefix() -> None:
+    reconcile = _collector_reconcile(COLLECTOR_CONNECTOR_ID, "collector-looks-like-direct-provider")
+    actual = _collector_actual(extra_direct_connector=True)
+    assert controller_worker.select_collector_pull_connectors(actual, reconcile) == [COLLECTOR_CONNECTOR_ID]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"status": "disabled"},
+        {"schedule_enabled": False},
+        {"definition_id": "tw-twse-tpex-official-market"},
+        {"definition_id": None},
+        {"is_due": False},
+        {"fetch_binding": {"mode": "provider_owned_adapter", "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload"}},
+        {"fetch_binding": {"mode": "static_records", "adapter": ""}},
+        {"fetch_binding": {"mode": "external_feed", "adapter": ""}},
+    ],
+)
+def test_selection_excludes_disabled_unscheduled_not_due_and_non_collector(kwargs: dict[str, Any]) -> None:
+    assert (
+        controller_worker.select_collector_pull_connectors(
+            _collector_actual(**kwargs), _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+        )
+        == []
+    )
+
+
+def test_selection_excludes_connector_not_admitted_by_reconcile() -> None:
+    assert controller_worker.select_collector_pull_connectors(_collector_actual(), _collector_reconcile()) == []
+
+
+def _patch_steady(
+    monkeypatch: pytest.MonkeyPatch,
+    state: ControllerState,
+    actual_kwargs: dict[str, Any],
+    schedule_calls: list[dict[str, Any]],
+) -> None:
+    connector_ids = [COLLECTOR_CONNECTOR_ID]
+    monkeypatch.setattr(
+        controller_worker, "load_desired_state", lambda **kw: (_personas(), _desired_meta())
+    )
+    monkeypatch.setattr(
+        controller_worker, "reconcile_desired_state", lambda **kw: _collector_reconcile(*connector_ids)
+    )
+    for reader in ("read_actual_state", "read_actual_state_with_fetch_bindings"):
+        monkeypatch.setattr(
+            controller_worker,
+            reader,
+            lambda **kw: _collector_actual(sequence_no=state.sequence_no, **actual_kwargs),
+        )
+
+    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
+        schedule_calls.append(kwargs)
+        return {
+            "summary": {
+                "total_ran": 1,
+                "total_failed": 0,
+                "total_skipped": 0,
+                "exclusive_connector_count": len(kwargs["exclusive_connector_ids"]),
+            }
+        }
+
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
+
+
+def test_successive_steady_ticks_invoke_scheduler_for_collector_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path, truth_level="scheduled_tick", mode=STEADY)
+    state = _state()
+    events: list[str] = []
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+    calls: list[dict[str, Any]] = []
+    _patch_steady(monkeypatch, state, {"extra_direct_connector": True}, calls)
+
+    first = run_controller_tick(config=config, state=state, store=store, writer=writer)
+    second = run_controller_tick(config=config, state=state, store=store, writer=writer)
+
+    assert len(calls) == 2
+    for call in calls:
+        assert call["exclusive_connector_ids"] == [COLLECTOR_CONNECTOR_ID]
+        assert call["force_connector_ids"] == []
+    for result in (first, second):
+        assert result["status"] == "ok"
+        assert result["controller_mode"] == STEADY
+        assert result["provider_egress_attempted"] is True
+    assert [c["truth_level"] for c in writer.calls if c["name"] == "success"] == ["scheduled_tick"] * 2
+
+
+@pytest.mark.parametrize(
+    "actual_kwargs", [{"definition_id": "tw-twse-tpex-official-market"}, {"is_due": False}]
+)
+def test_steady_tick_without_due_collector_connector_pulls_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, actual_kwargs: dict[str, Any]
+) -> None:
+    config = _config(tmp_path, truth_level="scheduled_tick", mode=STEADY)
+    state = _state()
+    store = RecordingStateStore(config.state_path, [])
+    calls: list[dict[str, Any]] = []
+    _patch_steady(monkeypatch, state, actual_kwargs, calls)
+    # Without terminal pulls the due-state (no execution counts changed) path applies.
+    result = run_controller_tick(config=config, state=state, store=store, writer=RecordingWriter([]))
+    assert calls == []
+    assert result["provider_egress_attempted"] is False
+    assert result["schedule_summary"]["total_provider_pulls"] == 0
+
+
+def test_steady_tick_surfaces_collector_source_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path, truth_level="scheduled_tick", mode=STEADY)
+    state = _state()
+    store = RecordingStateStore(config.state_path, [])
+    calls: list[dict[str, Any]] = []
+    _patch_steady(monkeypatch, state, {}, calls)
+    monkeypatch.setattr(
+        controller_worker,
+        "run_schedule_tick",
+        lambda **kw: {"summary": {"total_failed": 1, "exclusive_connector_count": 1}, "failed": []},
+    )
+    with pytest.raises(ControllerTickError, match="failed connector"):
+        run_controller_tick(config=config, state=state, store=store, writer=RecordingWriter([]))
+    assert state.consecutive_failures == 1

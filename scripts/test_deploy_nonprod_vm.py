@@ -3632,3 +3632,77 @@ def test_finmind_quota_failure_stops_dispatch_and_is_not_masked(monkeypatch: pyt
     with pytest.raises(SourceEvidenceError, match="402"):
         _finmind_dispatch("2026-11-12T10:00:00Z", monkeypatch, fetch=quota)
     assert len(seen) == 1  # stops at first 402, no retries/continuation
+
+
+# --- COLLECTOR-STEADY-PULL-RESTORE-20261112: steady Collector pull posture ---
+
+def _steady_posture(env_extra: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index('SOURCE_REFRESH_EGRESS_MODE="${PANTHEON_EXTERNAL_EGRESS:-deny}"')
+    end = source.index('SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"')
+    snippet = source[start:end]
+    script = (
+        "set -euo pipefail\nDEV_COMPOSE_PROFILES=root\n" + snippet +
+        'printf "MODE=%s\\nTRUTH=%s\\nTICKS=%s\\nRESTART=%s\\nEGRESS=%s\\nHOSTS=%s\\n" '
+        '"$SOURCE_REFRESH_CONTROLLER_MODE" "$SOURCE_REFRESH_TRUTH_LEVEL" "$SOURCE_REFRESH_MAX_TICKS" '
+        '"$SOURCE_REFRESH_RESTART_POLICY" "$SOURCE_REFRESH_EGRESS_MODE" "$SOURCE_REFRESH_ALLOWED_HOSTS"\n'
+    )
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("SOURCE_INGEST_", "PANTHEON_"))}
+    env.update(env_extra)
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, cwd=ROOT)
+
+
+def _kv(proc: subprocess.CompletedProcess[str]) -> dict[str, str]:
+    return dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+
+
+def test_ordinary_deploy_defaults_to_reconcile_only_even_with_collector_host() -> None:
+    proc = _steady_posture({"PANTHEON_COLLECTOR_HOST": "collector.example.test"})
+    assert proc.returncode == 0, proc.stderr
+    got = _kv(proc)
+    assert got["MODE"] == "reconcile_only" and got["TICKS"] == "0"
+    assert got["EGRESS"] == "allowlist" and got["HOSTS"] == "collector.example.test"
+
+
+def test_ordinary_deploy_keeps_explicit_steady_collector_pull_unbounded() -> None:
+    proc = _steady_posture({
+        "PANTHEON_COLLECTOR_HOST": "collector.example.test",
+        "SOURCE_INGEST_STEADY_COLLECTOR_PULL": "true",
+    })
+    assert proc.returncode == 0, proc.stderr
+    got = _kv(proc)
+    assert got == {
+        "MODE": "collector_steady_pull", "TRUTH": "scheduled_tick", "TICKS": "0",
+        "RESTART": "unless-stopped", "EGRESS": "allowlist", "HOSTS": "collector.example.test",
+    }
+
+
+def test_steady_collector_pull_requires_collector_host() -> None:
+    proc = _steady_posture({"SOURCE_INGEST_STEADY_COLLECTOR_PULL": "true"})
+    assert proc.returncode != 0
+    assert "requires PANTHEON_COLLECTOR_HOST" in proc.stderr
+
+
+def _validate_steady(mode: str, egress: str, hosts: str, host: str = "collector.example.test") -> subprocess.CompletedProcess[str]:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("validate_source_refresh_profile() {")
+    end = source.index("\n}\n\ncurl_with_retry()", start) + 2
+    script = (
+        'set -euo pipefail\nerror() { echo "$*" >&2; exit 1; }\n' + source[start:end] + '\n'
+        'export PANTHEON_DEV_COMPOSE_PROFILES=root\n'
+        f'export PANTHEON_COLLECTOR_HOST="{host}" PANTHEON_EXTERNAL_EGRESS="{egress}" '
+        f'PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="{hosts}" SOURCE_INGEST_CONTROLLER_MODE="{mode}"\n'
+        'export SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 '
+        'SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped\n'
+        'validate_source_refresh_profile\n'
+    )
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, cwd=ROOT)
+
+
+def test_steady_validator_accepts_collector_pull_only_on_exact_collector_host() -> None:
+    assert _validate_steady("collector_steady_pull", "allowlist", "collector.example.test").returncode == 0
+    assert _validate_steady("reconcile_only", "allowlist", "collector.example.test").returncode == 0
+    for egress, hosts in (("deny", ""), ("allowlist", "collector.example.test,openapi.twse.com.tw"), ("allowlist", "other.example.test")):
+        proc = _validate_steady("collector_steady_pull", egress, hosts)
+        assert proc.returncode != 0, (egress, hosts)
+    assert _validate_steady("reconcile_and_pull", "allowlist", "collector.example.test").returncode != 0
