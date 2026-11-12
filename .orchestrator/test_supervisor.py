@@ -2603,7 +2603,11 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertIn("required frontend CI is red", tasks[0]["next"])
 
     def test_execute_plans_integration_environment_faults_leave_source_untouched(self) -> None:
-        for reason in ("missing-dedicated-integration-path", "integration-checkout-not-detached"):
+        for reason in (
+            "missing-dedicated-integration-path", "integration-checkout-not-detached",
+            "contradictory-review-bridge-policy", "final-authority-timeout",
+            "final-pr-refresh-failed",
+        ):
             with self.subTest(reason=reason):
                 fe = self._make_execute_plans_source()
                 self.assertFalse(
@@ -2631,6 +2635,16 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
                 self.assertEqual(tasks[0]["status"], "review_approved")
                 self.assertEqual(tasks[0]["delivery_binding"]["pr"], 940)
                 self.assertFalse(request.exists())
+
+    def test_non_pantheon_source_reopen_is_limited_to_source_owned_reasons(self) -> None:
+        contract = supervisor.unblock_contract
+        for reason in contract.SOURCE_OWNED_REASONS:
+            self.assertTrue(contract.requires_source_reopen(reason, "execute_plans"), reason)
+        for reason in contract.REASONS - contract.SOURCE_OWNED_REASONS:
+            if reason == contract.EXACT_HEAD_BEHIND_BASE_REASON:
+                continue
+            self.assertFalse(contract.requires_source_reopen(reason, "execute_plans"), reason)
+            self.assertFalse(contract.requires_repair_task(reason, "execute_plans"), reason)
 
     def test_pantheon_ci_red_still_materializes_one_level_repair(self) -> None:
         self.assertFalse(

@@ -111,17 +111,12 @@ def task_id(
     return f"{readable[: TASK_ID_LIMIT - len(suffix) - 1].rstrip('-')}-{suffix}"
 
 
-# Integrator checkout/environment faults live in Pantheon's integration setup,
-# not in the delivered source. They never rework a non-Pantheon source task.
-INTEGRATION_ENVIRONMENT_REASONS = frozenset({
-    "dirty-repository-checkout", "git-common-dir-not-writable",
-    "integration-checkout-identity-mismatch", "integration-checkout-not-detached",
-    "integration-checkout-not-standalone", "invalid-git-common-dir",
-    "invalid-git-repository", "invalid-repository-root", "invalid-repository-scope",
-    "missing-dedicated-integration-path", "missing-origin-remote",
-    "missing-repository-checkout", "missing-repository-slug",
-    "repository-checkout-not-writable", "repository-origin-mismatch",
-    "repository-status-unavailable",
+# Demonstrated source-owned failures: only these may rework a non-Pantheon
+# source. Policy validation, unknown-outcome timeouts and PR readback failures
+# are tooling/provider faults and keep the unchanged exact-head approval.
+SOURCE_OWNED_REASONS = frozenset({
+    "ci-red", "final-ci-red", "smoke-failed", "rebase-conflict",
+    "exact-head-merge-conflict", "merge-state-dirty",
 })
 
 
@@ -135,8 +130,9 @@ def requires_repair_task(reason: str, repository_id: str | None = None) -> bool:
     """
     validate_reason(reason)
     if (
-        reason in INTEGRATION_ENVIRONMENT_REASONS
-        and repository_id not in (None, "", "pantheon")
+        repository_id not in (None, "", "pantheon")
+        and reason not in SOURCE_OWNED_REASONS
+        and reason != EXACT_HEAD_BEHIND_BASE_REASON
     ):
         return False
     return not (reason.startswith("review-gate-") or reason in {
@@ -159,7 +155,7 @@ def requires_source_reopen(reason: str, repository_id: str | None = None) -> boo
         return True
     return (
         repository_id not in (None, "", "pantheon")
-        and reason not in INTEGRATION_ENVIRONMENT_REASONS
+        and reason in SOURCE_OWNED_REASONS
         and requires_repair_task(reason)
     )
 
