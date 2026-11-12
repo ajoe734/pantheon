@@ -188,6 +188,7 @@ def _actual_readback() -> dict[str, Any]:
             "replay_failed": 0,
             "schema_rejected": 0,
         },
+        "dlq_status_counts_by_connector": {},
         "frontier_backlog": 0,
         "frontier_backlog_by_connector": {},
         "max_lag_seconds": 5,
@@ -2770,3 +2771,234 @@ def test_terminal_readback_exclusive_scope_still_validates_selected_connector_he
             actual=actual,
             expected_exclusive_connector_ids=(CONNECTOR_ID,),
         )
+
+
+@pytest.fixture
+def owner_dlq_readback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Real owner counters/journal, with the existing terminal connector fixture.
+
+    No provider request: connector provenance is the established official-market
+    calendar fixture; the DLQ and requirement/controller stores use real writers.
+    """
+    from services.foundation import DeadLetterStatus, EnvironmentScope, EventEnvelope, TraceContext
+
+    now = datetime(2026, 10, 23, 7, 5, tzinfo=timezone.utc)
+    fixture = _tw_oct22_close_readback(now)
+    official_id = "tw-twse-tpex-official-market"
+    finmind_id = "tw-finmind-broker-daily-report"
+    finmind = deepcopy(fixture["connectors"][0])
+    finmind["connector_id"] = finmind_id
+    finmind["connector"]["connector_id"] = finmind_id
+    finmind["freshness"]["status"] = "degraded"
+    finmind["source_health"]["status"] = "failed"
+    fixture["connectors"].append(finmind)
+    runtime = create_runtime(data_dir=tmp_path / "owner")
+    monkeypatch.setattr(runtime, "_controller_connector_readbacks", lambda: deepcopy(fixture["connectors"]))
+    ControllerStateStore(runtime.CONTROLLER_STATE_PATH).save(_state(sequence_no=1))
+    digest = "a" * 64
+    runtime.requirement_snapshot_store.append(
+        desired_state_sha256=digest, bindings={}, persona_count=1, authority="test://dlq-scope"
+    )
+    reconcile = _tw_reconcile()
+    reconcile["desired_state_sha256"] = digest
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+    journal_bytes = {}
+
+    def read(entries):
+        for index, (connector_id, status) in enumerate(entries):
+            event = EventEnvelope.new(
+                event_type="source_ingestion.scheduled_run_failed",
+                aggregate_type="source_ingest_run",
+                aggregate_id=f"run-dlq-{index}",
+                sequence_no=1,
+                trace=TraceContext.new(environment=EnvironmentScope(name="dev")),
+                producer_service="source-ingestion",
+                payload={} if connector_id is None else {"connector_id": connector_id},
+            )
+            entry = runtime.dead_letter_queue.reject(
+                event, reason="test source failure", tags=("source_ingestion", "retry_exhausted")
+            )
+            if status != "pending":
+                runtime.dead_letter_queue.replace_entry(replace(entry, status=DeadLetterStatus(status)))
+        # Reload the persisted owner queue before projecting, including latest statuses.
+        runtime.dead_letter_queue.load_from_spill()
+        before = runtime.DLQ_STORE_PATH.read_bytes() if entries else b""
+        journal_bytes.update({path: path.read_bytes() for path in runtime.DATA_DIR.rglob("*.jsonl")})
+        actual = runtime._controller_readback_payload()
+        assert (runtime.DLQ_STORE_PATH.read_bytes() if entries else b"") == before
+        return actual, before
+
+    yield runtime, read, reconcile, schedule, now, official_id, finmind_id
+    assert {path: path.read_bytes() for path in runtime.DATA_DIR.rglob("*.jsonl")} == journal_bytes
+
+
+def _validate_owner_dlq(actual, reconcile, schedule, now, scope):
+    return _validate_terminal_readback_impl(
+        reconcile=reconcile, schedule=schedule, actual=actual,
+        expected_controller_id="source-ingestion-test:generation-test",
+        expected_sequence_no=1, expected_deployment=_deployment(),
+        expected_exclusive_connector_ids=scope, now=now,
+    )
+
+
+@pytest.mark.parametrize("status", ["pending", "replay_failed", "schema_rejected"])
+def test_owner_readback_accepts_official_scope_but_retains_finmind_failure(owner_dlq_readback, status):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    actual, before = read([(finmind_id, status)])
+    assert actual["dlq_count"] == actual["unresolved_dlq_count"] == 1
+    assert actual["dlq_status_counts"][status] == 1
+    assert actual["dlq_status_counts_by_connector"][finmind_id][status] == 1
+    assert _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,)) == 0
+    with pytest.raises(ControllerTickError, match="unresolved dead-letter"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, ())
+    summary = controller_state.summarize_actual_readback(actual)
+    assert summary["unresolved_dlq_count"] == 1
+    assert summary["dlq_status_counts_by_connector"] == actual["dlq_status_counts_by_connector"]
+    assert controller_state.summarize_actual_readback(summary) == summary
+    assert actual["connectors"][1]["freshness"]["status"] == "degraded"
+    assert actual["connectors"][1]["source_health"]["status"] == "failed"
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize("status", ["pending", "replay_failed", "schema_rejected"])
+def test_owner_readback_rejects_own_and_mixed_dlq(owner_dlq_readback, mixed, status):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    entries = [(official_id, status)] + ([(finmind_id, "pending")] if mixed else [])
+    actual, before = read(entries)
+    with pytest.raises(ControllerTickError, match="selected connector scope"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+@pytest.mark.parametrize("connector_id", [None, "", " ", "unknown-connector", 123])
+def test_owner_readback_rejects_unknown_dlq_attribution(owner_dlq_readback, connector_id):
+    runtime, read, reconcile, schedule, now, official_id, _ = owner_dlq_readback
+    actual, before = read([(connector_id, "pending")])
+    with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert actual["unresolved_dlq_count"] == 1
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+@pytest.mark.parametrize("mutation", [
+    "missing", "null", "list", "empty", "status_missing", "status_extra",
+    "negative", "bool", "string", "float", "status_swap", "unknown", "zero_bucket",
+    "counts_null", "counts_list",
+])
+def test_owner_readback_rejects_incomplete_or_contradictory_dlq_map(owner_dlq_readback, mutation):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    actual, before = read([(finmind_id, "pending")])
+    by_connector = actual["dlq_status_counts_by_connector"]
+    counts = by_connector[finmind_id]
+    if mutation == "missing":
+        actual.pop("dlq_status_counts_by_connector")
+    elif mutation in {"null", "list", "empty"}:
+        actual["dlq_status_counts_by_connector"] = {"null": None, "list": [], "empty": {}}[mutation]
+    elif mutation == "status_missing":
+        counts.pop("replayed")
+    elif mutation == "status_extra":
+        counts["extra"] = 0
+    elif mutation in {"negative", "bool", "string", "float"}:
+        counts["pending"] = {"negative": -1, "bool": True, "string": "1", "float": 1.0}[mutation]
+    elif mutation == "status_swap":
+        counts.update(pending=0, replayed=1)
+    elif mutation == "unknown":
+        by_connector["unknown"] = by_connector.pop(finmind_id)
+    elif mutation == "zero_bucket":
+        by_connector[official_id] = {status: 0 for status in counts}
+    elif mutation == "counts_null":
+        by_connector[finmind_id] = None
+    elif mutation == "counts_list":
+        by_connector[finmind_id] = []
+    with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+@pytest.mark.parametrize("mutation", [
+    "controller", "sequence", "deployment", "stale", "scope", "snapshot", "global",
+    "target_health", "target_freshness", "scheduler_failed",
+])
+def test_owner_readback_scoped_dlq_preserves_existing_guards(owner_dlq_readback, mutation):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    actual, before = read([(finmind_id, "pending")])
+    if mutation == "controller":
+        actual["controller_state"]["controller_id"] = "forged"
+    elif mutation == "sequence":
+        actual["controller_state"]["sequence_no"] = 0
+    elif mutation == "deployment":
+        actual["controller_state"]["deployment"]["git_sha"] = "forged"
+    elif mutation == "stale":
+        actual["captured_at"] = (now - timedelta(seconds=301)).isoformat()
+    elif mutation == "scope":
+        schedule["summary"]["exclusive_connector_count"] = 0
+    elif mutation == "snapshot":
+        actual["requirement_snapshot"]["desired_state_sha256"] = "forged"
+    elif mutation == "global":
+        actual["unresolved_dlq_count"] = 0
+    elif mutation == "target_health":
+        actual["connectors"][0]["source_health"]["status"] = "failed"
+    elif mutation == "target_freshness":
+        actual["connectors"][0]["freshness"]["status"] = "stale"
+    elif mutation == "scheduler_failed":
+        schedule["summary"]["total_failed"] = 1
+    with pytest.raises(ControllerTickError):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+def test_owner_readback_accepts_only_resolved_target_history(owner_dlq_readback):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    actual, before = read([(official_id, "replayed"), (official_id, "duplicate_skipped"), (finmind_id, "pending")])
+    assert actual["dlq_count"] == 3
+    assert actual["unresolved_dlq_count"] == 1
+    assert _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,)) == 0
+    schedule["summary"]["exclusive_connector_count"] = 2
+    with pytest.raises(ControllerTickError, match="selected connector scope"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id, finmind_id))
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+def test_scoped_tick_keeps_global_dlq_failure_in_success_readback(
+    owner_dlq_readback, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    runtime, read, _, _, _, _, finmind_id = owner_dlq_readback
+    actual, before = read([(finmind_id, "pending")])
+    # Use the existing current-time tick connector fixture; owner DLQ projection
+    # and controller/requirement identities remain the real stored readback.
+    actual["connectors"][0] = _actual_readback()["connectors"][0]
+    events = []
+    config = _config(tmp_path, exclusive_connector_ids=(CONNECTOR_ID,))
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+    _patch_successful_tick(monkeypatch, events,
+        expected_force_connector_ids=[CONNECTOR_ID], expected_exclusive_connector_ids=[CONNECTOR_ID])
+    reconcile = _reconcile()
+    reconcile["desired_state_sha256"] = actual["requirement_snapshot"]["desired_state_sha256"]
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: reconcile)
+    monkeypatch.setattr(controller_worker, "read_actual_state", lambda **kwargs: deepcopy(actual))
+    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+    assert result["status"] == "ok"
+    success = _call(writer, "success")["kwargs"]
+    assert success["dlq_count"] == 1
+    assert success["payload"]["actual_readback"]["unresolved_dlq_count"] == 1
+    assert state.actual_readback["unresolved_dlq_count"] == 1
+    assert state.actual_readback["dlq_status_counts_by_connector"] == actual["dlq_status_counts_by_connector"]
+    ControllerStateStore(runtime.CONTROLLER_STATE_PATH).save(state)
+    readiness = runtime._source_freshness_readiness()
+    assert readiness["status"] == "degraded_data"
+    assert readiness["data_ready"] is False
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+def test_scoped_readback_requires_complete_map_even_when_globally_empty(owner_dlq_readback):
+    _, read, reconcile, schedule, now, official_id, _ = owner_dlq_readback
+    actual, _ = read([])
+    assert _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,)) == 0
+    actual.pop("dlq_status_counts_by_connector")
+    with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert _validate_owner_dlq(actual, reconcile, schedule, now, ()) == 0

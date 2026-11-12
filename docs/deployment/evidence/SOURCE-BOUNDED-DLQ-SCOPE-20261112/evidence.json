@@ -1,0 +1,136 @@
+{
+  "task_id": "SOURCE-BOUNDED-DLQ-SCOPE-20261112",
+  "scope": "Source-only correction to existing owner readback, persisted summary, and terminal validation under the existing scheduler-admitted exclusive connector scope.",
+  "owner": "Codex",
+  "assigned_reviewer": "Claude",
+  "base_commit": "32e7556fc3dac44ff311a2c712f412143847de33",
+  "anchor_commit": "a7eeeca03",
+  "original_evidence": {
+    "path": "/tmp/pantheon-root01a15322-resume-20261111/actual-normal-market-refresh43133926108-typed-outcomes.json",
+    "file_sha256": "17cba8036f4cf9889fac0fc1b807220059e266078d8e1f3d2153e29210b80465",
+    "run": 43133926108,
+    "artifact_id": 13906234901,
+    "artifact_sha256": "da76ff6d0f282562dacd80dba24752368027b0a65499a8d06cfc87d7cdee7c87",
+    "observed": [
+      "TAIFEX completed at 2026-11-12T01:24:55Z.",
+      "FinMind broker returned no rows for the requested symbols and failed its schedule stage.",
+      "The subsequent official Taiwan phase failed at actual_readback with one unresolved dead-letter entry. This terminal rejection does not establish that official records were not fetched."
+    ]
+  },
+  "change": {
+    "owner_field": "dlq_status_counts_by_connector",
+    "projection": "One five-status counter map per connector with retained DLQ entries, derived from the same actual DeadLetterQueue.entries() snapshot used for all existing global counts. Missing/invalid connector attribution is retained in the empty-key bucket; unknown nonempty IDs are preserved verbatim.",
+    "scoped_admission": "Require the existing scheduler exclusive_connector_count contract. Require a complete map with known configured connector IDs, exact status keys, nonnegative integer counts excluding bool, nonempty buckets, and per-status sums equal to global status totals. Select unresolved pending/replay_failed/schema_rejected counts only after those checks.",
+    "fail_closed": "Target unresolved entries, mixed target/unrelated failures, unknown or unattributed entries, absent/malformed maps (including a missing map with zero global DLQ), inconsistent status totals, and all existing controller/deployment/sequence/requirement/freshness/scheduler/frontier guards reject admission.",
+    "unscoped": "Existing strict global unresolved-DLQ admission is unchanged; no attribution field is needed to preserve legacy unscoped validation.",
+    "global_truth": "Global dlq_count, pending_dlq_count, unresolved_dlq_count and dlq_status_counts remain unchanged. The persisted summary retains attribution and all connector failure/freshness summaries. A scoped successful controller tick still reports the global unresolved count to the loop writer; failed FinMind health and degraded whole-source readiness remain visible.",
+    "not_changed": [
+      "Provider date handling (owned by FINMIND-BROKER-PUBLISHED-DATE-20261112)",
+      "DLQ history, statuses, source records, receipts, recovery/replay/acknowledgement behavior",
+      "Endpoints, service/cache/gate topology, caller authorization or scope admission",
+      "Registry receipt byte-design acceptance, BFF budgets, deployment or publication path",
+      "Tenant, auth, secret, paper/live and whole-source readiness boundaries"
+    ]
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_controller_readback.py services/source_ingestion/tests/test_controller_worker_manual_once.py",
+      "result": "158 passed in 49.71s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduler.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_source_readiness_bounded.py services/source_ingestion/tests/test_runtime_isolation.py services/source_ingestion/tests/test_runtime_latest_source_record.py services/source_ingestion/tests/test_requirement_state.py",
+      "result": "93 passed in 45.52s; one existing Starlette/httpx deprecation warning",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker.py -k 'owner_readback or scoped_tick_keeps or globally_empty'",
+      "purpose": "Recheck the added all-JSONL-journal byte-preservation assertions after the full suites.",
+      "result": "42 passed, 103 deselected in 12.75s",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed",
+      "exit_code": 0
+    }
+  ],
+  "regression_proof": {
+    "method": "Compile only _validate_terminal_readback from git show a7eeeca03^:services/source_ingestion/controller_worker.py against current module globals, install it before pytest imports the test module, and run the three new official-scope/unrelated-FinMind cases. The additive owner payload and all other code are identical.",
+    "test_selection": "test_owner_readback_accepts_official_scope_but_retains_finmind_failure",
+    "baseline_result": "3 expected failures (pending, replay_failed, schema_rejected), all at the original global unresolved-DLQ rejection, exit 1.",
+    "head_result": "All three cases pass within the successful suites above; unscoped validation still rejects the same readback.",
+    "fixture_boundary": "The real runtime owner computes DLQ counters from its writer-generated, persisted and reloaded queue; real controller and requirement stores supply identity. The pre-existing official-market/calendar terminal connector fixture isolates provider-free validation. These are local regression fixtures, not hosted/provider proof.",
+    "journal_preservation": "The real DeadLetterQueue.reject/replace_entry writers establish test state, never hand-edited fixture journals. After reload, all runtime JSONL journal bytes are captured and compared after owner projection and terminal/controller validation. No read or validation changes the stored histories."
+  },
+  "composition": {
+    "registry_task": "SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111",
+    "observed_state": "blocked waiting for Human/Ops byte-design choice; this correction has no declared dependencies and no concurrent active registry writer was found in canonical task state.",
+    "ordering_request": "Canonical progress requests existing local Human/Ops dependency-contract maintenance: the registry task must follow this DLQ correction before resuming shared runtime.py work. That command is explicitly local Human/Ops-only and cannot be invoked by this auto worker. The registry design hold and acceptance remain unchanged.",
+    "delivery": "Assigned Claude frozen-head independent review, required repository CI, and native supervisor integration remain required. Owner must finalize only after the exact reviewed head merges.",
+    "hosted": "NOT_RUN. Original sole publisher must verify the exact served source version and original normal bounded refresh afterwards. Keep all original official431339 failures and global source-health acceptance; local source tests do not prove hosted completion."
+  },
+  "ci_budget_followup": {
+    "implementation_head_before_followup": "a53cf176e862262307a3717c7c63c18e445ecab3",
+    "same_pr": "https://github.com/ajoe734/pantheon/pull/7204",
+    "authorization": "Canonical artifact-contract addition by Human/Ops at 2026-11-12T03:09:53Z; existing Run research suite step only, 20 to 25 minutes.",
+    "prior_ci": [
+      {
+        "run_id": 43138734368,
+        "attempt": 1,
+        "job_id": 130920917367,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/43138734368/job/130920917367",
+        "result": "FAILURE: GitHub timed out Run research suite after 20 minutes; last progress was 94%. No completed pytest summary; not passed."
+      },
+      {
+        "run_id": 43138734368,
+        "attempt": 2,
+        "job_id": 130933368126,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/43138734368/job/130933368126",
+        "pytest_summary": "833 passed, 2 skipped, 1335 warnings, 5 subtests passed in 1200.56s (0:20:00)",
+        "result": "FAILURE: GitHub timed out Run research suite after 20 minutes, after pytest printed its summary. This CI job did not pass."
+      }
+    ],
+    "change": "Only Run research suite timeout-minutes increases from 20 to 25. Existing research job timeout 30 and install timeout 15 remain. All workflow commands, tests, assertions, deselection/skips and product latency acceptance remain unchanged. Source DLQ implementation is unchanged.",
+    "validation": [
+      {
+        "command": "python3 -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision",
+        "result": "26 tests passed in 0.932s",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 inline YAML/byte comparison against HEAD:.github/workflows/branch-ci.yml",
+        "result": "PyYAML 6.0.1 parsed; exact single 20->25 substitution; job30/install15 and exact pytest command verified; all other workflow bytes identical.",
+        "exit_code": 0
+      },
+      {
+        "command": "git diff --check",
+        "result": "passed",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision (after current-dev merge)",
+        "result": "26 tests passed in 0.955s",
+        "exit_code": 0
+      },
+      {
+        "command": "timeout 180 /tmp/finmind-review-20261111-venv/bin/python -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_controller_readback.py services/source_ingestion/tests/test_controller_worker_manual_once.py",
+        "result": "158 passed in 43.20s after current-dev merge",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 inline comparison against origin/dev:.github/workflows/branch-ci.yml and git diff --exit-code a53cf176e862262307a3717c7c63c18e445ecab3 HEAD -- existing DLQ implementation/test paths",
+        "result": "Exact single timeout substitution from current dev; all six declared DLQ implementation/test paths unchanged from a53; evidence JSON parsed.",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --task-id SOURCE-BOUNDED-DLQ-SCOPE-20261112 --skip-merge; python3 scripts/git/check_commit_trailers.py --rev HEAD --task-id SOURCE-BOUNDED-DLQ-SCOPE-20261112; git diff --check origin/dev...HEAD",
+        "result": "passed",
+        "exit_code": 0
+      }
+    ],
+    "delivery_boundary": "New head requires fresh assigned Claude frozen-head review, genuine CI and native supervisor integration. No old-head third rerun, manual status, approval artifact or hosted completion claim. Original sole publisher retains joint #7203/#7204 release and protected-pair, four GUI, performance and thirteen parity acceptance. Separate test-file race remains with existing 7CAF followup.",
+    "integration_base": "3ac1a1a31b63f321431c293af26c713ce503d9e5",
+    "integration_merge": "f9d5214eec42197a5f22213ac6bb5bf9366e525a"
+  }
+}
