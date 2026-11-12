@@ -455,6 +455,21 @@ class GovernedVectorbtInputAdapter:
         snapshot = replay.get("source_snapshot")
         if not isinstance(snapshot, Mapping) or not snapshot:
             raise VectorbtWorkflowError("intraday replay requires a non-empty source_snapshot record")
+        if (
+            snapshot.get("reconciled_only") is not True
+            or snapshot.get("source_dataset") != "tw_price_1m"
+            or not snapshot.get("content_sha256")
+        ):
+            raise IntradayDataUnavailable(
+                "unreconciled_source_snapshot",
+                "source_snapshot must be a reconciled tw_price_1m snapshot with content_sha256",
+            )
+        records = dataset.get("records")
+        if isinstance(records, Sequence) and not isinstance(records, (str, bytes)) and records:
+            if _sha256_json(list(records)) != snapshot["content_sha256"]:
+                raise IntradayDataUnavailable(
+                    "source_snapshot_hash_mismatch", "records do not match the source_snapshot content_sha256"
+                )
         ceiling = _parse_aware(replay.get("availability_ceiling"), "replay.availability_ceiling")
         out = copy.deepcopy(dict(replay))
         out.update(
@@ -487,6 +502,8 @@ class GovernedVectorbtInputAdapter:
             raise VectorbtWorkflowError(
                 f"record for {instrument} is bound to dataset {declared!r}, expected {INTRADAY_DATASETS[frequency]!r}"
             )
+        if any(rec.get(flag) for flag in ("quarantined", "unreconciled")):
+            raise IntradayDataUnavailable("quarantined_or_unreconciled_bar", f"{instrument} {rec.get('bar_start')}")
         if rec.get("partial") or rec.get("waived"):
             raise IntradayDataUnavailable("partial_or_waived_bar", f"{instrument} {rec.get('bar_start')}")
         start = _parse_aware(rec.get("bar_start"), f"{instrument} bar_start").astimezone(TAIPEI_TZ)
@@ -937,18 +954,35 @@ class VectorbtBackend:
             )
             if artifact_orders is not None:
                 sizes = pd.Series(artifact_orders[inst], dtype="float64")
-                if config.apply_taiwan_fill_costs:
-                    fee_series = pd.Series(
+                flatten_idx: list[int] = []
+                if _is_intraday(dataset):
+                    if _artifact_holding(config.strategy_artifact) != "overnight":
+                        flatten_idx = sorted(_flatten_indexes(dataset.dates_by_instrument[inst]).values())
+                    # Flatten closes the ACTUALLY executed position (target 0, never reverses) so
+                    # rejected / cash-limited / partial fills cannot leave or flip a residual.
+                    for fi in flatten_idx:
+                        sizes.iloc[fi] = 0.0
+                size_types = pd.Series(0, index=sizes.index, dtype="int64")  # SizeType.Amount
+                for fi in flatten_idx:
+                    size_types.iloc[fi] = 3  # SizeType.TargetAmount
+
+                def _fees_for(flatten_sells: dict[int, bool]) -> Any:
+                    if not config.apply_taiwan_fill_costs:
+                        return config.fees
+                    return pd.Series(
                         [
                             comm_rate + inst_tax_rate
-                            if (not math.isnan(float(s)) and float(s) < 0.0)
+                            if (
+                                flatten_sells.get(i, False)
+                                if i in flatten_sells
+                                else (not math.isnan(float(s_)) and float(s_) < 0.0)
+                            )
                             else comm_rate
-                            for s in artifact_orders[inst]
+                            for i, s_ in enumerate(sizes)
                         ],
                         dtype="float64",
                     )
-                else:
-                    fee_series = config.fees
+
                 if _is_intraday(dataset):
                     # Orders are already shifted to the fill bar; fill at that bar's OPEN.
                     opens = pd.Series([b[0] for b in bars], dtype="float64")
@@ -956,15 +990,29 @@ class VectorbtBackend:
                     order_kwargs = dict(price=opens, freq=order_freq)
                 else:
                     order_kwargs = dict(freq="1D")
-                pf = vbt.Portfolio.from_orders(
-                    closes,
-                    size=sizes,
-                    size_type="amount",
-                    direction="both",
-                    init_cash=config.init_cash,
-                    fees=fee_series,
-                    **order_kwargs,
-                )
+
+                def _simulate(fees_arg: Any) -> Any:
+                    return vbt.Portfolio.from_orders(
+                        closes,
+                        size=sizes,
+                        size_type=size_types if flatten_idx else "amount",
+                        direction="both",
+                        init_cash=config.init_cash,
+                        fees=fees_arg,
+                        **order_kwargs,
+                    )
+
+                flatten_sells = {fi: True for fi in flatten_idx}
+                pf = _simulate(_fees_for(flatten_sells))
+                for _ in range(len(flatten_idx) + 1):  # tax applies only to flatten SELLs (closing a long)
+                    if not flatten_idx or not config.apply_taiwan_fill_costs:
+                        break
+                    flows = pf.asset_flow().to_numpy()
+                    actual = {fi: bool(flows[fi] < 0.0) for fi in flatten_idx}
+                    if actual == flatten_sells:
+                        break
+                    flatten_sells = actual
+                    pf = _simulate(_fees_for(flatten_sells))
                 cost_summary = _extract_fill_cost_summary(
                     pf,
                     commission_rate=comm_rate,
@@ -981,10 +1029,7 @@ class VectorbtBackend:
                     **cost_summary,
                 }
                 if _is_intraday(dataset):
-                    gross_pf = vbt.Portfolio.from_orders(
-                        closes, size=sizes, size_type="amount", direction="both",
-                        init_cash=config.init_cash, fees=0.0, **order_kwargs,
-                    )
+                    gross_pf = _simulate(0.0)
                     per_instrument[inst].update(
                         sharpe_ratio=round(
                             _annualized_sharpe(

@@ -63,12 +63,16 @@ def _records(instrument, *, width=5, opens=None, closes=None, avail="2026-11-10T
 
 
 def _dataset(width=5, freq="5m", ceiling=CEILING, **kw):
+    from services.research.vectorbt.adapter.vectorbt_adapter import _sha256_json
+
+    records = _records("2330", width=width, **kw) + _records("2317", width=width, **kw)
     return {
         "dataset_id": "ds-intraday", "strategy_id": "S-1", "source_dataset_refs": ["source-ingest:kbar/tw_price_1m"],
         "data_frequency": freq,
-        "records": _records("2330", width=width, **kw) + _records("2317", width=width, **kw),
+        "records": records,
         "replay": {"label": "replay", "clock": "bar_end", "availability_ceiling": ceiling.isoformat(),
-                   "source_snapshot": {"source_dataset": "tw_price_1m", "content_sha256": "abc"}},
+                   "source_snapshot": {"source_dataset": "tw_price_1m", "reconciled_only": True,
+                                       "content_sha256": _sha256_json(records)}},
     }
 
 
@@ -88,6 +92,7 @@ def test_bars_keyed_by_bar_start_allow_many_bars_per_date():
 def test_duplicate_instrument_bar_start_rejected():
     ds = _dataset()
     ds["records"].append(dict(ds["records"][0]))
+    _resnap(ds)
     with pytest.raises(VectorbtWorkflowError, match="duplicate bar"):
         GovernedVectorbtInputAdapter().prepare(ds)
 
@@ -112,6 +117,7 @@ def test_daily_style_records_cannot_stand_in_for_minute_bars():
     ds = _dataset()
     for r in ds["records"]:
         r["date"] = r.pop("bar_start")[:10]
+    _resnap(ds)
     with pytest.raises(IntradayDataUnavailable) as exc:
         GovernedVectorbtInputAdapter().prepare(ds)
     assert exc.value.reason == "missing_bar_start"
@@ -218,7 +224,7 @@ def test_engine_replay_label_snapshot_gross_net_and_annualisation():
     agg = res.backtest_result.aggregate_metrics
     assert agg["evidence_mode"] == "replay" and agg["live_or_paper_evidence"] is False
     assert agg["bars_per_year"] == 252 * 54 and agg["bar_frequency"] == "5m"
-    assert agg["source_snapshot"]["content_sha256"] == "abc"
+    assert len(agg["source_snapshot"]["content_sha256"]) == 64
     assert agg["mean_gross_total_return"] > agg["mean_net_total_return"]  # costs dominate intraday
     for m in res.backtest_result.per_instrument_metrics.values():
         assert m["fill_rule"] == "next_bar_open" and m["trade_count"] > 0 and m["trade_count"] % 2 == 0  # flat
@@ -539,3 +545,62 @@ def test_evaluate_library_attaches_intraday_and_refuses_ungoverned_dataset(tmp_p
     for bad in (tampered, quarantined, future, no_snapshot):
         with pytest.raises(IntradayEvaluationUnavailable):
             evaluate_alpha_template_library([_kmid()], universe=universe, intraday_replay_dataset=bad)
+
+
+# --- governance at the backtest boundary (real reconciled-store replay) -------------------------
+
+def _resnap(ds):
+    from services.research.vectorbt.adapter.vectorbt_adapter import _sha256_json
+
+    ds["replay"]["source_snapshot"]["content_sha256"] = _sha256_json(ds["records"])
+    return ds
+
+
+def test_prepare_rejects_tampered_or_ungoverned_replay_snapshots(tmp_path):
+    import copy
+
+    base = _replay_ds(tmp_path)
+    GovernedVectorbtInputAdapter().prepare(copy.deepcopy(base))  # control: untouched passes
+
+    changed = copy.deepcopy(base)
+    changed["records"][0]["open"] += 1.0  # price changed, hash now stale
+    with pytest.raises(IntradayDataUnavailable):
+        GovernedVectorbtInputAdapter().prepare(changed)
+
+    quarantined = copy.deepcopy(base)
+    quarantined["records"][0]["quarantined"] = True
+    _resnap(quarantined)  # even with a refreshed hash
+    with pytest.raises(IntradayDataUnavailable):
+        GovernedVectorbtInputAdapter().prepare(quarantined)
+
+    unreconciled = copy.deepcopy(base)
+    unreconciled["replay"]["source_snapshot"]["reconciled_only"] = False
+    with pytest.raises(IntradayDataUnavailable):
+        GovernedVectorbtInputAdapter().prepare(unreconciled)
+
+    nohash = copy.deepcopy(base)
+    del nohash["replay"]["source_snapshot"]["content_sha256"]
+    with pytest.raises(IntradayDataUnavailable):
+        GovernedVectorbtInputAdapter().prepare(nohash)
+
+
+# --- flatten closes the actually executed position ----------------------------------------------
+
+def _real_run(ds, **cfg):
+    from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
+
+    config = BacktestConfig(strategy_artifact=_minute_art("5m"), **cfg)
+    config.strategy_artifact["parameters"]["order_quantity"] = 1000
+    return run_vectorbt_workflow(ds, config=config, backend=VectorbtBackend()).backtest_result.per_instrument_metrics
+
+
+@pytest.mark.parametrize("days", [("2026-11-10",)])
+def test_flatten_closes_actual_position_when_cash_limited(tmp_path, monkeypatch, days):
+    pytest.importorskip("vectorbt")
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    ds = _replay_ds(tmp_path, days)
+    for kwargs in ({"init_cash": 10000}, {"init_cash": 10000, "apply_taiwan_fill_costs": True}):
+        metrics = _real_run(ds, **kwargs)
+        for m in metrics.values():
+            assert m["net_position"] == pytest.approx(0.0, abs=1e-6)
+            assert m["final_portfolio_value"] > 0.0
