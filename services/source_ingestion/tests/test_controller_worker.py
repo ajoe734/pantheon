@@ -3020,10 +3020,14 @@ def _collector_actual(
     extra_direct_connector: bool = False,
     is_due: bool = True,
     sequence_no: int = 1,
+    fetch_binding: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    from services.source_ingestion.connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
     actual = json.loads(json.dumps(_actual_readback()).replace(CONNECTOR_ID, connector_id))
     actual["controller_state"]["sequence_no"] = sequence_no
     item = actual["connectors"][0]
+    item["fetch_binding"] = fetch_binding or {"mode": "provider_owned_adapter", "adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN}
     item["connector"].update({"status": status, "metadata": {"definition_id": definition_id, "tenant_id": "tenant-a"}})
     # Registered Collector records carry bundle provenance (tenant/PIT), not direct-provider provenance.
     record = item["latest_source_record"]
@@ -3133,6 +3137,9 @@ def test_selection_uses_registered_collector_definition_not_name_prefix() -> Non
         {"definition_id": "tw-twse-tpex-official-market"},
         {"definition_id": None},
         {"is_due": False},
+        {"fetch_binding": {"mode": "provider_owned_adapter", "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload"}},
+        {"fetch_binding": {"mode": "static_records", "adapter": ""}},
+        {"fetch_binding": {"mode": "external_feed", "adapter": ""}},
     ],
 )
 def test_selection_excludes_disabled_unscheduled_not_due_and_non_collector(kwargs: dict[str, Any]) -> None:

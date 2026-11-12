@@ -1238,6 +1238,22 @@ def _validate_due_state_readback(
         )
 
 
+def _fetch_binds_collector_adapter(item: Mapping[str, Any]) -> bool:
+    """The persisted fetch config must be the Collector bundle provider-owned adapter.
+
+    A matching definition_id alone is not enough: a connector whose effective fetch
+    mode/adapter is anything else (e.g. a direct provider adapter) is never a steady pull.
+    """
+
+    from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
+    binding = item.get("fetch_binding") if isinstance(item.get("fetch_binding"), Mapping) else {}
+    return (
+        binding.get("mode") == "provider_owned_adapter"
+        and binding.get("adapter") == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+    )
+
+
 def registered_collector_connector_ids(actual: Mapping[str, Any], reconcile: Mapping[str, Any]) -> list[str]:
     """Reconciled, configured connectors whose registered definition is the Collector bundle adapter."""
 
@@ -1257,7 +1273,11 @@ def registered_collector_connector_ids(actual: Mapping[str, Any], reconcile: Map
         connector_id = str(item.get("connector_id") or "")
         connector = item.get("connector") if isinstance(item.get("connector"), Mapping) else {}
         metadata = connector.get("metadata") if isinstance(connector.get("metadata"), Mapping) else {}
-        if connector_id in reconciled and str(metadata.get("definition_id") or "") in collector_definitions:
+        if (
+            connector_id in reconciled
+            and str(metadata.get("definition_id") or "") in collector_definitions
+            and _fetch_binds_collector_adapter(item)
+        ):
             found.append(connector_id)
     return sorted(found)
 
@@ -1293,6 +1313,8 @@ def select_collector_pull_connectors(
         connector = item.get("connector") if isinstance(item.get("connector"), Mapping) else {}
         metadata = connector.get("metadata") if isinstance(connector.get("metadata"), Mapping) else {}
         if str(metadata.get("definition_id") or "") not in collector_definitions:
+            continue
+        if not _fetch_binds_collector_adapter(item):
             continue
         if str(connector.get("status") or "") != "enabled":
             continue

@@ -1896,3 +1896,30 @@ def test_full_controller_tick_fails_closed_on_collector_readback_violation(
     monkeypatch.setattr(cw, "read_actual_state", corrupted)
     with pytest.raises(cw.ControllerTickError, match="terminal source readback failed closed"):
         tick()
+
+
+def test_full_tick_excludes_definition_fetch_adapter_mismatch(steady_stack, tmp_path, monkeypatch):
+    from dataclasses import replace
+    from services.source_ingestion import controller_worker
+    from services.source_ingestion import provider_adapters as pa
+    http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
+    token = 'TaiwanOfficialMarketDatasetAdapter.records_from_payload'
+    calls = []
+    def fake_direct_transport(adapter, request, trace_id):
+        calls.append(token)
+        return ()
+    monkeypatch.setitem(pa.ALLOWED_PROVIDER_ADAPTERS, token, replace(pa.ALLOWED_PROVIDER_ADAPTERS[token], handler=fake_direct_transport))
+    cfg = _steady_collector_config('conn-collector-ptt')
+    cfg['fetch'] = {'mode': 'provider_owned_adapter', 'adapter': token,
+                    'adapter_config': {}, 'request': {}, 'max_records': 10,
+                    'allow_empty': True, 'empty_reason': 'review local fake direct transport'}
+    response = http.post('/api/source-ingest/connectors', json=cfg)
+    assert response.status_code == 201, response.text
+    try:
+        result = tick()
+        print('full_tick_status', result['status'])
+    except controller_worker.ControllerTickError as exc:
+        print('full_tick_terminal_error_after_adapter_execution', str(exc))
+    print('full_tick_direct_provider_adapter_calls', calls, 'collector_reads', reads)
+    assert calls == []
+    assert reads == []
