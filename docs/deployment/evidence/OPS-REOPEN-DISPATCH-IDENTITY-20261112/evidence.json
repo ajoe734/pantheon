@@ -8,7 +8,30 @@
   },
   "verification": {
     "test_supervisor": "417 tests; only cwd-dependent test_ignored_build_artifacts_do_not_dirty_worktree errors when run from .orchestrator, passes from repo root with PYTHONPATH=.orchestrator",
-    "rewrite.test_worker_workspace": "58 tests OK (adds process_queue regression: real block-mode guard + real git worktree; fails without the supervisor guard admission)"
+    "rewrite.test_worker_workspace": "58 tests OK (adds process_queue regression: real block-mode guard + real git worktree; fails without the supervisor guard admission)",
+    "real_flow_regressions": {
+      "location": ".orchestrator/rewrite/test_worker_workspace.py RecoveryCurrentbaseDeliveryTests",
+      "tests": [
+        "test_shrinking_activity_reopen_wake_survives_real_plan_reserve_process",
+        "test_real_flow_rejects_stale_identity_and_non_owner_without_launch",
+        "test_real_flow_unrelated_file_refuses_launch_and_keeps_pending"
+      ],
+      "path": "real build_dispatch_plan -> reserve_dispatch_plan -> process_queue on a temporary real Git worktree; real stale_dispatch_skip_message, evaluate_queued_delivery_admission, build_request, queue_events, prepare_worker_workspace and block-mode tree guard. Mocked only: load_status (reads the fixture status file), git fetch, repo-scope validation, activity logging, command-runtime block, and start_worker_for_request (launch counter).",
+      "covers": "activity shrink 2->1 with unchanged canonical intent; pending->materialized ack; health-refresh wait leaves event pending (no stale skip); then exactly one same-owner launch; duplicate reserve and restart process_queue launch nothing more; WIP bytes/HEAD/index unchanged, no stash; stale intent/generation/owner/reviewer/dependency rejected with stale_dispatch_event and no launch; unrelated file keeps event pending without launch. Reviewer refusal remains covered by test_process_queue_launches_owner_wip_through_block_guard_but_not_others.",
+      "commands": [
+        "cd .orchestrator && python3 -m unittest -k real_flow -k shrinking_activity rewrite.test_worker_workspace  -> 3 tests OK, exit 0",
+        "cd .orchestrator && python3 -m unittest rewrite.test_worker_workspace.RecoveryCurrentbaseDeliveryTests -> 28 tests OK in 48.0s, exit 0",
+        "cd .orchestrator && python3 -m unittest test_supervisor.SharedPlannerContractTests -> 36 tests OK in 0.18s, exit 0"
+      ]
+    }
   },
-  "not_claimed": ["runtime promotion", "original-task worker receipts", "product acceptance"]
+  "not_claimed": [
+    "runtime promotion",
+    "original-task worker receipts",
+    "product acceptance"
+  ],
+  "limitations": [
+    "Full test_supervisor and full rewrite.test_worker_workspace were not run to completion within the bounded batch; two pre-existing workspace cases hit git fetch timeouts in the reviewer's environment (base_fetch_failed), no regression claimed.",
+    "The generated untracked worker task-brief file appears in the worktree after a real launch; it is allowed in the preservation assertion and is not owner WIP."
+  ]
 }

@@ -1625,6 +1625,203 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         )
         self.assertEqual(launches, [])
 
+    # -- real planner -> reservation -> process_queue reopen regression ------
+
+    def _real_flow_fixture(self, *, owner="Claude2", reviewer="Codex"):
+        import test_supervisor as ts
+        sup = worker_workspace._supervisor_module()
+        config, task = self._resume_fixture(owner=owner, reviewer=reviewer)
+        base = ts.config_fixture(self.root)
+        for key in ("schema", "ready_dispatcher", "providers", "worker_reassignment"):
+            config[key] = base[key]
+        config["paths"].update(base["paths"])
+        config["ready_dispatcher"] = {
+            **base["ready_dispatcher"], "enabled": True,
+            "max_concurrent_per_account": {"claude2_account": 2, "codex_account": 2},
+        }
+        config["agents"] = {
+            "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2", "adapter": "codex", "max_parallel": 2},
+            "codex": base["agents"]["codex"],
+        }
+        config["providers"] = {
+            "claude2": {"delivery_mode": "codex", "account": "claude2-account"},
+            "codex": base["providers"]["codex"],
+        }
+        config["worker_reassignment"] = {"enabled": False}
+        config["worker_tree_guard"] = {"enabled": True, "mode": "block"}
+        task = {**task, "depends_on": [], "last_update": "2026-11-12T14:00:00Z"}
+        return sup, ts, config, task
+
+    def _assert_wip_preserved(self, before):
+        """Owner WIP bytes/head/index are unchanged; only the generated,
+        untracked worker task-brief may appear beside them."""
+        after = self._snapshot()
+        self.assertEqual(after["head"], before["head"])
+        self.assertEqual(after["files"], before["files"])
+        generated = ".orchestrator/worker-runtime/task-context/"
+        extra = [
+            line for line in after["status"].splitlines()
+            if line not in before["status"].splitlines()
+        ]
+        self.assertTrue(all(generated in line and line.startswith("??") for line in extra), extra)
+        self.assertEqual(self._git(self.worktree, "diff", "--cached", "--name-only"), "")
+
+    def _write_status(self, config, task):
+        Path(config["paths"]["status_file"]).write_text(
+            json.dumps({"tasks": [task]}), encoding="utf-8"
+        )
+
+    def _flow_patches(self, sup, launches, *, health_refresh=None):
+        status_path = self.root / "ai-status.json"
+
+        def read_status(*_a, **_k):
+            return json.loads(status_path.read_text(encoding="utf-8"))
+
+        return [
+            mock.patch.object(sup, "load_status", side_effect=read_status),
+            mock.patch.object(worker_workspace, "load_status", side_effect=read_status),
+            mock.patch.object(sup, "write_activity_log"),
+            mock.patch.object(sup, "sync_dispatched_task_status", create=True),
+            mock.patch.object(sup, "command_runtime_dispatch_block_reason", return_value=None),
+            mock.patch.object(worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)),
+            mock.patch.object(worker_workspace, "validate_task_repository_scope", return_value="pantheon"),
+            mock.patch.object(sup, "prepare_worker_workspace", worker_workspace.prepare_worker_workspace),
+            mock.patch.object(
+                sup, "start_worker_for_request",
+                side_effect=lambda *a, **k: launches.append(1) or (True, {}, {}),
+            ),
+        ]
+
+    def test_shrinking_activity_reopen_wake_survives_real_plan_reserve_process(self) -> None:
+        import contextlib
+        sup, ts, config, task = self._real_flow_fixture()
+        self._write_status(config, task)
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        reopen = {"ts": "2026-11-12T14:37:57Z", "agent": "Human/Ops", "type": "reopen", "task_id": self.task_id}
+        state = ts.with_healthy_delivery_health(
+            config, {"workers": {}, "queue": {"events": {}}, "worker_worktrees": {"leases": {}}}
+        )
+        launches: list[int] = []
+        with contextlib.ExitStack() as stack:
+            for patcher in self._flow_patches(sup, launches):
+                stack.enter_context(patcher)
+            status = {"tasks": [task]}
+            # Plan sees two reopen history rows; the tail then rotates to one.
+            plan = sup.build_dispatch_plan(
+                config, state, status, [], live_total=0, activity_events=[reopen, reopen]
+            )
+            self.assertEqual(len(plan["events"]), 1, plan)
+            planned = plan["events"][0]
+            self.assertEqual(planned["reason"], worker_workspace.REASON_OWNED_IN_PROGRESS)
+            self.assertEqual(planned["review_requeue_intent_id"], task["review_requeue_intent"]["intent_id"])
+            self.assertNotIn("review_reopen_revision", planned)
+            self.assertTrue(sup.reserve_dispatch_plan(config, state, plan, activity_events=[reopen]))
+            events = sup.queue_events(state)
+            self.assertEqual(len(events), 1)
+            event_id = events[0]["event_id"]
+
+            # Pending -> materialized acknowledgement keeps the same wake valid.
+            acked = {**task, "review_requeue_intent": {
+                **task["review_requeue_intent"], "status": "materialized",
+                "queue_event_id": event_id, "event_key": planned["key"],
+                "materialized_at": "2026-11-12T14:38:00Z",
+            }}
+            self._write_status(config, acked)
+            task_map = {self.task_id: acked}
+            self.assertIsNone(
+                sup.stale_dispatch_skip_message(config, events[0], task_map, activity_events=[])
+            )
+
+            # Genuine health-refresh wait must leave the event pending.
+            healthy = state["delivery_health"]
+            state["delivery_health"] = {"version": 1, "endpoints": {}, "accounts": {}}
+            demand: list[dict[str, str]] = []
+            sup.process_queue(config, state, health_refresh_demand=demand)
+            self.assertEqual(launches, [])
+            self.assertEqual(state["queue"]["events"][event_id]["status"], "pending")
+            self.assertNotEqual(state["queue"]["events"][event_id].get("skip_reason"), "stale_dispatch_event")
+            self.assertEqual(self._snapshot(), before)
+
+            # Health recovered: exactly one same-owner launch, WIP untouched.
+            state["delivery_health"] = healthy
+            sup.process_queue(config, state)
+            self.assertEqual(launches, [1], state["queue"]["events"][event_id])
+            self._assert_wip_preserved(before)
+            self.assertEqual(self._git(self.worktree, "stash", "list"), "")
+
+            # Duplicate/restart replay of the same plan launches nothing more.
+            self.assertFalse(sup.reserve_dispatch_plan(config, state, plan, activity_events=[]))
+            sup.process_queue(config, state)
+            self.assertEqual(launches, [1])
+            self._assert_wip_preserved(before)
+
+    def test_real_flow_rejects_stale_identity_and_non_owner_without_launch(self) -> None:
+        import contextlib
+        sup, ts, config, task = self._real_flow_fixture()
+        self._write_status(config, task)
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        state = ts.with_healthy_delivery_health(
+            config, {"workers": {}, "queue": {"events": {}}, "worker_worktrees": {"leases": {}}}
+        )
+        launches: list[int] = []
+        with contextlib.ExitStack() as stack:
+            for patcher in self._flow_patches(sup, launches):
+                stack.enter_context(patcher)
+            plan = sup.build_dispatch_plan(
+                config, state, {"tasks": [task]}, [], live_total=0, activity_events=[]
+            )
+            self.assertTrue(sup.reserve_dispatch_plan(config, state, plan, activity_events=[]))
+            event = sup.queue_events(state)[0]
+            event_id = event["event_id"]
+            intent = task["review_requeue_intent"]
+            variants = {
+                "intent": {**task, "review_requeue_intent": {**intent, "intent_id": "review-requeue-" + "b" * 64}},
+                "generation": {**task, "generation": 2, "review_requeue_intent": {**intent, "task_generation": 2}},
+                "owner": {**task, "owner": "Codex", "review_requeue_intent": {**intent, "owner": "Codex"}},
+                "reviewer": {**task, "reviewer": "Codex3", "review_requeue_intent": {**intent, "reviewer": "Codex3"}},
+                "dependency": {**task, "depends_on": ["OTHER-TASK"]},
+            }
+            for name, variant in variants.items():
+                self.assertIsNotNone(
+                    sup.stale_dispatch_skip_message(
+                        config, event, {self.task_id: variant}, activity_events=[]
+                    ),
+                    name,
+                )
+            # Stale in the real queue path: event is completed, never launched.
+            self._write_status(config, variants["intent"])
+            sup.process_queue(config, state)
+            record = state["queue"]["events"][event_id]
+            self.assertEqual(launches, [])
+            self.assertEqual(record.get("skip_reason"), "stale_dispatch_event")
+            self.assertEqual(self._snapshot(), before)
+
+    def test_real_flow_unrelated_file_refuses_launch_and_keeps_pending(self) -> None:
+        import contextlib
+        sup, ts, config, task = self._real_flow_fixture()
+        self._write_status(config, task)
+        self._dirty_owned_wip()
+        (self.worktree / "unrelated.py").write_text("# stray\n", encoding="utf-8")
+        before = self._snapshot()
+        state = ts.with_healthy_delivery_health(
+            config, {"workers": {}, "queue": {"events": {}}, "worker_worktrees": {"leases": {}}}
+        )
+        launches: list[int] = []
+        with contextlib.ExitStack() as stack:
+            for patcher in self._flow_patches(sup, launches):
+                stack.enter_context(patcher)
+            plan = sup.build_dispatch_plan(
+                config, state, {"tasks": [task]}, [], live_total=0, activity_events=[]
+            )
+            self.assertTrue(sup.reserve_dispatch_plan(config, state, plan, activity_events=[]))
+            event_id = sup.queue_events(state)[0]["event_id"]
+            sup.process_queue(config, state)
+        self.assertEqual(launches, [])
+        self.assertEqual(state["queue"]["events"][event_id]["status"], "pending")
+        self.assertEqual(self._snapshot(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

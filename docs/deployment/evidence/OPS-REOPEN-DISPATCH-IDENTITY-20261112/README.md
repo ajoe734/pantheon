@@ -26,3 +26,7 @@ Tests use real temporary Git worktrees (`RecoveryCurrentbaseDeliveryTests`).
 ## Not done here (original Ops duties)
 Source merge only. No live canonical/queue/runtime changes, no runtime promotion, no product acceptance,
 no touching of the frontend worktrees. Actual worker receipts for the original QA/pinned tasks remain Ops duties.
+
+## Real-flow regressions (review reopen)
+
+`RecoveryCurrentbaseDeliveryTests` now drives the real `build_dispatch_plan` -> `reserve_dispatch_plan` -> `process_queue` path on a temporary Git worktree with a shrinking activity view (2 -> 1) and unchanged canonical intent. See `evidence.json` `verification.real_flow_regressions` for exact commands, results (3 / 28 / 36 tests OK, exit 0) and limitations. Runtime promotion and original-task worker receipts remain Ops duties.
