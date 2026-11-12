@@ -318,3 +318,57 @@ def test_nested_gate_mechanism_record_and_contradicted_blocker() -> None:
     assert by_id["strat-nested"].score_breakdown.evidence_quality > 0
     assert "mechanism_contradicted" in by_id["strat-contradicted"].blockers
     assert by_id["strat-contradicted"].recommended_action.type == "ignore"
+
+
+def test_gate_to_registry_to_persona_ranks_supported_above_untested_without_injection(monkeypatch) -> None:
+    """Real gate -> promotion/draft builders -> registry read projection -> persona scorer."""
+    import urllib.parse  # noqa: F401
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.ports.research_knowledge_source import (
+        DefaultResearchKnowledgeSourcePort,
+    )
+    from services.registry.promotion.gate import PromotionGate
+    from services.research.replication.gate import create_promotion_request
+    from services.research.replication.tests.test_gate_mechanism import EVENT, evaluate, gate_request
+
+    items = []
+    for sid, predictions in (("strat-gate-untested", None), ("strat-gate-supported", [EVENT("-")])):
+        gate, response = evaluate(predictions, mechanism_alpha=0.5)
+        assert response.passed
+        spec = _admitted_spec(sid)
+        promotion = create_promotion_request(response, gate_request(gate, None).proposed_strategy_spec)
+        draft = PromotionGate.build_draft_entry_from_replication_request(
+            promotion, strategy_id=sid, checksum="sha256:test"
+        )
+        # the registry stores the draft entry; the spec rides in metadata beside the gate's record
+        items.append({
+            **{k: v for k, v in draft.items() if k != "metadata"},
+            "metadata": {**draft.get("metadata", {}), "strategy_spec": spec},
+            "artifact_state": "approved",
+            "owner_tenant": "tenant-dev",
+        })
+
+    monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: items)
+    monkeypatch.setattr(adapter_base, "registry_url", lambda path: "http://registry" + path)
+    monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda **k: "tenant-dev")
+    token = owner_reads.authorization.set("Bearer test")
+    try:
+        specs = DefaultResearchKnowledgeSourcePort()._fetch_canonical_strategy_specs_uncached()
+    finally:
+        owner_reads.authorization.reset(token)
+
+    projected = {s["strategy_id"]: s["metadata"] for s in specs}
+    assert projected["strat-gate-supported"]["mechanism_support"] == 1.0
+    assert projected["strat-gate-untested"].get("mechanism_support") is None
+
+    matches = PersonaStrategyDiscoveryService().match_candidates(
+        extract_persona_strategy_profile(_persona()),
+        strategy_specs=specs,
+        created_at="2026-06-10T00:00:00Z",
+    )
+    by_id = {m.matched_object_id: m for m in matches}
+    supported, untested = by_id["strat-gate-supported"], by_id["strat-gate-untested"]
+    assert supported.score_breakdown.evidence_quality == untested.score_breakdown.evidence_quality + 3.0
+    assert supported.rank < untested.rank
+    assert untested.blockers == ()
