@@ -1,0 +1,11 @@
+{
+  "task_id": "FINMIND-BROKER-READBACK-PROVENANCE-20261112",
+  "scope": "source-only; not a hosted market refresh PASS",
+  "root_cause": "records_from_daily_report_payload persisted source_url (actual quota_meta.request_url) but never api_endpoint, so controller readback required_provenance failed provenance_missing[api_endpoint]",
+  "fix": "broker record metadata now carries api_endpoint = actual transport request URL only when supplied and free of credentials/non-http(s); no derived fallback, controller gate unchanged",
+  "tests": {
+    "new": "services/source_ingestion/tests/test_finmind_broker_readback_provenance.py (8 passed)",
+    "finmind_connectors": "41 passed together with new file",
+    "broader_finmind_broker_backfill_filter": "205 passed, 9 failed; identical 9 failures present on base without this change"
+  }
+}
