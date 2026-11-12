@@ -1367,6 +1367,9 @@ jobs:
           # connector and exact reviewed hosts. Callers cannot inject profiles,
           # wildcard domains, credentials, query strings, or arbitrary egress.
           PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'root,source-ingest-scheduler' || 'root' }}
+          # Existing opt-in flag; vars.* is not shell env, so map it explicitly.
+          # Only the literal 'true' selects collector_steady_pull; unset/other keeps reconcile_only.
+          SOURCE_INGEST_STEADY_COLLECTOR_PULL: ${{ vars.SOURCE_INGEST_STEADY_COLLECTOR_PULL == 'true' && 'true' || 'false' }}
           PANTHEON_EXTERNAL_EGRESS: ${{ (env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' || vars.PANTHEON_COLLECTOR_HOST != '') && 'allowlist' || 'deny' }}
           PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'openapi.twse.com.tw,www.tpex.org.tw' || vars.PANTHEON_COLLECTOR_HOST }}
           SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market

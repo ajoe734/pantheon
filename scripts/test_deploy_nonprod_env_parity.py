@@ -736,3 +736,23 @@ with_dev_bff_runtime_env "${{runtime_sha}}" false \
     control_case = remote_case.split("\n  control)\n", 1)[1].split("\n  refresh-only)\n", 1)[0]
     assert "PANTHEON_PAPER_EXPRESSION_LAYER" not in control_case
 
+
+
+def _dev_deploy_step_env_block() -> str:
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    step = workflow.split("      - name: Deploy dev VM stack under lease\n", 1)[1]
+    return step.split("        shell: /bin/bash", 1)[0]
+
+
+def test_dev_deploy_step_maps_steady_collector_pull_var_to_env() -> None:
+    # vars.* is not shell env: the deploy step must map the existing flag explicitly,
+    # alongside the existing single PANTHEON_COLLECTOR_HOST mapping, with no new names.
+    block = _dev_deploy_step_env_block()
+    assert (
+        "SOURCE_INGEST_STEADY_COLLECTOR_PULL: ${{ vars.SOURCE_INGEST_STEADY_COLLECTOR_PULL == 'true' && 'true' || 'false' }}"
+        in block
+    )
+    assert "PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}" in block
+    # Bounded profile, egress allowlist and quotas stay untouched.
+    assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS: \"1\"" in block
+    assert block.count("SOURCE_INGEST_STEADY_COLLECTOR_PULL") == 2  # comment + mapping
