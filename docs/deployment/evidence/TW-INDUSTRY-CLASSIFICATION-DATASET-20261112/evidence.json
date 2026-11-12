@@ -1,0 +1,128 @@
+{
+  "schema_version": "task_evidence.v1",
+  "task_id": "TW-INDUSTRY-CLASSIFICATION-DATASET-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "scope": "Source implementation and local recorded-response verification; independent review and hosted ingestion are not asserted",
+  "base_sha": "421c13abc87a44e2b05d1bf638d9a5866e4d8400",
+  "observations": [
+    {
+      "venue": "twse",
+      "endpoint": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+      "industry_field": "產業別",
+      "company_field": "公司代號",
+      "first_local_observation_at": "2026-11-12T14:28:00.096140Z",
+      "first_local_observation_date": "2026-11-12",
+      "official_report_dates": [
+        "1151111"
+      ],
+      "full_response_sha256": "233a2f7dea3a3315f82a022b12fb8b732aeee4b510a4f41760bc5e61b29436a8",
+      "full_response_rows": 1099,
+      "recorded_fixture": "services/source_ingestion/tests/fixtures/twse_company_profile_recorded.json",
+      "fixture_sha256": "d921268c4f60e7e5ba747379e5984ba265e092df6d275e5b0176cd6a89b2aca0",
+      "selected_rows": 6
+    },
+    {
+      "venue": "tpex",
+      "endpoint": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+      "industry_field": "SecuritiesIndustryCode",
+      "company_field": "SecuritiesCompanyCode",
+      "first_local_observation_at": "2026-11-12T14:27:47.898769Z",
+      "first_local_observation_date": "2026-11-12",
+      "official_report_dates": [
+        "1151112"
+      ],
+      "full_response_sha256": "f4fc1fc95fc74aa71f306722fe4b495b14a809ad4b3adb07a7bfd5a8ff83fdb7",
+      "full_response_rows": 897,
+      "recorded_fixture": "services/source_ingestion/tests/fixtures/tpex_company_profile_recorded.json",
+      "fixture_sha256": "1489b8edb98fe4eedea41243ad3997d38cde8086dbbe10e35b4577d5d35e4fec",
+      "selected_rows": 4
+    }
+  ],
+  "datasets": {
+    "tw_industry_classification.industry_code": {
+      "normalized_dataset": "tw_industry_classification",
+      "availability_lag_days": 0,
+      "availability_floor": "actual acquisition time with subsecond precision",
+      "history_policy": "forward observations only; no backfill, imputation or website fallback"
+    },
+    "tw_sector_flows.net_shares": {
+      "normalized_dataset_catalogue_key": "tw_sector_flow",
+      "materialization": "runtime-derived latest complete visible session",
+      "availability_lag_days": 0,
+      "availability_floor": "maximum constituent availability and catalogue lag floors",
+      "unit": "shares",
+      "inputs": [
+        "tw_industry_classification.industry_code",
+        "tw_institutional_flows.foreign_net_shares",
+        "tw_institutional_flows.trust_net_shares",
+        "tw_institutional_flows.dealer_net_shares"
+      ],
+      "completeness": "explicit complete governed market required; every member same session; fail closed otherwise"
+    }
+  },
+  "production_entry_points": [
+    "execute_provider_owned_adapter -> TaiwanOfficialMarketDatasetAdapter.fetch_payload/records_from_payload -> MarketDataStorageWriter",
+    "source_dataset_authority.feature_observations_from_wrappers",
+    "evaluate_strategy_view -> evaluate_screened_view -> build_candidate_pool_snapshot",
+    "CurrentArtifactStrategy -> evaluate_screened_views",
+    "vectorbt _screened_artifact_view_sequence -> evaluate_screened_views"
+  ],
+  "acceptance_evidence": {
+    "1": [
+      "test_recorded_company_profiles_through_provider_refresh_and_storage",
+      "connector_definitions.GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS",
+      "financial_source_catalog official catalogue/template",
+      "active_universe.DEFAULT_SOURCE_UPDATE_RULES"
+    ],
+    "2": [
+      "test_recorded_company_profiles_through_provider_refresh_and_storage",
+      "test_forward_observations_keep_original_history_and_do_not_remap_prior_flows",
+      "test_official_industry_storage_reader_preserves_first_acquisition_time"
+    ],
+    "3": [
+      "test_catalogue_declares_observation_and_sector_availability",
+      "test_sector_sum_uses_real_flows_and_latest_known_industry",
+      "test_sector_aggregation_requires_explicit_complete_market_boundary"
+    ],
+    "4": [
+      "test_group_and_industry_neutralize_run_in_production_strategy_entry",
+      "test_sector_screen_derivation_runs_through_production_entry_and_missing_holds",
+      "test_real_paper_entry_uses_identical_sector_snapshot"
+    ],
+    "5": [
+      "test_recorded_company_profiles_through_provider_refresh_and_storage exact URL assertions",
+      "test_fetch_uses_openapi_only_and_rejects_website_endpoints",
+      "no egress allowlist file changed"
+    ],
+    "6": [
+      "observations metadata and recorded fixtures",
+      "recorded_inputs.json",
+      "README.md endpoint/field/first-acquisition table"
+    ]
+  },
+  "validation": {
+    "command": "timeout 180 /tmp/gfd-venv/bin/python -m pytest services/registry/test_sector_features.py services/registry/test_factor_rule.py services/registry/test_candidate_pool.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_feature_catalogue.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_active_universe.py services/training-session/tests/test_source_dataset_authority.py services/research/tests/test_candidate_pool_parity.py services/execution/lean_runtime/test_paper_signal_producer.py services/registry/test_strategy_artifact.py services/source_ingestion/tests/test_provider_management_coverage.py -q",
+    "exit_status": 0,
+    "passed": 458,
+    "skipped": 1,
+    "summary": "458 passed, 1 skipped, 15 warnings, 15 subtests passed in 84.27s (0:01:24)",
+    "skip_reason": "Existing opt-in read-only network smoke requires PANTHEON_TW_OFFICIAL_LIVE_SMOKE=1",
+    "log": "validation.log",
+    "log_sha256": "bb53de69855835dfd0685c73da157f20a8a6588d3e5a63f0dfe794c9bd0cde45",
+    "whitespace_check": "git diff --check (exit 0)"
+  },
+  "limits": [
+    "First local acquisition is 2026-11-12; hosted first ingestion/deployment is not established",
+    "Recorded samples are real selected response rows, not an entire-market completeness claim",
+    "Sector net shares are not a TWD monetary-flow feature",
+    "industry_neutralize is supported only as an outermost screen expression with governed group_by; per-symbol and unaligned temporal nesting remain rejected",
+    "A prospective company profile does not establish delisted-company history; survivorship admission remains unchanged"
+  ],
+  "review": {
+    "status": "awaiting independent exact-head review",
+    "manifest_committed_before_handoff": true,
+    "required_next_actor": "Claude",
+    "merge_authority": "canonical supervisor integrator"
+  }
+}
