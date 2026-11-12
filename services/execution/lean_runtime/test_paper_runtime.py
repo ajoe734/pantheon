@@ -1174,7 +1174,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(len(noop_events), 1)
         self.assertEqual(fill_events, [])
         self.assertEqual(noop_events[0]["metrics"]["noop_count"], 1)
-        self.assertEqual(noop_events[0]["metrics"]["fill_rate"], 0.0)
+        self.assertNotIn("fill_rate", noop_events[0]["metrics"])
         self.assertEqual(noop_events[0]["metadata"]["alpha_source"], "llm_riskoff_agent")
         self.assertEqual(pnl_events, [])
         self.assertEqual(snapshot["paper_state"]["performance_telemetry"]["code"], "performance_no_fills")
@@ -6247,3 +6247,118 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _fill_rate_runtime_scenario(tmp_path, monkeypatch):
+    """Real signal consumer/runtime/emitter -> durable telemetry projection."""
+    from services.execution.lean_runtime import paper_runtime, signal_consumer
+    from services.execution.lean_runtime.signal_producer import build_decision_signals
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    class QuarterClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = cls(2026, 11, 12, 4, 10, tzinfo=timezone.utc)
+            return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+    # Freeze both execution event time and signal admission time. The HTTP
+    # test must continue proving Q4 after the wall clock enters a new quarter.
+    monkeypatch.setattr(paper_runtime, "datetime", QuarterClock)
+    monkeypatch.setattr(signal_consumer, "datetime", QuarterClock)
+    binding_id = str(uuid.uuid4())
+    runtime_id = "return-runtime-0"
+    binding = {
+        "binding_id": binding_id, "runtime_id": runtime_id,
+        "capital_pool_id": "pool-fill-rate", "artifact_id": "artifact-fill-rate",
+        "artifact_version": "1", "plan_id": "plan-fill-rate",
+        "persona_capital_binding_id": "pcb-fill-rate", "status": "active",
+        "deployment_mode": "paper", "execution_mode": "paper",
+    }
+    monkeypatch.setenv("PANTHEON_PERFORMANCE_STATE_PATH", str(tmp_path / "ledger.json"))
+    monkeypatch.setenv("PANTHEON_LIFECYCLE_OUTBOX_PATH", str(tmp_path / "outbox.json"))
+    projection_path = str(tmp_path / "projection.json")
+    events = []
+
+    class Emitter(RuntimeTelemetryEmitter):
+        def emit_payload(self, payload):
+            events.append(payload)
+            RuntimeSummaryProjectionStore(path=projection_path).project_event(payload)
+            return True
+
+    identity = RuntimeIdentity.from_env({
+        "PANTHEON_RUNTIME_ROLE": "paper", "PANTHEON_RUNTIME_MODE": "paper",
+        "PANTHEON_RUNTIME_ID": runtime_id, "PANTHEON_WORKSPACE_REF": "w",
+        "PANTHEON_AUTH_PROFILE_REF": "p", "PANTHEON_PERSONA_ID": "fill-persona",
+        "PANTHEON_SESSION_ID": "s", "PANTHEON_TRACE_ID": str(uuid.uuid4()),
+        "PANTHEON_REQUEST_ID": "r", "PANTHEON_TENANT_ID": "pantheon-dev",
+    })
+    queue = InMemoryPendingSignalStore()
+
+    def service():
+        return PaperRuntimeService(
+            store=queue, identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+            telemetry_emitter=Emitter(identity, _FakeBindingResolver(binding)),
+            poll_interval_seconds=3600,
+        )
+
+    def run(runtime, suffix, quantity, action="BUY"):
+        now = QuarterClock.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        [signal] = build_decision_signals({
+            "decision_id": f"decision-{suffix}", "signal_id": f"signal-{suffix}",
+            "strategy_id": "strategy-fill-rate", "timestamp": now,
+            "tenant_id": "pantheon-dev", "environment": "paper", "symbol": "2330.TW",
+            "action": action, "direction": "LONG", "quantity": quantity,
+            "quantity_type": "SHARES", "run_id": f"run-{suffix}", "order_type": "MARKET",
+            "metadata": {"market_data": {"close": 100.0, "event_time": now,
+                                         "source_ref": "local-test-owner://quote"}},
+        }, binding_id=binding_id, runtime_id=runtime_id)
+        queue.enqueue(signal)
+        runtime.drain_once()
+        runtime._consumer.flush_rebalance(signal["run_id"], runtime._algo)
+
+    monkeypatch.setattr(PaperExecutionAlgorithm, "_post_broker_paper_order", staticmethod(
+        lambda url, payload: {"order_id": "partial-order", "fill_price": 100.0, "fill_qty": 4, "side": "buy"}
+    ))
+    first = service()
+    run(first, "partial", 10)
+    partial = RuntimeSummaryProjectionStore(path=projection_path).get(runtime_id)
+    restarted = service()
+    assert restarted._processed_signal_count == 0
+    assert restarted._algo.performance_ledger()["fill_count"] == 1
+
+    def reject(url, payload):
+        raise RuntimeError("test broker rejection")
+
+    monkeypatch.setattr(PaperExecutionAlgorithm, "_post_broker_paper_order", staticmethod(reject))
+    run(restarted, "reject", 6)
+    run(restarted, "noop", 0, "HOLD")
+    # Duplicated delivery and projection restarts must not multiply quantities.
+    for event in events:
+        RuntimeSummaryProjectionStore(path=projection_path).project_event(event)
+    summary = RuntimeSummaryProjectionStore(path=projection_path).get(runtime_id)
+    return summary, partial, events, restarted
+
+
+def test_fill_rate_runtime_partial_fill_rejection_noop_and_restart(tmp_path, monkeypatch):
+    summary, partial, events, runtime = _fill_rate_runtime_scenario(tmp_path, monkeypatch)
+    assert partial["fill_rate"] == 0.4
+    assert summary["fill_rate"] == 0.25
+    details = summary["fill_rate_details"]
+    assert details["numerator"] == 4.0 and details["denominator"] == 16.0
+    assert details["window"]["timezone"] == "UTC"
+    rejection = next(e for e in events if e["event_type"] == "order_rejection")
+    noop = next(e for e in events if e["event_type"] == "paper_order_simulated")
+    assert "test broker rejection" in rejection["metadata"]["execution_error_message"]
+    assert noop["metadata"]["noop_reason"]
+    assert "fill_rate" not in runtime._performance_snapshot_metrics()
+    assert all("fill_rate" not in e["metrics"] for e in events)
+
+
+def test_set_holdings_records_native_order_quantity_not_percent():
+    events = []
+    algo = PaperExecutionAlgorithm(event_sink=events.append)
+    algo.SetCurrentSignalContext({"requested_quantity": 0.1, "quantity_type": "PERCENT_PORTFOLIO"})
+    algo.SetHoldings("TEST.US", 0.1)
+    assert events[0].quantity == 100.0
+    assert events[0].metadata["requested_quantity"] == 100.0

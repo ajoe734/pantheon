@@ -1647,6 +1647,8 @@ class PaperExecutionAlgorithm:
             "side": side,
             "instrument_id": resolved_inst_id,
             "kind": resolved_kind,
+            "requested_quantity": quantity,
+            "order_submitted_at": _iso_now(),
         }
         if resolved_kind == "stock_future":
             base_metadata["multiplier"] = resolved_multiplier
@@ -2767,7 +2769,10 @@ class PaperExecutionAlgorithm:
             next_quantity=target_quantity,
             next_cash=next_cash,
         )
-        self._publish("paper_fill_simulated", symbol, delta, "set_holdings")
+        self._publish(
+            "paper_fill_simulated", symbol, delta, "set_holdings",
+            metadata={"requested_quantity": abs(delta)},
+        )
 
     def MarketOrder(self, symbol: str, quantity: float) -> None:  # noqa: N802
         security = self._security(symbol)
@@ -6045,6 +6050,14 @@ class PaperRuntimeService:
         if event.broker_submission_status:
             telemetry_metadata["broker_submission_status"] = event.broker_submission_status
         telemetry_metadata.update(event.metadata)
+        if event.event_type in {"paper_fill_simulated", "order_rejection"}:
+            # Keep the requested amount even for partial fills and rejections.
+            # This identity travels with the durable lifecycle/fill outbox;
+            # replay must never turn one submitted order into two orders.
+            telemetry_metadata.setdefault(
+                "order_id", event.metadata.get("broker_order_id") or f"paper-order-{event.event_id}"
+            )
+            telemetry_metadata.setdefault("order_submitted_at", event.created_at)
         if event.event_type == "bracket_order_logged":
             metrics: dict[str, Any] = {
                 "action": (
@@ -6058,7 +6071,6 @@ class PaperRuntimeService:
             metrics = {
                 "rejected_order_count": 1,
                 "fill_quantity": 0.0,
-                "fill_rate": 0.0,
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
@@ -6089,7 +6101,6 @@ class PaperRuntimeService:
             metrics = {
                 "noop_count": 1,
                 "fill_quantity": 0.0,
-                "fill_rate": 0.0,
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
@@ -6109,6 +6120,20 @@ class PaperRuntimeService:
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
+        if event.event_type in {"paper_fill_simulated", "order_rejection"}:
+            requested = event.metadata.get("requested_quantity")
+            if requested is None:
+                requested = event.metadata.get("computed_quantity")
+            if requested is None and event.event_type == "paper_fill_simulated":
+                requested = abs(event.quantity)
+            try:
+                if isinstance(requested, bool):
+                    raise ValueError("boolean submitted order quantity")
+                requested = _finite_float(requested, field="submitted order quantity")
+                requested = abs(requested) if requested != 0 else None
+            except ValueError:
+                requested = None
+            metrics["order_quantity"] = requested
         lifecycle_payload = None
         canonical_lifecycle = (
             event.event_type in _CANONICAL_LIFECYCLE_EVENT_TYPES
@@ -6180,7 +6205,7 @@ class PaperRuntimeService:
                 "order_submitted",
                 {
                     "action": "paper_order_submitted",
-                    "order_quantity": abs(event.quantity),
+                    "order_quantity": metrics["order_quantity"],
                     "order_price": event.fill_price,
                 },
                 order_metadata,
@@ -6658,12 +6683,10 @@ class PaperRuntimeService:
 
     def _performance_snapshot_metrics(self) -> dict[str, Any]:
         processed = int(self._processed_signal_count)
-        fill_rate = (float(self._fill_event_count) / processed) if processed > 0 else 0.0
         return {
             "processed_signal_count": processed,
             "execution_event_count": int(self._execution_event_count),
             "fill_event_count": int(self._fill_event_count),
-            "fill_rate": round(fill_rate, 6),
             "open_position_count": len(self._algo.positions()),
             "open_bracket_order_count": len(self._algo.open_bracket_orders()),
             "avg_slippage_bps": 0.0,
