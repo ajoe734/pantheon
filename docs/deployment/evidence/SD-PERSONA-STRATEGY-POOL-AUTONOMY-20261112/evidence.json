@@ -1,0 +1,32 @@
+{
+ "task_id": "SD-PERSONA-STRATEGY-POOL-AUTONOMY-20261112",
+ "kind": "design_document_evidence",
+ "read_date": "2026-11-12",
+ "document": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_PERSONA_STRATEGY_POOL_AUTONOMY_2026-11-12.md",
+ "hosted_behavior_claimed": false,
+ "repo_base": "origin/dev 796d55c03",
+ "operator_decisions": [
+  "P-1 one account combined signals",
+  "P-2 risk-budget utilisation and effective bets instead of a fixed count",
+  "P-3 existing three personas first",
+  "P-4 paper-only autonomy without approval",
+  "P-5 strategy selects trade universe; persona may widen permitted list",
+  "P-6 wide safety ceiling"
+ ],
+ "coordinator_proposed_values_not_operator_decisions": [
+  "utilisation 60% over 20 trading days",
+  "effective bets below 2",
+  "correlation cut-off 0.5",
+  "trial weight cap 10%",
+  "member weight halved at 5% and removed at 10% drawdown",
+  "ceiling 20 members"
+ ],
+ "unverified": [
+  "persona cron registration path is cited from the 2026-11-09 deployment investigation, not re-read today",
+  "no public rule found for how multi-manager funds increase an allocation"
+ ],
+ "superseded_tasks": [
+  "DISCOVERY-ALLOCATOR-RUNS-ADMITTED-STRATEGY-20261112",
+  "DEV-PLAN-DISCOVERY-DEMAND-EVOLUTION-20261112"
+ ]
+}
