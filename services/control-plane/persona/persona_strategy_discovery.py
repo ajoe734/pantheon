@@ -813,7 +813,11 @@ def _candidate_from_seed(seed: StrategySpecSeed | Mapping[str, Any]) -> Strategy
 
 def _candidate_from_strategy_spec(spec: Mapping[str, Any]) -> StrategyCandidate:
     raw = dict(spec)
-    metadata = _mapping(raw.get("metadata"))
+    metadata = dict(_mapping(raw.get("metadata")))
+    for key in ("mechanism", "mechanism_status", "mechanism_support"):
+        # the replication gate's admission-time mechanism record travels on the spec entry
+        if key in raw and key not in metadata:
+            metadata[key] = raw[key]
     market_scope = _mapping(raw.get("market_scope"))
     execution_profile = _mapping(raw.get("execution_profile"))
     governance = _mapping(raw.get("governance"))
@@ -941,6 +945,11 @@ def _candidate_hard_blockers(
     negative_memory_match = _mapping(candidate.metadata.get("negative_memory_match"))
     if str(negative_memory_match.get("warning_level") or "").lower() == "blocking":
         blockers.append("negative_memory_blocking_match")
+    mechanism_status = _mechanism_record(candidate).get("mechanism_status") or candidate.metadata.get(
+        "mechanism_status"
+    )
+    if str(mechanism_status or "").lower() == "contradicted":
+        blockers.append("mechanism_contradicted")
     return blockers
 
 
@@ -1005,10 +1014,32 @@ def _score_backend_compatibility(
     return 0.0, ["route_policy_blocks_required_backend"]
 
 
+_MECHANISM_SUPPORT_MAX_BONUS = 3.0
+
+
+def _mechanism_record(candidate: StrategyCandidate) -> Mapping[str, Any]:
+    """Admission-time mechanism record (replication gate §3.2), if the candidate carries one."""
+    return _mapping(candidate.metadata.get("mechanism"))
+
+
+def _mechanism_support(candidate: StrategyCandidate) -> float | None:
+    """mechanism_support = supported / testable predictions; None when untested."""
+    record = _mechanism_record(candidate)
+    value = record.get("mechanism_support", candidate.metadata.get("mechanism_support"))
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return max(0.0, min(1.0, float(value)))
+
+
 def _score_evidence_quality(candidate: StrategyCandidate) -> float:
     base = max(0.0, min(1.0, candidate.confidence)) * 10.0
     evidence_bonus = min(5.0, len(candidate.evidence_refs) * 1.5)
-    return _round_score(base + evidence_bonus)
+    # A candidate whose card predictions were tested in-sample earns up to +3 in
+    # proportion to the supported share; mechanism_untested earns nothing, so it ranks
+    # below an otherwise equal supported candidate without being rejected.
+    support = _mechanism_support(candidate)
+    mechanism_bonus = 0.0 if support is None else support * _MECHANISM_SUPPORT_MAX_BONUS
+    return _round_score(base + evidence_bonus + mechanism_bonus)
 
 
 def _score_risk(profile: PersonaStrategyProfile, candidate: StrategyCandidate) -> float:
