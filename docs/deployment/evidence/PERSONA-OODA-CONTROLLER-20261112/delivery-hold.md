@@ -1,5 +1,11 @@
 # Canonical review admission hold
 
+Historical hold, resolved 2026-11-12 at 22:35Z: Human/Ops added all nine paths
+through the governed artifact contract and reopened this same task. The owner
+re-read the canonical row through the assigned command runtime before resuming.
+Fresh exact-head independent review remains required; the original rejection
+and corrective path below are retained as the audit record.
+
 PR: https://github.com/ajoe734/pantheon/pull/7274
 
 The governed owner handoff used `AI_NAME=Codex`, reviewer Claude, PR 7274,

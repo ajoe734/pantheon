@@ -373,7 +373,9 @@ def test_private_packet_routes_do_not_trust_foreign_tenant_header(
         # record. The private payload must be absent from that envelope.
         assert detail.status_code == 200
         if not visible:
-            assert detail.json()["data"] is None
+            data = detail.json()["data"]
+            assert set(data) == {"id", "status", "readSurface", "message"}
+            assert data["status"] == "degraded"
         assert ("persona_cycle" in (detail.json().get("data") or {})) == visible
         # A rejected request cannot leave tenant admission in a later request.
         unscoped = client.get("/bff/ooda/packets", headers={"Authorization": "Bearer reader:viewer:mfa"})

@@ -3,9 +3,10 @@
 Source implementation for design §6.1 / D1 / D2 / D13 in
 `docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md`.
 Owner: Codex. Assigned independent reviewer: Claude. Hosted acceptance is pending.
-PR #7274 is published. Exact-head review admission is currently blocked by the
-canonical artifact contract; `delivery-hold.md` records the gate rejection and
-the nine necessary paths requiring governed Human/Ops revision.
+PR #7274 is published. Human/Ops admitted the nine required integration paths
+through the canonical artifact contract on 2026-11-12 at 22:35Z and reopened
+this same task for fresh exact-head review. `delivery-hold.md` retains the
+original gate rejection as history; it is not an outstanding path-scope hold.
 
 The existing Persona service lifespan reconciles active, tenant-bound
 `paper_running`, `paper_owner` and `consultable` personas. OpenClaw remains the
@@ -77,12 +78,28 @@ drawdown removal during outage, teaching-reference privacy, tenant-header
 spoofing and the twelve-row invariant. Exact commands/results are in
 `evidence.json` and the adjacent terminal-output logs.
 
+Resumption adds explicit unscoped and denied-tenant list/detail regressions,
+including a later unscoped request after rejection. Private packet payloads
+remain absent; missing detail records use the existing degraded envelope.
+The new actual Persona app lifespan tests cover disabled startup, enabled
+startup through the real cron/controller entry point, one packet/turn, the
+existing loop-control writer SDK's tenant-bound heartbeat and awaited shutdown.
+That startup test intercepts the final database write and uses the HTTP fixture;
+it does not claim a real database heartbeat or hosted startup.
+
 Two broader BFF tests also fail on the untouched starting base `b59cc3d8f`:
 the consultation catalog test still expects `not_implemented`, and the downstream
 DLQ replay fixture lacks the concrete monitor tenant. `baseline-tests.txt`
 records the isolated baseline reproduction. They are excluded by name from the
 otherwise passing focused BFF batch, not counted as passed. No unrelated BFF
 policy or fixture was changed to hide those failures.
+
+The resumed complete composed batch runs both tests without exclusions:
+205 tests and 45 subtests pass, while those same two tests fail (exit 1).
+`current-dev-baseline.txt` reproduces both failures on an independently
+provisioned, untouched archive of current `dev` `c733c0b99d47d7efec4f789b8fadeda66b355d50`.
+`resumed-composed.txt` contains the complete batch's terminal output. This
+batch is not reported as passing.
 
 Before terminal closeout, obtain independent exact-head source review, native
 merge/check evidence, the admitted hosted FE/BFF identity, real cycles/private

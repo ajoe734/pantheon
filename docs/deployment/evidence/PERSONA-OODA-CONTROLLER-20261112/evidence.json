@@ -79,6 +79,45 @@
       "result": "exit 0"
     }
   ],
+  "resumption_validation": {
+    "base": "c733c0b99d47d7efec4f789b8fadeda66b355d50",
+    "author_evidence_only": true,
+    "verification": [
+      {
+        "command": "timeout 60s python3 scripts/dev/provision_python_distribution.py",
+        "result": "exit 0; checkout-scoped interpreter inherits the supervisor-provided dependency interpreter; foreign-cwd imports verified"
+      },
+      {
+        "command": "timeout 60s .venv-pantheon/bin/python -m pytest services/persona/test_persona_cycle_controller.py -q --tb=short",
+        "result": "20 passed; exit 0; 18.78 seconds",
+        "output": "resumed-controller.txt"
+      },
+      {
+        "command": "timeout 120s .venv-pantheon/bin/python -m pytest services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py integrations/openclaw/test_persona_ooda_runtime.py services/control-plane/cron/test_persona_cron_registrar.py services/control-plane/cron/test_cron.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/persona/test_pool_policy.py services/control-plane/ooda/test_jsonl_store.py services/openclaw-gateway-adapter/test_main.py::TestCronServiceAuthentication services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/tests/test_control_loops_router.py -q --tb=short",
+        "result": "2 failed, 205 passed, 45 subtests passed; exit 1; 54.46 seconds; no exclusions and not a passing batch",
+        "output": "resumed-composed.txt"
+      },
+      {
+        "command": "timeout 60s .venv-pantheon/bin/python -m pytest services/control-plane/bff/test_loop_health_read_model_contract.py::test_loop_health_registry_only_lists_all_loops_without_live_claim services/control-plane/bff/tests/test_control_loops_router.py::test_loop_runs_control_room_and_downstream_replay -q --tb=short",
+        "working_directory": "Untouched git archive of current origin/dev c733c0b99d47d7efec4f789b8fadeda66b355d50 in /tmp/persona-ooda-current-dev-tSdzZv, independently provisioned using the same supervisor dependency interpreter",
+        "result": "2 failed; exit 1; 1.53 seconds; identical consultation catalog and downstream replay fixture failures",
+        "output": "current-dev-baseline.txt"
+      },
+      {
+        "command": "timeout 30s docker compose config --quiet && timeout 60s .venv-pantheon/bin/python scripts/bff_route_manifest_backend.py --check && git diff --check",
+        "result": "exit 0; routes match snapshot"
+      },
+      {
+        "command": "timeout 30s .venv-pantheon/bin/python -m py_compile services/persona/persona_cycle_controller.py services/persona/test_persona_cycle_controller.py services/control-plane/persona/main.py services/openclaw-gateway-adapter/main.py services/control-plane/bff/control_loops/router.py services/control-plane/bff/ports/ooda_management.py && timeout 30s .venv-pantheon/bin/python scripts/git/diff_budget.py --base origin/dev",
+        "result": "exit 0"
+      }
+    ],
+    "additional_coverage": [
+      "Exact-tenant, foreign tenant, header spoof, absent claims, absent scope and later unscoped requests through actual packet list/detail routers",
+      "Actual deployed Persona app lifespan enabled/disabled, real cron/controller entry point, one turn and packet, existing writer SDK tenant heartbeat and awaited stop; HTTP and final database write are fixture boundaries"
+    ],
+    "not_proven": "Independent review, native integration, hosted three-persona turns/private memory/consultation and real database heartbeat remain unclaimed"
+  },
   "delivery_boundaries": {
     "schedule_executor": "OpenClaw only; the persona service polls existing terminal run identities",
     "model_authority": "Schema-validated proposals only; no order, broker or capital route",
@@ -91,10 +130,9 @@
     "credentials": "Reuse configured existing gateway, adapter, telemetry, database and registry read credentials; none issued or rotated"
   },
   "delivery_admission": {
-    "status": "blocked",
+    "status": "ready_for_fresh_exact_head_handoff",
     "pr": "https://github.com/ajoe734/pantheon/pull/7274",
-    "reason": "Canonical handoff rejected necessary integration files outside the declared artifact contract",
-    "required_actor": "Human/Ops",
+    "reason": "Human/Ops admitted all nine integration paths at 2026-11-12T22:35:07Z and reopened the same task; owner re-read the governed canonical row",
     "record": "delivery-hold.md",
     "review_or_merge_claimed": false
   },
