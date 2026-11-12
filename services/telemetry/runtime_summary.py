@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from services.execution.lean_runtime.performance_telemetry import (
     is_portfolio_mark_fresh,
+    quarter_equity_observation,
 )
 from services.execution.market_snapshot_admission import is_taiwan_symbol
 
@@ -978,7 +979,7 @@ class RuntimeSummaryProjectionStore:
                 # Reset old metrics, positions, and history to prevent carrying them across rollover
                 keys_to_clear = [
                     "pnl", "pnl_at", "pnl_binding_id", "pnl_event_id",
-                    "initial_cash", "pnl_period_start_at", "pnl_currency",
+                    "initial_cash", "pnl_period_start_at", "pnl_currency", "quarter_equity_observations",
                     "drawdown", "drawdown_at", "drawdown_binding_id", "drawdown_event_id",
                     "sharpe_ratio", "sharpe_ratio_at", "sharpe_ratio_binding_id", "sharpe_ratio_event_id",
                     "fill_rate", "fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id",
@@ -1210,6 +1211,43 @@ class RuntimeSummaryProjectionStore:
                         else:
                             current.pop(f"{target_key}_event_id", None)
                         break
+
+            # Keep owner valuations independently of the latest-metric view.
+            # A heartbeat or rolling-window eviction must not erase an earlier
+            # quarterly decline. Conflicts at the same boundary are retained so
+            # the consumer can fail closed rather than pick arrival order.
+            observation = None
+            if event_type == "pnl_snapshot" and not is_derived_metric_echo:
+                observation = quarter_equity_observation(
+                    metrics, metadata,
+                    as_of=event.get("pnl_as_of") or metrics.get("pnl_as_of")
+                    or metadata.get("valuation_as_of"),
+                )
+                if observation["status"] == "unknown" and not observation.get("as_of"):
+                    # Date an admission failure without inventing a valuation
+                    # time or letting undated legacy data poison every quarter.
+                    observation["as_of"] = event_time
+            perf_observation = metadata.get("performance_telemetry")
+            if event_type == "heartbeat" and isinstance(perf_observation, dict):
+                if perf_observation.get("status") in ("marks_unavailable", "invalid_ledger", "invalid_drawdown_series"):
+                    _, attempted_at = _strict_rfc3339(perf_observation.get("attempted_at"))
+                    attempted_at = attempted_at or event_boundary_at
+                    if attempted_at is not None and event_boundary_at is not None:
+                        attempted_at = min(attempted_at, event_boundary_at)
+                    observation = {
+                        "schema_version": "quarter_equity.v1", "status": "unknown",
+                        "reason": perf_observation["status"],
+                        "as_of": attempted_at.isoformat().replace("+00:00", "Z") if attempted_at else event_time,
+                    }
+            if observation is not None:
+                observation.update({"runtime_id": runtime_id, "binding_id": binding_id,
+                                    "event_id": event.get("event_id")})
+                history = list(current.get("quarter_equity_observations") or [])
+                semantic = {k: v for k, v in observation.items() if k != "event_id"}
+                if not any({k: v for k, v in prior.items() if k != "event_id"} == semantic for prior in history):
+                    history.append(observation)
+                history.sort(key=lambda item: str(item.get("as_of") or ""))
+                current["quarter_equity_observations"] = history
 
             if event_type in ("pnl_snapshot", "drawdown_snapshot") and not is_derived_metric_echo:
                 reported_fill_count = metrics.get("fill_count")

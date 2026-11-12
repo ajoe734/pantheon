@@ -97,6 +97,22 @@ def build_pm12_eligible_persona_records(
     Returns per-dataset record dicts ready to be merged into
     ``PromotionReviewTestReadPorts._data``.
     """
+    from services.execution.lean_runtime.performance_telemetry import quarter_equity_observation
+
+    def owner_observation(as_of, cumulative_pnl, fill_count):
+        equity = 1.0 + cumulative_pnl
+        return {
+            **quarter_equity_observation(
+                {"pnl": cumulative_pnl, "portfolio_value": equity, "cash": equity,
+                 "initial_cash": 1.0, "pnl_currency": "USD", "fill_count": fill_count,
+                 "valuation_mark_count": 0, "pnl_period_start_at": "2026-01-01T00:00:00Z"},
+                {"valuation_method": "fill_cash_ledger_mark_to_market", "mark_refs": []},
+                as_of=as_of,
+            ),
+            "runtime_id": runtime_id, "binding_id": binding_id,
+            "event_id": f"fixture-quarter-{runtime_id}-{as_of}",
+        }
+
     return {
         "personas": {
             persona_id: {
@@ -152,6 +168,13 @@ def build_pm12_eligible_persona_records(
                 "pnl_currency": "USD",
                 "pnl_period_start_at": "2026-01-01T00:00:00Z",
                 "pnl_at": "2026-01-15T00:00:00Z",
+                "quarter_equity_observations": [
+                    owner_observation("2026-01-01T00:00:00Z", 0.0, 0),
+                    owner_observation("2026-01-02T00:00:00Z", -drawdown, 1),
+                    owner_observation("2026-01-15T00:00:00Z", pnl, 120),
+                ],
+                "fill_rate_at": "2026-01-15T00:00:00Z",
+                "avg_slippage_bps_at": "2026-01-15T00:00:00Z",
                 "drawdown": drawdown,
                 "sharpe_ratio": sharpe_ratio,
                 "total_trades": 120,
