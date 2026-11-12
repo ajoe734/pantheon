@@ -31,6 +31,7 @@ _PM12_ALLOCATION_INPUT_SCHEMA_VERSION = "persona-allocation-policy-input/v1"
 _PM12_ALLOCATION_ADAPTER_VERSION = "pm12-quarterly-overall-tier-v1"
 _ALLOCATION_POLICY_VERSION = "persona-real-allocation-v1"
 _PAPER_SIMULATION_POLICY_VERSION = "persona-paper-allocation-simulation-v1"
+_PAPER_QUARTERLY_POLICY_VERSION = "persona-paper-quarterly-allocation-v1"
 _PM12_TIER_CROSSWALK = {
     "tier-1": "s",
     "tier-2": "a",
@@ -110,7 +111,9 @@ def build_pm12_allocation_policy_input(
     return expected
 
 
-def _allocation_policy_input(row: Dict[str, Any]) -> Dict[str, Any] | None:
+def _allocation_policy_input(
+    row: Dict[str, Any], policy_version: str = _ALLOCATION_POLICY_VERSION
+) -> Dict[str, Any] | None:
     tier = str(row.get("tier") or row.get("tier_id") or "").strip().lower()
     formula_version = str(row.get("formula_version") or "").strip()
     if (
@@ -120,7 +123,7 @@ def _allocation_policy_input(row: Dict[str, Any]) -> Dict[str, Any] | None:
         or "overall_score" in row
         or "score" in row
     ):
-        return build_pm12_allocation_policy_input(row)
+        return build_pm12_allocation_policy_input(row, policy_version=policy_version)
     return None
 
 
@@ -149,12 +152,22 @@ def _tier_cap(row: Dict[str, Any]) -> tuple[float, str | None]:
     return cap, f"live_{tier or 'unrated'}_tier_cap"
 
 
-def calculate_target_allocations(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return auditable target lines; never mutates a binding or capital store."""
+def calculate_target_allocations(
+    rows: Iterable[Dict[str, Any]],
+    *,
+    positive_stages: frozenset[str] | set[str] = frozenset(_POSITIVE_ALLOCATION_STAGES),
+    policy_version: str = _ALLOCATION_POLICY_VERSION,
+) -> List[Dict[str, Any]]:
+    """Return auditable target lines; never mutates a binding or capital store.
+
+    ``positive_stages`` and ``policy_version`` exist only so the governed paper
+    quarterly cycle can reuse this exact ranking-to-weight arithmetic; the real
+    caller keeps the defaults.
+    """
     prepared: List[Dict[str, Any]] = []
     for source in rows:
         row = dict(source)
-        policy_input = _allocation_policy_input(row)
+        policy_input = _allocation_policy_input(row, policy_version)
         if policy_input is not None:
             row["allocation_policy_input"] = policy_input
         stage = str(row.get("stage") or "")
@@ -166,7 +179,7 @@ def calculate_target_allocations(rows: Iterable[Dict[str, Any]]) -> List[Dict[st
         )
         if row.get("eligible") is False and not exclusions:
             exclusions.append("ranking_ineligible")
-        if stage not in _POSITIVE_ALLOCATION_STAGES:
+        if stage not in positive_stages:
             exclusions.append("stage_not_real_allocation_eligible")
         rank_score = _rank_score(row)
         adjusted = max(rank_score, 0.0)
@@ -327,3 +340,107 @@ def calculate_paper_simulation_allocations(
             "live_capital_side_effects": False,
         }
     ]
+
+
+_PAPER_FACTOR_FIELDS = ("capacity_factor", "risk_budget_factor")
+
+
+def _paper_factor(row: Dict[str, Any], name: str) -> float:
+    value = row.get(name, 1.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"paper quarterly {name} must be a number")
+    value = float(value)
+    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise ValueError(f"paper quarterly {name} must be between 0 and 1")
+    return value
+
+
+def calculate_paper_competition_allocations(
+    rows: Iterable[Dict[str, Any]],
+    *,
+    retained_weight: float = 0.0,
+) -> List[Dict[str, Any]]:
+    """Share the paper pool across every paper persona by the real policy arithmetic.
+
+    Used only by the governed quarterly paper cycle.  Rows must already be joined
+    to their paper ledger, shared internal paper pool and unique paper-owner
+    binding.  Score share, tier caps, the +25 percent quarterly increase cap and
+    the exclusions are the real policy's (``calculate_target_allocations``); only
+    the eligible stage differs.  ``retained_weight`` is the weight still held by
+    allocations that receive no line (departed or skipped personas); the targets
+    are scaled down so retained + targets never exceed the paper total of 1.0.
+    """
+    if isinstance(retained_weight, bool) or not isinstance(retained_weight, (int, float)) \
+            or not math.isfinite(float(retained_weight)) or not 0.0 <= float(retained_weight) <= 1.0 + 1e-9:
+        raise ValueError("paper quarterly retained_weight must be between 0 and 1")
+    retained_weight = min(float(retained_weight), 1.0)
+    prepared: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for source in rows:
+        row = dict(source)
+        persona_id = str(row.get("persona_id") or "").strip()
+        if not persona_id or persona_id in seen:
+            raise ValueError("paper quarterly rows need one unique persona_id each")
+        seen.add(persona_id)
+        if str(row.get("stage") or "").strip().lower() != "paper_running":
+            raise ValueError("paper quarterly cycle requires stage=paper_running")
+        if str(row.get("capital_scope") or "").strip().lower() != "paper_ledger":
+            raise ValueError("paper quarterly cycle requires capital_scope=paper_ledger")
+        for field in ("paper_ledger_id", "capital_pool_id", "binding_id"):
+            if not str(row.get(field) or "").strip():
+                raise ValueError(f"paper quarterly cycle requires {field}")
+        if row.get("capital_sleeve_id") not in (None, ""):
+            raise ValueError("paper quarterly cycle cannot target a capital sleeve")
+        if not isinstance(row.get("eligible"), bool):
+            raise ValueError("paper quarterly cycle requires a known eligibility for every row")
+        current = row.get("current_weight")
+        if isinstance(current, bool) or not isinstance(current, (int, float)) \
+                or not math.isfinite(float(current)) or not 0.0 <= float(current) <= 1.0:
+            raise ValueError("paper quarterly current_weight must be between 0 and 1")
+        for name in _PAPER_FACTOR_FIELDS:
+            row[name] = _paper_factor(row, name)
+        row.pop("allocation_policy_input", None)
+        prepared.append(row)
+    if not prepared:
+        raise ValueError("paper quarterly cycle requires at least one paper persona")
+    pools = {str(r["capital_pool_id"]).strip() for r in prepared}
+    if len(pools) != 1:
+        raise ValueError("paper quarterly cycle requires one shared paper capital pool")
+
+    lines = calculate_target_allocations(
+        prepared,
+        positive_stages=frozenset({"paper_running"}),
+        policy_version=_PAPER_QUARTERLY_POLICY_VERSION,
+    )
+    by_persona = {r["persona_id"]: r for r in prepared}
+    total = sum(line["target_weight"] for line in lines)
+    available = max(0.0, 1.0 - retained_weight)
+    if total > available + 1e-12:
+        scale = available / total
+        for line in lines:
+            line["target_weight"] = math.floor(line["target_weight"] * scale * 1e8) / 1e8
+            line["delta"] = round(line["target_weight"] - float(line.get("current_weight") or 0.0), 8)
+            line["requires_human_approval"] = line["target_weight"] > float(line.get("current_weight") or 0.0)
+            line["cap_reasons"] = [*line["cap_reasons"], "paper_total_budget_scale"]
+    total = round(sum(line["target_weight"] for line in lines), 8)
+    if total + retained_weight > 1.0 + 1e-9:
+        raise ValueError(f"paper quarterly projected portfolio {total + retained_weight} is above the paper total of 1.0")
+    result = []
+    for line in lines:
+        row = by_persona[line["persona_id"]]
+        result.append({
+            **line,
+            "stage": "paper_running",
+            "capital_scope": "paper_ledger",
+            "paper_ledger_id": row["paper_ledger_id"],
+            "binding_id": row["binding_id"],
+            "capital_sleeve_id": None,
+            "capacity_factor": row["capacity_factor"],
+            "risk_budget_factor": row["risk_budget_factor"],
+            "pool_health_factors": row.get("pool_health_factors"),
+            "recommendation": "governed_paper_quarterly_allocation",
+            "paper_allocation_eligible": not line["exclusions"],
+            "requires_human_approval": False,
+            "live_capital_side_effects": False,
+        })
+    return result
