@@ -22,7 +22,6 @@ import fcntl
 import json
 import os
 import subprocess
-import tempfile
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
@@ -528,6 +527,27 @@ def agent_registry_lock_path() -> str:
     return os.path.join(os.path.dirname(PERSONA_WORKSPACE_ROOT), ".pantheon-agent-registry.lock")
 
 
+def _open_shared_registry_lock(path: str) -> int:
+    """Open the shared lock for every deployed identity (root adapter, uid1000 gateway).
+
+    Created world read/write so both identities can open it. flock(2) needs no
+    write permission, so if write access is still denied on a pre-existing
+    root-owned file we lock via a read-only descriptor of the *same inode*.
+    Any other failure propagates; callers must not fall back to a local lock.
+    """
+
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o666)
+    except PermissionError:
+        return os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if (os.fstat(fd).st_mode & 0o666) != 0o666:
+            os.fchmod(fd, 0o666)
+    except OSError:
+        pass  # not the owner; read-only/flock access still works on the shared inode
+    return fd
+
+
 @contextlib.contextmanager
 def agent_registry_lock() -> Any:
     """Reentrant cross-process exclusive lock around agents.list read-modify-write."""
@@ -542,13 +562,10 @@ def agent_registry_lock() -> Any:
                 _registry_depth.n -= 1
             return
         path = agent_registry_lock_path()
-        try:
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            handle = open(path, "a+b")
-        except OSError:
-            if os.getenv(_REGISTRY_LOCK_ENV, "").strip():
-                raise
-            handle = open(os.path.join(tempfile.gettempdir(), ".pantheon-agent-registry.lock"), "a+b")
+        # Fail closed: one shared inode only. No private /tmp fallback.
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        fd = _open_shared_registry_lock(path)
+        handle = os.fdopen(fd, "rb", closefd=True)
         with handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             _registry_depth.n = 1

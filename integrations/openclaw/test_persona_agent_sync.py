@@ -666,3 +666,61 @@ def test_deploy_script_fails_closed_without_shared_library(monkeypatch):
         assert "shared_soul_renderer_unavailable" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("no second renderer is permitted")
+
+
+# --- shared registry lock: cross-process permission boundary ---------------
+
+_LOCK_CHILD = """
+import os, sys, time
+sys.path[:0] = [sys.argv[2], sys.argv[3]]
+import persona_agent_sync as s
+t = time.time()
+with s.agent_registry_lock():
+    print(round(time.time() - t, 3), flush=True)
+"""
+
+
+def _run_child(lock_path: Path, tmp: Path):
+    import os
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    env = dict(os.environ, PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK=str(lock_path), TMPDIR=str(tmp))
+    return subprocess.Popen(
+        [sys.executable, "-c", _LOCK_CHILD, "x", str(root), str(Path(__file__).parent)],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+
+
+def test_registry_lock_read_only_existing_file_still_shared_across_processes(tmp_path, monkeypatch):
+    lock = tmp_path / "state" / "lock"
+    lock.parent.mkdir()
+    lock.write_bytes(b"")
+    lock.chmod(0o444)  # simulates root-owned file the other identity cannot append to
+    other_tmp = tmp_path / "gateway-tmp"
+    other_tmp.mkdir()
+    monkeypatch.setenv("PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK", str(lock))
+    import time
+
+    with sync.agent_registry_lock():
+        child = _run_child(lock, other_tmp)
+        time.sleep(1.0)
+        assert child.poll() is None, "child entered critical section while parent held shared lock"
+    out, err = child.communicate(timeout=20)
+    assert child.returncode == 0, err
+    assert float(out.strip()) >= 0.5
+
+
+def test_registry_lock_unavailable_fails_closed_without_tmp_fallback(tmp_path, monkeypatch):
+    import pytest
+
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    lock = blocker / "sub" / "lock"  # parent is a file -> cannot create
+    monkeypatch.setenv("PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK", "")
+    monkeypatch.setattr(sync, "PERSONA_WORKSPACE_ROOT", str(blocker / "sub" / "workspaces"))
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    with pytest.raises(OSError):
+        with sync.agent_registry_lock():
+            pass
+    assert not (tmp_path / ".pantheon-agent-registry.lock").exists()
