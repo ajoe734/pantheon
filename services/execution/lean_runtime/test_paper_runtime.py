@@ -6251,9 +6251,20 @@ if __name__ == "__main__":
 
 def _fill_rate_runtime_scenario(tmp_path, monkeypatch):
     """Real signal consumer/runtime/emitter -> durable telemetry projection."""
+    from services.execution.lean_runtime import paper_runtime, signal_consumer
     from services.execution.lean_runtime.signal_producer import build_decision_signals
     from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
+    class QuarterClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = cls(2026, 11, 12, 4, 10, tzinfo=timezone.utc)
+            return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+    # Freeze both execution event time and signal admission time. The HTTP
+    # test must continue proving Q4 after the wall clock enters a new quarter.
+    monkeypatch.setattr(paper_runtime, "datetime", QuarterClock)
+    monkeypatch.setattr(signal_consumer, "datetime", QuarterClock)
     binding_id = str(uuid.uuid4())
     runtime_id = "return-runtime-0"
     binding = {
@@ -6292,7 +6303,7 @@ def _fill_rate_runtime_scenario(tmp_path, monkeypatch):
         )
 
     def run(runtime, suffix, quantity, action="BUY"):
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = QuarterClock.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         [signal] = build_decision_signals({
             "decision_id": f"decision-{suffix}", "signal_id": f"signal-{suffix}",
             "strategy_id": "strategy-fill-rate", "timestamp": now,
@@ -6342,3 +6353,12 @@ def test_fill_rate_runtime_partial_fill_rejection_noop_and_restart(tmp_path, mon
     assert noop["metadata"]["noop_reason"]
     assert "fill_rate" not in runtime._performance_snapshot_metrics()
     assert all("fill_rate" not in e["metrics"] for e in events)
+
+
+def test_set_holdings_records_native_order_quantity_not_percent():
+    events = []
+    algo = PaperExecutionAlgorithm(event_sink=events.append)
+    algo.SetCurrentSignalContext({"requested_quantity": 0.1, "quantity_type": "PERCENT_PORTFOLIO"})
+    algo.SetHoldings("TEST.US", 0.1)
+    assert events[0].quantity == 100.0
+    assert events[0].metadata["requested_quantity"] == 100.0
