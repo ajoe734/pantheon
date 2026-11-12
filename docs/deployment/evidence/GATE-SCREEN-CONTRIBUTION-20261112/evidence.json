@@ -14,11 +14,12 @@
     "status": "passed",
     "exit_status": 0,
     "command": "python -m pytest services/research/replication services/research/alpha_replication/test_revalidation_worker.py -q",
-    "result": "93 passed in 170.55s, exit 0",
+    "result": "98 passed in 277.66s, exit 0 (includes collision-safe control input regressions)",
     "log": "docs/deployment/evidence/GATE-SCREEN-CONTRIBUTION-20261112/validation.log"
   },
   "acceptance_evidence": {
     "1_control_run_and_comparison": "gate._measure_screen_contribution; test_screen_that_beats_whole_boundary_control_is_measured_and_both_variants_count",
+    "2b_collision_safe_control": "test_colliding_non_canonical_control_input_is_not_entry_only_and_is_preserved; test_colliding_selection_input_still_gets_contribution_comparison",
     "2_drop_and_reregister_entry_only": "test_screen_that_adds_nothing_is_dropped_and_reregistered_entry_only; durable idempotent registration via worker: test_dropped_screen_is_durably_and_idempotently_registered_entry_only (retry + restart readback)",
     "1b_boundary_exclusions_preserved": "test_control_keeps_daily_boundary_exclusions_for_suspended_symbols (control keeps eligibility; suspended 0050 never trades)",
     "3_trial_counter": "trial_accounting; family count 2 after one screened evaluation",
