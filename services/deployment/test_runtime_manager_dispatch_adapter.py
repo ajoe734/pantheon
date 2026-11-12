@@ -351,6 +351,111 @@ def test_stage_promotion_dispatch_uses_promote_and_validates_child_readback():
     client.get.assert_called_once_with("rb-canary-001")
 
 
+def _paper_replace_fixture(**source_overrides):
+    saga = {
+        **_make_saga(),
+        "plan_id": "plan-002",
+        "artifact_id": "artifact-002",
+        "artifact_version": "v2.0.0",
+        "current_stage": "paper",
+        "target_stage": "paper",
+        "runtime_action": "replace_binding",
+    }
+    report = {
+        **_authority_report(),
+        "plan_id": "plan-002",
+        "artifact_id": "artifact-002",
+        "artifact_version": "v2.0.0",
+        "deployment_plan_current_stage": "paper",
+        "deployment_plan_binding_id": "rb-old",
+    }
+    source = {**_make_binding("rb-old"), **source_overrides}
+    child = {
+        **_make_binding("rb-new"),
+        "plan_id": "plan-002",
+        "artifact_id": "artifact-002",
+        "artifact_version": "v2.0.0",
+        "metadata": {
+            "strategy_id": "strat-001",
+            "replacement_kind": "forward",
+            "replacement_parent_binding_id": "rb-old",
+            "authoritative_loader_attestation": report,
+        },
+    }
+    context = _make_deploy_context(
+        current_binding_id="rb-old",
+        metadata={"authoritative_loader_attestation": report},
+    )
+    client = MagicMock()
+    client.replace.return_value = {"operation": "forward_replace", "new_binding": child}
+    client.get.side_effect = lambda bid: {"rb-old": source, "rb-new": child}.get(bid)
+    return saga, context, client
+
+
+def test_paper_forward_replace_uses_replace_not_deploy_and_keeps_runtime():
+    saga, context, client = _paper_replace_fixture()
+    result = dispatch_to_runtime_manager(saga=saga, deploy_context=context, client=client)
+    assert result.outcome == DispatchOutcome.SUCCESS, result.error_message
+    assert result.binding_id == "rb-new"
+    client.deploy.assert_not_called()
+    client.promote.assert_not_called()
+    client.replace.assert_called_once()
+    runtime_id, request = client.replace.call_args.args
+    assert runtime_id == "rt-001"
+    assert request["current_binding_id"] == "rb-old"
+    assert request["runtime_id"] == "rt-001"
+    assert request["capital_pool_id"] == "pool-paper-001"
+    assert request["artifact_id"] == "artifact-002"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"status": "retired"},
+        {"deployment_mode": "canary"},
+        {"capital_pool_id": "pool-other"},
+        {"persona_capital_binding_id": "pcb-other"},
+        {"artifact_id": "artifact-002", "artifact_version": "v2.0.0"},
+        {"runtime_id": ""},
+    ],
+)
+def test_paper_forward_replace_refuses_unverified_source_binding(override):
+    saga, context, client = _paper_replace_fixture(**override)
+    result = dispatch_to_runtime_manager(saga=saga, deploy_context=context, client=client)
+    assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+    assert result.error_code == "REPLACE_SOURCE_BINDING_MISMATCH"
+    client.replace.assert_not_called()
+    client.deploy.assert_not_called()
+
+
+def test_paper_forward_replace_refuses_missing_source_binding_id():
+    saga, context, client = _paper_replace_fixture()
+    context.pop("current_binding_id")
+    result = dispatch_to_runtime_manager(saga=saga, deploy_context=context, client=client)
+    assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+    client.replace.assert_not_called()
+    client.deploy.assert_not_called()
+
+
+def test_paper_forward_replace_readback_requires_forward_lineage():
+    saga, context, client = _paper_replace_fixture()
+    child = client.replace.return_value["new_binding"]
+    child["metadata"] = {**child["metadata"], "replacement_parent_binding_id": "rb-x"}
+    result = dispatch_to_runtime_manager(saga=saga, deploy_context=context, client=client)
+    assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+    assert result.error_code == "BINDING_READBACK_MISMATCH"
+
+
+def test_paper_forward_replace_replay_with_recorded_binding_does_not_call_replace():
+    saga, context, client = _paper_replace_fixture()
+    saga["binding_id"] = "rb-new"
+    result = dispatch_to_runtime_manager(saga=saga, deploy_context=context, client=client)
+    assert result.outcome == DispatchOutcome.SUCCESS, result.error_message
+    assert result.idempotent_replay is True
+    client.replace.assert_not_called()
+    client.deploy.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Acceptance criterion 2: duplicate dispatch does not duplicate bindings
 # ---------------------------------------------------------------------------

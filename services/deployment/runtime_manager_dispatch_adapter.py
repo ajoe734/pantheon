@@ -175,6 +175,48 @@ def _is_stage_promotion(saga: Mapping[str, Any]) -> bool:
     ) in _PROMOTION_TRANSITIONS and saga.get("runtime_action") == "replace_binding"
 
 
+def _is_paper_forward_replace(saga: Mapping[str, Any]) -> bool:
+    """Same-stage paper forward replacement of an existing RuntimeBinding.
+
+    Identified only by the approved plan's own fields: paper -> paper with
+    ``replace_binding``.  It is dispatched through the existing runtime-manager
+    ``replace`` owner route, never ``deploy`` (single-runtime guard) and never
+    a second deployment route.
+    """
+    return (
+        str(saga.get("current_stage") or "") == "paper"
+        and str(saga.get("target_stage") or "") == "paper"
+        and saga.get("runtime_action") == "replace_binding"
+    )
+
+
+def _verify_replace_source(
+    *, saga: Mapping[str, Any], deploy_context: Mapping[str, Any], source: Any
+) -> Optional[str]:
+    """Fail-closed check of the verified current binding before ``replace``."""
+    if not isinstance(source, Mapping):
+        return "current binding was not found"
+    expected = {
+        "status": _ACTIVE_BINDING_STATUS,
+        "deployment_mode": "paper",
+        "capital_pool_id": saga.get("capital_pool_id"),
+        "persona_capital_binding_id": deploy_context.get("persona_capital_binding_id"),
+    }
+    mismatches = [
+        f"{field} expected {value!r}, got {source.get(field)!r}"
+        for field, value in expected.items()
+        if source.get(field) != value
+    ]
+    if not str(source.get("runtime_id") or "").strip():
+        mismatches.append("current binding has no runtime_id")
+    if (source.get("artifact_id"), source.get("artifact_version")) == (
+        saga.get("artifact_id"),
+        saga.get("artifact_version"),
+    ):
+        mismatches.append("replacement artifact pair must differ from current binding")
+    return "; ".join(mismatches) or None
+
+
 def validate_authoritative_readback(
     *,
     saga: Dict[str, Any],
@@ -222,6 +264,13 @@ def validate_authoritative_readback(
             f"got {metadata.get('strategy_id')!r}"
         )
     is_promotion = _is_stage_promotion(saga)
+    if _is_paper_forward_replace(saga):
+        if metadata.get("replacement_kind") != "forward":
+            mismatches.append("metadata.replacement_kind expected 'forward'")
+        if metadata.get("replacement_parent_binding_id") != expected_source_binding_id:
+            mismatches.append(
+                "metadata.replacement_parent_binding_id does not match saga source_binding_id"
+            )
     attestation_key = (
         "authoritative_promotion_attestation"
         if is_promotion
@@ -525,7 +574,33 @@ def dispatch_to_runtime_manager(
     # --- New dispatch: create paper or atomically promote one stage ---
     try:
         request = _build_deploy_request(saga=saga, deploy_context=deploy_context)
-        if is_promotion:
+        if _is_paper_forward_replace(saga):
+            source_binding_id = str(
+                deploy_context.get("current_binding_id") or ""
+            ).strip()
+            if not source_binding_id:
+                raise RuntimeManagerClientError(
+                    "current_binding_id is required for paper forward replace",
+                    status_code=422,
+                    error_code="REPLACE_SOURCE_BINDING_REQUIRED",
+                )
+            source = client.get(source_binding_id)
+            source_error = _verify_replace_source(
+                saga=saga, deploy_context=deploy_context, source=source
+            )
+            if source_error:
+                return DispatchResult(
+                    outcome=DispatchOutcome.TERMINAL_ERROR,
+                    error_message=(
+                        f"paper forward replace source binding rejected: {source_error}"
+                    ),
+                    error_code="REPLACE_SOURCE_BINDING_MISMATCH",
+                )
+            request["current_binding_id"] = source_binding_id
+            request["runtime_id"] = source["runtime_id"]
+            replace_result = client.replace(source["runtime_id"], request)
+            binding = replace_result.get("new_binding")
+        elif is_promotion:
             source_binding_id = str(
                 deploy_context.get("current_binding_id") or ""
             ).strip()
