@@ -4,7 +4,12 @@
   "owner": "Codex2",
   "reviewer": "Claude",
   "review": {
-    "status": "pending_independent_review"
+    "status": "blocked_artifact_contract_revision",
+    "blocker": {
+      "required_actor": "Human/Ops",
+      "reason": "Governed exact-head handoff refused because 14 necessary changed files are outside the immutable task artifact contract.",
+      "request": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/artifact-contract-revision-request.json"
+    }
   },
   "base_commit": "caec3f40727c6bf7dd73c710625deff81b5fd4eb",
   "source_anchors": [
@@ -208,7 +213,8 @@
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/fresh-window-final.txt": "9fb32df0b48d8baa7710a86fb592cd625c8099e66b58e74e265ec784ec13913e",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/mechanism-context.txt": "4632cffac63226f80d83b54d6e699119c7a9724ebe65690934837be94c77c02e",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/composition-final.txt": "bbfe27d1034f241ba5d6a07371f3f9658c095cb74bfeb3190fb0736bddf9cc33",
-    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/memory-composition.txt": "149f0f98795e4c32cdb737701e87cb0497f2eb1b6e7c67bc3a649ab61ae08976"
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/memory-composition.txt": "149f0f98795e4c32cdb737701e87cb0497f2eb1b6e7c67bc3a649ab61ae08976",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/artifact-contract-revision-request.json": "3191e7f661d89deced4bb16ce08375a0423249e243d1ca02a94cf0fcfa6101a2"
   },
   "base_refresh": {
     "previous_base": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
