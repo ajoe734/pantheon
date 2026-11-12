@@ -129,12 +129,20 @@ def required_consultation(
         reasons.append(
             "harness patch touches " + ", ".join(hit) + "; red team required"
         )
-    seen: set[str] = set()
+    index: dict[str, int] = {}
     unique: list[PanelParticipant] = []
     for item in participants:
-        if item.persona_id in seen:
+        if item.persona_id in index:
+            # Never lose risk privileges when the initiator is also a
+            # required reviewer: merge the veto onto the kept entry.
+            pos = index[item.persona_id]
+            kept = unique[pos]
+            if item.may_veto and not kept.may_veto:
+                unique[pos] = PanelParticipant(
+                    kept.persona_id, ROLE_RISK, may_veto=True
+                )
             continue
-        seen.add(item.persona_id)
+        index[item.persona_id] = len(unique)
         unique.append(item)
     return ConsultRequirement(
         decision_type=decision_type,

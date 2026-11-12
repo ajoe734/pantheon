@@ -49,6 +49,8 @@ class ConsultationContributionRequest(BaseModel):
 class _Provider(Protocol):
     def invoke_structured(self, prompt: str, **kwargs: Any) -> Any: ...
 
+    def invoke(self, prompt: str, **kwargs: Any) -> Any: ...
+
 
 class ReplayConflict(RuntimeError):
     """The same idempotency key was reused with different content."""
@@ -347,6 +349,75 @@ def _prompt(payload: ConsultationContributionRequest) -> str:
     )
 
 
+PERSONA_OWN_AGENT = "persona_own_agent"
+
+
+def _persona_prompt(payload: ConsultationContributionRequest, persona_id: str) -> str:
+    """Prompt for a participant's own provisioned agent (agent_id == persona_id).
+
+    The agent answers from its own persona context and committee-visible
+    memory; it sees only the request and its own role, never another
+    participant's answer.
+    """
+
+    return (
+        f"You are persona {persona_id}, answering a Pantheon Consultation "
+        "independently as yourself. Use your own persona judgement and the "
+        "committee-visible memory available to you. You have no approval, "
+        "deployment, broker, capital, or mutation authority. Do not vote. "
+        "Answer with exactly one JSON object, no prose and no code fence, "
+        "satisfying this JSON schema:\n"
+        + json.dumps(QUALIFIED_CONTRIBUTION_SCHEMA, sort_keys=True)
+        + "\nUse participant_type=persona and participant_ref="
+        + json.dumps(persona_id)
+        + ".\n"
+        + _prompt(payload)
+    )
+
+
+def _persona_response(
+    result: Any,
+    payload: ConsultationContributionRequest,
+    persona_id: str,
+) -> dict[str, Any]:
+    if str(getattr(result, "status", "") or "") != "completed":
+        raise ContributionProviderError("OpenClaw persona agent did not complete")
+    output = getattr(result, "output", None)
+    if not isinstance(output, Mapping):
+        raise ContributionProviderError("OpenClaw provider output must be an object")
+    if output.get("agent_id") != persona_id:
+        raise ContributionProviderError(
+            "persona consultation output did not come from the persona's own agent"
+        )
+    if output.get("function_calls"):
+        raise ContributionProviderError(
+            "persona consultation must not emit tool calls"
+        )
+    text = AssistantOpenClawProvider._result_text(result)
+    try:
+        structured = json.loads(text)
+    except ValueError as exc:
+        raise ContributionProviderError(
+            "persona agent answer is not valid JSON"
+        ) from exc
+    if not isinstance(structured, Mapping):
+        raise ContributionProviderError("persona agent answer must be a JSON object")
+    contribution = QualifiedContribution.from_payload(
+        structured,
+        expected_tenant_id=payload.tenant_id,
+        expected_request_id=payload.request_id,
+    )
+    if (
+        contribution.participant_type != "persona"
+        or contribution.participant_ref != persona_id
+        or contribution.author_type != "persona"
+    ):
+        raise ContributionProviderError(
+            "persona agent attribution must be the asked persona"
+        )
+    return {"status": "completed", "contribution": contribution.to_dict()}
+
+
 def _qualified_response(
     result: Any,
     payload: ConsultationContributionRequest,
@@ -490,18 +561,43 @@ def create_app(
         if replay is not None:
             return replay
 
+        participant = payload.request.get("participant")
+        own_agent = (
+            isinstance(participant, Mapping)
+            and participant.get("agent") == PERSONA_OWN_AGENT
+        )
+        session_id = "consult-" + hashlib.sha256(
+            stable_key.encode("utf-8")
+        ).hexdigest()[:32]
         try:
-            result = provider.invoke_structured(
-                _prompt(payload),
-                extraction_schema=QUALIFIED_CONTRIBUTION_SCHEMA,
-                agent_id=STRUCTURED_AGENT_ID,
-                mode="user",
-                session_id="consult-"
-                + hashlib.sha256(stable_key.encode("utf-8")).hexdigest()[:32],
-                operator_id=expected_actor,
-                trace_id=str(payload.request.get("trace_id") or "") or None,
-            )
-            response = _qualified_response(result, payload)
+            if own_agent:
+                persona_id = str(participant.get("persona_id") or "").strip()
+                if not persona_id or persona_id == STRUCTURED_AGENT_ID:
+                    return _blocked(
+                        422,
+                        "persona_own_agent requires a participant persona_id",
+                        retryable=False,
+                    )
+                result = provider.invoke(
+                    _persona_prompt(payload, persona_id),
+                    agent_id=persona_id,
+                    mode="user",
+                    session_id=session_id + ":" + persona_id,
+                    operator_id=expected_actor,
+                    trace_id=str(payload.request.get("trace_id") or "") or None,
+                )
+                response = _persona_response(result, payload, persona_id)
+            else:
+                result = provider.invoke_structured(
+                    _prompt(payload),
+                    extraction_schema=QUALIFIED_CONTRIBUTION_SCHEMA,
+                    agent_id=STRUCTURED_AGENT_ID,
+                    mode="user",
+                    session_id=session_id,
+                    operator_id=expected_actor,
+                    trace_id=str(payload.request.get("trace_id") or "") or None,
+                )
+                response = _qualified_response(result, payload)
             replay_store.complete(
                 idempotency_key=stable_key,
                 request_fingerprint=request_fingerprint,

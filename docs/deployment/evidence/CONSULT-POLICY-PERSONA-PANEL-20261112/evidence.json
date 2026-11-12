@@ -31,7 +31,9 @@
     "6_deployed_addresses": [
       "services/consultation/tests/test_panel_deployed_config.py::test_root_compose_wires_consultation_panel_addresses (governance sink, memory, evolution addresses; memory/governance start order; no compose depends_on cycle)"
     ],
-    "7_protocol_document": ["CONSULTATION_SESSION_PROTOCOL.md"],
+    "7_protocol_document": [
+      "CONSULTATION_SESSION_PROTOCOL.md"
+    ],
     "8_integration_real_entry_points": [
       "services/consultation/tests/test_persona_panel_integration.py (real consultation-svc + executor, Persona owner, governance, evolution health, memory; only the provider HTTP is faked)"
     ]
@@ -42,10 +44,15 @@
   },
   "not_claimed": [
     "Hosted/deployed run: no real hosted cycle or consultation was executed.",
-    "OpenClaw adapter per-persona routing: services/openclaw-gateway-adapter is outside this task's artifacts and still validates provider output against the structured-extraction agent. The executor sends participant {persona_id, role, agent:'persona_own_agent'} and rejects an answer not attributed to that persona; the adapter must route that ask to the persona's own agent before a hosted panel can complete.",
+    "Own-agent routing (rework): services/openclaw-gateway-adapter/consultation_provider.py now routes participant.agent=persona_own_agent to provider.invoke(agent_id=<persona_id>), refuses output whose agent_id is not that persona, tool calls, or attribution other than the asked persona (test_persona_own_agent_routing.py). Not proven against a hosted gateway with provisioned persona agents; hosted/private-memory backfill obligations remain open. The adapter and governance edits sit outside the originally listed scoped artifacts and need owner-boundary acknowledgement at review.",
     "Governance ingress stores the handoff (target_gate, memo_ids, evidence_refs); it does not persist the extra gated_decision/gate fields the executor also sends. The memo is linked to the decision via the request target and the handoff evidence ref.",
     "Risk and red team personas are created in draft; advancing to consultable is a governed lifecycle step, not automated.",
     "The three-persona hosted backfill / private-memory obligation and real P1-fix hosted evidence stay outstanding.",
     "Env: no source-level change to evolution; it is an address plus health probe only."
-  ]
+  ],
+  "rework_20261112": {
+    "risk_veto_dedup": "required_consultation merges may_veto onto the initiator entry when the risk persona initiates; unit + e2e regressions",
+    "gated_decision_wiring": "governance consultation-handoffs stores gated_decision/gate/operator_decision for consultation.panel.* handoffs; POST /api/governance/consultation-gates/adopt refuses (409) auto-adoption when a veto is pending or no panel review exists; e2e test attempts adoption after risk reject",
+    "target_binding": "panel.gated_decision type/id must equal request target_type/target_id at consultation entry (422) and in executor (WorkflowBlocked)"
+  }
 }

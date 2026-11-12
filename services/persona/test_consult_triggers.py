@@ -119,3 +119,21 @@ def test_bootstrap_only_creates_the_missing_one_and_tolerates_a_race():
     owner = FakePersonaOwner(existing=[t.RISK_PERSONA_ID])
     out = t.bootstrap_consult_personas(persona_url="http://p", http=owner)
     assert out == {t.RISK_PERSONA_ID: "exists", t.RED_TEAM_PERSONA_ID: "created"}
+
+
+def test_risk_persona_initiating_keeps_veto_after_dedup():
+    from services.persona import consult_triggers as t
+
+    req = t.required_consultation(
+        t.DECISION_HARNESS_PATCH,
+        "p-1",
+        initiator_persona_id=t.RISK_PERSONA_ID,
+        touches=("guardrails",),
+    )
+    risk = [p for p in req.participants if p.persona_id == t.RISK_PERSONA_ID]
+    assert len(risk) == 1 and risk[0].may_veto
+    gate = t.evaluate_gate(
+        [p.to_dict() for p in req.participants],
+        {t.RISK_PERSONA_ID: "reject", t.RED_TEAM_PERSONA_ID: "approve"},
+    )
+    assert gate.operator_decision_required

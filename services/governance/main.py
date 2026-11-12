@@ -323,6 +323,42 @@ def _utc_now() -> str:
 # Routes — Consultation advisory handoff intake
 # ---------------------------------------------------------------------------
 
+def _validated_panel_gate(body: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist the gated decision and gate a panel handoff carries.
+
+    A risk-persona veto yields a pending operator decision at the owning gate;
+    automatic adoption of that decision is then refused (see
+    ``adopt_consultation_gated_decision``).
+    """
+
+    decision = body.get("gated_decision")
+    gate = body.get("gate")
+    if not isinstance(decision, dict) or not isinstance(gate, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="panel handoff requires gated_decision and gate",
+        )
+    decision_type = _required_string(decision.get("type"), "gated_decision.type")
+    decision_id = _required_string(decision.get("id"), "gated_decision.id")
+    outcome = _required_string(gate.get("outcome"), "gate.outcome")
+    operator_required = gate.get("operator_decision_required")
+    if not isinstance(operator_required, bool):
+        raise HTTPException(
+            status_code=422,
+            detail="gate.operator_decision_required must be a boolean",
+        )
+    if operator_required != (outcome == "operator_decision"):
+        raise HTTPException(status_code=422, detail="gate outcome is inconsistent")
+    return {
+        "gated_decision": {"type": decision_type, "id": decision_id},
+        "gate": dict(gate),
+        "operator_decision": {
+            "status": "pending" if operator_required else "not_required",
+            "vetoed_by": gate.get("vetoed_by"),
+        },
+    }
+
+
 @app.post(
     "/api/governance/consultation-handoffs",
     response_model=Dict[str, Any],
@@ -383,6 +419,9 @@ def accept_consultation_handoff(
             detail="Consultation handoff idempotency key is invalid",
         )
 
+    panel_gate: Optional[Dict[str, Any]] = None
+    if target_gate.startswith("consultation.panel."):
+        panel_gate = _validated_panel_gate(body)
     request_digest = hashlib.sha256(
         json.dumps(
             body,
@@ -392,6 +431,7 @@ def accept_consultation_handoff(
         ).encode("utf-8")
     ).hexdigest()
     record = {
+        **(panel_gate or {}),
         "handoff_id": handoff_id,
         "tenant_id": tenant_id,
         "request_id": request_id,
@@ -436,6 +476,67 @@ def accept_consultation_handoff(
         "handoff_id": handoff_id,
         "consumer_ref": str(canonical["consumer_ref"]),
         "idempotent": not inserted,
+    }
+
+
+@app.post(
+    "/api/governance/consultation-gates/adopt",
+    response_model=Dict[str, Any],
+    summary="Attempt automatic adoption of a consultation-gated decision",
+)
+def adopt_consultation_gated_decision(
+    body: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+    service_actor: Optional[str] = Header(
+        None,
+        alias="X-Pantheon-Service-Actor",
+    ),
+    tenant_header: Optional[str] = Header(None, alias="X-Pantheon-Tenant-Id"),
+) -> Dict[str, Any]:
+    """Decision-owner gate: refuse auto-adoption without a clean panel review.
+
+    Adoption is allowed only when a panel handoff for exactly this decision
+    exists and none of them requires an operator decision. A risk veto (or a
+    missing panel) refuses adoption and leaves the pending operator decision.
+    """
+
+    _, tenant_id = _authenticate_consultation_handoff_service(
+        authorization=authorization,
+        service_actor=service_actor,
+        tenant_id=tenant_header,
+    )
+    decision_type = _required_string(body.get("type"), "type")
+    decision_id = _required_string(body.get("id"), "id")
+    reviews = [
+        item
+        for item in consultation_handoff_store.list_all()
+        if item.get("tenant_id") == tenant_id
+        and (item.get("gated_decision") or {}).get("type") == decision_type
+        and (item.get("gated_decision") or {}).get("id") == decision_id
+    ]
+    if not reviews:
+        raise HTTPException(
+            status_code=409,
+            detail="no consultation panel review exists for this decision",
+        )
+    blocking = [
+        item for item in reviews if (item.get("gate") or {}).get("operator_decision_required")
+    ]
+    if blocking:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "adopted": False,
+                "operator_decision_required": True,
+                "operator_decision": blocking[0].get("operator_decision"),
+                "handoff_id": blocking[0].get("handoff_id"),
+                "reason": "risk persona opposed; automatic adoption refused",
+            },
+        )
+    return {
+        "adopted": True,
+        "operator_decision_required": False,
+        "handoff_ids": [item["handoff_id"] for item in reviews],
     }
 
 

@@ -358,6 +358,103 @@ def test_risk_oppose_blocks_auto_adoption_and_becomes_operator_decision(
     assert gate["vetoed_by"] == triggers.RISK_PERSONA_ID
 
 
+def _adopt(stack: dict[str, Any], decision_type: str, decision_id: str) -> tuple[int, Any]:
+    req = urllib.request.Request(
+        stack["governance"] + "/api/governance/consultation-gates/adopt",
+        data=json.dumps({"type": decision_type, "id": decision_id}).encode(),
+        headers={
+            "Authorization": f"Bearer {HANDOFF_TOKEN}",
+            "X-Pantheon-Tenant-Id": TENANT,
+            "X-Pantheon-Service-Actor": "consultation-workflow-executor",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode())
+
+
+def test_risk_veto_refuses_real_auto_adoption_at_decision_owner(
+    stack: dict[str, Any],
+) -> None:
+    _bootstrap(stack)
+    _created, result, _fake = _run_panel(
+        stack,
+        {INITIATOR: "approve", triggers.RISK_PERSONA_ID: "reject"},
+        decision_type=triggers.DECISION_TRIAL_ADMISSION,
+        touches=(),
+        decision_id="trial-veto",
+    )
+    assert result["completed"] == 1, result
+    stored = stack["handoffs"].list_all()[0]
+    assert stored["gated_decision"] == {"type": "trial_admission", "id": "trial-veto"}
+    assert stored["operator_decision"]["status"] == "pending"
+    status, body = _adopt(stack, "trial_admission", "trial-veto")
+    assert status == 409
+    assert body["detail"]["operator_decision_required"] is True
+    assert body["detail"]["adopted"] is False
+    # An unreviewed decision is not adoptable either.
+    assert _adopt(stack, "trial_admission", "never-reviewed")[0] == 409
+
+
+def test_risk_initiated_patch_keeps_veto_end_to_end(stack: dict[str, Any]) -> None:
+    _bootstrap(stack)
+    rid = triggers.RISK_PERSONA_ID
+    with _provider_fake({rid: "reject", triggers.RED_TEAM_PERSONA_ID: "approve"}) as fake:
+        cfg = _config(stack, f"http://127.0.0.1:{fake.server_address[1]}/contribute")
+        requirement = triggers.required_consultation(
+            triggers.DECISION_HARNESS_PATCH,
+            "patch-risk-init",
+            initiator_persona_id=rid,
+            touches=("guardrails",),
+        )
+        assert requirement is not None
+        assert [p for p in requirement.participants if p.persona_id == rid][0].may_veto
+        client = ConsultationServiceClient(
+            base_url=stack["api"], token=SERVICE_TOKEN, tenant_id=TENANT
+        )
+        client.open_persona_panel(requirement, persona_id=rid, trace_id="trace-ri")
+        result = run_tick(
+            config=cfg, state=WorkflowStateStore(cfg.state_path), provider=_provider(cfg)
+        )
+    assert result["completed"] == 1, result
+    assert stack["handoffs"].list_all()[0]["gate"]["operator_decision_required"] is True
+    assert _adopt(stack, "harness_patch", "patch-risk-init")[0] == 409
+
+
+def test_panel_decision_must_match_request_target(stack: dict[str, Any]) -> None:
+    requirement = triggers.required_consultation(
+        triggers.DECISION_TRIAL_ADMISSION, "trial-x", initiator_persona_id=INITIATOR
+    )
+    assert requirement is not None
+    body = {
+        "request_type": "persona_policy",
+        "requested_by": {"actor_type": "persona", "actor_id": INITIATOR},
+        "from_persona_id": INITIATOR,
+        "target_type": "envelope_publication",
+        "target_id": "env-other",
+        "metadata": {"panel": requirement.to_panel_metadata()},
+        "trace_id": "trace-mm",
+    }
+    req = urllib.request.Request(
+        stack["api"] + "/api/consult/requests",
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": f"Bearer {SERVICE_TOKEN}",
+            "X-Pantheon-Tenant-Id": TENANT,
+            "X-Pantheon-Service-Actor": f"persona:{INITIATOR}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as err:
+        urllib.request.urlopen(req, timeout=10)
+    assert err.value.code == 422
+
+
 def test_panel_open_requires_persona_service_caller_and_policy_complete_panel(
     stack: dict[str, Any],
 ) -> None:

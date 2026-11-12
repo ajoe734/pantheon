@@ -150,6 +150,14 @@ def _authorize_panel_open(create_payload: Dict[str, Any]) -> None:
             ),
         )
     decision = panel.get("gated_decision") or {}
+    if (
+        str(decision.get("type") or "") != str(create_payload.get("target_type") or "")
+        or str(decision.get("id") or "") != str(create_payload.get("target_id") or "")
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="panel gated_decision must match the request target_type/target_id",
+        )
     required = consult_triggers.required_consultation(
         str(decision.get("type") or ""),
         str(decision.get("id") or ""),

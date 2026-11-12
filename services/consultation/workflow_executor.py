@@ -733,6 +733,12 @@ def _validated_panel(
     decision = panel.get("gated_decision")
     if not isinstance(decision, Mapping):
         raise WorkflowBlocked("panel.gated_decision is required")
+    if str(decision.get("type") or "") != str(request.get("target_type") or "") or str(
+        decision.get("id") or ""
+    ) != str(request.get("target_id") or ""):
+        raise WorkflowBlocked(
+            "panel gated_decision must match the request target_type/target_id"
+        )
     initiator = str(panel.get("initiator_persona_id") or "")
     if not initiator or initiator != str(request.get("from_persona_id") or ""):
         raise WorkflowBlocked("panel initiator must be the requesting persona")
