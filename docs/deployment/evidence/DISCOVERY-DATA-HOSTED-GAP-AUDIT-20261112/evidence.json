@@ -296,6 +296,7 @@
     "proof_sha256": "5558904df68705a8d78061651e1be5454c59ec503312ca992be07f39a5f7312a",
     "note": "cited separately from the 09:22Z legacy registry; historical cause of empty inventory UNKNOWN"
   },
+  "review_corrections_rehandoff": "(1) approval-gate waiver advice removed; approval failure retained as owner finding. (2) reconciler has only official/FinMind factories (persona_source_reconciler.py:205-209, 401-419, 443-452); no Collector definition/instance materialization; COLLECTOR-HOSTED-ADMISSION-20261112 pending owner repair; temp-store dry-run for collector-tw-twse-price-history unsupported. (3) RSS/GDELT use collector_news_articles with no tw_community_daily; shared official definition declares feature_targets returns (refs only, also via market_data_storage fallback); hosted feature coverage unknown.",
   "authorised_activation_path": "Source management commands OFF / UI legacy no-action (Human/Ops 09:44:15Z). Provisioning owner: COLLECTOR-HOSTED-ADMISSION-20261112 (deployment desired-state holder -> persona-source reconciler -> registry/scheduler -> steady pull); not implemented/deployed by this audit; no flag flip, no policy-gate waiver, no manual compat-route registration",
   "industry_primary_schema_1001Z": {
     "scope": "public API schema documentation only; no rows fetched; not hosted industry/PIT proof",
