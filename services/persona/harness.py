@@ -300,6 +300,22 @@ class PersistentHarnessOwner:
             return state, row
         return self._mutate(persona_id, actor, reduce)
 
+    def record_comparison(self, persona_id: str, patch_id: str, record: dict[str, Any], actor: str) -> dict[str, Any]:
+        """Append a shadow comparison record. It never changes status or activates anything."""
+        def reduce(persona: Any, state: Any) -> tuple[dict, dict]:
+            if not state or patch_id not in state["patches"]:
+                raise HarnessError("patch_not_found", 404)
+            row = state["patches"][patch_id]
+            if row["status"] != "previewed":
+                raise HarnessError("precheck_required", 409)
+            if record.get("patch_id") != patch_id or record.get("persona_id") != persona_id:
+                raise HarnessError("comparison_binding_mismatch")
+            row.setdefault("comparisons", []).append(copy.deepcopy(record))
+            self._event(state, "shadow_compared", actor, patch_id=patch_id,
+                        status=record.get("status"), decision=record.get("decision"))
+            return state, {"patch_id": patch_id, "comparisons": len(row["comparisons"])}
+        return self._mutate(persona_id, actor, reduce)
+
     def _check(self, persona: Any, state: dict, row: dict) -> tuple[HarnessSurface | None, list[str]]:
         patch = PersonaPatch.model_validate(row["proposal"])
         if state["active_version"] != patch.base_version:
