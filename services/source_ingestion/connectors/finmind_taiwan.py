@@ -566,6 +566,10 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
         # api_endpoint is only the actual transport request URL supplied by the caller;
         # never the derived fallback, and never a URL carrying secrets.
         request_endpoint = _safe_request_endpoint(source_url)
+        if _text(source_url) and request_endpoint is None:
+            # Reject before any record is built so a secret-bearing URL is never
+            # retained in source_url, api_endpoint, body or readback.
+            raise FinMindFetchError("FinMind broker request URL carries credentials or is not a clean http(s) URL")
         for row in self.top_rows_from_payload(
             payload,
             symbol=symbol,
