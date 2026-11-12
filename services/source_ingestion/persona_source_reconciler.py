@@ -373,7 +373,9 @@ class SourceProvisioningReconciler:
                 persona_id=requirement.persona_id,
                 dataset=requirement.dataset,
                 connector_id=collector_candidates[0],
-                status="unsupported",
+                # Skipped, not unsupported: a deployment without a collector host is a valid posture,
+                # and must not fail the whole controller tick closed. The reason stays in the readback.
+                status="skipped",
                 connector_action="collector_host_not_configured",
                 schedule_action="not_attempted",
                 idempotency_key=requirement.idempotency_key,

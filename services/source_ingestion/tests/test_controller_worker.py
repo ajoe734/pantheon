@@ -1871,7 +1871,22 @@ def _make_stub_persona_server():
     return server, port
 
 
-def test_load_desired_state_merges_default_and_active_personas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture()
+def baseline_desired_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The official-market-only holder (the deployment default minus the Collector admissions)."""
+
+    payload = json.loads(controller_worker.DEFAULT_DESIRED_STATE_PATH.read_text(encoding="utf-8"))
+    holder = payload["personas"][0]
+    holder["required_data_sources"] = [
+        req for req in holder["required_data_sources"] if req["connector_candidates"] == ["tw-twse-tpex-official-market"]
+    ]
+    path = tmp_path / "baseline_desired_state.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_PATH", str(path))
+    return path
+
+
+def test_load_desired_state_merges_default_and_active_personas(baseline_desired_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     server, port = _make_stub_persona_server()
     try:
         active_persona_1 = {
@@ -1915,7 +1930,6 @@ def test_load_desired_state_merges_default_and_active_personas(tmp_path: Path, m
         ]
 
         monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
-        monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
 
         personas, meta = controller_worker.load_desired_state(timeout_seconds=5.0)
         pids = [p["persona_id"] for p in personas]
@@ -1941,7 +1955,6 @@ def test_load_desired_state_fails_closed_when_persona_owner_unreachable(monkeypa
         _StubPersonaOwnerHandler.personas = []
 
         monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
-        monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
 
         with pytest.raises(ControllerTickError) as exc_info:
             controller_worker.load_desired_state(timeout_seconds=5.0)
@@ -1959,7 +1972,6 @@ def test_load_desired_state_fails_closed_when_persona_owner_returns_malformed_li
         _StubPersonaOwnerHandler.personas = []
 
         monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
-        monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
 
         with pytest.raises(ControllerTickError) as exc_info:
             controller_worker.load_desired_state(timeout_seconds=5.0)
@@ -2272,7 +2284,7 @@ def test_controller_worker_resolves_tenant_from_bff_tenant_id(
     assert refreshed.tenant_id == "tenant-dev"
 
 
-def test_persona_with_bff_default_taiwan_requirements_adds_nothing_to_holder(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_persona_with_bff_default_taiwan_requirements_adds_nothing_to_holder(baseline_desired_state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bff_tw_requirements = [
         {
             "dataset": "tw_price_daily",
@@ -2328,7 +2340,7 @@ def test_persona_with_bff_default_taiwan_requirements_adds_nothing_to_holder(mon
         persona_server.server_close()
 
 
-def test_persona_finmind_only_merged_and_fails_closed_with_unsupported_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_persona_finmind_only_merged_and_fails_closed_with_unsupported_1(baseline_desired_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import socket
     import threading
     import time
@@ -3038,7 +3050,16 @@ def _collector_actual(
     }
     record["provenance"].setdefault("event_time", record["provenance"]["available_time"])
     record["provenance"]["tenant_id"] = "tenant-a"
-    record["metadata"] = {**(record.get("metadata") or {}), "collector": {"source_id": definition_id, "bundle_status": "complete"}}
+    from services.source_ingestion.connector_definitions import get_connector_definition
+
+    # The record carries the Collector's own source id, which is not always the definition id
+    # (strategy-seed-paper-corpus is served as collector-papers).
+    definition = get_connector_definition(definition_id or "")
+    collector_source_id = (definition.metadata.get("collector") or {}).get("source_id", definition_id) if definition else definition_id
+    record["metadata"] = {
+        **(record.get("metadata") or {}),
+        "collector": {"source_id": collector_source_id, "bundle_status": "complete"},
+    }
     item["schedule"]["enabled"] = schedule_enabled
     item["freshness"]["is_due"] = is_due
     if extra_direct_connector:
@@ -3248,3 +3269,19 @@ def test_steady_tick_surfaces_collector_source_failure(
     with pytest.raises(ControllerTickError, match="failed connector"):
         run_controller_tick(config=config, state=state, store=store, writer=RecordingWriter([]))
     assert state.consecutive_failures == 1
+
+
+def test_steady_batch_is_bounded_by_scheduler_slots_and_starts_with_least_recent_success() -> None:
+    actual = {
+        "connectors": [
+            {"connector_id": "collector-a", "freshness": {"last_success_at": "2026-11-12T01:00:00Z"}},
+            {"connector_id": "collector-b", "freshness": {"last_success_at": None}},
+            {"connector_id": "collector-c", "freshness": {"last_success_at": "2026-11-11T01:00:00Z"}},
+        ]
+    }
+    selected = ["collector-a", "collector-b", "collector-c"]
+
+    assert controller_worker.limit_collector_pull_batch(actual, selected, limit=1) == ["collector-b"]
+    assert controller_worker.limit_collector_pull_batch(actual, selected, limit=2) == ["collector-b", "collector-c"]
+    assert controller_worker.limit_collector_pull_batch(actual, selected, limit=10) == selected
+    assert controller_worker.limit_collector_pull_batch(actual, [], limit=2) == []

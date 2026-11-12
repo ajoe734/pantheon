@@ -541,3 +541,80 @@ def test_public_cap_raw_only_reaches_every_item_and_bundle_across_fresh_adapters
     _, raw = _public_sweep(config, {}, tmp_path, monkeypatch, files, rounds=12)
     assert len(raw) == 4
     assert len(list((tmp_path / "raw_store" / "raw").rglob("manifest.json"))) == 2
+
+
+# COLLECTOR-HOSTED-ADMISSION-20261112: two-year price history is point-in-time per row ----------------
+def _market_files(source_id, rows):
+    files, entry, _ = make_bundle(source_id=source_id, attribution="TWSE")
+    base = f"bundles/{source_id}/{entry['date']}/{entry['run_id']}"
+    items = [
+        {"id": item_id, "url": f"https://example.test/{item_id}", "fetched_at": FETCHED, **row}
+        for item_id, row in zip(("a", "b"), rows)
+    ]
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in items).encode()
+    return files, entry
+
+
+_TWSE_ROW = {"symbol": "2330", "security_name": "台積電", "exchange": "TWSE", "dataset": "tw_price_daily",
+             "open": 940.0, "high": 955.0, "low": 938.0, "close": 950.0, "volume_shares": 20000000, "transactions": 12000}
+
+
+@pytest.mark.parametrize(
+    "source_id,dataset,expected_time",
+    [
+        ("collector-tw-twse-price-history", "tw_price_daily", "T06:30:00Z"),
+        ("collector-tw-tpex-price-history", "tw_price_daily", "T06:30:00Z"),
+        ("collector-tw-twse-t86", "tw_institutional_flow", "T08:30:00Z"),
+    ],
+)
+def test_backfilled_market_rows_use_their_own_trade_date_as_event_time(tmp_path, source_id, dataset, expected_time):
+    rows = [{**_TWSE_ROW, "dataset": dataset, "trade_date": "2024-11-12"},
+            {**_TWSE_ROW, "dataset": dataset, "trade_date": "2025-03-04"}]
+    files, entry = _market_files(source_id, rows)
+    adapter = adapter_for(files, [entry], tmp_path, source_id=source_id, source_type="market", platform=None,
+                          attribution_required=True, dataset=dataset)
+    records = adapter.pull().records
+    # Fetched in 2026, but each row is event-dated by its own trade date, and available when fetched.
+    assert [r.metadata["event_time"] for r in records] == ["2024-11-12" + expected_time, "2025-03-04" + expected_time]
+    assert all(r.metadata["available_time"] == FETCHED and r.metadata["pit"]["validated"] for r in records)
+    assert [r.metadata["trade_date"] for r in records] == ["2024-11-12", "2025-03-04"]
+
+
+def test_market_row_published_on_another_date_than_its_trade_date_is_rejected(tmp_path):
+    rows = [{**_TWSE_ROW, "trade_date": "2024-11-12", "published_at": "2026-11-10T06:30:00Z"}, {**_TWSE_ROW, "trade_date": "2024-11-13"}]
+    files, entry = _market_files("collector-tw-twse-price-history", rows)
+    adapter = adapter_for(files, [entry], tmp_path, source_id="collector-tw-twse-price-history", source_type="market",
+                          platform=None, attribution_required=True, dataset="tw_price_daily")
+    with pytest.raises(SourceEvidenceError, match="trade_date"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+def test_collector_history_rows_agree_with_official_tw_price_daily_and_leave_it_unchanged(tmp_path):
+    from services.source_ingestion.connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+    from services.source_ingestion.tests.test_taiwan_official_connectors import TWSE_PRICE_HISTORY_PAYLOAD
+
+    official = TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_price_history_payload(
+        "2330.TWSE", "TWSE", TWSE_PRICE_HISTORY_PAYLOAD,
+        api_endpoint="bundle://collector-tw-twse-price-history?date=20260601&symbol=2330", trace_id="official",
+    )
+    before = [r.to_dict() for r in official]
+    truth = official[0].metadata["normalized_row"]  # 2330.TWSE 2026-06-09
+
+    rows = [{**_TWSE_ROW, "trade_date": truth["date"]}, {**_TWSE_ROW, "trade_date": "2024-11-12", "close": 900.0}]
+    files, entry = _market_files("collector-tw-twse-price-history", rows)
+    adapter = adapter_for(files, [entry], tmp_path, source_id="collector-tw-twse-price-history", source_type="market",
+                          platform=None, attribution_required=True, dataset="tw_price_daily")
+    collector = adapter.pull().records
+
+    same_day = next(r for r in collector if r.metadata["trade_date"] == truth["date"])
+    row = same_day.metadata["normalized_row"]
+    assert (row["symbol"], row["trade_date"]) == (truth["symbol"], truth["date"])
+    for collector_key, official_key in (("open", "open"), ("high", "high"), ("low", "low"), ("close", "close"),
+                                        ("volume_shares", "volume"), ("transactions", "transactions")):
+        assert row[collector_key] == truth[official_key], collector_key
+    # The collector copy is a separate lineage, not an official record, and official truth is untouched.
+    assert same_day.connector_id != official[0].connector_id
+    assert same_day.source_id.startswith("collector:collector-tw-twse-price-history:")
+    assert not same_day.source_id.startswith("tw-official:")
+    assert [r.to_dict() for r in official] == before
