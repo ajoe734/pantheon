@@ -47,6 +47,7 @@ try:
         CreateBindingRequest,
         CreateCapitalPoolRequest,
         CreateRebalanceRequest,
+        PaperAllocationCycleRequest,
         PersonaCapitalBindingBody,
         RebalanceApplyReceipt,
         RebalanceBody,
@@ -55,6 +56,7 @@ try:
         WriteAuthorityResponse,
     )
     from . import allocation_lineage as lineage
+    from . import paper_allocation_cycle
     from .allocation_store import (
         AllocationAuthorityConflict,
         AllocationAuthorityError,
@@ -95,6 +97,7 @@ except ImportError:
         CreateBindingRequest,
         CreateCapitalPoolRequest,
         CreateRebalanceRequest,
+        PaperAllocationCycleRequest,
         PersonaCapitalBindingBody,
         RebalanceApplyReceipt,
         RebalanceBody,
@@ -103,6 +106,7 @@ except ImportError:
         WriteAuthorityResponse,
     )
     import allocation_lineage as lineage  # type: ignore
+    import paper_allocation_cycle  # type: ignore
     from allocation_store import (  # type: ignore
         AllocationAuthorityConflict,
         AllocationAuthorityError,
@@ -1241,6 +1245,19 @@ def evaluate_allocation_policy(payload: Dict[str, Any]) -> Dict[str, Any]:
             if not str(payload.get("promotion_review_id") or "").strip():
                 raise lineage.AllocationLineageError("promotion_review_id is required")
         return lineage.evaluate_allocation(payload, paper=bool(paper))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.post("/api/paper-allocation-cycles")
+def run_paper_allocation_cycle(body: PaperAllocationCycleRequest) -> Dict[str, Any]:
+    """Governed quarterly paper cycle: idempotent per tenant+quarter+pool, paper scope only."""
+    try:
+        body = bind_capital_mutation(body)
+        with CapitalBoundaryService._CAPITAL_STATE_APPLY_LOCK:
+            return paper_allocation_cycle.run_paper_allocation_cycle(
+                get_capital_service(), body, tenant=_current_tenant() or "",
+                paper_environment=lineage.paper_environment_allowed())
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 

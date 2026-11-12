@@ -324,3 +324,18 @@ class ContainmentBody(BaseModel):
     audit_event_id: Optional[str] = None
     audit_delivered_at: Optional[str] = None
     idempotent_replay: bool = False
+
+
+class PaperAllocationCycleRequest(BaseModel):
+    """Trigger for the governed quarterly paper allocation cycle (paper scope only)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor_id: str
+    actor_role: str
+    tenant_id: Optional[str] = None
+    quarter: str = Field(pattern=r"^\d{4}-Q[1-4]$")
+    ranking_snapshot_id: str = Field(min_length=1)
+    capital_pool_id: str = Field(min_length=1)
+    # persona_id -> {risk_budget_factor, capacity_factor, source/reason}; absent personas stay at 1.0
+    pool_health: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
