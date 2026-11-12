@@ -100,24 +100,31 @@ class RecommendedMeasureConsumers:
                 read_path = path.removesuffix("/patches")
             code, body = default_http_request("GET", base + read_path, None, headers)
             if kind == "persona_mutation_review" and code == 200 and isinstance(body, dict):
-                body = body.get("patches", {}).get(resource_id)
-                code = 200 if body else 404
+                patches = body.get("patches")
+                if not isinstance(patches, dict):
+                    code, body = 502, None
+                else:
+                    body = patches.get(resource_id)
+                    code = 200 if body else 404
             if code == 404:
                 code, body = default_http_request("POST", base + path, payload, headers)
                 if code == 422 and kind == "memory_candidate":
                     # Concurrent duplicate creation is an error at the Memory
                     # owner. Read and compare the deterministic candidate again.
-                    code, body = default_http_request("GET", base + read_path, None, headers)
+                    recovered_code, recovered = default_http_request("GET", base + read_path, None, headers)
+                    if recovered_code == 200:
+                        code, body = recovered_code, recovered
             record = body.get("proposal") if kind == "persona_mutation_review" and isinstance(body, dict) else body
             if code not in {200, 201} or not isinstance(record, dict):
                 raise CandidateDecisionConflict(f"{kind} owner delivery failed (HTTP {code}); retry the approval")
             compared = {field: expected for field, expected in payload.items()
-                        if not (kind == "research_request" and field == "actor_id")}
+                        if not (kind == "research_request" and field == "actor_id")
+                        and not (kind == "memory_candidate" and field in {"updated_at", "review_state", "promotion_stage", "target_env"})}
             if any(record.get(field) != expected for field, expected in compared.items()):
                 raise CandidateDecisionConflict(f"{kind} owner receipt does not match the reviewed measure")
             if kind == "research_request":
                 history = record.get("lifecycle_history") or []
-                if not history or history[0].get("transitioned_by") != payload["actor_id"]:
+                if not isinstance(history, list) or not history or not isinstance(history[0], dict) or history[0].get("transitioned_by") != payload["actor_id"]:
                     raise CandidateDecisionConflict("research_request owner receipt actor does not match the reviewed measure")
             return {"measure_id": candidate["measure_id"], "persona_id": persona,
                 "consumer": kind, "resource_id": record[id_field], "resource_path": path + "/" + resource_id,

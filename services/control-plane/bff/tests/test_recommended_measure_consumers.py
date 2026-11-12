@@ -341,3 +341,24 @@ def test_approved_measure_cannot_be_modified_or_redelivered(prepared):
         json={**staged[2], "action": "modify", "reason": "alter already consumed bytes", "proposed_value": {"different": True}})
     assert modified.status_code == 409
     assert len([c for c in p.owner.calls if c[0] == "POST"]) == 1
+
+
+def test_memory_recovery_preserves_owner_review_progress(prepared):
+    p = prepared
+    staged = stage(p, "memory_candidate")
+    p.owner.lose_response = True
+    assert approve(p, staged).status_code == 409
+    for record in p.owner.records.values():
+        record.update(review_state="pending_review", updated_at="2026-07-17T12:01:00+00:00")
+    assert approve(p, staged).status_code == 200
+    assert len([c for c in p.owner.calls if c[0] == "POST"]) == 1
+
+
+def test_malformed_harness_owner_readback_fails_without_write(prepared, monkeypatch):
+    p = prepared
+    staged = stage(p, "persona_mutation_review")
+    monkeypatch.setattr(consumers, "default_http_request", lambda *a: (200, {"patches": []}))
+    response = approve(p, staged)
+    assert response.status_code == 409
+    assert "HTTP 502" in response.text
+    assert not p.owner.calls

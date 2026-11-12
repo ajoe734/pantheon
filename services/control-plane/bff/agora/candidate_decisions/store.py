@@ -595,6 +595,11 @@ class CandidateDecisionStore:
                 raise CandidateDecisionConflict("candidate scope is invalid")
             if latest[2] != expected_etag:
                 raise CandidateDecisionConflict("candidate ETag is stale")
+            existing = conn.execute(
+                f"SELECT record_json FROM {table} WHERE {id_field}=%s", (receipt[id_field],)
+            ).fetchone()
+            if existing is not None and _decode(existing[0]) != receipt:
+                raise CandidateDecisionConflict(f"canonical {kind} receipt identity reused with different bytes")
             self._consume(current, consumer, conn)
             inserted = conn.execute(
                 f"INSERT INTO {table} "
