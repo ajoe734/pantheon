@@ -153,8 +153,14 @@ def evaluate_portfolio_envelope(artifact, closes, *, features=None,
 
 
 def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
-                             max_net_strength=1.0, gross_weight_limit=1.0):
-    """Build a new immutable revision; registration starts at draft/candidate."""
+                             max_net_strength=1.0, gross_weight_limit=1.0,
+                             pool_snapshot=None, parent_envelope_id=None):
+    """Build a new immutable revision; registration starts at draft/candidate.
+
+    ``pool_snapshot`` (pool version + digest) is pinned inside the checksummed
+    logic and ``parent_envelope_id`` joins the lineage, so every revision names
+    the pool version it came from and the envelope it replaces.
+    """
     from .strategy_artifact import strategy_artifact_checksum, validate_strategy_artifact
 
     if not members:
@@ -178,7 +184,15 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
                                   "members": pinned, "risk_limits": {
                                       "max_net_strength": max_net_strength,
                                       "gross_weight_limit": gross_weight_limit}}
-    template["lineage"] = {"parent_registry_ids": sorted({m["artifact_id"] for m in pinned})}
+    parents = {m["artifact_id"] for m in pinned}
+    if parent_envelope_id:
+        parents.add(parent_envelope_id)
+    if pool_snapshot is not None:
+        # Scalar immutable parameters are inside the checksum and need no
+        # schema extension (the strategy_logic schema forbids extra fields).
+        template["parameters"]["pool_version"] = int(pool_snapshot["pool_version"])
+        template["parameters"]["pool_digest"] = str(pool_snapshot["pool_digest"])
+    template["lineage"] = {"parent_registry_ids": sorted(parents)}
     template["mutation_surface"] = {"controls": [], "immutable_parameters": sorted(template["parameters"])}
     validate_strategy_artifact(template)
     return template

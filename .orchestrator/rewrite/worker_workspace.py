@@ -1055,6 +1055,154 @@ def _refresh_reused_worker_worktree(
     return False, f"merge_failed: {details}"
 
 
+def _task_artifact_covers(artifacts: list[str], path: str) -> bool:
+    candidate = path.replace("\\", "/")
+    if candidate.startswith("./"):
+        candidate = candidate[2:]
+    if not candidate or candidate.startswith("/") or ".." in candidate.split("/"):
+        return False
+    for raw in artifacts:
+        artifact = str(raw or "").strip().replace("\\", "/")
+        if artifact.startswith("./"):
+            artifact = artifact[2:]
+        if not artifact or artifact.startswith("/") or ".." in artifact.split("/"):
+            return False
+        if candidate == artifact or (
+            artifact.endswith("/") and candidate.startswith(artifact)
+        ):
+            return True
+    return False
+
+
+def _same_owner_reopen_wip_may_resume(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    request: DeliveryRequest,
+    *,
+    task_id: str | None,
+    repository_id: str,
+    branch: str,
+    worktree_path: Path,
+    target_agent: str | None,
+) -> bool:
+    """Allow the original owner to continue its own dirty task-artifact WIP.
+
+    Exact canonical facts must agree: an in-progress task with a canonical
+    review-requeue record for the same generation/owner/reviewer, a dispatch
+    to that owner (never the reviewer), the task's own branch and a lease (if
+    any) for this very path, no other active worker on the path, and every
+    dirty path covered by the task's declared artifacts. Nothing is committed,
+    stashed, reset or removed; any ambiguity fails closed.
+    """
+
+    if not task_id or str(request.task_id or "") != task_id:
+        return False
+    if str(request.reason or "") != REASON_OWNED_IN_PROGRESS:
+        return False
+    try:
+        status = load_status(config)
+    except (RuntimeError, OSError, ValueError):
+        return False
+    supervisor = _supervisor_module()
+    task = supervisor.task_index_from_status(config, status).get(task_id)
+    if task is None or str(task.get("status") or "") != "in_progress":
+        return False
+    try:
+        canonical_repository_id = validate_task_repository_scope(config, task)
+    except (RuntimeError, ValueError):
+        return False
+    if canonical_repository_id != repository_id or not task_branch_matches(
+        branch, worker_task_branch(config, task_id)
+    ):
+        return False
+    record = supervisor.task_review_requeue_record(task)
+    if record is None:
+        return False
+    generation = task_generation(task)
+    try:
+        if int(request.metadata.get("task_generation") or -1) != generation:
+            return False
+    except (TypeError, ValueError):
+        return False
+    embedded = (request.metadata.get("task") or {}).get(
+        supervisor.REVIEW_REQUEUE_INTENT_KEY
+    )
+    if isinstance(embedded, Mapping) and str(embedded.get("intent_id") or "") != str(
+        record.get("intent_id") or ""
+    ):
+        return False
+    actor = supervisor.canonical_agent_name(config, str(target_agent or ""))
+    owner = supervisor.canonical_agent_name(config, str(task.get("owner") or ""))
+    reviewer = supervisor.canonical_agent_name(config, str(task.get("reviewer") or ""))
+    if not actor or actor != owner or actor == reviewer:
+        return False
+    if supervisor.task_current_dispatch_responsibility(config, task) != "owner":
+        return False
+    lease = (state.get("worker_worktrees") or {}).get("leases", {}).get(task_id)
+    if lease is not None:
+        try:
+            if (
+                not isinstance(lease, Mapping)
+                or Path(str(lease.get("path") or "")).resolve() != worktree_path.resolve()
+                or str(lease.get("repository_id") or repository_id) != repository_id
+                or not task_branch_matches(str(lease.get("branch") or ""), branch)
+            ):
+                return False
+        except (OSError, RuntimeError, ValueError):
+            return False
+        prior = str(lease.get("last_target_agent") or "")
+        if prior and supervisor.canonical_agent_name(config, prior) != actor:
+            return False
+    if any(
+        _paths_overlap(worktree_path, active)
+        for active in active_worker_workspace_roots(config, state)
+    ):
+        return False
+    artifacts = [str(item) for item in (task.get("artifacts") or [])]
+    entries = _git_dirty_entries(worktree_path)
+    if not entries:
+        return False
+    for entry in entries:
+        code = entry["status"]
+        if "U" in code or code[:1] in {"R", "C"} or code[1:2] in {"R", "C"}:
+            return False
+        if not _task_artifact_covers(artifacts, entry["path"]):
+            return False
+    return True
+
+
+def _resume_owner_wip_worktree(worktree_path: Path, base_sha: str) -> tuple[bool, str]:
+    """Reuse owner WIP untouched; only a non-overwriting fast-forward is tried.
+
+    Autostash is explicitly disabled so git can never stash, rewrite or
+    conflict-mark owner WIP. The resulting workspace is validated (no
+    unmerged paths, no new stash, identical dirty set) before admission.
+    """
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(worktree_path), *args],
+            capture_output=True, text=True, check=False,
+        )
+
+    def snapshot() -> tuple[list[tuple[str, str]], str]:
+        entries = sorted((e["status"], e["path"]) for e in _git_dirty_entries(worktree_path))
+        return entries, git("stash", "list", "--format=%H").stdout
+
+    before, stashes = snapshot()
+    merged = git(
+        "-c", "merge.autoStash=false", "-c", "rebase.autoStash=false",
+        "merge", "--ff-only", "--no-autostash", base_sha,
+    )
+    after, stashes_after = snapshot()
+    unmerged = git("diff", "--name-only", "--diff-filter=U").stdout.strip()
+    if unmerged or stashes_after != stashes or any("U" in code for code, _ in after):
+        return False, "owner_wip_resume_invalid_workspace"
+    if after != before:
+        return False, "owner_wip_resume_dirty_set_changed"
+    return True, "owner_wip_resumed" if merged.returncode else "owner_wip_resumed+ff"
+
+
 def _recovery_worktree_archive_root(config: dict[str, Any]) -> Path:
     """Resolve the managed archive root used for recovery WIP snapshots."""
 
@@ -1600,10 +1748,28 @@ def prepare_worker_workspace(
 
     # Reused and recreated task branches share exactly one refresh/admission
     # policy. Only a brand-new branch created at the pinned base needs no merge.
+    request.metadata.pop("owner_wip_resume_admitted", None)
     if reused or creation_origin != "base_snapshot":
-        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-            worktree_path, base_sha, task_id=workspace_task_id, branch=branch,
-        )
+        if reused and not recovery_workspace and _same_owner_reopen_wip_may_resume(
+            config, state, request,
+            task_id=workspace_task_id,
+            repository_id=repository_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            target_agent=target_agent,
+        ):
+            refresh_ok, refresh_status = _resume_owner_wip_worktree(
+                worktree_path, base_sha
+            )
+            # Freshly validated by the canonical checks above and the
+            # post-merge workspace validation; only then may the launch
+            # dirty-tree guard admit exactly this scoped owner WIP.
+            if refresh_ok:
+                request.metadata["owner_wip_resume_admitted"] = True
+        else:
+            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                worktree_path, base_sha, task_id=workspace_task_id, branch=branch,
+            )
         write_activity_log(config, {
             "type": "worker_worktree_refreshed",
             "task_id": request.task_id,
