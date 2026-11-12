@@ -110,6 +110,48 @@ class ReplicationResponse:
 
 ---
 
+## 3a. Screen Contribution Test (SD_STRATEGY_SCREEN_ENTRY_EXIT §4)
+
+Applies only to a candidate whose `strategy_logic` has a `screen` (or whose evaluation
+carries `candidate_pool_snapshots`). Candidates without a screen take the unchanged
+primary path.
+
+* **Inputs**: the exact `strategy_artifact` and `backtest_dataset` (with
+  `candidate_pool_market`) in `research_handoff`/`proposed_strategy_spec`. Absent inputs
+  fail closed (`screen_contribution_inputs_missing`); nothing is synthesized.
+* **Control**: the same artifact with only `screen` removed and `parameters.symbols` set to
+  every symbol of the governed market, run through the same protocol, costs and split.
+  The control run is persisted in the backtest run store.
+* **Decision**: the screened candidate is admissible only if its out-of-sample after-cost
+  Sharpe exceeds the control's by more than `min_screen_oos_sharpe_improvement` (default
+  0). If either Sharpe is non-finite (zero-variance window) the comparison falls back to
+  out-of-sample after-cost total return, strictly greater; `comparison_metric` records which.
+* **Control definition**: the candidate's own entry/exit rules with every selection step
+  removed. The governed daily boundary exclusions (suspension, liquidity, history, stale
+  data) stay in force: the control keeps the screen's eligibility block and `min_size` with
+  a single pass-everything filter, so it trades exactly the eligible boundary.
+* **Screen adds nothing**: status `screen_dropped`; criterion fails; `re_registration`
+  carries the entry-only artifact, checksum, control run id and the reason. The
+  revalidation worker consumes it and durably registers the entry-only candidate in
+  `entry_only_registrations.json` (idempotent on tenant + parent spec + entry-only
+  checksum; record holds reason and lineage to the screened parent and both runs;
+  readable via `list_entry_only_registrations`). The run metadata carries the
+  `registration_id`.
+* **Resubmitting an entry-only registration**: the gate recognises the registered artifact
+  structurally, never from a caller flag: its screen must be the fixed point of the
+  whole-boundary control construction (eligibility block, `min_size`, single
+  pass-everything filter, no selection step). Such a candidate skips only the
+  screen-contribution comparison (one trial, no `screen_contribution` block); every primary
+  admission check still runs. Any artifact with a selection step stays a screened candidate.
+* **Control cannot run**: status `control_unavailable`; fails closed.
+* **Trials**: the screened evaluation (screen variant) and the control (entry variant) each
+  increment the family counter; `trial_accounting` records both.
+* **Survivorship**: a backtest with status `survivorship_limited` is never admitted; the
+  criterion fails with `status: survivorship_limited` and the reason, which is echoed in
+  the response summary.
+* **Record**: `real_backtest_validation.details.screen_contribution` (also in
+  `metadata.backtest_summary`) states the measured contribution.
+
 ## 4. Admission Decisions
 
 ### ADMITTED

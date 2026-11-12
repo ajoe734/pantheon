@@ -232,10 +232,51 @@ def _persona_id(persona: Dict[str, Any]) -> str:
 
 
 def _persona_operational(persona: Dict[str, Any]) -> bool:
+    # The write owner archives/suspends independently of lifecycle_state.
+    # Flattened operational metadata must never revive an inactive owner.
+    if str(persona.get("status") or "").strip().lower() in {
+        "archived", "suspended", "inactive", "disabled", "retired", "frozen", "draft",
+    }:
+        return False
     # Only explicit Persona Registry lifecycle truth is accepted.  Generic
     # deployment labels (for example ``deployed``) must not grant interaction
     # eligibility.
     return is_persona_operational(persona)
+
+
+def _private_persona(persona: Dict[str, Any]) -> bool:
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    private_markers = {
+        "archetype": "agora_servant", "mandate": "user_private_agora_servant",
+        "strategy_family": "agora_servant", "persona_class": "agora_servant",
+        "owner_scope": "user_private", "visibility_scope": "private", "memory_scope": "private_user",
+    }
+    return any(
+        str(record.get(key) or "").strip().lower() == value
+        for record in (persona, metadata) for key, value in private_markers.items()
+    )
+
+
+def _persona_user_allowed(persona: Dict[str, Any], user_id: str) -> bool:
+    if not _private_persona(persona):
+        return True
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    owners = {
+        str(record[key]).strip()
+        for record in (persona, metadata)
+        for key in ("agora_user_id", "agoraUserId", "owner_user_id", "user_id", "userId")
+        if record.get(key)
+    }
+    return owners == {user_id}
+
+
+def _management_persona_context(binding: Dict[str, Any]) -> bool:
+    focused = binding.get("focused_object") or {}
+    return (
+        focused.get("kind") == "persona"
+        and unquote(urlsplit(str(binding.get("source_route") or "")).path).rstrip("/")
+        == f"/management/personas/{focused.get('id')}"
+    )
 
 
 def _environment_allowed(persona: Dict[str, Any], environment: str) -> bool:
@@ -296,8 +337,17 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop scope denied", "audience_mismatch")
         return session
 
-    def eligibility(body: EligibilityRequest, resolved: Any) -> Dict[str, Any]:
+    def eligibility(body: EligibilityRequest, resolved: Any, *,
+                    context_binding: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         session_for(body.workshop_id, resolved)
+        # Eligibility accepts no caller-supplied origin. For submission use the
+        # matching immutable receipt, even if another tab saved a newer one.
+        receipt = context_binding or lifecycle.latest_context_binding(
+            resolved.tenant_id, resolved.user_id, body.workshop_id,
+        )
+        institutional_compare = (
+            body.mode in {"compare", "consult"} and _management_persona_context(receipt or {})
+        )
         results = []
         read_store = get_read_store()
         for persona in read_store.list_personas(include_market_persona_defaults=True):
@@ -307,6 +357,10 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 continue
             if persona.get("tenant_id") != resolved.tenant_id:
                 reasons.append("tenant_mismatch")
+            if not _persona_user_allowed(persona, resolved.user_id):
+                reasons.append("persona_user_mismatch")
+            if institutional_compare and _private_persona(persona):
+                reasons.append("persona_not_institutional")
             if not _persona_operational(persona):
                 reasons.append("persona_not_active")
             metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
@@ -338,9 +392,6 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             participant_snapshot = None
             if not reasons:
                 try:
-                    receipt = lifecycle.latest_context_binding(
-                        resolved.tenant_id, resolved.user_id, body.workshop_id,
-                    )
                     participant_snapshot, _ = build_participant_admission(
                         persona=persona,
                         capability_snapshot=snapshot or {},
@@ -539,6 +590,14 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                     if not persona or persona.get("tenant_id") != resolved.tenant_id:
                         from services.control_plane.bff.models import ErrorCode
                         raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Selected Persona is not canonical in this tenant", "selected_persona_not_found")
+                    if not _persona_user_allowed(persona, resolved.user_id):
+                        from services.control_plane.bff.models import ErrorCode
+                        raise bff_error(403, ErrorCode.FORBIDDEN, "Selected Persona is private to another user", "persona_user_mismatch")
+                    if body.initial_mode == "compare" and _management_persona_context({
+                        "focused_object": focused, "source_route": body.source_route,
+                    }) and _private_persona(persona):
+                        from services.control_plane.bff.models import ErrorCode
+                        raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Management Compare requires institutional Personas", "participant_eligibility_failed")
                 from services.control_plane.bff.models import ErrorCode
 
                 for ref in normalized_refs:
@@ -548,6 +607,8 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                     audience_verified = False
                     if kind == "persona":
                         row = personas.get(ref_id)
+                        if row and not _persona_user_allowed(row, resolved.user_id):
+                            raise bff_error(403, ErrorCode.FORBIDDEN, "Persona reference is private to another user", "persona_user_mismatch")
                         canonical_version = _persona_version(row) if row else None
                         audience_verified = bool(row and row.get("tenant_id") == resolved.tenant_id)
                     elif kind == "strategy":
@@ -759,7 +820,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             environment=advice_environment,
             required_capability=body.required_capability,
         )
-        eligibility_result = eligibility(eligibility_request, resolved)
+        eligibility_result = eligibility(eligibility_request, resolved, context_binding=context_binding)
         eligible_rows = {x["persona_id"]: x for x in eligibility_result["included"]}
         if not set(selected_persona_ids).issubset(eligible_rows):
             from services.control_plane.bff.models import ErrorCode

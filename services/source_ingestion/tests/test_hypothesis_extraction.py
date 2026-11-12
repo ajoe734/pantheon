@@ -220,7 +220,9 @@ def test_sector_then_quality_idea_is_needs_data(tmp_path):
     assert _run(worker, _source(body=recording["stored_text"])).created == 1
     card = _card_with_origin(store.list_all()[0])
     assert "then ranks quality" in card["screen_idea"]["statement"]
-    assert card["testability"] == "needs_data:tw_industry_classification"
+    # Extraction retains the idea, but stamps the remaining unsupported field.
+    assert card["screen_idea"] == recording["sector_card"]["screen_idea"]
+    assert card["testability"] == "needs_data:tw_sector_flows"
 
 
 @pytest.mark.parametrize("part", ["screen_idea", "entry_idea"])
