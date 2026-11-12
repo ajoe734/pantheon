@@ -459,6 +459,7 @@ class IntradayStore:
             "incoming_rows": [dict(r) for r in incoming_rows],
         }
         path = self.quarantine_path(sym, day)
+        prior: dict[str, Any] = {}
         if path.exists():
             try:
                 prior = json.loads(path.read_text(encoding="utf-8"))
@@ -468,29 +469,46 @@ class IntradayStore:
                 record["quarantined_at"] = prior.get("quarantined_at", record["quarantined_at"])
         manifest = self._manifest_for_update(day)
         previous = manifest["symbols"].get(sym) or {}
+        # Keep every earlier incoming raw reference (hash + path) across repeated quarantines.
+        raw_refs: list[dict[str, Any]] = [
+            r for r in (prior.get("incoming_raw_refs") or []) if isinstance(r, dict)
+        ]
+        original_hash = previous.get("raw_response_hash") or prior.get("original_raw_response_hash")
         if raw_envelope is not None:
             raw_main = self.raw_path(sym, day)
             incoming_hash = str(raw_envelope.get("response_content_hash") or "")
-            if raw_main.exists() and previous.get("status") == STATUS_ACCEPTED:
-                # Never overwrite the original raw response that backs the retained
-                # shard: keep the incoming one beside it under its own hash.
+            if raw_main.exists():
+                # Existing raw bytes are immutable regardless of previous status: keep the
+                # incoming response beside them under its own hash.
                 suffix = (incoming_hash or _sha256(_canonical(raw_envelope)))[:16]
-                conflict_path = raw_main.with_name(f"{sym}.raw.conflict-{suffix}.jsonl.gz")
-                self._write_raw(sym, day, raw_envelope, path=conflict_path)
-                record["incoming_raw_path"] = str(conflict_path.relative_to(self.root))
+                target = raw_main.with_name(f"{sym}.raw.conflict-{suffix}.jsonl.gz")
+                if incoming_hash and incoming_hash == original_hash:
+                    target = raw_main  # identical response already stored; nothing to write
+                else:
+                    self._write_raw(sym, day, raw_envelope, path=target)
             else:
                 self._write_raw(sym, day, raw_envelope)
-                record["incoming_raw_path"] = str(raw_main.relative_to(self.root))
+                target = raw_main
+            rel = str(target.relative_to(self.root))
+            record["incoming_raw_path"] = rel
             record["incoming_raw_response_hash"] = incoming_hash or None
-            record["original_raw_response_hash"] = previous.get("raw_response_hash")
+            ref = {"path": rel, "response_hash": incoming_hash or None}
+            if ref not in raw_refs:
+                raw_refs.append(ref)
+        elif prior.get("incoming_raw_path"):
+            record["incoming_raw_path"] = prior.get("incoming_raw_path")
+            record["incoming_raw_response_hash"] = prior.get("incoming_raw_response_hash")
+        record["original_raw_response_hash"] = original_hash
+        record["incoming_raw_refs"] = raw_refs
         _atomic_write(path, (_canonical(record) + "\n").encode("utf-8"))
         manifest["symbols"][sym] = {
             "status": STATUS_QUARANTINED, "reason": reason,
             "row_count": int(previous.get("row_count") or 0),
             "content_hash": previous.get("content_hash"),
             "shard": previous.get("shard"),
-            "raw_response_hash": previous.get("raw_response_hash"),
-            "incoming_raw_response_hash": (raw_envelope or {}).get("response_content_hash"),
+            "raw_response_hash": original_hash,
+            "incoming_raw_response_hash": record.get("incoming_raw_response_hash"),
+            "incoming_raw_refs": raw_refs,
             "stored_at": _iso(self.clock()),
         }
         self._write_manifest(day, manifest)

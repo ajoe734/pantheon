@@ -217,3 +217,49 @@ def test_prune_retains_whole_day_with_unresolved_quarantine(tmp_path):
     assert not store.quarantine_path("2317", old).exists()
     store.prune(today=date(2027, 2, 20))
     assert not store.shard_path("2317", old).exists()
+
+
+def _dup_batch(close):
+    rows = _rows(n=1)
+    return rows + [{**rows[0], "close": close}]
+
+
+def _raw_text(path):
+    with gzip.open(path, "rt") as fh:
+        return fh.read()
+
+
+def test_repeated_quarantine_preserves_original_raw_from_accepted_day(tmp_path):
+    store = _store(tmp_path)
+    store.put_symbol_day("2330", DAY, _rows(n=1), raw_envelope={
+        "raw_rows": [{"c": "orig"}], "response_content_hash": "orig"})
+    raw_before = store.raw_path("2330", DAY).read_bytes()
+    store.put_symbol_day("2330", DAY, _dup_batch(999.0), raw_envelope={
+        "raw_rows": [{"c": "conflict1"}], "response_content_hash": "c1"})
+    store.put_symbol_day("2330", DAY, _dup_batch(998.0), raw_envelope={
+        "raw_rows": [{"c": "conflict2"}], "response_content_hash": "c2"})
+    assert store.raw_path("2330", DAY).read_bytes() == raw_before
+    q = json.loads(store.quarantine_path("2330", DAY).read_text())
+    assert q["original_raw_response_hash"] == "orig"
+    refs = {r["response_hash"]: r["path"] for r in q["incoming_raw_refs"]}
+    assert set(refs) == {"c1", "c2"}
+    assert "conflict1" in _raw_text(tmp_path / refs["c1"])
+    assert "conflict2" in _raw_text(tmp_path / refs["c2"])
+    entry = json.loads(store.manifest_path(DAY).read_text())["symbols"]["2330"]
+    assert entry["raw_response_hash"] == "orig" and len(entry["incoming_raw_refs"]) == 2
+
+
+def test_repeated_quarantine_preserves_first_raw_when_initially_quarantined(tmp_path):
+    store = _store(tmp_path)
+    store.put_symbol_day("2330", DAY, _dup_batch(999.0), raw_envelope={
+        "raw_rows": [{"c": "first"}], "response_content_hash": "f1"})
+    raw_before = store.raw_path("2330", DAY).read_bytes()
+    store.put_symbol_day("2330", DAY, _dup_batch(998.0), raw_envelope={
+        "raw_rows": [{"c": "second"}], "response_content_hash": "f2"})
+    assert store.raw_path("2330", DAY).read_bytes() == raw_before
+    q = json.loads(store.quarantine_path("2330", DAY).read_text())
+    refs = {r["response_hash"]: r["path"] for r in q["incoming_raw_refs"]}
+    assert set(refs) == {"f1", "f2"}
+    assert "second" in _raw_text(tmp_path / refs["f2"])
+    entry = json.loads(store.manifest_path(DAY).read_text())["symbols"]["2330"]
+    assert entry["raw_response_hash"] is None or entry["raw_response_hash"] == "f1"

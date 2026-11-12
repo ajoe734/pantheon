@@ -1,39 +1,41 @@
 {
-  "task_id": "INTRADAY-1M-STORE-BACKFILL-20261111",
-  "scope": "K2: tw_price_1m partitioned gz-JSONL store, resumable newest-first two-year backfill, retention/quarantine pruner, disk guard, and permanent exclusion of tw_price_1m from the daily latest-snapshot projection. Source + tests only.",
-  "source_evidence": {
-    "store": "services/source_ingestion/intraday_store.py: normalized/tw_price_1m/<date>/<SYMBOL>.jsonl.gz sorted by bar_start; per-day manifest.json (row counts, per-symbol counts, content hashes); raw/tw_price_1m provenance envelope; idempotent on (symbol, session_date, bar_start), identical refetch rewrites nothing, differing OHLCV for an existing key quarantines the symbol-day and never overwrites; resolve_quarantine; manifest-driven pruner (2-year rolling accepted days, resolved quarantine expires after 90 days, unresolved quarantine never deleted, deletions logged to _logs/tw_price_1m_prune.jsonl, restricted to this dataset's directories); disk guard requires free >= max(10 x projected remaining bytes, 20 GB) on the INTRADAY_STORE_ROOT mount, raises disk_budget_exhausted and deletes nothing; measure_mount() runs df --output equivalent for hosted evidence.",
-    "backfill": "services/source_ingestion/intraday_backfill.py: run_backfill uses K1 fetch_kbar + shared KBarHourlyBudget (default 4500/h), newest session first over the governed is_trading_day calendar, resumes by skipping manifest-complete symbol-days, stops with budget_exhausted/quota_402 (no same-hour retry) or credential_error (no retry, no substitute data), disk guard before start, every request and every write, default universe cap 200, 730-day window. Uses K1 normalize_kbar_payload so the complete 271-bar session and governed closures are kept; conflicting duplicates and unsupported session shapes are quarantined, the complete raw response is persisted; no truncation, imputation, padding or volume-tolerance change. coverage_report gives actual per-symbol coverage and missing days.",
-    "job_class": "services/source_ingestion/active_universe.py: DEFAULT_SOURCE_UPDATE_RULES gains tw-finmind-kbar-1m / tw_price_1m (CORE+CANDIDATE, max 200 symbols per run, job_class intraday_minute_store_backfill, daily_snapshot_projection=excluded).",
-    "snapshot_isolation": "services/source_ingestion/pipeline.py: persist_latest_market_snapshots drops every tw_price_1m record (connector id, dataset/normalized_target/source_dataset metadata) and skips the whole batch when the connector declares tw_price_1m. Reconciled-only minute projection stays K4's separate writer.",
-    "default_desired_state_json": "Deliberately UNCHANGED. A persona entry for tw_price_1m was tried and reverted: it broke 5 test_controller_worker tests and would make the generic controller path schedule minute pulls, which this task does not authorize (no real backfill) and which would bypass the store job class. Enabling controller scheduling is left to a later approved task."
-  },
-  "test_evidence": {
-    "commands": "uv run --python 3.12 ... python -m pytest services/source_ingestion/tests/test_intraday_store.py test_intraday_backfill.py test_pipeline_snapshot_dataset_isolation.py; full services/source_ingestion run",
-    "new_tests": "15 passed in test_intraday_store.py + test_pipeline_snapshot_dataset_isolation.py; 14 in test_intraday_backfill.py",
-    "regression": "services/source_ingestion full suite with the desired-state change reverted: test_controller_worker 145 passed; remaining suite 1451 passed before revert (5 controller failures were solely due to the reverted desired-state edit)",
-    "limits": "Tests use a fake fetcher and injected disk usage; no real FinMind request was made and no real data was fetched."
-  },
-  "hosted_evidence": {
-    "status": "NOT_MEASURED",
-    "gap": "AC4: df --output=source,size,avail on the configured INTRADAY_STORE_ROOT on the hosted dev host pantheon-dev-deploy (project pantheon-dev-20260902) was not run. This worker is not that host. The 3 GB budget remains a projection and free space is unmeasured. IntradayStore.measure_mount(path) is the intended probe and must be executed on the hosted host.",
-    "per_symbol_coverage": "NOT_AVAILABLE: no real backfill was run or authorized (hosted external_wait). coverage_report is implemented and unit-tested only."
-  },
-  "not_claimed": [
-    "hosted store-mount df measurement",
-    "any real FinMind fetch, real two-year coverage, or real disk consumption",
-    "reconciliation against tw_price_daily (K3)",
-    "whole-task completion"
-  ],
-  "review_round_2_fixes": {
-    "retention": "prune() now processes quarantine expiry first and retains the whole session day (shard, raw, manifest) while any symbol in it has a live quarantine record (unresolved or <90 days resolved); regression test_prune_retains_whole_day_with_unresolved_quarantine.",
-    "shared_budget": "run_backfill default budget is K1 shared_kbar_budget(); test_default_budget_is_shared_kbar_budget_across_runs.",
-    "disk_guard": "check_disk_budget runs before every request and again before every write; stops with disk_budget_exhausted; test_disk_drop_during_first_fetch_stops_before_any_write; mid-run test now stops before next request.",
-    "raw_conflict": "quarantine keeps the original raw response untouched and writes the incoming one to <SYMBOL>.raw.conflict-<hash>.jsonl.gz; quarantine record/manifest carry original and incoming raw hashes; test_conflict_preserves_original_raw_and_keeps_incoming_separately.",
-    "focused_pytest": "33 passed (test_intraday_store, test_intraday_backfill, test_pipeline_snapshot_dataset_isolation). Full source_ingestion suite not re-run in this round."
-  },
-  "review_round_3_fixes": {
-    "additive_raw": "put_symbol_day additive refetch no longer overwrites <SYMBOL>.raw.jsonl.gz; the incoming raw response is written to <SYMBOL>.raw.add-<hash>.jsonl.gz and the manifest keeps raw_response_hash (original) plus raw_responses [{hash,path}] for every response behind retained bars. Identical refetch remains a no-op. Regression: test_additive_refetch_preserves_every_raw_response.",
-    "focused_pytest": "34 passed (test_intraday_store, test_intraday_backfill, test_pipeline_snapshot_dataset_isolation)."
-  }
+ "task_id": "INTRADAY-1M-STORE-BACKFILL-20261111",
+ "scope": "K2: tw_price_1m partitioned gz-JSONL store, resumable newest-first two-year backfill, retention/quarantine pruner, disk guard, and permanent exclusion of tw_price_1m from the daily latest-snapshot projection. Source + tests only.",
+ "source_evidence": {
+  "store": "services/source_ingestion/intraday_store.py: normalized/tw_price_1m/<date>/<SYMBOL>.jsonl.gz sorted by bar_start; per-day manifest.json (row counts, per-symbol counts, content hashes); raw/tw_price_1m provenance envelope; idempotent on (symbol, session_date, bar_start), identical refetch rewrites nothing, differing OHLCV for an existing key quarantines the symbol-day and never overwrites; resolve_quarantine; manifest-driven pruner (2-year rolling accepted days, resolved quarantine expires after 90 days, unresolved quarantine never deleted, deletions logged to _logs/tw_price_1m_prune.jsonl, restricted to this dataset's directories); disk guard requires free >= max(10 x projected remaining bytes, 20 GB) on the INTRADAY_STORE_ROOT mount, raises disk_budget_exhausted and deletes nothing; measure_mount() runs df --output equivalent for hosted evidence.",
+  "backfill": "services/source_ingestion/intraday_backfill.py: run_backfill uses K1 fetch_kbar + shared KBarHourlyBudget (default 4500/h), newest session first over the governed is_trading_day calendar, resumes by skipping manifest-complete symbol-days, stops with budget_exhausted/quota_402 (no same-hour retry) or credential_error (no retry, no substitute data), disk guard before start, every request and every write, default universe cap 200, 730-day window. Uses K1 normalize_kbar_payload so the complete 271-bar session and governed closures are kept; conflicting duplicates and unsupported session shapes are quarantined, the complete raw response is persisted; no truncation, imputation, padding or volume-tolerance change. coverage_report gives actual per-symbol coverage and missing days.",
+  "job_class": "services/source_ingestion/active_universe.py: DEFAULT_SOURCE_UPDATE_RULES gains tw-finmind-kbar-1m / tw_price_1m (CORE+CANDIDATE, max 200 symbols per run, job_class intraday_minute_store_backfill, daily_snapshot_projection=excluded).",
+  "snapshot_isolation": "services/source_ingestion/pipeline.py: persist_latest_market_snapshots drops every tw_price_1m record (connector id, dataset/normalized_target/source_dataset metadata) and skips the whole batch when the connector declares tw_price_1m. Reconciled-only minute projection stays K4's separate writer.",
+  "default_desired_state_json": "Deliberately UNCHANGED. A persona entry for tw_price_1m was tried and reverted: it broke 5 test_controller_worker tests and would make the generic controller path schedule minute pulls, which this task does not authorize (no real backfill) and which would bypass the store job class. Enabling controller scheduling is left to a later approved task.",
+  "repeated_quarantine_raw_preservation": "intraday_store.quarantine_symbol_day: existing raw/<SYMBOL>.raw.jsonl.gz is never overwritten regardless of previous status (accepted or quarantined); each later incoming response is stored at <SYMBOL>.raw.conflict-<hash16>.jsonl.gz; quarantine record and manifest retain original_raw_response_hash plus cumulative incoming_raw_refs [{path,response_hash}] across repeated quarantines, including the in-batch-duplicate path that bypasses already_quarantined."
+ },
+ "test_evidence": {
+  "commands": "uv run --python 3.12 ... python -m pytest services/source_ingestion/tests/test_intraday_store.py test_intraday_backfill.py test_pipeline_snapshot_dataset_isolation.py; full services/source_ingestion run",
+  "new_tests": "15 passed in test_intraday_store.py + test_pipeline_snapshot_dataset_isolation.py; 14 in test_intraday_backfill.py",
+  "regression": "services/source_ingestion full suite with the desired-state change reverted: test_controller_worker 145 passed; remaining suite 1451 passed before revert (5 controller failures were solely due to the reverted desired-state edit)",
+  "limits": "Tests use a fake fetcher and injected disk usage; no real FinMind request was made and no real data was fetched.",
+  "review_round_4": "Added 2 repeated-quarantine regressions (accepted-then-twice-conflicting; initially-quarantined then second conflict). 36 passed locally across test_intraday_store, test_intraday_backfill, test_pipeline_snapshot_dataset_isolation (python3.12 venv, pytest 9.2). Source/tests only; hosted df and actual coverage remain external_wait."
+ },
+ "hosted_evidence": {
+  "status": "NOT_MEASURED",
+  "gap": "AC4: df --output=source,size,avail on the configured INTRADAY_STORE_ROOT on the hosted dev host pantheon-dev-deploy (project pantheon-dev-20260902) was not run. This worker is not that host. The 3 GB budget remains a projection and free space is unmeasured. IntradayStore.measure_mount(path) is the intended probe and must be executed on the hosted host.",
+  "per_symbol_coverage": "NOT_AVAILABLE: no real backfill was run or authorized (hosted external_wait). coverage_report is implemented and unit-tested only."
+ },
+ "not_claimed": [
+  "hosted store-mount df measurement",
+  "any real FinMind fetch, real two-year coverage, or real disk consumption",
+  "reconciliation against tw_price_daily (K3)",
+  "whole-task completion"
+ ],
+ "review_round_2_fixes": {
+  "retention": "prune() now processes quarantine expiry first and retains the whole session day (shard, raw, manifest) while any symbol in it has a live quarantine record (unresolved or <90 days resolved); regression test_prune_retains_whole_day_with_unresolved_quarantine.",
+  "shared_budget": "run_backfill default budget is K1 shared_kbar_budget(); test_default_budget_is_shared_kbar_budget_across_runs.",
+  "disk_guard": "check_disk_budget runs before every request and again before every write; stops with disk_budget_exhausted; test_disk_drop_during_first_fetch_stops_before_any_write; mid-run test now stops before next request.",
+  "raw_conflict": "quarantine keeps the original raw response untouched and writes the incoming one to <SYMBOL>.raw.conflict-<hash>.jsonl.gz; quarantine record/manifest carry original and incoming raw hashes; test_conflict_preserves_original_raw_and_keeps_incoming_separately.",
+  "focused_pytest": "33 passed (test_intraday_store, test_intraday_backfill, test_pipeline_snapshot_dataset_isolation). Full source_ingestion suite not re-run in this round."
+ },
+ "review_round_3_fixes": {
+  "additive_raw": "put_symbol_day additive refetch no longer overwrites <SYMBOL>.raw.jsonl.gz; the incoming raw response is written to <SYMBOL>.raw.add-<hash>.jsonl.gz and the manifest keeps raw_response_hash (original) plus raw_responses [{hash,path}] for every response behind retained bars. Identical refetch remains a no-op. Regression: test_additive_refetch_preserves_every_raw_response.",
+  "focused_pytest": "34 passed (test_intraday_store, test_intraday_backfill, test_pipeline_snapshot_dataset_isolation)."
+ }
 }
