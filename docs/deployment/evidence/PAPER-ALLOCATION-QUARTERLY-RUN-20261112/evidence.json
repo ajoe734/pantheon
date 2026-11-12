@@ -10,7 +10,7 @@
     "owner_cycle": "services/capital/main.py run_paper_allocation_cycle: recompute from the admitted snapshot, policy persona-paper-quarterly-allocation-v1, create one rebalance proposal per tenant+quarter+pool, apply automatically inside the paper ledger (approval_ref paper-auto:<id>), receipt + audit_ref + rollback_target",
     "idempotency": "rebalance_id derived from tenant|quarter|pool; an existing cycle is returned, an unapplied one is only completed; evaluator also records applied cycles in its state",
     "policy": "calculate_paper_competition_allocations reuses calculate_target_allocations (score share, tier caps S25/A15/B8, +25% increase cap, exclusions) with paper_running as the positive stage; retained weight of held allocations without a line (departed/skipped personas) is reserved and targets are scaled down (paper_total_budget_scale) so the projected owner portfolio never exceeds 1.0; the owner also refuses any cycle whose projection would exceed it",
-    "pool_health": "evaluator derives risk_budget_factor = min(1, gross_utilisation/budget_full) and capacity_factor = 1 - idle_day_share from the persona's current strategy-pool decision.health; anything unknown stays 1.0 with the reason stored in pool_health_factors (O-21)",
+    "pool_health": "evaluator derives risk_budget_factor = min(1, gross_utilisation/budget_full) and capacity_factor only from the O-21 capacity fact (budget full plus admitted candidates waiting). No persisted source for that fact exists in pool health, so capacity_factor stays 1.0 with reason capacity_observation_unavailable and status is partial/unavailable, never known; idle_day_share is not substituted (O-21/AC4 fallback)",
     "real_capital_unchanged": "calculate_target_allocations defaults, real evaluate endpoint, human approval and apply path are untouched; factor fields are context fields only for the paper quarterly policy; the cycle refuses non-paper pools, non-dev environments and non-paper lines"
   },
   "acceptance": {
@@ -50,7 +50,7 @@
   ],
   "review_fix_verification": "pytest services/capital: 387 passed, 12 skipped; persona-evaluator-agent + test_bff_capital_paper_allocation.py: 54 passed",
   "decisions_for_review": [
-    "capacity_factor = 1 - idle_day_share is an implementation choice for 'could the persona use more capital'; the addendum names budget-full plus waiting candidates, for which no persisted source exists yet",
+    "capacity_factor stays 1.0 with a recorded reason because the addendum's capacity fact (budget full plus admitted candidates waiting) has no persisted source yet; when one is published the evaluator should consume it. Regression covers known utilisation and idle share with absent capacity facts",
     "Only the latest closed quarter with a persisted snapshot is cycled; older missed quarters are not replayed",
     "The evaluator's BFF token must carry the operator role (and tenant scope) to call the write route; no token change was made here",
     "Personas without paper_ledger_id on the ranking item or without exactly one active paper_owner binding are skipped with a recorded reason (simulation.skipped); no eligible persona refuses the cycle",

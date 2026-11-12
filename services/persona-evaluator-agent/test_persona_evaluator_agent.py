@@ -588,7 +588,9 @@ def test_failed_cycle_is_recorded_and_retried_with_the_same_idempotency_key(tmp_
 def test_pool_health_factors_come_from_recorded_health_and_stay_one_with_a_reason_otherwise():
     health = {"gross_utilisation": {"status": "known", "value": 0.4}, "idle_day_share": {"status": "known", "value": 0.25}}
     factors = pea.pool_health_factors(health, {"budget_full": 0.8})
-    assert factors["risk_budget_factor"] == 0.5 and factors["capacity_factor"] == 0.75 and factors["status"] == "known"
+    assert factors["risk_budget_factor"] == 0.5 and factors["capacity_factor"] == 1.0 and factors["status"] == "partial"
+    # regression: utilisation and idle share known, capacity facts absent -> capacity stays 1.0, reason recorded, never "known"
+    assert factors["reasons"] == {"capacity_factor": "capacity_observation_unavailable"}
     full = pea.pool_health_factors({"gross_utilisation": {"status": "known", "value": 0.95},
                                     "idle_day_share": {"status": "known", "value": 0.0}}, {"budget_full": 0.8})
     assert full["risk_budget_factor"] == 1.0 and full["capacity_factor"] == 1.0

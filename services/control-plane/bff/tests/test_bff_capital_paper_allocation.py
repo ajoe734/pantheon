@@ -32,8 +32,8 @@ Q1_CLOSE_TIME = datetime(2027, 1, 5, tzinfo=timezone.utc).timestamp()
 Q2_CLOSE_TIME = datetime(2027, 4, 5, tzinfo=timezone.utc).timestamp()
 
 
-# p1 score 90 x risk_budget 0.5 x capacity 0.75 = 33.75; p2 70 / p3 60 have no pool health (factor 1.0)
-FIRST_QUARTER = {"p1": 0.20610687, "p2": 0.15, "p3": 0.08}  # shares 33.75/70/60 of 163.75, then S/A/B tier caps
+# p1 score 90 x risk_budget 0.5 x capacity 1.0 (no capacity fact) = 45; p2 70 / p3 60 have no pool health (factor 1.0)
+FIRST_QUARTER = {"p1": 0.25, "p2": 0.15, "p3": 0.08}  # shares 45/70/60 of 175, then S/A/B tier caps
 
 
 def _ranking_item(persona_id: str, tier: str, score: float, **extra: Any) -> Dict[str, Any]:
@@ -152,7 +152,7 @@ def test_quarter_close_runs_one_paper_cycle_across_three_personas_and_applies_it
     assert sum(_weights(harness).values()) <= 1.0
     lines = {l["persona_id"]: l for l in proposal["lines"]}
     # pool health: p1 has recorded health, p2/p3 stay at 1 with the reason
-    assert lines["p1"]["risk_budget_factor"] == 0.5 and lines["p1"]["capacity_factor"] == 0.75
+    assert lines["p1"]["risk_budget_factor"] == 0.5 and lines["p1"]["capacity_factor"] == 1.0
     assert lines["p2"]["risk_budget_factor"] == 1.0 and "pool health unavailable" in lines["p2"]["pool_health_factors"]["reason"]
 
     # the evaluator's own state shows the cycle once; a rerun never reaches the owner a second time
@@ -187,7 +187,7 @@ def test_management_rebalance_read_shows_the_cycle_proposal_lines_and_reasons(wo
     assert cycle["simulation"]["paper_total"] == 1000.0 and cycle["rollback_target"]["allocations"]
     by_persona = {l["persona_id"]: l for l in cycle["lines"]}
     assert by_persona["p3"]["target_weight"] == 0.08 and "live_b_tier_cap" in by_persona["p3"]["cap_reasons"]
-    assert by_persona["p1"]["risk_budget_factor"] == 0.5 and by_persona["p1"]["pool_health_factors"]["status"] == "known"
+    assert by_persona["p1"]["risk_budget_factor"] == 0.5 and by_persona["p1"]["pool_health_factors"]["status"] == "partial"
     detail = harness.client.get(f"/bff/rebalances/{cycle['rebalance_id']}", headers=HEADERS).json()["data"]
     assert detail["apply_receipt"]["live_capital_side_effects"] is False
 

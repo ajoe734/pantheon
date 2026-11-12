@@ -421,8 +421,9 @@ def pool_health_factors(health: Any, policy: Any) -> dict[str, Any]:
     """Derive the allocation factors from a persona's recorded strategy-pool health, never from a default.
 
     risk_budget_factor = min(1, gross risk-budget utilisation / budget_full): an under-used budget earns less.
-    capacity_factor = 1 - idle_day_share: the share of observed days the pool actually deployed capital.
-    Anything not known stays at 1.0 with the reason recorded.
+    capacity_factor needs the O-21 capacity fact (budget full and admitted candidates waiting). The pool health
+    record carries no such observation, so it stays 1.0 with the reason recorded and the status is never "known".
+    Idle-day share is not a capacity fact and is never substituted for it.
     """
     health = health if isinstance(health, dict) else {}
     out: dict[str, Any] = {"risk_budget_factor": 1.0, "capacity_factor": 1.0, "source": "strategy_pool_health", "reasons": {}}
@@ -431,16 +432,13 @@ def pool_health_factors(health: Any, policy: Any) -> dict[str, Any]:
         entry = health.get(key)
         return _fraction(entry.get("value")) if isinstance(entry, dict) and entry.get("status") == "known" else None
 
-    gross, idle = known("gross_utilisation"), known("idle_day_share")
+    gross = known("gross_utilisation")
     budget_full = _fraction((policy or {}).get("budget_full")) if isinstance(policy, dict) else None
     if gross is not None and budget_full and gross >= 0:
         out["risk_budget_factor"] = round(min(1.0, gross / budget_full), 8)
     else:
         out["reasons"]["risk_budget_factor"] = "gross_utilisation_or_budget_full_unknown"
-    if idle is not None and 0 <= idle <= 1:
-        out["capacity_factor"] = round(1.0 - idle, 8)
-    else:
-        out["reasons"]["capacity_factor"] = "idle_day_share_unknown"
+    out["reasons"]["capacity_factor"] = "capacity_observation_unavailable"
     out["status"] = "known" if not out["reasons"] else "partial" if len(out["reasons"]) < 2 else "unavailable"
     return out
 
