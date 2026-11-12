@@ -6,7 +6,9 @@
   "review": {
     "status": "pending_independent_review",
     "previous": "REQUEST CHANGES at f9f52984: replay after record_binding_created compared replacement_parent_binding_id against mutable plan.binding_id",
-    "fix": "Replay branch recovers the admitted source from the immutable child replacement_parent_binding_id only after independently verifying the parent in RuntimeManager (paper, same capital pool, persona binding, runtime_id, differing artifact pair); otherwise BINDING_READBACK_MISMATCH. Non-replay paths unchanged."
+    "fix": "Replay branch recovers the admitted source from the immutable child replacement_parent_binding_id only after independently verifying the parent in RuntimeManager (paper, same capital pool, persona binding, runtime_id, differing artifact pair); otherwise BINDING_READBACK_MISMATCH. Non-replay paths unchanged.",
+    "previous_2": "REQUEST CHANGES at 4166d8f40: runtime.load.requested path called validate_authoritative_readback without expected_source_binding_id, so every valid forward child failed activation and compensated",
+    "fix_2": "Shared verify_forward_replace_parent helper (adapter) independently verifies the immutable admitted parent in both the binding-created replay and the runtime.load.requested path; tampered/missing parent fails closed to compensation"
   },
   "scope": "Source-only. Pool version -> immutable envelope -> automated paper approval -> DeploymentPlan -> same-stage replace of the existing RuntimeBinding through the existing Deployment owner path. No hosted/live claim.",
   "implementation": {
@@ -59,6 +61,11 @@
       "command": "python -m pytest services/deployment/test_runtime_manager_dispatch_adapter.py services/deployment/test_outbox_consumer_worker.py -q",
       "exit_code": 0,
       "result": "173 passed incl. binding-created-before-inbox-receipt regressions (adapter replay, parent-lineage negatives, real run_poll + real adapter with no compensation and no duplicate replace)"
+    },
+    {
+      "command": "python -m pytest services/deployment/test_outbox_consumer_worker.py services/deployment/test_runtime_manager_dispatch_adapter.py -q",
+      "exit_code": 0,
+      "result": "179 passed incl. real run_poll runtime.load.requested success to completed projection and 5 tampered-parent negatives"
     }
   ],
   "acceptance": {

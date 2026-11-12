@@ -3643,3 +3643,83 @@ def test_binding_created_before_inbox_receipt_replay_does_not_compensate(worker)
     compensation.assert_not_called()
     client.replace.assert_not_called()
     client.deploy.assert_not_called()
+
+
+def _run_forward_replace_runtime_load(worker, mutate=None):
+    from services.deployment.test_runtime_manager_dispatch_adapter import (
+        _binding_created_replay_fixture,
+    )
+
+    saga, _context, client = _binding_created_replay_fixture()
+    if mutate:
+        mutate(client)
+    binding = client.get("rb-new")
+    saga["runtime_id"] = binding["runtime_id"]
+    event = _outbox_record("evt-paper-replace-load")
+    event["event"].update(
+        event_type="runtime.load.requested",
+        aggregate_id=saga["saga_id"],
+        payload={"binding_id": "rb-new"},
+    )
+    with (
+        patch.object(worker, "fetch_pending_outbox", return_value=[event]),
+        patch.object(worker, "fetch_saga", side_effect=[saga, _completed_saga(saga)]),
+        patch.object(worker, "RuntimeManagerClient", return_value=client),
+        patch.object(
+            worker, "consume_event", return_value=_inbox_receipt("evt-paper-replace-load")
+        ),
+        patch.object(worker, "record_runtime_active") as active,
+        patch.object(
+            worker, "fetch_projection", return_value=_success_projection(saga, binding)
+        ),
+        patch.object(worker, "_trigger_delivery_compensation") as compensation,
+        patch.object(worker, "record_delivery_failure", return_value={}),
+    ):
+        result = worker.run_poll(
+            api_url="http://127.0.0.1:1", consumer_name="test-consumer"
+        )
+    return result, active, compensation
+
+
+def test_forward_replace_runtime_load_reaches_completed_projection(worker):
+    result, active, compensation = _run_forward_replace_runtime_load(worker)
+    compensation.assert_not_called()
+    active.assert_called_once()
+    assert result["errors"] == []
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["parent_runtime", "parent_mode", "parent_pool", "child_lineage", "parent_missing"],
+)
+def test_forward_replace_runtime_load_rejects_tampered_parent(worker, tamper):
+    def mutate(client):
+        real_get = client.get
+
+        def get(binding_id):
+            b = real_get(binding_id)
+            if b is None:
+                return None
+            b = dict(b)
+            if binding_id == "rb-old":
+                if tamper == "parent_missing":
+                    return None
+                if tamper == "parent_runtime":
+                    b["runtime_id"] = "rt-other"
+                if tamper == "parent_mode":
+                    b["deployment_mode"] = "live"
+                if tamper == "parent_pool":
+                    b["capital_pool_id"] = "pool-other"
+            elif tamper == "child_lineage":
+                b["metadata"] = {
+                    **b["metadata"],
+                    "replacement_parent_binding_id": "rb-forged",
+                }
+            return b
+
+        client.get = get
+
+    result, active, compensation = _run_forward_replace_runtime_load(worker, mutate)
+    active.assert_not_called()
+    compensation.assert_called_once()
+    assert result["errors"]

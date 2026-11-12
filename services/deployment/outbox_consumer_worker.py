@@ -43,6 +43,8 @@ from runtime_manager_dispatch_adapter import (
     DispatchOutcome,
     DispatchResult,
     validate_authoritative_readback,
+    verify_forward_replace_parent,
+    _is_paper_forward_replace,
 )
 from runtime_manager_client import (
     RuntimeManagerClient,
@@ -2607,10 +2609,27 @@ def run_poll(
                     raise RuntimeError(
                         f"authoritative RuntimeBinding {binding_id!r} is not readable yet"
                     )
-                mismatch = validate_authoritative_readback(
+                load_source_binding_id = None
+                lineage_mismatch = None
+                if _is_paper_forward_replace(saga):
+                    load_source_binding_id, lineage_error = verify_forward_replace_parent(
+                        client=client,
+                        saga=saga,
+                        binding=binding,
+                        persona_capital_binding_id=binding.get(
+                            "persona_capital_binding_id"
+                        ),
+                    )
+                    if lineage_error is not None:
+                        if lineage_error[0] == DispatchOutcome.RETRYABLE_ERROR:
+                            raise RuntimeError(lineage_error[1])
+                        lineage_mismatch = lineage_error[1]
+                    load_source_binding_id = load_source_binding_id or None
+                mismatch = lineage_mismatch or validate_authoritative_readback(
                     saga=saga,
                     binding=binding,
                     expected_binding_id=binding_id,
+                    expected_source_binding_id=load_source_binding_id,
                 )
                 if mismatch:
                     reason = f"RuntimeBinding activation readback failed: {mismatch}"
