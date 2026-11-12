@@ -336,6 +336,30 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 | `/api/v1/bindings` | GET | CP-03 | `{ data: [PersonaCapitalBinding], meta }` | `persona_id`, `capital_pool_id`, `role`, `validity` |
 | `/api/v1/bindings/{binding_id}` | GET | CP-04 | `{ data: PersonaCapitalBinding + Persona, meta }` | — |
 
+#### 9.2.1 Governed quarterly paper allocation cycle
+
+Paper personas compete for paper capital once per quarter through the existing ranking and allocation
+path. Real capital allocation and its human approval path are unchanged; this mode can never create or
+apply a real (canary/live) rebalance. No new BFF route: it rides the existing evaluation route.
+
+| Route | Method | Role | Response |
+|---|---|---|---|
+| `/bff/management/allocation-policy/evaluate` with `authority_mode=governed_paper_quarterly_cycle` | POST | operator | `{ data: { cycle, rebalance, applied, replayed, receipt }, meta }` |
+| `/bff/rebalances`, `/bff/rebalances/{rebalance_id}` | GET | read | the cycle proposal with its lines, cap reasons, exclusions, factors, `simulation`, `constraints`, `rollback_target` and apply receipt |
+
+* Body: `authority_mode`, `quarter` (`YYYY-Qn`), `ranking_snapshot_id` (admitted quarterly snapshot of that
+  quarter), `capital_pool_id` (paper pool, `metadata.execution_context=paper`), optional `pool_health` (per
+  persona `risk_budget_factor` / `capacity_factor` / provenance). Without that `authority_mode` the route
+  stays a read-only evaluation.
+* The Capital owner recomputes targets from the snapshot with policy `persona-paper-quarterly-allocation-v1`
+  (real tier caps S 25 % / A 15 % / B 8 %, +25 % quarterly increase cap, existing exclusions, total weight
+  never above 1.0), creates one proposal per tenant + quarter + pool and applies it automatically in the
+  paper ledger with an audit receipt and a rollback target. A rerun or catch-up returns the existing cycle.
+* Pool-health factors default to 1.0; the reason is stored per persona line (`pool_health_factors`).
+* A persona without a paper ledger on its ranking item or without exactly one active paper-owner binding is
+  skipped with a recorded reason (`simulation.skipped`); an unknown snapshot, period mismatch, non-paper pool,
+  non-paper environment or a caller without the operator role fails closed (4xx) and creates nothing.
+
 ### 9.3 Deployment Surfaces (DP-01–DP-04)
 
 **Canonical source**: BINDING_AND_DEPLOYMENT_SEMANTICS.md

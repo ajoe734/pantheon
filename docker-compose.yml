@@ -3122,6 +3122,9 @@ services:
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PERSONA_EVALUATOR_INTERVAL_SECONDS: ${PERSONA_EVALUATOR_INTERVAL_SECONDS:-900}
+      # Paper capital pool for the governed quarterly paper allocation cycle; empty = cycle not configured (no allocation).
+      # The BFF token must carry the operator role for this write (paper scope only; real capital is untouched).
+      PERSONA_EVALUATOR_PAPER_POOL_ID: ${PERSONA_EVALUATOR_PAPER_POOL_ID:-}
       PERSONA_EVALUATOR_STATE_PATH: /data/persona-evaluator-agent/state.json
     volumes:
       - persona-evaluator-agent-data:/data/persona-evaluator-agent
