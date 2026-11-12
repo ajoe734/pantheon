@@ -662,12 +662,14 @@ class CurrentArtifactStrategy:
             snapshots = b_dict.get("market_inputs") or metadata.get("market_inputs")
             if not isinstance(snapshots, Mapping) or not snapshots:
                 raise SignalDecisionUnavailable("market_input_missing", "screen requires market_inputs for the governed market")
-            features = {**(metadata.get("features") or {}), **(b_dict.get("features") or {})}
             try:
+                features = {**(metadata.get("features") or {}), **(b_dict.get("features") or {})}
                 _, market_symbols = _market(features.get(MARKET_FEATURE_KEY))
                 keyed = {canonical_symbol(s): s for s in snapshots}
-                if set(keyed) != set(market_symbols):
+                if len(keyed) != len(snapshots) or set(keyed) != set(market_symbols):
                     raise ValueError("screen market_inputs must cover the complete governed market")
+                if not all(isinstance(snapshots[s], Mapping) for s in snapshots):
+                    raise ValueError("screen market_inputs must contain snapshot objects")
                 stamps = {snapshots[s].get("event_time") for s in snapshots}
                 if len(stamps) != 1 or not next(iter(stamps)):
                     raise ValueError("screen market_inputs require one common decision bar")

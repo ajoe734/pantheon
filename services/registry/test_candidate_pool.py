@@ -259,3 +259,15 @@ def test_screen_constants_must_remain_governed_mutable_controls():
                                                   if c["parameter_key"] != "pool_count"]
     with pytest.raises(fr.FactorRuleValidationError, match="pool_count.*mutation_surface.controls"):
         fr.validate_factor_rule_logic(artifact["strategy_logic"], artifact["parameters"], artifact["mutation_surface"])
+
+
+def test_rule_flat_exit_cannot_open_a_short_or_reconstruct_a_phantom_position():
+    artifact, market = screen_artifact(), recorded_market()
+    artifact["strategy_logic"]["exit"]["flat_when"] = {"op": "gt", "args": [
+        {"ref": "signal"}, {"const_param": "exit_z"}]}
+    flat = evaluate_screened_views(artifact, market, "2026-09-02")["2317.TW"]
+    assert flat["action"] == "HOLD" and flat["hold_reason"] == "exit_without_position"
+    held = evaluate_screened_views(artifact, market, "2026-09-02", positions={
+        "2317.TW": {"current_direction": "LONG", "holding_bars": 1}})["2317.TW"]
+    assert held["action"] == "SELL" and held["exit_reason"] == "rule_exit"
+    assert held["target_direction"] == "FLAT"

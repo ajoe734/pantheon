@@ -29,6 +29,8 @@ def digest(value: Any) -> str:
 
 
 def canonical_symbol(symbol: str) -> str:
+    if not isinstance(symbol, str):
+        raise fr.FactorRuleValidationError("screen symbol must be a string")
     match = re.fullmatch(r"([0-9]{4,6})\.(TW|TWSE|TWO|TPEX)", symbol.upper())
     if not match:
         raise fr.FactorRuleValidationError(f"screen requires a Taiwan equity symbol: {symbol!r}")
@@ -382,6 +384,12 @@ def _member_view(artifact: Mapping, symbols: Mapping, snapshot: Mapping, symbol:
                 current_direction=current_direction or "FLAT", holding_bars=holding_bars or 0,
                 include_position_state=True,
             )
+            if view["action"] != "HOLD" and view["target_direction"] == "FLAT":
+                if current_direction not in {"LONG", "SHORT"}:
+                    view = {**hold, "target_direction": "FLAT", "holding_bars": 0,
+                            "hold_reason": "exit_without_position"}
+                else:
+                    view["exit_reason"] = "rule_exit"
         except fr.FactorRuleValidationError as exc:
             view = {**hold, "hold_reason": f"missing_entry_input:{exc}"}
     return {**view, "candidate_pool_snapshot": snapshot, "candidate_pool_digest": snapshot["digest"]}
