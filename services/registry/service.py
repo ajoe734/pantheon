@@ -19,6 +19,9 @@ import json
 import logging
 import os
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Literal, Optional
@@ -66,6 +69,7 @@ from .strategy_artifact import (
     strategy_artifact_checksum,
     validate_strategy_artifact,
 )
+from .promotion.gate import PromotionError, PromotionGate
 from .paper_strategy_spec import validate_strategy_spec
 from .alpha_template import (
     AlphaTemplateValidationError,
@@ -208,6 +212,9 @@ class StrategyArtifactRegisterRequest(BaseModel):
     evaluation_summary: Optional[dict[str, Any]] = None
     rollback_target: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
+    replication_proof: Optional[dict[str, Any]] = None
+    backtest_evaluation: Optional[dict[str, Any]] = None
+    """Producer's full gate evaluation; recomputed (digest/checks/metrics) at registration, not stored."""
 
 
 class StrategyArtifactMutationRequest(BaseModel):
@@ -987,7 +994,49 @@ def _strategy_artifact_registration(
         "evaluation_summary": payload.evaluation_summary,
         "rollback_target": payload.rollback_target,
         "metadata": payload.metadata,
+        "replication_proof": payload.replication_proof,
+        "backtest_evaluation": payload.backtest_evaluation,
     }
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # never forward the bearer to another origin
+        return None
+
+
+def _verify_research_run_owner(
+    authorization: Optional[str], tenant: Optional[str], run_id: str, *, digest: str, checksum: str,
+    gate_verdict: Optional[dict[str, Any]] = None,
+) -> None:
+    """Confirm with the Research run owner that this tenant's run has this exact digest/checksum.
+
+    Forwards the already-verified caller bearer (RAM only, never logged/stored) to the single
+    configured Research origin; any missing config, transport error or mismatch fails closed.
+    """
+    base = os.environ.get("RESEARCH_ORCHESTRATOR_API_URL", "").strip().rstrip("/")
+    if not base or not authorization or not tenant:
+        raise RegistryError("producer run owner verification is not configured; gate proof refused.")
+    url = f"{base}/api/research-orchestrator/backtest-runs/{urllib.parse.quote(run_id, safe='')}/owner-binding"
+    request = urllib.request.Request(
+        url, headers={"Authorization": authorization, "X-Tenant-Id": tenant, "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(request, timeout=5) as response:
+            owned = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - every failure refuses the proof; no token in message
+        raise RegistryError(f"producer run owner verification failed: {type(exc).__name__}") from None
+    if (not isinstance(owned, dict) or owned.get("backtest_run_id") != run_id
+            or owned.get("tenant_id") != tenant or owned.get("status") != "completed"
+            or owned.get("evaluation_digest") != digest or owned.get("artifact_checksum") != checksum):
+        raise RegistryError("producer run owner record does not match the gate proof.")
+    # The owner persisted the gate's real decision (trial count, mandate, verdict digest): the
+    # proof's policy context must equal it, so a caller cannot reconstruct a rejected/other-trial gate.
+    recorded = owned.get("gate_verdict")
+    if (not isinstance(recorded, dict) or not isinstance(gate_verdict, dict)
+            or recorded.get("admission_status") != "admitted"
+            or any(recorded.get(k) is None or recorded.get(k) != gate_verdict.get(k)
+                   for k in ("admission_status", "trial_count", "mandate_max_drawdown", "family_id", "verdict_digest"))):
+        raise RegistryError("producer run owner gate verdict does not match the gate proof.")
 
 
 def _register_strategy_artifact(
@@ -996,8 +1045,32 @@ def _register_strategy_artifact(
     *,
     ctx: AuthContext,
     actor: Optional[dict[str, Any]] = None,
+    authorization: Optional[str] = None,
 ) -> RegistryEntryView:
+    registration = dict(registration)
+    replication_proof = registration.pop("replication_proof", None)
+    backtest_evaluation = registration.pop("backtest_evaluation", None)
     registry_id, create_payload = build_strategy_artifact_registry_payload(registration)
+    if replication_proof is not None:
+        # The success flag is derived here from the verified producer proof, never
+        # accepted from the caller.
+        try:
+            create_payload.replication_proof = PromotionGate.verify_admitted_replication_proof(
+                replication_proof, registration.get("evaluation_summary"), create_payload.lineage.to_dict(),
+                backtest_evaluation=backtest_evaluation,
+                artifact_checksum=strategy_artifact_checksum(registration["strategy_artifact"]),
+                producer_run_id=create_payload.producer_run_id or "",
+            )
+            binding = create_payload.replication_proof["owner_verified_binding"]
+            _verify_research_run_owner(
+                authorization, _caller_tenant(ctx), binding["backtest_run_id"],
+                digest=binding["evaluation_digest"], checksum=binding["artifact_checksum"],
+                gate_verdict=binding.get("gate_verdict"),
+            )
+            binding["producer_verified"] = True
+        except PromotionError as exc:
+            raise RegistryError(str(exc)) from exc
+        create_payload.replication_success = True
     view, created = registry_service.register_if_absent(create_payload, registry_id, actor=actor)
     if created:
         return view
@@ -1040,6 +1113,8 @@ def _register_strategy_artifact(
         or comparison_entry.evaluation_summary != create_payload.evaluation_summary
         or comparison_entry.rollback_target != create_payload.rollback_target
         or comparison_entry.metadata != create_payload.metadata
+        or comparison_entry.replication_success != create_payload.replication_success
+        or comparison_entry.replication_proof != create_payload.replication_proof
     ):
         raise RegistryError(
             f"StrategyArtifact registry_id already exists with different content: {registry_id}"
@@ -1770,6 +1845,7 @@ def register_strategy_artifact(
             _strategy_artifact_registration(payload),
             ctx=ctx,
             actor=_actor_context(ctx),
+            authorization=authorization,
         )
     except RegistryConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))

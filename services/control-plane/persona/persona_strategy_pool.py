@@ -297,6 +297,28 @@ class PersonaStrategyPoolStore:
             return []
         return [dict(r) for r in record.get("refusals", [])]
 
+    def member_baselines(self, persona_id: str, tenant_id: str) -> list[dict[str, Any]]:
+        """Each non-removed member's own approved baseline (or explicit missing reason).
+
+        Read-only; keyed by the immutable pool version so the association with
+        the member's artifact/checksum is preserved.
+        """
+        from services.evolution.approved_baselines import resolve_member_baseline
+
+        version = self.current(persona_id, tenant_id)
+        out = []
+        for member in version["members"]:
+            if member["stage"] == "removed":
+                continue
+            entry = self._reader(member["artifact_ref"], tenant_id)
+            out.append({
+                "pool_version": version["pool_version"], "stage": member["stage"],
+                "baseline": resolve_member_baseline(
+                    tenant_id=tenant_id, persona_id=persona_id,
+                    artifact_ref=member["artifact_ref"], checksum=member["checksum"], entry=entry),
+            })
+        return out
+
     # -- writes ------------------------------------------------------------
     def append(
         self,
