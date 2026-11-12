@@ -31,5 +31,9 @@
     "disk_guard": "check_disk_budget runs before every request and again before every write; stops with disk_budget_exhausted; test_disk_drop_during_first_fetch_stops_before_any_write; mid-run test now stops before next request.",
     "raw_conflict": "quarantine keeps the original raw response untouched and writes the incoming one to <SYMBOL>.raw.conflict-<hash>.jsonl.gz; quarantine record/manifest carry original and incoming raw hashes; test_conflict_preserves_original_raw_and_keeps_incoming_separately.",
     "focused_pytest": "33 passed (test_intraday_store, test_intraday_backfill, test_pipeline_snapshot_dataset_isolation). Full source_ingestion suite not re-run in this round."
+  },
+  "review_round_3_fixes": {
+    "additive_raw": "put_symbol_day additive refetch no longer overwrites <SYMBOL>.raw.jsonl.gz; the incoming raw response is written to <SYMBOL>.raw.add-<hash>.jsonl.gz and the manifest keeps raw_response_hash (original) plus raw_responses [{hash,path}] for every response behind retained bars. Identical refetch remains a no-op. Regression: test_additive_refetch_preserves_every_raw_response.",
+    "focused_pytest": "34 passed (test_intraday_store, test_intraday_backfill, test_pipeline_snapshot_dataset_isolation)."
   }
 }
