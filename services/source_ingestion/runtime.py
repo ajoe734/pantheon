@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from .tw_close_reconcile import COLLECTOR_PRICE_HISTORY_SOURCE_IDS
 
 from fastapi import HTTPException
 
@@ -1150,7 +1151,7 @@ class SourceIngestionRuntime:
             except Exception:
                 pass
 
-        latest: dict[str, tuple[tuple[int, int, int, str, str, str], SourceRecord]] = {}
+        latest: dict[str, tuple[tuple[Any, ...], SourceRecord]] = {}
         for record in self.evidence_repository.list_source_records():
             cid = record.connector_id
             rec_dict = record.to_dict()
@@ -1176,7 +1177,12 @@ class SourceIngestionRuntime:
             rec_created = str(rec_dict.get("created_at") or "")
             source_id = str(record.source_id or "")
 
-            rec_key = (is_accepted_run, is_price, is_active_symbol, rec_avail, rec_created, source_id)
+            if cid in COLLECTOR_PRICE_HISTORY_SOURCE_IDS:
+                # The collector backfills oldest-first after a same-day close is admitted, so the
+                # latest completed run can be an older session; newest admitted session wins.
+                rec_key = (is_price, rec_avail, is_accepted_run, is_active_symbol, rec_created, source_id)
+            else:
+                rec_key = (is_accepted_run, is_price, is_active_symbol, rec_avail, rec_created, source_id)
             if cid not in latest or rec_key > latest[cid][0]:
                 latest[cid] = (rec_key, record)
 

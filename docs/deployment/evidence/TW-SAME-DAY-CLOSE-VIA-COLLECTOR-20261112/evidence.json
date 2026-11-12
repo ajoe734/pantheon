@@ -11,11 +11,11 @@
   },
   "acceptance": {
     "1": "deploy/collector/tests/test_spiders_and_pollers.py (close capture tests) (no request <14:40 or >17:00 or non-trading day; first attempt 14:40 captures both; unpublished page retried; timer unit covers window in Asia/Taipei)",
-    "2": "test_collector_bundle_connector.py::test_newest_trade_date_is_delivered_first_even_when_backfill_is_pending, ..._not_redelivered_after_save_and_sweep_continues, definitions at 1800s",
+    "2": "test_collector_bundle_connector.py::test_newest_trade_date_is_delivered_first_even_when_backfill_is_pending, ..._not_redelivered_after_save_and_sweep_continues, definitions at 1800s; test_public_path_returns_every_priority_row_above_max_records_and_acks_accurately (governed execute_provider_owned_adapter path: a 1500-row newest day with fetch.max_records=1000 returns all rows on the first pull; provider_adapters.py no longer re-slices the collector adapter's output below its priority ceiling)",
     "3": "test_tw_close_reconcile.py::test_collector_close_for_newest_session_is_admitted_with_named_lineage (lineage names collector source, exchange endpoint, bundle digest)",
     "4": "test_collector_row_never_replaces_or_hides_an_official_row, test_collector_row_with_foreign_endpoint_never_enters_the_projection, test_relayed_close_with_incomplete_lineage_is_not_admitted_and_not_a_non_official_pause",
     "5": "test_official_row_replaces_collector_close_and_comparison_is_recorded[agree|mismatch] (recorded OpenAPI-style payload vs MI_INDEX-shaped row)",
-    "6": "test_preflight_cover_needs_both_exchanges_on_the_same_session + helper tests; existing controller_worker suite (168) unchanged green. A full tick-level readback test for the cover branch was NOT added.",
+    "6": "test_preflight_cover_needs_both_exchanges_on_the_same_session + helper tests; existing controller_worker suite (168) unchanged green. A full tick-level readback test for the cover branch was NOT added.; runtime._latest_source_record_by_connector ranks collector price-history connectors by newest trade date before accepted-run, so a later older-session backfill run cannot replace the covered close session (test_collector_price_history_keeps_newest_session_across_older_backfill_run).",
     "7": "existing source_ingestion, execution admission and controller suites pass unchanged; no-collector snapshot test asserts no collector_close lineage and no reconciliation",
     "8": "this file"
   },

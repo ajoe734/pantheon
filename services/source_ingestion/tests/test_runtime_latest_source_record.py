@@ -186,3 +186,20 @@ def test_latest_source_record_prioritizes_newer_provider_event_time_over_later_c
     assert latest[connector_id].source_id == "tw-official:tw_price_daily:TWSE:2330:current"
     assert latest[connector_id].metadata["available_time"] == "2026-08-28T05:30:00Z"
     assert latest[connector_id].metadata["source_ingest_run_id"] == run_id
+
+
+def test_collector_price_history_keeps_newest_session_across_older_backfill_run(tmp_path: Path) -> None:
+    # TW-SAME-DAY-CLOSE-VIA-COLLECTOR: backfill runs after a same-day close must not replace coverage.
+    runtime = SourceIngestionRuntime(data_dir=tmp_path)
+    connector_id = "collector-tw-twse-price-history"
+    runtime.evidence_repository.add_source_record(
+        _make_record("c:close", connector_id, run_id="run-close", available_time="2026-06-11T06:30:00Z",
+                     created_at="2026-06-11T07:00:00Z")
+    )
+    runtime.evidence_repository.add_source_record(
+        _make_record("c:backfill", connector_id, run_id="run-backfill", available_time="2026-06-09T06:30:00Z",
+                     created_at="2026-06-11T07:30:00Z")
+    )
+    receipts = [_make_receipt(connector_id, run_id="run-close"), _make_receipt(connector_id, run_id="run-backfill")]
+    latest = runtime._latest_source_record_by_connector({connector_id: receipts})
+    assert latest[connector_id].source_id == "c:close"

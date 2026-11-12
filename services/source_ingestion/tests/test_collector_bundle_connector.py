@@ -781,3 +781,33 @@ def test_oversized_newest_day_is_delivered_whole_in_one_pull(tmp_path):
     first = adapter.pull()
     newest = [r for r in first.records if r.metadata["trade_date"] == "2024-11-02"]
     assert len(newest) == 1500 and first.priority_done
+
+
+def test_public_path_returns_every_priority_row_above_max_records_and_acks_accurately(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    source_id = "collector-tw-twse-price-history"
+    files, entries = {}, []
+    for n, size in ((1, 600), (2, 1500)):  # run2 = newest day, larger than fetch.max_records
+        f, e = _day_bundle(source_id, n, size)
+        files.update(f)
+        entries.append(e)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    config = {"source_id": source_id, "source_type": "market", "attribution_required": True,
+              "dataset": "tw_price_daily", "cadence_seconds": 1800, "host": HOST, "max_records": 1000}
+    fetch = {"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": config, "request": {}, "max_records": 1000}
+
+    def pull():
+        adapter = CollectorBundleAdapter(connector_id="conn-pub", **config)
+        return execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id="t")
+
+    first = pull()
+    newest = [r for r in first if r.metadata["trade_date"] == "2024-11-02"]
+    assert len(newest) == 1500  # whole newest session on the first governed pull
+    second = pull()
+    # the oldest-first sweep resumes with the backfill; any later replay of the newest day is
+    # idempotent (identical source ids), never a different or partial row set
+    assert {r.metadata["trade_date"] for r in second[:600]} == {"2024-11-01"}
+    assert {r.source_id for r in second if r.metadata["trade_date"] == "2024-11-02"} <= {r.source_id for r in newest}
