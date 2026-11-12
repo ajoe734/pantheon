@@ -10,6 +10,13 @@ from services.evolution.approved_baselines import (
 FIXTURES = Path(__file__).resolve().parents[1] / "research" / "replication" / "fixtures"
 
 
+RUN_RECORDS = {}  # authoritative BacktestRunStore records written by the genuine gate path
+
+
+def run_record_reader(run_id):
+    return RUN_RECORDS.get(run_id)
+
+
 def genuine_entry(fixture="recorded_backtest_tw_2330", symbols=("2330.TW",), tenant="t1"):
     """Registry entry built from the real gate on recorded Taiwan backtest output.
 
@@ -46,16 +53,20 @@ def genuine_entry(fixture="recorded_backtest_tw_2330", symbols=("2330.TW",), ten
     assert response.passed, response
     promotion = create_promotion_request(response, request.proposed_strategy_spec)
     summary = promotion.registry_entry["evaluation_summary"]
+    RUN_RECORDS[summary["backtest_run_id"]] = gate.backtest_run_store.get(summary["backtest_run_id"])
     return {"registry_id": "reg-" + fixture, "artifact_state": "approved", "checksum": checksum,
             "owner_tenant": tenant, "approval_decision_id": "dec-" + fixture,
             "evaluation_summary": summary, "lineage": promotion.lineage,
+            "replication_success": promotion.registry_entry["replication_success"],
+            "replication_proof": promotion.replication_proof,
             "metadata": {"strategy_artifact": artifact}}
 
 
 def resolve(e, universe=("2330.TW",), checksum=None, ref=None, tenant="t1"):
     return resolve_member_baseline(
         tenant_id=tenant, persona_id="p1", artifact_ref=ref or (e or {}).get("registry_id", "x"),
-        checksum=checksum or (e or {}).get("checksum", ""), entry=e, universe=universe)
+        checksum=checksum or (e or {}).get("checksum", ""), entry=e, universe=universe,
+        run_record=run_record_reader(((e or {}).get("evaluation_summary") or {}).get("backtest_run_id")))
 
 
 def book(sharpe=0.4, drawdown=0.05, **kw):
@@ -98,13 +109,58 @@ class ApprovedBaselineTests(unittest.TestCase):
             "backtest_run_missing": mutate(lambda e: e["evaluation_summary"].update(backtest_run_id="")),
             "backtest_run_not_in_lineage": mutate(lambda e: e["lineage"].update(source_run_ids=["other-run"])),
             "out_of_sample_metrics_missing": mutate(lambda e: e["evaluation_summary"].update(out_of_sample_sharpe_ratio=None)),
-            "gate_not_passed": mutate(lambda e: e["evaluation_summary"].update(out_of_sample_sharpe_ratio=-1.0)),
+            "gate_proof_differs_from_summary": mutate(lambda e: e["evaluation_summary"].update(out_of_sample_sharpe_ratio=-1.0)),
+            "gate_not_passed": mutate(lambda e: e.update(replication_success=False)),
+            "gate_proof_missing": mutate(lambda e: e.pop("replication_proof")),
         }
         for reason, e in cases.items():
             with self.subTest(reason):
                 b = resolve(e, ref=self.one["registry_id"], checksum=self.one["checksum"])
                 self.assertEqual((b["status"], b["reason"]), ("no_approved_baseline", reason))
                 self.assertNotIn("oos_sharpe", b)  # no synthetic/default value
+
+    def test_summary_numbers_and_a_run_id_are_not_a_gate_verdict(self):
+        # Reviewer counterexample: graft the two-symbol entry's summary and lineage
+        # onto the single-symbol member; its own checksum/universe must not approve.
+        grafted = copy.deepcopy(self.one)
+        grafted["evaluation_summary"] = copy.deepcopy(self.two["evaluation_summary"])
+        grafted["lineage"] = copy.deepcopy(self.two["lineage"])
+        self.assertNotEqual(resolve(grafted)["status"], "approved")
+        grafted["replication_proof"] = copy.deepcopy(self.two["replication_proof"])
+        b = resolve(grafted)  # even a fully grafted proof is bound to another artifact's run
+        self.assertEqual((b["status"], b["reason"]), ("no_approved_baseline", "backtest_run_bound_to_other_artifact"))
+
+        def mutate(fn):
+            e = copy.deepcopy(self.one); fn(e); return e
+
+        def fail_gate(e):
+            verdict = next(r for r in e["replication_proof"]["replication_results"]
+                           if r["criterion_id"] == "real_backtest_validation")
+            verdict["passed"] = False
+        cases = {
+            "gate_not_passed/rejected": mutate(lambda e: e["replication_proof"].update(admission_status="rejected")),
+            "gate_not_passed/verdict": mutate(fail_gate),
+            "gate_round_trips_missing": mutate(lambda e: e["evaluation_summary"].update(round_trips=0)),
+        }
+        for name, e in cases.items():
+            with self.subTest(name):
+                # keep proof and summary consistent so only the named defect is under test
+                e["replication_proof"]["evaluation_summary"] = e["evaluation_summary"]
+                b = resolve(e)
+                self.assertEqual(b["status"], "no_approved_baseline")
+                self.assertEqual(b["reason"], name.split("/")[0])
+
+    def test_run_record_is_required_and_must_bind_this_checksum(self):
+        entry = self.one
+        kw = dict(tenant_id="t1", persona_id="p1", artifact_ref=entry["registry_id"],
+                  checksum=entry["checksum"], entry=entry, universe=("2330.TW",))
+        record = run_record_reader(entry["evaluation_summary"]["backtest_run_id"])
+        self.assertEqual(resolve_member_baseline(**kw)["reason"], "backtest_run_binding_unavailable")
+        self.assertEqual(resolve_member_baseline(**kw, run_record={**record, "artifact_checksum": "sha256:x"})["reason"],
+                         "backtest_run_bound_to_other_artifact")
+        self.assertEqual(resolve_member_baseline(**kw, run_record={**record, "status": "failed"})["reason"],
+                         "backtest_run_not_completed")
+        self.assertEqual(resolve_member_baseline(**kw, run_record=record)["status"], "approved")
 
     def test_wrong_child_scope_or_universe_never_inherits_proof(self):
         # A child with a different checksum/ref cannot use this entry's proof.
@@ -123,9 +179,12 @@ class ApprovedBaselineTests(unittest.TestCase):
         gross = book(basis="underlying_gross_virtual")
         self.assertEqual(compare_member_book(base, gross)["status"], "incomparable_return_basis")
         self.assertEqual(compare_member_book(base, book(periods_per_year=12))["status"], "incomparable_return_basis")
-        # member net block is chosen over the gross headline block
+        # member net block is chosen over the gross headline block when its basis matches
         both = {**gross, "net_of_costs": book(0.4, 0.12)}
         self.assertEqual(compare_member_book(base, both)["status"], "compared")
+        # the exposure-fraction book is not the gate's share-sized basis
+        fraction = {**gross, "net_of_costs": book(0.4, 0.12, basis="underlying_exposure_fraction_net_taiwan_costs_equal_notional")}
+        self.assertEqual(compare_member_book(base, fraction)["status"], "incomparable_return_basis")
         undefined = compare_member_book(base, book(None, sharpe_undefined_reason="insufficient_or_constant_returns"))
         self.assertEqual(undefined["status"], "member_metric_missing")
         missing = compare_member_book(resolve(None, ref="x"), book())

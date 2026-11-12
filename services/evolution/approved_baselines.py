@@ -13,9 +13,12 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 PERIODS_PER_YEAR = 252
-# The replication backtest protocol scores daily returns after Taiwan fill costs
-# (vectorbt adapter: sqrt(252) Sharpe, costs applied on every fill).
-RETURN_BASIS = "underlying_net_taiwan_fill_costs"
+# The gate scores share-sized (artifact order_quantity, init_cash) vectorbt
+# portfolios per instrument, daily, sqrt(252), Taiwan costs on every fill, and
+# aggregates multi-symbol runs as the mean of per-instrument Sharpe.  A virtual
+# book is comparable only when it reports exactly this basis; the exposure-fraction
+# book does not, so comparison is explicitly ``incomparable_return_basis``.
+RETURN_BASIS = "gate_share_sized_per_instrument_mean_sharpe_taiwan_fill_costs"
 _DAILY_BARS = {"1d", "d", "daily", "1day"}
 
 
@@ -35,9 +38,43 @@ def _code(symbol: Any) -> str:
     return str(symbol).strip().upper().split(".")[0]
 
 
+def _gate_proof_failure(entry: Mapping[str, Any], summary: Mapping[str, Any], run_id: str) -> str | None:
+    """Reason the persisted proof is not an exact passed gate verdict, else ``None``."""
+    if entry.get("replication_success") is not True:
+        return "gate_not_passed"
+    proof = entry.get("replication_proof")
+    if not isinstance(proof, Mapping) or not proof:
+        return "gate_proof_missing"
+    status = getattr(proof.get("admission_status"), "value", proof.get("admission_status"))
+    if str(status) != "admitted" or str(proof.get("backtest_run_id") or "") != run_id:
+        return "gate_not_passed"
+    if proof.get("evaluation_summary") != summary:
+        return "gate_proof_differs_from_summary"
+    verdicts = [r for r in proof.get("replication_results") or []
+                if isinstance(r, Mapping) and r.get("criterion_id") == "real_backtest_validation"]
+    if len(verdicts) != 1 or verdicts[0].get("passed") is not True:
+        return "gate_not_passed"
+    details = verdicts[0].get("details")
+    details = details if isinstance(details, Mapping) else {}
+    if (details.get("status") != "passed" or details.get("failed_checks")
+            or str(details.get("backtest_run_id") or "") != run_id
+            or not all(v is True for v in (details.get("checks") or {}).values())
+            or not details.get("checks")):
+        return "gate_not_passed"
+    for field, detail_field in (("out_of_sample_sharpe_ratio", "out_of_sample_sharpe_ratio"),
+                                ("max_drawdown", "out_of_sample_max_drawdown")):
+        if summary.get(field) != details.get(detail_field):
+            return "gate_proof_differs_from_summary"
+    trips = summary.get("round_trips")
+    if not _finite(trips) or trips <= 0:
+        return "gate_round_trips_missing"
+    return None
+
+
 def resolve_member_baseline(
     *, tenant_id: str, persona_id: str, artifact_ref: str, checksum: str,
     entry: Mapping[str, Any] | None, universe: Sequence[str] | None = None,
+    run_record: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve one member's baseline from its own immutable approved registry entry.
 
@@ -45,6 +82,14 @@ def resolve_member_baseline(
     ``evaluation_summary`` (``create_promotion_request``), its ``lineage`` run
     ids, and the embedded strategy artifact whose checksum is the entry
     checksum.  A parent's or sibling's entry is never consulted.
+
+    A summary Sharpe above a threshold is not a gate verdict.  Approval needs the
+    persisted passed gate proof (``replication_success``, admitted
+    ``replication_proof`` whose ``real_backtest_validation`` passed with no failed
+    checks and matches the summary) *and* the authoritative backtest run record
+    (``BacktestRunStore``) binding that run id to this member's checksum.  The
+    entry itself carries no checksum for the run, so without ``run_record`` the
+    result is ``backtest_run_binding_unavailable`` rather than an approval.
     """
     key = baseline_key(tenant_id, persona_id, artifact_ref, checksum)
     if not isinstance(entry, Mapping) or not entry:
@@ -80,11 +125,17 @@ def resolve_member_baseline(
         return _missing(key, "backtest_run_not_in_lineage")
     sharpe = summary.get("out_of_sample_sharpe_ratio")
     drawdown = summary.get("max_drawdown")
-    threshold = summary.get("deflated_sharpe_threshold")
     if not _finite(sharpe) or not _finite(drawdown):
         return _missing(key, "out_of_sample_metrics_missing")
-    if not _finite(threshold) or not float(sharpe) > float(threshold) or not float(sharpe) > 0:
-        return _missing(key, "gate_not_passed")
+    failed = _gate_proof_failure(entry, summary, run_id)
+    if failed:
+        return _missing(key, failed)
+    if not isinstance(run_record, Mapping) or str(run_record.get("backtest_run_id") or "") != run_id:
+        return _missing(key, "backtest_run_binding_unavailable")
+    if run_record.get("status") != "completed":
+        return _missing(key, "backtest_run_not_completed")
+    if str(run_record.get("artifact_checksum") or "") != checksum:
+        return _missing(key, "backtest_run_bound_to_other_artifact")
     parameters = artifact.get("parameters") if isinstance(artifact.get("parameters"), Mapping) else {}
     validated = [str(s) for s in parameters.get("symbols") or []]
     if not validated:

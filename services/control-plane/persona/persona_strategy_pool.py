@@ -263,7 +263,9 @@ class PersonaStrategyPoolStore:
         registry_reader: RegistryEntryReader | None = None,
         owner_lister: OwnerArtifactLister | None = None,
         now: Callable[[], str] = _utc_now,
+        run_record_reader: Callable[[str], Mapping[str, Any] | None] | None = None,
     ) -> None:
+        self._run_reader = run_record_reader  # BacktestRunStore.get; none provisioned by default
         self._records = records
         self._reader = registry_reader or http_registry_entry_reader
         self._lister = owner_lister or http_owner_artifact_lister
@@ -311,11 +313,15 @@ class PersonaStrategyPoolStore:
             if member["stage"] == "removed":
                 continue
             entry = self._reader(member["artifact_ref"], tenant_id)
+            summary = entry.get("evaluation_summary") if isinstance(entry, Mapping) else None
+            run_id = summary.get("backtest_run_id") if isinstance(summary, Mapping) else None
+            record = self._run_reader(run_id) if self._run_reader and run_id else None
             out.append({
                 "pool_version": version["pool_version"], "stage": member["stage"],
                 "baseline": resolve_member_baseline(
                     tenant_id=tenant_id, persona_id=persona_id,
-                    artifact_ref=member["artifact_ref"], checksum=member["checksum"], entry=entry),
+                    artifact_ref=member["artifact_ref"], checksum=member["checksum"], entry=entry,
+                    run_record=record),
             })
         return out
 

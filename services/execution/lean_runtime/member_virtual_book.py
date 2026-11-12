@@ -12,9 +12,9 @@ from pathlib import Path
 
 
 GROSS_BASIS = "underlying_gross_virtual"
-# Same basis id the approved gate proof carries: daily returns, Taiwan statutory
-# fill costs (broker commission both sides, transaction tax on sells).
-NET_BASIS = "underlying_net_taiwan_fill_costs"
+# Exposure-fraction returns with Taiwan statutory costs on every exposure change.
+# Not the gate's share-sized/cash-fill basis, so never labelled as it.
+NET_BASIS = "underlying_exposure_fraction_net_taiwan_costs_equal_notional"
 _COMMISSION_RATE = 0.001425
 _EQUITY_TAX_RATE = 0.003
 _ETF_TAX_RATE = 0.001
@@ -133,9 +133,13 @@ class MemberVirtualBooks:
                        previous["exposure"] * (row["price"] / previous["price"] - 1)
                        for previous, row in zip(rows, rows[1:])}
             costs = _net_interval_costs(book["symbol"], rows)
+            # The cost of the exposure change made at a mark belongs to the interval
+            # ending at that mark, so the final exit is charged; the opening
+            # entry (no prior interval) rides on the first interval.
             net = {(previous["event_time"], row["event_time"]):
                    returns[(previous["event_time"], row["event_time"])] - cost
-                   for previous, row, cost in zip(rows, rows[1:], costs)}
+                   - (costs[0] if index == 0 else 0.0)
+                   for index, (previous, row, cost) in enumerate(zip(rows, rows[1:], costs[1:]))}
             key = (book["binding_id"], book["envelope_checksum"], book["member_id"])
             groups.setdefault(key, []).append((book, returns, net))
         result = []

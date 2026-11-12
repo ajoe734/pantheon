@@ -71,8 +71,21 @@ class MemberVirtualBookTests(unittest.TestCase):
         self.assertEqual(row["basis"], "underlying_gross_virtual")
         self.assertAlmostEqual(row["return_series"][0], 0.10)
         net = row["net_of_costs"]
-        self.assertEqual((net["basis"], net["periods_per_year"]), ("underlying_net_taiwan_fill_costs", 252))
+        self.assertEqual((net["basis"], net["periods_per_year"]), ("underlying_exposure_fraction_net_taiwan_costs_equal_notional", 252))
         # entry pays commission; the later exit pays commission plus 0.3% equity tax
         self.assertAlmostEqual(net["return_series"][0], 0.10 - 0.001425)
-        self.assertAlmostEqual(net["return_series"][1], 0.10)
-        self.assertAlmostEqual(net["return_series"][2], -(0.001425 + 0.003))
+        # the exit is charged on the interval that ends at the exit mark
+        self.assertAlmostEqual(net["return_series"][1], 0.10 - (0.001425 + 0.003))
+        self.assertAlmostEqual(net["return_series"][2], 0.0)
+
+    def test_terminal_exit_is_charged_without_a_later_mark(self):
+        books = MemberVirtualBooks()
+        base = {"artifact_id": "m", "version": "1", "checksum": "sha256:m", "virtual_only": False}
+        for day, direction in ((1, "LONG"), (2, "FLAT")):
+            books.observe(binding_id="b", envelope_checksum="e", symbol="2330.TW",
+                          event_time=f"2024-10-0{day}T05:30:00Z", price=100, source_ref="r",
+                          members={"m": {**base, "view": {"direction": direction, "strength": 1}}},
+                          bar_frequency="1d")
+        [row] = books.snapshot()
+        # entry commission + exit commission + 0.3% equity tax, none omitted
+        self.assertAlmostEqual(row["net_of_costs"]["total_return"], -(0.001425 * 2 + 0.003), places=6)

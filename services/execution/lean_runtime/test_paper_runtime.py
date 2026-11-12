@@ -6147,7 +6147,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
 
     def test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account(self):
         """Recorded Taiwan gate proof -> registry entries -> runtime snapshot, per member."""
-        from services.evolution.test_approved_baselines import genuine_entry
+        from services.evolution.test_approved_baselines import genuine_entry, run_record_reader
         from services.execution.lean_runtime.member_virtual_book import virtual_book_metrics
         service = PaperRuntimeService(
             store=InMemoryPendingSignalStore([]), identity=self._identity(),
@@ -6158,6 +6158,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
         good = genuine_entry("recorded_backtest_tw_2330_2317", ("2330.TW", "2317.TW"), tenant="default")
         entries = {decay["registry_id"]: decay, good["registry_id"]: good}
         service._member_entry_reader = lambda ref, tenant: entries.get(ref)
+        service._member_run_record_reader = run_record_reader
 
         def member(entry, count):
             return {entry["registry_id"]: {
@@ -6184,13 +6185,13 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
             self.assertEqual(book["baseline"]["checksum"], book["checksum"])
             self.assertEqual(book["baseline"]["oos_sharpe"],
                              entry["evaluation_summary"]["out_of_sample_sharpe_ratio"])
-            self.assertEqual(book["baseline_comparison"]["status"], "compared")
+            # The exposure-fraction book is not the gate's share-sized basis, so the
+            # comparison is explicitly incomparable rather than a fabricated delta.
+            self.assertEqual(book["baseline_comparison"]["status"], "incomparable_return_basis")
+            self.assertNotIn("sharpe_delta", book["baseline_comparison"])
         self.assertNotEqual(books[decay["registry_id"]]["baseline"]["backtest_run_id"],
                             books[good["registry_id"]]["baseline"]["backtest_run_id"])
         weak = books[decay["registry_id"]]
-        self.assertTrue(weak["baseline_comparison"]["below_baseline_sharpe"])
-        self.assertTrue(weak["baseline_comparison"]["exceeds_baseline_drawdown"])
-        self.assertFalse(books[good["registry_id"]]["baseline_comparison"]["below_baseline_sharpe"])
         # A combined account of both members would look healthy and hide the decaying member.
         combined = virtual_book_metrics(
             [(a + b) / 2 for a, b in zip(weak["net_of_costs"]["return_series"],
@@ -6198,10 +6199,6 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
             basis=weak["net_of_costs"]["basis"])
         self.assertGreater(combined["sharpe_ratio"], 0)
         self.assertGreater(combined["sharpe_ratio"], weak["net_of_costs"]["sharpe_ratio"])
-        # The comparison used the member's own net book, never the combined series.
-        self.assertAlmostEqual(
-            weak["baseline_comparison"]["sharpe_delta"],
-            weak["net_of_costs"]["sharpe_ratio"] - weak["baseline"]["oos_sharpe"])
         self.assertTrue(all(not b["is_real_order"] for b in books.values()))
 
     def test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline(self):

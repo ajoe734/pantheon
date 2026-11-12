@@ -5937,6 +5937,19 @@ class PaperRuntimeService:
         persona_id = getattr(self._identity, "persona_id", None) or ""
         tenant_id = os.getenv("PANTHEON_TENANT_ID", "default").strip() or "default"
 
+        # Authoritative gate run record reader (BacktestRunStore.get); no default
+        # store is provisioned, so absent injection stays an explicit missing proof.
+        run_reader = getattr(self, "_member_run_record_reader", None)
+
+        def run_record(entry):
+            summary = (entry or {}).get("evaluation_summary") if isinstance(entry, Mapping) else None
+            run_id = summary.get("backtest_run_id") if isinstance(summary, Mapping) else None
+            try:
+                return run_reader(run_id) if callable(run_reader) and run_id else None
+            except Exception:  # noqa: BLE001 - unreadable run record is not proof
+                log.exception("member baseline run record read failed for %s", run_id)
+                return None
+
         def resolve(artifact_id, checksum, symbols):
             try:
                 entry = reader(artifact_id, tenant_id) if callable(reader) else None
@@ -5946,6 +5959,7 @@ class PaperRuntimeService:
             return resolve_member_baseline(
                 tenant_id=tenant_id, persona_id=persona_id, artifact_ref=artifact_id,
                 checksum=checksum, entry=entry, universe=symbols,
+                run_record=run_record(entry),
             )
 
         return self._member_virtual_books.snapshot(baseline_resolver=resolve, **scope)
