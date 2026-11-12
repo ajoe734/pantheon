@@ -665,7 +665,7 @@ class TestRecoveryTracking:
                     )
                 )
             )
-            for _ in range(4):
+            for _ in range(24):
                 with monitor._store._connect() as conn:
                     conn.execute(
                         "UPDATE delivery_outbox SET next_attempt_at=0 WHERE channel='incident_resolve'"
@@ -676,7 +676,9 @@ class TestRecoveryTracking:
             r for r in monitor.list_delivery_records() if r["channel"] == "incident_resolve"
         )
         assert resolve_row["status"] == "dead_letter"
-        assert resolve_row["attempt_count"] == 5
+        # incident channels retry by window (capped backoff, >=15 min), not by
+        # delivery_max_attempts: 0.1s base backoff needs 25 attempts.
+        assert resolve_row["attempt_count"] == 25
         assert resolve_row["last_error"] == "network_error"
         assert monitor._store.get_incident("capital")["status"] == "resolving"
         assert (
@@ -740,7 +742,7 @@ class TestRecoveryTracking:
         # no longer blocks, so the permanently blocked dependency here is an
         # incident_open that dead-letters (incidents rejects it).
         def open_rejected(url, body, timeout):
-            return (False, -1) if "consume-infrastructure-health" in url else (True, 201)
+            return (False, 400) if "consume-infrastructure-health" in url else (True, 201)
 
         with patch(
             "services.control_plane.bff.downstream_health_monitor._post_json",
@@ -2617,3 +2619,132 @@ class TestIncidentOpenCreatedAt:
         resolves = [b for u, b in posts if u.endswith("/status")]
         assert len(opens) == 1 and len(resolves) == 1
         assert opens[0]["created_at"] < resolves[0]["resolved_at"]
+
+
+class TestIncidentDeliveryRetryWindow:
+    """BFF-HEALTH-INCIDENT-DELIVERY-RETRY-WINDOW-20261112."""
+
+    def _monitor(self):
+        return DownstreamHealthMonitor(
+            telemetry_url="",
+            incidents_url="http://inc:8090",
+            tenant_id="tenant-test",
+            probe_interval_seconds=60,
+            failure_threshold=1,
+            delivery_max_attempts=5,
+            delivery_backoff_seconds=1,
+        )
+
+    @staticmethod
+    def _probe(ok: bool, checked_at: str) -> DownstreamProbeResult:
+        return DownstreamProbeResult(
+            target_name="capital",
+            ok=ok,
+            status_code=200 if ok else 503,
+            latency_ms=5.0,
+            checked_at=checked_at,
+            failure_reason=None if ok else "HTTP 503",
+            consecutive_failures=0 if ok else 1,
+        )
+
+    def test_incident_open_and_resolve_survive_six_minute_outage(self):
+        monitor = self._monitor()
+        clock = {"now": 0.0}
+        posted: List[str] = []
+
+        def post(url, body, timeout):
+            if "/api/incidents/" in url:
+                if clock["now"] < 360.0:
+                    return False, -1  # connection refused during the restart
+                posted.append("resolve" if url.endswith("/status") else "open")
+                return True, 200
+            posted.append("telemetry")
+            return True, 202
+
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            side_effect=post,
+        ):
+            _run(monitor._handle_probe_result(self._probe(False, "2026-11-12T10:00:00Z")))
+            _run(monitor._handle_probe_result(self._probe(True, "2026-11-12T10:02:00Z")))
+            for _ in range(200):
+                rows = monitor.list_delivery_records()
+                waiting = [
+                    r for r in rows if r["channel"].startswith("incident")
+                    and r["status"] in {"retry", "pending"}
+                ]
+                if not waiting:
+                    break
+                with monitor._store._connect() as conn:
+                    due = conn.execute(
+                        "SELECT MIN(next_attempt_at) FROM delivery_outbox "
+                        "WHERE status='retry'"
+                    ).fetchone()[0]
+                    assert due is not None
+                    # A waiting delivery is never retried before its backoff.
+                    assert monitor._deliver_due_sync() == 0
+                    clock["now"] += max(1.0, due - time.time())
+                    conn.execute("UPDATE delivery_outbox SET next_attempt_at=0")
+                monitor._deliver_due_sync()
+
+        rows = {r["channel"]: r for r in monitor.list_delivery_records()}
+        assert rows["incident_open"]["status"] == "delivered"
+        assert rows["incident_resolve"]["status"] == "delivered"
+        assert not [r for r in monitor.list_delivery_records() if r["status"] == "dead_letter"]
+        assert posted == ["open", "resolve"]
+
+    def test_incident_retry_window_is_capped_backoff_covering_fifteen_minutes(self):
+        monitor = self._monitor()
+        monitor._store.queue_delivery(
+            delivery_id="d1", event_id="e1", channel="incident_open",
+            target_name="capital", url="http://inc:8090/x", body={"a": 1},
+            dependency_ids=[], max_attempts=5,
+        )
+        waited, attempts = 0.0, 0
+        while True:
+            with monitor._store._connect() as conn:
+                conn.execute("UPDATE delivery_outbox SET status='claimed', claim_token='t'")
+            row = monitor.list_delivery_records()[0]
+            row["claim_token"] = "t"
+            before = time.time()
+            status = monitor._store.fail_delivery(
+                row, error="network_error", fatal=False,
+                base_backoff_seconds=1.0,
+            )
+            attempts += 1
+            if status == "dead_letter":
+                break
+            delay = monitor.list_delivery_records()[0]["next_attempt_at"] - before
+            assert delay <= 61.0
+            waited += delay
+        assert waited >= 900.0 - attempts * 0.5
+        assert attempts > 5
+
+    def test_incident_non_retryable_dead_letters_at_once_and_telemetry_keeps_five(self):
+        monitor = self._monitor()
+        for ch in ("incident_open", "telemetry"):
+            monitor._store.queue_delivery(
+                delivery_id=f"d-{ch}", event_id=f"e-{ch}", channel=ch,
+                target_name="capital", url="http://x/y", body={"c": ch},
+                dependency_ids=[], max_attempts=5,
+            )
+        with monitor._store._connect() as conn:
+            conn.execute("UPDATE delivery_outbox SET status='claimed', claim_token='t'")
+        rows = {r["channel"]: dict(r, claim_token="t") for r in monitor.list_delivery_records()}
+        assert monitor._store.fail_delivery(
+            rows["incident_open"], error="HTTP 400", fatal=True, base_backoff_seconds=1.0
+        ) == "dead_letter"
+        row = rows["telemetry"]
+        for n in range(4):
+            row["attempt_count"] = n
+            with monitor._store._connect() as conn:
+                conn.execute("UPDATE delivery_outbox SET status='claimed', claim_token='t' WHERE channel='telemetry'")
+            assert monitor._store.fail_delivery(
+                row, error="network_error", fatal=False, base_backoff_seconds=1.0
+            ) == "retry"
+        row["attempt_count"] = 4
+        with monitor._store._connect() as conn:
+            conn.execute("UPDATE delivery_outbox SET status='claimed', claim_token='t' WHERE channel='telemetry'")
+        assert monitor._store.fail_delivery(
+            row, error="network_error", fatal=False, base_backoff_seconds=1.0
+        ) == "dead_letter"

@@ -1,0 +1,28 @@
+{
+  "task_id": "BFF-HEALTH-INCIDENT-DELIVERY-RETRY-WINDOW-20261112",
+  "source": "hosted BFF delivery_outbox read-only, 2026-11-10T15:13Z to 2026-11-12 (figures from task brief; no per-window timestamps were available to the worker)",
+  "hosted_facts": {"incident_open_dead_letter_rows": 134, "error": "network_error", "attempts_before_dead_letter": 5, "old_policy_window_seconds_approx": 31},
+  "deploy_windows": [
+    {"window": 1, "first_delivery_to_recovery_seconds": 80},
+    {"window": 2, "first_delivery_to_recovery_seconds": 376},
+    {"window": 3, "first_delivery_to_recovery_seconds": 152},
+    {"window": 4, "first_delivery_to_recovery_seconds": 194},
+    {"window": 5, "first_delivery_to_recovery_seconds": 128},
+    {"window": 6, "first_delivery_to_recovery_seconds": 226},
+    {"window": 7, "first_delivery_to_recovery_seconds": 151},
+    {"window": 8, "first_delivery_to_recovery_seconds": null, "note": "no incident events were due for two hours afterwards; outage length not measurable"}
+  ],
+  "max_measured_outage_seconds": 376,
+  "chosen_policy": {
+    "channels": ["incident_open", "incident_resolve"],
+    "retryable": "connection error, timeout, 408/425/429, 5xx",
+    "backoff": "exponential from PANTHEON_BFF_HEALTH_DELIVERY_BACKOFF_SECONDS (default 1s), capped at 60s",
+    "dead_letter_after_seconds": 900,
+    "window_env": "PANTHEON_BFF_HEALTH_INCIDENT_RETRY_WINDOW_SECONDS (floor 900)",
+    "cap_env": "PANTHEON_BFF_HEALTH_INCIDENT_MAX_BACKOFF_SECONDS"
+  },
+  "coverage": {"window_seconds": 900, "margin_over_longest_measured": "900/376 = 2.39x", "all_measured_windows_covered": true, "attempts_with_default_backoff": 21},
+  "unchanged": ["telemetry retry policy (5 attempts)", "6h quarantine", "explicit replay (resets attempt_count, restarting window)", "delivery identity rules", "non-retryable responses dead-letter at once"],
+  "tests": "services/control-plane/bff/test_bff_downstream_health_monitor.py::TestIncidentDeliveryRetryWindow (6 min refused-connection outage: open then resolve delivered, no dead letter, order kept)",
+  "pending_verification": "coordinator verifies next hosted deploy windows after rollout"
+}
