@@ -76,7 +76,14 @@
       "exit_code": 0,
       "result": "124 passed, 631 warnings, 18 subtests passed in 63.40s (0:01:03)",
       "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/composition-final.txt",
-      "note": "Final composed source on dev caec3f40727c6bf7dd73c710625deff81b5fd4eb, including incoming mechanism-stage gate, registry promotion metadata, new BFF imports, registry-ref identity and the fresh-window guard."
+      "note": "Executed on the merge tree with actual dev parent 383dfb63293466886b3f7cbe575b8a8ad21356df; incoming Memory writeback composition is tested separately below."
+    },
+    {
+      "command": "timeout 90 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/research/tests/test_evolution_gate_executor.py services/research/tests/test_pool_evolution_integration.py services/research/tests/test_memory_writeback_wiring.py services/research/alpha_replication/test_evolution_search.py -q --disable-warnings --maxfail=1",
+      "exit_code": 0,
+      "result": "43 passed, 129 warnings in 13.52s",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/memory-composition.txt",
+      "note": "Final composition on immutable merge parent caec3f40727c6bf7dd73c710625deff81b5fd4eb; research/main.py is the only previously hashed source changed by inherited Memory writeback."
     }
   ],
   "nonpassing_batches": [
@@ -192,7 +199,7 @@
     "services/research/alpha_replication/evolution_search.py": "d3f566490e8f9e8b5039b0edc9559cd97c699dbceb73055b137b28455e29a140",
     "services/research/alpha_replication/shared_stores.py": "63d83267d1e5f79f042bd43c28e87bca41d01f898272708a2d6ea351d85f675c",
     "services/research/alpha_replication/test_evolution_search.py": "b6a7131071ea66ce17f23589bfc8a97599f4f7eae98d3789019b56fda19cd7ed",
-    "services/research/main.py": "68afe81fc50c2e48bdfb41c3a0c198d7b50bc8fa80c8f5ab81c312d5f8625402",
+    "services/research/main.py": "4d7125e0df1c5dc54d228b511508cde31696784dfd9ff72c1cc4ff38da00eb4f",
     "services/research/replication/fixtures/recorded_backtest_tw_2330.json": "0dc3496aa93fe472e6694af88a913974ef546f60f6fa9a549a39ad0893770897",
     "services/research/tests/fixtures/pool_admission_tw_recorded.json": "8108807c99ae2d6b9aba26b75fc761263842375b8518136eb0250ef3652474d1",
     "services/research/tests/test_evolution_gate_executor.py": "67a59b0dfe7b249abe11dc7ca01aec40230c6a06c4d1fa10ec8f28062ffa934c",
@@ -200,7 +207,8 @@
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/member-ref-final.txt": "70e3bda30b3ba4eee375d62c62fdf7a79d00443e03d2f9280b6178c123023086",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/fresh-window-final.txt": "9fb32df0b48d8baa7710a86fb592cd625c8099e66b58e74e265ec784ec13913e",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/mechanism-context.txt": "4632cffac63226f80d83b54d6e699119c7a9724ebe65690934837be94c77c02e",
-    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/composition-final.txt": "bbfe27d1034f241ba5d6a07371f3f9658c095cb74bfeb3190fb0736bddf9cc33"
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/composition-final.txt": "bbfe27d1034f241ba5d6a07371f3f9658c095cb74bfeb3190fb0736bddf9cc33",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/memory-composition.txt": "149f0f98795e4c32cdb737701e87cb0497f2eb1b6e7c67bc3a649ab61ae08976"
   },
   "base_refresh": {
     "previous_base": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
@@ -223,7 +231,7 @@
     },
     {
       "previous_base": "2e9d3f2849219b58fa644619ef5837f6b0a8becf",
-      "current_base": "caec3f40727c6bf7dd73c710625deff81b5fd4eb",
+      "current_base": "383dfb63293466886b3f7cbe575b8a8ad21356df",
       "upstream_files": [
         "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/README.md",
         "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/composition-tests.txt",
@@ -258,7 +266,33 @@
         "services/research/replication/test_gate.py",
         "services/research/replication/tests/test_gate_mechanism.py"
       ],
-      "verification": "124 passed, 631 warnings, 18 subtests passed in 63.40s (0:01:03); inherited upstream changes are unchanged as the second merge parent; task artifact hashes remain exact."
+      "verification": "124 tests/18 subtests passed on actual merge parent 383dfb63293466886b3f7cbe575b8a8ad21356df. The previously recorded moving origin/dev reference was corrected before review admission."
+    },
+    {
+      "previous_base": "383dfb63293466886b3f7cbe575b8a8ad21356df",
+      "current_base": "caec3f40727c6bf7dd73c710625deff81b5fd4eb",
+      "upstream_files": [
+        "docker-compose.yml",
+        "docs/deployment/evidence/MEMORY-WRITEBACK-WIRING-20261112/README.md",
+        "docs/deployment/evidence/MEMORY-WRITEBACK-WIRING-20261112/evidence.json",
+        "services/memory/MEMORY_LAYER_DESIGN_NOTE.md",
+        "services/memory/institutional_memory_entry.schema.json",
+        "services/memory/institutional_memory_store.py",
+        "services/memory/learn_feedback_writeback.py",
+        "services/memory/main.py",
+        "services/memory/persona_memory.schema.json",
+        "services/memory/persona_memory_store.py",
+        "services/persona/learning_feedback_bridge.py",
+        "services/postmortems/test_main_routes.py",
+        "services/research/alpha_replication/revalidation_worker.py",
+        "services/research/alpha_replication/test_revalidation_worker.py",
+        "services/research/main.py",
+        "services/research/memory_writeback_worker.py",
+        "services/research/research_memory_outbox.py",
+        "services/research/tests/test_memory_writeback_wiring.py",
+        "services/research/tests/test_reviewed_memory_writeback.py"
+      ],
+      "verification": "43 passed, 129 warnings in 13.52s; task source hash delta is research/main.py only, inherited unchanged from the accepted upstream Memory task."
     }
   ]
 }

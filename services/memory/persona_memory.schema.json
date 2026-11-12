@@ -64,6 +64,8 @@
         "postmortem_published",
         "evolution_decision_approved",
         "consultation_closed",
+        "pool_outcome",
+        "harness_experience",
         "trainer_epoch_complete",
         "operator_feedback",
         "research_task_completed",
@@ -89,7 +91,8 @@
         "evolution-svc",
         "trainer-svc",
         "consultation-svc",
-        "research-svc"
+        "research-svc",
+        "persona-svc"
       ],
       "description": "Service that wrote this entry. Only whitelisted services may write."
     },
