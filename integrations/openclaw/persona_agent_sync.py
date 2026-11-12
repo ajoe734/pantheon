@@ -140,6 +140,116 @@ def _trait_value(persona: Mapping[str, Any], key: str) -> str:
     return str(raw).strip()
 
 
+# ----------------------------------------------------------------------------
+# Active harness (read from the Persona owner record; never synthesized)
+# ----------------------------------------------------------------------------
+
+# Tool profile of a trading persona agent: read-only plus proposal submission.
+# Order / broker / capital / lifecycle / runtime tools are never granted; the
+# deterministic gates of the owning services keep authority over every action.
+PERSONA_PROPOSAL_TOOL = "persona_proposal_submit"
+PERSONA_AGENT_TOOL_PROFILE: Dict[str, Any] = {
+    "allow": ["read", PERSONA_PROPOSAL_TOOL],
+    "deny": ["exec", "process", "write", "edit", "apply_patch", "browser", "web_fetch", "web_search"],
+    "exec": {"security": "deny", "ask": "always"},
+}
+_FORBIDDEN_TOOL_MARKERS = (
+    "order", "broker", "capital", "lifecycle", "runtime", "bind", "promote",
+    "trade", "exec", "write", "edit", "patch", "process", "cron", "deploy",
+)
+
+
+def assert_persona_agent_tool_profile(profile: Mapping[str, Any]) -> None:
+    """Fail closed unless the profile is read-only plus proposal submission."""
+    allow = [str(item) for item in profile.get("allow") or []]
+    if PERSONA_PROPOSAL_TOOL not in allow:
+        raise ValueError("persona_agent_tool_profile_missing_proposal_tool")
+    for tool in allow:
+        if tool in ("read", PERSONA_PROPOSAL_TOOL):
+            continue
+        raise ValueError(f"persona_agent_tool_profile_forbidden_tool:{tool}")
+    exec_policy = profile.get("exec") if isinstance(profile.get("exec"), Mapping) else {}
+    if exec_policy.get("security") != "deny":
+        raise ValueError("persona_agent_tool_profile_exec_not_denied")
+
+
+def persona_agent_runtime_policy() -> Dict[str, Any]:
+    """`agents.list` entry policy for a trading persona agent (validated copy)."""
+    assert_persona_agent_tool_profile(PERSONA_AGENT_TOOL_PROFILE)
+    return {"tools": json.loads(json.dumps(PERSONA_AGENT_TOOL_PROFILE))}
+
+
+def active_harness_version(persona: Mapping[str, Any]) -> tuple[Optional[Dict[str, Any]], str]:
+    """Return (active harness version dict, reason). Validation matches the owner's
+    runtime profile: schema, persona binding and content digest. Absent or invalid
+    data yields (None, reason) - there is no baseline fabricated here."""
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
+    state = metadata.get("persona_harness") if isinstance(metadata.get("persona_harness"), Mapping) else {}
+    if not state:
+        return None, "harness_not_initialized"
+    active = state.get("active_version")
+    versions = state.get("versions")
+    if type(active) is int and isinstance(versions, list) and 1 <= active <= len(versions):
+        from pydantic import ValidationError
+        from services.persona.harness import HarnessVersion, digest
+
+        try:
+            row = HarnessVersion.model_validate(versions[active - 1])
+        except ValidationError:
+            return None, "invalid_harness_record"
+        if (
+            row.persona_id == _persona_id(persona)
+            and row.version == active
+            and row.content_digest == digest(row.surface.model_dump(mode="json"))
+        ):
+            return row.model_dump(mode="json"), "ready"
+    return None, "invalid_harness_record"
+
+
+def _render_harness_block(persona: Mapping[str, Any]) -> str:
+    version, reason = active_harness_version(persona)
+    if version is None:
+        return (
+            "\n## Active harness\n"
+            f"_(No active harness version: `{reason}`. Operate on the registry fields above; "
+            "do not assume extra skills, thresholds or workflow steps.)_\n"
+        )
+    surface = version["surface"]
+    lines = [
+        "",
+        "## Active harness",
+        f"- Version: **{version['version']}** (digest `{version['content_digest'][:12]}`)",
+    ]
+    workflow = surface["workflow"]
+    lines.append(f"- Workflow cadence: every {workflow['cadence_seconds']}s")
+    lines.extend(f"  {i}. {step}" for i, step in enumerate(workflow["steps"], 1))
+    thresholds = surface["cycle_thresholds"]
+    lines.append(
+        f"- Evidence floor: at least {thresholds['minimum_evidence_count']} evidence items, "
+        f"confidence >= {thresholds['minimum_confidence']}"
+    )
+    forbidden = surface["guardrails"]["forbidden_solo_actions"]
+    if forbidden:
+        lines.append("- Never do alone: " + ", ".join(forbidden))
+    for trigger in surface["consult_policy"]:
+        lines.append(f"- Consult before `{trigger['action']}`: {', '.join(trigger['required_roles'])}")
+    for tool, guidance in sorted(surface["tool_guidance"].items()):
+        lines.append(f"- Tool `{tool}`: {guidance}")
+    for skill in surface["skills"]:
+        lines.append(f"- Skill `{skill['name']}` (when: {skill['trigger']}): {skill['guidance']}")
+    return "\n".join(lines) + "\n"
+
+
+_MEMORY_SECTION = """## Memory
+MEMORY.md and memory/ in this workspace are a **read-only cache** materialized from the
+canonical Pantheon Memory Plane (each entry carries its source memory id). They contain
+only your own private entries plus institutional entries. Do **not** edit MEMORY.md or
+anything under memory/: edits are discarded at the next materialization.
+When something is worth keeping, **stage a memory candidate** (summary, evidence, source
+event id) in your cycle output / through `{proposal_tool}`; the memory service reviews it.
+"""
+
+
 def build_persona_soul(persona: Mapping[str, Any]) -> str:
     """Render a persona-specific SOUL.md from its registry record + traits.
 
@@ -176,6 +286,8 @@ def build_persona_soul(persona: Mapping[str, Any]) -> str:
             "and tell the operator which of these to define before making sized decisions.)_\n"
         )
 
+    harness_block = _render_harness_block(persona)
+    memory_section = _MEMORY_SECTION.format(proposal_tool=PERSONA_PROPOSAL_TOOL)
     return f"""# SOUL.md — {name} (`{pid}`)
 
 You are **{name}** — a Pantheon trading persona with your own mandate. You are
@@ -186,7 +298,7 @@ to the right persona.
 ## Who you are
 {mandate_line}
 {strategy_line}{archetype_line}{state_line}
-{traits_block}
+{traits_block}{harness_block}
 ## How you work every turn (OODA)
 When asked to assess or decide, answer **as this persona**, concretely:
 - **Observe** — what the signals / market / regime you were given actually show (cite the numbers).
@@ -197,10 +309,9 @@ When asked to assess or decide, answer **as this persona**, concretely:
 - **Paper unless a live capital binding is explicitly active** (`is_real_capital=false` by default). You never place real orders or move capital on your own.
 - Stay inside your mandate; don't answer other personas' domains.
 - Be direct and quantitative — no filler, no bare 「在，老闆」 / `NO_REPLY`. Reply in 繁體中文 by default.
+- Your tools are read-only plus `{PERSONA_PROPOSAL_TOOL}`. You have no order, broker, capital, lifecycle or runtime tool; you only propose, deterministic gates decide.
 
-## Memory
-MEMORY.md + memory/ + USER.md in this workspace are your durable memory. Read them; update MEMORY.md when something is worth keeping.
-"""
+{memory_section}"""
 
 
 def desired_agent_spec(
@@ -284,6 +395,7 @@ def _agent_fallbacks(agent: Mapping[str, Any]) -> Optional[List[str]]:
 def _reconcile_agent_model_policy(
     run: CliRunner,
     spec: PersonaAgentSpec,
+    runtime_policy: Optional[Mapping[str, Any]] = None,
 ) -> Optional[Dict[str, str]]:
     """Persist `{primary, fallbacks}` into `agents.list` via the existing config owner."""
 
@@ -334,9 +446,13 @@ def _reconcile_agent_model_policy(
             "repair_action": "recreate_openclaw_agent_or_add_set_model_support",
         }
     desired_policy = spec.model_policy()
-    if target.get("model") == desired_policy:
+    policy_extra = json.loads(json.dumps(dict(runtime_policy))) if runtime_policy else {}
+    if target.get("model") == desired_policy and all(
+        target.get(key) == value for key, value in policy_extra.items()
+    ):
         return None
     target["model"] = desired_policy
+    target.update(policy_extra)
     set_proc = run([
         "openclaw", "config", "set", "agents.list",
         json.dumps(agents, sort_keys=True, separators=(",", ":")),
@@ -396,6 +512,7 @@ def sync_persona_agents(
     memory_materializer: Optional[MemoryMaterializer] = None,
     skip_persona: Optional[Callable[[Mapping[str, Any]], bool]] = None,
     route_policy_resolver: Optional[Callable[[Mapping[str, Any]], Optional[Mapping[str, Any]]]] = None,
+    runtime_policy: Optional[Mapping[str, Any]] = None,
 ) -> SyncReport:
     """Reconcile each persona into an OpenClaw agent (create missing) + write its
     SOUL.md. Idempotent: existing agents keep their id; the SOUL is rewritten so
@@ -439,7 +556,7 @@ def sync_persona_agents(
                         "error": (proc.stderr or proc.stdout or "agents set-identity failed")[:300],
                     })
                     continue
-                policy_failure = _reconcile_agent_model_policy(run, spec)
+                policy_failure = _reconcile_agent_model_policy(run, spec, runtime_policy)
                 if policy_failure is not None:
                     report.failed.append(policy_failure)
                     continue
@@ -459,7 +576,7 @@ def sync_persona_agents(
                         "error": (proc.stderr or proc.stdout or "agents add failed")[:300],
                     })
                     continue
-                policy_failure = _reconcile_agent_model_policy(run, spec)
+                policy_failure = _reconcile_agent_model_policy(run, spec, runtime_policy)
                 if policy_failure is not None:
                     report.failed.append(policy_failure)
                     continue

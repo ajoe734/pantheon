@@ -1312,6 +1312,29 @@ def _materialize_terminal_persona_provisioning_ledger(
     return new_state
 
 
+# --- _provision_persona_agent ---
+def _provision_persona_agent(persona_id: str) -> Dict[str, Any]:
+    """Create/update the persona's own OpenClaw agent from its owner record.
+
+    The Persona owner record (with its harness metadata) is the only input; the
+    adapter renders SOUL with the shared renderer and materializes memory.
+    """
+
+    writer = _get_active_write_owner()
+    getter = getattr(writer, "get_persona", None) if writer else None
+    if not callable(getter):
+        raise RuntimeError("persona_owner_unavailable_for_agent_provisioning")
+    persona = getter(persona_id)
+    if not isinstance(persona, Mapping):
+        raise RuntimeError("persona_record_missing_for_agent_provisioning")
+    from ..openclaw_ops_client import OpenClawOpsClient
+
+    client = OpenClawOpsClient()
+    if not client.configured:
+        raise RuntimeError("openclaw_adapter_unconfigured")
+    return client.ensure_trading_persona_agent(dict(persona))
+
+
 # --- _reconcile_persona_provisioning_compensation ---
 def _reconcile_persona_provisioning_compensation(
     metadata: Mapping[str, Any],
@@ -5251,6 +5274,7 @@ def _coordinate_persona_create(
         governance_actor_id=os.getenv(
             "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
         ),
+        agent_provisioner=_provision_persona_agent,
     )
     try:
         active = coordinator.coordinate(active)
