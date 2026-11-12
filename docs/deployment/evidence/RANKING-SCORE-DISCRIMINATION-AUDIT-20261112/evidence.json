@@ -1,0 +1,431 @@
+{
+  "schema_version": "ranking-discrimination-audit-evidence/v1",
+  "task_id": "RANKING-SCORE-DISCRIMINATION-AUDIT-20261112",
+  "owner": "Codex2",
+  "assigned_reviewer": "Claude",
+  "review_state": "pending_independent_review",
+  "scope": "Read-only source audit; only report and this manifest change",
+  "audited_source_commit": "04230bdef85147f072fc86c2afc9ba4083208ca8",
+  "report": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/RANKING_SCORE_DISCRIMINATION_AUDIT_2026-11-12.md",
+  "report_sha256": "21963d37c73127e67b01a8044ef5913320f069c4155c35fc0f0740bfddbd6df5",
+  "hosted_access_attempted": false,
+  "production_mutation_attempted": false,
+  "inherited_observation": {
+    "provenance": [
+      "task-scoped dispatch brief",
+      "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_PERSONA_POOL_CAPITAL_ADDENDUM_2026-11-12.md"
+    ],
+    "independently_reverified": false,
+    "quarter": "2026-Q4",
+    "quarterly_snapshot_count": 1772,
+    "capital_allocations": 0,
+    "capital_rebalances": 0,
+    "pnl_by_persona": {
+      "衡岳 R2": 12880.116,
+      "青禾 R3": 4730.0,
+      "澄川 R2": 207.0
+    },
+    "metrics_shared": {
+      "drawdown": 0.0,
+      "fill_rate": 0.0,
+      "total_trades": 1,
+      "runtime_count": 1,
+      "avg_slippage_bps": 0.0,
+      "telemetry_resolution": "fresh"
+    },
+    "evidence_coverage": 0.1,
+    "current_weight": null,
+    "target_weight": null,
+    "missing_original_fields": [
+      "risk label",
+      "session_summary",
+      "evaluation_summary",
+      "capability_summary",
+      "routed_strategy_count",
+      "memory_summary",
+      "raw metric event ids/denominators",
+      "equity/drawdown history"
+    ]
+  },
+  "findings": [
+    {
+      "id": "score_saturation",
+      "classification": "confirmed_formula_property_and_unit_boundary_mismatch",
+      "fact": "Absolute currency PnL is consumed as 100 score points per unit; >=0.5 clamps to 100"
+    },
+    {
+      "id": "fill_rate_zero",
+      "classification": "reachable_input_projection_hazard_not_hosted_root_cause_proof",
+      "fact": "Latest event-level zero or reset process rate can coexist with persisted total_trades=1"
+    },
+    {
+      "id": "drawdown_zero",
+      "classification": "valid_possible_current_drawdown_not_proof_of_quarter_maximum",
+      "fact": "Current value at rolling high-water mark gives zero; actual hosted history unavailable"
+    },
+    {
+      "id": "coverage",
+      "classification": "record_count_proxy_formula_property",
+      "fact": "One retained summary yields min(1,1/10)=0.1 regardless of trades or quarter duration"
+    },
+    {
+      "id": "activity",
+      "classification": "compatible_reconstruction_not_unique_hosted_decomposition",
+      "fact": "20*active + 15*completed + 10*has_snapshot + 5*routed + min(2*memory,10)"
+    },
+    {
+      "id": "quarter_basis",
+      "classification": "confirmed_current_metric_semantics",
+      "fact": "Quarter labels latest available telemetry; no quarter filter in ranking metric reducer"
+    },
+    {
+      "id": "schedule",
+      "classification": "bounded_repository_caller_audit",
+      "fact": "900s persona evaluator admits snapshots and lifecycle proposals, no automatic allocation evaluation/proposal caller found"
+    },
+    {
+      "id": "paper_policy",
+      "classification": "confirmed_policy_boundary",
+      "fact": "Exactly one isolated eligible paper ledger row; target=1; requires_human_approval=True"
+    },
+    {
+      "id": "paper_weights",
+      "classification": "intentional_presentation_projection",
+      "fact": "Paper rows explicitly clear current/target weight; not proof of missing Capital records"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "sha256": "df1228fcef09791972c56ebfca3abc1f416b8ff7c42e941b46d66f33a807f7ea",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/control-plane/bff/personas/service.py"
+    },
+    {
+      "path": "services/telemetry/runtime_summary.py",
+      "sha256": "93435a2f0522abdda43ed49e0f2bdbf05d043e0dcdcb173a2d228c585ff6085f",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/telemetry/runtime_summary.py"
+    },
+    {
+      "path": "services/execution/lean_runtime/paper_runtime.py",
+      "sha256": "72e994b16f04a3538662c95eb282b8748f9968377c74b822b60ab3c3e792cfbc",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/execution/lean_runtime/paper_runtime.py"
+    },
+    {
+      "path": "services/execution/lean_runtime/performance_telemetry.py",
+      "sha256": "94bb9bbf9060f9bb2d0fe37161ea9e8b7e1ccc2b19e8beee543fbc736079b742",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/execution/lean_runtime/performance_telemetry.py"
+    },
+    {
+      "path": "services/capital/allocation_policy.py",
+      "sha256": "aab6269a5fea553b7db916420ef75e80cf1bf2d323378434c6d1f7e9e693ae3d",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/capital/allocation_policy.py"
+    },
+    {
+      "path": "services/capital/allocation_lineage.py",
+      "sha256": "dfd6b7e4893ec5943432934ec9cbc50ad4ff29e7c9d713f725b846fd7df7c72a",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/capital/allocation_lineage.py"
+    },
+    {
+      "path": "services/capital/main.py",
+      "sha256": "a9d453e0060d598f0610b2476d843f9b3dd7c350bdcb0608f3f1480824e8c2d7",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/capital/main.py"
+    },
+    {
+      "path": "services/control-plane/bff/capital/router.py",
+      "sha256": "35bd963696545d0f5b72e64a6a35e5d3b1477a9c44e9c6ae5216746de5f7c4a3",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/control-plane/bff/capital/router.py"
+    },
+    {
+      "path": "services/control-plane/bff/command_adapters/capital_adapter.py",
+      "sha256": "93f78a6c34a98ede02ed06ccafe19c045f9bb691bfc2ea518b5e39e73bb1a992",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/control-plane/bff/command_adapters/capital_adapter.py"
+    },
+    {
+      "path": "services/control-plane/bff/command_executor.py",
+      "sha256": "4476feefb74beeefc4e4f55c5d6d4e221424af2d3c1b9fcc89cadad909c9bb26",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/control-plane/bff/command_executor.py"
+    },
+    {
+      "path": "services/persona-evaluator-agent/persona_evaluator_agent.py",
+      "sha256": "bd6afb1f6d59f176fd1f61ce103d23755ace63d9edafada20f0ea172f311cc02",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/persona-evaluator-agent/persona_evaluator_agent.py"
+    },
+    {
+      "path": "services/rankings/snapshots.py",
+      "sha256": "f67041c64b098eaa4b08990766ef9fe31b3b382a6fd328725680a06d1c9383fc",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/rankings/snapshots.py"
+    },
+    {
+      "path": "services/control-plane/cron/service.py",
+      "sha256": "8317468b18ccb88f453c5ff00bf9dedfd438bc56d88f42c0bc9ef903b8218430",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/services/control-plane/cron/service.py"
+    },
+    {
+      "path": "docker-compose.yml",
+      "sha256": "28b6433ffd117329c91715a5d9ef4997e688f6dcc68594d7996e1aff7414864e",
+      "permalink": "https://github.com/ajoe734/pantheon/blob/04230bdef85147f072fc86c2afc9ba4083208ca8/docker-compose.yml"
+    }
+  ],
+  "caller_searches": [
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "allocation-evaluations|allocation-policy/evaluate|evaluate_allocation\\(|calculate_paper_simulation_allocations\\(|calculate_target_allocations\\(",
+        "services",
+        "scripts",
+        ".github",
+        "deploy",
+        "docker-compose.yml",
+        "-g",
+        "*.py",
+        "-g",
+        "*.sh",
+        "-g",
+        "*.yml",
+        "-g",
+        "!**/test*.py",
+        "-g",
+        "!**/tests/**",
+        "-g",
+        "!**/conftest.py"
+      ],
+      "exit_code": 0,
+      "stdout": "services/capital/allocation_lineage.py:109:def evaluate_allocation(payload: Dict[str, Any], *, paper: bool = False) -> Dict[str, Any]:\nservices/capital/allocation_lineage.py:147:    evaluated = evaluate_allocation({\nservices/capital/allocation_policy.py:151:def calculate_target_allocations(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:\nservices/capital/allocation_policy.py:224:def calculate_paper_simulation_allocations(\nservices/capital/main.py:1230:@app.post(\"/api/allocation-evaluations\")\nservices/capital/main.py:1243:        return lineage.evaluate_allocation(payload, paper=bool(paper))\nservices/control-plane/bff/command_adapters/preconditions.py:2731:        suggestion=\"Use POST /bff/management/allocation-policy/evaluate, then POST /bff/rebalances.\",\nservices/control-plane/bff/command_adapters/capital_adapter.py:72:    def evaluate_allocation(self, payload, *, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:\nservices/control-plane/bff/command_adapters/capital_adapter.py:73:        return http_request_json(capital_url(\"/api/allocation-evaluations\"), method=\"POST\", payload=payload, auth_token=auth_token, tenant_id=self._tenant(tenant_id, auth_token))\nservices/control-plane/bff/capital/router.py:462:    @router.post(\"/bff/management/allocation-policy/evaluate\")\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "create_capital_rebalance_proposal\\(|governed_paper_simulation",
+        "services",
+        "scripts",
+        ".github",
+        "deploy",
+        "docker-compose.yml",
+        "-g",
+        "*.py",
+        "-g",
+        "*.sh",
+        "-g",
+        "*.yml",
+        "-g",
+        "!**/test*.py",
+        "-g",
+        "!**/tests/**",
+        "-g",
+        "!**/conftest.py"
+      ],
+      "exit_code": 0,
+      "stdout": "services/capital/allocation_lineage.py:32:PAPER_AUTHORITY_MODE = \"governed_paper_simulation\"\nservices/control-plane/bff/command_executor.py:359:def create_capital_rebalance_proposal(\nservices/control-plane/bff/main.py:2939:_PPL_ALLOC_009_PAPER_AUTHORITY_MODE = \"governed_paper_simulation\"\nservices/control-plane/bff/command_adapters/capital_adapter.py:99:        return _executor().create_capital_rebalance_proposal(body, auth_token=auth_token, **({\"tenant_id\": tenant} if tenant else {}))\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "quarterly.*allocat|allocat.*quarterly|rebalance_cadence",
+        "services",
+        "scripts",
+        ".github",
+        "deploy",
+        "docker-compose.yml",
+        "-g",
+        "*.py",
+        "-g",
+        "*.sh",
+        "-g",
+        "*.yml",
+        "-g",
+        "!**/test*.py",
+        "-g",
+        "!**/tests/**",
+        "-g",
+        "!**/conftest.py"
+      ],
+      "exit_code": 0,
+      "stdout": "services/control-plane/cron/service.py:131:                \"rebalance_cadence\": payload.get(\"rebalance_cadence\", payload[\"frequency\"]),\nservices/registry/paper_strategy_spec.py:178:            \"rebalance_cadence\": \"daily close, paper replay only\",\nservices/learning/qlib/activation/strategy_spec_builder.py:179:            \"rebalance_cadence\": \"daily close research scoring; optimizer owns allocation\",\nservices/research/replication/smoke_test.py:121:            \"rebalance_cadence\": \"1d\",\nservices/control-plane/persona/persona_strategy_discovery.py:394:            metadata.get(\"rebalance_cadence\"),\nservices/control-plane/persona/persona_strategy_discovery.py:875:                execution_profile.get(\"rebalance_cadence\"),\nservices/research/strategy_spec/conversion.py:246:        rebalance_cadence = _rebalance_cadence(seed)\nservices/research/strategy_spec/conversion.py:247:        if rebalance_cadence:\nservices/research/strategy_spec/conversion.py:248:            payload[\"execution_profile\"][\"rebalance_cadence\"] = rebalance_cadence\nservices/research/strategy_spec/conversion.py:429:def _rebalance_cadence(seed: StrategySpecSeed) -> str | None:\nservices/control-plane/bff/pm12/service.py:275:            \"Only admitted PM-12 quarterly snapshots can feed allocation evaluation.\",\nservices/control-plane/bff/strategies/routes/common.py:303:        \"rebalance_cadence\",\nservices/control-plane/bff/persona_provisioning_coordinator.py:1876:                \"rebalance_cadence\": f\"{bar_frequency} bar close, paper only\",\nservices/control-plane/bff/agora/strategy_workshop/semantic_provider.py:29:and exit_rules.details must contain the matching rebalance_cadence. Never infer absent values.\nservices/research/strategy_spec/models.py:217:    rebalance_cadence: str | None = None\nservices/research/strategy_spec/models.py:233:            \"rebalance_cadence\",\nservices/research/strategy_spec/models.py:234:            _optional_text(self.rebalance_cadence, \"execution_profile.rebalance_cadence\"),\nservices/research/strategy_spec/models.py:251:        if self.rebalance_cadence:\nservices/research/strategy_spec/models.py:252:            payload[\"rebalance_cadence\"] = self.rebalance_cadence\nservices/research/strategy_spec/models.py:263:            rebalance_cadence=mapping.get(\"rebalance_cadence\"),\nservices/research/strategy_spec/normalizer.py:425:        rebalance_cadence = (\nservices/research/strategy_spec/normalizer.py:426:            legacy_spec.get(\"rebalance_cadence\")\nservices/research/strategy_spec/normalizer.py:427:            or parameters.get(\"rebalance_cadence\")\nservices/research/strategy_spec/normalizer.py:436:        if rebalance_cadence:\nservices/research/strategy_spec/normalizer.py:437:            profile[\"rebalance_cadence\"] = rebalance_cadence\nservices/control-plane/bff/agora/strategy_workshop/reconstruction.py:148:                cadence = semantic_draft.strategy_map.exit_rules.details.get(\"rebalance_cadence\")\nservices/control-plane/bff/agora/strategy_workshop/reconstruction.py:151:                        or cadence != document[\"execution_profile\"].get(\"rebalance_cadence\")):\nservices/control-plane/ooda/paper_loop_packet.py:145:            \"rebalance_cadence\": \"daily\",\n",
+      "stderr": ""
+    }
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped editable distribution; foreign-cwd imports and pytest verified"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 /tmp/ranking_audit_reproduce.py",
+      "exit_code": 0,
+      "script": "import copy\nimport json\nimport os\nimport tempfile\nfrom pathlib import Path\nfrom types import SimpleNamespace\nfrom unittest.mock import patch\n\n# Local test adapters only; no hosted endpoints or production state.\nos.environ['PANTHEON_BFF_AUTH_STUB'] = 'true'\nos.environ['PANTHEON_BFF_AUTH_MODE'] = 'permissive'\nos.environ['RANKING_STORE_DSN'] = 'postgresql://test:test@localhost:5432/test'\nos.environ['RANKING_STORE_BOOTSTRAP'] = '0'\n\nfrom services.control_plane.bff.personas import service as ps\nfrom services.control_plane.bff.tests.test_bff_pm12_persona_league import (\n    _fresh_client, _Pm12LeagueTestStore, HEADERS,\n)\nfrom services.execution.lean_runtime.paper_runtime import PaperRuntimeService\nfrom services.execution.lean_runtime.performance_telemetry import PerformanceSample, RollingDrawdownTracker\nfrom services.telemetry.runtime_summary import RuntimeSummaryProjectionStore\nfrom services.telemetry.test_runtime_summary_projection import _fill_event, _event\n\nout = {}\nwith tempfile.TemporaryDirectory(prefix='ranking-audit-') as td:\n    store = _Pm12LeagueTestStore(fallback=False)\n    rows, summaries = [], {}\n    # Explicit reconstruction assumptions, not recovered hosted row summaries.\n    for name, pnl in [('衡岳 R2', 12880.116), ('青禾 R3', 4730.0), ('澄川 R2', 207.0)]:\n        rid = 'audit-runtime-' + str(len(rows))\n        rows.append(dict(id=name, persona_id=name, name=name, state='paper_running',\n                         stage='paper_running', risk='low', runtime_resolution='active',\n                         session_resolution='active', runtime_ids=[rid],\n                         capital_scope='paper_ledger', current_weight=None, target_weight=None,\n                         session_summary={'active': 1}, evaluation_summary={'completed': 0},\n                         capability_summary={'has_snapshot': False}, memory_summary={'total': 0},\n                         routed_strategy_count=1))\n        summaries[rid] = dict(runtime_id=rid, collected_at='2026-11-12T04:10:00Z',\n                              pnl=pnl, drawdown=0.0, fill_rate=0.0,\n                              total_trades=1, avg_slippage_bps=0.0)\n    store.get_telemetry_summary = lambda rid: copy.deepcopy(summaries.get(rid))\n    # Substitute only directory/owner-read boundaries. The registered quarterly\n    # HTTP route, telemetry reducers, scorer, tier, adapter and snapshot ID run.\n    with patch.object(ps, '_pm12_persona_league_rows', return_value=rows):\n        client = _fresh_client(td, store=store)\n        response = client.get('/bff/management/quarterly-ranking',\n                              headers=HEADERS, params={'quarter': '2026-Q4'})\n        assert response.status_code == 200, response.text\n        items = response.json()['data']['items']\n        assert len(items) == 3\n        expected = dict(pnl_score=100.0, risk_score=95.0, execution_score=0.0,\n                        activity_score=25.0, overall_score=62.5)\n        for item in items:\n            assert item['components'] == expected, item\n            assert item['tier'] == 'tier-3'\n            assert item['evidence_coverage'] == 0.1\n            assert item['metrics']['telemetry_resolution'] == 'fresh'\n            assert item['allocation_policy_input']['rank_score'] == 62.5\n        out['http_reproduction'] = dict(status_code=response.status_code,\n            scope='local HTTP + real reducers; owner rows and summaries are test inputs',\n            assumed_activity_inputs=rows[0]['session_summary'] | dict(\n                completed=0, has_snapshot=False, memory_total=0, routed_strategy_count=1),\n            items=[{k: item[k] for k in ('persona_id', 'components', 'tier', 'evidence_coverage', 'metrics')}\n                   for item in items])\n\n    projection = RuntimeSummaryProjectionStore(path=str(Path(td) / 'summaries.json'))\n    fill = _fill_event(created_at='2026-11-12T04:00:00Z')\n    projection.project_event(fill)\n    zero = _event('order_rejection', created_at='2026-11-12T04:01:00Z')\n    zero['metrics'] = {'fill_rate': 0.0}\n    summary = projection.project_event(zero)\n    assert summary['total_trades'] == 1 and summary['fill_rate'] == 0.0\n    out['fill_then_rejection'] = {k: summary[k] for k in ('total_trades', 'fill_rate', 'fill_rate_event_id')}\n\n    runtime = PaperRuntimeService.__new__(PaperRuntimeService)\n    runtime._processed_signal_count = runtime._execution_event_count = runtime._fill_event_count = 0\n    runtime._algo = SimpleNamespace(positions=lambda: [], open_bracket_orders=lambda: [])\n    out['reset_process_counters'] = runtime._performance_snapshot_metrics()\n    assert out['reset_process_counters']['fill_rate'] == 0.0\n\n    tracker = RollingDrawdownTracker()\n    sample = PerformanceSample(pnl=207.0, portfolio_value=1207.0, initial_cash=1000.0,\n                               cash=1207.0, as_of='2026-11-12T04:00:00Z', fill_count=1, marks=())\n    out['profitable_high_water_sample'] = tracker.observe(sample)\n    assert out['profitable_high_water_sample']['drawdown_pct'] == 0.0\n\n    empty = ps._pm12_telemetry_metrics_from_records([], [])\n    assert empty['pnl'] is None and empty['drawdown'] is None and empty['fill_rate'] is None\n    out['missing_metrics'] = empty\n\nprint(json.dumps(out, ensure_ascii=False, indent=2))\n",
+      "stdout_json": {
+        "http_reproduction": {
+          "status_code": 200,
+          "scope": "local HTTP + real reducers; owner rows and summaries are test inputs",
+          "assumed_activity_inputs": {
+            "active": 1,
+            "completed": 0,
+            "has_snapshot": false,
+            "memory_total": 0,
+            "routed_strategy_count": 1
+          },
+          "items": [
+            {
+              "persona_id": "青禾 R3",
+              "components": {
+                "overall_score": 62.5,
+                "pnl_score": 100.0,
+                "risk_score": 95.0,
+                "execution_score": 0.0,
+                "activity_score": 25.0
+              },
+              "tier": "tier-3",
+              "evidence_coverage": 0.1,
+              "metrics": {
+                "runtime_ids": [
+                  "audit-runtime-1"
+                ],
+                "runtime_count": 1,
+                "telemetry_coverage_count": 1,
+                "pnl": 4730.0,
+                "drawdown": 0.0,
+                "fill_rate": 0.0,
+                "avg_slippage_bps": 0.0,
+                "total_trades": 1,
+                "latest_telemetry_at": "2026-11-12T04:10:00Z",
+                "telemetry_evidence_refs": [
+                  {
+                    "ref_id": "telemetry-summary:audit-runtime-1",
+                    "source_type": "telemetry_summary",
+                    "runtime_id": "audit-runtime-1",
+                    "observed_at": "2026-11-12T04:10:00Z"
+                  }
+                ],
+                "telemetry_resolution": "fresh"
+              }
+            },
+            {
+              "persona_id": "衡岳 R2",
+              "components": {
+                "overall_score": 62.5,
+                "pnl_score": 100.0,
+                "risk_score": 95.0,
+                "execution_score": 0.0,
+                "activity_score": 25.0
+              },
+              "tier": "tier-3",
+              "evidence_coverage": 0.1,
+              "metrics": {
+                "runtime_ids": [
+                  "audit-runtime-0"
+                ],
+                "runtime_count": 1,
+                "telemetry_coverage_count": 1,
+                "pnl": 12880.116,
+                "drawdown": 0.0,
+                "fill_rate": 0.0,
+                "avg_slippage_bps": 0.0,
+                "total_trades": 1,
+                "latest_telemetry_at": "2026-11-12T04:10:00Z",
+                "telemetry_evidence_refs": [
+                  {
+                    "ref_id": "telemetry-summary:audit-runtime-0",
+                    "source_type": "telemetry_summary",
+                    "runtime_id": "audit-runtime-0",
+                    "observed_at": "2026-11-12T04:10:00Z"
+                  }
+                ],
+                "telemetry_resolution": "fresh"
+              }
+            },
+            {
+              "persona_id": "澄川 R2",
+              "components": {
+                "overall_score": 62.5,
+                "pnl_score": 100.0,
+                "risk_score": 95.0,
+                "execution_score": 0.0,
+                "activity_score": 25.0
+              },
+              "tier": "tier-3",
+              "evidence_coverage": 0.1,
+              "metrics": {
+                "runtime_ids": [
+                  "audit-runtime-2"
+                ],
+                "runtime_count": 1,
+                "telemetry_coverage_count": 1,
+                "pnl": 207.0,
+                "drawdown": 0.0,
+                "fill_rate": 0.0,
+                "avg_slippage_bps": 0.0,
+                "total_trades": 1,
+                "latest_telemetry_at": "2026-11-12T04:10:00Z",
+                "telemetry_evidence_refs": [
+                  {
+                    "ref_id": "telemetry-summary:audit-runtime-2",
+                    "source_type": "telemetry_summary",
+                    "runtime_id": "audit-runtime-2",
+                    "observed_at": "2026-11-12T04:10:00Z"
+                  }
+                ],
+                "telemetry_resolution": "fresh"
+              }
+            }
+          ]
+        },
+        "fill_then_rejection": {
+          "total_trades": 1,
+          "fill_rate": 0.0,
+          "fill_rate_event_id": "evt-paper-order_rejection"
+        },
+        "reset_process_counters": {
+          "processed_signal_count": 0,
+          "execution_event_count": 0,
+          "fill_event_count": 0,
+          "fill_rate": 0.0,
+          "open_position_count": 0,
+          "open_bracket_order_count": 0,
+          "avg_slippage_bps": 0.0
+        },
+        "profitable_high_water_sample": {
+          "drawdown_pct": 0.0,
+          "peak_portfolio_value": 1207.0,
+          "portfolio_value": 1207.0,
+          "window_observations": 2,
+          "window_days": 20,
+          "drawdown_as_of": "2026-11-12T04:00:00Z"
+        },
+        "missing_metrics": {
+          "runtime_ids": [],
+          "runtime_count": 0,
+          "telemetry_coverage_count": 0,
+          "pnl": null,
+          "drawdown": null,
+          "fill_rate": null,
+          "avg_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "telemetry_evidence_refs": []
+        }
+      },
+      "stderr": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "boundary": "Only owner-row/summary adapters and local auth; production HTTP route, telemetry, scores, tier and adapter run unchanged"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/capital/test_allocation_policy.py services/capital/test_allocation_lineage_integrity.py services/persona-evaluator-agent/test_persona_evaluator_agent.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py -k 'quarterly or score_alone or paper_simulation or lineage or target or pm12_adapter'",
+      "exit_code": 0,
+      "passed": 29,
+      "deselected": 49,
+      "stdout": ".............................                                            [100%]\n=============================== warnings summary ===============================\nservices/research/strategy_spec/normalizer.py:21\nservices/research/strategy_spec/normalizer.py:21\n  /tmp/pantheon-worker-worktrees/pantheon/ranking-score-discrimination-audit-20261112/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.\n    from jsonschema import Draft7Validator, RefResolver\n\n../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1\n  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n    from starlette.testclient import TestClient as TestClient  # noqa\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n29 passed, 49 deselected, 3 warnings in 14.35s\n"
+    }
+  ],
+  "limitations": [
+    "No new hosted reads or inspection of external schedulers; inherited observations are not independent measurements",
+    "Risk=low is implied; chosen activity inputs are a compatible example, not original row evidence",
+    "Fill/rejection replay proves reachability, not which hosted event supplied zero",
+    "No formula, policy, production code or canonical task-state files edited",
+    "No independent review approval or hosted activation claimed"
+  ]
+}
