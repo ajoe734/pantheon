@@ -209,6 +209,92 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "combination_rule",
+            "members",
+            "risk_limits"
+          ],
+          "properties": {
+            "kind": {
+              "const": "persona_portfolio_v1"
+            },
+            "combination_rule": {
+              "const": "clipped_weighted_sum_v1"
+            },
+            "members": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "required": [
+                  "member_id",
+                  "artifact_id",
+                  "version",
+                  "checksum",
+                  "risk_weight",
+                  "virtual_only",
+                  "artifact"
+                ],
+                "properties": {
+                  "member_id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                  },
+                  "artifact_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                  },
+                  "version": {
+                    "type": "string",
+                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                  },
+                  "checksum": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "risk_weight": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "virtual_only": {
+                    "type": "boolean"
+                  },
+                  "artifact": {
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "risk_limits": {
+              "type": "object",
+              "required": [
+                "max_net_strength",
+                "gross_weight_limit"
+              ],
+              "properties": {
+                "max_net_strength": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                },
+                "gross_weight_limit": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -254,7 +340,7 @@
       "properties": {
         "controls": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": {
             "oneOf": [
               {
@@ -569,5 +655,31 @@
       ]
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "strategy_logic": {
+            "properties": {
+              "kind": {
+                "const": "persona_portfolio_v1"
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "mutation_surface": {
+            "properties": {
+              "controls": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }

@@ -1510,6 +1510,11 @@ class RuntimeSummaryProjectionStore:
             # The producer reports a failed/expired valuation attempt through its
             # heartbeat performance_telemetry. Only its own attempt time orders
             # it; a heartbeat never refreshes a mark, it can only withdraw one.
+            member_books = metadata.get("member_virtual_books")
+            if isinstance(member_books, list) and event_type in {"heartbeat", "signal_generation"}:
+                safe_books = _json_safe_object({"books": member_books})
+                if safe_books is not None:
+                    current["member_virtual_books"] = safe_books["books"]
             perf = metadata.get("performance_telemetry")
             if event_type == "heartbeat" and isinstance(perf, dict):
                 # The heartbeat reports the same authoritative ledger fill_count

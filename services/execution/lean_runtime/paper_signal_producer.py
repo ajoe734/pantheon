@@ -431,6 +431,7 @@ class CurrentArtifactStrategy:
         {
             "close_to_close_momentum",
             "factor_rule_v1",
+            "persona_portfolio_v1",
         }
     )
 
@@ -689,7 +690,17 @@ class CurrentArtifactStrategy:
                 self._expression_on()
                 and strategy_artifact.get("expression_policy") is not None
             )
-            if expression_enabled:
+            portfolio_result = None
+            if logic_kind == "persona_portfolio_v1":
+                from services.registry.portfolio_envelope import evaluate_portfolio_envelope
+
+                portfolio_result = evaluate_portfolio_envelope(
+                    strategy_artifact, closes, features=features, decision_time=decision_time,
+                    symbol=market_input["symbol"],
+                )
+                view = portfolio_result["view"]
+                action = view["action"]
+            elif expression_enabled:
                 from services.registry.strategy_artifact import evaluate_strategy_view
 
                 view = evaluate_strategy_view(
@@ -825,6 +836,19 @@ class CurrentArtifactStrategy:
                 "is_real_capital": False,
             },
         }
+        if portfolio_result is not None:
+            out["metadata"]["portfolio_member_views"] = {
+                member["member_id"]: {
+                    **{key: member[key] for key in (
+                        "artifact_id", "version", "checksum", "risk_weight", "virtual_only"
+                    )},
+                    "view": portfolio_result["member_views"][member["member_id"]],
+                }
+                for member in strategy_logic["members"]
+                if member["member_id"] in portfolio_result["member_views"]
+            }
+            out["metadata"]["portfolio_net_view"] = dict(portfolio_result["view"])
+            out["metadata"]["portfolio_bar_frequency"] = parameters["bar_frequency"]
         if expression_enabled and view is not None and is_taiwan_venue_symbol(symbol):
             # Lazy: the producer evaluates only after admission and a stored
             # record lookup, so a restart never re-runs builder or decider.
