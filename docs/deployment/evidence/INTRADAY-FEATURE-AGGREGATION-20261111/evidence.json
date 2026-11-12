@@ -1,7 +1,7 @@
 {
   "task": "INTRADAY-FEATURE-AGGREGATION-20261111",
   "owner": "Claude",
-  "reviewer": "Codex",
+  "reviewer": "Codex2",
   "tracks": {
     "source": {
       "status": "implemented_pending_independent_review",
@@ -67,5 +67,19 @@
     "tests": "services/registry/tests/test_strategy_artifact_bar_frequency.py: shared-evaluator negative tests (daily/generic fallback, raw/naive/unstamped minute series, missing decision_time)",
     "source_test_results": "4 task files + new tests: 46 passed; 442 passed across all factor_rule-referencing test files (persona-portfolio venv)",
     "not_tested": "hosted remains W5"
+  },
+  "review_reject_fix_round4": {
+    "findings": [
+      "P1 dataset isolation: minute inputs resolved via generic field fallback (features[close]) and dataset metadata was unchecked",
+      "P1 PIT: minute decision_time accepted naive/date-only values"
+    ],
+    "fix": [
+      "factor_rule._lookup_minute_feature: input name or dataset-qualified keys only; no bare-field fallback",
+      "_require_minute_observations rejects obs whose dataset/field metadata conflicts with the declared input",
+      "_require_aware_decision_time enforced in assert_governed_feature_observations and resolve_point_in_time_inputs for minute inputs; daily path unchanged"
+    ],
+    "tests": "public evaluator negative tests for generic/daily-tagged close and vwap, and naive/date-only/None decision_time",
+    "validation": "timeout 300 python -m pytest <7 task test files> -q => 100 passed; services/registry/tests -k 'factor or strategy or minute or intraday' => 32 passed",
+    "hosted": "not run; remains W5"
   }
 }

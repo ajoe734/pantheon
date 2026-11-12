@@ -236,10 +236,34 @@ def _require_aware_timestamp(value: Any, label: str) -> None:
         raise FactorRuleValidationError(f"{label} must be a timezone-aware minute timestamp")
 
 
+def _lookup_minute_feature(
+    features: Mapping[str, Any], *, name: str, dataset: str, field: str
+) -> Any | None:
+    """Minute-input lookup: input name or dataset-qualified keys only (no bare-field fallback)."""
+    if name in features and features[name] is not None:
+        return features[name]
+    for key in (f"{dataset}.{field}", f"{dataset}:{field}"):
+        if key in features and features[key] is not None:
+            return features[key]
+    ds_entry = features.get(dataset)
+    if isinstance(ds_entry, Mapping) and ds_entry.get(field) is not None:
+        return ds_entry[field]
+    return None
+
+
+def _require_aware_decision_time(decision_time: Any) -> None:
+    if isinstance(decision_time, datetime) or (
+        isinstance(decision_time, str) and decision_time.strip()
+    ):
+        _require_aware_timestamp(decision_time, "minute decision_time")
+        return
+    raise FactorRuleValidationError("minute decision_time must be a timezone-aware minute timestamp")
+
+
 def _require_minute_observations(
     feature_map: Mapping[str, Any], *, name: str, dataset: str, field: str
 ) -> None:
-    series = _lookup_raw_feature(feature_map, name=name, dataset=dataset, field=field)
+    series = _lookup_minute_feature(feature_map, name=name, dataset=dataset, field=field)
     if not isinstance(series, (list, tuple)) or not series:
         raise FactorRuleValidationError(
             f"minute input '{name}' ({dataset}.{field}) requires dataset-bound minute observations; "
@@ -255,6 +279,13 @@ def _require_minute_observations(
             raise FactorRuleValidationError(
                 f"minute input '{name}[{idx}]' must carry value, event_time and available_time"
             )
+        for meta_key, expected in (("dataset", dataset), ("field", field)):
+            declared = obs.get(meta_key)
+            if declared is not None and declared != expected:
+                raise FactorRuleValidationError(
+                    f"minute input '{name}[{idx}]' is bound to {meta_key}={declared!r}, "
+                    f"expected {expected!r}; cross-dataset substitution is not allowed"
+                )
         _require_aware_timestamp(obs["event_time"], f"minute input '{name}[{idx}].event_time'")
         _require_aware_timestamp(obs["available_time"], f"minute input '{name}[{idx}].available_time'")
 
@@ -283,7 +314,7 @@ def assert_governed_feature_observations(
         if dataset in INTRADAY_PRICE_VOLUME_DATASETS:
             # SD §6.3: minute inputs must be dataset-bound, timezone-aware observations
             # evaluated at an explicit decision_time; no daily/generic/raw fallback.
-            _parse_timestamp_utc(decision_time, is_decision_time=True)
+            _require_aware_decision_time(decision_time)
             _require_minute_observations(feature_map, name=name, dataset=dataset, field=field)
             continue
         if not decision_checked:
@@ -1254,9 +1285,15 @@ def resolve_point_in_time_inputs(
         elif cat_def is not None:
             lag_days = max(lag_days, cat_def.min_availability_lag_days)
 
-        raw_series = _lookup_raw_feature(
-            feature_map, name=name, dataset=dataset, field=field
-        )
+        if dataset in INTRADAY_PRICE_VOLUME_DATASETS:
+            _require_aware_decision_time(decision_time)
+            raw_series = _lookup_minute_feature(
+                feature_map, name=name, dataset=dataset, field=field
+            )
+        else:
+            raw_series = _lookup_raw_feature(
+                feature_map, name=name, dataset=dataset, field=field
+            )
         if raw_series is not None and dataset in INTRADAY_PRICE_VOLUME_DATASETS:
             _require_minute_observations(feature_map, name=name, dataset=dataset, field=field)
         if raw_series is None and dataset in INTRADAY_PRICE_VOLUME_DATASETS:

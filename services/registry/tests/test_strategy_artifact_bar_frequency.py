@@ -163,3 +163,59 @@ def test_shared_evaluator_rejects_raw_or_unstamped_minute_features(_restore_cata
         factor_rule.evaluate_factor_rule_view(
             _art(), None, features={"tw_price_1m.close": series}, decision_time=decision_time
         )
+
+
+def _register_minute_close():
+    factor_rule.register_feature_definition(
+        factor_rule.FeatureDefinition("tw_price_1m", "close", availability_lag_unit="minutes", min_availability_lag=3)
+    )
+
+
+def _tagged(dataset, field="close"):
+    return [
+        {**_obs("2026-11-10T09:00:00+08:00", 100.0, "2026-11-10T09:00:00+08:00"), "dataset": dataset, "field": field},
+        {**_obs("2026-11-10T09:01:00+08:00", 101.0, "2026-11-10T09:01:00+08:00"), "dataset": dataset, "field": field},
+    ]
+
+
+def test_public_evaluator_rejects_generic_or_daily_timestamped_minute_input(_restore_catalogue):
+    _register_minute_close()
+    late = "2026-11-10T16:05:00+08:00"
+    # bare generic ``close`` key must not satisfy a declared tw_price_1m.close input
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.evaluate_factor_rule_view(_art(), None, features={"close": _tagged("tw_price_daily")}, decision_time=late)
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.evaluate_factor_rule_view(_art(), None, features={"close": _tagged("tw_price_1m")}, decision_time=late)
+    # conflicting dataset metadata under the right key is rejected
+    with pytest.raises(factor_rule.FactorRuleValidationError, match="cross-dataset"):
+        factor_rule.evaluate_factor_rule_view(
+            _art(), None, features={"px": _tagged("tw_price_daily")}, decision_time=late
+        )
+    # minute vwap must not be served by a generic vwap key or daily metadata
+    vwap_logic = _minute_logic(lag_minutes=3)
+    vwap_logic["inputs"][0].update(field="vwap")
+    art = {"strategy_logic": vwap_logic, "parameters": {"w": 2}}
+    factor_rule.register_feature_definition(
+        factor_rule.FeatureDefinition("tw_price_1m", "vwap", availability_lag_unit="minutes", min_availability_lag=3)
+    )
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.evaluate_factor_rule_view(art, None, features={"vwap": _tagged("tw_price_daily", "vwap")}, decision_time=late)
+    with pytest.raises(factor_rule.FactorRuleValidationError, match="cross-dataset"):
+        factor_rule.evaluate_factor_rule_view(art, None, features={"px": _tagged("tw_price_daily", "vwap")}, decision_time=late)
+
+
+@pytest.mark.parametrize("bad", ["2026-11-10T09:02:00", "2026-11-10", __import__("datetime").datetime(2026, 11, 10, 9, 2), None])
+def test_minute_decision_time_must_be_timezone_aware(_restore_catalogue, bad):
+    _register_minute_close()
+    series = [
+        _obs("2026-11-10T09:00:00+08:00", 100.0, "2026-11-10T16:00:00+08:00"),
+        _obs("2026-11-10T09:01:00+08:00", 101.0, "2026-11-10T16:00:00+08:00"),
+    ]
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.evaluate_factor_rule_view(_art(), None, features={"px": series}, decision_time=bad)
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.resolve_point_in_time_inputs(_minute_logic(lag_minutes=3), None, features={"px": series}, decision_time=bad)
+    with pytest.raises(factor_rule.FactorRuleValidationError, match="no visible"):
+        factor_rule.evaluate_factor_rule_view(
+            _art(), None, features={"px": series}, decision_time="2026-11-10T09:02:00+08:00"
+        )
