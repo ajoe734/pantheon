@@ -2724,9 +2724,8 @@ def _twse_session_day(day):
     evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
     return not evidence or day.isoformat() not in (evidence.get("holidays") or {})
 
-# PANTHEON_REFRESH_PREFLIGHT_NOW pins the clock only for isolated tests/reproduction.
-_pinned_now = os.environ.get("PANTHEON_REFRESH_PREFLIGHT_NOW", "").strip()
-_now = datetime.fromisoformat(_pinned_now.replace("Z", "+00:00")) if _pinned_now else datetime.now(timezone.utc)
+# Real aware current time only; no runtime clock override (tests inject clocks in isolation).
+_now = datetime.now(timezone.utc)
 if is_finmind:
     # Broker reports publish 18:00 Taipei: default to the latest genuinely published session.
     run_date = latest_published_broker_session(_now, is_session_day=_twse_session_day).isoformat()
