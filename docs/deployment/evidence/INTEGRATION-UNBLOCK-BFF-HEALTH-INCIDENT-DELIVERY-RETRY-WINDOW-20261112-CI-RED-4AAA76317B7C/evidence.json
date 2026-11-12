@@ -1,19 +1,70 @@
 {
   "task_id": "INTEGRATION-UNBLOCK-BFF-HEALTH-INCIDENT-DELIVERY-RETRY-WINDOW-20261112-CI-RED-4AAA76317B7C",
+  "status": "diagnosis_complete_implementation_scope_blocked",
+  "owner": "Codex",
+  "assigned_reviewer": "Codex2",
   "source_pr": 7235,
+  "source_pr_url": "https://github.com/ajoe734/pantheon/pull/7235",
+  "source_head": "4e78917da09610ee93f1b3b3ca1e1d6816315c6f",
+  "source_frozen_base": "f9b9da399af3ad5c9699f403566d4effd84c672d",
   "source_branch": "task/BFF-HEALTH-INCIDENT-DELIVERY-RETRY-WINDOW-20261112",
   "source_pr_files": [
+    "docs/deployment/evidence/BFF-HEALTH-INCIDENT-DELIVERY-RETRY-WINDOW-20261112/evidence.json",
     "services/control-plane/bff/downstream_health_monitor.py",
     "services/control-plane/bff/test_bff_downstream_health_monitor.py",
     "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py"
   ],
   "root_cause": {
-    "persona_provisioning_owner_contracts": "scripts/test_dev_remote_guarded_exec.py::test_ssh_startup_exit_is_not_replaced_by_generic_capture_failure returned 75 instead of 255 (EPIPE / process-exit race in scripts/dev_remote_guarded_exec.py). 2110 other tests passed. The source PR does not touch these files, so this is a pre-existing timing flake, not a regression from the PR.",
-    "service_suites_heavy_installs": "The 'Run incidents service tests' step failed. Run logs were unavailable at inspection time because the run was still in progress; cause not confirmed. The PR does not touch services/incidents."
+    "persona_provisioning_owner_contracts": {
+      "job_url": "https://github.com/ajoe734/pantheon/actions/runs/43223265169/job/131199908422",
+      "failing_test": "scripts/test_dev_remote_guarded_exec.py::test_ssh_startup_exit_is_not_replaced_by_generic_capture_failure",
+      "observed": "Expected SSH exit 255, got generic capture failure 75; CI reports 1 failed, 2110 passed, 1 skipped, 9 subtests passed, exit 1.",
+      "analysis": "The fixture closes stdin before sleeping 0.02s and exiting 255. Startup os.write catches BlockingIOError but not BrokenPipeError; a pipe closure before child.poll observes termination can therefore fall through to generic transport error 75. This is a source-inspection inference consistent with the CI assertion, not a locally reproduced traceback. Both transport files are unchanged between the frozen base and source head. Local timing reproduction has not been run."
+    },
+    "service_suites_heavy_installs": {
+      "job_url": "https://github.com/ajoe734/pantheon/actions/runs/43223264920/job/131202977120",
+      "failing_test": "services/incidents/test_infrastructure_orphan_recovery.py::test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless",
+      "observed": "At line 642, status is retry instead of dead_letter after five network failures. CI reports 1 failed, 116 passed, exit 1. This failure causes the aggregate required Service suites check to fail.",
+      "analysis": "This is a cross-service test regression caused by the new incident delivery policy, despite the incidents test file being unchanged. The historical outage fixture assumes the retired five-attempt policy and also asserts attempt_count == 5. The source monitor correctly keeps retrying until its 900-second backoff budget is exhausted. The fixture must represent the historical persisted dead-letter state explicitly or exercise the full new retry budget, preserving all seven incident identities, orphan resolution and harmless replay assertions. Do not shorten the production retry window or weaken CI."
+    }
   },
-  "not_verified": [
-    "incidents service test failure cause",
-    "local reproduction of the flake (pytest not installed in this worker environment)"
+  "verification": [
+    {
+      "command": "gh run view 43223264920 --job 131202977120 --log-failed",
+      "exit_code": 0,
+      "result": "Collected the completed incidents service failure log; test command inside CI exited 1."
+    },
+    {
+      "command": "gh run view 43223265169 --job 131199908422 --log-failed",
+      "exit_code": 0,
+      "result": "Collected the completed SSH transport assertion log; test command inside CI exited 1."
+    },
+    {
+      "command": "timeout 45 /tmp/bffvenv/bin/python -m pytest -q services/incidents/test_infrastructure_orphan_recovery.py::test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless",
+      "checkout": "isolated shared clone at f9b9da399af3ad5c9699f403566d4effd84c672d",
+      "exit_code": 0,
+      "result": "1 passed, 3 warnings in 4.70s"
+    },
+    {
+      "command": "timeout 45 /tmp/bffvenv/bin/python -m pytest -q services/incidents/test_infrastructure_orphan_recovery.py::test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless",
+      "checkout": "same isolated shared clone at source head 4e78917da09610ee93f1b3b3ca1e1d6816315c6f",
+      "exit_code": 1,
+      "result": "1 failed, 3 warnings in 3.85s; reproduced retry != dead_letter at line 642"
+    }
   ],
-  "blocker": "The only needed fix is in scripts/dev_remote_guarded_exec.py or its test, outside this task's artifact contract (scripts/git/auto_integrator.py plus this evidence file). No code change was made."
+  "integrator_assessment": "scripts/git/auto_integrator.py correctly refuses ci-red at its other_failing gate. No integrator change is justified; bypassing checks would conceal a reproduced regression.",
+  "correction_to_previous_evidence": "The prior evidence incorrectly treated unchanged incidents files as evidence of an unrelated failure. Completed CI logs and base/head reproduction establish a source-policy-related fixture failure. A usable pytest environment was found at /tmp/bffvenv; system python3 alone lacks pytest.",
+  "required_contract_additions": [
+    "services/incidents/test_infrastructure_orphan_recovery.py",
+    "scripts/dev_remote_guarded_exec.py",
+    "scripts/test_dev_remote_guarded_exec.py"
+  ],
+  "recovery_plan": [
+    "Human/Ops adds the three required paths to this existing repair task through governed artifact-contract while blocked, then reopens it for Codex. No task-state JSON or command runtime edits.",
+    "Repair the historical incidents fixture compatibly with dev and the source policy. Fix bounded SSH startup exit handling with focused regression coverage.",
+    "Deliver fixes on this repair task branch and PR with this repair Task-ID, update this manifest, hand off to Codex2 for exact-head review and let the canonical integrator merge after required CI.",
+    "After repair integration, the source owner can refresh the still-frozen source PR through reopen/new-head review, or rerun its CI on an appropriate current-base test merge; verify actual green checks and native integration. Do not change its approved head silently."
+  ],
+  "source_disposition": "PR #7235 remains OPEN and canonical review_approved at the unchanged head, stranded on failed CI. It has not been superseded or repaired; acceptance item 2 is outstanding.",
+  "blocker": "The current contract allows only scripts/git/auto_integrator.py and this evidence file. The required fixture and SSH transport fixes are outside that contract. scripts/ai_status.py command_artifact_contract permits revisions only by Human/Ops in todo/blocked. No implementation change, reviewer approval, CI recovery or merged delivery is claimed."
 }
