@@ -1767,3 +1767,20 @@ def test_worker_never_reuses_cached_results_across_candidates() -> None:
     )
 
     assert not hasattr(AlphaRevalidationWorker, "_CACHED_DEFAULT_TW_BACKTEST")
+
+
+def test_backtest_run_store_records_gate_dataset_universe_beside_the_digest(tmp_path) -> None:
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, dataset_symbol_universe
+
+    dataset = {"records": [{"instrument": "2330"}, {"instrument": "2317"}, {"instrument": "2330"}, {"date": "x"}]}
+    assert dataset_symbol_universe(dataset) == ["2317", "2330"]
+    assert dataset_symbol_universe({}) == []
+    store = SharedBacktestRunStore(tmp_path / "runs.json")
+    evaluation = {"backtest_run_id": "bt-1", "status": "completed", "dataset_id": "d"}
+    digest = store.evaluation_digest(evaluation)
+    store.record(evaluation, dataset_symbols=dataset_symbol_universe(dataset))
+    row = SharedBacktestRunStore(tmp_path / "runs.json").get("bt-1")
+    assert row["dataset_symbols"] == ["2317", "2330"] and row["evaluation_digest"] == digest
+    store.record({"backtest_run_id": "bt-2", "status": "completed"})  # no dataset: no universe is invented
+    assert "dataset_symbols" not in store.get("bt-2")
+    assert store.get("bt-1")["dataset_symbols"] == ["2317", "2330"]
