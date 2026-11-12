@@ -97,14 +97,23 @@ CHAIN_CAPITAL_LABEL_KEYS = frozenset({"chain_id", "task_id", "fixture", "paper_o
 class PoolDispatchUncertain(Exception):
     """Pool envelope dispatch outcome could not be confirmed by readback."""
 
-    def __init__(self, reason: str, receipt: dict[str, Any]) -> None:
+    def __init__(
+        self, reason: str, receipt: dict[str, Any], *, terminal_rejection: bool = False
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.receipt = receipt
+        # True only when an authoritative saga readback shows a terminal
+        # failure/abort, which excludes pending execution of the dispatch.
+        self.terminal_rejection = terminal_rejection
 
 
 class PersonaProvisioningCoordinationError(RuntimeError):
     """An owner receipt could not prove the requested provisioning step."""
+
+
+class _TerminalSagaRejection(PersonaProvisioningCoordinationError):
+    """Saga readback proves terminal rejection of the dispatched plan."""
 
 
 @dataclass(frozen=True)
@@ -3727,6 +3736,21 @@ class PersonaProvisioningCoordinator:
                 and str(receipt.get("status") or "") not in {"failed", "aborted", "compensating"}
             )
 
+        def validate_saga(receipt: Mapping[str, Any]) -> None:
+            if saga_ready(receipt):
+                return
+            if (
+                receipt.get("saga_id") == saga_id
+                and receipt.get("plan_id") == plan_id
+                and str(receipt.get("status") or "") in {"failed", "aborted"}
+            ):
+                raise _TerminalSagaRejection(
+                    "Deployment saga reached a terminal failure for the envelope dispatch"
+                )
+            raise PersonaProvisioningCoordinationError(
+                "Deployment saga readback does not prove the envelope dispatch"
+            )
+
         def _receipt(saga_status: Any) -> dict[str, Any]:
             return {
                 "persona_id": persona_id,
@@ -3767,14 +3791,20 @@ class PersonaProvisioningCoordinator:
                     },
                 },
                 ready=saga_ready,
-                validate=lambda r: saga_ready(r)
-                or (_ for _ in ()).throw(
-                    PersonaProvisioningCoordinationError(
-                        "Deployment saga readback does not prove the envelope dispatch"
-                    )
-                ),
+                validate=validate_saga,
             )
         except Exception as exc:
+            terminal = False
+            cause: BaseException | None = exc
+            while cause is not None:
+                if isinstance(cause, _TerminalSagaRejection):
+                    terminal = True
+                    break
+                cause = cause.__cause__
+            if terminal:
+                raise PoolDispatchUncertain(
+                    str(exc), _receipt(None), terminal_rejection=True
+                ) from exc
             # Dispatch may have been admitted: the owners, not this exception,
             # say whether the binding moved.  Never claim the previous kept.
             raise PoolDispatchUncertain(str(exc), _receipt(None)) from exc

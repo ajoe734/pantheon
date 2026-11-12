@@ -177,6 +177,8 @@ class PublishOwnerTransport(FakeOwnerTransport):
         super().__init__(**kwargs)
         self.runtime = runtime
         self.refuse_dispatch = False
+        self.queue_dispatch = False
+        self.queued: list[Any] = []
 
     def _apply_post(self, owner, path, body):
         if owner == "deployment" and path == "/api/deployment/plans":
@@ -193,6 +195,11 @@ class PublishOwnerTransport(FakeOwnerTransport):
             plan["runtime_action"] = StagePlanner().default_runtime_action(transition).value
             return response
         if owner == "deployment" and path.endswith("/dispatch"):
+            if self.queue_dispatch:
+                # Accepted asynchronously (outbox): executes only when drained.
+                self.queue_dispatch = False
+                self.queued.append(lambda: self._apply_post(owner, path, body))
+                return {"accepted": True, "replayed": False}
             plan_id = path.split("/")[-2]
             plan = self.objects[("deployment", f"/api/deployment/plans/{plan_id}")]
             saga = {
@@ -494,6 +501,42 @@ def test_saga_readback_loss_after_dispatch_is_not_reported_as_previous_kept(
     history = world.publisher.history(TENANT, PERSONA)
     assert not history["refusals"]
     assert history["published"]["1"]["envelope_artifact_id"] == data["envelope_artifact_id"]
+    assert _live(world)[0]["artifact_id"] == data["envelope_artifact_id"]
+
+
+def test_queued_dispatch_with_lost_readback_is_not_refused_when_binding_later_moves(
+    world, monkeypatch, tmp_path
+):
+    import urllib.error
+
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 0.5)], 0)
+    world.transport.queue_dispatch = True
+    real_get = world.transport.get
+
+    def lossy_get(owner, path):
+        if owner == "deployment" and "/sagas/" in path and world.transport.queued:
+            raise urllib.error.URLError("readback lost")
+        return real_get(owner, path)
+
+    world.transport.get = lossy_get
+    response = client.post(PATH, json={}, headers=H)
+    world.transport.get = real_get
+    # Old binding is still active, but accepted work is pending: not a refusal.
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "dispatched"
+    assert _live(world)[0]["artifact_id"] == world.ids.strategy_artifact_id
+    history = world.publisher.history(TENANT, PERSONA)
+    assert not history["refusals"]
+    assert history["published"]["1"]["status"] == "dispatched"
+    assert history["published"]["1"]["deployment_plan_id"] == data["deployment_plan_id"]
+
+    assert len(world.transport.queued) == 1
+    # The already accepted queued work executes later and moves the binding.
+    for run in world.transport.queued:
+        run()
+    assert world.runtime.calls == ["deploy", "replace"]
     assert _live(world)[0]["artifact_id"] == data["envelope_artifact_id"]
 
 

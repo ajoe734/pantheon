@@ -371,11 +371,15 @@ class PersonaPoolPublisher:
                 }
             )
         except PoolDispatchUncertain as exc:
-            # Dispatch may have been admitted. Only owner readback may say
-            # whether the previous envelope still runs.
+            # Dispatch may have been admitted and still be queued. Refuse only
+            # with authoritative terminal rejection evidence plus readback that
+            # the previous envelope still runs; otherwise keep a dispatched
+            # receipt regardless of the binding being active right now.
             receipt = exc.receipt
             try:
-                kept = self._previous_still_live(ids, receipt, previous)
+                kept = exc.terminal_rejection and self._previous_still_live(
+                    ids, receipt, previous
+                )
             except Exception:
                 kept = False
             if kept:
