@@ -28,7 +28,7 @@
         "checksum": {"type": "string", "minLength": 1, "description": "Must equal the registry entry checksum"},
         "stage": {"enum": ["trial", "active", "removed"]},
         "risk_weight": {"type": "number", "minimum": 0, "maximum": 1},
-        "baseline_ref": {"type": ["string", "null"], "description": "Gate verdict reference; required when stage is active"},
+        "baseline_ref": {"type": ["string", "null"], "description": "Gate verdict reference (the approval decision that admitted the artifact, never the rollback target); required when stage is active"},
         "joined_at": {"type": "string"},
         "parent_ref": {"type": ["string", "null"]},
         "demand_ref": {"type": ["string", "null"]},

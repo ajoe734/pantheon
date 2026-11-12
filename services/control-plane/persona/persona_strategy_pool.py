@@ -199,8 +199,43 @@ def http_owner_artifact_lister(persona_id: str, tenant_id: str) -> list[Mapping[
                 found.append(entry)
         nxt = payload.get("next_page_token")
         if not nxt:
-            return found
+            return select_running_artifacts(found)
         offset = int(nxt)
+
+
+def select_running_artifacts(entries: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Keep only the artifact(s) the persona actually runs.
+
+    The provisioning owner approves a zero-capital fail-closed baseline and
+    the running artifact under the same persona; the baseline is the running
+    artifact's rollback target, not a running member.  Excluded:
+      * entries flagged ``metadata.fail_closed_baseline``;
+      * entries that another candidate names as its rollback target;
+      * entries without the capital-binding owner reference;
+      * entries the registry marks superseded.
+    """
+    rollback_ids = {
+        str(ref)
+        for e in entries
+        for ref in (
+            e.get("rollback_target"),
+            (e.get("metadata") or {}).get("rollback_target_registry_id"),
+        )
+        if ref
+    }
+    kept: list[Mapping[str, Any]] = []
+    for entry in entries:
+        metadata = entry.get("metadata") if isinstance(entry.get("metadata"), Mapping) else {}
+        if metadata.get("fail_closed_baseline") is True:
+            continue
+        if str(entry.get("registry_id")) in rollback_ids:
+            continue
+        if not metadata.get("persona_capital_binding_id"):
+            continue
+        if entry.get("superseded_by") or metadata.get("superseded_by"):
+            continue
+        kept.append(entry)
+    return kept
 
 
 def _verify_member(
@@ -285,7 +320,7 @@ class PersonaStrategyPoolStore:
         try:
             self._validate_membership(previous, request.members, tenant_id)
         except PoolMemberRefused as exc:
-            self._record_refusal(persona_id, tenant_id, existing, request, actor_id, exc)
+            self._record_refusal(persona_id, tenant_id, request, actor_id, exc)
             raise
         body = {
             "schema_version": SCHEMA_VERSION,
@@ -299,14 +334,23 @@ class PersonaStrategyPoolStore:
             "previous_digest": previous["digest"] if previous else None,
         }
         body["digest"] = canonical_digest(body)
-        record = {
-            "persona_id": persona_id,
-            "tenant_id": tenant_id,
-            "versions": versions + [body],
-            "refusals": list(existing.get("refusals", [])) if existing else [],
-        }
-        ok, _ = self._records.compare_and_set(persona_id, existing, record)
-        if not ok:
+        for _ in range(8):
+            record = {
+                "persona_id": persona_id,
+                "tenant_id": tenant_id,
+                "versions": versions + [body],
+                "refusals": list(existing.get("refusals", [])) if existing else [],
+            }
+            ok, _ = self._records.compare_and_set(persona_id, existing, record)
+            if ok:
+                break
+            # Only a refusal journal entry may have landed meanwhile; a new
+            # version means a real conflict.
+            latest = self._records.get(persona_id)
+            if latest is None or latest.get("tenant_id") != tenant_id or len(latest.get("versions", [])) != len(versions):
+                raise PoolVersionConflict("pool changed concurrently; re-read and retry")
+            existing = latest
+        else:
             raise PoolVersionConflict("pool changed concurrently; re-read and retry")
         return dict(body)
 
@@ -339,9 +383,7 @@ class PersonaStrategyPoolStore:
             if member.stage == "removed":
                 continue
             total += member.risk_weight
-            unchanged = before is not None and before["stage"] == member.stage
-            if not unchanged:
-                _verify_member(member, tenant_id, self._reader)
+            _verify_member(member, tenant_id, self._reader)
         if total > 1.0 + _WEIGHT_EPSILON:
             raise PoolMemberRefused(f"risk weights of live members sum to {total:.6f}, above 1.0")
 
@@ -349,28 +391,33 @@ class PersonaStrategyPoolStore:
         self,
         persona_id: str,
         tenant_id: str,
-        existing: Mapping[str, Any] | None,
         request: AppendPoolVersionRequest,
         actor_id: str,
         exc: PoolMemberRefused,
     ) -> None:
-        if existing is None:
-            # Nothing to attach a refusal to without creating a pool; keep the
-            # record version-less so reads still report "no pool".
-            record: dict[str, Any] = {"persona_id": persona_id, "tenant_id": tenant_id, "versions": [], "refusals": []}
-        else:
-            record = dict(existing)
-        record["refusals"] = list(record.get("refusals", [])) + [
-            {
-                "refused_at": self._now(),
-                "actor_id": actor_id,
-                "artifact_ref": exc.artifact_ref,
-                "reason": exc.reason,
-                "attempted_against_version": len(existing["versions"]) if existing else 0,
-                "change_reason": request.change_reason,
-            }
-        ]
-        self._records.compare_and_set(persona_id, existing, record)
+        for _ in range(8):
+            current = self._records.get(persona_id)
+            if current is not None and current.get("tenant_id") != tenant_id:
+                return
+            record: dict[str, Any] = (
+                dict(current)
+                if current is not None
+                else {"persona_id": persona_id, "tenant_id": tenant_id, "versions": [], "refusals": []}
+            )
+            record["refusals"] = list(record.get("refusals", [])) + [
+                {
+                    "refused_at": self._now(),
+                    "actor_id": actor_id,
+                    "artifact_ref": exc.artifact_ref,
+                    "reason": exc.reason,
+                    "attempted_against_version": request.expected_version,
+                    "change_reason": request.change_reason,
+                }
+            ]
+            ok, _ = self._records.compare_and_set(persona_id, current, record)
+            if ok:
+                return
+        raise PoolVersionConflict("could not record refusal under contention")
 
     # -- first member ------------------------------------------------------
     def seed_from_owner_records(
@@ -390,10 +437,13 @@ class PersonaStrategyPoolStore:
                 f"expected exactly one approved paper artifact bound to the persona, found {len(candidates)}"
             )
         entry = candidates[0]
-        baseline = str(entry.get("rollback_target") or "").strip()
-        if not baseline:
+        # The gate baseline is the approval decision that admitted this
+        # artifact.  ``rollback_target`` is the prior no-trade rollback
+        # artifact and is a different thing; never substitute it.
+        baseline = str(entry.get("approval_decision_id") or "").strip()
+        if not baseline or baseline == str(entry.get("rollback_target") or "").strip():
             raise PoolMemberRefused(
-                "owner record has no baseline reference", artifact_ref=str(entry.get("registry_id"))
+                "owner record has no gate baseline reference", artifact_ref=str(entry.get("registry_id"))
             )
         joined = str(entry.get("approved_at") or entry.get("created_at") or "").strip()
         if not joined:

@@ -50,9 +50,10 @@ class FakeRegistry:
     def add(self, rid, *, state="approved", checksum=CHECKSUM, persona=None, baseline="baseline-1"):
         self.entries[rid] = {
             "registry_id": rid, "artifact_state": state, "checksum": checksum,
-            "rollback_target": baseline, "approved_at": "2026-11-01T00:00:00+00:00",
+            "approval_decision_id": baseline, "rollback_target": "rollback-no-trade", "approved_at": "2026-11-01T00:00:00+00:00",
             "owner_tenant": "tenant-a",
-            "metadata": {"persona_id": persona, "execution_context": "paper"} if persona else {},
+            "metadata": {"persona_id": persona, "execution_context": "paper",
+                         "persona_capital_binding_id": "pcb-1"} if persona else {},
         }
 
     def read(self, rid, tenant):
@@ -192,7 +193,7 @@ def test_seed_fails_closed_without_or_with_ambiguous_owner_records(env):
     assert client.post("/api/personas/persona-1/strategy-pool/seed", headers=_auth(WRITE)).status_code == 422
     reg.add("a", persona="persona-1"); reg.add("b", persona="persona-1")
     assert client.post("/api/personas/persona-1/strategy-pool/seed", headers=_auth(WRITE)).status_code == 422
-    reg.entries.pop("b"); reg.entries["a"]["rollback_target"] = None
+    reg.entries.pop("b"); reg.entries["a"]["approval_decision_id"] = None
     assert client.post("/api/personas/persona-1/strategy-pool/seed", headers=_auth(WRITE)).status_code == 422
 
 
@@ -205,3 +206,99 @@ def test_registry_unavailable_fails_closed_without_write(env, monkeypatch):
     mod.POOL_STORE._reader = boom
     assert _post(client, [_member("art-1")], 0).status_code == 503
     assert client.get("/api/personas/persona-1/strategy-pool", headers=_auth(READ)).status_code == 404
+
+
+def test_seed_baseline_is_gate_decision_not_rollback_target(env):
+    client, reg, _ = env
+    reg.add("run-1", persona="persona-1", baseline="governance-gate-verdict")
+    r = client.post("/api/personas/persona-1/strategy-pool/seed", headers=_auth(WRITE))
+    assert r.status_code == 201
+    assert r.json()["members"][0]["baseline_ref"] == "governance-gate-verdict"
+
+
+def _provisioning_entries(persona="persona-1"):
+    meta = {"persona_id": persona, "execution_context": "paper", "persona_capital_binding_id": "pcb-1"}
+    base = {"registry_id": "baseline-0", "artifact_state": "approved", "checksum": CHECKSUM,
+            "owner_tenant": "tenant-a", "rollback_target": None,
+            "metadata": dict(meta, fail_closed_baseline=True)}
+    run = {"registry_id": "run-1", "artifact_state": "approved", "checksum": CHECKSUM,
+           "owner_tenant": "tenant-a", "rollback_target": "baseline-0", "approval_decision_id": "gate-1",
+           "approved_at": "2026-11-01T00:00:00+00:00",
+           "metadata": dict(meta, fail_closed_baseline=False, rollback_target_registry_id="baseline-0")}
+    return base, run
+
+
+def test_real_http_lister_excludes_rollback_baseline_and_superseded(env, monkeypatch):
+    import persona_strategy_pool as psp
+    base, run = _provisioning_entries()
+    old = dict(run, registry_id="run-0", rollback_target="baseline-0", superseded_by="run-1")
+    entries = {e["registry_id"]: e for e in (base, run, old)}
+
+    def fake_http(path, tenant):
+        if "strategy-artifacts?" in path:
+            return {"items": [{"registry_id": k} for k in entries], "next_page_token": None}
+        return {"entry": entries[path.rsplit("/", 1)[1]]}
+
+    monkeypatch.setattr(psp, "_http_json", fake_http)
+    found = psp.http_owner_artifact_lister("persona-1", "tenant-a")
+    assert [e["registry_id"] for e in found] == ["run-1"]
+
+
+def test_seed_through_real_lister_with_provisioning_shape(env, monkeypatch):
+    import persona_strategy_pool as psp
+    client, reg, _ = env
+    base, run = _provisioning_entries()
+    entries = {e["registry_id"]: e for e in (base, run)}
+    monkeypatch.setattr(psp, "_http_json", lambda path, t: (
+        {"items": [{"registry_id": k} for k in entries], "next_page_token": None}
+        if "strategy-artifacts?" in path else {"entry": entries[path.rsplit("/", 1)[1]]}))
+    import sys as _s
+    mod = _s.modules["persona_main_pool_test_module"]
+    mod.POOL_STORE._lister = psp.http_owner_artifact_lister
+    mod.POOL_STORE._reader = lambda rid, t: entries.get(rid, {})
+    r = client.post("/api/personas/persona-1/strategy-pool/seed", headers=_auth(WRITE))
+    assert r.status_code == 201, r.text
+    m = r.json()["members"][0]
+    assert (m["artifact_ref"], m["baseline_ref"]) == ("run-1", "gate-1")
+
+
+def test_unchanged_stage_is_revalidated_on_append(env):
+    client, reg, _ = env
+    reg.add("art-1")
+    assert _post(client, [_member("art-1")], 0).status_code == 201
+    reg.entries["art-1"]["artifact_state"] = "retired"
+    r = _post(client, [_member("art-1", risk_weight=0.8)], 1)
+    assert r.status_code == 422
+    # historical removal of a now-retired member stays allowed
+    removed = _member("art-1", stage="removed", removal_reason="retired")
+    assert _post(client, [removed], 1).status_code == 201
+    reg.add("art-2"); 
+    reg.entries["art-2"]["checksum"] = "sha256:" + "b" * 64
+    assert _post(client, [removed, _member("art-2")], 2).status_code == 422
+
+
+def test_concurrent_refusals_are_all_recorded(env):
+    import threading
+    client, reg, _ = env
+    import sys as _s
+    store = _s.modules["persona_main_pool_test_module"].POOL_STORE
+    from persona_strategy_pool import AppendPoolVersionRequest, PoolMember, PoolMemberRefused
+    barrier = threading.Barrier(2)
+    orig = store._reader
+
+    def slow(rid, t):
+        barrier.wait(timeout=5)
+        return orig(rid, t)
+    store._reader = slow
+    results = []
+
+    def go(ref):
+        req = AppendPoolVersionRequest(expected_version=0, change_reason="c", members=[PoolMember(**_member(ref))])
+        try:
+            store.append("persona-1", "tenant-a", req, actor_id="op")
+        except PoolMemberRefused:
+            results.append(ref)
+    ts = [threading.Thread(target=go, args=(r,)) for r in ("x-1", "x-2")]
+    [t.start() for t in ts]; [t.join() for t in ts]
+    assert sorted(results) == ["x-1", "x-2"]
+    assert sorted(r["artifact_ref"] for r in store.refusals("persona-1", "tenant-a")) == ["x-1", "x-2"]

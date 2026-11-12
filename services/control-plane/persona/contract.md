@@ -372,5 +372,5 @@ Design: SD_PERSONA_STRATEGY_POOL_AUTONOMY_2026-11-12 §4.1.
   `GET /api/personas/{id}/strategy-pool`, `GET .../strategy-pool/versions` (versions + refusals),
   `GET .../strategy-pool/versions/{n}`, `POST .../strategy-pool/versions` (`expected_version` + full membership),
   `POST .../strategy-pool/seed` (version 1 from the persona's single approved paper artifact in registry owner
-  records; zero/several candidates or no baseline reference is refused). Another tenant's persona: 403 on write, 404 on read.
+  records; zero/several running candidates is refused; the zero-capital rollback baseline and superseded artifacts are excluded; `baseline_ref` is the artifact's approval decision, never `rollback_target`, and a missing one is refused). Every append re-verifies all non-removed members against the registry. Another tenant's persona: 403 on write, 404 on read.
 * Store: `PERSONA_POOL_STORE_BACKEND|PATH|DSN|TABLE`.

@@ -4,11 +4,11 @@
     "1_versioned_append": "test_create_append_read_through_real_routes",
     "2_member_fields": "docs/contracts/persona_strategy_pool.v1.schema.json; PoolMember",
     "3_removal_keeps_lifecycle": "test_removal_keeps_history_and_persona_lifecycle",
-    "4_first_member_from_owner_records": "test_first_member_derived_from_owner_records; test_seed_fails_closed_without_or_with_ambiguous_owner_records",
+    "4_first_member_from_owner_records": "test_first_member_derived_from_owner_records; test_seed_fails_closed_without_or_with_ambiguous_owner_records; test_real_http_lister_excludes_rollback_baseline_and_superseded; test_seed_through_real_lister_with_provisioning_shape; test_seed_baseline_is_gate_decision_not_rollback_target",
     "5_tenant_scoped_routes": "test_cross_tenant_write_refused_and_read_hidden",
-    "6_refusal_recorded": "test_unapproved_or_mismatched_artifact_refused_with_recorded_reason; test_refusal_recorded_on_existing_pool",
+    "6_refusal_recorded": "test_unapproved_or_mismatched_artifact_refused_with_recorded_reason; test_refusal_recorded_on_existing_pool; test_unchanged_stage_is_revalidated_on_append; test_concurrent_refusals_are_all_recorded",
     "7_integration_through_real_routes": "all route tests drive services/control-plane/persona/main.py app via TestClient"
   },
-  "verification": "PYTHONPATH=. python -m pytest services/control-plane/persona -q => 151 passed, 1 warning, 3 subtests passed in 32.46s",
+  "verification": "PYTHONPATH=. python -m pytest services/control-plane/persona -q => 156 passed, 1 warning, 3 subtests passed in 14.35s",
   "not_verified": "hosted run against a live registry owner; seed reads registry over HTTP (PERSONA_REGISTRY_BASE_URL) and is exercised here with an injected reader"
 }
