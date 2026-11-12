@@ -138,7 +138,35 @@ def test_disk_guard_stops_mid_run(tmp_path):
 
     fetcher = Draining()
     report = _run(store, fetcher)
-    assert report.status == "disk_budget_exhausted" and len(fetcher.calls) == 4  # finishes the date, stops before the next
+    assert report.status == "disk_budget_exhausted" and len(fetcher.calls) == 3  # stops before the next request
+
+
+def test_disk_drop_during_first_fetch_stops_before_any_write(tmp_path):
+    state = {"free": 1000 * GB}
+    store = IntradayStore(tmp_path, usage_fn=lambda p: SimpleNamespace(free=state["free"]))
+
+    class Draining(FakeFetcher):
+        def fetch_kbar(self, symbol, day):
+            state["free"] = 1 * GB
+            return super().fetch_kbar(symbol, day)
+
+    fetcher = Draining()
+    report = _run(store, fetcher)
+    assert report.status == "disk_budget_exhausted" and len(fetcher.calls) == 1
+    assert store.read_manifest("2026-11-10") is None
+
+
+def test_default_budget_is_shared_kbar_budget_across_runs(tmp_path, monkeypatch):
+    from services.source_ingestion.connectors import finmind_taiwan as fm
+    shared = KBarHourlyBudget(4500, clock=lambda: 0)
+    monkeypatch.setattr(fm, "_SHARED_KBAR_BUDGET", shared)
+    store = _store(tmp_path)
+    fetcher = FakeFetcher(fail={("2317", "2026-11-10"): FinMindQuotaError("402")})
+    first = _run(store, fetcher, budget=None)
+    assert first.status == "quota_402" and shared.snapshot()["blocked_by_402"]
+    n = len(fetcher.calls)
+    second = _run(store, fetcher, budget=None)
+    assert second.status == "budget_exhausted" and len(fetcher.calls) == n
 
 
 def test_conflicting_duplicate_and_unsupported_session_are_quarantined(tmp_path):

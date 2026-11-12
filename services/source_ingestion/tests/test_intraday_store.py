@@ -155,3 +155,43 @@ def test_quarantine_kept_until_resolved_then_expires_after_90_days(tmp_path):
     out = store.prune(today=date(2027, 2, 11))
     assert not store.quarantine_path("2330", DAY).exists()
     assert out["deleted"][0]["kind"] == "resolved_quarantine"
+
+
+def test_conflict_preserves_original_raw_and_keeps_incoming_separately(tmp_path):
+    store = _store(tmp_path)
+    store.put_symbol_day("2330", DAY, _rows(), raw_envelope={
+        "raw_rows": [{"close": 100.5}], "response_content_hash": "orig"})
+    store.put_symbol_day("2330", DAY, _rows(close=999.0), raw_envelope={
+        "raw_rows": [{"close": 999.0}], "response_content_hash": "conflict"})
+    with gzip.open(store.raw_path("2330", DAY), "rt") as fh:
+        text = fh.read()
+    assert '"orig"' in text and "999" not in text
+    q = json.loads(store.quarantine_path("2330", DAY).read_text())
+    assert q["original_raw_response_hash"] == "orig" and q["incoming_raw_response_hash"] == "conflict"
+    incoming = tmp_path / q["incoming_raw_path"]
+    assert incoming.exists() and incoming != store.raw_path("2330", DAY)
+    with gzip.open(incoming, "rt") as fh:
+        assert "999" in fh.read()
+
+
+def test_prune_retains_whole_day_with_unresolved_quarantine(tmp_path):
+    t = {"now": datetime(2026, 11, 12, tzinfo=timezone.utc)}
+    store = _store(tmp_path, clock=lambda: t["now"])
+    old = "2024-11-01"
+    env = {"raw_rows": [], "response_content_hash": "h"}
+    store.put_symbol_day("2330", old, _rows(day=old), raw_envelope=env)
+    store.put_symbol_day("2317", old, _rows("2317", day=old), raw_envelope=env)
+    store.put_symbol_day("2317", old, _rows("2317", day=old, close=9.0), raw_envelope=env)  # quarantined
+    out = store.prune(today=date(2026, 11, 12))
+    assert out["deleted"] == [] and out["skipped"][0]["reason"] == "quarantine_retained"
+    assert store.quarantine_path("2317", old).exists()
+    assert store.shard_path("2317", old).exists() and store.raw_path("2317", old).exists()
+    assert store.symbol_day_status("2317", old) == "quarantined"
+    assert store.symbol_day_status("2330", old) == "accepted"
+    # resolved + 90 days: quarantine expires first, then the day is pruned.
+    store.resolve_quarantine("2317", old, resolution="refetched_clean")
+    t["now"] = datetime(2027, 2, 20, tzinfo=timezone.utc)
+    store.prune(today=date(2027, 2, 20))
+    assert not store.quarantine_path("2317", old).exists()
+    store.prune(today=date(2027, 2, 20))
+    assert not store.shard_path("2317", old).exists()

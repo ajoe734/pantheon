@@ -10,7 +10,7 @@
 * Records come from K1's ``normalize_kbar_payload`` (complete 271-bar session, governed
   closures). No bar is truncated, fabricated, imputed or volume-adjusted here, and the
   complete raw response is persisted beside the normalized rows.
-* The disk guard runs before the first request and before every session date.
+* The disk guard runs before the first request and before every request and write.
 * Nothing here touches ``tw_price_daily`` or the latest daily snapshot store.
 """
 
@@ -28,6 +28,7 @@ from .connectors.finmind_taiwan import (
     FinMindTaiwanKBarAdapter,
     KBarHourlyBudget,
     fetch_kbar,
+    shared_kbar_budget,
 )
 from .intraday_store import (
     DiskBudgetExhausted,
@@ -115,7 +116,7 @@ def run_backfill(
     is_trading_day: Callable[[date], bool] | None = None,
 ) -> BackfillReport:
     """Run (or resume) the backfill until done, throttled, blocked or out of disk."""
-    budget = budget or KBarHourlyBudget(FINMIND_KBAR_HOURLY_SELF_LIMIT)
+    budget = budget or shared_kbar_budget()
     adapter = adapter or FinMindTaiwanKBarAdapter()
     gate = is_trading_day or _governed_gate
     syms = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
@@ -152,9 +153,13 @@ def run_backfill(
         except DiskBudgetExhausted as exc:
             return finish(STOP_DISK, detail=exc.detail)
         for symbol in pending:
-            remaining -= 1
             if max_requests is not None and report.requests >= max_requests:
                 return finish(STOP_MAX_REQUESTS)
+            try:
+                store.check_disk_budget(max(remaining, 0))
+            except DiskBudgetExhausted as exc:
+                return finish(STOP_DISK, detail=exc.detail)
+            remaining -= 1
             try:
                 result = fetch_kbar(fetcher, symbol, day_iso, budget=budget)
             except FinMindCredentialError as exc:
@@ -176,6 +181,10 @@ def run_backfill(
                 return finish(STOP_QUOTA, resume_after_seconds=result.resume_after_seconds)
             report.requests += 1
             consecutive_errors = 0
+            try:
+                store.check_disk_budget(max(remaining + 1, 0))  # re-check before the write
+            except DiskBudgetExhausted as exc:
+                return finish(STOP_DISK, detail=exc.detail)
             _store_result(store, adapter, report, symbol, day, day_iso, result, gate)
     return finish(STOP_COMPLETED)
 

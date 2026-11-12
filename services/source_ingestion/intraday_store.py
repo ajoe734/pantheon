@@ -384,8 +384,10 @@ class IntradayStore:
         self._write_manifest(day, manifest)
         return PutResult("added" if existing else "written", sym, day, len(ordered), len(new_keys))
 
-    def _write_raw(self, symbol: str, day: str, envelope: Mapping[str, Any]) -> None:
-        path = self.raw_path(symbol, day)
+    def _write_raw(
+        self, symbol: str, day: str, envelope: Mapping[str, Any], *, path: Path | None = None
+    ) -> None:
+        path = path or self.raw_path(symbol, day)
         header = {k: v for k, v in envelope.items() if k != "raw_rows"}
         lines = [_canonical({"_envelope": header})]
         lines.extend(_canonical(r) for r in envelope.get("raw_rows") or ())
@@ -445,16 +447,31 @@ class IntradayStore:
                 prior = {}
             if prior.get("resolved_at") is None and prior.get("reason") == reason:
                 record["quarantined_at"] = prior.get("quarantined_at", record["quarantined_at"])
-        if raw_envelope is not None:
-            self._write_raw(sym, day, raw_envelope)
-        _atomic_write(path, (_canonical(record) + "\n").encode("utf-8"))
         manifest = self._manifest_for_update(day)
         previous = manifest["symbols"].get(sym) or {}
+        if raw_envelope is not None:
+            raw_main = self.raw_path(sym, day)
+            incoming_hash = str(raw_envelope.get("response_content_hash") or "")
+            if raw_main.exists() and previous.get("status") == STATUS_ACCEPTED:
+                # Never overwrite the original raw response that backs the retained
+                # shard: keep the incoming one beside it under its own hash.
+                suffix = (incoming_hash or _sha256(_canonical(raw_envelope)))[:16]
+                conflict_path = raw_main.with_name(f"{sym}.raw.conflict-{suffix}.jsonl.gz")
+                self._write_raw(sym, day, raw_envelope, path=conflict_path)
+                record["incoming_raw_path"] = str(conflict_path.relative_to(self.root))
+            else:
+                self._write_raw(sym, day, raw_envelope)
+                record["incoming_raw_path"] = str(raw_main.relative_to(self.root))
+            record["incoming_raw_response_hash"] = incoming_hash or None
+            record["original_raw_response_hash"] = previous.get("raw_response_hash")
+        _atomic_write(path, (_canonical(record) + "\n").encode("utf-8"))
         manifest["symbols"][sym] = {
             "status": STATUS_QUARANTINED, "reason": reason,
             "row_count": int(previous.get("row_count") or 0),
             "content_hash": previous.get("content_hash"),
             "shard": previous.get("shard"),
+            "raw_response_hash": previous.get("raw_response_hash"),
+            "incoming_raw_response_hash": (raw_envelope or {}).get("response_content_hash"),
             "stored_at": _iso(self.clock()),
         }
         self._write_manifest(day, manifest)
@@ -510,29 +527,6 @@ class IntradayStore:
         deleted: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
 
-        norm_root = self.root / NORMALIZED_DIR
-        if norm_root.is_dir():
-            for child in sorted(norm_root.iterdir()):
-                if not child.is_dir() or child.is_symlink():
-                    continue
-                try:
-                    day = date.fromisoformat(child.name)
-                except ValueError:
-                    skipped.append({"path": child.name, "reason": "not_a_session_date"})
-                    continue
-                if day >= cutoff:
-                    continue
-                manifest = self.read_manifest(day.isoformat())
-                if manifest is None:
-                    skipped.append({"session_date": child.name, "reason": "no_manifest"})
-                    continue
-                mhash = manifest.get("content_hash")
-                self._delete_dir(child, kind="normalized", session_date=child.name, manifest_hash=mhash)
-                raw_dir = self.root / RAW_DIR / child.name
-                if raw_dir.is_dir():
-                    self._delete_dir(raw_dir, kind="raw", session_date=child.name, manifest_hash=mhash)
-                deleted.append({"session_date": child.name, "kind": "accepted_day"})
-
         q_root = self.root / QUARANTINE_DIR
         if q_root.is_dir():
             for day_dir in sorted(q_root.iterdir()):
@@ -562,4 +556,38 @@ class IntradayStore:
                                     "symbol": record.get("symbol")})
                 if day_dir.is_dir() and not any(day_dir.iterdir()):
                     day_dir.rmdir()
+        norm_root = self.root / NORMALIZED_DIR
+        if norm_root.is_dir():
+            for child in sorted(norm_root.iterdir()):
+                if not child.is_dir() or child.is_symlink():
+                    continue
+                try:
+                    day = date.fromisoformat(child.name)
+                except ValueError:
+                    skipped.append({"path": child.name, "reason": "not_a_session_date"})
+                    continue
+                if day >= cutoff:
+                    continue
+                manifest = self.read_manifest(day.isoformat())
+                if manifest is None:
+                    skipped.append({"session_date": child.name, "reason": "no_manifest"})
+                    continue
+                held = [
+                    sym for sym, entry in (manifest.get("symbols") or {}).items()
+                    if entry.get("status") == STATUS_QUARANTINED
+                    and self.quarantine_path(sym, child.name).exists()
+                ]
+                if held:
+                    # Unresolved (or <90 days resolved) quarantine keeps its shard,
+                    # raw responses and manifest: the whole day is retained.
+                    skipped.append({"session_date": child.name, "reason": "quarantine_retained",
+                                    "symbols": sorted(held)})
+                    continue
+                mhash = manifest.get("content_hash")
+                self._delete_dir(child, kind="normalized", session_date=child.name, manifest_hash=mhash)
+                raw_dir = self.root / RAW_DIR / child.name
+                if raw_dir.is_dir():
+                    self._delete_dir(raw_dir, kind="raw", session_date=child.name, manifest_hash=mhash)
+                deleted.append({"session_date": child.name, "kind": "accepted_day"})
+
         return {"cutoff": cutoff.isoformat(), "deleted": deleted, "skipped": skipped}
