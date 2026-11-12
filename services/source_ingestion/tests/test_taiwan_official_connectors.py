@@ -2310,6 +2310,7 @@ def test_holiday_calendar_is_sourced_from_twse_openapi_endpoint() -> None:
 def test_recorded_company_profiles_through_provider_refresh_and_storage(
     tmp_path, monkeypatch, venue, fixture, code_key, industry_key,
 ):
+    from datetime import datetime, timedelta
     import json
     from pathlib import Path
     from types import SimpleNamespace
@@ -2320,6 +2321,13 @@ def test_recorded_company_profiles_through_provider_refresh_and_storage(
     recording = json.loads((Path(__file__).parent / "fixtures" / f"{fixture}_company_profile_recorded.json").read_text())
     stamp = recording["recorded_at"]
     monkeypatch.setattr(tw, "_utc_now", lambda: stamp)
+
+    class RecordedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(tz)
+
+    monkeypatch.setattr(tw, "datetime", RecordedClock)
     seen = []
 
     def official(request, **kwargs):
@@ -2341,11 +2349,14 @@ def test_recorded_company_profiles_through_provider_refresh_and_storage(
     for record in records:
         row = record.metadata["normalized_row"]
         assert row["industry_code"] == expected[row["symbol"]]
-        assert row["available_time"] == row["observed_at"] == row["ingest_time"]
+        assert row["available_time"] == row["observed_at"] == row["ingest_time"] == stamp
         assert row["event_time"] == "2026-11-12"
         observations.extend(observations_from_row("tw_industry_classification", row))
     assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-11")
     assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-12T14:27:00Z")
+    instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time=instant - timedelta(microseconds=1))
+    assert len(read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time=instant)) == len(records)
     assert len(read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-13")) == len(records)
     writer = MarketDataStorageWriter(tmp_path)
     manifest = writer.write_run(result=SimpleNamespace(records=records, run=SimpleNamespace(ingest_run_id="observed-1")), connector=connector)

@@ -3310,7 +3310,9 @@ def normalize_industry_classification_rows(
     from ..feature_catalogue import parse_time
 
     canonical = _canonical_venue(venue)
-    observed = parse_time(ingest_time or _utc_now()).isoformat().replace("+00:00", "Z")
+    # The shared legacy clock truncates microseconds. An acquired category must
+    # never become visible even a fraction of a second before it was observed.
+    observed = parse_time(ingest_time or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
     symbol_key, industry_key = (
         ("公司代號", "產業別") if canonical == "TWSE"
         else ("SecuritiesCompanyCode", "SecuritiesIndustryCode")
