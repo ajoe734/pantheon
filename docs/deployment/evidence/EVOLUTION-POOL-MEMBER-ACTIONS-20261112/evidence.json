@@ -6,7 +6,7 @@
   "review": {
     "status": "pending_independent_review"
   },
-  "base_commit": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
+  "base_commit": "2e9d3f2849219b58fa644619ef5837f6b0a8becf",
   "source_anchors": [
     "c1a8086fcb66bce9da62552501248f2744fa9287",
     "56b839151c9f9cf898368a8a43d5e99dd07f93fe",
@@ -159,5 +159,14 @@
     "services/research/tests/fixtures/pool_admission_tw_recorded.json": "8108807c99ae2d6b9aba26b75fc761263842375b8518136eb0250ef3652474d1",
     "services/research/tests/test_evolution_gate_executor.py": "2bc7c041a5c7c197970c07ba9ea37dc950a520aa29f72f6a6c15f49b24d6fa3e",
     "services/research/tests/test_pool_evolution_integration.py": "86cf21276afed1f8f44f7b02f78208a920506ce5495109aac0a85d1c796419e5"
+  },
+  "base_refresh": {
+    "previous_base": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
+    "current_base": "2e9d3f2849219b58fa644619ef5837f6b0a8becf",
+    "upstream_files": [
+      "docker-compose.yml",
+      "docs/deployment/evidence/INTRADAY-STORE-RUNTIME-CONFIG-20261112/evidence.json"
+    ],
+    "verification": "No task-owned source changed; all 35 recorded artifact hashes still match. Normal merge refresh preserves the already published task history without force pushing."
   }
 }
