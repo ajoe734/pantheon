@@ -1,0 +1,35 @@
+{
+  "task_id": "GATE-SCREEN-CONTRIBUTION-20261112",
+  "owner": "Claude2",
+  "reviewer": "Codex2",
+  "design": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_STRATEGY_SCREEN_ENTRY_EXIT_2026-11-12.md section 4",
+  "fixture": "services/research/replication/fixtures/recorded_screen_contribution_tw.json",
+  "recorded_data": {
+    "source": "Official TWSE STOCK_DAY (2330, 2317 from the FACTOR-RULE-SCREEN-SECTION recording; 0050 recorded 2026-11-12 with response hashes)",
+    "symbols": ["2330.TW", "2317.TW", "0050.TW"],
+    "sessions": 39,
+    "coverage_flags": "recording attests no delisted/suspended coverage; tests flip includes_delisted/includes_suspended only as named attestation injections"
+  },
+  "validation": {
+    "status": "passed",
+    "exit_status": 0,
+    "command": "python -m pytest services/research/replication services/research/alpha_replication/test_revalidation_worker.py -q",
+    "result": "91 passed in 125s",
+    "log": "docs/deployment/evidence/GATE-SCREEN-CONTRIBUTION-20261112/validation.log"
+  },
+  "acceptance_evidence": {
+    "1_control_run_and_comparison": "gate._measure_screen_contribution; test_screen_that_beats_whole_boundary_control_is_measured_and_both_variants_count",
+    "2_drop_and_reregister_entry_only": "test_screen_that_adds_nothing_is_dropped_and_reregistered_entry_only",
+    "3_trial_counter": "trial_accounting; family count 2 after one screened evaluation",
+    "4_survivorship_limited": "test_survivorship_limited_history_is_not_admitted_and_reason_recorded",
+    "5_record_and_unchanged_primary": "details.screen_contribution; test_candidate_without_screen_keeps_primary_checks_and_counts_one_trial",
+    "6_recorded_data_no_synthetic": "fixture above; production code only copies/removes the candidate's own screen"
+  },
+  "known_limits": [
+    "The recorded slice is two months, so tests relax only min_pit_history_days/bars and min_oos_round_trips via GateConfig; production defaults are unchanged.",
+    "The recorded screened OOS window has zero-variance returns (non-finite Sharpe), so the contribution comparison used the after-cost total-return fallback in tests.",
+    "The existing primary check does not reject a non-finite OOS Sharpe; left unchanged (out of scope).",
+    "Source-only; no hosted rollout claimed."
+  ],
+  "independent_review": {"status": "pending", "reviewer": "Codex2"}
+}

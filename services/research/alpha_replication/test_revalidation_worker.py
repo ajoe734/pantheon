@@ -1767,3 +1767,55 @@ def test_worker_never_reuses_cached_results_across_candidates() -> None:
     )
 
     assert not hasattr(AlphaRevalidationWorker, "_CACHED_DEFAULT_TW_BACKTEST")
+
+
+def _capture_gate_requests(worker, registry_entry):
+    captured = []
+
+    def _evaluate(self, request):
+        captured.append(request)
+        return FakeGateResponse(passed=True, summary="captured")
+
+    with mock.patch.object(
+        worker, "_fetch_strategy_spec_entry", return_value=registry_entry
+    ), mock.patch(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        _evaluate,
+    ):
+        result = worker.run_once(tenant_id="tenant-a")
+    assert result["errors"] == []
+    return captured
+
+
+def test_screened_candidate_hands_artifact_and_market_to_gate_contribution_test(tmp_path) -> None:
+    from services.research.replication.tests import test_gate_screen_contribution as sc
+
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+    spec = _strategy_spec(strategy_id=payload["strategy_id"])
+    dataset_ref = next(d["ref"] for d in spec["data_dependencies"] if d.get("kind") == "dataset")
+    artifact = sc.artifact("top")
+    artifact["strategy_id"] = spec["strategy_id"]
+    market_dataset = sc.dataset(sc.recorded_market(attest_coverage=True))
+    market_dataset["dataset_id"] = dataset_ref
+    spec["strategy_artifact"] = artifact
+    spec["backtest_dataset"] = market_dataset
+
+    (request,) = _capture_gate_requests(worker, _registry_entry(payload, spec))
+
+    assert request.research_handoff["strategy_artifact"] == artifact
+    assert request.research_handoff["backtest_dataset"] == market_dataset
+
+
+def test_unscreened_candidate_handoff_is_unchanged(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+
+    (request,) = _capture_gate_requests(worker, _tw_registry_entry(payload))
+
+    assert "strategy_artifact" not in request.research_handoff
+    assert "backtest_dataset" not in request.research_handoff

@@ -942,6 +942,19 @@ class AlphaRevalidationWorker:
         }
         if isinstance(raw_spec.get("family_id"), str):
             handoff_payload["family_id"] = raw_spec["family_id"]
+        raw_artifact = raw_spec.get("strategy_artifact")
+        raw_dataset = raw_spec.get("backtest_dataset")
+        if (
+            isinstance(raw_artifact, Mapping)
+            and isinstance(raw_artifact.get("strategy_logic"), Mapping)
+            and "screen" in raw_artifact["strategy_logic"]
+        ):
+            # The gate's screen contribution test reruns the candidate's own rules over
+            # the whole boundary, so it needs the exact artifact and market dataset the
+            # approved run used. Unscreened candidates are handed nothing extra.
+            handoff_payload["strategy_artifact"] = dict(raw_artifact)
+            if isinstance(raw_dataset, Mapping):
+                handoff_payload["backtest_dataset"] = dict(raw_dataset)
 
         request = ReplicationRequest(
             candidate_id=run_id,

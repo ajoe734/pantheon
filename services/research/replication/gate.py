@@ -6,7 +6,9 @@ Validates research candidates against admission criteria before
 allowing promotion to the registry.
 """
 
+import copy
 import hashlib
+import math
 import uuid
 import json
 from pathlib import Path
@@ -36,6 +38,7 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
 
 
 CONFLICT = object()
+SURVIVORSHIP_LIMITED_STATUS = "survivorship_limited"
 
 
 class FamilyTrialCounterStore:
@@ -205,6 +208,7 @@ class ReplicationGate:
             backtest_details.get("status") == INSUFFICIENT_HISTORY_STATUS
         )
 
+        screen_status = backtest_details.get("status")
         if is_insufficient_history:
             admitted = False
             reasoning = (
@@ -217,6 +221,12 @@ class ReplicationGate:
             admitted, reasoning = AdmissionRules.evaluate_admission(
                 required_results, optional_results
             )
+            if not admitted and screen_status in (
+                SURVIVORSHIP_LIMITED_STATUS,
+                "screen_dropped",
+                "control_unavailable",
+            ):
+                reasoning = f"{reasoning}. {backtest_result.evidence}"
             replication_status = (
                 ReplicationStatus.PASSED
                 if admitted
@@ -576,6 +586,10 @@ class ReplicationGate:
                 dataset=dataset,
                 mandate_max_drawdown=mandate_dd,
                 min_oos_round_trips=self.config.min_oos_round_trips,
+                min_pit_history_days=self.config.min_pit_history_days,
+                min_pit_history_bars=self.config.min_pit_history_bars,
+                in_sample_fraction=self.config.in_sample_ratio,
+                walk_forward_folds=self.config.walk_forward_folds,
             )
             if computed.get("status") in ("completed", INSUFFICIENT_HISTORY_STATUS):
                 self.backtest_run_store.record(computed)
@@ -623,6 +637,156 @@ class ReplicationGate:
             return next(iter(values))
 
         return resolve(checksums), resolve(dataset_ids)
+
+    @staticmethod
+    def _screen_inputs(
+        request: ReplicationRequest, backtest_eval: Dict[str, Any]
+    ) -> Optional[tuple]:
+        """Return None for an unscreened candidate, else (artifact|None, dataset|None)."""
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+        artifact = next(
+            (
+                c
+                for c in (spec.get("strategy_artifact"), handoff.get("strategy_artifact"))
+                if isinstance(c, dict)
+            ),
+            None,
+        )
+        dataset = next(
+            (
+                c
+                for c in (spec.get("backtest_dataset"), handoff.get("backtest_dataset"))
+                if isinstance(c, dict)
+            ),
+            None,
+        )
+        logic = artifact.get("strategy_logic") if isinstance(artifact, dict) else None
+        artifact_screened = isinstance(logic, dict) and "screen" in logic
+        bundle = backtest_eval.get("artifact_bundle")
+        evidence_screened = isinstance(bundle, dict) and bool(bundle.get("candidate_pool_snapshots"))
+        if not (artifact_screened or evidence_screened):
+            return None
+        return (
+            artifact if artifact_screened else None,
+            dataset if isinstance(dataset, dict) and dataset.get("candidate_pool_market") else None,
+        )
+
+    def _measure_screen_contribution(
+        self,
+        request: ReplicationRequest,
+        screened_eval: Dict[str, Any],
+        artifact: Dict[str, Any],
+        dataset: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Run the same entry/exit rules over the whole boundary and compare out of sample.
+
+        The control is the candidate's own artifact with only the ``screen`` removed and
+        its symbols set to every governed symbol of the supplied market; nothing is
+        generated. Fails closed when the control cannot complete.
+        """
+        from services.registry.strategy_artifact import strategy_artifact_checksum
+
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+        market = dataset.get("candidate_pool_market")
+        boundary = sorted((market.get("symbols") or {}).keys()) if isinstance(market, dict) else []
+        screened_oos = screened_eval.get("out_of_sample") or {}
+        screened_sharpe = float(screened_oos.get("sharpe_ratio", 0.0))
+        screened_return = float(screened_oos.get("total_return", 0.0))
+        measured: Dict[str, Any] = {
+            "rule": (
+                "screened out-of-sample after-cost result must exceed the same entry/exit "
+                "rules over the whole boundary"
+            ),
+            "required_sharpe_improvement": self.config.min_screen_oos_sharpe_improvement,
+            "boundary_symbols": boundary,
+            "screened_backtest_run_id": screened_eval.get("backtest_run_id"),
+            "screened_oos_sharpe": screened_sharpe if math.isfinite(screened_sharpe) else None,
+            "screened_oos_total_return": screened_return,
+        }
+        if not boundary:
+            return {**measured, "status": "control_unavailable", "reason": "market_boundary_empty"}
+
+        control = copy.deepcopy(artifact)
+        control["strategy_logic"].pop("screen")
+        control["parameters"]["symbols"] = boundary
+        try:
+            control_checksum = strategy_artifact_checksum(control)
+            control_eval = run_replication_backtest_protocol(
+                strategy_artifact=control,
+                dataset=dataset,
+                mandate_max_drawdown=float(
+                    spec.get("mandate_max_drawdown", self.config.max_oos_drawdown)
+                ),
+                min_oos_round_trips=self.config.min_oos_round_trips,
+                min_pit_history_days=self.config.min_pit_history_days,
+                min_pit_history_bars=self.config.min_pit_history_bars,
+                in_sample_fraction=self.config.in_sample_ratio,
+                walk_forward_folds=self.config.walk_forward_folds,
+                run_id=f"{screened_eval.get('backtest_run_id')}-entry-only",
+            )
+        except Exception as exc:  # fail closed; never admit on an unmeasured screen
+            return {
+                **measured,
+                "status": "control_unavailable",
+                "reason": f"whole_boundary_control_failed:{type(exc).__name__}:{exc}",
+            }
+        if control_eval.get("status") != "completed":
+            return {
+                **measured,
+                "status": "control_unavailable",
+                "reason": f"whole_boundary_control_{control_eval.get('status')}",
+            }
+        self.backtest_run_store.record(control_eval)
+        control_oos = control_eval.get("out_of_sample") or {}
+        control_sharpe = float(control_oos.get("sharpe_ratio", 0.0))
+        control_return = float(control_oos.get("total_return", 0.0))
+        # Sharpe is the comparison metric. A zero-variance window yields a non-finite
+        # Sharpe that cannot rank anything, so fall back to after-cost total return.
+        if math.isfinite(screened_sharpe) and math.isfinite(control_sharpe):
+            metric = "oos_sharpe"
+            improvement = screened_sharpe - control_sharpe
+            required = self.config.min_screen_oos_sharpe_improvement
+        else:
+            metric = "oos_total_return"
+            improvement = screened_return - control_return
+            required = 0.0
+        measured.update(
+            {
+                "control_backtest_run_id": control_eval.get("backtest_run_id"),
+                "control_artifact_checksum": control_checksum,
+                "control_oos_sharpe": control_sharpe if math.isfinite(control_sharpe) else None,
+                "control_oos_total_return": control_return,
+                "comparison_metric": metric,
+                "oos_improvement": improvement,
+                "oos_sharpe_improvement": (
+                    screened_sharpe - control_sharpe
+                    if metric == "oos_sharpe"
+                    else None
+                ),
+            }
+        )
+        if improvement > required:
+            return {**measured, "status": "contributes"}
+        reason = (
+            f"screened {metric} improvement {improvement:.4f} does not exceed required "
+            f"{required:.4f} over the whole-boundary entry-only run "
+            f"(screened {screened_sharpe if metric == 'oos_sharpe' else screened_return:.4f} vs "
+            f"control {control_sharpe if metric == 'oos_sharpe' else control_return:.4f})"
+        )
+        return {
+            **measured,
+            "status": "screen_dropped",
+            "reason": reason,
+            "re_registration": {
+                "candidate_kind": "entry_only",
+                "screen_dropped": True,
+                "reason": reason,
+                "strategy_artifact": control,
+                "artifact_checksum": control_checksum,
+                "backtest_run_id": control_eval.get("backtest_run_id"),
+            },
+        }
 
     def _verify_authoritative_run(
         self, request: ReplicationRequest, backtest_eval: Dict[str, Any]
@@ -687,6 +851,28 @@ class ReplicationGate:
                 passed=False,
                 evidence="No real backtest run exists for candidate artifact; admission refused",
                 details={"reason": "missing_backtest_run"},
+            )
+
+        if (
+            backtest_eval.get("status") == SURVIVORSHIP_LIMITED_STATUS
+            or backtest_eval.get("survivorship_limited") is True
+        ):
+            reason = str(
+                backtest_eval.get("reason")
+                or "backtest history does not attest delisted and suspended symbol coverage"
+            )
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=(
+                    f"Backtest is {SURVIVORSHIP_LIMITED_STATUS}; not admitted: {reason}"
+                ),
+                details={
+                    "status": SURVIVORSHIP_LIMITED_STATUS,
+                    "survivorship_limited": True,
+                    "reason": reason,
+                    "source_dataset_refs": list(backtest_eval.get("source_dataset_refs") or []),
+                },
             )
 
         unbound = self._verify_authoritative_run(request, backtest_eval)
@@ -828,6 +1014,55 @@ class ReplicationGate:
             family_id,
             int(preset_trials) if isinstance(preset_trials, int) else None,
         )
+        screen_contribution: Optional[Dict[str, Any]] = None
+        screen_inputs = self._screen_inputs(request, backtest_eval)
+        if screen_inputs is not None:
+            screen_artifact, screen_dataset = screen_inputs
+            if screen_artifact is None or screen_dataset is None:
+                return ReplicationResult(
+                    criterion_id="real_backtest_validation",
+                    passed=False,
+                    evidence=(
+                        "Candidate has a screen but its strategy artifact or governed market "
+                        "dataset is absent; the screen contribution test cannot run, admission refused"
+                    ),
+                    details={
+                        "status": "screen_contribution_unavailable",
+                        "reason": "screen_contribution_inputs_missing",
+                        "family_id": family_id,
+                    },
+                )
+            # The screened evaluation above is a screen variant of the family; the
+            # whole-boundary control below is an entry variant. Both are trials.
+            trial_count = self._trial_counter_store.increment(family_id)
+            screen_contribution = self._measure_screen_contribution(
+                request, backtest_eval, screen_artifact, screen_dataset
+            )
+            screen_contribution["trial_accounting"] = {
+                "screen_variant_trials": 1,
+                "entry_variant_trials": 1,
+                "family_trial_count_after": trial_count,
+            }
+            if screen_contribution["status"] != "contributes":
+                failure_reason = screen_contribution.get("reason")
+                dropped = screen_contribution["status"] == "screen_dropped"
+                return ReplicationResult(
+                    criterion_id="real_backtest_validation",
+                    passed=False,
+                    evidence=(
+                        "Screen adds nothing out of sample after costs: dropped and candidate "
+                        f"re-registered as entry-only ({failure_reason})"
+                        if dropped
+                        else f"Screen contribution test could not be completed: {failure_reason}"
+                    ),
+                    details={
+                        "status": screen_contribution["status"],
+                        "backtest_run_id": backtest_run_id,
+                        "family_id": family_id,
+                        "trial_count": trial_count,
+                        "screen_contribution": screen_contribution,
+                    },
+                )
         deflation = self.config.compute_deflated_sharpe_threshold(trial_count)
         deflated_sharpe_threshold = float(deflation["deflated_sharpe_threshold"])
         sharpe_haircut = float(deflation["sharpe_haircut"])
@@ -912,6 +1147,8 @@ class ReplicationGate:
             "checks": checks,
             "failed_checks": failed_checks,
         }
+        if screen_contribution is not None:
+            details["screen_contribution"] = screen_contribution
 
         if not passed:
             return ReplicationResult(
