@@ -26,18 +26,21 @@ inside a 20-day window.
 Weekly mutation evaluates up to the requested 50 structural children; retraining
 uses a 50-variant search. The shared lifetime family counter is read strictly;
 500 trials means `tried` and stops further variant generation. A built child
-rejected before numerical scoring still counts as a trial. Passing children
+rejected by the gate before numerical scoring still counts as a trial. Passing children
 obtain ordinary low-risk registry approval and join the same pool as zero-weight
 trials through `evolution_trial`. Pool history records persona admission trials.
 
 `evolution_compete` independently verifies both approved baselines, parent
 lineage, checksums, aligned virtual-book dates and at least 60 new trading-return
-observations after child admission. The stronger member remains; a winning
-child becomes active with the parent's weight. Removed members stay in history.
+observations after child admission. The child must also pass the existing decay-policy floor/ceiling on its fresh
+gate-basis metrics. Only a passing, stronger child becomes active with the
+parent's weight; otherwise the child is removed. Removed members stay in history.
 All applied changes publish through the existing BFF publisher and its existing
 Registry/Governance/Deployment path.
 
 Virtual-book snapshots now expose their observed dates and source references.
+Book lookup and baseline resolution use the pool member registry reference
+(`member_id`), preserving registry aliases independently of embedded artifact IDs.
 The default runtime book path is scoped by tenant/persona, with locked writes
 and exact immutable-member history carryover across binding/envelope changes.
 Explicit lifecycle/performance paths keep their existing isolation; deployments

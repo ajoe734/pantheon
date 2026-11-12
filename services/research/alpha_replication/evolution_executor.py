@@ -131,7 +131,8 @@ def build_gate_request_factory(
         from services.research.vectorbt.adapter.vectorbt_adapter import run_replication_backtest_protocol as run_protocol
 
     non_schema = ("lifecycle_state", "backtest_evaluation", "backtest_dataset", "strategy_artifact",
-                  "skip_backtest", "history_trading_days")
+                  "skip_backtest", "history_trading_days", "hypothesis_card",
+                  "hypothesis_predictions", "mechanism_inputs")
     evaluation_spec = {k: v for k, v in dict(spec).items() if k not in non_schema}
 
     def factory(artifact: Mapping[str, Any]) -> Any:
@@ -157,6 +158,12 @@ def build_gate_request_factory(
                     "evaluation_hypotheses": "H1: child achieves positive deflated out-of-sample Sharpe after costs.",
                 },
                 "family_id": family_id,
+                "strategy_artifact": artifact,
+                "backtest_dataset": dict(dataset),
+                **{key: dict(spec[key]) for key in ("hypothesis_card", "mechanism_inputs")
+                   if isinstance(spec.get(key), Mapping)},
+                **({"hypothesis_predictions": list(spec["hypothesis_predictions"])}
+                   if isinstance(spec.get("hypothesis_predictions"), list) else {}),
             },
             proposed_strategy_spec=evaluation_spec,
             backtest_evaluation=evaluated,

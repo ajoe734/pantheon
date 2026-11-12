@@ -10,6 +10,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from services.evolution.test_auto_consumer_dispatch import world as dispatch_world, client as evolution_client
@@ -17,8 +19,9 @@ from services.research.tests.test_evolution_gate_executor import research, world
 from services.research.tests.test_pool_admission import recorded_dataset
 
 
+@pytest.mark.parametrize("child_fresh_passed", [True, False])
 def test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal(
-    dispatch_world, research, research_world, monkeypatch, tmp_path,
+    dispatch_world, research, research_world, monkeypatch, tmp_path, child_fresh_passed,
 ):
     import services.evolution.auto_consumer_runtime as runtime
     import services.evolution.pool_evolution_scheduler as scheduler
@@ -172,7 +175,6 @@ def test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal(
     assert trial['parent_ref'] == parent_id and trial['risk_weight'] == 0 and published
     owner = runtime.PoolOwner(env, transport)
     short_books = books_for(pool['members'], days[:60])
-    import pytest
     with pytest.raises(RuntimeError, match='60_new_trading_days'):
         owner.compete(pool, trial, {b['artifact_id']: {**b, **b['net_of_costs']} for b in short_books})
     assert store.current(pid, tenant)['members'][0]['stage'] == 'active'
@@ -180,8 +182,11 @@ def test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal(
     pool = store.current(pid, tenant)
     # The book includes more than 60 distinct exchange trading days after admission.
     summary_books[:] = books_for(pool['members'], days)
+    if not child_fresh_passed:
+        next(b for b in summary_books if b['artifact_id'] == trial['artifact_ref'])['gate_basis']['sharpe_ratio'] = -1
     owner.compete(pool, trial, {b['artifact_id']: {**b, **b['net_of_costs']} for b in summary_books})
     final = store.current(pid, tenant)
-    assert next(m for m in final['members'] if m['artifact_ref'] == parent_id)['stage'] == 'removed'
-    assert next(m for m in final['members'] if m['artifact_ref'] == trial['artifact_ref'])['stage'] == 'active'
+    assert next(m for m in final['members'] if m['artifact_ref'] == parent_id)['stage'] == ('removed' if child_fresh_passed else 'active')
+    assert next(m for m in final['members'] if m['artifact_ref'] == trial['artifact_ref'])['stage'] == ('active' if child_fresh_passed else 'removed')
+    assert final['decision']['child_fresh_window_passed'] is child_fresh_passed
     assert persona['lifecycle_state'] == 'paper_owner'

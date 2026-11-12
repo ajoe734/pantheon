@@ -154,9 +154,9 @@ class PoolOwner:
         if len(rows) != 1:
             raise RuntimeError("exactly one current paper runtime summary is required")
         books = rows[0].get("member_virtual_books") or []
-        if len({b["artifact_id"] for b in books}) != len(books):
+        if len({b.get("member_id") or b["artifact_id"] for b in books}) != len(books):
             raise RuntimeError("ambiguous member virtual books")
-        return {b["artifact_id"]: {**b, **b.get("net_of_costs", {})} for b in books}
+        return {b.get("member_id") or b["artifact_id"]: {**b, **b.get("net_of_costs", {})} for b in books}
 
     def family_state(self, family):
         from urllib.parse import quote

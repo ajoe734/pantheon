@@ -199,3 +199,15 @@ def test_exact_member_history_survives_envelope_replacement(tmp_path):
         event_time='2024-10-05T05:30:00Z', price=104, source_ref='recorded-unit',
         bar_frequency='1d', members={'member': changed})
     assert next(b for b in last if b['binding_id'] == 'other')['dates'] == []
+
+
+def test_baseline_lookup_uses_the_pool_member_registry_ref():
+    from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
+    books = MemberVirtualBooks()
+    books.observe(binding_id='binding', envelope_checksum='envelope', symbol='2330.TW',
+        event_time='2024-10-01T05:30:00Z', price=100, source_ref='unit-book-source', bar_frequency='1d',
+        members={'registry-alias': {'artifact_id': 'embedded-a', 'version': '1.0.0', 'checksum': 'sha256:a',
+            'virtual_only': False, 'view': {'direction': 'LONG', 'strength': 1}}})
+    looked_up = []
+    books.snapshot(baseline_resolver=lambda ref, *_: looked_up.append(ref))
+    assert looked_up == ['registry-alias']

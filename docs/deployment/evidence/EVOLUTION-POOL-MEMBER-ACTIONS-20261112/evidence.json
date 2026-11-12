@@ -21,7 +21,7 @@
       "exit_code": 0,
       "result": "372 passed, 522 warnings, 58 subtests passed in 123.39s (0:02:03)",
       "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/validation.txt",
-      "note": "372-test regression before the final early-gate-refusal trial-counter addition; that addition is covered by the next batch and post-rebase validation."
+      "note": "Broad regression before final counter, registry-reference, fresh-window and mechanism-context hardening; later completed batches cover those deltas."
     },
     {
       "command": "timeout 240 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/research/tests/test_retrain_oos_gate.py -q --disable-warnings --maxfail=1",
@@ -48,6 +48,27 @@
       "command": "git diff --check",
       "exit_code": 0,
       "result": "passed"
+    },
+    {
+      "command": "timeout 90 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/evolution/test_auto_consumer_runtime.py services/execution/lean_runtime/test_member_virtual_book.py services/execution/lean_runtime/test_paper_runtime.py services/research/tests/test_pool_evolution_integration.py -q --disable-warnings --maxfail=1",
+      "exit_code": 0,
+      "result": "142 passed, 50 warnings, 33 subtests passed in 81.76s (0:01:21)",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/member-ref-final.txt",
+      "note": "Registry-reference lookup, full runtime regression and positive orchestration; before the fresh-window hardening."
+    },
+    {
+      "command": "timeout 90 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/research/tests/test_pool_evolution_integration.py services/control-plane/persona/test_persona_strategy_pool.py services/research/tests/test_evolution_gate_executor.py -q --disable-warnings --maxfail=1",
+      "exit_code": 0,
+      "result": "38 passed, 301 warnings in 20.63s",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/fresh-window-final.txt",
+      "note": "Fresh-window pass is required as well as 60 days and parent outperformance; parameterized integration covers a failed fresh gate preserving the parent."
+    },
+    {
+      "command": "timeout 60 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/research/tests/test_evolution_gate_executor.py services/research/tests/test_pool_evolution_integration.py -q --disable-warnings --maxfail=1",
+      "exit_code": 0,
+      "result": "10 passed, 80 warnings in 8.40s",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/mechanism-context.txt",
+      "note": "Approved card/predictions/mechanism inputs are transported outside schema-only StrategySpec fields for composition with the incoming mechanism gate."
     }
   ],
   "nonpassing_batches": [
@@ -60,6 +81,11 @@
       "command": "Combined regression with timeout 120",
       "exit_code": 124,
       "result": "timed out, not counted as passed; completed timeout-180 batch above replaces it"
+    },
+    {
+      "command": "Initial registry-reference/runtime batch with timeout 60",
+      "exit_code": 124,
+      "result": "timed out, not counted as passed; completed timeout-90 batch above replaces it"
     }
   ],
   "acceptance": {
@@ -71,7 +97,9 @@
     "2": [
       "test_decay_uses_member_own_baseline_and_three_distinct_observations",
       "test_missing_baseline_is_skipped_with_durable_reason",
-      "services/evolution/test_approved_baselines.py"
+      "services/evolution/test_approved_baselines.py",
+      "test_books_are_keyed_by_pool_registry_ref_instead_of_embedded_artifact_id",
+      "test_baseline_lookup_uses_the_pool_member_registry_ref"
     ],
     "3": [
       "test_twenty_observed_days_revalidate_and_weekly_retrain_as_low_risk_controller",
@@ -88,7 +116,8 @@
     "5": [
       "test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal",
       "test_retrain_child_preserves_registry_alias_lineage",
-      "services/evolution/test_approved_baselines.py"
+      "services/evolution/test_approved_baselines.py",
+      "test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal[False]"
     ],
     "6": [
       "test_auto_approved_research_work_is_dispatched_with_real_governance_authority",
@@ -121,19 +150,20 @@
     "The original candidate OOS gate/proof requirement remains mandatory in production. Periodic revalidation uses only post-admission governed data with existing decay-policy Sharpe/drawdown limits on the member gate basis; unavailable data is an evaluation rejection.",
     "Existing operator-only BFF publication authorization and distinct proposer/gate credentials must be configured for the worker and research; missing configuration fails closed.",
     "Default persona-scoped virtual-book storage preserves immutable member histories across envelope changes. Explicit custom lifecycle/performance paths must be preserved by deployments across replacements.",
-    "Membership changes remain CAS-versioned. Refused owner decisions may append unchanged history without a runtime membership change. Successful changes reconcile immutable publication before new proposals."
+    "Membership changes remain CAS-versioned. Refused owner decisions may append unchanged history without a runtime membership change. Successful changes reconcile immutable publication before new proposals.",
+    "A child must pass its fresh gate-basis Sharpe/drawdown window as well as outperform the parent. A failed fresh window removes the child even if its exposure-return rank exceeds the parent."
   ],
   "artifact_sha256": {
-    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/README.md": "ac3e3bf43b7c53d90d2b5846e8d8efd20a2b563a437467ee8c9fb0bc51411541",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/README.md": "e4500b4f52b36e88da6aef688b111ff924aad40940185a5a3859b0b164498eb9",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/counter-final.txt": "39387ec85e14827c43ae41e261adf1b35fcb037ab26e3b4c0e34f4b5797791f6",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/post-rebase.txt": "1853e1a3dd2035b752cd63f5ec6708bc0cbcc2315d5bf500c3cb67dafd0f698c",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/retrain-oos.txt": "61ac1c321809e47a91f69a37187ed13017d2c0c295bad4aff211fdd39e02b422",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/validation.txt": "1b9848cf9874002c31bd91c89c3912e938ae0c1f19e562f12c357cd3ffdd592c",
     "services/control-plane/bff/persona_pool_publisher.py": "b9f240b7e4342668ef8d1e8028d124da2d45b92dfc092efbde4ae0aa0440c5af",
     "services/control-plane/bff/tests/test_persona_pool_publish_route.py": "be6a18ae3da943eca2dc48d174f926528e9302b23a0e5ccddbaf4b9c0dc838cb",
-    "services/control-plane/persona/persona_strategy_pool.py": "1d3bb3e25912bac4e0fcc48f6d897516e24c0fce022792ed914ac99046c86626",
+    "services/control-plane/persona/persona_strategy_pool.py": "1d48f87fd4e0e1bbc10ec8f7e705b316a0edbd6c53404332266df578c9eca38d",
     "services/evolution/auto_consumer.py": "99ae96c3757f10e35a6e2487bdc8752535de04553ec0c7a710bea5bd8d19ddef",
-    "services/evolution/auto_consumer_runtime.py": "269698222a4108f93c5b53a62588c0e0a6776ea30b8f841141252abbd03e8601",
+    "services/evolution/auto_consumer_runtime.py": "e77cedb3cd6f8be9565a5b12bcf7d43cfd421db49b2075b0745969bd0def02b9",
     "services/evolution/decay_monitor.py": "4249923da42fa672e89cf40c5f8754a487697d8e15c333c051fcaa99a8048f2e",
     "services/evolution/dispatch_outbox.py": "63e86b650486736572e2443661ebde4c4605401853f8d7170697561645da12ac",
     "services/evolution/dispatch_receipts.py": "e9f663d0190d073343fe6e32e7109faec40fc35c0372b59573fe88781d944e0d",
@@ -142,23 +172,26 @@
     "services/evolution/pool_evolution_scheduler.py": "2d04400c669c42dd1392b64d5c38502d692dc251591e9464c001bf67cd485989",
     "services/evolution/test_auto_consumer.py": "40fdbe11d3f6d35b100dd6617cf4ec197eafe203c18900dbe742a6969fdccb43",
     "services/evolution/test_auto_consumer_dispatch.py": "9730170c4dcc98895139c7d7d10f6e2d05e5add643d3595ae0a878e48f867e0d",
-    "services/evolution/test_auto_consumer_runtime.py": "88c383035d5885151ea430c4a9268a8700dd0e7a9547021799cebc5819c67feb",
+    "services/evolution/test_auto_consumer_runtime.py": "f86cdba7e9d14bd7c2030cc9dd542e0896a4cf278ae339c6b09e7ffc92e7101e",
     "services/evolution/test_pool_evolution_scheduler.py": "7b663f836dfed65d8537eda9e42c6dbe9b74c19c52b3ebd60f69b31d1aaad699",
-    "services/execution/lean_runtime/member_virtual_book.py": "590520062918cee16430b6906e7a8c6ba1783a395233cce8a630ec07372ffce4",
+    "services/execution/lean_runtime/member_virtual_book.py": "4f15ea27b8f77906c166ef01a5acbf7ac5246006b1546607309ad1a66ad39a7f",
     "services/execution/lean_runtime/paper_runtime.py": "2fe4779f1db320b298335ef7f7476b0235dca3153a562859028180691c8c5c15",
-    "services/execution/lean_runtime/test_member_virtual_book.py": "ef1bf8e2086caabe8d1451420c52339b8448ed58dd30fa7820bb756712c5a656",
+    "services/execution/lean_runtime/test_member_virtual_book.py": "66ad58576efcbc6c7fe579477a438a17711e1f00e29c9960fafa90da7a20cd54",
     "services/registry/portfolio_envelope.py": "45729ea9960b1b5546bf85586dcbac1808bf1491d43cac9a0761cdc0811da513",
     "services/registry/strategy_artifact.schema.json": "1b5adad1487c7e7a8229e55abd17a5f814862d45b97c8ad35e3bc5fcc4824d7e",
     "services/registry/test_portfolio_envelope.py": "be76a3d5cb7076a79d70f7f7acded885aefb7e1a1fe2a88b54a60a0116f1c217",
-    "services/research/alpha_replication/evolution_executor.py": "99164ef3edf5d417bfcf712edb6bc569d665a34d2580344ea20580d1b0cbe054",
+    "services/research/alpha_replication/evolution_executor.py": "27efa7bc9598414810fe484055b578c9c7f7f1bbf70eccb38c3f7568bc715023",
     "services/research/alpha_replication/evolution_search.py": "d3f566490e8f9e8b5039b0edc9559cd97c699dbceb73055b137b28455e29a140",
     "services/research/alpha_replication/shared_stores.py": "63d83267d1e5f79f042bd43c28e87bca41d01f898272708a2d6ea351d85f675c",
     "services/research/alpha_replication/test_evolution_search.py": "b6a7131071ea66ce17f23589bfc8a97599f4f7eae98d3789019b56fda19cd7ed",
     "services/research/main.py": "68afe81fc50c2e48bdfb41c3a0c198d7b50bc8fa80c8f5ab81c312d5f8625402",
     "services/research/replication/fixtures/recorded_backtest_tw_2330.json": "0dc3496aa93fe472e6694af88a913974ef546f60f6fa9a549a39ad0893770897",
     "services/research/tests/fixtures/pool_admission_tw_recorded.json": "8108807c99ae2d6b9aba26b75fc761263842375b8518136eb0250ef3652474d1",
-    "services/research/tests/test_evolution_gate_executor.py": "2bc7c041a5c7c197970c07ba9ea37dc950a520aa29f72f6a6c15f49b24d6fa3e",
-    "services/research/tests/test_pool_evolution_integration.py": "86cf21276afed1f8f44f7b02f78208a920506ce5495109aac0a85d1c796419e5"
+    "services/research/tests/test_evolution_gate_executor.py": "67a59b0dfe7b249abe11dc7ca01aec40230c6a06c4d1fa10ec8f28062ffa934c",
+    "services/research/tests/test_pool_evolution_integration.py": "2cdc53103e061eec75d514aee31dc56c637c0ec1c07bd95dbe5ce0bebcd2db90",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/member-ref-final.txt": "70e3bda30b3ba4eee375d62c62fdf7a79d00443e03d2f9280b6178c123023086",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/fresh-window-final.txt": "9fb32df0b48d8baa7710a86fb592cd625c8099e66b58e74e265ec784ec13913e",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/mechanism-context.txt": "4632cffac63226f80d83b54d6e699119c7a9724ebe65690934837be94c77c02e"
   },
   "base_refresh": {
     "previous_base": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",

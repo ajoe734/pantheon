@@ -544,8 +544,21 @@ class PersonaStrategyPoolStore:
                     parent_series = dated_series(parent_book, parent["checksum"])
                     if not set(days) <= parent_series.keys() or not set(days) <= child_series.keys():
                         raise ValueError("evolution_comparison_window_incomplete")
-                    child_wins = sharpe([child_series[d] for d in days], policy.periods_per_year) > sharpe(
+                    from services.evolution.approved_baselines import compare_member_book
+                    from services.evolution.auto_consumer import DecayPolicy
+                    comparison = compare_member_book(child_baseline, child_book)
+                    if comparison["status"] != "compared":
+                        raise ValueError("evolution_child_fresh_metrics_unavailable")
+                    if any(day <= child["joined_at"][:10] for day in child_book["dates"]):
+                        raise ValueError("evolution_child_metrics_include_pre_admission_data")
+                    metric = next(b for b in (child_book, child_book.get("gate_basis", {}),
+                        child_book.get("net_of_costs", {})) if b.get("basis") == child_baseline["return_basis"])
+                    decay_policy = DecayPolicy()
+                    fresh_passed = (metric["sharpe_ratio"] >= child_baseline["oos_sharpe"] * decay_policy.min_sharpe_ratio_of_baseline
+                        and metric["max_drawdown"] <= child_baseline["oos_max_drawdown"] * decay_policy.max_drawdown_multiple)
+                    child_wins = fresh_passed and sharpe([child_series[d] for d in days], policy.periods_per_year) > sharpe(
                         [parent_series[d] for d in days], policy.periods_per_year)
+                    decision["child_fresh_window_passed"] = fresh_passed
                     loser = parent if child_wins else child
                     if child_wins:
                         child.update(stage="active", risk_weight=parent["risk_weight"])

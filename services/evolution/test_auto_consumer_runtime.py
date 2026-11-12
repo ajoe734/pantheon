@@ -92,3 +92,15 @@ def test_decision_reads_bind_the_configured_tenant_without_transport_help():
         pass
     else:
         raise AssertionError("an unbound tenant must fail closed")
+
+
+def test_books_are_keyed_by_pool_registry_ref_instead_of_embedded_artifact_id():
+    env = {**ENV, 'AUTO_CONSUMER_CAPITAL_URL': 'http://cap', 'AUTO_CONSUMER_CAPITAL_TOKEN': 'capital-test',
+           'AUTO_CONSUMER_TELEMETRY_URL': 'http://tel', 'AUTO_CONSUMER_TELEMETRY_TOKEN': 'telemetry-test'}
+    def transport(method, url, headers, body):
+        if url.startswith('http://cap'):
+            return 200, [{'binding_id': 'pcb', 'persona_id': 'p', 'tenant_id': TENANT, 'status': 'active'}]
+        return 200, {'summaries': [{'tenant_id': TENANT, 'deployment_stage': 'paper',
+            'persona_capital_binding_id': 'pcb', 'member_virtual_books': [
+                {'member_id': 'registry-alias', 'artifact_id': 'embedded-a', 'checksum': 'sha256:a'}]}]}
+    assert list(rt.PoolOwner(env, transport).books({'persona_id': 'p'})) == ['registry-alias']

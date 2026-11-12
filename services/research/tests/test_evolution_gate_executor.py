@@ -227,3 +227,21 @@ def test_pool_revalidation_uses_only_recorded_post_admission_bars():
     with pytest.raises(ExecutorRefusal, match='no_approved_member_baseline'):
         revalidate_member(artifact=artifact, dataset=recorded_dataset(),
             member={'joined_at': '2024-09-30T00:00:00Z'}, baseline={'status': 'no_approved_baseline'})
+
+
+def test_evolution_gate_factory_preserves_approved_mechanism_context():
+    from services.research.alpha_replication.evolution_executor import build_gate_request_factory
+    from services.research.vectorbt.adapter.vectorbt_adapter import build_canonical_tw_strategy_artifact
+    card = {'predictions': [{'test_kind': 'regime_difference', 'expected_sign': 'positive'}]}
+    dataset = {'dataset_id': 'recorded-unit', 'records': [], 'source_dataset_refs': ['test-owner-source']}
+    spec = {'name': 'approved-spec', 'hypothesis_card': card, 'hypothesis_predictions': card['predictions'],
+            'mechanism_inputs': {'source_ref': 'approved-owner-record'}}
+    factory = build_gate_request_factory(spec=spec, dataset=dataset, decision_id='d', tenant_id='t',
+        family_id='f', timestamp='2026-11-12T00:00:00Z', record_backtest=lambda _: None,
+        run_protocol=lambda **_: {'dataset_id': 'recorded-unit'})
+    request = factory(build_canonical_tw_strategy_artifact())
+    assert request.proposed_strategy_spec == {'name': 'approved-spec'}
+    assert request.research_handoff['hypothesis_card'] == card
+    assert request.research_handoff['hypothesis_predictions'] == card['predictions']
+    assert request.research_handoff['mechanism_inputs'] == spec['mechanism_inputs']
+    assert request.research_handoff['backtest_dataset'] == dataset

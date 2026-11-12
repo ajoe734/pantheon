@@ -258,7 +258,7 @@ class MemberVirtualBooks:
             if baseline_resolver is not None:
                 from services.evolution.approved_baselines import compare_member_book
                 member = result[-1]
-                baseline = baseline_resolver(member["artifact_id"], member["checksum"],
+                baseline = baseline_resolver(member["member_id"], member["checksum"],
                                              [u["symbol"] for u in member["underlyings"]])
                 member["baseline"] = baseline
                 if isinstance(baseline, dict) and baseline.get("status") == "approved":
