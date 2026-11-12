@@ -439,3 +439,35 @@ def test_readmitted_pending_then_failing_official_requarantines_and_refetch_reco
                                clock=lambda: much_later)
     assert ok.outcome == "pass"
     assert len(read_reconciled_rows(store, "2330", DAY)) == 271
+
+
+def _adapter_snapshot(tmp_path, records):
+    snap = tmp_path / "off" / "normalized" / "tw_price_daily" / "m"
+    snap.mkdir(parents=True)
+    with (snap / "a.jsonl").open("w") as fh:
+        for r in records:
+            fh.write(json.dumps({"source_id": r.source_id, "metadata": r.metadata}, default=str) + "\n")
+    return OfficialDaily.from_snapshot(tmp_path / "off")
+
+
+def test_adapter_produced_tpex_lots_and_twse_shares_rows_are_read(tmp_path):
+    from services.source_ingestion.connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+    from services.source_ingestion.tests.test_taiwan_official_connectors import (
+        TPEX_PRICE_HISTORY_PAYLOAD, TWSE_PRICE_HISTORY_PAYLOAD)
+    ad = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    recs = ad.records_from_price_history_payload("3105.TPEX", "TPEx", TPEX_PRICE_HISTORY_PAYLOAD,
+                                                 api_endpoint="bundle://t?date=20260601&symbol=3105", trace_id="t1")
+    recs += ad.records_from_price_history_payload("2330.TWSE", "TWSE", TWSE_PRICE_HISTORY_PAYLOAD,
+                                                  api_endpoint="bundle://t?date=20260601&symbol=2330", trace_id="t2")
+    off = _adapter_snapshot(tmp_path, recs)
+    tp = off.rows_for("3105", "2026-06-10")
+    assert len(tp) == 1 and tp[0].volume == Decimal(3200 * 1000)
+    assert off.rows_for("3105", "2026-06-09")[0].volume == Decimal(2900 * 1000)
+    tw = off.rows_for("2330", "2026-06-10")
+    assert len(tw) == 1 and tw[0].volume == Decimal(30_000_000)
+
+
+def test_true_null_volume_is_no_trade_not_official_row():
+    from services.source_ingestion.intraday_reconcile import _official_volume_shares
+    assert _official_volume_shares({"volume": None, "volume_lots": None}) is None
+    assert _official_volume_shares({"volume": 0, "volume_lots": None}) == Decimal(0)

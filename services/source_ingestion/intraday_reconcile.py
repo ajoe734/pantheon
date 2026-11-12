@@ -167,6 +167,20 @@ def _dec(value: Any) -> Decimal | None:
 
 
 # ---------------------------------------------------------------- official daily rows
+SHARES_PER_LOT = Decimal(1000)
+
+
+def _official_volume_shares(body: Mapping[str, Any]) -> Decimal | None:
+    """Official volume in shares. TPEx monthly history only publishes ``volume_lots``
+    (成交張數, 1 lot = 1000 shares) with ``volume`` null; TWSE publishes shares.
+    Both null means a true no-trade quote."""
+    shares = _dec(body.get("volume"))
+    if shares is not None:
+        return shares
+    lots = _dec(body.get("volume_lots"))
+    return None if lots is None else lots * SHARES_PER_LOT
+
+
 @dataclass(frozen=True)
 class OfficialRow:
     symbol: str
@@ -208,13 +222,14 @@ class OfficialDaily:
                 try:
                     rec = json.loads(line)
                     meta = rec.get("metadata") or {}
-                    body = meta.get("body", rec)
+                    body = meta.get("body") or meta.get("normalized_row") or rec
                     body = json.loads(body) if isinstance(body, str) else dict(body)
                     sym, day = str(body["symbol"]).upper(), str(body["date"])[:10]
                 except (ValueError, KeyError, TypeError, AttributeError):
                     continue
                 dates.add(day)
-                vals = [_dec(body.get(k)) for k in (*PRICE_FIELDS, "volume")]
+                vals = [_dec(body.get(k)) for k in PRICE_FIELDS]
+                vals.append(_official_volume_shares(body))
                 if any(v is None for v in vals):
                     continue  # all-null no-trade quote: not an official bar
                 avail = _parse_ts(body.get("available_time") or meta.get("available_time"))
