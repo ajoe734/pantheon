@@ -1,0 +1,103 @@
+{
+  "task": "INTRADAY-FEATURE-AGGREGATION-20261111",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "tracks": {
+    "source": {
+      "status": "implemented_pending_independent_review",
+      "artifacts": [
+        "services/registry/factor_rule.py",
+        "services/registry/strategy_artifact.py",
+        "services/research/intraday_bars.py",
+        "services/control-plane/bff/persona_provisioning_coordinator.py",
+        "services/source_ingestion/requirement_state.py",
+        "services/source_ingestion/routers/ingest_operations.py",
+        "services/source_ingestion/intraday_snapshot_projection.py",
+        "services/source_ingestion/intraday_reconcile.py"
+      ]
+    },
+    "tests": {
+      "command": "python -m pytest services/research/tests/test_intraday_bars.py services/registry services/source_ingestion/tests/test_snapshot_frequency_isolation.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_intraday_reconcile.py services/source_ingestion/tests/test_pipeline_snapshot_dataset_isolation.py -q",
+      "result": "all new tests pass; wider runs of services/source_ingestion/tests, services/registry, strategy_spec, persona provisioning, paper_signal_producer, operational_readiness, hosted_lifecycle_probe, paper_fleet_reconciler show only failures that are identical on the unmodified base commit (12 in test_controller_worker/test_distillation_controller/test_finmind_broker_backfill, 2 in test_persona_provisioning_route_security, 2 live-postgres/idle-cycle tests)",
+      "covers": [
+        "SD 6.1 table 1d/1m/5m/15m/30m/60m -> dataset; any other value rejected by validate_execution_recipe and persona provisioning",
+        "feature definitions: minute datasets governed price-volume with minute-unit availability lag; day lag unchanged",
+        "aggregation anchored at 09:00 session start; last bucket truncated and flagged half_bucket; missing minute => partial, never imputed, skipped by default",
+        "bucket availability = max(bucket end, member bar_availability_ts); loader requires tz-aware decision_time, optional minute lag",
+        "loader fail-closed: quarantined/pending/never-stored day => InsufficientCleanHistory; 1d request rejected, no daily/synthetic substitution",
+        "LatestMarketSnapshotStore keyed by (symbol, dataset); _point_from_record rejects other-dataset records; unknown dataset/frequency fail closed",
+        "daily state lines and public JSON byte-identical (dataset key written only for non-daily)",
+        "snapshots/latest?frequency= default 1d; 422 for unknown, 404 for an unprojected frequency, no fallback",
+        "end-to-end: IntradayStore ingest -> reconcile_day (projection at end of run) -> GET frequency=1m returns real bar closes (non-empty assertion); pending_official, fail/quarantine, tampered shard, dry-run write nothing; default 1d response bytes identical before/after",
+        "review fix P1: a published day that later fails/quarantines is durably withdrawn (tombstone/replacement line) - public GET 200 -> 404, survives reload, daily snapshot bytes unchanged",
+        "review fix P2: session ends 13:30 (270 regular minutes); last 60m bucket is 13:00-13:30 half bucket (expected 30), 13:30 auction bar kept in it; 5m/15m/30m full buckets; early-close via session_close_minute",
+        "review fix P1: minute-unit lag enforced in validation (availability_lag_minutes) and point-in-time resolution (registered 3-minute lag hides 09:01 bar at 09:02, visible at 09:04)",
+        "review fix P2: cross_session=false resets windows to the latest visible Taipei session; true keeps prior session",
+        "review fix P1: minute-bound strategies (any declared tw_price_*m input) reject implicit built-in close/open/high/low/volume/vwap refs in signal/entry/exit/strength at validation, and resolve_point_in_time_inputs exposes no generic closes/synthetic vwap; public-evaluator regressions in test_strategy_artifact_bar_frequency.py",
+        "review fix P2: strategy_artifact schema load admits optional integer availability_lag_minutes>=0 on inputs; full-artifact validate + registry payload tests for lag 3/5 accepted, 2 and -1 rejected",
+        "review fix P1 (2nd): a minute-bound factor_rule strategy rejects any daily/generic price input at validation and resolution, so a placeholder tw_price_1m input cannot admit a tw_price_daily.close alias; close_to_close_momentum with non-1d bar_frequency fails closed in validate/evaluate_strategy_view/evaluate_strategy_action; unknown frequencies rejected for momentum artifacts; daily behavior unchanged (full-artifact regressions in test_strategy_artifact_bar_frequency.py)"
+      ],
+      "rereview_result": "545 passed, 48 skipped, 7 subtests passed (exit 0, 82s) after the second review REJECT of PR #7234",
+      "bounded_rerun": "timeout 550 python -m pytest services/registry/test_factor_rule.py services/registry/test_strategy_artifact.py services/registry/tests services/research/tests/test_intraday_bars.py services/source_ingestion/tests/test_snapshot_frequency_isolation.py services/source_ingestion/tests/test_intraday_snapshot_projection.py => 163 passed, exit 0"
+    },
+    "merged": {
+      "status": "not_yet",
+      "note": "recorded after PR merge"
+    },
+    "hosted": {
+      "status": "not_run",
+      "note": "W5 owns hosted proof; no provider, token, VM or hosted store was accessed"
+    }
+  },
+  "design_decisions": {
+    "projection_writer": "intraday_snapshot_projection.project_reconciled_minute_snapshots is the only minute snapshot writer; it takes pass results, re-reads rows via hash-verified read_reconciled_rows, and calls append_normalized_records(dataset='tw_price_1m'). reconcile_day invokes it at the end of a write=True run when snapshot_store is given. pipeline.persist_latest_market_snapshots exclusion is untouched.",
+    "snapshot_semantics": "point event_time = bar_end; snapshot observed_at = max bar_availability_ts of the projected rows (real reconciled availability, not bar_end); store keeps the latest max_closes (60) bars per (symbol, dataset)",
+    "feature_lag": "FeatureDefinition gains availability_lag_unit (days|minutes), min_availability_lag and cross_session (default false); min_availability_lag_days retained for compatibility",
+    "frequency_table_home": "services/registry/strategy_artifact.BAR_FREQUENCY_DATASETS (requirement_state keeps a mirrored literal to avoid a registry import cycle at module scope)"
+  },
+  "gaps": [
+    "The runtime wiring of reconcile_day(snapshot_store=...) into a scheduled/hosted reconcile run is not exercised: the only repository caller is the read-only report script (write=False). Hosted scheduling belongs to K2/W5.",
+    "5m/15m/30m/60m latest snapshots are not projected (only the 1m dataset is written; coarser frequencies return 404 from snapshots/latest); aggregation is served by services/research/intraday_bars.load_bars.",
+    "Not exercised against real provider data; KBar unit and publication time remain K1/K3 unverified items. No hosted evidence.",
+    "Pre-existing failing tests listed under tests.result are unchanged by this task."
+  ],
+  "boundaries": "source-only; no provider/token/VM/SSH/hosted/config/trading access; tw_price_daily never written; no retired route or FinMind daily bypass restored",
+  "review_reject_fix_round3": {
+    "defects": [
+      "minute inputs fell back to generic/daily close or derived vwap, bypassing lag/session filter",
+      "intraday datasets exempt from assert_governed_feature_observations let raw numeric minute features through"
+    ],
+    "fix": "services/registry/factor_rule.py: minute datasets now require dataset-bound, timezone-aware event_time/available_time observations plus decision_time (_require_minute_observations); missing minute input raises, no daily/generic close or synthetic vwap fallback; daily path unchanged",
+    "tests": "services/registry/tests/test_strategy_artifact_bar_frequency.py: shared-evaluator negative tests (daily/generic fallback, raw/naive/unstamped minute series, missing decision_time)",
+    "source_test_results": "4 task files + new tests: 46 passed; 442 passed across all factor_rule-referencing test files (persona-portfolio venv)",
+    "not_tested": "hosted remains W5"
+  },
+  "review_reject_fix_round4": {
+    "findings": [
+      "P1 dataset isolation: minute inputs resolved via generic field fallback (features[close]) and dataset metadata was unchecked",
+      "P1 PIT: minute decision_time accepted naive/date-only values"
+    ],
+    "fix": [
+      "factor_rule._lookup_minute_feature: input name or dataset-qualified keys only; no bare-field fallback",
+      "_require_minute_observations rejects obs whose dataset/field metadata conflicts with the declared input",
+      "_require_aware_decision_time enforced in assert_governed_feature_observations and resolve_point_in_time_inputs for minute inputs; daily path unchanged"
+    ],
+    "tests": "public evaluator negative tests for generic/daily-tagged close and vwap, and naive/date-only/None decision_time",
+    "validation": "timeout 300 python -m pytest <7 task test files> -q => 100 passed; services/registry/tests -k 'factor or strategy or minute or intraday' => 32 passed",
+    "hosted": "not run; remains W5"
+  },
+  "review_reject_fix_round5": {
+    "finding": "P1: declared parameters.bar_frequency=1m with empty inputs and implicit close refs bypassed minute dataset/PIT/lag/session protection (BUY from raw generic closes)",
+    "fix": "services/registry/factor_rule.py: declared_intraday_frequency(parameters) (1d/undeclared=daily path unchanged; 1m/5m/15m/30m/60m minute; anything else fails closed). validate_factor_rule_logic requires >=1 declared input from the frequency's governed dataset, rejects contradicting minute datasets, and forbids implicit built-in price refs in all slots; resolve_point_in_time_inputs(bar_frequency=) never exposes generic closes/vwap and fails closed without matching inputs; evaluate_factor_rule_view passes parameters.bar_frequency.",
+    "tests": "services/registry/tests/test_strategy_artifact_bar_frequency.py: full-artifact validate_strategy_artifact + evaluate_strategy_view negatives for 1m/5m/15m/30m/60m with empty and daily inputs across signal/entry/exit/strength; mismatched/contradicting datasets; unknown frequencies; resolver; positive valid 1m artifact; daily regression; table mirror equality",
+    "source_test_results": "timeout 550 pytest services/registry services/research/tests/test_intraday_bars.py + 5 source_ingestion test files => 532 passed, 48 skipped, 7 subtests passed, exit 0",
+    "not_tested": "hosted remains W5"
+  },
+  "review_reject_fix_round6": {
+    "reviewed_head": "e784cc35511d072ab4949b7f433e643e8a11320c",
+    "p1_frequency_isolation": "explicit bar_frequency=1d with any minute-dataset input now rejected in validate_factor_rule_logic and resolve_point_in_time_inputs; test: test_explicit_1d_rejects_minute_inputs_at_validation_and_evaluation; genuine daily regression retained; test_full_artifact_with_minute_lag_validates_and_registers now declares 1m.",
+    "p1_pit_backdating": "requirement_state.append_normalized_records keeps the later prior observed_at for non-daily datasets so out-of-order/idempotent reprojection never relabels retained newer points as earlier-available; daily path untouched; test: test_out_of_order_rerun_never_backdates_retained_newer_points (public GET + reload).",
+    "verification": "reviewer bounded command: 547 passed, 48 skipped, 7 subtests, exit0 (source/tests only; merged/hosted not claimed)",
+    "ci_revalidation_failure": "test_revalidation_worker.py::test_crash_after_authority_write_reclaims_same_attempt_without_duplicate passed 3/3 alone and full file 46 passed locally on this head; file untouched by this task (diff only intraday_bars.py); suspected lease-timing flake in CI, NOT waived and frozen-base reproduction not done; needs CI rerun on the new head."
+  }
+}

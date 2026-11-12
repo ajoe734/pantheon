@@ -22,6 +22,7 @@ from services.registry.strategy_artifact import (
     canonical_market_context,
     classify_market_token,
     create_market_transition_revision,
+    dataset_for_bar_frequency,
 )
 
 from .persona_provisioning import (
@@ -1770,6 +1771,11 @@ class PersonaProvisioningCoordinator:
                 )
             symbols = ["SPY"]
         bar_frequency = str(record.request_payload.get("bar_frequency") or "1d")
+        # SD_INTRADAY_MINUTE_BARS §6.1: only governed frequencies may be provisioned.
+        try:
+            dataset_for_bar_frequency(bar_frequency)
+        except StrategyArtifactValidationError as exc:
+            raise PersonaProvisioningCoordinationError(str(exc)) from exc
         data_source = str(
             record.request_payload.get("data_source")
             or "source-ingest:paper/persona-bootstrap"
