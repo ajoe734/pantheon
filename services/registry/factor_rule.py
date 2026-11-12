@@ -99,8 +99,13 @@ class FeatureDefinition:
     min_availability_lag: int | None = None
     # Indicator windows reset at the 09:00 session start unless declared otherwise.
     cross_session: bool = False
+    # Screen refreshes cannot outrun publication. Custom catalogue entries must
+    # declare this to participate in a screen; legacy evaluation is unaffected.
+    release_cadence: str | None = None
 
     def __post_init__(self) -> None:
+        if self.release_cadence not in {None, "daily", "weekly", "monthly", "quarterly"}:
+            raise FactorRuleValidationError("invalid feature release_cadence")
         if self.availability_lag_unit not in AVAILABILITY_LAG_UNITS:
             raise FactorRuleValidationError(
                 "feature definition availability_lag_unit must be one of "
@@ -175,6 +180,7 @@ def _seed_default_feature_catalogue() -> None:
                         else f"Daily price-volume {fld} ({ds})"
                     ),
                     availability_lag_unit="minutes" if intraday else "days",
+                    release_cadence="daily",
                 )
             )
     seeded: tuple[tuple[str, str, int, str], ...] = (
@@ -221,6 +227,14 @@ def _seed_default_feature_catalogue() -> None:
                 field=field,
                 min_availability_lag_days=lag_days,
                 description=desc,
+                release_cadence=(
+                    "quarterly" if dataset == "tw_quarterly_statements" or field == "gdp_yoy"
+                    else "monthly" if dataset == "tw_monthly_revenue" or field in {
+                        "m1b_yoy", "m2_yoy", "monitoring_score", "leading_index",
+                        "coincident_index", "cpi_yoy", "export_orders_yoy",
+                    }
+                    else "daily"
+                ),
             )
         )
 
@@ -719,7 +733,7 @@ def validate_factor_rule_logic(
 
     expected_keys = {"kind", "inputs", "signal", "entry", "exit", "strength"}
     actual_keys = set(strategy_logic.keys())
-    if actual_keys != expected_keys:
+    if actual_keys - {"screen"} != expected_keys:
         raise FactorRuleValidationError(
             f"factor_rule_v1 strategy_logic keys must be {sorted(expected_keys)}, got {sorted(actual_keys)}"
         )
@@ -967,6 +981,13 @@ def validate_factor_rule_logic(
         )
     _validate_window_And_param_constraints(strength_ast, parameters)
 
+    screen = None
+    if "screen" in strategy_logic:
+        from .candidate_pool import screen_param_names, validate_screen
+
+        screen = validate_screen(strategy_logic["screen"], declared_inputs, parameters)
+        all_const_params.update(screen_param_names(screen))
+
     # Every referenced const_param must exist in parameters as a finite number
     # and must be a declared mutable control in mutation_surface.controls.
     for param_name in sorted(all_const_params):
@@ -1023,7 +1044,7 @@ def validate_factor_rule_logic(
                     f"factor_rule_v1 control '{param_name}' must declare a valid allowed_range and positive step"
                 )
 
-    return {
+    result = {
         "kind": "factor_rule_v1",
         "inputs": [declared_inputs[item["name"]] for item in raw_inputs],
         "signal": signal_ast,
@@ -1037,6 +1058,9 @@ def validate_factor_rule_logic(
         },
         "strength": strength_ast,
     }
+    if screen is not None:
+        result["screen"] = screen
+    return result
 
 
 def _parse_timestamp_utc(value: Any, *, is_decision_time: bool = False) -> datetime:
