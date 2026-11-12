@@ -1,0 +1,49 @@
+{
+ "task_id": "SD-DISCOVERY-DEMAND-EVOLUTION-20261112",
+ "kind": "design_document_evidence",
+ "read_date": "2026-11-12",
+ "document": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_DISCOVERY_DEMAND_AND_EVOLUTION_TRIGGERS_2026-11-12.md",
+ "hosted_behavior_claimed": false,
+ "scope_statement": "design only; no source/test/workflow/config/infrastructure change; implementation tasks are opened only after the operator answers O-13 to O-20",
+ "repo_base": "origin/dev e28bef7e4 (cited files identical to 32e7556fc where they were read)",
+ "hosted_readonly_reads": [
+  {
+   "path": "/data/research-orchestrator/discovery_allocator_runs.jsonl",
+   "container": "pantheon-research-orchestrator-svc-1",
+   "runs": 4,
+   "first_run": "2026-11-11T20:22:51Z",
+   "bound": 0,
+   "admitted_candidates_seen": 4,
+   "stop_reason": "owner_unreachable persona DNS at start-up"
+  }
+ ],
+ "related_tasks_opened": [
+  "DISCOVERY-ALLOCATOR-RUNS-ADMITTED-STRATEGY-20261112",
+  "DISCOVERY-GATE-PASS-APPROVED-BASELINE-20261112"
+ ],
+ "verified_code_facts": [
+  "deploy/collector/collector_stack/pollers.py:566 arXiv fixed query max_results=10",
+  "deploy/collector/collector_stack/pollers.py:658 OpenAlex single concept filter per-page=10",
+  "docker-compose.yml:359 PANTHEON_L2_EXTRACTION_ENABLED default 0",
+  "services/source_ingestion/hypothesis_compiler.py:109/160/168 needs_data_counts table with no external reader",
+  "services/control-plane/persona/persona_strategy_discovery.py:124 PersonaStrategyProfile mandate fields; :729 match_persona_strategies",
+  "docs/contracts/hypothesis_card.v1.schema.json has no predictions field",
+  "services/research/replication/gate.py:775-935 out-of-sample backtest judgement",
+  "services/research/alpha_replication/revalidation_worker.py:822 sponsor_persona_id hard-coded persona-tw-equity",
+  "no production code creates mutate or revalidate evolution proposals (only services/control-plane/bff/smoke_test.py:781 and services/runtime-manager/smoke_test.py:1273)",
+  "services/evolution/auto_consumer.py:197 auto gate requires created_by_role evolution_controller",
+  "services/evolution/auto_consumer_runtime.py:240 run_consumer_tick hosts the decay monitor",
+  "services/evolution/cooldown_enforcement.py:45 retrain and revalidate cooldown 72 h",
+  "services/registry/alpha_template.py:399 ensure_builtin_alpha_templates"
+ ],
+ "operator_questions": [
+  "O-13",
+  "O-14",
+  "O-15",
+  "O-16",
+  "O-17",
+  "O-18",
+  "O-19",
+  "O-20"
+ ]
+}
