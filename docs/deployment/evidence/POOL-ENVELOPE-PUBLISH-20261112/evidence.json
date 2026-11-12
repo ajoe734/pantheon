@@ -5,8 +5,8 @@
   "reviewer": "Codex",
   "review": {
     "status": "pending_independent_review",
-    "previous": "REQUEST CHANGES at f9f52984: replay after record_binding_created compared replacement_parent_binding_id against mutable plan.binding_id",
-    "fix": "Replay branch recovers the admitted source from the immutable child replacement_parent_binding_id only after independently verifying the parent in RuntimeManager (paper, same capital pool, persona binding, runtime_id, differing artifact pair); otherwise BINDING_READBACK_MISMATCH. Non-replay paths unchanged.",
+    "previous": "REQUEST CHANGES at 25609bcef: persona_pool_publisher treated PoolDispatchUncertain as definitive refusal whenever the previous binding was still active, though accepted dispatch is asynchronous",
+    "fix": "PoolDispatchUncertain carries terminal_rejection, set only when saga readback shows failed/aborted for the matching saga/plan; publisher refuses only with that evidence plus previous binding live, otherwise records a dispatched receipt. Mounted-route regression test_queued_dispatch_with_lost_readback_is_not_refused_when_binding_later_moves covers queued acceptance + lost saga readback + later binding move; test_dispatch_failure_records_reason_and_old_envelope_keeps_running retains terminal failure coverage.",
     "previous_2": "REQUEST CHANGES at 4166d8f40: runtime.load.requested path called validate_authoritative_readback without expected_source_binding_id, so every valid forward child failed activation and compensated",
     "fix_2": "Shared verify_forward_replace_parent helper (adapter) independently verifies the immutable admitted parent in both the binding-created replay and the runtime.load.requested path; tampered/missing parent fails closed to compensation",
     "previous_3": "REQUEST CHANGES at 09322a0ca: absent/null forward-replace child replacement_parent_binding_id activated runtime without an independently verified parent",
@@ -82,6 +82,16 @@
       "command": "python -m pytest services/control-plane/bff/test_persona_provisioning_coordinator.py + architecture tests -q",
       "exit_code": 0,
       "result": "108 passed"
+    },
+    {
+      "command": "python -m pytest route/publisher/coordinator/adapter/outbox/envelope tests",
+      "exit_code": 0,
+      "result": "287 passed"
+    },
+    {
+      "command": "python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "39 passed"
     }
   ],
   "acceptance": {
