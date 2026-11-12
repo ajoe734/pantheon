@@ -1473,6 +1473,8 @@ class PersonaCronRegistrar:
                 continue
             try:
                 runtime.gateway_call("cron.remove", {"id": job["id"]})
+                if any(j.get("id") == job["id"] for j in self._list_jobs(runtime)):
+                    raise RuntimeError("orphan/legacy cron removal did not pass readback")
             except Exception as exc:
                 failures.append({"persona_id": pid, "reason": str(exc)[:300]})
         return {"jobs": converged, "failures": failures, "eligible_count": len(eligible)}

@@ -79,6 +79,13 @@ def _erroring_turn(persona_id: str, prompt: str) -> PersonaOodaTurn:
 
 
 class CloseCronDispatchTests(unittest.TestCase):
+    def test_daily_cycle_cannot_bypass_controller_claims_via_legacy_closure(self):
+        runtime = FakeGatewayRuntime()
+        with self.assertRaisesRegex(CronOodaClosureError, "durable claims"):
+            close_persona_cron_dispatch("persona-tw-equity", "pantheon.persona.daily-cycle",
+                                        job_id="job-1", runtime=runtime)
+        self.assertEqual(runtime.calls, [])
+
     def test_completed_turn_closes_packet_with_real_fingerprint(self):
         runtime = FakeGatewayRuntime()
         with _tmp_store() as store_path:

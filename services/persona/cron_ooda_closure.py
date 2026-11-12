@@ -93,6 +93,7 @@ from services.control_plane.ooda.ooda_loop_packet import (  # noqa: E402
 )
 from services.control_plane.ooda.stage_transition import validate_status_transition  # noqa: E402
 from services.control_plane.cron.workflows import (  # noqa: E402
+    PERSONA_DAILY_CYCLE_WORKFLOW_ID,
     WorkflowDefinition,
     get_workflow_definition,
 )
@@ -278,6 +279,11 @@ def close_persona_cron_dispatch(
     satisfy.
     """
     workflow: WorkflowDefinition = get_workflow_definition(workflow_id)
+    if workflow_id == PERSONA_DAILY_CYCLE_WORKFLOW_ID:
+        raise CronOodaClosureError(
+            "daily-cycle runs must use PersonaCycleController.consume_run; "
+            "legacy force-run closure cannot bypass durable claims and proposal validation"
+        )
 
     run, _runs_response = force_run_job(
         runtime,
