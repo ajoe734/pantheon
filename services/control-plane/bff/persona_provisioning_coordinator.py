@@ -94,6 +94,15 @@ TERMINAL_RUNTIME_BINDING_STATUSES = frozenset({"retired", "failed", "failed_inac
 CHAIN_CAPITAL_LABEL_KEYS = frozenset({"chain_id", "task_id", "fixture", "paper_only"})
 
 
+class PoolDispatchUncertain(Exception):
+    """Pool envelope dispatch outcome could not be confirmed by readback."""
+
+    def __init__(self, reason: str, receipt: dict[str, Any]) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.receipt = receipt
+
+
 class PersonaProvisioningCoordinationError(RuntimeError):
     """An owner receipt could not prove the requested provisioning step."""
 
@@ -3718,50 +3727,58 @@ class PersonaProvisioningCoordinator:
                 and str(receipt.get("status") or "") not in {"failed", "aborted", "compensating"}
             )
 
-        saga = self._transition_then_get(
-            owner="deployment",
-            get_path=saga_path,
-            post_path=f"/api/deployment/plans/{_path_id(plan_id)}/dispatch",
-            payload={
-                "trace_id": f"persona-pool-publish:{ids.token}:{pool_version}",
-                "correlation_id": record.idempotency_key,
-                "idempotency_key": f"{record.idempotency_key}:deployment-dispatch",
-                "actor_id": self.actor_id,
-                "saga_id": saga_id,
-                "source_task_id": f"persona-pool-publish-{label}",
-                "metadata": {
-                    "tenant_id": tenant_id,
-                    "persona_id": persona_id,
-                    "capital_pool_id": ids.capital_pool_id,
-                    "persona_capital_binding_id": ids.persona_capital_binding_id,
-                    "execution_context": "paper",
-                    "pool_version": pool_version,
+        def _receipt(saga_status: Any) -> dict[str, Any]:
+            return {
+                "persona_id": persona_id,
+                "pool_version": pool_version,
+                "envelope_artifact_id": artifact_id,
+                "envelope_version": version,
+                "approval_decision_id": decision_id,
+                "deployment_plan_id": plan_id,
+                "deployment_saga_id": saga_id,
+                "previous_envelope_id": previous_id,
+                "source_binding_id": binding["binding_id"],
+                "runtime_id": binding.get("runtime_id"),
+                "capital_pool_id": ids.capital_pool_id,
+                "persona_capital_binding_id": ids.persona_capital_binding_id,
+                "saga_status": saga_status,
+                "binding_already_moved": already_moved,
+            }
+
+        try:
+            saga = self._transition_then_get(
+                owner="deployment",
+                get_path=saga_path,
+                post_path=f"/api/deployment/plans/{_path_id(plan_id)}/dispatch",
+                payload={
+                    "trace_id": f"persona-pool-publish:{ids.token}:{pool_version}",
+                    "correlation_id": record.idempotency_key,
+                    "idempotency_key": f"{record.idempotency_key}:deployment-dispatch",
+                    "actor_id": self.actor_id,
+                    "saga_id": saga_id,
+                    "source_task_id": f"persona-pool-publish-{label}",
+                    "metadata": {
+                        "tenant_id": tenant_id,
+                        "persona_id": persona_id,
+                        "capital_pool_id": ids.capital_pool_id,
+                        "persona_capital_binding_id": ids.persona_capital_binding_id,
+                        "execution_context": "paper",
+                        "pool_version": pool_version,
+                    },
                 },
-            },
-            ready=saga_ready,
-            validate=lambda r: saga_ready(r)
-            or (_ for _ in ()).throw(
-                PersonaProvisioningCoordinationError(
-                    "Deployment saga readback does not prove the envelope dispatch"
-                )
-            ),
-        )
-        return {
-            "persona_id": persona_id,
-            "pool_version": pool_version,
-            "envelope_artifact_id": artifact_id,
-            "envelope_version": version,
-            "approval_decision_id": decision_id,
-            "deployment_plan_id": plan_id,
-            "deployment_saga_id": saga_id,
-            "previous_envelope_id": previous_id,
-            "source_binding_id": binding["binding_id"],
-            "runtime_id": binding.get("runtime_id"),
-            "capital_pool_id": ids.capital_pool_id,
-            "persona_capital_binding_id": ids.persona_capital_binding_id,
-            "saga_status": saga.get("status"),
-            "binding_already_moved": already_moved,
-        }
+                ready=saga_ready,
+                validate=lambda r: saga_ready(r)
+                or (_ for _ in ()).throw(
+                    PersonaProvisioningCoordinationError(
+                        "Deployment saga readback does not prove the envelope dispatch"
+                    )
+                ),
+            )
+        except Exception as exc:
+            # Dispatch may have been admitted: the owners, not this exception,
+            # say whether the binding moved.  Never claim the previous kept.
+            raise PoolDispatchUncertain(str(exc), _receipt(None)) from exc
+        return _receipt(saga.get("status"))
 
     def _record_failure(
         self,

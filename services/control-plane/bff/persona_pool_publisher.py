@@ -23,10 +23,12 @@ from services.control_plane.persona.persona_strategy_pool import (
     canonical_digest,
 )
 from services.registry.portfolio_envelope import build_portfolio_envelope
+from services.registry.strategy_artifact import strategy_artifact_checksum
 
 from .persona_provisioning_coordinator import (
     PersonaProvisioningCoordinationError,
     PersonaProvisioningCoordinator,
+    PoolDispatchUncertain,
     TERMINAL_RUNTIME_BINDING_STATUSES,
     _path_id,
     _registry_entry,
@@ -191,6 +193,24 @@ class PersonaPoolPublisher:
         body = (entry.get("metadata") or {}).get("strategy_artifact")
         if not isinstance(body, Mapping):
             raise PoolPublishRefused(f"member {ref!r} has no strategy artifact", step="member")
+        # Independently validate the embedded body: the entry checksum alone
+        # does not prove the artifact we are about to pin is the approved one.
+        try:
+            body_checksum = strategy_artifact_checksum(body)
+        except Exception as exc:
+            raise PoolPublishRefused(
+                f"member {ref!r} embedded strategy artifact is invalid: {exc}", step="member"
+            ) from exc
+        if (
+            body_checksum != checksum
+            or body.get("artifact_id") != ref
+            or str(body.get("version")) != str(entry.get("version"))
+        ):
+            raise PoolPublishRefused(
+                f"member {ref!r} embedded strategy artifact does not match its "
+                "registry checksum, identity or version",
+                step="member",
+            )
         return entry
 
     def _registry_view(self, artifact_id: str) -> "Mapping[str, Any] | None":
@@ -334,6 +354,7 @@ class PersonaPoolPublisher:
         request_hash = canonical_digest(
             {"pool_digest": digest, "envelope": artifact_id, "previous": previous}
         )
+        dispatch_note = None
         try:
             receipt = self.coordinator.publish_pool_envelope(
                 {
@@ -348,6 +369,20 @@ class PersonaPoolPublisher:
                     "stage": stage,
                     "market": envelope["parameters"].get("market"),
                 }
+            )
+        except PoolDispatchUncertain as exc:
+            # Dispatch may have been admitted. Only owner readback may say
+            # whether the previous envelope still runs.
+            receipt = exc.receipt
+            try:
+                kept = self._previous_still_live(ids, receipt, previous)
+            except Exception:
+                kept = False
+            if kept:
+                self._refuse(tenant_id, persona_id, number, exc.reason,
+                             status_code=409, step="owner_chain")
+            dispatch_note = (
+                f"dispatch outcome unconfirmed ({exc.reason}); reconcile via owners"
             )
         except PersonaProvisioningCoordinationError as exc:
             self._refuse(tenant_id, persona_id, number, str(exc), status_code=409, step="owner_chain")
@@ -372,6 +407,7 @@ class PersonaPoolPublisher:
             "approval_decision_id": receipt["approval_decision_id"],
             "status": "published" if moved else "dispatched",
             "published_at": (done or {}).get("published_at") or self.now(),
+            **({"note": dispatch_note} if dispatch_note else {}),
         }
 
         def mutate(record):
@@ -386,7 +422,23 @@ class PersonaPoolPublisher:
 
         self._save(tenant_id, persona_id, mutate)
         return {**receipt, **{k: entry[k] for k in ("status", "members", "pool_digest")},
+                **({"note": dispatch_note} if dispatch_note else {}),
                 "idempotent_replay": done is not None and done["status"] == "published"}
+
+    def _previous_still_live(self, ids, receipt, previous) -> bool:
+        """True only when owner readback proves the previous envelope still runs."""
+        reader = self.coordinator.runtime_binding_reader
+        if not reader:
+            return False
+        bindings = reader(receipt["deployment_plan_id"], ids.capital_pool_id)
+        live = [b for b in bindings if b.get("capital_pool_id") == ids.capital_pool_id
+                and b.get("status") not in TERMINAL_RUNTIME_BINDING_STATUSES]
+        return bool(
+            len(live) == 1
+            and live[0].get("artifact_id") == previous["artifact_id"]
+            and live[0].get("artifact_version") == previous["version"]
+            and live[0].get("status") == "active"
+        )
 
     def _binding_moved(self, ids, receipt) -> bool:
         reader = self.coordinator.runtime_binding_reader

@@ -450,6 +450,53 @@ def test_member_checksum_mismatch_refused_previous_keeps_running(world, monkeypa
     assert refusals and "checksum" in refusals[-1]["reason"]
 
 
+def test_embedded_body_tampered_with_matching_entry_checksum_refused(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 0.5)], 0)
+    key = ("registry", "/api/registry/strategy-artifacts/artifact-a")
+    body = world.transport.objects[key]["entry"]["metadata"]["strategy_artifact"]
+    body["parameters"]["symbols"] = ["9999.TW"]  # entry + pool checksum unchanged
+    _refused(client.post(PATH, json={}, headers=H), world, "embedded strategy artifact")
+    refusals = world.publisher.history(TENANT, PERSONA)["refusals"]
+    assert refusals and refusals[-1]["step"] == "member"
+
+
+def test_embedded_body_identity_or_version_mismatch_refused(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 0.5)], 0)
+    key = ("registry", "/api/registry/strategy-artifacts/artifact-a")
+    world.transport.objects[key]["entry"]["version"] = "9.9.9"
+    _refused(client.post(PATH, json={}, headers=H), world, "embedded strategy artifact")
+
+
+def test_saga_readback_loss_after_dispatch_is_not_reported_as_previous_kept(
+    world, monkeypatch, tmp_path
+):
+    import urllib.error
+
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 0.5)], 0)
+    real_get = world.transport.get
+
+    def lossy_get(owner, path):
+        if owner == "deployment" and "/sagas/" in path and "replace" in world.runtime.calls:
+            raise urllib.error.URLError("readback lost")
+        return real_get(owner, path)
+
+    world.transport.get = lossy_get
+    response = client.post(PATH, json={}, headers=H)
+    world.transport.get = real_get
+    assert "replace" in world.runtime.calls
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert "previous-envelope-keeps-running" not in response.text
+    assert data["status"] in {"published", "dispatched"}
+    history = world.publisher.history(TENANT, PERSONA)
+    assert not history["refusals"]
+    assert history["published"]["1"]["envelope_artifact_id"] == data["envelope_artifact_id"]
+    assert _live(world)[0]["artifact_id"] == data["envelope_artifact_id"]
+
+
 def test_member_not_approved_refused(world, monkeypatch, tmp_path):
     client = _client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5)], 0)
