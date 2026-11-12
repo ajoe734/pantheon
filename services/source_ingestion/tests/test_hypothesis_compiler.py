@@ -219,7 +219,11 @@ def test_fingerprints_and_support_separate_screen_and_entry_changes():
     assert len(c.store.drafts()) == 3
 
 
-def test_unknown_screen_requirements_count_all_datasets_without_proposer():
+def test_unknown_screen_requirements_count_all_datasets_without_proposer(monkeypatch):
+    from services.registry import factor_rule
+
+    # Keep this multi-dataset demand test independent of industry rollout.
+    monkeypatch.delitem(factor_rule._FEATURE_CATALOGUE, ("tw_industry_classification", "industry_code"))
     r = _screen_entry_recording()
     seen = []
     c = HypothesisCompiler(lambda *_: seen.append(True), CompilerStore())
@@ -234,7 +238,11 @@ def test_unknown_screen_requirements_count_all_datasets_without_proposer():
     assert {d["dataset"] for d in c.store.needs_data_report()} == {"tw_industry_classification", "tw_sector_flows", "tw_price_daily"}
 
 
-def test_missing_screen_keeps_prediction_demand_accounting_and_non_testable_skip():
+def test_missing_screen_keeps_prediction_demand_accounting_and_non_testable_skip(monkeypatch):
+    from services.registry import factor_rule
+
+    # Exercise missing screen inputs alongside predictions, even after rollout.
+    monkeypatch.delitem(factor_rule._FEATURE_CATALOGUE, ("tw_industry_classification", "industry_code"))
     r = _screen_entry_recording()
     card = r["sector_card"]
     card["predictions"] = _prediction_recording()["response"]["output"]["structured_data"]["hypothesis_card"]["predictions"]
@@ -245,6 +253,23 @@ def test_missing_screen_keeps_prediction_demand_accounting_and_non_testable_skip
     card["testability"] = "not_testable"
     assert c.compile(card).status == "skipped"
     assert all(d["count"] == 1 for d in c.store.needs_data_report())
+
+
+def test_sector_screen_current_catalogue_counts_only_unsupported_field():
+    from services.registry.factor_rule import get_feature_definition
+
+    assert get_feature_definition("tw_industry_classification", "industry_code") is not None
+    assert get_feature_definition("tw_sector_flows", "net_shares") is not None
+    assert get_feature_definition("tw_sector_flows", "net_inflow") is None
+    card = _screen_entry_recording()["sector_card"]
+    seen = []
+    c = HypothesisCompiler(lambda *_: seen.append(True), CompilerStore())
+    for _ in range(2):
+        out = c.compile(card)
+        assert out.status == NEEDS_DATA and out.dataset == "tw_sector_flows"
+        assert out.artifact is None
+    assert c.store.needs_data_report() == [{"dataset": "tw_sector_flows", "count": 1}]
+    assert seen == [] and c.store.drafts() == []
 
 
 def test_declared_idea_cannot_be_silently_omitted_or_replaced():
