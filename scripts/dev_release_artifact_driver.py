@@ -710,12 +710,15 @@ def _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, ht
     owners = _owners(docker)
     os.environ.update(GIT_SHA=args.candidate_backend_sha, PANTHEON_ENV="dev")
     services = _candidate_images(args, docker)
+    source_qualification = _qualify_source_candidate(args, outer, docker, barrier)
     if _service_snapshot(docker) != before or _owners(docker) != owners:
         raise a.ArtifactError("running identities changed during candidate admission")
     if _compose_bytes(args.compose_file, args.candidate_backend_sha) != compose:
         raise a.ArtifactError("candidate Compose changed during image admission")
     if any(_built_image(docker, service, args.candidate_backend_sha) != services[service] for service in a.SERVICES):
         raise a.ArtifactError("built candidate image tags changed during admission")
+    if source_qualification and a._resolved_image_id(docker, "pantheon-source-ingest") != source_qualification["writer_image"]:
+        raise a.ArtifactError("Source writer image changed during admission")
     barrier.check()
     archives = {image_id: a.save_image(docker=docker, archive_root=ROOT / "images", image_id=image_id,
                                         check_lease=barrier.check)
@@ -742,6 +745,41 @@ def _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, ht
     return {"candidate_image_manifest_path": str(path), "candidate_image_manifest_sha256": digest,
             "candidate_image_manifest": receipt, "candidate_image_override_path": str(override_path),
             "candidate_image_override_sha256": receipt["image_override_sha256"]}
+
+
+def _qualify_source_candidate(args, outer, docker, barrier):
+    """Existing pre-rollout seal must admit the Source writer too.
+
+    Source is not one of the three BFF archive images. Its existing local
+    Compose build tag and held baseline image are the bounded component inputs;
+    do not widen the generic image bundle or invent a second Source authority.
+    """
+    current = a._stack_rows(docker).get(a.API_SERVICE, [])
+    baseline = outer.get("stack_baseline", {}).get("services", {}).get(a.API_SERVICE)
+    if not current and baseline is None:
+        return None
+    if len(current) != 1 or baseline is None or current[0]["image_id"] != baseline["image_id"]:
+        raise a.StackError("Source baseline reader is not retained before writer admission", [a.API_SERVICE])
+    model = a._json(docker.call("compose", "-p", "pantheon", "-f", str(args.compose_file),
+                               "config", "--no-interpolate", "--no-env-resolution", "--format", "json"))
+    row = model.get("services", {}).get(a.API_SERVICE, {})
+    build = row.get("build")
+    if row.get("image") is not None or not isinstance(build, dict) or build.get("context") != str(args.compose_file.parent) or \
+            build.get("dockerfile") != "services/source_ingestion/Dockerfile":
+        raise a.StackError("Source candidate does not own the fixed Compose build tag", [a.API_SERVICE])
+    image = a._resolved_image_id(docker, "pantheon-source-ingest")
+    a._match(image, a.IMAGE, "built Source image")
+    codec = a.source_probe(docker=docker, image_id=image, mode="codec", check_lease=barrier.check)
+    try:
+        raw = subprocess.run(["git", "-C", str(args.compose_file.parent), "show",
+                              args.candidate_backend_sha + ":services/source_ingestion/requirement_state.py"],
+                             check=True, capture_output=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        raise a.ArtifactError("candidate Source codec source is unavailable") from None
+    if hashlib.sha256(raw).hexdigest() != codec["codec_sha256"]:
+        raise a.StackError("built Source codec is not the admitted candidate source", [a.API_SERVICE])
+    return a.qualify_source_writer(docker=docker, retained_image=baseline["image_id"],
+                                    writer_image=image, check_lease=barrier.check)
 
 
 def _load(args, identity, manifest_path):

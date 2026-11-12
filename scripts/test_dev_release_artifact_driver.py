@@ -4,6 +4,7 @@ No live VM, container creation, real credential, or deployment is used here.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -19,7 +20,7 @@ import uuid
 import pytest
 
 from scripts import dev_release_artifact_driver as d
-from scripts.test_dev_release_artifacts import FakeDocker, IDS
+from scripts.test_dev_release_artifacts import FakeDocker, IDS, run_local_source_probe
 from scripts import dev_release_artifacts as primitive
 
 
@@ -63,10 +64,29 @@ class Docker(FakeDocker):
         self.build_contract_drift = None
 
     def call(self, *args):
+        source = getattr(self, "source_row", None)
+        if source and args[0] == "run":
+            self.calls.append(args)
+            return run_local_source_probe(self, args)
+        if source and args[0] == "inspect" and args[-1] == source["container_id"]:
+            if args[2] == d.a.STACK_FORMAT:
+                self.calls.append(args)
+                return json.dumps({"service": "source-ingest", "oneoff": "False", "image_id": source["image_id"],
+                                   "status": "running", "exit_code": 0, "health_test": ["CMD", "true"], "health": "healthy"})
+            if args[2] == d.a.SOURCE_PATH_FORMAT:
+                return json.dumps("SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH=" + str(self.source_journal)) + "\n"
+            if args[2] == d.a.API_ENV_FORMAT:
+                return ""
+            if args[2] == d.a.RESTART_FORMAT:
+                return json.dumps("unless-stopped")
+            if args[2] == d.a.STACK_ENV_FORMAT:
+                return ""
         if args[0] == "ps" and len(args) == 5:
             self.calls.append(args)
             cids = [f"{index + 1:064x}" for index in range(len(d.a.SERVICES))]
             cids.extend(row["container_id"] for service in d.OWNERS if (row := self.owners.get(service)) is not None)
+            if source:
+                cids.append(source["container_id"])
             return "".join(cid + "\n" for cid in cids)
         if args[0] == "ps" and args[-1].rsplit("=", 1)[1] in d.OWNERS:
             self.calls.append(args)
@@ -137,6 +157,10 @@ class Docker(FakeDocker):
                 **{service: {**split.get(service, {}), "build": {"context": str(self.candidate_compose.parent), "dockerfile": d.DOCKERFILES[service]}}
                    for service in d.a.SERVICES}
             }}
+            if source:
+                model["services"]["source-ingest"] = {
+                    "build": {"context": str(self.candidate_compose.parent),
+                              "dockerfile": "services/source_ingestion/Dockerfile"}}
             row = model["services"][d.a.SERVICES[0]]
             if self.build_contract_drift == "explicit_image": row["image"] = "pantheon-operator-bff"
             elif self.build_contract_drift == "dockerfile": row["build"]["dockerfile"] = "services/governance/Dockerfile"
@@ -227,10 +251,13 @@ def case(tmp_path, monkeypatch):
     source.mkdir()
     compose = source / "docker-compose.yml"
     compose.write_text("services: {}\n")
+    codec = source / "services/source_ingestion/requirement_state.py"
+    codec.parent.mkdir(parents=True)
+    codec.write_bytes((Path(__file__).resolve().parents[1] / "services/source_ingestion/requirement_state.py").read_bytes())
     def git(*args):
         return subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True, text=True).stdout.strip()
     git("init", "-q")
-    git("add", "docker-compose.yml")
+    git("add", "docker-compose.yml", "services/source_ingestion/requirement_state.py")
     git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture baseline")
     source_sha = git("rev-parse", "HEAD")
     candidate_source = tmp_path / "candidate-source"
@@ -1955,3 +1982,53 @@ def test_main_whole_stack_owner_transition_publishes_readback_only_when_valid(ca
         },
     }
     assert comp.validate_readback(readback, evidence, "restore") == readback
+
+
+def _attach_real_source_codec(case, tmp_path, *, frozen_bee=False):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    case.docker.source_scratch = SimpleNamespace(name=str(tmp_path))
+    case.docker.source_journal = tmp_path / "journal.jsonl"
+    case.docker.source_journal.write_text(market_snapshot_writer_samples()["official_daily"])
+    case.docker.source_row = {"container_id": "9" * 64, "image_id": "sha256:" + "8" * 64}
+    case.docker.source_codecs = {}
+    if frozen_bee:
+        case.docker.source_codecs[case.docker.source_row["image_id"]] = "bee62bc2978618539984aff9db136b064adc14a0"
+    candidate = "sha256:" + "7" * 64
+    for image in (candidate, case.docker.source_row["image_id"]):
+        case.docker.images[image] = {"id": image, "revision": None, "repo_digests": None}
+    case.docker.tags = {"pantheon-source-ingest": candidate}
+
+
+def test_guarded_seal_rejects_writer_before_any_owner_or_data_mutation(case, tmp_path):
+    _attach_real_source_codec(case, tmp_path, frozen_bee=True)
+    captured = seal(case, admit_candidate=False)
+    before = case.docker.source_journal.read_bytes()
+    owners = copy.deepcopy(case.docker.owners)
+    containers = copy.deepcopy(case.docker.containers)
+    case.docker.calls.clear()
+    with pytest.raises(d.a.SourceCompatibilityError):
+        admit(case)
+    assert case.docker.source_journal.read_bytes() == before
+    assert case.docker.owners == owners and case.docker.containers == containers
+    assert not (Path(captured["manifest_path"]).parent / "candidate-images.json").exists()
+    assert not any(c[0] in ("stop", "start") or (c[0] == "compose" and "up" in c) for c in case.docker.calls)
+
+
+def test_guarded_seal_qualifies_real_source_codec_at_candidate_blob(case, tmp_path):
+    _attach_real_source_codec(case, tmp_path)
+    before = case.docker.source_journal.read_bytes()
+    seal(case, admit_candidate=False)
+    admit(case)
+    assert case.args.candidate_image_manifest.exists()
+    assert case.docker.source_journal.read_bytes() == before
+    assert any(c[0] == "run" and c[-2] == "journal" for c in case.docker.calls)
+
+
+def test_guarded_seal_rejects_wrong_candidate_source_blob(case, tmp_path):
+    _attach_real_source_codec(case, tmp_path)
+    seal(case, admit_candidate=False)
+    # The immutable writer image is actual 70a, not the candidate's codec blob.
+    candidate = case.docker.tags["pantheon-source-ingest"]
+    case.docker.source_codecs[candidate] = "70a5bb860e855beacd14445c29bff64ccfa7e8f2"
+    with pytest.raises(d.a.StackError, match="not the admitted candidate source"):
+        admit(case)

@@ -121,6 +121,18 @@ class StackMixedError(StackError):
     pass
 
 
+SOURCE_FAILURE_REASONS = frozenset({"point_schema", "checksum", "lineage", "snapshot_identity",
+                                    "schema", "journal_changed", "reader_rejected", "unavailable"})
+
+
+class SourceCompatibilityError(StackError):
+    def __init__(self, reason, line=None):
+        self.reason = reason if reason in SOURCE_FAILURE_REASONS else "reader_rejected"
+        self.line = line if type(line) is int and 0 < line < 100000000 else None
+        super().__init__("Source codec incompatible: " + self.reason + (
+            f" at journal line {self.line}" if self.line else ""), [API_SERVICE])
+
+
 FAILURE_CODE = "DEV_ARTIFACT_OPERATION_FAILED"
 FAILURE_STAGES = frozenset({"initialize", "install", "transport", "capture", "verify",
                             "seal-candidate", "restore", "restore-final", "seal-result", "publish-evidence"})
@@ -165,9 +177,12 @@ def failure_record(error: Exception, stage: str) -> dict:
         kind = "contract"
     elif isinstance(cause, (ValueError, TypeError, KeyError, AttributeError)):
         kind = "invalid-data"
-    return {"status": "error", "error_code": FAILURE_CODE,
+    record = {"status": "error", "error_code": FAILURE_CODE,
             "failure_stage": stage if isinstance(stage, str) and stage in FAILURE_STAGES else "initialize",
             "failure_kind": kind, "failure_location": location, "exit_code": code}
+    if isinstance(error, SourceCompatibilityError):
+        record["source_compatibility"] = {"reason": error.reason, "line": error.line}
+    return record
 
 
 def remote_failure_record(raw: bytes) -> dict | None:
@@ -179,10 +194,16 @@ def remote_failure_record(raw: bytes) -> dict | None:
             value = _json(line)
         except (ArtifactError, ValueError, TypeError, RecursionError):
             continue
-        if not isinstance(value, dict) or set(value) != {
+        if not isinstance(value, dict) or set(value) - {"source_compatibility"} != {
             "status", "error_code", "failure_stage", "failure_kind", "failure_location", "exit_code"
         }:
             continue
+        if "source_compatibility" in value:
+            detail = value["source_compatibility"]
+            if not isinstance(detail, dict) or set(detail) != {"reason", "line"} or \
+                    not isinstance(detail["reason"], str) or detail["reason"] not in SOURCE_FAILURE_REASONS or \
+                    (detail["line"] is not None and (type(detail["line"]) is not int or not 0 < detail["line"] < 100000000)):
+                continue
         stage, kind, location = (value[key] for key in ("failure_stage", "failure_kind", "failure_location"))
         if (value["status"] == "error" and value["error_code"] == FAILURE_CODE
                 and isinstance(stage, str) and stage in FAILURE_STAGES
@@ -498,7 +519,9 @@ def projection(lines):
     rows = sorted((s.to_dict() for s in values.values()), key=lambda s: (s["symbol"], s.get("dataset", "tw_price_daily")))
     return hashlib.sha256(m._canonical_json({"snapshots": rows}).encode()).hexdigest()
 try:
-    if mode == "writer":
+    if mode == "codec":
+        result = {}
+    elif mode == "writer":
         samples = m.market_snapshot_writer_samples()
         result = {"samples": samples, "projections": {k: projection(v.splitlines()) for k,v in samples.items()}}
     elif mode == "samples":
@@ -509,7 +532,7 @@ try:
         # Missing state is not an empty journal proof. The owner must identify
         # an existing file; do not create directories, lock files or projections.
         with path.open("rb") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
             before = os.fstat(f.fileno())
             if before.st_size > 256 * 1024 * 1024:
                 raise ValueError("journal exceeds bounded qualification")
@@ -543,7 +566,7 @@ def source_probe(*, docker, image_id, mode, argument="", container_id=None, chec
     if container_id is not None:
         _match(container_id, re.compile(r"[0-9a-f]{12,64}"), "Source volume owner")
         command.extend(("--volumes-from", container_id + ":ro"))
-    if mode not in ("journal", "writer", "samples") or (mode == "journal") != (container_id is not None):
+    if mode not in ("codec", "journal", "writer", "samples") or (mode == "journal") != (container_id is not None):
         raise ArtifactError("invalid Source probe scope")
     check_lease()
     try:
@@ -552,14 +575,13 @@ def source_probe(*, docker, image_id, mode, argument="", container_id=None, chec
             raise ArtifactError("Source probe output exceeds bound")
         result = _json(raw.encode())
     except ArtifactError:
-        raise StackError("Source codec qualification unavailable", [API_SERVICE]) from None
+        raise SourceCompatibilityError("unavailable") from None
     if not isinstance(result, dict) or result.get("ok") is not True:
         reason = result.get("reason") if isinstance(result, dict) else None
         if reason not in ("point_schema", "checksum", "lineage", "snapshot_identity", "schema", "journal_changed"):
             reason = "reader_rejected"
         line = result.get("line") if isinstance(result, dict) else None
-        suffix = f" at journal line {line}" if type(line) is int and 0 < line < 100000000 else ""
-        raise StackError("Source codec incompatible: " + reason + suffix, [API_SERVICE])
+        raise SourceCompatibilityError(reason, line)
     _match(result.get("codec_sha256"), DIGEST, "Source codec digest")
     check_lease()
     return result
@@ -653,7 +675,8 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
     if API_SERVICE in first:
         if API_SERVICE not in services:
             raise StackError("Source owner is not a capturable baseline", [API_SERVICE])
-        qualify_source_reader(docker=docker, image_id=services[API_SERVICE]["image_id"], check_lease=check_lease)
+        services[API_SERVICE]["source_snapshot"] = qualify_source_reader(
+            docker=docker, image_id=services[API_SERVICE]["image_id"], check_lease=check_lease)
     if not services or len(services) > STACK_MAX_SERVICES:
         raise ArtifactError("stack baseline service count is out of bounds")
     for service, row in services.items():
@@ -688,8 +711,17 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
         _match(service, SERVICE_NAME, "stack service name")
         # A running source controller/API must carry its recorded posture; nothing else may.
         controlled = service in CONTROL_POSTURE and row.get("state") == "running"
-        _keys(row, ("image_id", "state", "has_healthcheck", "env") + (("control",) if controlled else ()),
+        source_snapshot = service == API_SERVICE and "source_snapshot" in row
+        _keys(row, ("image_id", "state", "has_healthcheck", "env") + (("control",) if controlled else ())
+              + (("source_snapshot",) if source_snapshot else ()),
               "stack service")
+        if source_snapshot:
+            proof = row["source_snapshot"]
+            _keys(proof, ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256"), "Source snapshot proof")
+            for key in ("codec_sha256", "journal_sha256", "projection_sha256"):
+                _match(proof[key], DIGEST, "Source snapshot digest")
+            if type(proof["journal_size"]) is not int or not 0 <= proof["journal_size"] <= 256 * 1024 * 1024:
+                raise ArtifactError("invalid Source snapshot proof size")
         if controlled:
             control = row["control"]
             _keys(control, ("env", "restart"), "stack control posture")
@@ -889,8 +921,11 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
     # appended after capture. A capture-time hash cannot prove restore safety.
     # This precedes compose up, owner stop/start, and image-name re-pointing.
     if stack is not None and API_SERVICE in stack["services"]:
-        qualify_source_reader(docker=docker, image_id=stack["services"][API_SERVICE]["image_id"],
-                              check_lease=check_lease)
+        writers = _stack_rows(docker).get(API_SERVICE, [])
+        if len(writers) != 1:
+            raise StackError("Source journal requires exactly one existing owner", [API_SERVICE])
+        qualify_source_writer(docker=docker, retained_image=stack["services"][API_SERVICE]["image_id"],
+                              writer_image=writers[0]["image_id"], check_lease=check_lease)
 
     def pinned(service: str) -> dict:
         # A recreated container must keep the tenant and GIT_SHA it ran with at
