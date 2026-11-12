@@ -1519,6 +1519,36 @@ class TestRunPoll:
         assert call_kwargs["allowed_target_stages"] == ("canary",)
         assert call_kwargs["allowed_registry_deployment_stages"] == ("paper",)
 
+    def test_paper_forward_replace_authority_stays_paper_scoped(self, worker):
+        worker.verify_deploy_authorities.reset_mock()
+        saga = _binding_saga(
+            current_stage="paper",
+            target_stage="paper",
+            runtime_action="replace_binding",
+        )
+        plan = _binding_plan(
+            current_stage="paper",
+            target_stage="paper",
+            runtime_action="replace_binding",
+            binding_id="rb-paper-001",
+        )
+
+        worker.verify_binding_deploy_authorities(
+            saga=saga,
+            plan=plan,
+            persona_capital_binding_id="pcb-001",
+            persona_capital_binding_status="active",
+            allowed_deployment_scope="paper",
+            deployment_base_url="http://deployment:8095",
+            timeout_seconds=10.0,
+        )
+
+        call_kwargs = worker.verify_deploy_authorities.call_args.kwargs
+        # Same-stage replacement never widens scope beyond paper and keeps the
+        # new envelope's registry stage at none/paper.
+        assert call_kwargs["allowed_target_stages"] == ("paper",)
+        assert call_kwargs["allowed_registry_deployment_stages"] == ("none", "paper")
+
     def test_sequence_block_never_mutates_or_burns_retry_budget(self, worker):
         record = _outbox_record("evt-comp-blocked", sequence_no=3)
         record["event"].update(

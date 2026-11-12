@@ -1,0 +1,35 @@
+{
+  "schema_version": "task_review_evidence.v1",
+  "task_id": "POOL-ENVELOPE-PUBLISH-20261112",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "review": {"status": "pending_independent_review"},
+  "scope": "Source-only. Pool version -> immutable envelope -> automated paper approval -> DeploymentPlan -> same-stage replace of the existing RuntimeBinding through the existing Deployment owner path. No hosted/live claim.",
+  "implementation": {
+    "deployment": "runtime_manager_dispatch_adapter: paper->paper replace_binding verifies the active source binding and calls the existing RuntimeManagerClient.replace (never deploy); readback requires forward-replacement lineage.",
+    "registry": "portfolio_envelope.build_portfolio_envelope pins pool_version/pool_digest as immutable parameters and the previous envelope in lineage.",
+    "bff": "PersonaProvisioningCoordinator.publish_pool_envelope (GET-first owner chain), PersonaPoolPublisher, POST /bff/personas/{id}/strategy-pool/publish."
+  },
+  "validation": [
+    {"command": "python -m pytest services/control-plane/bff/tests/test_persona_pool_publish_route.py -q", "exit_code": 0, "result": "10 passed"},
+    {"command": "python -m pytest services/control-plane/bff/test_persona_pool_publisher.py -q", "exit_code": 0, "result": "4 passed"},
+    {"command": "python -m pytest services/deployment/test_runtime_manager_dispatch_adapter.py services/deployment/test_outbox_consumer_worker.py services/control-plane/bff/tests/test_persona_lifecycle_forward.py services/control-plane/bff/tests/test_ppl_alloc_009_paper_eligibility_proof.py -q", "exit_code": 0, "result": "399 passed"},
+    {"command": "python -m pytest services/control-plane/bff/test_persona_provisioning_coordinator.py -q", "exit_code": 0, "result": "69 passed"},
+    {"command": "python -m pytest services/registry/test_portfolio_envelope.py services/research/tests/test_portfolio_envelope_parity.py -q", "exit_code": 0, "result": "13 passed"},
+    {"command": "python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_bff_route_diff.py services/control-plane/bff/tests/test_bff_path_dedupe.py services/control-plane/bff/tests/test_bff_main_composition.py -q", "exit_code": 0, "result": "architecture 39 passed; route/path/composition 68 passed"},
+    {"command": "mutation check: force _is_paper_forward_replace -> False", "exit_code": 1, "result": "second-version publish fails (deploy path), proving the integration test exercises replace"}
+  ],
+  "acceptance": {
+    "1": ["test_two_pool_versions_move_binding_with_replace_not_deploy (member version/checksum/weight, pool_version, lineage)"],
+    "2": ["test_two_pool_versions_move_binding_with_replace_not_deploy (automated_gate approval, plan, binding)"],
+    "3": ["test_two_pool_versions_move_binding_with_replace_not_deploy (same runtime/capital pool/pcb, positions and ledger unchanged, one active binding)"],
+    "4": ["test_member_checksum_mismatch_refused_previous_keeps_running", "test_member_not_approved_refused", "test_wrong_tenant_member_refused", "test_wrong_current_binding_refused", "test_unapproved_envelope_never_reaches_deployment", "test_dispatch_failure_records_reason_and_old_envelope_keeps_running", "test_older_pool_version_refused_after_newer_published"],
+    "5": ["test_duplicate_publish_is_idempotent", "test_beyond_paper_refused", "test_beyond_paper_refused_before_any_owner_read"],
+    "6": ["test_two_pool_versions_move_binding_with_replace_not_deploy (real route + coordinator + real dispatch adapter; only owner HTTP faked)"]
+  },
+  "known_limits": [
+    "The publish history store defaults to in-process memory (refusal reasons are lost on BFF restart); authoritative ordering/idempotency read owner state (RuntimeBinding + Registry), not this record.",
+    "RuntimeManager is faked with the real single-runtime and forward-replace continuity rules; the runtime-manager /replace MFA decorator is unchanged and its auth behaviour for the Deployment caller is not exercised or claimed here.",
+    "No hosted deployment or live evidence; source-only."
+  ]
+}
