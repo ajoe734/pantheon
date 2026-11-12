@@ -1,0 +1,22 @@
+{
+  "schema_version": "persona_pool_policy.v1",
+  "health_window_days": 20,
+  "low_utilisation": 0.6,
+  "minimum_effective_bets": 2.0,
+  "correlation_cutoff": 0.5,
+  "trial_risk_cap": 0.1,
+  "trial_history_days": 20,
+  "halve_drawdown": 0.05,
+  "remove_drawdown": 0.1,
+  "member_ceiling": 20,
+  "tilt_min": 0.5,
+  "tilt_max": 1.5,
+  "tilt_sharpe_scale": 0.1,
+  "base_sharpe_threshold": 0.5,
+  "trial_penalty_scale": 0.25,
+  "minimum_sharpe_improvement": 0.0,
+  "periods_per_year": 252,
+  "minimum_oos_days": 20,
+  "in_sample_fraction": 0.7,
+  "budget_full": 1.0
+}
