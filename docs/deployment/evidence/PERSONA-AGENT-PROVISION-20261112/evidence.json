@@ -28,20 +28,39 @@
     "5_degraded_never_blocks_paper": [
       "services/control-plane/bff/tests/test_persona_agent_provision_integration.py::test_agent_failure_is_readable_degraded_and_never_blocks_paper",
       "services/control-plane/bff/tests/test_persona_agent_provision_integration.py::test_missing_persona_owner_is_degraded_with_reason",
-      "integrations/openclaw/test_trading_persona_agent_adapter.py::test_missing_harness_is_explicit_not_synthesized_and_memory_failure_degrades"
+      "integrations/openclaw/test_trading_persona_agent_adapter.py::test_missing_harness_is_explicit_not_synthesized_and_memory_failure_degrades",
+      "services/control-plane/bff/tests/test_persona_agent_provision_http_entry.py::test_degraded_agent_is_exposed_persisted_and_never_blocks_paper (status in create response meta, persisted in Persona metadata, retained across readback rebuild)"
     ],
     "6_integration_through_real_entry": [
-      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py (real coordinator + default_agent_provisioner + TradingPersonaAgentClient; only urllib urlopen to the adapter faked)"
+      "services/control-plane/bff/tests/test_persona_agent_provision_http_entry.py::test_fresh_create_makes_adapter_call_and_exposes_agent (real HTTP POST /bff/management/personas/create-paper-bundle, no pre-existing Persona; only adapter urlopen faked)",
+      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py (coordinator + default_agent_provisioner + TradingPersonaAgentClient)"
     ]
   },
   "verification": [
-    {"command": "pytest integrations/openclaw services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_agent_provision_integration.py services/control-plane/bff/tests/test_openclaw_ops_service_auth.py services/persona/test_harness.py", "result": "264 passed, 2 failed (test_dev_gates.py x2; identical failures on dev 7b685a15d, pre-existing)"},
-    {"command": "pytest services/openclaw-gateway-adapter --ignore=test_compose_activation.py", "result": "597 passed, 4 skipped (before the added memory-refresh test); new file 5 passed"},
-    {"command": "test_compose_activation.py / test_persona_provisioning_compose_contract.py", "result": "not run: venv lacks PyYAML"}
+    {
+      "command": "pytest integrations/openclaw services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_agent_provision_integration.py services/control-plane/bff/tests/test_openclaw_ops_service_auth.py services/persona/test_harness.py",
+      "result": "264 passed, 2 failed (test_dev_gates.py x2; identical failures on dev 7b685a15d, pre-existing)"
+    },
+    {
+      "command": "pytest services/openclaw-gateway-adapter --ignore=test_compose_activation.py",
+      "result": "597 passed, 4 skipped (before the added memory-refresh test); new file 5 passed"
+    },
+    {
+      "command": "test_compose_activation.py / test_persona_provisioning_compose_contract.py",
+      "result": "not run: venv lacks PyYAML"
+    },
+    {
+      "command": "pytest services/control-plane/bff tests: http_entry, agent_provision_integration, create_paper_bundle, persona_provisioning_coordinator/readback/reconcile, create_data_scope, baseline_500, owner_packaged_transport",
+      "result": "229 passed"
+    }
   ],
   "known_limits": [
     "persona_proposal_submit is a contract name; the proposal-submission tool is delivered with the C1 controller",
     "backfill of the three hosted personas and hosted memory materialization were not executed",
     "personas/service.py and openclaw_ops_client.py are unchanged to stay inside the artifact contract; the coordinator's default provisioner lazily reuses service._get_active_write_owner and the existing ops client via integrations/openclaw/persona_agent_client.py"
+  ],
+  "review_rejection_fixes": [
+    "P1: agent sync moved out of coordinator.coordinate into _coordinate_persona_create, after the owner Persona record is persisted (provision_persona_agent).",
+    "P2: openclaw_agent status/reason exposed in create response meta, persisted in Persona metadata, carried forward by _persona_record_for_provisioning on readback."
   ]
 }

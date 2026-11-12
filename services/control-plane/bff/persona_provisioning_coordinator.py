@@ -558,7 +558,6 @@ class PersonaProvisioningCoordinator:
                 "deployment_saga_id": ids.deployment_saga_id,
                 "first_evaluation_workflow_id": FIRST_EVALUATION_WORKFLOW_ID,
             }
-            active.result["openclaw_agent"] = self._provision_persona_agent(active.persona_id)
             active = self._checkpoint(active)
         except Exception as exc:  # noqa: BLE001 - downstream boundaries are injected
             active = self._record_failure(active, ids, failed_step=failed_step, error=exc)
@@ -568,10 +567,11 @@ class PersonaProvisioningCoordinator:
             lease_seconds=self.lease_seconds,
         )
 
-    def _provision_persona_agent(self, persona_id: str) -> dict[str, Any]:
+    def provision_persona_agent(self, persona_id: str) -> dict[str, Any]:
         """Create/update the persona's own OpenClaw agent without gating paper.
 
-        Runs after the schedule is admitted, so no outcome here can fail or
+        Callers invoke this only after the Persona owner record is persisted
+        and the schedule is admitted, so no outcome here can fail or
         compensate the paper admission. Any problem becomes a readable degraded
         state carrying its reason; success carries the agent projection.
         """

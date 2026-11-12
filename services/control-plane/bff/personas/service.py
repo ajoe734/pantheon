@@ -4995,6 +4995,12 @@ def _persona_record_for_provisioning(
     updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
     if existing is None:
         existing = _get_active_read_store().get_persona(record.persona_id)
+    # The OpenClaw agent status is recorded on the owner Persona after create;
+    # every later readback/lifecycle rebuild of this metadata must carry it.
+    _prior_meta = (existing or {}).get("metadata") if isinstance(existing, Mapping) else None
+    _prior_agent = _prior_meta.get("openclaw_agent") if isinstance(_prior_meta, Mapping) else None
+    if isinstance(_prior_agent, Mapping) and "openclaw_agent" not in metadata:
+        metadata["openclaw_agent"] = deepcopy(dict(_prior_agent))
     if existing is None:
         if mutate_store:
             if not callable(creator):
@@ -5149,6 +5155,8 @@ def _persona_create_response(
         "live_capital_side_effects": False,
         "human_review_required_for_live": True,
     }
+    if isinstance(metadata.get("openclaw_agent"), Mapping):
+        meta["openclaw_agent"] = deepcopy(dict(metadata["openclaw_agent"]))
     if ooda_packet:
         meta["ooda_packet_id"] = ooda_packet.get("packet_id")
         meta["ooda_loop_status"] = ooda_packet.get("status")
@@ -5268,7 +5276,27 @@ def _coordinate_persona_create(
         mutate_store=True,
     )
     ooda_packet = None
-    if active.state not in {"failed", "compensated"}:
+    if active.state not in {"failed", "compensated", "retired"}:
+        # Only after the owner Persona record exists (AC1/AC6), and never
+        # blocking paper: failure becomes a readable degraded status that is
+        # persisted on the Persona so readbacks and the response expose it.
+        agent_status = coordinator.provision_persona_agent(active.persona_id)
+        metadata["openclaw_agent"] = agent_status
+        persona = {
+            **persona,
+            "metadata": {**(persona.get("metadata") or {}), "openclaw_agent": agent_status},
+        }
+        try:
+            _updater = getattr(_get_active_write_owner(), "update_persona", None)
+            if callable(_updater):
+                _updater(
+                    active.persona_id,
+                    lifecycle_state=persona.get("owner_lifecycle_state")
+                    or persona.get("lifecycle_state"),
+                    metadata=metadata,
+                )
+        except Exception as exc:  # noqa: BLE001 - status persistence is best effort
+            log.warning("Persona openclaw_agent status persistence failed: %s", exc)
         ooda_packet = _ensure_persona_ooda_packet(
             active.persona_id,
             deterministic_provisioning_ids(active).capital_pool_id,

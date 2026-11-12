@@ -100,7 +100,12 @@ def _provision(adapter, monkeypatch, record):
     )
     with mock.patch.object(persona_service, "_get_active_write_owner", return_value=_Owner(record)), \
             mock.patch.object(urllib.request, "urlopen", urlopen):
-        return coordinator.coordinate(ledger), calls
+        coordinated = coordinator.coordinate(ledger)
+        # The BFF create entry calls this only after the owner Persona exists.
+        coordinated.result["openclaw_agent"] = coordinator.provision_persona_agent(
+            coordinated.persona_id
+        )
+        return coordinated, calls
 
 
 def test_provisioning_entry_creates_persona_own_agent_from_owner_record(monkeypatch):
@@ -162,6 +167,7 @@ def test_missing_persona_owner_is_degraded_with_reason(monkeypatch):
     )
     with mock.patch.object(persona_service, "_get_active_write_owner", return_value=None):
         result = coordinator.coordinate(ledger)
+        result.result["openclaw_agent"] = coordinator.provision_persona_agent(result.persona_id)
     assert result.result["openclaw_agent"] == {
         "status": "degraded", "reason": "RuntimeError: persona_owner_unavailable_for_agent_provisioning",
     }
