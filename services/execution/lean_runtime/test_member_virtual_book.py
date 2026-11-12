@@ -57,3 +57,22 @@ class MemberVirtualBookTests(unittest.TestCase):
         self.assertTrue(summary["marks_complete"])
         self.assertAlmostEqual(summary["return_series"][0], 0)
 
+    def test_net_of_costs_block_charges_taiwan_fill_costs_and_keeps_gross_headline(self):
+        books = MemberVirtualBooks()
+        member = {"m": {"artifact_id": "m", "version": "1", "checksum": "sha256:m", "virtual_only": False,
+                        "view": {"direction": "LONG", "strength": 1}}}
+        flat = {"m": {**member["m"], "view": {"direction": "FLAT", "strength": 1}}}
+        for day, (price, members) in enumerate(((100, member), (110, member), (121, flat), (121, flat)), 1):
+            summary = books.observe(
+                binding_id="b", envelope_checksum="e", symbol="2330.TW",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                members=members, bar_frequency="1d")
+        [row] = summary if isinstance(summary, list) else books.snapshot()
+        self.assertEqual(row["basis"], "underlying_gross_virtual")
+        self.assertAlmostEqual(row["return_series"][0], 0.10)
+        net = row["net_of_costs"]
+        self.assertEqual((net["basis"], net["periods_per_year"]), ("underlying_net_taiwan_fill_costs", 252))
+        # entry pays commission; the later exit pays commission plus 0.3% equity tax
+        self.assertAlmostEqual(net["return_series"][0], 0.10 - 0.001425)
+        self.assertAlmostEqual(net["return_series"][1], 0.10)
+        self.assertAlmostEqual(net["return_series"][2], -(0.001425 + 0.003))

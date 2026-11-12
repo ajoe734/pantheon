@@ -2,20 +2,21 @@
   "task_id": "POOL-MEMBER-BASELINE-20261112",
   "scope": "source delivery only; no hosted activation, no autonomous action, no natural-event acceptance claim",
   "implemented": {
-    "resolver": "services/evolution/approved_baselines.py (resolve_member_baseline, compare_member_book)",
-    "virtual_book": "member_virtual_book.py: periods_per_year recorded; snapshot(baseline_resolver=) adds baseline and baseline_comparison per member",
-    "runtime_entry_point": "paper_runtime.py _member_book_snapshot used by snapshot, heartbeat and signal_generation metadata",
+    "resolver": "services/evolution/approved_baselines.py resolve_member_baseline reads the schema the existing gate/promotion path persists: registry entry approved state, checksum, owner_tenant, lineage.source_run_ids, evaluation_summary (create_promotion_request: out_of_sample_sharpe_ratio, max_drawdown, deflated_sharpe_threshold, backtest_run_id) and embedded metadata.strategy_artifact whose recomputed checksum must equal the entry/member checksum; validated universe = embedded artifact parameters.symbols must equal the member's underlyings; bar_frequency must be daily (gate annualisation sqrt(252))",
+    "return_basis": "underlying_net_taiwan_fill_costs, 252 periods: the gate's OOS Sharpe/drawdown are daily, after Taiwan fill costs. member_virtual_book.py adds a net_of_costs metric block on that basis (gross headline unchanged); compare_member_book compares only the block whose basis and annualisation match the baseline, else incomparable_return_basis",
+    "runtime_entry_point": "paper_runtime.py _member_book_snapshot (snapshot, heartbeat, signal_generation metadata) now defaults to approved_baselines.http_registry_entry_reader (registry owner endpoint and PERSONA_REGISTRY_* env already used by the pool store, no new setting) with actual tenant/persona/member identity; read failures become explicit registry_entry_missing",
     "pool_entry_point": "persona_strategy_pool.py PersonaStrategyPoolStore.member_baselines (read-only, keyed by pool_version, artifact_ref, checksum)",
-    "telemetry": "runtime_summary already passes member_virtual_books through; verified unchanged by test_portfolio_envelope_parity"
+    "telemetry": "runtime_summary passes member_virtual_books through unchanged"
   },
+  "tests": "Recorded Taiwan backtest fixtures (recorded_backtest_tw_2330 / _2330_2317) -> real ReplicationGate -> create_promotion_request -> registry-shaped entry -> runtime snapshot with two members with different baselines; decaying member flagged while a combined series looks healthy; negative cases for unapproved, wrong tenant/checksum/universe/child, missing run/lineage/metrics, failed gate, incomparable basis",
   "validation": {
-    "command": "pytest: test_persona_strategy_pool, test_approved_baselines, test_member_virtual_book, test_portfolio_envelope_parity, test_paper_runtime, test_runtime_summary_projection, test_performance_telemetry",
-    "result": "23 passed + 266 passed, 0 failed"
+    "command": "/tmp/persona-portfolio-venv/bin/python -m pytest test_persona_strategy_pool, test_approved_baselines, test_member_virtual_book, test_portfolio_envelope_parity, test_paper_runtime, test_runtime_summary_projection, test_performance_telemetry",
+    "result": "293 passed, 64 subtests, exit 0"
   },
   "remaining_gaps": [
-    "The replication gate does not yet emit tenant_id, artifact_checksum, validated_universe, return_basis or periods_per_year in its verdict, and nothing persists the verdict to registry entry metadata.replication_gate_verdict; until it does every member resolves to explicit no_approved_baseline (fail-closed, no defaults).",
-    "The runtime has no production registry reader injected (_member_entry_reader is unset), so hosted runtimes report registry_entry_missing; wiring is an owner-contract follow-up outside this scope.",
-    "Tests use local fixtures, not recorded Taiwan gate output; no hosted market-day claim.",
-    "Autonomous member actions remain with EVOLUTION-POOL-MEMBER-ACTIONS and POOL-ADMISSION-AND-WEIGHTS."
+    "The registry entry does not persist the gate's replication_proof or an explicit return_basis/periods_per_year field; the basis is derived from the fixed backtest protocol (daily, sqrt(252), Taiwan fill costs) and the embedded artifact's bar_frequency. An owner-side field would be stronger.",
+    "net_of_costs approximates the gate's share-based fill-cost model as exposure-fraction commission and sell tax; it is not identical to vectorbt fills.",
+    "The runtime reads the registry owner per member per snapshot with no cache (no cache allowed by scope); hosted runtimes need PERSONA_REGISTRY_BASE_URL/service token wiring by the owner, not verified here.",
+    "Tests use recorded fixtures, no hosted market-day claim. Autonomous member actions remain with EVOLUTION-POOL-MEMBER-ACTIONS and POOL-ADMISSION-AND-WEIGHTS."
   ]
 }

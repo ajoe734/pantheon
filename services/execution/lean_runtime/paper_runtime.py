@@ -5928,9 +5928,12 @@ class PaperRuntimeService:
 
     def _member_book_snapshot(self, **scope) -> list[dict[str, Any]]:
         """Member virtual books with each member's own approved baseline and comparison."""
-        from services.evolution.approved_baselines import resolve_member_baseline
+        from services.evolution.approved_baselines import (
+            http_registry_entry_reader, resolve_member_baseline,
+        )
 
-        reader = getattr(self, "_member_entry_reader", None)
+        # Registry owner read by default; tests may inject a reader.
+        reader = getattr(self, "_member_entry_reader", None) or http_registry_entry_reader
         persona_id = getattr(self._identity, "persona_id", None) or ""
         tenant_id = os.getenv("PANTHEON_TENANT_ID", "default").strip() or "default"
 

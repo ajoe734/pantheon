@@ -11,7 +11,27 @@ from datetime import datetime
 from pathlib import Path
 
 
-def virtual_book_metrics(returns, *, periods_per_year=252):
+GROSS_BASIS = "underlying_gross_virtual"
+# Same basis id the approved gate proof carries: daily returns, Taiwan statutory
+# fill costs (broker commission both sides, transaction tax on sells).
+NET_BASIS = "underlying_net_taiwan_fill_costs"
+_COMMISSION_RATE = 0.001425
+_EQUITY_TAX_RATE = 0.003
+_ETF_TAX_RATE = 0.001
+
+
+def _net_interval_costs(symbol, rows):
+    """Fractional-notional cost of the exposure change made at each observation."""
+    tax = _ETF_TAX_RATE if str(symbol).split(".")[0].startswith("00") else _EQUITY_TAX_RATE
+    costs, held = [], 0.0
+    for row in rows:
+        change = row["exposure"] - held
+        costs.append(_COMMISSION_RATE * abs(change) + tax * max(0.0, -change))
+        held = row["exposure"]
+    return costs
+
+
+def virtual_book_metrics(returns, *, periods_per_year=252, basis=GROSS_BASIS):
     equity = peak = 1.0
     drawdown = 0.0
     for value in returns:
@@ -26,7 +46,7 @@ def virtual_book_metrics(returns, *, periods_per_year=252):
             if deviation > 0 else None,
             "sharpe_undefined_reason": None if deviation > 0 else "insufficient_or_constant_returns",
             "max_drawdown": drawdown, "observation_count": len(returns),
-            "basis": "underlying_gross_virtual", "periods_per_year": periods_per_year,
+            "basis": basis, "periods_per_year": periods_per_year,
             "is_real_order": False}
 
 
@@ -112,8 +132,12 @@ class MemberVirtualBooks:
             returns = {(previous["event_time"], row["event_time"]):
                        previous["exposure"] * (row["price"] / previous["price"] - 1)
                        for previous, row in zip(rows, rows[1:])}
+            costs = _net_interval_costs(book["symbol"], rows)
+            net = {(previous["event_time"], row["event_time"]):
+                   returns[(previous["event_time"], row["event_time"])] - cost
+                   for previous, row, cost in zip(rows, rows[1:], costs)}
             key = (book["binding_id"], book["envelope_checksum"], book["member_id"])
-            groups.setdefault(key, []).append((book, returns))
+            groups.setdefault(key, []).append((book, returns, net))
         result = []
         for group in groups.values():
             book = group[0][0]
@@ -121,18 +145,20 @@ class MemberVirtualBooks:
             if isinstance(count, bool) or not isinstance(count, int) or count < 1:
                 raise ValueError("invalid virtual book underlying count")
             all_underlyings = len(group) == count
-            complete = all_underlyings and len({b["observations"][-1]["event_time"] for b, _ in group}) == 1
+            complete = all_underlyings and len({b["observations"][-1]["event_time"] for b, _, _ in group}) == 1
             # Only common, observed return intervals enter member metrics. A
             # missing underlying mark never becomes a fabricated zero return.
-            dates = set.intersection(*(set(returns) for _, returns in group)) if all_underlyings else set()
+            dates = set.intersection(*(set(returns) for _, returns, _ in group)) if all_underlyings else set()
             dates = sorted(dates)
-            returns = [math.fsum(series[day] for _, series in group) / count for day in dates]
+            returns = [math.fsum(series[day] for _, series, _ in group) / count for day in dates]
+            net_returns = [math.fsum(series[day] for _, _, series in group) / count for day in dates]
             underlyings = [{"symbol": subbook["symbol"], **virtual_book_metrics(list(series.values())),
                             "as_of": subbook["observations"][-1]["event_time"]}
-                           for subbook, series in group]
+                           for subbook, series, _ in group]
             result.append({**{k: v for k, v in book.items()
                               if k not in {"observations", "symbol", "underlying_count"}},
                            **virtual_book_metrics(returns), "underlyings": underlyings,
+                           "net_of_costs": virtual_book_metrics(net_returns, basis=NET_BASIS),
                            "aggregation": "equal_notional_per_underlying",
                            "marks_complete": complete,
                            "as_of": dates[-1][1] if dates else None})
