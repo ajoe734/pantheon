@@ -670,7 +670,7 @@ def test_pm12_persona_league_rankings_returns_computed_blocks() -> None:
             items = body["data"]["items"]
             summary = body["data"]["summary"]
             assert [block["criteria"] for block in items] == ["overall", "pnl"]
-            assert items[0]["items"][0]["rank"] == 1
+            assert items[0]["items"][0]["rank"] == (1 if items[0]["items"][0]["score"] is not None else None)
             assert items[0]["items"][0]["persona_id"]
             assert "overall_score" in items[0]["items"][0]
             assert summary["persona_count"] >= 1
@@ -712,7 +712,7 @@ def test_pm12_persona_league_movers_returns_current_snapshot_movers() -> None:
             assert summary["direction"] == "new"
             assert summary["baseline_status"] == "unavailable"
             assert summary["new_count"] == summary["persona_count"]
-            assert items[0]["current_rank"] == 1
+            assert items[0]["current_rank"] == (1 if items[0]["current_score"] is not None else None)
             assert items[0]["previous_rank"] is None
             assert items[0]["rank_delta"] is None
             assert items[0]["score_delta"] is None
@@ -770,7 +770,7 @@ def test_pm12_persona_league_tiers_returns_config_and_current_assignments() -> N
             assignments = body["data"]["related"]["assignments"]
             assert len(items) == 4
             assert items[0]["tier_id"] == "tier-1"
-            assert summary["formula_version"] == "pm12-default-v1"
+            assert summary["formula_version"] == "pm12-return-on-capital-v2"
             assert summary["persona_count"] == len(assignments)
             assert "tierId" not in items[0]
             assert "formulaVersion" not in summary
@@ -808,7 +808,7 @@ def test_pm12_persona_league_heatmap_uses_snake_case_rows() -> None:
             cell = row["cells"][0]
 
             assert data["heatmap_id"] == "persona-league-heatmap"
-            assert data["formula_version"] == "pm12-default-v1"
+            assert data["formula_version"] == "pm12-return-on-capital-v2"
             assert summary["returned_persona_count"] == 1
             assert summary["bucket_count"] == 2
             assert row["persona_id"]
@@ -818,8 +818,9 @@ def test_pm12_persona_league_heatmap_uses_snake_case_rows() -> None:
             assert bucket["end_exclusive_at"]
             assert cell["persona_id"] == row["persona_id"]
             assert cell["bucket_id"] == bucket["bucket_id"]
-            assert cell["composite_score"] >= 0
-            assert cell["formula_version"] == "pm12-default-v1"
+            assert cell["composite_score"] is None
+            assert cell["components"]["pnl_score"] is None
+            assert cell["formula_version"] == "pm12-return-on-capital-v2"
             assert cell["observed_telemetry_count"] >= 0
 
             assert "heatmapId" not in data
@@ -861,13 +862,13 @@ def test_pm12_quarterly_ranking_returns_formula_window_and_evidence() -> None:
             assert "rankings" not in body
             assert "rankings" not in data
             assert summary["quarter"] == "2026-Q1"
-            assert summary["formula_version"] == "pm12-default-v1"
+            assert summary["formula_version"] == "pm12-return-on-capital-v2"
             assert data["quarter_window"]["start_at"] == "2026-01-01T00:00:00Z"
             assert data["quarter_window"]["end_exclusive_at"] == "2026-04-01T00:00:00Z"
             assert data["formula"]["weights"]["pnl"] == 0.35
             assert body["page_info"]["page_size"] == 1
             assert body["page_info"]["total"] >= 1
-            assert items[0]["rank"] == 1
+            assert items[0]["rank"] == (1 if items[0]["score"] is not None else None)
             assert items[0]["quarter"] == "2026-Q1"
             assert items[0]["score_field"] == "overall_score"
             assert data["evidence_refs"]
@@ -900,7 +901,7 @@ def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -
             assert response.status_code == 200, response.text
             body = response.json()
             assert body["data"] == body["formula"]
-            assert body["formula"]["formula_version"] == "pm12-default-v1"
+            assert body["formula"]["formula_version"] == "pm12-return-on-capital-v2"
             assert body["formula"]["score_field"] == "overall_score"
             assert body["formula"]["weights"] == {
                 "pnl": 0.35,
@@ -910,7 +911,7 @@ def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -
             }
             assert body["summary"]["weight_total"] == 1.0
             assert body["summary"]["evidence_ref_count"] == len(body["evidence_refs"])
-            assert body["version_history"][0]["formula_version"] == "pm12-default-v1"
+            assert body["version_history"][0]["formula_version"] == "pm12-return-on-capital-v2"
             assert body["version_history"][0]["governance_evidence_refs"]
             assert body["formula"]["change_control"]["requires_governance_evidence"] is True
             assert "formulaVersion" not in body["formula"]
@@ -945,8 +946,9 @@ def test_pm12_quarterly_ranking_drilldown_uses_snake_case_lightweight_sources() 
             assert data["summary"]["persona_id"] == "persona-alpha"
             assert summary["component_count"] == len(data["contributions"])
             assert contribution["score_field"]
-            assert contribution["weighted_contribution"] >= 0
-            assert contribution["contribution_share"] >= 0
+            assert contribution["weighted_contribution"] is None
+            assert contribution["score"] is None
+            assert contribution["contribution_share"] is None
             assert data["source_breakdown"]["route_policy_summary"]["rule_count"] >= 0
             assert data["source_breakdown"]["session_count"] >= 0
             assert data["links"]["parent_ranking"].endswith("quarter=2026-Q1")
@@ -1214,12 +1216,15 @@ def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
         # Integrity of ranking output: real scores, rank ordering, exclusions preserved
         prev_score = float("inf")
         for idx, item in enumerate(items, start=1):
-            assert item["rank"] == idx
+            assert item["rank"] == (idx if item["overall_score"] is not None else None)
             assert item["quarter"] == "2026-Q1"
-            assert isinstance(item["overall_score"], (int, float))
-            assert item["overall_score"] <= prev_score
-            prev_score = item["overall_score"]
-            assert item["tier"] in {"tier-1", "tier-2", "tier-3", "tier-4"}
+            if item["overall_score"] is None:
+                assert item["tier"] == "unknown"
+                assert item["eligible"] is False
+                assert "unknown_pnl_return" in item["exclusion_codes"]
+            else:
+                assert item["overall_score"] <= prev_score
+                prev_score = item["overall_score"]
             assert "eligible" in item
             assert "exclusion_codes" in item
             assert "exclusion_reasons" in item
@@ -1351,3 +1356,161 @@ def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
         )
         assert denied.status_code == 403
 
+
+
+# Owner rows and telemetry are local test inputs. The registered HTTP router,
+# projection, telemetry reducer, scorer, adapter and snapshot identity are real.
+def _return_ranking(monkeypatch, tmp_path, observations, *, quarter="2026-Q4", route="/bff/management/quarterly-ranking"):
+    rows = []
+    summaries = {}
+    for index, (name, metrics) in enumerate(observations):
+        runtime_id = f"return-runtime-{index}"
+        rows.append({
+            "id": name, "persona_id": name, "name": name,
+            "state": "paper_running", "stage": "paper_running", "risk": "low",
+            "runtime_resolution": "active", "session_resolution": "active",
+            "runtime_ids": [runtime_id], "capital_scope": "paper_ledger",
+            "session_summary": {"active": 1}, "evaluation_summary": {"completed": 0},
+            "capability_summary": {"has_snapshot": False}, "memory_summary": {"total": 0},
+            "routed_strategy_count": 1,
+        })
+        summaries[runtime_id] = {"runtime_id": runtime_id, "collected_at": "2026-11-12T04:10:00Z",
+                                 "drawdown": 0.0, "fill_rate": 0.0, "avg_slippage_bps": 0.0,
+                                 **metrics}
+    store = _Pm12LeagueTestStore(fallback=False)
+    store.get_telemetry_summary = lambda runtime_id: summaries.get(runtime_id)
+    monkeypatch.setattr(personas_service, "_pm12_persona_league_rows", lambda **kwargs: rows)
+    with _fresh_client(str(tmp_path), store=store) as client:
+        response = client.get(route, headers=HEADERS, params={"quarter": quarter, "persona_id": rows[0]["id"]})
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+
+def _period_pnl(pnl, capital):
+    return {"pnl": pnl, "initial_cash": capital, "pnl_period_start_at": "2026-10-01T00:00:00Z",
+            "pnl_at": "2026-11-12T04:10:00Z"}
+
+
+def test_quarterly_route_return_on_capital_discriminates_audited_pnls(monkeypatch, tmp_path):
+    # Inherited audited PnLs. Capital provenance and its boundary are recorded
+    # in the task evidence; activity is an explicitly compatible test tuple.
+    source_path = Path(__file__).resolve().parents[4] / "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/hosted-capital-observations.json"
+    recorded = {row["name"]: row for row in json.loads(source_path.read_text())}
+    data = _return_ranking(monkeypatch, tmp_path, [
+        (name, {**_period_pnl(pnl, recorded[name]["initial_cash"]),
+                "pnl_period_start_at": recorded[name]["ledger_started_at"]})
+        for name, pnl in [("衡岳 R2", 12880.116), ("青禾 R3", 4730.0), ("澄川 R2", 207.0)]
+    ])
+    items = data["items"]
+    assert [item["persona_id"] for item in items] == ["衡岳 R2", "青禾 R3", "澄川 R2"]
+    assert [item["components"]["pnl_score"] for item in items] == [62.880116, 54.73, 50.207]
+    assert [item["overall_score"] for item in items] == [49.508041, 46.6555, 45.07245]
+    for item in items:
+        metrics = item["metrics"]
+        assert metrics["pnl_capital"] == 100000.0
+        assert metrics["pnl_return_unit"] == "fraction"
+        assert metrics["pnl_unit"] == "ledger_currency"
+        assert metrics["pnl_period"]["quarter"] == "2026-Q4"
+        assert metrics["pnl_period"]["as_of"] == "2026-11-12T04:10:00Z"
+        assert item["allocation_policy_input"]["source_formula_version"] == "pm12-return-on-capital-v2"
+        assert item["allocation_policy_input"]["rank_score"] == item["overall_score"]
+    assert data["formula"]["version_history"][1]["formula_version"] == "pm12-default-v1"
+    assert "operator-20261112" in data["formula"]["governance_evidence_refs"][0]
+
+
+def test_quarterly_route_return_is_scale_invariant_and_zero_pnl_is_known(monkeypatch, tmp_path):
+    data = _return_ranking(monkeypatch, tmp_path, [
+        ("small", _period_pnl(20.0, 100.0)), ("scaled", _period_pnl(2000.0, 10000.0)),
+        ("lower", _period_pnl(10.0, 100.0)), ("zero", _period_pnl(0.0, 100.0)),
+        ("loss", _period_pnl(-20.0, 100.0)),
+    ])
+    scores = {item["persona_id"]: item["components"]["pnl_score"] for item in data["items"]}
+    assert scores == {"small": 70.0, "scaled": 70.0, "lower": 60.0, "zero": 50.0, "loss": 30.0}
+
+
+@pytest.mark.parametrize("changes", [
+    {"initial_cash": None}, {"initial_cash": 0}, {"initial_cash": -10}, {"initial_cash": True},
+    {"initial_cash": float("inf")}, {"pnl": None}, {"pnl": float("nan")}, {"pnl": False},
+    {"pnl_period_start_at": None}, {"pnl_at": None},
+    {"pnl_period_start_at": "2026-09-30T23:59:59Z"},
+    {"pnl_at": "2027-01-01T00:00:00Z"},
+])
+def test_quarterly_route_unknown_pnl_stays_unknown_and_fails_closed(monkeypatch, tmp_path, changes):
+    data = _return_ranking(monkeypatch, tmp_path, [("unknown", {**_period_pnl(207.0, 100000.0), **changes})])
+    item = data["items"][0]
+    assert item["components"]["pnl_score"] is None
+    assert item["overall_score"] is None and item["score"] is None and item["rank"] is None
+    assert item["tier"] == "unknown" and item["eligible"] is False
+    assert item["allocation_policy_input"] is None
+    assert "unknown_pnl_return" in item["exclusion_codes"]
+
+
+def test_quarterly_route_does_not_sum_cumulative_history(monkeypatch, tmp_path):
+    observation = _period_pnl(200.0, 1000.0)
+    observation["history"] = [{"runtime_id": "return-runtime-0", "collected_at": "2026-11-01T00:00:00Z",
+                               **_period_pnl(100.0, 1000.0), "pnl_at": "2026-11-01T00:00:00Z"}]
+    item = _return_ranking(monkeypatch, tmp_path, [("history", observation)])["items"][0]
+    assert item["metrics"]["pnl"] == 200.0
+    assert item["metrics"]["pnl_capital"] == 1000.0
+    assert item["components"]["pnl_score"] == 70.0
+
+
+def test_quarterly_drilldown_keeps_unknown_contribution(monkeypatch, tmp_path):
+    data = _return_ranking(monkeypatch, tmp_path, [("unknown", _period_pnl(None, 1000.0))],
+                           route="/bff/management/quarterly-ranking/drilldown")
+    pnl = next(row for row in data["contributions"] if row["key"] == "pnl")
+    assert pnl["score"] is None and pnl["weighted_contribution"] is None
+    assert data["score"] is None and data["summary"]["total_weighted_contribution"] is None
+
+
+def test_pm12_v1_snapshot_digest_stays_readable_and_v2_is_versioned():
+    import hashlib
+    from services.rankings.snapshots import snapshot_record, _pm12_ranking_snapshot_payload_items
+    legacy = [{"persona_id": "legacy", "formula_version": "pm12-default-v1", "overall_score": 62.5}]
+    original_content = {"surface": "quarterly", "period": "2026-Q4", "formula_version": "pm12-default-v1",
+                        "items": _pm12_ranking_snapshot_payload_items(legacy)}
+    original_digest = hashlib.sha256(json.dumps(original_content, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+    record = snapshot_record(legacy, surface="quarterly", period="2026-Q4")
+    assert record.content_digest == original_digest and record.formula_version == "pm12-default-v1"
+    current = [{**legacy[0], "formula_version": "pm12-return-on-capital-v2"}]
+    updated = snapshot_record(current, surface="quarterly", period="2026-Q4")
+    assert updated.formula_version == "pm12-return-on-capital-v2"
+    assert updated.content_digest != record.content_digest
+    with pytest.raises(ValueError, match="mixed"):
+        snapshot_record(legacy + current, surface="quarterly", period="2026-Q4")
+
+
+def test_pnl_projection_reaches_quarterly_http_route(monkeypatch, tmp_path):
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+    from services.telemetry.test_runtime_summary_projection import _event
+    projection = RuntimeSummaryProjectionStore(path=str(tmp_path / "projection.json"))
+    event = _event("pnl_snapshot", created_at="2026-11-12T04:10:00Z")
+    event["runtime_id"] = "return-runtime-0"
+    event["metrics"] = _period_pnl(4730.0, 100000.0)
+    summary = projection.project_event(event)
+    item = _return_ranking(monkeypatch, tmp_path, [("projected", summary)])["items"][0]
+    assert item["components"]["pnl_score"] == 54.73
+    assert item["metrics"]["pnl_sources"][0]["event_id"] == event["event_id"]
+
+
+@pytest.mark.parametrize("version", ["pm12-default-v1", "pm12-return-on-capital-v2"])
+def test_bff_allocation_reader_accepts_both_snapshot_versions(version):
+    from services.rankings.snapshots import snapshot_record
+    from services.control_plane.bff.pm12.service import _pm12_allocation_snapshot_record
+    snapshot = snapshot_record([{"persona_id": "p", "formula_version": version}],
+                               surface="quarterly", period="2026-Q4").to_canonical_dict()
+    store = SimpleNamespace(get_ranking_snapshot=lambda snapshot_id: snapshot)
+    assert _pm12_allocation_snapshot_record(snapshot["ranking_snapshot_id"], read_store=store) == snapshot
+
+
+def test_pnl_return_requires_all_runtime_denominators_and_compatible_windows():
+    records = [{"runtime_id": runtime_id, **_period_pnl(pnl, 1000.0), "pnl_currency": "TWD"}
+               for runtime_id, pnl in [("r1", 100.0), ("r2", 200.0)]]
+    metrics = personas_service._pm12_telemetry_metrics_from_records(["r1", "r2"], records)
+    assert metrics["pnl_return"] == 0.15 and metrics["pnl_capital"] == 2000.0
+    assert personas_service._pm12_telemetry_metrics_from_records(["r1", "r2", "missing"], records)["pnl_return"] is None
+    records[1]["pnl_currency"] = "USD"
+    assert personas_service._pm12_telemetry_metrics_from_records(["r1", "r2"], records)["pnl_return"] is None
+    records[1]["pnl_currency"] = "TWD"
+    records[1]["pnl_period_start_at"] = "2026-10-02T00:00:00Z"
+    assert personas_service._pm12_telemetry_metrics_from_records(["r1", "r2"], records)["pnl_return"] is None

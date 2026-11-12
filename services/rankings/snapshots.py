@@ -116,12 +116,15 @@ def _pm12_ranking_snapshot_content(
     # Preserve the original digest for v1/implicit-v1 snapshots. New snapshots
     # carry their formula on each item; never relabel historical stored rows.
     versions = {str(item.get("formula_version") or FORMULA_VERSION) for item in items}
-    if len(versions) > 1 or versions - SUPPORTED_FORMULA_VERSIONS:
+    if RETURN_ON_CAPITAL_FORMULA_VERSION in versions and len(versions) > 1:
         raise ValueError("ranking snapshot has mixed or unsupported formula versions")
+    # The old identity helper always used a v1 header, even when arbitrary
+    # item labels were present. Preserve those historical hashes as well.
+    version = RETURN_ON_CAPITAL_FORMULA_VERSION if versions == {RETURN_ON_CAPITAL_FORMULA_VERSION} else FORMULA_VERSION
     return {
         "surface": surface,
         "period": period,
-        "formula_version": next(iter(versions), FORMULA_VERSION),
+        "formula_version": version,
         "items": _pm12_ranking_snapshot_payload_items(items),
     }
 

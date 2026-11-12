@@ -1,0 +1,30 @@
+{
+  "schema_version": "ranking-pnl-normalisation-evidence/v1",
+  "task_id": "RANKING-PNL-NORMALISATION-20261112",
+  "owner": "Codex",
+  "assigned_reviewer": "Claude",
+  "review_state": "pending_independent_review",
+  "formula_version": "pm12-return-on-capital-v2",
+  "previous_version": "pm12-default-v1",
+  "governance_evidence": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/operator-decision.md",
+  "hosted_capital_observations": {
+    "path": "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/hosted-capital-observations.json",
+    "retrieved_at": "2026-11-12T09:58:46.595881+00:00",
+    "source": "Read-only SSH to current dev identity from deployment plan section 3.1; docker exec Python reads runtime bindings and paper-performance JSON files; filtered output only. File SHA-256 refers to complete source ledger bytes, not the filtered evidence JSON.",
+    "join": "Capital pool name -> runtime binding capital_pool_id -> ledger binding_id; three ledger initial_cash values are 100000.0.",
+    "runtime_status_at_read": "paused",
+    "pnl_source": "Inherited 2026-11-12 audit values 12880.116 / 4730 / 207, not freshly measured PnL; no new hosted scoring or activation claim."
+  },
+  "implementation_boundary": [
+    "Persona return scorer, quarterly period validation and unknown presentation",
+    "Paper PnL event and telemetry projection propagate existing ledger capital/start without changing capital",
+    "Snapshot version identity and BFF/allocation adapter accept historical v1 and v2"
+  ],
+  "validation": [],
+  "limitations": [
+    "No hosted deployment or allocation/capital mutation",
+    "Quarter opening equity is not reconstructed for a ledger started before the requested quarter; such PnL remains unknown",
+    "Audited risk/activity inputs are compatible test reconstruction, not original hosted row summaries",
+    "Non-PnL risk/execution/activity metric semantics remain unchanged"
+  ]
+}

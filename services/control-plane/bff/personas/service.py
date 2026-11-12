@@ -5651,19 +5651,19 @@ _PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 
 # --- _PM12_QUARTERLY_FORMULA_DOC_REF ---
 _PM12_QUARTERLY_FORMULA_DOC_REF = (
-    "docs/04/pantheon_bff_api_gap_2026-05-23/"
-    "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"
+    "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/"
+    "operator-decision.md"
 )
 
 
 # --- _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID ---
 _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID = (
-    "pm12-quarterly-ranking-formula-v1-governance"
+    "pm12-quarterly-ranking-formula-v2-operator-20261112"
 )
 
 
 # --- _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT ---
-_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-05-23T00:00:00Z"
+_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-11-12T00:00:00Z"
 
 
 # --- _PM12_HEATMAP_BUCKET_DELTAS ---
@@ -5766,8 +5766,8 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
         {
             "id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
             "ref_id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
-            "title": "PM-12 quarterly ranking formula governance baseline",
-            "display_label": "PM-12 quarterly ranking formula governance baseline",
+            "title": "Operator decision 2026-11-12: PnL return on capital",
+            "display_label": "Operator decision 2026-11-12: PnL return on capital",
             "source_type": "governance_record",
             "source_ref": _PM12_QUARTERLY_FORMULA_DOC_REF,
             "captured_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
@@ -5776,7 +5776,7 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
                 "tier": "primary",
                 "verified": True,
                 "last_verified_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
-                "verification_method": "task_review",
+                "verification_method": "operator_decision_in_canonical_task",
             },
             "linked_object_summary": {
                 "entity_type": "ranking_formula",
@@ -5786,7 +5786,7 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
             "resolved_link": {
                 "availability": "available",
                 "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
-                "display_label": "Open PM-12 integration spec",
+                "display_label": "Open operator decision record",
                 "open_in_new_tab": False,
             },
             "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
@@ -5848,7 +5848,7 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
             {"key": "execution", "label": "Execution", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["execution"]},
             {"key": "activity", "label": "Activity", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["activity"]},
         ],
-        "basis": "latest_available_persona_league_metrics_with_quarter_window",
+        "basis": "persona_return_on_capital_with_verified_period",
         "policy": "read_only_governance_advisory",
         "governance_evidence_refs": evidence_ref_ids,
         "version_history": version_history,
@@ -6061,16 +6061,16 @@ def _pm12_quarterly_ranking_items(
     rows = [row for row in rows if not _fleet_cls.is_non_trading_persona(row)]
 
     def ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
-        if telemetry_cache is None:
-            return _pm12_persona_league_ranking_item(row)
         return _pm12_persona_league_ranking_item(
             row,
             telemetry_cache=telemetry_cache,
+            quarter_window=quarter_window,
         )
 
     ranked = sorted(
         (ranking_item(row) for row in rows),
         key=lambda item: (
+            item.get("overall_score") is not None,
             _management_number(item.get("overall_score")) or 0.0,
             str(item.get("persona_id") or ""),
         ),
@@ -6086,7 +6086,7 @@ def _pm12_quarterly_ranking_items(
         else {}
     )
     for rank, item in enumerate(ranked, start=1):
-        score = _management_number(item.get("overall_score")) or 0.0
+        score = _management_number(item.get("overall_score"))
         persona_id = str(item.get("persona_id") or "")
         quarter = quarter_window["quarter"]
         gov_state = _pm12_quarterly_ranking_governance_state(
@@ -6094,19 +6094,19 @@ def _pm12_quarterly_ranking_items(
         )
         ranking_item = {
             **item,
-            "rank": rank,
+            "rank": rank if score is not None else None,
             "score": score,
             "score_field": "overall_score",
             "quarter": quarter,
             "quarter_window": quarter_window,
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-            "basis": "latest_available_persona_league_metrics_with_quarter_window",
+            "basis": "persona_return_on_capital_with_verified_period",
             "period": "quarter",
             "criteria": "overall",
             "governance_state": gov_state,
         }
-        ranking_item["allocation_policy_input"] = build_pm12_allocation_policy_input(
-            ranking_item
+        ranking_item["allocation_policy_input"] = (
+            build_pm12_allocation_policy_input(ranking_item) if score is not None else None
         )
         items.append(ranking_item)
     return items
@@ -6144,7 +6144,7 @@ def _pm12_quarterly_find_persona_row(
 def _pm12_quarterly_component_score(
     components: Dict[str, Any],
     score_field: str,
-) -> float:
+) -> Optional[float]:
     camel_score_fields = {
         "pnl_score": "pnlScore",
         "risk_score": "riskScore",
@@ -6155,7 +6155,7 @@ def _pm12_quarterly_component_score(
     value = _management_number(components.get(score_field))
     if value is None:
         value = _management_number(components.get(camel_score_fields.get(score_field, "")))
-    return value or 0.0
+    return value
 
 
 # --- _pm12_quarterly_drilldown_contributions ---
@@ -6172,8 +6172,9 @@ def _pm12_quarterly_drilldown_contributions(item: Dict[str, Any]) -> List[Dict[s
         score_field, label = _PM12_LEAGUE_RANKING_CRITERIA[key]
         weight = _management_number(component.get("weight")) or 0.0
         score = _pm12_quarterly_component_score(components, score_field)
-        weighted = round(score * weight, 6)
-        total_weighted += weighted
+        weighted = round(score * weight, 6) if score is not None else None
+        if weighted is not None:
+            total_weighted += weighted
         contribution_rows.append({
             "id": f"{item.get('persona_id') or item.get('id')}-{key}",
             "key": key,
@@ -6185,10 +6186,11 @@ def _pm12_quarterly_drilldown_contributions(item: Dict[str, Any]) -> List[Dict[s
             "basis": "component_score_x_formula_weight",
         })
 
-    denominator = total_weighted if total_weighted > 0 else None
+    complete = all(row["score"] is not None for row in contribution_rows)
+    denominator = total_weighted if complete and total_weighted > 0 else None
     for row in contribution_rows:
         weighted = _management_number(row.get("weighted_contribution")) or 0.0
-        share = round(weighted / denominator, 6) if denominator else 0.0
+        share = round(weighted / denominator, 6) if denominator else None
         row["contribution_share"] = share
 
     return contribution_rows
@@ -6206,11 +6208,11 @@ def _pm12_quarterly_drilldown_payload(
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     formula = _pm12_quarter_formula_payload()
     contributions = _pm12_quarterly_drilldown_contributions(item)
-    total_weighted = round(
+    total_weighted = None if any(entry["weighted_contribution"] is None for entry in contributions) else round(
         sum(_management_number(entry.get("weighted_contribution")) or 0.0 for entry in contributions),
         6,
     )
-    score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or total_weighted
+    score = _management_number(item.get("overall_score"))
     route_policy = row.get("route_policy_summary") if isinstance(row.get("route_policy_summary"), dict) else {}
     capabilities = row.get("capability_summary") if isinstance(row.get("capability_summary"), dict) else {}
     bindings = row.get("binding_summary") if isinstance(row.get("binding_summary"), dict) else {}
@@ -7493,11 +7495,12 @@ def _pm12_persona_league_ranking_item(
     *,
     metrics: Optional[Dict[str, Any]] = None,
     telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+    quarter_window: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     metrics = (
         metrics
         if isinstance(metrics, dict)
-        else _pm12_persona_telemetry_metrics(row, telemetry_cache=telemetry_cache)
+        else _pm12_persona_telemetry_metrics(row, telemetry_cache=telemetry_cache, quarter_window=quarter_window)
     )
     scores = _pm12_persona_league_scores(row, metrics)
     tier = _pm12_tier_for_score(scores["overall_score"])
@@ -7518,6 +7521,9 @@ def _pm12_persona_league_ranking_item(
 
     exclusion_codes: List[str] = []
     exclusion_reasons: List[str] = []
+    if scores["pnl_score"] is None:
+        exclusion_codes.append("unknown_pnl_return")
+        exclusion_reasons.append("PnL, capital or matching performance period is unknown")
     if not lifecycle_operational:
         exclusion_codes.append("inactive_lifecycle")
         exclusion_reasons.append(f"Inactive lifecycle state: {state}")
@@ -7588,7 +7594,7 @@ def _pm12_persona_league_ranking_item(
 
     if telemetry_count == 0:
         source_confidence = "unavailable"
-    elif metrics.get("pnl") is None or metrics.get("drawdown") is None:
+    elif scores["pnl_score"] is None or metrics.get("drawdown") is None:
         source_confidence = "degraded"
     else:
         source_confidence = "formal"
@@ -7632,6 +7638,7 @@ def _pm12_persona_league_ranking_item(
         "tier_id": tier["id"],
         "tier_label": tier["label"],
         "overall_score": scores["overall_score"],
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "metrics": metrics,
         "components": components,
         "links": row.get("links") or {},
@@ -7675,6 +7682,7 @@ def _pm12_persona_league_rankings(
         ranked = sorted(
             base_items,
             key=lambda item: (
+                (item.get("components") or {}).get(score_key) is not None,
                 _management_number((item.get("components") or {}).get(score_key)) or 0.0,
                 str(item.get("persona_id") or ""),
             ),
@@ -7682,10 +7690,10 @@ def _pm12_persona_league_rankings(
         )[:limit]
         block_items: List[Dict[str, Any]] = []
         for rank, item in enumerate(ranked, start=1):
-            score = _management_number((item.get("components") or {}).get(score_key)) or 0.0
+            score = _management_number((item.get("components") or {}).get(score_key))
             block_items.append({
                 **item,
-                "rank": rank,
+                "rank": rank if score is not None else None,
                 "score": score,
                 "score_field": score_key,
                 "period": "short_cycle",
@@ -7696,7 +7704,7 @@ def _pm12_persona_league_rankings(
             "ranking_id": f"persona-league-{criterion}",
             "criteria": criterion,
             "label": label,
-            "formula_version": "pm12-default-v1",
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
             "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
             "items": block_items,
             "ranked_count": len(block_items),
@@ -7714,6 +7722,7 @@ def _pm12_persona_league_tier_payload(
     ranking_items = sorted(
         ranking_items,
         key=lambda item: (
+            item.get("overall_score") is not None,
             _management_number(item.get("overall_score")) or 0.0,
             str(item.get("persona_id") or ""),
         ),
@@ -7747,7 +7756,7 @@ def _pm12_persona_league_tier_payload(
         })
     summary = {
         "season_id": "current",
-        "formula_version": "pm12-default-v1",
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "persona_count": len(assignments),
         "tier_count": len(tiers),
         "by_tier": by_tier,
@@ -7765,6 +7774,7 @@ def _pm12_persona_league_mover_items(
     ranked_items = sorted(
         (_pm12_persona_league_ranking_item(row) for row in rows),
         key=lambda item: (
+            item.get("overall_score") is not None,
             _management_number(item.get("overall_score")) or 0.0,
             str(item.get("persona_id") or ""),
         ),
@@ -7774,14 +7784,14 @@ def _pm12_persona_league_mover_items(
     direction_counts = {"up": 0, "down": 0, "flat": 0, "new": 0}
     for current_rank, item in enumerate(ranked_items, start=1):
         persona_id = str(item.get("persona_id") or item.get("id") or "")
-        current_score = _management_number(item.get("overall_score")) or 0.0
+        current_score = _management_number(item.get("overall_score"))
         movement_direction = "new"
         direction_counts[movement_direction] += 1
         mover = {
             **item,
             "id": f"persona-league-mover-{persona_id}",
             "mover_id": f"persona-league-mover-{persona_id}",
-            "current_rank": current_rank,
+            "current_rank": current_rank if current_score is not None else None,
             "previous_rank": None,
             "rank_delta": None,
             "direction": movement_direction,
@@ -7791,7 +7801,7 @@ def _pm12_persona_league_mover_items(
             "score_delta_display": "baseline unavailable",
             "baseline_status": "unavailable",
             "basis": "current_persona_league_snapshot_no_historical_baseline",
-            "rank": current_rank,
+            "rank": current_rank if current_score is not None else None,
             "score": current_score,
             "score_field": "overall_score",
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
@@ -12609,13 +12619,13 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
 }
 _PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 _PM12_QUARTERLY_FORMULA_DOC_REF = (
-    "docs/04/pantheon_bff_api_gap_2026-05-23/"
-    "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"
+    "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/"
+    "operator-decision.md"
 )
 _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID = (
-    "pm12-quarterly-ranking-formula-v1-governance"
+    "pm12-quarterly-ranking-formula-v2-operator-20261112"
 )
-_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-05-23T00:00:00Z"
+_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-11-12T00:00:00Z"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _PM12_HEATMAP_BUCKET_DELTAS = {
     "hour": timedelta(hours=1),
@@ -13202,6 +13212,8 @@ def _pm12_telemetry_record_timestamp(record: Dict[str, Any]) -> Optional[datetim
 
 # --- _pm12_finite_number ---
 def _pm12_finite_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
     parsed = _management_number(value)
     if parsed is None or not math.isfinite(parsed):
         return None
@@ -13231,6 +13243,8 @@ def _pm12_telemetry_record_resolution(
 def _pm12_telemetry_metrics_from_records(
     runtime_ids: List[str],
     telemetry: List[Dict[str, Any]],
+    *,
+    quarter_window: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     telemetry = sorted(
         telemetry,
@@ -13339,7 +13353,85 @@ def _pm12_telemetry_metrics_from_records(
         "total_trades": int(sum(trade_values)) if trade_values else 0,
         "latest_telemetry_at": latest_timestamp_iso,
         "telemetry_evidence_refs": telemetry_evidence_refs,
+        **_pm12_pnl_return_metrics(runtime_ids, telemetry, quarter_window=quarter_window),
     }
+
+
+def _pm12_pnl_return_metrics(
+    runtime_ids: List[str],
+    records: List[Dict[str, Any]],
+    *,
+    quarter_window: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Use the latest cumulative PnL/capital tuple per authoritative runtime.
+
+    No historical cumulative sums, metadata budget defaults or invented quarter
+    opening equity. A ledger opened within the quarter is a since-inception
+    quarter-to-date observation; an older ledger needs a period owner first.
+    """
+    result: Dict[str, Any] = {
+        "pnl_return": None, "pnl_capital": None,
+        "pnl_unit": "ledger_currency", "pnl_return_unit": "fraction",
+        "pnl_period": None, "pnl_return_status": "unknown",
+        "pnl_return_reason": "missing_pnl_capital_or_period", "pnl_sources": [],
+    }
+    if not runtime_ids:
+        return result
+    for runtime_id in runtime_ids:
+        candidates = [record for record in records if record.get("runtime_id") == runtime_id]
+        # PnL's own timestamp must not advance with unrelated heartbeat metrics.
+        def pnl_at(record):
+            return _audit_datetime(record.get("pnl_at") or record.get("pnl_as_of"))
+        candidates = [record for record in candidates if pnl_at(record) is not None]
+        if not candidates:
+            return result
+        latest_at = max(pnl_at(record) for record in candidates)
+        latest = [record for record in candidates if pnl_at(record) == latest_at]
+        tuples = []
+        for record in latest:
+            pnl = _pm12_finite_number(record.get("pnl"))
+            capital = _pm12_finite_number(record.get("initial_cash"))
+            start = _audit_datetime(record.get("pnl_period_start_at"))
+            tuples.append((pnl, capital, start, str(record.get("pnl_currency") or "")))
+        if any(value != tuples[0] for value in tuples):
+            result["pnl_return_reason"] = "ambiguous_pnl_observation"
+            return result
+        pnl, capital, start, currency = tuples[0]
+        if pnl is None or capital is None or capital <= 0 or start is None or start > latest_at:
+            return result
+        if quarter_window is not None:
+            quarter_start = _audit_datetime(quarter_window.get("start_at"))
+            quarter_end = _audit_datetime(quarter_window.get("end_exclusive_at"))
+            if quarter_start is None or quarter_end is None or not quarter_start <= start <= latest_at < quarter_end:
+                result["pnl_return_reason"] = "pnl_period_outside_ranking_quarter"
+                return result
+        result["pnl_sources"].append({
+            "runtime_id": runtime_id, "pnl": pnl, "capital": capital,
+            "capital_source": "pnl_snapshot.initial_cash", "currency": currency or None,
+            "start_at": _pm12_iso_z(start), "as_of": _pm12_iso_z(latest_at),
+            "event_id": latest[0].get("pnl_event_id"),
+        })
+    sources = result["pnl_sources"]
+    # Different windows/currencies cannot form one persona return. In particular,
+    # do not add two unlabelled currencies across independent ledgers.
+    if len(sources) > 1 and (
+        len({(s["start_at"], s["as_of"], s["currency"]) for s in sources}) != 1
+        or not sources[0]["currency"]
+    ):
+        result["pnl_return_reason"] = "incompatible_runtime_pnl_periods_or_currencies"
+        return result
+    capital = sum(source["capital"] for source in sources)
+    pnl = sum(source["pnl"] for source in sources)
+    pnl_return = pnl / capital
+    if not all(math.isfinite(value) for value in (capital, pnl, pnl_return)):
+        return result
+    result.update({
+        "pnl": pnl, "pnl_capital": capital, "pnl_return": pnl_return,
+        "pnl_period": {"start_at": sources[0]["start_at"], "as_of": sources[0]["as_of"],
+                       "quarter": quarter_window.get("quarter") if quarter_window else None},
+        "pnl_return_status": "known", "pnl_return_reason": None,
+    })
+    return result
 
 
 # --- _pm12_persona_telemetry_records ---
@@ -13403,6 +13495,7 @@ def _pm12_persona_telemetry_metrics(
     row: Dict[str, Any],
     *,
     telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+    quarter_window: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     telemetry_cache = telemetry_cache if telemetry_cache is not None else {}
     runtime_ids = _pm12_persona_runtime_ids(row, telemetry_cache=telemetry_cache)
@@ -13418,6 +13511,7 @@ def _pm12_persona_telemetry_metrics(
     metrics = _pm12_telemetry_metrics_from_records(
         runtime_ids,
         records,
+        quarter_window=quarter_window,
     )
     resolutions = [
         _pm12_telemetry_record_resolution(summary, runtime_id)
@@ -13440,7 +13534,9 @@ def _pm12_persona_telemetry_metrics(
 
 
 # --- _pm12_tier_for_score ---
-def _pm12_tier_for_score(score: float) -> Dict[str, Any]:
+def _pm12_tier_for_score(score: Optional[float]) -> Dict[str, Any]:
+    if score is None:
+        return {"id": "unknown", "label": "Unknown", "governance_posture": "insufficient_evidence"}
     for tier in _PM12_LEAGUE_TIER_DEFINITIONS:
         if score >= float(tier["min_score"]):
             return tier
