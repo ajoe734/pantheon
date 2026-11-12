@@ -1,0 +1,77 @@
+{
+  "task_id": "FACTOR-RULE-SCREEN-SECTION-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "scope": "factor_rule_v1 optional screen, shared PIT candidate pools, paper/vectorbt integration",
+  "design": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_STRATEGY_SCREEN_ENTRY_EXIT_2026-11-12.md",
+  "implementation_notes": "docs/deployment/evidence/FACTOR-RULE-SCREEN-SECTION-20261112/README.md",
+  "fixture": "services/research/tests/fixtures/candidate_pool_tw_recorded.json",
+  "recorded_data": {
+    "source": "Official TWSE STOCK_DAY; four raw responses with hashes and rows retained in fixture",
+    "symbols": [
+      "2330.TW",
+      "2317.TW"
+    ],
+    "sessions": 39,
+    "bars": 78,
+    "period": "2026-09-01 through 2026-10-30",
+    "survivorship_limited": true
+  },
+  "validation": {
+    "status": "passed",
+    "exit_status": 0,
+    "bounded_timeout_seconds": 180,
+    "command": ".venv-pantheon/bin/python -m pytest services/registry/test_factor_rule.py services/registry/test_candidate_pool.py services/registry/test_strategy_artifact.py services/execution/lean_runtime/test_paper_signal_producer.py services/research/vectorbt/test_adapter.py services/research/tests/test_candidate_pool_parity.py services/source_ingestion/tests/test_feature_catalogue.py -q --tb=short --durations=5",
+    "result": "328 passed, 20 subtests passed; 309 dependency deprecation warnings; 143.26 seconds",
+    "log": "docs/deployment/evidence/FACTOR-RULE-SCREEN-SECTION-20261112/validation.log",
+    "tested_base": "ac4fd811db2c2c48a2e3cb870b3ec1fb15406d9d",
+    "additional_check": "git diff --check",
+    "environment": {
+      "python": "3.12",
+      "vectorbt": "1.1.1",
+      "provision": "scripts/dev/provision_python_distribution.py --dependency-python /tmp/persona-portfolio-venv/bin/python"
+    }
+  },
+  "independent_review": {
+    "status": "pending",
+    "reviewer": "Claude"
+  },
+  "hosted_claim": false,
+  "acceptance_evidence": {
+    "1": [
+      "test_optional_screen_schema_and_legacy_shape",
+      "test_ordered_filter_rank_and_bottom_use_current_set",
+      "test_industry_group_cuts_with_dated_catalogued_classification"
+    ],
+    "2": [
+      "test_boundary_exclusions_are_recorded",
+      "test_calendar_catches_a_wholly_stale_feed"
+    ],
+    "3": [
+      "test_refresh_is_calendar_anchored_and_no_faster_than_slowest_input",
+      "test_slow_rank_freezes_the_entire_upstream_prefix",
+      "test_screen_cadence_uses_source_catalogue_dataset_and_provider_periods"
+    ],
+    "4": [
+      "test_paper_persists_pool_even_on_hold_day_and_digest_changes_decision_key"
+    ],
+    "5": [
+      "test_pool_exit_and_minimum_hold_never_evaluate_excluded_entry",
+      "test_pool_removal_expression_must_close_a_held_instrument",
+      "test_rule_flat_exit_cannot_open_a_short_or_reconstruct_a_phantom_position"
+    ],
+    "6": [
+      "test_today_and_future_rows_cannot_change_snapshot_or_digest",
+      "test_declared_release_lag_and_late_publication_are_both_honored",
+      "test_survivorship_limited_history_cannot_enter_replication_admission"
+    ],
+    "7": [
+      "test_screen_schema_is_portable_and_legacy_artifact_bytes_are_preserved",
+      "existing factor rule, artifact, paper and vectorbt regression suites"
+    ],
+    "8": [
+      "test_real_vectorbt_entry_and_paper_replay_match_every_bar",
+      "test_fixture_ohlcv_is_parsed_from_recorded_official_rows"
+    ]
+  }
+}

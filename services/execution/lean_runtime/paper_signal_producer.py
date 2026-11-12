@@ -529,6 +529,12 @@ class CurrentArtifactStrategy:
                 params,
                 decider=self._decider or expression_policy.decide,
             )
+        if view.get("exit_reason") and record.get("reason_code") != "close_leg":
+            # An exit may only reduce an actual held instrument. A stale feed
+            # position must never turn removal from a pool into a fresh short.
+            record = expression_policy.budget_unavailable_no_trade(
+                decision_view, "held_position", "candidate pool exit has no validated close leg",
+            )
         chosen_candidate = next(
             (c for c in candidates if c.get("instrument_id") == record.get("instrument_id")),
             {},
@@ -565,7 +571,8 @@ class CurrentArtifactStrategy:
             "momentum": view.get("momentum"),
         }
 
-    def __call__(self, binding: Any, now_iso: str, *, _portfolio_symbol: str | None = None) -> dict[str, Any]:
+    def __call__(self, binding: Any, now_iso: str, *, _portfolio_symbol: str | None = None,
+                 _screen_view: Mapping[str, Any] | None = None) -> dict[str, Any]:
         b_dict = _binding_dict_from_obj(binding)
         binding_id = _required_binding_text(b_dict, "binding_id")
         metadata = (
@@ -646,6 +653,39 @@ class CurrentArtifactStrategy:
                 f"binding {binding_id} requested unsupported strategy_logic kind {logic_kind!r}",
             )
 
+        screened = logic_kind == "factor_rule_v1" and "screen" in strategy_logic
+        if screened and _portfolio_symbol is None:
+            from services.registry.candidate_pool import (
+                MARKET_FEATURE_KEY, _market, canonical_symbol, evaluate_screened_views,
+            )
+
+            snapshots = b_dict.get("market_inputs") or metadata.get("market_inputs")
+            if not isinstance(snapshots, Mapping) or not snapshots:
+                raise SignalDecisionUnavailable("market_input_missing", "screen requires market_inputs for the governed market")
+            try:
+                features = {**(metadata.get("features") or {}), **(b_dict.get("features") or {})}
+                _, market_symbols = _market(features.get(MARKET_FEATURE_KEY))
+                keyed = {canonical_symbol(s): s for s in snapshots}
+                if len(keyed) != len(snapshots) or set(keyed) != set(market_symbols):
+                    raise ValueError("screen market_inputs must cover the complete governed market")
+                if not all(isinstance(snapshots[s], Mapping) for s in snapshots):
+                    raise ValueError("screen market_inputs must contain snapshot objects")
+                stamps = {snapshots[s].get("event_time") for s in snapshots}
+                if len(stamps) != 1 or not next(iter(stamps)):
+                    raise ValueError("screen market_inputs require one common decision bar")
+                positions = {s: snapshots[keyed[s]] for s in keyed}
+                views = evaluate_screened_views(
+                    strategy_artifact, features[MARKET_FEATURE_KEY], next(iter(stamps)), positions=positions,
+                )
+            except (ValueError, TypeError) as exc:
+                raise SignalDecisionUnavailable("market_input_invalid", str(exc)) from exc
+            decisions = []
+            for symbol in sorted(keyed):
+                member_binding = {**b_dict, "symbol": symbol, "features": features,
+                                  "market_input": {**snapshots[keyed[symbol]], "symbol": symbol}}
+                decisions.append(self(member_binding, now_iso, _portfolio_symbol=symbol, _screen_view=views[symbol]))
+            return {"portfolio_decisions": decisions}
+
         if logic_kind == "persona_portfolio_v1":
             from services.registry.strategy_artifact import (
                 StrategyArtifactValidationError, validate_strategy_artifact,
@@ -709,7 +749,8 @@ class CurrentArtifactStrategy:
             )
 
             assert_governed_feature_inputs(strategy_logic)
-            assert_governed_feature_observations(strategy_logic, features, decision_time)
+            if not screened:
+                assert_governed_feature_observations(strategy_logic, features, decision_time)
         except FactorRuleValidationError as exc:
             raise SignalDecisionUnavailable(
                 "feature_not_in_catalogue",
@@ -731,7 +772,10 @@ class CurrentArtifactStrategy:
                 )
                 view = portfolio_result["view"]
                 action = view["action"]
-            elif expression_enabled:
+            elif screened and _screen_view is not None:
+                view = dict(_screen_view)
+                action = view["action"]
+            elif expression_enabled or screened:
                 from services.registry.strategy_artifact import evaluate_strategy_view
 
                 view = evaluate_strategy_view(
@@ -741,6 +785,7 @@ class CurrentArtifactStrategy:
                     decision_time=decision_time,
                     holding_bars=holding_bars,
                     current_direction=current_direction,
+                    symbol=market_input["symbol"],
                 )
                 action = view["action"]
             else:
@@ -805,6 +850,8 @@ class CurrentArtifactStrategy:
             "symbol": symbol,
             "bar": bar_key,
         }
+        if screened:
+            decision_key["candidate_pool_digest"] = view["candidate_pool_digest"]
         decision_digest = hashlib.sha256(
             json.dumps(decision_key, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -881,6 +928,12 @@ class CurrentArtifactStrategy:
             }
             out["metadata"]["portfolio_net_view"] = dict(portfolio_result["view"])
             out["metadata"]["portfolio_bar_frequency"] = parameters["bar_frequency"]
+        if screened:
+            out["metadata"]["candidate_pool_snapshot"] = view["candidate_pool_snapshot"]
+            out["metadata"]["candidate_pool_digest"] = view["candidate_pool_digest"]
+            out["metadata"]["candidate_pool_view"] = {
+                k: v for k, v in view.items() if k != "candidate_pool_snapshot"
+            }
         if expression_enabled and view is not None and is_taiwan_venue_symbol(symbol):
             # Lazy: the producer evaluates only after admission and a stored
             # record lookup, so a restart never re-runs builder or decider.
@@ -890,7 +943,7 @@ class CurrentArtifactStrategy:
                 # not graded because their bars are not one session each.
                 "grading": (
                     {"closes": list(closes), "decision_id_for_bar": decision_id_for_bar}
-                    if str(parameters.get("bar_frequency") or "").strip().lower()
+                    if not screened and str(parameters.get("bar_frequency") or "").strip().lower()
                     in {"1d", "d", "1day", "daily"}
                     else None
                 ),
@@ -1377,7 +1430,8 @@ def _strategy_symbol(
         )
 
     # 2. Raw symbol membership check against approved artifact parameters.symbols
-    if isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+    screened = "screen" in (strategy_artifact.get("strategy_logic") or {})
+    if not screened and isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
         if symbol not in symbols:
             raise SignalDecisionUnavailable(
                 "market_input_invalid",
@@ -1888,6 +1942,16 @@ class PaperSignalProducer:
                 is_signal_already_admitted,
             )
             dsp = DecisionSignalProducer(store)
+
+            pool_snapshot = (out.get("metadata") or {}).get("candidate_pool_snapshot")
+            if pool_snapshot is not None:
+                putter = getattr(store, "put_decision_record", None)
+                if not callable(putter):
+                    self._degraded_by_binding[binding_id] = "candidate_pool_store_unsupported"
+                    return 0
+                # Store HOLD days as well as trades, before deduplication or
+                # expression selection can return early.
+                putter(f"candidate-pool-{binding_id}-{pool_snapshot['digest']}", pool_snapshot)
 
             # An explicit signal_id marks a decision whose identity is already
             # deterministic; reuse the store's processed or execution-fence record
