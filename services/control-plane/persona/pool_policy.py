@@ -61,7 +61,7 @@ def dated_series(book, checksum=None):
         parsed = [date.fromisoformat(day) for day in days]
     except (ValueError, TypeError):
         raise ValueError("virtual_book_dates_invalid") from None
-    if parsed != sorted(set(parsed)) or any(not finite(v) or v <= -1 for v in values):
+    if parsed != sorted(set(parsed)) or any(not finite(v) or v < -1 for v in values):
         raise ValueError("virtual_book_observations_invalid")
     if book.get("basis") != "underlying_exposure_fraction_net_taiwan_costs_equal_notional":
         raise ValueError("virtual_book_return_basis_unknown")
@@ -181,7 +181,7 @@ def reweight(members, books, policy, now, previous_statistics=None):
         stat["drawdown_cap"] = None
         if stat["drawdown"] + 1e-12 >= policy.halve_drawdown:
             prior_cap = previous_statistics.get(ref, {}).get("drawdown_cap")
-            stat["drawdown_cap"] = prior_cap if finite(prior_cap) else member["risk_weight"] * 0.5
+            stat["drawdown_cap"] = min(prior_cap, member["risk_weight"]) if finite(prior_cap) else member["risk_weight"] * 0.5
             weight = min(weight, stat["drawdown_cap"])
         if member["stage"] == "trial" and stat["days"] < policy.trial_history_days:
             weight = min(weight, policy.trial_risk_cap)

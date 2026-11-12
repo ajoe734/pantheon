@@ -85,6 +85,10 @@ def evaluate_admission(*, dataset, current, proposed, candidate, entries, trial_
         raise ValueError("backtest_windows_not_aligned")
     if any(not math.isfinite(v) or v <= 0 for bars in prepared.ohlcv_by_instrument.values() for bar in bars for v in bar[:4]):
         raise ValueError("backtest_prices_invalid")
+    if any(isinstance(row.get(key), bool) for row in dataset["records"] for key in ("open", "high", "low", "close", "volume")):
+        raise ValueError("backtest_boolean_observations_invalid")
+    if any(not math.isfinite(bar[4]) or bar[4] < 0 for bars in prepared.ohlcv_by_instrument.values() for bar in bars):
+        raise ValueError("backtest_volume_invalid")
     all_dates = calendars[0]
     dates = all_dates[int(len(all_dates) * policy.in_sample_fraction):]
     if len(dates) - 1 < policy.minimum_oos_days:

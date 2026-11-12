@@ -151,8 +151,8 @@ class PoolDecisionRequest(BaseModel):
 
     @model_validator(mode="after")
     def _candidate_required(self):
-        if (self.action == "admit") != (self.candidate is not None):
-            raise ValueError("only admission requires a candidate")
+        if self.action != "admit" and self.candidate is not None:
+            raise ValueError("only admission accepts a candidate")
         return self
 
 
@@ -371,7 +371,8 @@ class PersonaStrategyPoolStore:
             )
         previous = versions[-1] if versions else None
         try:
-            self._validate_membership(previous, request.members, tenant_id)
+            self._validate_membership(previous, request.members, tenant_id,
+                policy_authorized=bool(decision and decision.get("status") == "applied"))
         except PoolMemberRefused as exc:
             self._record_refusal(persona_id, tenant_id, request, actor_id, exc)
             raise
@@ -409,7 +410,8 @@ class PersonaStrategyPoolStore:
         return dict(body)
 
     def _validate_membership(
-        self, previous: Mapping[str, Any] | None, members: list[PoolMember], tenant_id: str
+        self, previous: Mapping[str, Any] | None, members: list[PoolMember], tenant_id: str,
+        *, policy_authorized: bool = False,
     ) -> None:
         from pool_policy import load_policy
 
@@ -443,6 +445,18 @@ class PersonaStrategyPoolStore:
                 continue
             total += member.risk_weight
             _verify_member(member, tenant_id, self._reader)
+            if not policy_authorized:
+                # The record API remains available for bootstrap, risk
+                # reductions and removals. It cannot bypass automated policy
+                # by inserting a member or increasing an allocation directly.
+                if previous and (before is None or member.risk_weight > before["risk_weight"] + _WEIGHT_EPSILON
+                                 or (before["stage"] == "trial" and member.stage == "active")):
+                    raise PoolMemberRefused("admission or increased risk requires a paper pool policy decision",
+                                            artifact_ref=member.artifact_ref)
+                if member.stage == "trial" and member.risk_weight > policy.trial_risk_cap + _WEIGHT_EPSILON:
+                    # An unchanged matured trial is already policy-attested.
+                    if before is None or member.risk_weight != before["risk_weight"]:
+                        raise PoolMemberRefused("unproven trial allocation exceeds policy cap", artifact_ref=member.artifact_ref)
         if total > 1.0 + _WEIGHT_EPSILON:
             raise PoolMemberRefused(f"risk weights of live members sum to {total:.6f}, above 1.0")
 
@@ -470,12 +484,17 @@ class PersonaStrategyPoolStore:
         members = [dict(m) for m in current["members"]]
         count = max((int((v.get("decision") or {}).get("persona_trial_count", 0))
                      for v in self.versions(persona_id, tenant_id)), default=0)
-        if request.action == "admit":
+        if request.action == "admit" and request.candidate is not None:
             count += 1
         decision = {"action": request.action, "status": "refused", "reasons": [],
                     "persona_trial_count": count, "policy": policy.model_dump(),
+                    "candidate": request.candidate.model_dump() if request.candidate else None,
                     "policy_digest": canonical_digest(policy.model_dump()),
                     "health": pool_health(members, request.books, request.observations, policy),
+                    "input_digest": canonical_digest({"books": request.books, "observations": request.observations,
+                                                      "dataset": request.dataset}),
+                    "book_sources": {ref: {key: book.get(key) for key in ("checksum", "source_ref", "basis", "dates")}
+                                     for ref, book in request.books.items()},
                     "execution_context": "paper", "execution_status": "requires_approved_envelope"}
         now = self._now()
         try:
@@ -487,6 +506,8 @@ class PersonaStrategyPoolStore:
                 decision.update(status="applied", member_statistics=stats)
             else:
                 candidate = request.candidate
+                if candidate is None:
+                    raise ValueError("no_qualifying_candidate_budget_left_unused")
                 live = [m for m in members if m["stage"] != "removed"]
                 if candidate.artifact_ref in {m["artifact_ref"] for m in members}:
                     raise ValueError("candidate_already_in_pool_history")
@@ -513,11 +534,17 @@ class PersonaStrategyPoolStore:
                 candidate_stat = member_statistics(trial, request.books.get(candidate.artifact_ref), policy)
                 if candidate_stat["drawdown"] + 1e-12 >= policy.remove_drawdown:
                     raise ValueError("candidate_virtual_book_drawdown_exceeds_removal_policy")
-                # Risk-parity start from observed member volatility. Adding a
-                # trial never expands total allocated risk; caps leave cash idle.
+                # Risk-parity start from observed member volatility; caps
+                # leave unused risk budget idle.
                 inv = {ref: 1 / stat["volatility"] for ref, stat in {**stats, candidate.artifact_ref: candidate_stat}.items()}
                 trial["risk_weight"] = min(policy.trial_risk_cap, inv[candidate.artifact_ref] / sum(inv.values()))
-                full = sum(m["risk_weight"] for m in live) >= policy.budget_full - _WEIGHT_EPSILON
+                health = decision["health"]
+                if any(health[key]["status"] != "known" for key in ("gross_utilisation", "drawdown_utilisation")):
+                    raise ValueError("risk_budget_observations_missing")
+                last = request.observations[-1]
+                full = max(sum(m["risk_weight"] for m in live),
+                           health["gross_utilisation"]["value"], health["drawdown_utilisation"]["value"],
+                           last["gross_notional"] / last["gross_limit"], last["drawdown"] / last["drawdown_limit"]) >= policy.budget_full - _WEIGHT_EPSILON
                 proposed = [dict(m) for m in members]
                 if full:
                     if not live:

@@ -104,11 +104,235 @@ def _post(client, members, expected, pid="persona-1", tenant="tenant-a"):
     )
 
 
+def _decision(client, version, action="reweight", **kw):
+    return client.post("/api/personas/persona-1/strategy-pool/decisions",
+        json={"expected_version": version, "execution_context": "paper", "action": action, **kw},
+        headers=_auth(WRITE))
+
+
+def _observed_book(checksum, better=False):
+    # Test-only book input at the authenticated owner boundary. Production
+    # has no fallback books or prices; the OOS replay below uses recorded TWSE.
+    from datetime import date, timedelta
+    return {"checksum": checksum, "source_ref": "test:virtual-book-owner", "since_inception": True,
+            "basis": "underlying_exposure_fraction_net_taiwan_costs_equal_notional",
+            "dates": [(date(2026, 9, 1) + timedelta(days=i)).isoformat() for i in range(30)],
+            "returns": ([.002, -.0005] if better else [.001, -.0005]) * 15}
+
+
+def _risk_observations(books, notional=20):
+    return [{"date": day, "source_ref": "test:risk-owner", "gross_notional": notional,
+             "gross_limit": 100, "drawdown": .01, "drawdown_limit": .1}
+            for day in next(iter(books.values()))["dates"][-20:]]
+
+
+def test_decision_routes_admit_reweight_replace_refuse_and_read_version_history(env):
+    """Real HTTP -> store -> policy -> recorded-data replay, no patched evaluator.
+
+    Registry is the existing FakeRegistry boundary. Its test-only constant-long
+    approval proof is not represented as a real gate approval or hosted proof.
+    """
+    import copy
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    from services.research.tests.test_pool_admission import entries_and_members, recorded_dataset
+
+    client, reg, owner = env
+    entries, one, two = entries_and_members()
+    current = entries[two["artifact_ref"]]
+    candidate = copy.deepcopy(entries[one["artifact_ref"]])
+    artifact = candidate["metadata"]["strategy_artifact"]
+    artifact["strategy_logic"].update(positive_action="BUY", non_positive_action="BUY")
+    artifact["parameters"]["zero_momentum_action"] = "BUY"
+    candidate["checksum"] = strategy_artifact_checksum(artifact)
+    candidate["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = candidate["checksum"]
+    reg.entries = {"current": {**current, "registry_id": "current"},
+                   "candidate": {**candidate, "registry_id": "candidate"},
+                   "stronger": {**candidate, "registry_id": "stronger"},
+                   "weak": {**entries[one["artifact_ref"]], "registry_id": "weak"}}
+    assert _post(client, [_member("current", checksum=current["checksum"], risk_weight=.7)], 0).status_code == 201
+    lifecycle = owner.get("persona-1").lifecycle_state
+    books = {ref: _observed_book(entry["checksum"], better=ref in {"candidate", "stronger"})
+             for ref, entry in reg.entries.items()}
+    common = {"books": books, "dataset": recorded_dataset(), "observations": _risk_observations(books)}
+    admitted = _decision(client, 1, "admit", candidate={"artifact_ref": "candidate", "checksum": candidate["checksum"]}, **common)
+    assert admitted.status_code == 201, admitted.text
+    assert admitted.json()["decision"]["status"] == "applied", admitted.text
+    trial = admitted.json()["members"][-1]
+    assert trial["stage"] == "trial" and trial["risk_weight"] <= .1
+    weighted = _decision(client, 2, **common)
+    assert weighted.status_code == 201 and weighted.json()["decision"]["status"] == "applied", weighted.text
+    assert sum(m["risk_weight"] for m in weighted.json()["members"]) == pytest.approx(1)
+    replaced = _decision(client, 3, "admit", candidate={"artifact_ref": "stronger", "checksum": candidate["checksum"]}, **common)
+    assert replaced.status_code == 201 and replaced.json()["decision"]["status"] == "applied", replaced.text
+    assert replaced.json()["decision"]["replaced_artifact_ref"] == "current"
+    assert replaced.json()["members"][0]["stage"] == "removed"
+    refused = _decision(client, 4, "admit", candidate={"artifact_ref": "weak", "checksum": reg.entries["weak"]["checksum"]}, **common)
+    assert refused.status_code == 201 and refused.json()["decision"]["status"] == "refused", refused.text
+    assert refused.json()["members"] == replaced.json()["members"]
+    assert refused.json()["decision"]["persona_trial_count"] == 3
+    history = client.get("/api/personas/persona-1/strategy-pool/versions", headers=_auth(READ)).json()["versions"]
+    assert [v["pool_version"] for v in history] == [1, 2, 3, 4, 5]
+    assert all(b["previous_digest"] == a["digest"] for a, b in zip(history, history[1:]))
+    assert owner.get("persona-1").lifecycle_state == lifecycle
+    assert all(v["decision"]["execution_status"] == "requires_approved_envelope" for v in history[1:])
+
+
+def test_missing_books_record_refusal_and_read_health_unknown(env):
+    client, reg, _ = env
+    reg.add("current")
+    _post(client, [_member("current")], 0)
+    response = _decision(client, 1)
+    assert response.status_code == 201
+    decision = response.json()["decision"]
+    assert decision["status"] == "refused" and decision["reasons"] == ["virtual_book_source_missing"]
+    assert response.json()["members"][0]["risk_weight"] == .5
+    result = client.post("/api/personas/persona-1/strategy-pool/health", json={}, headers=_auth(READ))
+    assert result.status_code == 200 and result.json()["gross_utilisation"]["status"] == "unknown"
+    assert _decision(client, 1).status_code == 409
+
+
+def test_decisions_fail_auth_tenant_and_paper_scope(env):
+    client, _, _ = env
+    url = "/api/personas/persona-1/strategy-pool/decisions"
+    body = {"expected_version": 1, "execution_context": "paper", "action": "reweight"}
+    assert client.post(url, json=body).status_code == 401
+    assert client.post(url, json=body, headers=_auth(READ)).status_code == 403
+    assert client.post(url.replace("persona-1", "persona-2"), json=body, headers=_auth(WRITE)).status_code == 403
+    assert client.post(url, json={**body, "execution_context": "live"}, headers=_auth(WRITE)).status_code == 422
+    assert client.post(url, json={**body, "persona_trial_count": 0}, headers=_auth(WRITE)).status_code == 422
+
+
+def test_safety_ceiling_enforced_by_existing_record_route(env):
+    client, reg, _ = env
+    for i in range(21):
+        reg.add(str(i))
+    response = _post(client, [_member(str(i), risk_weight=.01) for i in range(21)], 0)
+    assert response.status_code == 422 and "safety ceiling" in response.text
+
+
+def test_reweight_haircut_is_persisted_and_idempotent(env):
+    client, reg, _ = env
+    reg.add("current")
+    _post(client, [_member("current")], 0)
+    book = _observed_book(CHECKSUM)
+    book.update(returns=[.01, .02, -.05], dates=book["dates"][:3])
+    first = _decision(client, 1, books={"current": book})
+    second = _decision(client, 2, books={"current": book})
+    assert first.status_code == second.status_code == 201
+    assert first.json()["members"][0]["risk_weight"] == second.json()["members"][0]["risk_weight"] == .25
+
+
+def test_idle_budget_never_loosens_gate_and_persona_trials_survive_refusals(env):
+    from services.research.tests.test_pool_admission import entries_and_members, recorded_dataset
+    client, reg, _ = env
+    entries, one, two = entries_and_members()
+    reg.entries = entries
+    _post(client, [_member(two["artifact_ref"], checksum=two["checksum"], risk_weight=.3)], 0)
+    books = {ref: _observed_book(entry["checksum"]) for ref, entry in entries.items()}
+    # Same candidate and recorded bars, first with idle capital, then higher
+    # measured utilisation. Neither changes the policy or correlation cut-off.
+    outcomes = []
+    for version, notional in ((1, 0), (2, 70)):
+        rows = _risk_observations(books, notional)
+        response = _decision(client, version, "admit", candidate={"artifact_ref": one["artifact_ref"], "checksum": one["checksum"]},
+                             books=books, observations=rows, dataset=recorded_dataset())
+        assert response.status_code == 201
+        outcomes.append(response.json())
+    assert all(result["decision"]["status"] == "refused" and result["members"][0]["risk_weight"] == .3 for result in outcomes)
+    assert outcomes[0]["decision"]["backtest"]["correlations"] == outcomes[1]["decision"]["backtest"]["correlations"]
+    assert outcomes[0]["decision"]["policy_digest"] == outcomes[1]["decision"]["policy_digest"]
+    assert [result["decision"]["persona_trial_count"] for result in outcomes] == [1, 2]
+    assert outcomes[1]["decision"]["backtest"]["required_candidate_sharpe"] > outcomes[0]["decision"]["backtest"]["required_candidate_sharpe"]
+
+
+@pytest.mark.parametrize("failure", ["missing_proof", "checksum", "tenant", "not_passed"])
+def test_admission_requires_candidates_own_owner_verified_gate_proof(env, failure):
+    from services.research.tests.test_pool_admission import entries_and_members
+    client, reg, _ = env
+    entries, one, two = entries_and_members()
+    reg.entries = entries
+    _post(client, [_member(two["artifact_ref"], checksum=two["checksum"], risk_weight=.5)], 0)
+    candidate = entries[one["artifact_ref"]]
+    if failure == "missing_proof":
+        candidate.pop("replication_proof")
+    elif failure == "checksum":
+        candidate["checksum"] = "wrong"
+    elif failure == "tenant":
+        candidate["owner_tenant"] = "other"
+    else:
+        candidate["replication_success"] = False
+    response = _decision(client, 1, "admit", candidate={"artifact_ref": one["artifact_ref"], "checksum": one["checksum"]})
+    assert response.status_code == 201 and response.json()["decision"]["status"] == "refused"
+    assert response.json()["decision"]["reasons"] and len(response.json()["members"]) == 1
+
+
+def test_full_budget_rejects_candidate_that_is_not_stronger_and_ceiling_is_tunable(env, monkeypatch):
+    from services.research.tests.test_pool_admission import entries_and_members
+    import pool_policy
+    client, reg, _ = env
+    entries, one, two = entries_and_members()
+    reg.entries = entries
+    _post(client, [_member(two["artifact_ref"], checksum=two["checksum"], risk_weight=1)], 0)
+    books = {ref: _observed_book(entry["checksum"]) for ref, entry in entries.items()}
+    candidate = {"artifact_ref": one["artifact_ref"], "checksum": one["checksum"]}
+    response = _decision(client, 1, "admit", candidate=candidate, books=books, observations=_risk_observations(books))
+    assert response.json()["decision"]["reasons"] == ["full_budget_candidate_not_stronger_than_weakest"]
+    # Direct risk reductions remain possible; additions/increases must use policy.
+    assert _post(client, [_member(two["artifact_ref"], checksum=two["checksum"], risk_weight=.5)], 2).status_code == 201
+    # Even with allocation below 100%, actual full utilisation requires replacement.
+    response = _decision(client, 3, "admit", candidate=candidate, books=books, observations=_risk_observations(books, 100))
+    assert response.json()["decision"]["reasons"] == ["full_budget_candidate_not_stronger_than_weakest"]
+    policy = pool_policy.load_policy().model_copy(update={"member_ceiling": 1})
+    monkeypatch.setattr(pool_policy, "load_policy", lambda: policy)
+    response = _decision(client, 4, "admit", candidate=candidate, books=books, observations=_risk_observations(books))
+    assert response.json()["decision"]["reasons"] == ["pool_member_safety_ceiling"]
+
+
+def test_admission_missing_budget_data_does_not_assume_spare_capacity(env):
+    from services.research.tests.test_pool_admission import entries_and_members
+    client, reg, _ = env
+    entries, one, two = entries_and_members()
+    reg.entries = entries
+    _post(client, [_member(two["artifact_ref"], checksum=two["checksum"], risk_weight=.5)], 0)
+    books = {ref: _observed_book(entry["checksum"]) for ref, entry in entries.items()}
+    response = _decision(client, 1, "admit", candidate={"artifact_ref": one["artifact_ref"], "checksum": one["checksum"]}, books=books)
+    assert response.status_code == 201
+    assert response.json()["decision"]["reasons"] == ["risk_budget_observations_missing"]
+
+
+def test_registry_outage_is_not_an_admission_verdict(env):
+    import sys
+    from persona_strategy_pool import RegistryUnavailable
+    client, reg, _ = env
+    reg.add("current")
+    _post(client, [_member("current")], 0)
+    def unavailable(ref, tenant):
+        raise RegistryUnavailable("registry unavailable")
+    sys.modules["persona_main_pool_test_module"].POOL_STORE._reader = unavailable
+    response = _decision(client, 1, "admit", candidate={"artifact_ref": "new", "checksum": CHECKSUM})
+    assert response.status_code == 503
+    history = client.get("/api/personas/persona-1/strategy-pool/versions", headers=_auth(READ)).json()
+    assert len(history["versions"]) == 1
+
+
+def test_no_candidate_records_idle_budget_without_inventing_trials(env):
+    client, reg, _ = env
+    reg.add("current")
+    _post(client, [_member("current", risk_weight=.2)], 0)
+    response = _decision(client, 1, "admit")
+    assert response.status_code == 201
+    result = response.json()
+    assert result["members"][0]["risk_weight"] == .2
+    assert result["decision"]["reasons"] == ["no_qualifying_candidate_budget_left_unused"]
+    assert result["decision"]["persona_trial_count"] == 0
+
+
 def test_create_append_read_through_real_routes(env):
     client, reg, owner = env
     reg.add("art-1"); reg.add("art-2")
     assert _post(client, [_member("art-1")], 0).status_code == 201
-    r = _post(client, [_member("art-1"), _member("art-2", stage="trial", risk_weight=0.1, baseline_ref=None)], 1)
+    assert _post(client, [_member("art-1"), _member("art-2", stage="trial", risk_weight=0.1, baseline_ref=None)], 1).status_code == 422
+    r = _post(client, [_member("art-1", risk_weight=.4)], 1)
     assert r.status_code == 201 and r.json()["pool_version"] == 2
     cur = client.get("/api/personas/persona-1/strategy-pool", headers=_auth(READ)).json()
     assert cur["pool_version"] == 2 and cur["schema_version"] == "persona_strategy_pool.v1"

@@ -1,4 +1,3 @@
-import copy
 import math
 from datetime import date, timedelta
 
@@ -63,7 +62,7 @@ def test_risk_parity_tilt_trial_cap_and_haircuts_leave_idle_budget():
     result, _ = reweight(members, {"a": book(values), "b": book([v * 2 for v in values])}, policy, "now")
     assert result[0]["risk_weight"] == pytest.approx(2/3)
     assert result[1]["risk_weight"] == pytest.approx(1/3)  # 20 distinct observed days, cap lifted
-    result, _ = reweight(members, {"a": book(values[:18]), "b": book(values[:18])}, policy, "now")
+    result, _ = reweight(members, {"a": book(values[:19]), "b": book(values[:19])}, policy, "now")
     assert result[1]["risk_weight"] == .1 and sum(m["risk_weight"] for m in result) == .6
     halved, stats = reweight([member("a")], {"a": book([.01, .02, -.05])}, policy, "now")
     repeated, _ = reweight(halved, {"a": book([.01, .02, -.05])}, policy, "later", stats)
@@ -71,6 +70,8 @@ def test_risk_parity_tilt_trial_cap_and_haircuts_leave_idle_budget():
     removed, _ = reweight([member("a")], {"a": book([.01, .02, -.1])}, policy, "now")
     assert removed[0]["stage"] == "removed" and removed[0]["risk_weight"] == 0
     assert removed[0]["removal_reason"] == "own_high_water_drawdown"
+    bankrupt, _ = reweight([member("a")], {"a": book([.01, .02, -1])}, policy, "now")
+    assert bankrupt[0]["stage"] == "removed"
     tilted, _ = reweight([member("a"), member("b")], {"a": book(values), "b": book([-v for v in values])}, load_policy(), "now")
     assert tilted[0]["risk_weight"] > tilted[1]["risk_weight"]
 

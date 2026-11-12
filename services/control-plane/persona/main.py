@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from integrations.openclaw.adapter import (
     OpenClawDockerGatewayRuntime,
@@ -560,8 +560,9 @@ def decide_strategy_pool(
 
 
 class PoolHealthRequest(BaseModel):
-    books: dict[str, dict[str, Any]] = {}
-    observations: list[dict[str, Any]] = []
+    model_config = ConfigDict(extra="forbid")
+    books: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 @app.post("/api/personas/{persona_id}/strategy-pool/health")
