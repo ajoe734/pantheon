@@ -123,6 +123,13 @@ class TestGateConfig(unittest.TestCase):
         self.assertIn("evaluation_hypotheses", ids)
         self.assertIn("implementation_ready", ids)
 
+    def test_config_mechanism_defaults(self):
+        """Mechanism stage defaults (SD_DISCOVERY_DEMAND §3.2)."""
+        config = GateConfig()
+        self.assertEqual(config.mechanism_alpha, 0.05)
+        self.assertEqual(config.mechanism_regime_ma_sessions, 200)
+        self.assertEqual(len(config.get_required_criteria()), 5)  # primary rule unchanged
+
     def test_config_to_json(self):
         """Test configuration JSON serialization."""
         config = GateConfig()

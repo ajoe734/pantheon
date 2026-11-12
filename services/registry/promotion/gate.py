@@ -121,7 +121,14 @@ class PromotionGate:
             if isinstance(rep_proof.get("evaluation_summary"), Mapping):
                 eval_summary = copy.deepcopy(dict(rep_proof["evaluation_summary"]))
 
-        return {
+        mechanism_meta: dict[str, Any] = {}
+        for mkey in ("mechanism", "mechanism_status", "mechanism_support"):
+            for holder in (reg_entry, rep_proof if isinstance(rep_proof, Mapping) else {}):
+                if holder.get(mkey) is not None:
+                    mechanism_meta[mkey] = copy.deepcopy(holder[mkey])
+                    break
+
+        draft = {
             "registry_id": resolved_registry_id,
             "artifact_type": reg_entry.get("artifact_type", "strategy_spec"),
             "strategy_id": resolved_strategy_id,
@@ -137,6 +144,10 @@ class PromotionGate:
                 "path": payload.get("storage_path", ""),
             },
         }
+        if mechanism_meta:
+            # persisted in entry metadata so the registry read projection carries the gate's mechanism record
+            draft["metadata"] = mechanism_meta
+        return draft
 
     @staticmethod
     def verify_admitted_replication_proof(
