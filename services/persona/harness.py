@@ -23,9 +23,6 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-Text = str
-
-
 class Guardrails(StrictModel):
     forbidden_solo_actions: list[str]
     allowed_tools: list[str]
@@ -216,7 +213,6 @@ def _reflection_evidence(persona: Any, ref: EvidenceReference) -> bool:
     return ref.kind == "trade_reflection" and any(
         not reflection_schema_errors(row)
         and row.get("persona_id") == persona.persona_id
-        and row.get("environment") == "paper"
         and row.get("reflection_id") == ref.ref
         and row.get("facts_snapshot_ref") == ref.moment
         for row in persona.metadata.get("trade_reflections", [])
@@ -242,7 +238,7 @@ class PersistentHarnessOwner:
         for _ in range(4):
             result: dict[str, Any] = {}
             def update(persona: Any) -> dict[str, Any]:
-                if persona.lifecycle_state != "paper_owner":
+                if persona.lifecycle_state != "paper_owner" or persona.status != "active":
                     raise HarnessError("paper_owner_required", 409)
                 if not persona.tenant_id:
                     raise HarnessError("persona_tenant_binding_missing", 403)
@@ -309,6 +305,8 @@ class PersistentHarnessOwner:
         if state["active_version"] != patch.base_version:
             return None, ["stale_base_version"]
         base = HarnessVersion.model_validate(state["versions"][patch.base_version - 1])
+        if base.content_digest != digest(base.surface.model_dump(mode="json")):
+            return None, ["base_content_digest_mismatch"]
         candidate, reasons = precheck(base.surface, patch, self.script_root)
         for ref in patch.evidence_refs:
             try:
@@ -321,6 +319,8 @@ class PersistentHarnessOwner:
 
     def operate(self, persona_id: str, patch_id: str, action: str, actor: str,
                 adoption_ref: str | None = None, reason: str | None = None) -> dict[str, Any]:
+        if action not in {"precheck", "activate", "rollback"}:
+            raise HarnessError("unknown_harness_action")
         def reduce(persona: Any, state: Any) -> tuple[dict, dict]:
             if not state or patch_id not in state["patches"]:
                 raise HarnessError("patch_not_found", 404)
