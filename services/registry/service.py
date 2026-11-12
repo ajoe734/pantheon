@@ -1006,6 +1006,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _verify_research_run_owner(
     authorization: Optional[str], tenant: Optional[str], run_id: str, *, digest: str, checksum: str,
+    gate_verdict: Optional[dict[str, Any]] = None,
 ) -> None:
     """Confirm with the Research run owner that this tenant's run has this exact digest/checksum.
 
@@ -1028,6 +1029,14 @@ def _verify_research_run_owner(
             or owned.get("tenant_id") != tenant or owned.get("status") != "completed"
             or owned.get("evaluation_digest") != digest or owned.get("artifact_checksum") != checksum):
         raise RegistryError("producer run owner record does not match the gate proof.")
+    # The owner persisted the gate's real decision (trial count, mandate, verdict digest): the
+    # proof's policy context must equal it, so a caller cannot reconstruct a rejected/other-trial gate.
+    recorded = owned.get("gate_verdict")
+    if (not isinstance(recorded, dict) or not isinstance(gate_verdict, dict)
+            or recorded.get("admission_status") != "admitted"
+            or any(recorded.get(k) is None or recorded.get(k) != gate_verdict.get(k)
+                   for k in ("admission_status", "trial_count", "mandate_max_drawdown", "family_id", "verdict_digest"))):
+        raise RegistryError("producer run owner gate verdict does not match the gate proof.")
 
 
 def _register_strategy_artifact(
@@ -1056,6 +1065,7 @@ def _register_strategy_artifact(
             _verify_research_run_owner(
                 authorization, _caller_tenant(ctx), binding["backtest_run_id"],
                 digest=binding["evaluation_digest"], checksum=binding["artifact_checksum"],
+                gate_verdict=binding.get("gate_verdict"),
             )
             binding["producer_verified"] = True
         except PromotionError as exc:

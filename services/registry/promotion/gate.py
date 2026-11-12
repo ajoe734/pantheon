@@ -53,6 +53,16 @@ _LIFECYCLE_TO_DEPLOYMENT_STAGE: dict[str, str] = {
 }
 
 
+def real_backtest_verdict_digest(details: Any) -> str:
+    """Canonical digest of the gate's real_backtest_validation details (producer and Registry agree)."""
+    import hashlib
+    import json
+
+    return "sha256:" + hashlib.sha256(
+        json.dumps(details, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 class PromotionGate:
     def __init__(self, logger: logging.Logger | None = None):
         self.log = logger or logging.getLogger(__name__)
@@ -272,6 +282,10 @@ class PromotionGate:
             "evaluation_digest": digest, "status": "completed",
             "out_of_sample_sharpe_ratio": sharpe, "out_of_sample_max_drawdown": drawdown,
             "out_of_sample_round_trips": trips,
+            "gate_verdict": {
+                "admission_status": "admitted", "trial_count": trial_count, "mandate_max_drawdown": mandate,
+                "family_id": details.get("family_id"), "verdict_digest": real_backtest_verdict_digest(dict(details)),
+            },
         }
         return verified
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import json as _json
@@ -2257,6 +2258,7 @@ def _evolution_oos_context(
     def _record_owned(evaluation: Dict[str, Any]) -> Optional[str]:
         run_id = backtests.record(evaluation)
         if run_id:
+            _PRODUCER_EVALUATIONS[run_id] = copy.deepcopy(evaluation)  # the exact evaluation the gate judges
             _bind_backtest_run_owner(data_dir, run_id, tenant_id=tenant_id, decision_id=decision_id)
         return run_id
 
@@ -2266,6 +2268,54 @@ def _evolution_oos_context(
     )
 
     return gate, factory
+
+
+_PRODUCER_EVALUATIONS: Dict[str, Dict[str, Any]] = {}  # run_id -> evaluation, consumed by the registration
+
+
+def _producer_proof_registration(
+    *, data_dir: Path, child: Dict[str, Any], verdict: Dict[str, Any], decision_id: str, run_id: str,
+) -> Dict[str, Any]:
+    """Registration fields for a gate-passed child: the real proof, its run evaluation and lineage.
+
+    Records the actual gate verdict (trial/mandate context + digest) in the server-owned run
+    record so the Registry can authenticate it through the owner-binding readback.
+    """
+    from services.registry.promotion.gate import real_backtest_verdict_digest
+    proof = verdict.get("replication_proof")
+    backtest_run_id = str(verdict.get("backtest_run_id") or "")
+    results = (proof or {}).get("results") if isinstance(proof, dict) else None
+    details = next(
+        (r.get("details") for r in results or [] if r.get("criterion_id") == "real_backtest_validation"), None
+    )
+    evaluation = _PRODUCER_EVALUATIONS.pop(backtest_run_id, None)
+    summary = {
+        "out_of_sample_gate": {k: v for k, v in verdict.items() if k != "replication_proof"},
+        "decision_id": decision_id,
+    }
+    if not isinstance(details, dict) or not evaluation:
+        return {"evaluation_summary": summary, "producer_run_id": run_id}
+    wire = json.loads(json.dumps(proof, default=str))
+    wire["replication_results"] = wire.pop("results")
+    wire["backtest_run_id"] = backtest_run_id
+    full = json.loads(json.dumps(evaluation, default=str))
+    summary.update(
+        backtest_run_id=backtest_run_id, out_of_sample_sharpe_ratio=details.get("out_of_sample_sharpe_ratio"),
+        max_drawdown=abs(float(details.get("out_of_sample_max_drawdown"))),
+        round_trips=details.get("out_of_sample_round_trips"),
+    )
+    wire["evaluation_summary"] = summary
+    _bind_backtest_run_gate_verdict(
+        data_dir, backtest_run_id,
+        {"admission_status": wire.get("admission_status"), "trial_count": details.get("trial_count"),
+         "mandate_max_drawdown": details.get("mandate_max_drawdown"), "family_id": details.get("family_id"),
+         "verdict_digest": real_backtest_verdict_digest(json.loads(json.dumps(details, default=str)))},
+    )
+    # The artifact checksum is fixed before the run exists, so the exact backtest run is the producer run.
+    return {
+        "evaluation_summary": summary, "producer_run_id": backtest_run_id, "replication_proof": wire,
+        "backtest_evaluation": full,
+    }
 
 
 def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
@@ -2343,7 +2393,10 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                         "artifact_state": "candidate",
                         "strategy_artifact": child,
                         "producer_run_id": run_id,
-                        "evaluation_summary": {"out_of_sample_gate": verdict, "decision_id": decision_id},
+                        **_producer_proof_registration(
+                            data_dir=Path(ALPHA_REPLICATION_DATA_DIR), child=child, verdict=verdict,
+                            decision_id=decision_id, run_id=run_id,
+                        ),
                         "metadata": {k: v for k, v in entry_meta.items() if k == "persona_id"},
                     },
                 )
@@ -4136,6 +4189,22 @@ def _bind_backtest_run_owner(data_dir: Path, run_id: str, *, tenant_id: str, dec
     tmp.replace(path)
 
 
+def _bind_backtest_run_gate_verdict(data_dir: Path, run_id: str, gate_verdict: Dict[str, Any]) -> None:
+    """Persist the real gate decision context beside the run owner record (server-side only)."""
+    path = _backtest_owner_path(data_dir)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        loaded = {}
+    owner = loaded.get(run_id) if isinstance(loaded, dict) else None
+    if not isinstance(owner, dict):
+        return  # an unbound run never gains a verdict
+    owner["gate_verdict"] = gate_verdict
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(loaded, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
 @app.get("/api/research-orchestrator/backtest-runs/{run_id}/owner-binding")
 def read_backtest_run_owner_binding(
     run_id: str,
@@ -4173,6 +4242,7 @@ def read_backtest_run_owner_binding(
         "status": record.get("status"), "artifact_checksum": record.get("artifact_checksum"),
         "dataset_id": record.get("dataset_id"), "source_dataset_refs": record.get("source_dataset_refs"),
         "artifact_ref": record.get("artifact_ref"), "evaluation_digest": record.get("evaluation_digest"),
+        "gate_verdict": owner.get("gate_verdict"),
     }
 
 

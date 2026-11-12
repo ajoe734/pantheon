@@ -3993,12 +3993,19 @@ def _real_gate_registration():
 class _FakeResearchOwner:
     """Stands in for the Research owner-binding route: serves a tenant-bound run record."""
 
-    def __init__(self, bt_eval, tenant, **override):
+    def __init__(self, bt_eval, tenant, proof=None, **override):
         import hashlib, json as _j
+        from services.registry.promotion.gate import real_backtest_verdict_digest
         digest = "sha256:" + hashlib.sha256(
             _j.dumps(bt_eval, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
         self.record = {"backtest_run_id": bt_eval["backtest_run_id"], "tenant_id": tenant, "status": "completed",
                        "artifact_checksum": bt_eval["strategy_artifact"]["checksum"], "evaluation_digest": digest}
+        if proof is not None:  # the owner's own persisted record of the real gate decision
+            d = next(x for x in proof["replication_results"] if x["criterion_id"] == "real_backtest_validation")["details"]
+            self.record["gate_verdict"] = {
+                "admission_status": str(getattr(proof["admission_status"], "value", proof["admission_status"])),
+                "trial_count": d["trial_count"], "mandate_max_drawdown": d["mandate_max_drawdown"],
+                "family_id": d.get("family_id"), "verdict_digest": real_backtest_verdict_digest(d)}
         self.record.update(override)
         self.requests = []
 
@@ -4025,7 +4032,8 @@ def test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery(stric
     other = _jwt(subject="gate-other", tenant="tenant-b")
     reg = _real_gate_registration()
     rid = reg["registry_id"]
-    owner = _FakeResearchOwner(reg["backtest_evaluation"], "tenant-a").install(monkeypatch)
+    owner = _FakeResearchOwner(reg["backtest_evaluation"], "tenant-a", reg["replication_proof"]).install(monkeypatch)
+    good_record = dict(owner.record)
 
     # Forged / altered / foreign submissions are refused before anything is persisted.
     def forged(mutate):
@@ -4047,10 +4055,17 @@ def test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery(stric
     assert forged(lambda r: r["backtest_evaluation"]["strategy_artifact"].update(checksum="sha256:other")) == 400
 
     # Producer owner disagreement (foreign tenant, changed digest, unknown run, unconfigured) refuses the proof.
-    for override in ({"tenant_id": "tenant-b"}, {"evaluation_digest": "sha256:changed"}, {"status": "failed"}, None):
-        owner.record = None if override is None else {**_FakeResearchOwner(reg["backtest_evaluation"], "tenant-a").record, **override}
+    real = good_record["gate_verdict"]
+    for override in ({"tenant_id": "tenant-b"}, {"evaluation_digest": "sha256:changed"}, {"status": "failed"}, None,
+                     # the owner's real gate decision differs from the submitted proof (trial 50 rejected vs claimed trial)
+                     {"gate_verdict": {**real, "trial_count": real["trial_count"] + 49, "admission_status": "rejected",
+                                       "verdict_digest": "sha256:other"}},
+                     {"gate_verdict": {**real, "trial_count": real["trial_count"] + 49}},
+                     {"gate_verdict": {**real, "verdict_digest": "sha256:other"}},
+                     {"gate_verdict": None}):
+        owner.record = None if override is None else {**good_record, **override}
         assert strict_client.post("/api/registry/strategy-artifacts", json=reg, headers=_bearer(token)).status_code == 400
-    owner.record = _FakeResearchOwner(reg["backtest_evaluation"], "tenant-a").record
+    owner.record = dict(good_record)
     monkeypatch.delenv("RESEARCH_ORCHESTRATOR_API_URL")
     assert strict_client.post("/api/registry/strategy-artifacts", json=reg, headers=_bearer(token)).status_code == 400
     monkeypatch.setenv("RESEARCH_ORCHESTRATOR_API_URL", "http://research.test:8101")

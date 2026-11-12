@@ -93,3 +93,54 @@ def test_historical_run_without_owner_binding_is_not_served(research):
     module, client, data_dir = research
     _, run_id = _record(module, data_dir, None)
     assert client.get(_url(run_id), headers=_bearer("tenant-a", ["registry-writer"])).status_code == 404
+
+
+def test_producer_registration_carries_real_proof_and_owner_authenticates_verdict(research, tmp_path):
+    """Producer path: real gate verdict -> registration fields -> owner readback -> Registry verification."""
+    module, client, data_dir = research
+    from services.registry.promotion.gate import PromotionGate
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    from services.research.alpha_replication import evolution_search as search
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
+    from services.research.replication.gate_schema import ReplicationRequest
+    from services.research.vectorbt.adapter.vectorbt_adapter import build_canonical_tw_strategy_artifact
+
+    evaluation = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    child = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-replication-001", symbols=("2330.TW",))
+    store = SharedBacktestRunStore(data_dir / "backtest_runs.json")
+    gate = SharedReplicationGate(trial_counter_path=tmp_path / "trials.json", backtest_run_store=store)
+    spec = {"name": "tw_momentum", "description": "d", "signals": ["momentum"], "parameters": {"lookback": 2},
+            "governance": {"approval_required": True, "policy_id": "oc-001-research-normalization"}}
+
+    def factory(_child):
+        run_id = store.record(evaluation)
+        module._PRODUCER_EVALUATIONS[run_id] = json.loads(json.dumps(evaluation))
+        module._bind_backtest_run_owner(data_dir, run_id, tenant_id="tenant-a", decision_id="dec-1")
+        return ReplicationRequest(
+            candidate_id="cand-producer", source_task_id="RS-002",
+            research_handoff={"source_metadata": {"api_endpoint": "https://api.openalex.org/works/W123",
+                                                  "retrieved_at": "2026-11-10T00:00:00Z",
+                                                  "governance_context": "Approved structured source"},
+                              "normalized_findings": {"strategy_spec": {"name": "tw_momentum"},
+                                                      "replication_notes": "n", "evaluation_hypotheses": "h"}},
+            proposed_strategy_spec=spec, backtest_evaluation=evaluation,
+            metadata={"strategy_artifact_checksum": evaluation["strategy_artifact"]["checksum"],
+                      "dataset_version_id": evaluation["dataset_id"]})
+
+    verdict = search.judge_child_out_of_sample(child, gate=gate, request_factory=factory, family_id="fam-1")
+    assert verdict["passed"] is True
+    fields = module._producer_proof_registration(
+        data_dir=data_dir, child=child, verdict=verdict, decision_id="dec-1", run_id="research-run-1")
+    assert "replication_proof" not in fields["evaluation_summary"]["out_of_sample_gate"]
+    assert fields["producer_run_id"] == verdict["backtest_run_id"]
+
+    # The Registry owner verifies the producer-built fields without any prebuilt verified entry.
+    verified = PromotionGate.verify_admitted_replication_proof(
+        fields["replication_proof"], fields["evaluation_summary"], {},
+        backtest_evaluation=fields["backtest_evaluation"],
+        artifact_checksum=strategy_artifact_checksum(child), producer_run_id=fields["producer_run_id"])
+    # ... and the owner's persisted verdict (served by the readback) equals the verified proof's context.
+    body = client.get(_url(verdict["backtest_run_id"]), headers=_bearer("tenant-a", ["registry-writer"])).json()
+    assert body["gate_verdict"] == verified["owner_verified_binding"]["gate_verdict"]
+    assert body["gate_verdict"]["admission_status"] == "admitted"
+    assert body["evaluation_digest"] == verified["owner_verified_binding"]["evaluation_digest"]
