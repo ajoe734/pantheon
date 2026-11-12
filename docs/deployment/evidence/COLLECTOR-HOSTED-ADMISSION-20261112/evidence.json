@@ -1,0 +1,199 @@
+{
+  "task_id": "COLLECTOR-HOSTED-ADMISSION-20261112",
+  "what_changed": {
+    "default_desired_state": "services/source_ingestion/default_desired_state.json: the existing deployment requirement holder now declares one live_pull requirement per admitted Collector definition (connector_candidates = [definition id]); the official tw_price_daily requirement is byte-for-byte unchanged; held sources are listed under held_collector_sources",
+    "reconciler": "persona_source_reconciler.py: CollectorDefinitionProvider provisions each admitted connector from its deployed ConnectorDefinition (adapter token, provider_owned_adapter fetch, host from PANTHEON_COLLECTOR_HOST, per-pull cap and schedule interval from the definition cadence, metadata.definition_id). No second registry or scheduler; connector id = definition id so the five social platforms on collector_social_posts remain five connectors",
+    "no_host": "without PANTHEON_COLLECTOR_HOST every Collector requirement is reported status=skipped, connector_action=collector_host_not_configured with the reason in details (visible in the reconcile response/readback); nothing is written. Skipped (not unsupported) on purpose: unsupported fails the whole controller tick closed and would have broken the official refresh on any deployment without a collector host",
+    "controller_worker": "three defects found by driving the real tick with the default desired state: (1) steady mode selected every due Collector source but the scheduler claims only max_concurrency per tick and reports the rest as failed, so >max_concurrency admitted sources failed every tick; limit_collector_pull_batch now bounds the batch, least-recently-successful first; (2) terminal validation required a tenant on the connector metadata, which controller-provisioned connectors do not carry (runtime stamps the controller tenant); (3) it compared record collector.source_id to the definition id, which differs for strategy-seed-paper-corpus (collector-papers)",
+    "pit_event_time": "collector_bundle.py: market rows with a trade_date are event-dated by that trade date (published_at date must equal it, else rejected; absent -> trade_date T06:30Z, T86 T08:30Z), so a two-year backfill is not stamped with the fetch date",
+    "community_test_volume": "connector_definitions.py: collector_social_posts sources carry max_records=50 (COLLECTOR_COMMUNITY_TEST_VOLUME) until the O-6 counsel review is recorded"
+  },
+  "sources": [
+    {
+      "connector_id": "collector-gdelt",
+      "collector_source_id": "collector-gdelt",
+      "dataset": "collector_news_articles",
+      "cadence_seconds": 3600,
+      "max_records_per_pull": 500,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-library-books",
+      "collector_source_id": "collector-library-books",
+      "dataset": "collector_book_sections",
+      "cadence_seconds": 2678400,
+      "max_records_per_pull": 500,
+      "state": "held_configured_disabled"
+    },
+    {
+      "connector_id": "collector-news-rss",
+      "collector_source_id": "collector-news-rss",
+      "dataset": "collector_news_articles",
+      "cadence_seconds": 3600,
+      "max_records_per_pull": 500,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-cmoney-forum",
+      "collector_source_id": "collector-tw-cmoney-forum",
+      "dataset": "collector_social_posts",
+      "cadence_seconds": 21600,
+      "max_records_per_pull": 50,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-instagram-popular",
+      "collector_source_id": "collector-tw-instagram-popular",
+      "dataset": "collector_social_posts",
+      "cadence_seconds": 86400,
+      "max_records_per_pull": 50,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-macro-cbc",
+      "collector_source_id": "collector-tw-macro-cbc",
+      "dataset": "collector_macro_series",
+      "cadence_seconds": 86400,
+      "max_records_per_pull": 500,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-macro-dgbas",
+      "collector_source_id": "collector-tw-macro-dgbas",
+      "dataset": "collector_macro_series",
+      "cadence_seconds": 2678400,
+      "max_records_per_pull": 500,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-macro-ndc",
+      "collector_source_id": "collector-tw-macro-ndc",
+      "dataset": "collector_macro_series",
+      "cadence_seconds": 2678400,
+      "max_records_per_pull": 500,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-ptt-stock",
+      "collector_source_id": "collector-tw-ptt-stock",
+      "dataset": "collector_social_posts",
+      "cadence_seconds": 21600,
+      "max_records_per_pull": 50,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-threads",
+      "collector_source_id": "collector-tw-threads",
+      "dataset": "collector_social_posts",
+      "cadence_seconds": 21600,
+      "max_records_per_pull": 50,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-tpex-price-history",
+      "collector_source_id": "collector-tw-tpex-price-history",
+      "dataset": "tw_price_daily",
+      "cadence_seconds": 86400,
+      "max_records_per_pull": 500,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-twse-price-history",
+      "collector_source_id": "collector-tw-twse-price-history",
+      "dataset": "tw_price_daily",
+      "cadence_seconds": 86400,
+      "max_records_per_pull": 500,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-tw-twse-t86",
+      "collector_source_id": "collector-tw-twse-t86",
+      "dataset": "tw_institutional_flow",
+      "cadence_seconds": 86400,
+      "max_records_per_pull": 500,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "collector-youtube-finance",
+      "collector_source_id": "collector-youtube-finance",
+      "dataset": "collector_social_posts",
+      "cadence_seconds": 86400,
+      "max_records_per_pull": 50,
+      "state": "admitted_enabled"
+    },
+    {
+      "connector_id": "strategy-seed-paper-corpus",
+      "collector_source_id": "collector-papers",
+      "dataset": "strategy_seed_metadata",
+      "cadence_seconds": 86400,
+      "max_records_per_pull": 500,
+      "state": "admitted_enabled"
+    }
+  ],
+  "held_and_why": {
+    "collector-library-books": "O-12: books are files the operator owns/licenses and places in the collector library; nothing is downloaded and none is confirmed on the hosted collector. Left configured_disabled; the operator enables it through the existing source commands, no code change",
+    "decided_and_admitted": "O-3 (Instagram popular tags only), O-4 (CMoney low rate, internal analysis), O-11 (PTT mirrors off, direct PTT only) are recorded in DEV_PLAN section 1 and so are admitted, at test volume per O-6; SD section 13 listed them as open before those decisions"
+  },
+  "tests": {
+    "tick": "test_scheduled_connector.py::test_full_collector_steady_tick_from_default_desired_state_pulls_every_admitted_source (real run_controller_tick, real default desired state, real reconcile endpoint, real provisioning, real selection, real scheduler, real CollectorBundleAdapter on a fake transport): reconcile_only provisions and pulls nothing (0 transport reads); steady mode pulls all 14 admitted sources over successive ticks, records for each, provenance/tenant/PIT validated; PTT bundle of 60 posts stops at the 50 test-volume cap and a fresh adapter resumes the remaining 10 from the persisted cursor",
+    "no_host": "test_without_collector_host_nothing_is_provisioned_and_reason_is_in_readback",
+    "reconciler": "test_persona_source_reconciler.py: five social platforms stay five connectors, schedule interval from definition cadence, idempotent second reconcile, dataset support, official requirement unchanged",
+    "history": "test_collector_bundle_connector.py: each backfilled row event-dated by its own trade date (TWSE/TPEx price, T86); mismatched published_at rejected with no write; a collector row for a symbol/date already in official tw_price_daily agrees on open/high/low/close/volume/transactions and the official records are unchanged (separate lineage collector: vs tw-official:)",
+    "batches": "controller_worker+scheduled_connector+collector_bundle+persona_source_reconciler+compose_activation 315 passed; services/source_ingestion rest 1283 passed 13 skipped; scripts/test_deploy_nonprod_vm.py 132 passed 2 skipped. Existing controller tests that assumed a one-requirement default now use a baseline_desired_state fixture (the real default is covered by the new tests)"
+  },
+  "two_year_backfill_estimate": {
+    "basis": "COLLECTOR-PRICE-HISTORY-BACKFILL-20261111: 487 trading-day bundles per source (window 2024-11-10..2026-11-10); hosted collector serves 488 days each of TWSE, TPEx price history and T86. Rows per day are ESTIMATES (not measured: hosted state was not touched): TWSE ~1300, TPEx ~900, T86 ~1250. Per-pull limit is the definition cap max_records=500 (existing limit, not widened); schedule interval is the definition cadence 86400s",
+    "collector-tw-twse-price-history": {
+      "assumed_rows_per_trading_day": 1300,
+      "trading_day_bundles": 487,
+      "total_rows": 633100,
+      "pulls_needed_at_cap": 1267,
+      "days_to_drain_at_definition_cadence_86400s": 1267,
+      "days_to_drain_if_pulled_hourly": 52.8
+    },
+    "collector-tw-tpex-price-history": {
+      "assumed_rows_per_trading_day": 900,
+      "trading_day_bundles": 487,
+      "total_rows": 438300,
+      "pulls_needed_at_cap": 877,
+      "days_to_drain_at_definition_cadence_86400s": 877,
+      "days_to_drain_if_pulled_hourly": 36.5
+    },
+    "collector-tw-twse-t86": {
+      "assumed_rows_per_trading_day": 1250,
+      "trading_day_bundles": 487,
+      "total_rows": 608750,
+      "pulls_needed_at_cap": 1218,
+      "days_to_drain_at_definition_cadence_86400s": 1218,
+      "days_to_drain_if_pulled_hourly": 50.8
+    },
+    "first_pull": "First pull returns at most 500 rows per source, event-dated from the oldest bundle first. Bundle verification is windowed to the cap: per pull the adapter reads index.json, each touched bundle's manifest.json and items.jsonl (+status.json) and at most max_records(500) raw files (only the rows that can be returned are hash/size-verified; bundle_sha256 over declared hashes and items/manifest id coverage are verified for every touched bundle). Rows beyond the window are verified when the persisted resume cursor reaches them.",
+    "finding": "At the definition cadence of one pull per day the cap drains only 500 rows per source per day, i.e. roughly 3-4 years per source: the two-year backfill is correct and resumable but not practical at steady cadence. Options (operator/Root decision, not done here because the task forbids widening limits and hosted/deploy changes): a temporary shorter interval for the three history connectors through the existing schedule command (hourly = ~53/37/51 days), or a one-off larger per-job cap; neither is changed by this task",
+    "official_truth": "TW_OFFICIAL_HISTORY_MAX_MONTHS=2 untouched; official tw_price_daily records are never written by the collector path",
+    "per_pull_io": {
+      "max_raw_reads_per_pull": 500,
+      "fixed_reads_per_touched_bundle": 2,
+      "touched_bundles_per_pull": "1 typically (a 1300-row day takes ~3 pulls: 500/500/300; the tail pull may touch the next bundle)",
+      "worst_case_requests_per_pull": "~510 (500 raw + 2-3 bundles x 2 + index + status), well inside the 30s controller request budget at the observed transport rate; previously the first pull verified ALL pending bundles (~633100 raw reads for TWSE)",
+      "regression": "test_collector_bundle_connector.py::test_multi_bundle_history_pull_reads_only_what_the_cap_can_return (3 bundles x 600 rows, cap 500: max 500 raw reads/pull, 1800 rows delivered exactly once across resumes, tampered later raw caught when its window is reached)"
+    },
+    "duration": "Pull count is unchanged (rows/500); each pull is now bounded at ~500 raw reads instead of scaling with total pending history, so drain time stays as listed (about 1267/877/1218 pulls) rather than the first pull blocking on the whole backlog"
+  },
+  "not_changed": [
+    "deploy workflows",
+    "egress rules",
+    "SOURCE_INGEST_STEADY_COLLECTOR_PULL",
+    "hosted state",
+    "TW_OFFICIAL_HISTORY_MAX_MONTHS"
+  ],
+  "operator_follow_up": [
+    "set PANTHEON_COLLECTOR_HOST on the dev source-ingest runtime (existing W1 Ops owner) so reconcile provisions the 14 connectors; until then reconcile reports skipped/collector_host_not_configured",
+    "decide how to drain the two-year history (see finding)"
+  ],
+  "review_round_2_fairness_fix": {
+    "finding": "limit_collector_pull_batch ranked only by last_success_at so a permanently failing source monopolised bounded slots",
+    "fix": "rank by latest of last_success_at and last_failure_at from readback freshness (least recently attempted first); cadence and per-pull caps unchanged",
+    "regression": "services/source_ingestion/tests/test_scheduled_connector.py::test_one_failing_collector_does_not_starve_other_admitted_sources (real controller, max_concurrency=1, injected GDELT failure)",
+    "focused_suites": "314 passed"
+  }
+}
