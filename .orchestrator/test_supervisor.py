@@ -2568,16 +2568,47 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertTrue(self._materialize())
         self._assert_own_branch_wording(self._task_id())
 
-    def test_repair_task_states_own_branch_delivery_rule_execute_plans_source(self) -> None:
+    def test_execute_plans_ci_red_reopens_source_without_pantheon_repair_task(self) -> None:
         fe = self._make_execute_plans_source()
         reason = "ci-red"
-        unblock_id = self._fe_task_id(reason)
-        self._publish(
-            reason=reason, detail="required CI is red",
-            unblock_task_id=unblock_id, **fe,
+        self.assertTrue(supervisor.unblock_contract.requires_repair_task(reason))
+        self.assertFalse(supervisor.unblock_contract.requires_source_reopen(reason))
+        self.assertTrue(
+            supervisor.unblock_contract.requires_source_reopen(reason, "execute_plans")
         )
+        request = self._publish(
+            reason=reason, detail="required frontend CI is red",
+            unblock_task_id=self._fe_task_id(reason), **fe,
+        )
+        calls: list[tuple[list[str], dict[str, str], str]] = []
+        with mock.patch.object(
+            supervisor.subprocess, "run",
+            side_effect=self._run_real_reopen_subprocess(calls),
+        ):
+            self.assertTrue(self._materialize())
+        self.assertFalse(request.exists())
+        self.assertEqual(len(calls), 1)
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        tasks = snapshot["state"]["tasks"]
+        # No execute-plans repair task declaring Pantheon integrator tooling.
+        self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+        self.assertNotIn(
+            "scripts/git/auto_integrator.py",
+            json.dumps(tasks, sort_keys=True),
+        )
+        self.assertEqual(tasks[0]["status"], "in_progress")
+        self.assertIn("source-owned return (ci-red)", tasks[0]["next"])
+        self.assertIn("required frontend CI is red", tasks[0]["next"])
+
+    def test_pantheon_ci_red_still_materializes_one_level_repair(self) -> None:
+        self.assertFalse(
+            supervisor.unblock_contract.requires_source_reopen("ci-red", "pantheon")
+        )
+        self._publish()
         self.assertTrue(self._materialize())
-        self._assert_own_branch_wording(unblock_id)
+        self._assert_own_branch_wording(self._task_id())
 
     def test_queued_child_repair_is_rejected_without_mutating_source(self) -> None:
         for provenance in (
@@ -3122,32 +3153,6 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertFalse(self._materialize())
         self.assertEqual(supervisor.load_status(self.config), before)
         self.assertTrue(self._rejected_receipt(request).is_file())
-
-    def test_execute_plans_ci_red_creates_one_repair_task_in_execute_plans_workspace(self) -> None:
-        fe = self._make_execute_plans_source()
-        unblock_id = self._fe_task_id("ci-red")
-        request = self._publish(
-            reason="ci-red", unblock_task_id=unblock_id, detail="PR #940 has failing checks.",
-            **fe,
-        )
-        self.assertTrue(self._materialize())
-        self.assertFalse(request.exists())
-        status = supervisor.load_status(self.config)
-        repairs = [t for t in status["tasks"] if t["id"] == unblock_id]
-        self.assertEqual(len(repairs), 1)
-        self.assertEqual(len(status["tasks"]), 2)
-        repair = repairs[0]
-        self.assertEqual(
-            supervisor.task_target_repository_id(self.config, repair), "execute_plans"
-        )
-        self.assertEqual(
-            supervisor.task_primary_repository_id(self.config, repair), "execute_plans"
-        )
-        self.assertEqual(
-            supervisor.repository_slug(self.config, "execute_plans"), "ajoe734/execute-plans"
-        )
-        # Repair task must pass the same repository-scope validation used by dispatch.
-        supervisor.validate_task_repository_scope(self.config, repair)
 
     def test_exact_head_behind_base_reopen_failure_keeps_request_retryable(self) -> None:
         reason = "exact-head-behind-base"
