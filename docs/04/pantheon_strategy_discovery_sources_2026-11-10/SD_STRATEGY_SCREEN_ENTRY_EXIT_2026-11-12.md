@@ -84,6 +84,8 @@ Why the catalogued datasets are absent on hosted was not investigated here.
 * **Point-in-time**: C(D) uses only data available by D−1 including each dataset's release lag; history must
   include symbols later delisted or suspended, otherwise the backtest is marked survivorship-limited and is
   not admitted.
+* **One evaluator**: backtest and paper compute C(D), entry and exit through the same screen/entry/exit evaluator
+  code path; only the data feed differs. A backtest-only screen implementation is not admissible.
 * **Minimum pool size**: below a declared minimum the strategy holds, it does not trade a pool of one or two
   names by accident.
 * Trial counting: screen variants and entry variants both count as trials of the family.
