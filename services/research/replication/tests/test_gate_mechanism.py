@@ -344,3 +344,36 @@ def test_production_module_synthesizes_no_data():
     source = (Path(mt.__file__)).read_text()
     assert not re.search(r"^\s*(import|from)\s+(random|numpy)", source, re.M)
     assert "random" not in source.split('"""', 2)[2]
+
+
+# ------------------------------------------------ screened candidate: pool membership sets the window
+def test_screened_unequal_pool_histories_read_no_out_of_sample_bar_at_gate_entry():
+    from services.research.replication.tests import test_gate_screen_contribution as sc
+    from services.research.vectorbt.adapter.vectorbt_adapter import GovernedVectorbtInputAdapter
+
+    market = sc.recorded_market(attest_coverage=True)
+    market["symbols"]["2317.TW"]["bars"] = market["symbols"]["2317.TW"]["bars"][5:]  # shorter pool member
+    ds = sc.dataset(market)
+    art = sc.artifact()
+    assert art["parameters"]["symbols"] == ["2330.TW"]
+    config = GateConfig(**sc.SHORT_HISTORY)
+    prepared = GovernedVectorbtInputAdapter().prepare(ds)
+    counts = {k.split(".")[0]: v for k, v in prepared.bars_per_instrument.items()}
+    protocol_split = int(min(counts.values()) * config.in_sample_ratio)
+    assert protocol_split < int(counts["2330"] * config.in_sample_ratio)  # the leak scenario
+    poisoned = copy.deepcopy(ds)
+    by_inst = {}
+    for rec in poisoned["records"]:
+        by_inst.setdefault(rec["instrument"], []).append(rec)
+    for rows in by_inst.values():
+        rows.sort(key=lambda r: r["date"])
+        for rec in rows[protocol_split:]:
+            for key in ("open", "high", "low", "close"):
+                rec[key] = mt._Poison() if hasattr(mt, "_Poison") else _Poison()
+    gate = ReplicationGate(config=config)
+    request = sc.build_request(art, poisoned)
+    request.research_handoff["hypothesis_predictions"] = [REGIME("+")]
+    _, inputs = recorded()
+    request.research_handoff["mechanism_inputs"] = inputs
+    result = gate._run_mechanism_stage(request)  # raises AssertionError if an OOS bar is read
+    assert result["prediction_count"] == 1

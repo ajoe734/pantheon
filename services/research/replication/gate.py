@@ -342,6 +342,15 @@ class ReplicationGate:
         artifact = first("strategy_artifact", dict) or {}
         params = artifact.get("parameters") if isinstance(artifact.get("parameters"), dict) else {}
         symbols = params.get("symbols") if isinstance(params.get("symbols"), list) else []
+        logic = artifact.get("strategy_logic")
+        if isinstance(logic, dict) and "screen" in logic:
+            # Screened artifacts: the protocol's window is the min over the whole candidate pool
+            # (vectorbt_adapter uses pool_market["symbols"] as the target universe).
+            dataset = first("backtest_dataset", dict) or {}
+            pool = dataset.get("candidate_pool_market")
+            pool_symbols = pool.get("symbols") if isinstance(pool, dict) else None
+            if isinstance(pool_symbols, dict) and pool_symbols:
+                symbols = list(pool_symbols)
         return run_mechanism_stage(
             predictions,
             first("backtest_dataset", dict),
