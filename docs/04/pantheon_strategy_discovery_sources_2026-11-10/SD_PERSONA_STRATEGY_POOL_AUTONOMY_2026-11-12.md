@@ -64,7 +64,7 @@ operation.
 | Automatic evolution retires the persona, not a strategy | `services/evolution/auto_consumer.py:41` (`RETIRE_PATH = ("frozen", "retired")`, persona lifecycle) |
 | The allocator treated personas as slots | `services/research/discovery_allocator.py:15` (`MAX_DISCOVERY_PERSONAS`) |
 | Trade-time universe is design only | `SD_VIEW_UNIVERSE_CROSS_SECTIONAL.md`; no implementation in `services/` |
-| A per-persona schedule and an Observe–Orient–Decide–Act–Learn record already exist | persona cron (registered through the OpenClaw gateway cron proxy at provisioning); `services/persona/cron_ooda_closure.py`, `services/control-plane/ooda/ooda_loop_packet.py`, read at `/bff/ooda/packets` |
+| A per-persona schedule and an Observe–Orient–Decide–Act–Learn record already exist | persona cron (registered at provisioning by `_register_persona_cron_required`, `services/control-plane/bff/personas/service.py:4380`, via `services/control-plane/cron/persona_cron_registrar.py`); `services/persona/cron_ooda_closure.py`, `services/control-plane/ooda/ooda_loop_packet.py`, read at `/bff/ooda/packets` |
 
 ## 3. What others do (read 2026-11-12)
 
@@ -114,7 +114,7 @@ Sources are listed in §9.
 * `members[]`: `artifact_ref` and checksum (a gate-passed registry artifact), `stage` (`trial` | `active` |
   `removed`), `risk_weight`, `baseline_ref` (the gate verdict, §5.2), `joined_at`, `parent_ref`,
   `demand_ref`.
-* `pool_version` is hashed into every decision key, like `universe_digest`, so a decision always names the
+* `pool_version` is hashed into every decision key, like the `universe_digest` specified in `SD_VIEW_UNIVERSE_CROSS_SECTIONAL.md` (design only, not yet in code), so a decision always names the
   exact pool it was made with.
 * A removed member stays in history; the persona is never retired because a member is removed.
 

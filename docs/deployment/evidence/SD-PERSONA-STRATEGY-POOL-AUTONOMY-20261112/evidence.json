@@ -22,11 +22,11 @@
   "ceiling 20 members"
  ],
  "unverified": [
-  "persona cron registration path is cited from the 2026-11-09 deployment investigation, not re-read today",
   "no public rule found for how multi-manager funds increase an allocation"
  ],
  "superseded_tasks": [
   "DISCOVERY-ALLOCATOR-RUNS-ADMITTED-STRATEGY-20261112",
   "DEV-PLAN-DISCOVERY-DEMAND-EVOLUTION-20261112"
- ]
+ ],
+ "verified_on_base": "origin/dev 796d55c03: §2 lines services/capital/models.py:28,:72; services/evolution/auto_consumer.py:41; services/research/discovery_allocator.py:15; persona cron registration at services/control-plane/bff/personas/service.py:4380; OODA modules and /bff/ooda/packets route present. universe_digest exists only in design docs."
 }
