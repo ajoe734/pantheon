@@ -58,6 +58,10 @@
     {
       "command": "pytest integrations/openclaw (excluding test_dev_gates, pre-existing Postgres DSN env failure) + bff provisioning suites",
       "result": "213 passed after review fix e37ef451f"
+    },
+    {
+      "command": "pytest services/openclaw-gateway-adapter integrations/openclaw (excl test_dev_gates, compose_activation) + bff provisioning integration/http_entry/coordinator/readback, run non-root (uid!=0) with restored services/openclaw-gateway-adapter/conftest.py",
+      "result": "877 passed, 4 skipped, 6 deselected"
     }
   ],
   "known_limits": [
@@ -65,7 +69,8 @@
     "backfill of the three hosted personas and hosted memory materialization were not executed",
     "personas/service.py and openclaw_ops_client.py are unchanged to stay inside the artifact contract; the coordinator's default provisioner lazily reuses service._get_active_write_owner and the existing ops client via integrations/openclaw/persona_agent_client.py",
     "review P1 (CLI-vs-HTTP) fixed: persona_agent_sync.agent_registry_lock (reentrant flock in the shared OpenClaw state dir, override PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK) wraps the whole sync_persona_agents read-modify-write; the standalone CLI and every adapter ensure route (via _agent_registry_lock) use that one lock identity. Hosted AC1/AC3 backfill of the three personas and hosted private-memory proof remain external_wait; not executed, not claimed from local fixtures",
-    "unverified locally: test_dev_gates.py::test_sync_persona_agents_reconciliation_and_model_drift and test_bff_persona_memory_gate_fails_when_not_returning_canonical_memory failed in a combined local run (dev_gates needs a Postgres DSN); not confirmed pre-existing at f90f863"
+    "unverified locally: test_dev_gates.py::test_sync_persona_agents_reconciliation_and_model_drift and test_bff_persona_memory_gate_fails_when_not_returning_canonical_memory failed in a combined local run (dev_gates needs a Postgres DSN); not confirmed pre-existing at f90f863",
+    "services/openclaw-gateway-adapter/conftest.py (admitted artifact) only points the existing PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK at tmp_path for tests; runtime lock remains fail-closed with no private tmp fallback. Hosted three-persona backfill and private-memory proof remain external_wait, not executed."
   ],
   "review_rejection_fixes": [
     "P1: agent sync moved out of coordinator.coordinate into _coordinate_persona_create, after the owner Persona record is persisted (provision_persona_agent).",
