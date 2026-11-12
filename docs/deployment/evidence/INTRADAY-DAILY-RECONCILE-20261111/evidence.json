@@ -1,0 +1,81 @@
+{
+  "task": "INTRADAY-DAILY-RECONCILE-20261111",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "tracks": {
+    "source": {
+      "status": "implemented_pending_independent_review",
+      "artifacts": [
+        "services/source_ingestion/intraday_reconcile.py",
+        "config/intraday_reconciliation.json",
+        "scripts/report_intraday_reconciliation.py",
+        "services/source_ingestion/tests/test_intraday_reconcile.py"
+      ]
+    },
+    "tests": {
+      "command": "python -m pytest services/source_ingestion/tests/test_intraday_reconcile.py services/source_ingestion/tests/test_intraday_store.py services/source_ingestion/tests/test_intraday_backfill.py -q",
+      "result": "65 passed (incl. empty-store explicit-symbols minute_missing read-only regression)",
+      "covers": [
+        "pass",
+        "fail per field (open/high/low/close/volume)",
+        "tick-vs-pct tolerance and boundaries",
+        "volume 2% boundary",
+        "coverage <95%",
+        "gap 11 min fail / 10 min pass",
+        "no_official_row",
+        "pending_official (absent partition, not-yet-available row)",
+        "official_row_conflict",
+        "minute_missing",
+        "bars outside regular session",
+        "already_quarantined",
+        "dry-run writes nothing",
+        "tampered shard / stale pass invisible",
+        "refetch readmission (stale / still failing / passing)",
+        "waiver flagged non-replication",
+        "pass rate <90% not widened",
+        "config rejects auto widen",
+        "read-only report script",
+        "P1 readmit/waiver sidecar bound to current resolved quarantine generation (re-quarantine, interrupted resolution fail closed)",
+        "P2 pass->pending withdraws pass on write, write=False stays read-only",
+        "P2 recovered clean day reconciles as pass with preserved timestamps; official change revalidated",
+        "P2 readmitted pass->pending (absent partition / future official) withholds sidecar, loader closed, official restored re-passes; failing official requarantines then later refetch readmits",
+        "P2 read-only report enumerates intended universe (stored symbols or --symbols) x (stored dates + official dates from first stored day): absent symbol entries and wholly absent day manifests report minute_missing; unrelated official symbols ignored; store unchanged"
+      ]
+    },
+    "merged": {
+      "status": "not_yet",
+      "note": "recorded after PR merge"
+    },
+    "hosted": {
+      "status": "not_run",
+      "note": "W5 owns hosted proof; no hosted store/official snapshot was accessed by this source task"
+    }
+  },
+  "design_decisions": {
+    "quarantine": "IntradayStore.quarantine_symbol_day (manifest status quarantined => IntradayStore.read_rows returns []); detail carries outcome, violations {field, observed, official, tolerance, reason}, source_refs",
+    "pass_visibility": "sidecar normalized/tw_price_1m_reconciled/<date>/<SYMBOL>.json with real reconciled_at and bar_availability_ts = max(bar_end, fetched_at, reconciled_at); read_reconciled_rows verifies shard hash; minute shards are never rewritten",
+    "readmission": "only via a later re-fetch that itself passes; sidecar rows + resolved quarantine; original shard kept",
+    "waiver": "operator + reason required; waived=true, replication_eligible=false, no bar_availability_ts, served only with include_waived=True",
+    "pending_vs_missing": "official partition for the date absent or row not yet available => pending_official (nothing quarantined, day invisible); partition present but symbol row absent => no_official_row (quarantine)",
+    "tick_table": "TWSE stock price bands parameterised in config; ETF 0.01 tick below 50 is not modelled (stock table gives the larger tolerance there)",
+    "volume_unit_factor": "config value 1000 is only an inference (K1 probe: raw KBar x1000 within 1.6-7.9% of official on all 267 rows); recorded in every result as inferred_unverified_not_acceptance, not an acceptance claim",
+    "review_fix_round": "readmitted/waived sidecars store quarantine_resolved_at/quarantined_at and the loader requires them to equal the current resolved quarantine record; reconcile_symbol_day evaluates resolved readmitted rows instead of reporting already_quarantined; pending outcomes in write mode unlink the pass sidecar",
+    "review_fix_round_2": "pending on a readmitted day marks the bound sidecar withheld=true instead of unlinking it (quarantine generation is already resolved, so refetch cannot re-run); loader returns [] while withheld; next reconcile with valid official data rewrites the record",
+    "review_fix_round_3": "report derives symbol universe from all manifests (or --symbols) and dates from manifests plus official partitions >= first stored day, passing symbols= to reconcile_day; nothing quarantined, write=False",
+    "official_volume_unit": "Reader accepts TWSE volume (shares) and TPEx monthly history volume_lots (成交張數, 1 lot=1000 shares, volume null); only both-null/null price is a no-trade non-row. Reads adapter metadata.normalized_row. 2% tolerance unchanged. Regressions use adapter-produced TWSE/TPEx records."
+  },
+  "real_input_facts_not_pass": {
+    "kbar_probe_residuals": "/tmp/pantheon-kbar-probe-20261112/real-finmind-kbar-probe-run1.json sha256 f0e74d5c9484fcfd2a1476a0a452b33264ea0002f8e6b325f33501747a25330b; all-267-row volume residuals 2330 6.49%/7.86%, 2317 1.63%/2.69% against the 2% target. These are all-row sums including the 14:30 row, regular-session sums were not reconstructable; under this contract such days would fail/quarantine, tolerance is not widened and no clean-day PASS is claimed.",
+    "current_day_capture": "2330 2026-11-12 captured 17:01:07 Asia/Taipei, 267 rows = 266 regular 09:00-13:30 plus one 14:30 row (volume 130), regular raw volume 28991, response sha256 e8a6e3f20f981d7cf53c3d2026378ac367b9f198fcabb4e93087a86fd550469a. No official 2026-11-12 daily row was available, so this is not a verified reconciliation; it would be pending_official. Raw data stays private vendor_research and is not copied here.",
+    "provider_publication_time": "UNKNOWN (only bracketed by an empty 09:26 and a non-empty 17:01 observation)"
+  },
+  "gaps": [
+    "Pass rate on the first two weeks of real data NOT measured: no real minute store or official tw_price_daily snapshot is available to this source-only worker. scripts/report_intraday_reconciliation.py produces it read-only once run against the hosted store (W5).",
+    "No 20 clean reconciled sessions, no verified official daily reconciliation, no licensed/commercial PIT proof.",
+    "KBar volume unit (shares vs lots) remains unverified; the 2% volume target is applied after the configured factor.",
+    "Hosted mount/df/200-symbol-2-year obligations remain with K2/W5 (external_wait).",
+    "Readmission/waiver use a reconciliation sidecar because intraday_store.py is outside this task's artifacts; a store-level status for readmitted days would need a later K2 change.",
+    "Pruner (K2) does not remove the sidecar for pruned days; the sidecar is invisible without its shard hash match."
+  ],
+  "boundaries": "source-only; no provider/token/VM/SSH/hosted/config/trading access; tw_price_daily never written"
+}
