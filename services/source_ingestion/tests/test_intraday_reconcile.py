@@ -302,6 +302,37 @@ def test_official_snapshot_reader_and_report_script_are_read_only(tmp_path):
     assert sorted(str(p) for p in tmp_path.rglob("*")) == before
 
 
+def _report(tmp_path, official_rows, official_dates, **kw):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rep", ROOT / "scripts/report_intraday_reconciliation.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    snap = tmp_path / "off" / "normalized" / "tw_price_daily"
+    for d in official_dates:
+        (snap / d).mkdir(parents=True, exist_ok=True)
+    for r in official_rows:
+        body = {"symbol": r.symbol, "date": r.date, "open": 100, "high": 110, "low": 95, "close": 104,
+                "volume": 27_100_000, "available_time": "2026-11-10T06:30:00Z"}
+        with (snap / r.date / "a.jsonl").open("a") as fh:
+            fh.write(json.dumps({"metadata": {"body": json.dumps(body)}}) + "\n")
+    return mod.build_report(tmp_path / "store", tmp_path / "off", None, None, **kw)
+
+
+def test_report_surfaces_absent_symbol_entry_and_absent_day_manifest(tmp_path):
+    d1, d2, d3 = "2026-11-09", "2026-11-10", "2026-11-11"
+    store = _store(tmp_path / "store")
+    store.put_symbol_day("2317", d1, _bars("2317", d1, fetched=f"{d1}T08:00:00Z"))
+    store.put_symbol_day("2330", d2, _bars("2330", d2, fetched=f"{d2}T08:00:00Z"))
+    rows = [_official(s, d) for s, d in
+            [("2317", d1), ("2330", d2), ("2317", d2), ("2317", d3), ("2330", d3), ("9999", d2)]]
+    before = sorted(str(p) for p in (tmp_path / "store").rglob("*"))
+    rep = _report(tmp_path, rows, [d1, d2, d3])
+    assert rep["symbol_universe"] == ["2317", "2330"]
+    assert rep["per_day_outcomes"][d2].get("minute_missing") == 1   # 2317 entry absent
+    assert rep["per_day_outcomes"][d3] == {"minute_missing": 2}     # whole day manifest absent
+    assert not any(r["symbol"] == "9999" for r in rep["non_pass"])  # unrelated official symbol ignored
+    assert sorted(str(p) for p in (tmp_path / "store").rglob("*")) == before
+
+
 def _recovered(tmp_path):
     store = _store(tmp_path)
     store.put_symbol_day("2330", DAY, _bars(close=120.0))

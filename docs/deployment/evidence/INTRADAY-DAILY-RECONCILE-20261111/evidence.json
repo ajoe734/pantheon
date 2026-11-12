@@ -14,7 +14,7 @@
     },
     "tests": {
       "command": "python -m pytest services/source_ingestion/tests/test_intraday_reconcile.py services/source_ingestion/tests/test_intraday_store.py services/source_ingestion/tests/test_intraday_backfill.py -q",
-      "result": "63 passed (3 new P2-recoverability regressions)",
+      "result": "64 passed (1 new report-coverage regression)",
       "covers": [
         "pass",
         "fail per field (open/high/low/close/volume)",
@@ -38,7 +38,8 @@
         "P1 readmit/waiver sidecar bound to current resolved quarantine generation (re-quarantine, interrupted resolution fail closed)",
         "P2 pass->pending withdraws pass on write, write=False stays read-only",
         "P2 recovered clean day reconciles as pass with preserved timestamps; official change revalidated",
-        "P2 readmitted pass->pending (absent partition / future official) withholds sidecar, loader closed, official restored re-passes; failing official requarantines then later refetch readmits"
+        "P2 readmitted pass->pending (absent partition / future official) withholds sidecar, loader closed, official restored re-passes; failing official requarantines then later refetch readmits",
+        "P2 read-only report enumerates intended universe (stored symbols or --symbols) x (stored dates + official dates from first stored day): absent symbol entries and wholly absent day manifests report minute_missing; unrelated official symbols ignored; store unchanged"
       ]
     },
     "merged": {
@@ -59,7 +60,8 @@
     "tick_table": "TWSE stock price bands parameterised in config; ETF 0.01 tick below 50 is not modelled (stock table gives the larger tolerance there)",
     "volume_unit_factor": "config value 1000 is only an inference (K1 probe: raw KBar x1000 within 1.6-7.9% of official on all 267 rows); recorded in every result as inferred_unverified_not_acceptance, not an acceptance claim",
     "review_fix_round": "readmitted/waived sidecars store quarantine_resolved_at/quarantined_at and the loader requires them to equal the current resolved quarantine record; reconcile_symbol_day evaluates resolved readmitted rows instead of reporting already_quarantined; pending outcomes in write mode unlink the pass sidecar",
-    "review_fix_round_2": "pending on a readmitted day marks the bound sidecar withheld=true instead of unlinking it (quarantine generation is already resolved, so refetch cannot re-run); loader returns [] while withheld; next reconcile with valid official data rewrites the record"
+    "review_fix_round_2": "pending on a readmitted day marks the bound sidecar withheld=true instead of unlinking it (quarantine generation is already resolved, so refetch cannot re-run); loader returns [] while withheld; next reconcile with valid official data rewrites the record",
+    "review_fix_round_3": "report derives symbol universe from all manifests (or --symbols) and dates from manifests plus official partitions >= first stored day, passing symbols= to reconcile_day; nothing quarantined, write=False"
   },
   "real_input_facts_not_pass": {
     "kbar_probe_residuals": "/tmp/pantheon-kbar-probe-20261112/real-finmind-kbar-probe-run1.json sha256 f0e74d5c9484fcfd2a1476a0a452b33264ea0002f8e6b325f33501747a25330b; all-267-row volume residuals 2330 6.49%/7.86%, 2317 1.63%/2.69% against the 2% target. These are all-row sums including the 14:30 row, regular-session sums were not reconstructable; under this contract such days would fail/quarantine, tolerance is not widened and no clean-day PASS is claimed.",
