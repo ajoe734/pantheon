@@ -46,6 +46,12 @@
   },
   "validation": [
     {
+      "command": "COMPOSE_PROFILES=root timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/persona services/control-plane/persona",
+      "exit_code": 0,
+      "result": "354 passed, 1 skipped, 3 subtests passed in 102.87s",
+      "note": "Recovery verification after merging dev 0c1e435c6; includes final unknown-action guard. Checkout-scoped distribution provisioned through scripts/dev/provision_python_distribution.py. Skipped test is the opt-in hosted smoke."
+    },
+    {
       "command": "COMPOSE_PROFILES=root timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/persona services/control-plane/persona",
       "exit_code": 0,
       "result": "353 passed, 1 skipped, 3 subtests passed",
