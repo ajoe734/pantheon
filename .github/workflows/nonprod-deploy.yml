@@ -3583,6 +3583,20 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Prepare original QA frontend dependencies (no credentials)
+        id: original_qa_prepare
+        # Pinned lockfile install + browser, in an isolated step that never sees
+        # any dev-login secret or SSH key.  Failure is surfaced by the caller as
+        # an explicit cli_not_ready unproven outcome, never as PASS.
+        if: ${{ always() && steps.original_qa_frontend.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        working-directory: .original-qa-frontend
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
+
       - name: Original paired four-role read-only QA (supplementary, non-gating)
         id: original_paired_readonly_qa
         if: ${{ always() && steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && !inputs.run_exact_artifact_roundtrip }}
@@ -3622,7 +3636,7 @@ jobs:
           python3 "${GITHUB_WORKSPACE}/.target/scripts/run_dev_paired_readonly_qa.py" \
             --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
             --fe-sha "${QA_FRONTEND_SHA}" --bff-sha "${QA_BACKEND_SHA}" \
-            --root-run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --pair-id "${QA_PAIR_ID}" \
+            --root-run-id "${GITHUB_RUN_ID}" --run-attempt "${GITHUB_RUN_ATTEMPT}" --pair-id "${QA_PAIR_ID}" \
             --tenant-id "${QA_TENANT_ID}" --persona-id "${QA_PERSONA_ID}" \
             --expected-roles-json "${QA_EXPECTED_ROLES_JSON}" \
             --frontend-checkout "${GITHUB_WORKSPACE}/.original-qa-frontend" \

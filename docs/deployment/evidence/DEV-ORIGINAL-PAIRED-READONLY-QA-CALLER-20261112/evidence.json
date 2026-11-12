@@ -3,15 +3,22 @@
   "scope": "source-only caller; no real VM/SSH/hosted/provider/secret access; no CLI execution",
   "cli_input_contract_sha256": "dedf42e580da8855a94ad93426162196c305b4beb5f18097d14a1d2f6aaf0727",
   "files": [
-    ".github/workflows/nonprod-deploy.yml (two post-Root steps, continue-on-error, not read by the Root outcome gate)",
+    ".github/workflows/nonprod-deploy.yml (three post-Root steps: FE checkout, credential-free npm ci+playwright prepare, caller; all continue-on-error, not read by the Root outcome gate)",
     "scripts/run_dev_paired_readonly_qa.py",
     "scripts/test_run_dev_paired_readonly_qa.py",
     "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py (secret-reference counts +1 for the new step)"
   ],
-  "local_verification": "after merging current dev: 57 passed (12 caller fixture tests, strict-auth count contract incl. +1 VIEWER/OPERATOR_A and +1 OPERATOR_B/TEST_ADMIN caller refs, env-parity); bootstrap and source-sha contracts 115 passed 2 skipped; workflow YAML parses; no real CLI/VM/SSH/secret access",
+  "local_verification": "caller fixtures + strict-auth + env-parity + bootstrap + source-sha suites: 174 passed, 2 skipped; workflow YAML parses; git diff --check clean; no real CLI/VM/SSH/secret access",
   "remaining_for_actual_execution": [
     "merged qualified CLI + this caller + reviewed transport in one exact accepted pair",
     "repo/env vars DEV_ORIGINAL_QA_TENANT_ID, _PERSONA_ID, _EXPECTED_ROLES_JSON, _BASELINE_PATH, _BASELINE_SHA256 (missing => outcome unproven, never pass)",
     "original Ops publisher executes the sole sequential 4-role/13-raw run"
-  ]
+  ],
+  "review_rejection_fixes": {
+    "root_identity": "--root-run-id is GITHUB_RUN_ID only (matches release controller runId); --run-attempt recorded separately in evidence",
+    "cli_readiness": "credential-free prepare step (npm ci --ignore-scripts, playwright install chromium) + caller preflight probe before any credential use; failure => cli_not_ready unproven",
+    "evidence_retention": "CLI result.json and value-free per-path diff pointer/count summary embedded in the release evidence file; current-responses.json and baseline values never retained",
+    "owner_inventory": "independent: two fixed read-only GETs of the source-ingest owner (management/sources, registry) over the existing pinned SSH transport; connector_ids follow the FE connector_id||id contract; caller no longer reads the BFF projection or logs in; unavailable/duplicate/incomplete => unproven",
+    "runtime_errors": "any exception yields structured unproven evidence retaining expected baseline metadata and completed child exit/artifacts; missing node => exit 127"
+  }
 }
