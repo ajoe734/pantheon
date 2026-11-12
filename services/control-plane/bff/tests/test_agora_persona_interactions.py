@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import os
 import uuid
 from datetime import datetime, timezone
@@ -180,6 +182,164 @@ def context_payload(version="v1"):
         {"type": "strategy", "id": "strategy-1", "version_id": version},
         {"type": "decision_event", "id": "decision-1"},
     ]}
+
+
+def _institutional_cohort(monkeypatch):
+    def persona(pid, **fields):
+        return {"persona_id": pid, "tenant_id": "pantheon-dev", "status": "active",
+                "lifecycle_state": "paper_running", "environment_ceiling": "paper", **fields}
+
+    # The private role must be recognised even with an ordinary Persona ID/name.
+    rows = [
+        persona("focus"),
+        persona("ordinary-id", archetype="agora_servant", mandate="user_private_agora_servant",
+                strategy_family="agora_servant", metadata={"persona_class": "agora_servant",
+                    "owner_scope": "user_private", "visibility_scope": "private",
+                    "memory_scope": "private_user", "agora_user_id": "interaction-user"}),
+        persona("peer", paper_runtime_state="paused", metadata={"runtime_status": "paused"}),
+        persona("foreign", tenant_id="other-tenant"),
+        persona("archived", status="archived", paper_runtime_state="retired",
+                metadata={"lifecycle_state": "paper_running"}),
+        persona("suspended", status="suspended"),
+        persona("retired", lifecycle_state="retired"),
+    ]
+    monkeypatch.setattr(read_store, "list_personas", lambda **kwargs: copy.deepcopy(rows))
+    return rows
+
+
+def _resolve_persona_entry(c, *, ids=None, mode="compare", workshop_id=None, source_kind="persona"):
+    focused_id = "focus" if source_kind == "persona" else workshop_id
+    route = (f"/management/personas/{focused_id}" if source_kind == "persona"
+             else f"/agora/strategy-workshop/{focused_id}")
+    payload = {"context_refs": [{"type": source_kind, "id": focused_id}],
+               "source_route": route, "return_route": route,
+               "focused_object": {"kind": source_kind, "id": focused_id},
+               "evidence_cutoff": _utc_now_rfc3339(), "selected_persona_ids": ids or ["focus"],
+               "initial_mode": mode}
+    if workshop_id:
+        payload["workshop_id"] = workshop_id
+    return c.post("/bff/agora/interactions/context:resolve",
+                  headers={**AUTH, "Idempotency-Key": uuid.uuid4().hex}, json=payload)
+
+
+def _eligible(c, workshop_id, mode="compare"):
+    response = c.post("/bff/agora/interactions/participants:eligible", headers=AUTH,
+                      json={"workshop_id": workshop_id, "mode": mode, "environment": "research"})
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def _daily_submission(binding, snapshots):
+    now = _utc_now_rfc3339()
+    text = "Compare the frozen Paper evidence; advisory only."
+    return {"workshop_id": binding["workshop_id"],
+            "human_request": {"request_id": uuid.uuid4().hex, "operator_id": "interaction-user",
+                "mode": binding["initial_mode"], "request_text": text, "submitted_at": now,
+                "request_sha256": hashlib.sha256(text.encode()).hexdigest()},
+            "context_snapshot": {**{key: binding[key] for key in (
+                "tenant_id", "source_route", "focused_object", "context_refs", "strategy_ref",
+                "decision_ref", "journal_ref", "position_risk_snapshot_refs", "evidence_cutoff",
+                "selected_persona_ids", "initial_mode", "return_route")}, "captured_at": now},
+            "participants": [snapshots[pid] for pid in binding["selected_persona_ids"]]}
+
+
+@pytest.mark.parametrize("mode", ["compare", "consult"])
+def test_management_compare_eligible_pool_is_institutional_and_owner_active(monkeypatch, mode):
+    c = client(monkeypatch)
+    _institutional_cohort(monkeypatch)
+    resolution = _resolve_persona_entry(c)
+    assert resolution.status_code == 200, resolution.text
+    pool = _eligible(c, resolution.json()["data"]["workshop_id"], mode)
+    assert [row["persona_id"] for row in pool["included"]] == ["focus", "peer"]
+    excluded = {row["persona_id"]: row["reasons"] for row in pool["excluded"]}
+    assert "persona_not_institutional" in excluded["ordinary-id"]
+    assert "tenant_mismatch" in excluded["foreign"]
+    for pid in ("archived", "suspended", "retired"):
+        assert "persona_not_active" in excluded[pid]
+
+
+def test_management_compare_without_peer_does_not_fall_back_to_private_servant(monkeypatch):
+    c = client(monkeypatch)
+    rows = _institutional_cohort(monkeypatch)
+    rows[:] = [row for row in rows if row["persona_id"] != "peer"]
+    resolution = _resolve_persona_entry(c)
+    assert resolution.status_code == 200, resolution.text
+    pool = _eligible(c, resolution.json()["data"]["workshop_id"])
+    assert [row["persona_id"] for row in pool["included"]] == ["focus"]
+    assert all(row["participant_snapshot"] is None for row in pool["excluded"])
+
+
+@pytest.mark.parametrize("status", ["archived", "suspended", "inactive", "disabled"])
+def test_owner_inactive_status_overrides_stale_operational_alias(monkeypatch, status):
+    c = client(monkeypatch)
+    rows = _institutional_cohort(monkeypatch)
+    rows[2]["status"] = status
+    resolution = _resolve_persona_entry(c, mode="ask")
+    pool = _eligible(c, resolution.json()["data"]["workshop_id"], "ask")
+    assert "peer" not in {row["persona_id"] for row in pool["included"]}
+    assert "archived" not in {row["persona_id"] for row in pool["included"]}
+
+
+@pytest.mark.parametrize("mode", ["ask", "reflect"])
+def test_management_talk_and_reflect_keep_exact_focused_selection(monkeypatch, mode):
+    c = client(monkeypatch)
+    _institutional_cohort(monkeypatch)
+    resolution = _resolve_persona_entry(c, mode=mode)
+    assert resolution.status_code == 200, resolution.text
+    binding = resolution.json()["data"]["context_binding"]
+    assert binding["selected_persona_ids"] == ["focus"]
+    assert binding["initial_mode"] == mode
+
+
+def test_management_compare_freeze_rejects_private_selected_peer(monkeypatch):
+    c = client(monkeypatch)
+    _institutional_cohort(monkeypatch)
+    response = _resolve_persona_entry(c, ids=["focus", "ordinary-id"])
+    assert response.status_code == 422, response.text
+    assert "participant_eligibility_failed" in response.text
+
+
+def test_private_agora_workshop_preserves_own_servant_and_denies_other_user(monkeypatch):
+    c = client(monkeypatch)
+    rows = _institutional_cohort(monkeypatch)
+    other = copy.deepcopy(rows[1])
+    other["persona_id"] = "other-private"
+    other["metadata"]["agora_user_id"] = "another-user"
+    rows.append(other)
+    initial = c.post("/bff/agora/interactions/context:resolve", headers=AUTH, json=context_payload())
+    wid = initial.json()["data"]["workshop_id"]
+    resolution = _resolve_persona_entry(c, ids=["focus", "ordinary-id"], workshop_id=wid,
+                                         source_kind="workshop")
+    assert resolution.status_code == 200, resolution.text
+    pool = _eligible(c, wid)
+    assert "ordinary-id" in {row["persona_id"] for row in pool["included"]}
+    assert "other-private" not in {row["persona_id"] for row in pool["included"]}
+    denied = _resolve_persona_entry(c, ids=["focus", "other-private"], workshop_id=wid,
+                                    source_kind="workshop")
+    assert denied.status_code == 403, denied.text
+
+
+def test_submit_uses_matching_management_receipt_even_after_new_agora_receipt(monkeypatch):
+    c = client(monkeypatch)
+    rows = _institutional_cohort(monkeypatch)
+    resolution = _resolve_persona_entry(c, ids=["focus", "peer"])
+    assert resolution.status_code == 200, resolution.text
+    binding = resolution.json()["data"]["context_binding"]
+    pool = _eligible(c, binding["workshop_id"])
+    snapshots = {row["persona_id"]: row["participant_snapshot"] for row in pool["included"]}
+    body = _daily_submission(binding, snapshots)
+    # The old institution changes role after freezing; a newer receipt from
+    # another tab must not remove the old Management receipt's restrictions.
+    rows[2].update({key: copy.deepcopy(rows[1][key]) for key in ("archetype", "mandate", "strategy_family", "metadata")})
+    newer = _resolve_persona_entry(c, ids=["focus", "peer"], workshop_id=binding["workshop_id"],
+                                  source_kind="workshop")
+    assert newer.status_code == 200, newer.text
+    assert "peer" in {row["persona_id"] for row in _eligible(c, binding["workshop_id"])["included"]}
+    response = c.post("/bff/agora/interactions", json=body,
+                      headers={**AUTH, "Idempotency-Key": uuid.uuid4().hex})
+    assert response.status_code == 422, response.text
+    assert "participant_eligibility_failed" in response.text
+    assert interaction_lifecycle.list("pantheon-dev", "interaction-user") == []
 
 
 def test_context_resolution_is_idempotent_and_versioned(monkeypatch):
