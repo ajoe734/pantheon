@@ -4381,3 +4381,23 @@ class TestPositionNetPnlRecognizedCosts(unittest.TestCase):
         entry = again["_cost_by_symbol"][self._SRF]
         self.assertEqual(entry["realized_pnl"], 1800.0)
         self.assertAlmostEqual(entry["costs"], 19.884 + 14.0, places=9)
+
+
+def test_pnl_capital_and_period_are_one_observation_and_clear_on_legacy_update(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "summary.json"))
+    def pnl_event(at, **metrics):
+        event = _event("pnl_snapshot", created_at=at)
+        event["event_id"] = "pnl-" + at
+        event["metrics"] = {"pnl": 207.0, **metrics}
+        return event
+    source = pnl_event("2026-11-12T04:10:00Z", initial_cash=100000.0,
+                       pnl_period_start_at="2026-10-01T00:00:00Z")
+    summary = store.project_event(source)
+    assert summary["initial_cash"] == 100000.0
+    assert summary["pnl_period_start_at"] == "2026-10-01T00:00:00Z"
+    summary = store.project_event(pnl_event("2026-11-12T04:00:00Z", initial_cash=5.0))
+    assert summary["initial_cash"] == 100000.0
+    summary = store.project_event(_event("heartbeat", created_at="2026-11-12T04:11:00Z"))
+    assert summary["initial_cash"] == 100000.0 and summary["pnl_at"] == "2026-11-12T04:10:00Z"
+    summary = store.project_event(pnl_event("2026-11-12T04:12:00Z"))
+    assert "initial_cash" not in summary and "pnl_period_start_at" not in summary

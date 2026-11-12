@@ -6486,6 +6486,7 @@ class PaperRuntimeService:
                 "pnl": sample.pnl,
                 **common_metrics,
                 "pnl_as_of": sample.as_of,
+                "pnl_period_start_at": ledger.get("ledger_started_at"),
             },
             pnl_metadata,
             event_id=str(uuid.uuid4()),

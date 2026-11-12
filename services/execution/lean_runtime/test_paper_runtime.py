@@ -701,6 +701,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(len(pnl_events), 1)
         self.assertEqual(len(drawdown_events), 1)
         self.assertAlmostEqual(pnl_events[0]["metrics"]["pnl"], 50.0)
+        self.assertGreater(pnl_events[0]["metrics"]["initial_cash"], 0)
+        self.assertTrue(pnl_events[0]["metrics"]["pnl_period_start_at"])
         self.assertEqual(pnl_events[0]["pnl_as_of"], mark_provider.as_of)
         self.assertNotIn("pnl_as_of", pnl_events[0]["metrics"])
         self.assertNotIn("drawdown_pct", pnl_events[0]["metrics"])
