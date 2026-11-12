@@ -107,8 +107,8 @@ def build_pm12_eligible_persona_records(
                 "tenant_id": tenant_id,
                 "mandate": "alpha_research_and_paper_execution",
                 "strategy_family": "momentum",
-                "created_at": "2026-03-01T00:00:00Z",
-                "last_active_at": "2026-04-11T10:00:00Z",
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_active_at": "2026-01-15T00:00:00Z",
                 "metadata": {
                     "archetype": "momentum",
                     "risk_level": "low",
@@ -146,12 +146,18 @@ def build_pm12_eligible_persona_records(
                 "runtime_id": runtime_id,
                 "window": "1h",
                 "pnl": pnl,
+                # Test ledger: 0.85 profit on 1.0 capital is an 85% return.
+                # Keep its observation in Q1 at the fixture contract's clock.
+                "initial_cash": 1.0,
+                "pnl_currency": "USD",
+                "pnl_period_start_at": "2026-01-01T00:00:00Z",
+                "pnl_at": "2026-01-15T00:00:00Z",
                 "drawdown": drawdown,
                 "sharpe_ratio": sharpe_ratio,
                 "total_trades": 120,
                 "fill_rate": fill_rate,
                 "avg_slippage_bps": avg_slippage_bps,
-                "collected_at": "2026-04-10T15:00:00Z",
+                "collected_at": "2026-01-15T00:00:00Z",
             },
         },
         "sessions": {

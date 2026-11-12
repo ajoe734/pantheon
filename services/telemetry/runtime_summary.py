@@ -978,6 +978,7 @@ class RuntimeSummaryProjectionStore:
                 # Reset old metrics, positions, and history to prevent carrying them across rollover
                 keys_to_clear = [
                     "pnl", "pnl_at", "pnl_binding_id", "pnl_event_id",
+                    "initial_cash", "pnl_period_start_at", "pnl_currency",
                     "drawdown", "drawdown_at", "drawdown_binding_id", "drawdown_event_id",
                     "sharpe_ratio", "sharpe_ratio_at", "sharpe_ratio_binding_id", "sharpe_ratio_event_id",
                     "fill_rate", "fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id",
@@ -1193,6 +1194,14 @@ class RuntimeSummaryProjectionStore:
                             # independently newer drawdown still advances.
                             break
                         current[target_key] = metrics[source_key]
+                        if target_key == "pnl":
+                            # Capital/window belong to this PnL observation. A
+                            # later legacy observation must clear old provenance,
+                            # and out-of-order observations must not replace it.
+                            for field in ("initial_cash", "pnl_period_start_at", "pnl_currency"):
+                                current.pop(field, None)
+                                if field in metrics:
+                                    current[field] = metrics[field]
                         current[f"{target_key}_at"] = metric_as_of
                         current[f"{target_key}_binding_id"] = binding_id
                         metric_event_id = str(event.get("event_id") or "").strip()

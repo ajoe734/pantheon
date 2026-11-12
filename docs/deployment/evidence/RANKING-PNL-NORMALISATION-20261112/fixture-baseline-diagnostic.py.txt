@@ -1,0 +1,22 @@
+import ast
+import __future__
+import subprocess
+import pytest
+from services.control_plane.bff import test_bff_promotion_review_governance as gov
+
+source = subprocess.check_output([
+    "git", "show", "ba42641b36e16a31cd45c376a955a56d61b70ec7:services/control-plane/bff/test_bff_promotion_review_governance.py"
+], text=True)
+previous_builder = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.FunctionDef)
+                        and node.name == "build_pm12_eligible_persona_records")
+# Diagnostic only: restore the exact pre-repair helper in memory; no repo writes.
+exec(compile(ast.Module(body=[previous_builder], type_ignores=[]),
+             "pre_repair_fixture_at_ba42641b3", "exec",
+             flags=__future__.annotations.compiler_flag), gov.__dict__)
+raise SystemExit(pytest.main(["-q",
+    "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks",
+    "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied",
+    "services/control-plane/bff/test_bff_promotion_review_governance.py::test_cockpit_timeout_degrades_without_blocking_health",
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary",
+]))

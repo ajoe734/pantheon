@@ -2066,7 +2066,7 @@
       "layer": "application",
       "imports_main": false,
       "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "rationale": "Registered persona HTTP routes exercise v2 return-on-capital scoring, unknown provenance, allocation adaptation and historical snapshot identity using owner-read adapters; no main composition globals"
     },
     {
       "file": "tests/test_bff_rebalance_proposals.py",
