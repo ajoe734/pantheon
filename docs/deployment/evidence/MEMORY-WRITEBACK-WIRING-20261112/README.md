@@ -67,3 +67,13 @@ retry evidence, and operator/committee retrieval with cross-persona denial.
 Record that evidence through `milestone hosted done` before terminal closeout.
 
 Local validation results are in `evidence.json`; they prove source behavior only.
+
+## Review admission hold
+
+PR #7262 was pushed, but canonical handoff rejected head
+`0d75e27563cabb7b5d93cacb1f529cc8bbaccff0`: required Memory schema/store/writeback
+files, Alpha writer files and the Postmortem regression test are absent from the
+task artifact contract. The eight exact paths are listed in `evidence.json`.
+Only Human/Ops may correct the contract through the governed `artifact-contract`
+command on a blocked task. After correction, reopen and repeat owner handoff at
+the current committed PR head; no review approval or merge is currently present.

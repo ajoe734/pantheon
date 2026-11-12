@@ -3,10 +3,28 @@
   "owner": "Codex",
   "reviewer": "Claude",
   "recorded_at": "2026-11-12",
-  "source_status": "ready_for_independent_review",
+  "source_status": "implemented_review_admission_blocked",
   "hosted_status": "external_wait",
   "integration_base": "8f0445559a19474d7e7da29ed3f175c0800df558",
   "review_decision": "pending_assigned_reviewer",
+  "review_admission": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/7262",
+    "attempted_head": "0d75e27563cabb7b5d93cacb1f529cc8bbaccff0",
+    "result": "rejected_artifact_contract",
+    "reason": "Canonical handoff rejects necessary source files outside the task artifact contract. Only Human/Ops may revise that contract; no gate or canonical JSON was edited.",
+    "missing_artifacts": [
+      "services/memory/institutional_memory_entry.schema.json",
+      "services/memory/institutional_memory_store.py",
+      "services/memory/learn_feedback_writeback.py",
+      "services/memory/persona_memory.schema.json",
+      "services/memory/persona_memory_store.py",
+      "services/postmortems/test_main_routes.py",
+      "services/research/alpha_replication/revalidation_worker.py",
+      "services/research/alpha_replication/test_revalidation_worker.py"
+    ],
+    "required_actor": "Human/Ops",
+    "recovery": "Use the governed artifact-contract command to add the required paths while blocked, then reopen and repeat owner handoff against the current PR head and this committed manifest. Hosted acceptance remains outstanding."
+  },
   "acceptance": [
     {
       "id": 1,
