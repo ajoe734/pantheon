@@ -4,7 +4,7 @@
   "read_date": "2026-11-12",
   "document": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md",
   "hosted_behavior_claimed": false,
-  "repo_base": "5183cbf9171bba4b85ec0a9ee5f2543f5d211967",
+  "repo_base": "4042386ef7b11cee46343ba2cad53033239c1ced",
   "operator_statements_2026_11_12": [
     "persona的記憶跟各persona的討論會議機制是怎樣進行? 這些你詳細跟現在的L1-L12怎麼協作",
     "跟這些到底互動關係是什麼?你詳細思考整理出來",
@@ -48,7 +48,7 @@
     "limitation": "Historical context only; fresh exact-version hosted evidence belongs to PERSONA-CYCLE-RECONNECT-HOSTED-ACCEPTANCE-20261112."
   },
   "source_verification": {
-    "base_sha": "5183cbf9171bba4b85ec0a9ee5f2543f5d211967",
+    "base_sha": "4042386ef7b11cee46343ba2cad53033239c1ced",
     "citations": [
       {
         "reference": "CANONICAL_DOCUMENT_MAP.md:28-50",
@@ -92,7 +92,7 @@
       },
       {
         "reference": "services/control-plane/bff/personas/service.py:4414",
-        "base_blob": "8d212467243d0d5e0b4251393bc26faff7ae6a68"
+        "base_blob": "35e2efddf1fb02244d2fdb5f32c3eb7df1d92167"
       },
       {
         "reference": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md:362-381",
@@ -335,7 +335,7 @@
         "base_blob": "bbe1d5262a8a0a55820bf033911d9df288dbb4f4"
       }
     ],
-    "operator_quotes_compared_with_commit": "d1d854a31",
+    "operator_quotes_compared_with_commit": "461e458c8a16a0a5163a1f32651c5f046688ce7e",
     "operator_quotes_unchanged": true,
     "decision_sources_checked": 13,
     "changed_files": [
@@ -345,7 +345,7 @@
     "command": "python3 -c 'import json; exec(json.load(open(\"docs/deployment/evidence/SD-PERSONA-CYCLE-RECONNECT-20261112/evidence.json\"))[\"verification_script\"])'",
     "result": "passed"
   },
-  "verification_script": "import hashlib,json,re,subprocess\nfrom pathlib import Path\nmanifest=Path('docs/deployment/evidence/SD-PERSONA-CYCLE-RECONNECT-20261112/evidence.json')\ne=json.loads(manifest.read_text());p=Path(e['document']);s=p.read_text();base=e['repo_base']\noriginal=subprocess.check_output(['git','show','d1d854a31:'+str(p)],text=True)\nquotes=lambda text: re.findall(r'^> (.*)$',text,re.M)\nassert quotes(s)==quotes(original)==e['operator_statements_2026_11_12'], 'operator quotes changed'\nassert e['hosted_behavior_claimed'] is False\nassert e['hosted_observation_provenance']['independently_reverified'] is False\nsection=s.split('\\n## 2.')[1].split('\\n## 4.')[0]\nrefs=[]\nfor token in re.findall(r'`([^`]+)`',section):\n    m=re.fullmatch(r'([^:]+\\.(?:md|py|json))(?::(\\d+)(?:-(\\d+))?)?',token)\n    assert not token.startswith(':'), f'shorthand reference: {token}'\n    if not m: continue\n    path,start,end=m.groups(); source=Path(path)\n    assert source.is_file(), f'missing {token}'\n    delivered=source.read_bytes();baseline=subprocess.check_output(['git','show',base+':'+path])\n    assert delivered==baseline, f'reference changed from checked base: {path}'\n    lines=delivered.decode().splitlines()\n    if start: assert 1<=int(start)<=int(end or start)<=len(lines), f'bad line {token}'\n    refs.append({'reference':token,'base_blob':subprocess.check_output(['git','rev-parse',base+':'+path],text=True).strip()})\nassert refs\nrefs=list({r['reference']:r for r in refs}.values())\ndecisions=s.split('\\n## 4.')[1].split('\\n## 5.')[0]\nrows=re.findall(r'^\\| D(\\d+) \\| (.*)$',decisions,re.M)\nassert [int(n) for n,_ in rows]==list(range(1,14))\nfor n,row in rows:\n    assert re.search(r'`[^`]+\\.(md|py|json)(?::[^`]*)?`',row), f'D{n} missing source'\nallowed={str(p),str(manifest)}\nchanged=set(subprocess.check_output(['git','diff','--name-only',base],text=True).splitlines())\nassert changed==allowed, f'out-of-scope change: {changed}'\nsubprocess.run(['git','diff','--check',base],check=True)\nprint(f'PASS: {len(refs)} citations resolve at {base}; 7 verbatim statements; D1-D13 cite sources; exact two-file scope; JSON false hosted claim; diff whitespace clean')\n",
+  "verification_script": "import hashlib,json,re,subprocess\nfrom pathlib import Path\nmanifest=Path('docs/deployment/evidence/SD-PERSONA-CYCLE-RECONNECT-20261112/evidence.json')\ne=json.loads(manifest.read_text());p=Path(e['document']);s=p.read_text();base=e['repo_base']\noriginal=subprocess.check_output(['git','show','461e458c8a16a0a5163a1f32651c5f046688ce7e:'+str(p)],text=True)\nquotes=lambda text: re.findall(r'^> (.*)$',text,re.M)\nassert quotes(s)==quotes(original)==e['operator_statements_2026_11_12'], 'operator quotes changed'\nassert e['hosted_behavior_claimed'] is False\nassert e['hosted_observation_provenance']['independently_reverified'] is False\nsection=s.split('\\n## 2.')[1].split('\\n## 4.')[0]\nrefs=[]\nfor token in re.findall(r'`([^`]+)`',section):\n    m=re.fullmatch(r'([^:]+\\.(?:md|py|json))(?::(\\d+)(?:-(\\d+))?)?',token)\n    assert not token.startswith(':'), f'shorthand reference: {token}'\n    if not m: continue\n    path,start,end=m.groups(); source=Path(path)\n    assert source.is_file(), f'missing {token}'\n    delivered=source.read_bytes();baseline=subprocess.check_output(['git','show',base+':'+path])\n    assert delivered==baseline, f'reference changed from checked base: {path}'\n    lines=delivered.decode().splitlines()\n    if start: assert 1<=int(start)<=int(end or start)<=len(lines), f'bad line {token}'\n    refs.append({'reference':token,'base_blob':subprocess.check_output(['git','rev-parse',base+':'+path],text=True).strip()})\nassert refs\nrefs=list({r['reference']:r for r in refs}.values())\nassert refs==e['source_verification']['citations'], 'citation manifest differs'\ndecisions=s.split('\\n## 4.')[1].split('\\n## 5.')[0]\nrows=re.findall(r'^\\| D(\\d+) \\| (.*)$',decisions,re.M)\nassert [int(n) for n,_ in rows]==list(range(1,14))\nfor n,row in rows:\n    assert re.search(r'`[^`]+\\.(md|py|json)(?::[^`]*)?`',row), f'D{n} missing source'\nallowed={str(p),str(manifest)}\nchanged=set(subprocess.check_output(['git','diff','--name-only',base],text=True).splitlines())\nassert changed==allowed, f'out-of-scope change: {changed}'\nsubprocess.run(['git','diff','--check',base],check=True)\nprint(f'PASS: {len(refs)} citations resolve at {base}; 7 verbatim statements; D1-D13 cite sources; exact two-file scope; JSON false hosted claim; diff whitespace clean')\n",
   "manual_design_checks": [
     "C1 runs in existing persona service and reuses OpenClaw cron; no second scheduler.",
     "C3 writes to the existing Memory Plane; workspace memory is a materialized cache.",
@@ -356,14 +356,71 @@
   "delivery_validation": {
     "commit_trailers": {
       "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --task-id SD-PERSONA-CYCLE-RECONNECT-20261112",
-      "exit_status": 1,
-      "result": "failed",
-      "offending_commit": "d1d854a31da2f1c685823ce096f60726777f0d3e",
-      "reason": "subject exceeds 72 chars (77)",
-      "inherited_commit": true
+      "exit_status": 0,
+      "result": "passed after authorized metadata replay"
     },
     "review_admitted": false,
-    "remaining_action": "Human/Ops must authorize a one-time published-history repair, or provide a compliant replacement delivery under the existing task. Re-run validation and exact-head handoff afterward.",
-    "policy_reference": "docs/conventions/GIT_WORKFLOW.md section 5.5 forbids amend on a pushed commit and routine force pushes."
+    "remaining_action": "Fresh exact-head handoff to assigned reviewer Codex2, required CI and native supervisor integration; this manifest claims no approval or merge.",
+    "metadata_repair": {
+      "task_id": "SD-PERSONA-CYCLE-RECONNECT-20261112",
+      "backup_ref": "recovery/sd7249-before-metadata-replay-20261112",
+      "actor": "Codex",
+      "old_head": "d9f4abd9e33d49c570e14268c9d59930622014e2",
+      "new_head": "44e38d7cee711eefa714c3b5980dd94786a4d2a2",
+      "original_final_tree": "b5faf2bfb09944776c958103f7ec1a703f1cd7a6",
+      "final_tree_identical": true,
+      "commits": [
+        {
+          "old": "d1d854a31da2f1c685823ce096f60726777f0d3e",
+          "new": "461e458c8a16a0a5163a1f32651c5f046688ce7e",
+          "tree": "ab091da9203c6d8dbc5a455b48586df1283745f3",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        },
+        {
+          "old": "7cab4c014e90da984bd8b87425ee61a07ff84102",
+          "new": "f284a7ec80ea97ca559180b93ab2b75f129eb194",
+          "tree": "36b4c7e5f9f08df3fb5f289ff87564f096c8e460",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        },
+        {
+          "old": "bc523dd09397c4541e995257ee26d4ba1163ce90",
+          "new": "963bd46ffa070ce6fa8d64f95c8344dc856adc3a",
+          "tree": "425ec76e9290e75aa2b2ebdb5f242a99de16985e",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        },
+        {
+          "old": "df2b0103a5e815df3571474c20f348330ef29030",
+          "new": "164ec7d48a157c249f04e6d760c4fa9eebb5ce99",
+          "tree": "d908341c81467b3da04a6ef7314b52d201646510",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        },
+        {
+          "old": "d9f4abd9e33d49c570e14268c9d59930622014e2",
+          "new": "44e38d7cee711eefa714c3b5980dd94786a4d2a2",
+          "tree": "b5faf2bfb09944776c958103f7ec1a703f1cd7a6",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        }
+      ],
+      "authorization": "Current canonical task generation 3; Human/Ops reopen at 2026-11-12T15:59:10Z explicitly authorized this single task-ref replay and lease.",
+      "new_subject": "SD-PERSONA-CYCLE-RECONNECT-20261112: reconnect persona cycle",
+      "preserved_attribution": "Original author names, emails, timestamps and all LLM-Agent, Reviewer and Co-Authored-By lines preserved; Codex is the replay committer, not the inherited content author.",
+      "publication": "Single explicit force-with-lease bound to the task ref and old head succeeded; subsequent delivery uses normal non-force pushes.",
+      "tree_equality_scope": "Every replayed commit tree equals its original tree; final equality is recorded before the normal current-dev merge and this evidence refresh.",
+      "historical_failure": {
+        "commit": "d1d854a31da2f1c685823ce096f60726777f0d3e",
+        "reason": "subject exceeds 72 chars (77)",
+        "prior_exit_status": 1
+      }
+    },
+    "base_refresh": {
+      "previous_base": "5183cbf9171bba4b85ec0a9ee5f2543f5d211967",
+      "current_base": "4042386ef7b11cee46343ba2cad53033239c1ced",
+      "result": "Merged current dev; all cited line ranges remain identical, source blobs refreshed, document and evidence remain the only PR changes."
+    }
   }
 }
