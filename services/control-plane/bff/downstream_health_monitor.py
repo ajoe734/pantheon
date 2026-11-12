@@ -543,6 +543,11 @@ def _probe_file_health(
         return False, -1, f"unexpected file probe error: {exc}"
 
 
+INCIDENT_CHANNELS = frozenset({"incident_open", "incident_resolve"})
+INCIDENT_RETRY_WINDOW_SECONDS = 900.0
+INCIDENT_MAX_BACKOFF_SECONDS = 60.0
+
+
 def _post_json(url: str, body: Dict[str, Any], timeout: float) -> tuple[bool, int]:
     """POST JSON using request-scoped headers set by the delivery worker."""
 
@@ -1677,12 +1682,40 @@ class _DurableHealthStore:
         error: str,
         fatal: bool,
         base_backoff_seconds: float,
+        incident_retry_window_seconds: float = INCIDENT_RETRY_WINDOW_SECONDS,
+        incident_max_backoff_seconds: float = INCIDENT_MAX_BACKOFF_SECONDS,
     ) -> str:
         attempt = int(delivery["attempt_count"]) + 1
         max_attempts = int(delivery["max_attempts"])
-        dead = fatal or attempt >= max_attempts
+        base = max(0.1, base_backoff_seconds)
+        if str(delivery["channel"]) in INCIDENT_CHANNELS:
+            # Incident deliveries must outlive an incidents-service restart
+            # during a deploy: capped exponential backoff, dead-lettered only
+            # once the backoff waited so far covers the retry window.  Derived
+            # from attempt_count so an explicit replay (attempt_count=0)
+            # restarts the window without a schema change.
+            cap = min(
+                INCIDENT_MAX_BACKOFF_SECONDS,
+                max(0.1, incident_max_backoff_seconds),
+            )
+            # Saturated arithmetic: never form base * 2**k for large k.
+            waited = 0.0
+            term = base
+            saturated_at = None
+            for k in range(1, attempt):
+                if term >= cap:
+                    saturated_at = k
+                    break
+                waited += term
+                term *= 2
+            if saturated_at is not None:
+                waited += cap * (attempt - saturated_at)
+            dead = fatal or waited >= incident_retry_window_seconds
+            delay = 0.0 if dead else min(cap, term)
+        else:
+            dead = fatal or attempt >= max_attempts
+            delay = 0.0 if dead else base * (2 ** (attempt - 1))
         status = "dead_letter" if dead else "retry"
-        delay = 0.0 if dead else max(0.1, base_backoff_seconds) * (2 ** (attempt - 1))
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -2100,6 +2133,23 @@ class DownstreamHealthMonitor:
                 delivery_backoff_seconds
                 if delivery_backoff_seconds is not None
                 else os.getenv("PANTHEON_BFF_HEALTH_DELIVERY_BACKOFF_SECONDS", "1")
+            ),
+        )
+        self._incident_retry_window = max(
+            INCIDENT_RETRY_WINDOW_SECONDS,
+            _env_float(
+                "PANTHEON_BFF_HEALTH_INCIDENT_RETRY_WINDOW_SECONDS",
+                INCIDENT_RETRY_WINDOW_SECONDS,
+            ),
+        )
+        self._incident_max_backoff = min(
+            INCIDENT_MAX_BACKOFF_SECONDS,
+            max(
+                1.0,
+                _env_float(
+                    "PANTHEON_BFF_HEALTH_INCIDENT_MAX_BACKOFF_SECONDS",
+                    INCIDENT_MAX_BACKOFF_SECONDS,
+                ),
             ),
         )
         self._delivery_max_age = max(
@@ -3413,6 +3463,8 @@ class DownstreamHealthMonitor:
                         error=str(exc),
                         fatal=False,
                         base_backoff_seconds=self._delivery_backoff,
+                        incident_retry_window_seconds=self._incident_retry_window,
+                        incident_max_backoff_seconds=self._incident_max_backoff,
                     )
                     continue
                 body = json.loads(str(delivery["body_json"]))
@@ -3487,6 +3539,8 @@ class DownstreamHealthMonitor:
                     ),
                     fatal=not retryable,
                     base_backoff_seconds=self._delivery_backoff,
+                    incident_retry_window_seconds=self._incident_retry_window,
+                    incident_max_backoff_seconds=self._incident_max_backoff,
                 )
         return delivered_count
 

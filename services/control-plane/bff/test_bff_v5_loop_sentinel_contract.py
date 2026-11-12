@@ -1261,7 +1261,7 @@ def test_l12_bff_incident_mapping_survives_failure_restart_and_recovery(
         if url.endswith("/api/v1/telemetry/infrastructure-health"):
             return True, 202
         if url.endswith("/api/incidents/consume-infrastructure-health"):
-            return False, 503
+            return False, 400
         return True, 200
 
     with patch.object(
@@ -1320,6 +1320,29 @@ def test_l12_bff_incident_mapping_survives_failure_restart_and_recovery(
     assert resolved["status"] == "resolved"
     assert resolved["incident_id"] == incident_id
     assert "telemetry" not in restarted._open_incident_ids
+
+
+def test_l12_bff_incident_create_503_is_retryable_not_dead_lettered(tmp_path):
+    monitor = _health_monitor(
+        tmp_path,
+        state_path=str(tmp_path / "incident-503.sqlite3"),
+        failure_threshold=1,
+        delivery_max_attempts=1,
+    )
+
+    def transient_503(url, body, timeout):
+        if url.endswith("/api/incidents/consume-infrastructure-health"):
+            return False, 503
+        return True, 202
+
+    with patch.object(health_module, "_post_json", side_effect=transient_503):
+        asyncio.run(
+            monitor._handle_probe_result(_probe(ok=False, consecutive_failures=1))
+        )
+    event_id = monitor.get_state()["incidents"]["telemetry"]["opening_event_id"]
+    statuses = {i["status"] for i in monitor.list_delivery_records(event_id=event_id)}
+    assert "dead_letter" not in statuses
+    assert "retry" in statuses
 
 
 def test_l12_bff_recovery_survives_delivered_history_retention(
