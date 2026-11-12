@@ -4029,14 +4029,21 @@ def process_queue(
             continue
         request_metadata = getattr(request, "metadata", {}) if hasattr(request, "metadata") else {}
         workspace_path = request_metadata.get("workspace_path") if isinstance(request_metadata, dict) else None
-        guard_ok, guard_message = check_worker_tree_clean(
-            config,
-            run_id=str(event_id or ""),
-            task_id=str(event.get("task_id") or ""),
-            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
-            queue_event_id=str(event_id or ""),
-            cwd=Path(str(workspace_path)) if workspace_path else None,
+        owner_wip_admitted = (
+            isinstance(request_metadata, dict)
+            and request_metadata.get("owner_wip_resume_admitted") is True
         )
+        if owner_wip_admitted:
+            guard_ok, guard_message = True, None
+        else:
+            guard_ok, guard_message = check_worker_tree_clean(
+                config,
+                run_id=str(event_id or ""),
+                task_id=str(event.get("task_id") or ""),
+                target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+                queue_event_id=str(event_id or ""),
+                cwd=Path(str(workspace_path)) if workspace_path else None,
+            )
         if not guard_ok:
             _set_pending_wait_reason(record, guard_message)
             record["dirty_tree_guard_at"] = utc_now()

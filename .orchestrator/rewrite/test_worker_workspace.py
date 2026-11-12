@@ -1553,6 +1553,78 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         )
         self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), self.source_head)
 
+    def _run_process_queue(self, config, task, agent, *, state):
+        """Real process_queue + real prepare + real block-mode tree guard."""
+        sup = worker_workspace._supervisor_module()
+        config = {**config, "worker_tree_guard": {"enabled": True, "mode": "block"},
+                  "ready_dispatcher": {"enabled": True}}
+        request = worker_workspace.DeliveryRequest(
+            agent_id=agent, provider="test", delivery_mode="auto", message="launch",
+            task_id=self.task_id, reason=worker_workspace.REASON_OWNED_IN_PROGRESS,
+            metadata={
+                "workspace_path": str(self.worktree), "task_generation": 1,
+                "task": {"review_requeue_intent": task.get("review_requeue_intent")},
+            },
+        )
+        event = {
+            "event_id": "evt-q", "task_id": self.task_id, "task_generation": 1,
+            "target_agent": agent, "delivery_endpoint_id": "ep",
+            "reason": worker_workspace.REASON_OWNED_IN_PROGRESS, "message": "wake",
+        }
+        import runtime_state
+        if "evt-q" not in (state.get("queue") or {}).get("events", {}):
+            runtime_state.store_queue_event(state, event)
+        launches = []
+        decision = mock.Mock(eligible=True)
+        with (
+            mock.patch.object(sup, "load_status", return_value={}),
+            mock.patch.object(worker_workspace, "load_status", return_value={}),
+            mock.patch.object(worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)),
+            mock.patch.object(sup, "task_index_from_status", return_value={self.task_id: task}),
+            mock.patch.object(sup, "canonical_agent_name", side_effect=lambda c, v: str(v or "")),
+            mock.patch.object(sup, "task_current_dispatch_responsibility", return_value="owner"),
+            mock.patch.object(worker_workspace, "validate_task_repository_scope", return_value="pantheon"),
+            mock.patch.object(sup, "ready_dispatch_settings", return_value={"enabled": True, "active_worker_statuses": []}),
+            mock.patch.object(sup, "command_runtime_dispatch_block_reason", return_value=None),
+            mock.patch.object(sup, "queue_events", return_value=[event]),
+            mock.patch.object(sup, "stale_dispatch_skip_message", return_value=None),
+            mock.patch.object(sup, "evaluate_queued_delivery_admission", return_value=decision),
+            mock.patch.object(sup, "build_request", return_value=request),
+            mock.patch.object(sup, "prepare_worker_workspace", worker_workspace.prepare_worker_workspace),
+            mock.patch.object(sup, "start_worker_for_request",
+                              side_effect=lambda *a, **k: launches.append(1) or (True, {}, {})),
+            mock.patch.object(sup, "write_activity_log"),
+            mock.patch.object(sup, "sync_dispatched_task_status", create=True),
+        ):
+            try:
+                sup.process_queue(config, state)
+            except Exception as exc:  # surfaced with context for iteration
+                raise AssertionError(f"process_queue failed: {exc!r}") from exc
+        return launches, state["queue"]["events"].get("evt-q", {})
+
+    def test_process_queue_launches_owner_wip_through_block_guard_but_not_others(self) -> None:
+        config, task = self._resume_fixture()
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        launches, record = self._run_process_queue(
+            config, task, "Claude2", state={"worker_worktrees": {"leases": {}}}
+        )
+        self.assertEqual(launches, [1], record)
+        self.assertEqual(self._snapshot(), before)
+        # Reviewer: refused at preparation, never launched, WIP untouched.
+        launches, record = self._run_process_queue(
+            config, task, "Codex", state={"worker_worktrees": {"leases": {}}}
+        )
+        self.assertEqual(launches, [])
+        self.assertEqual(record.get("status"), "pending")
+        self.assertEqual(self._snapshot(), before)
+        # Unrelated dirty file: refused.
+        (self.worktree / "unrelated.py").write_text("# stray\n", encoding="utf-8")
+        launches, record = self._run_process_queue(
+            config, task, "Claude2", state={"worker_worktrees": {"leases": {}}}
+        )
+        self.assertEqual(launches, [])
+
 
 if __name__ == "__main__":
     unittest.main()

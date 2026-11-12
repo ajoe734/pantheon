@@ -1726,6 +1726,7 @@ def prepare_worker_workspace(
 
     # Reused and recreated task branches share exactly one refresh/admission
     # policy. Only a brand-new branch created at the pinned base needs no merge.
+    request.metadata.pop("owner_wip_resume_admitted", None)
     if reused or creation_origin != "base_snapshot":
         if reused and not recovery_workspace and _same_owner_reopen_wip_may_resume(
             config, state, request,
@@ -1738,6 +1739,9 @@ def prepare_worker_workspace(
             refresh_ok, refresh_status = _resume_owner_wip_worktree(
                 worktree_path, base_sha
             )
+            # Freshly validated by the canonical checks above; the launch
+            # dirty-tree guard may admit exactly this scoped owner WIP.
+            request.metadata["owner_wip_resume_admitted"] = True
         else:
             refresh_ok, refresh_status = _refresh_reused_worker_worktree(
                 worktree_path, base_sha, task_id=workspace_task_id, branch=branch,
