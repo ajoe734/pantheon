@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import urllib.error
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -26,6 +26,75 @@ DAY = "2026-11-10"
 
 def _row(minute, o=100.0, h=101.0, l=99.0, c=100.5, v=10, sid="2330", d=DAY):
     return {"date": d, "minute": minute, "stock_id": sid, "open": o, "high": h, "low": l, "close": c, "volume": v}
+
+
+def _public_dispatch(rows, *, day=DAY, parameters=None, fetch_changes=None):
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    adapter = FinMindTaiwanKBarAdapter()
+    return execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={**adapter.fetch_config(), **(fetch_changes or {})},
+        trace_id="kbar-public-dispatch",
+        job_parameters={
+            "symbol": "2330", "date": day, "payload": {"data": rows},
+            "fetched_at": f"{day}T08:00:00Z", "reconciled_at": f"{day}T09:00:00Z",
+            **(parameters or {}),
+        },
+    )
+
+
+def _full_session():
+    start = datetime.fromisoformat(f"{DAY}T09:00:00")
+    return [_row((start + timedelta(minutes=i)).strftime("%H:%M:%S")) for i in range(271)]
+
+
+def test_public_dispatch_preserves_complete_symbol_day():
+    records = _public_dispatch(_full_session())
+    assert len(records) == 271
+    assert records[0].metadata["raw_row"]["minute"] == "09:00:00"
+    assert records[-1].metadata["raw_row"]["minute"] == "13:30:00"
+    assert all(r.metadata["normalization_summary"]["kept_bars"] == len(records) for r in records)
+
+
+def test_public_dispatch_default_without_fetch_limit_preserves_complete_symbol_day():
+    assert len(_public_dispatch(_full_session(), fetch_changes={"max_records": None})) == 271
+
+
+@pytest.mark.parametrize("limit", [100, 270, 271, 300])
+@pytest.mark.parametrize("location", ["fetch", "request"])
+def test_public_dispatch_explicit_limit_never_silently_truncates(limit, location):
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    fetch_changes = {"max_records": limit if location == "fetch" else None}
+    parameters = {"max_records": limit} if location == "request" else {}
+    if limit < 271:
+        with pytest.raises(SourceEvidenceError, match=r"complete symbol-day.*required=271.*allowed=" + str(limit)):
+            _public_dispatch(_full_session(), parameters=parameters, fetch_changes=fetch_changes)
+    else:
+        assert len(_public_dispatch(_full_session(), parameters=parameters, fetch_changes=fetch_changes)) == 271
+
+
+@pytest.mark.parametrize("day", ["2026-10-09", "2026-02-16", "2026-11-08"])
+@pytest.mark.parametrize("overrides", [{}, {"is_trading_day": lambda _: True},
+                                      {"closed_dates": [], "holidays": []}])
+def test_public_dispatch_governed_closures_cannot_be_reopened(day, overrides):
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    with pytest.raises(SourceEvidenceError, match="non-trading day"):
+        _public_dispatch([_row("09:00:00", d=day)], day=day, parameters=overrides)
+
+
+@pytest.mark.parametrize("overrides", [
+    {"is_trading_day": lambda _: False}, {"closed_dates": [DAY]}, {"holidays": [DAY]},
+    {"closed_dates": ["2026-11-09"], "holidays": [DAY]},
+    {"is_trading_day": lambda _: True, "closed_dates": [DAY]},
+])
+def test_public_dispatch_caller_calendar_can_add_closures(overrides):
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    with pytest.raises(SourceEvidenceError, match="non-trading day"):
+        _public_dispatch([_row("09:00:00")], parameters=overrides)
 
 
 def test_dataset_row_maps_to_tw_price_1m_only():

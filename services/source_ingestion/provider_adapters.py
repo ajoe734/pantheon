@@ -116,7 +116,8 @@ def execute_provider_owned_adapter(
         **_mapping(fetch.get("request")),
         **_mapping(job_parameters),
     }
-    max_records = int(fetch.get("max_records") or request.get("max_records") or 100)
+    default_max_records = adapter.max_records if isinstance(adapter, FinMindTaiwanKBarAdapter) else 100
+    max_records = int(fetch.get("max_records") or request.get("max_records") or default_max_records)
     if max_records < 1:
         raise SourceEvidenceError("fetch.max_records must be > 0 for provider_owned_adapter")
     request[EFFECTIVE_MAX_RECORDS_KEY] = max_records
@@ -349,7 +350,7 @@ def _finmind_kbar(
             )
         payload, quota_meta = result.payload, dict(result.quota_meta)
         fetched_at = quota_meta.get("fetched_at")
-    return adapter.records_from_kbar_payload(
+    records = adapter.records_from_kbar_payload(
         payload,
         symbol=symbol,
         session_date=session_date,
@@ -360,15 +361,29 @@ def _finmind_kbar(
         is_trading_day=_kbar_trading_day_gate(request),
         trace_id=trace_id,
     )
+    max_records = int(request.get(EFFECTIVE_MAX_RECORDS_KEY) or request.get("max_records") or adapter.max_records)
+    if len(records) > max_records:
+        raise SourceEvidenceError(
+            f"FinMind KBar {symbol} {session_date}: max_records cannot hold the complete symbol-day; "
+            f"required={len(records)} allowed={max_records}; no records emitted"
+        )
+    return records
 
 
 def _kbar_trading_day_gate(request: Mapping[str, Any]) -> Any:
-    """Governed calendar for KBar: caller callable, else holiday list + weekday rule."""
+    """Caller calendar restrictions may add closures to the governed calendar."""
+    from services.execution.lean_runtime.instrument_candidates import is_trading_day
+
     gate = request.get("is_trading_day")
-    if callable(gate):
-        return gate
-    closed = {str(d)[:10] for d in (request.get("closed_dates") or request.get("holidays") or ())}
-    return lambda day: day.weekday() < 5 and day.isoformat() not in closed
+    closed = {
+        str(d)[:10]
+        for key in ("closed_dates", "holidays")
+        for d in (request.get(key) or ())
+    }
+    return lambda day: (
+        is_trading_day(day) and day.isoformat() not in closed
+        and (not callable(gate) or bool(gate(day)))
+    )
 
 
 def _finmind_storage(

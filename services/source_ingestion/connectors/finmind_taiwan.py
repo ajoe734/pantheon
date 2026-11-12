@@ -1301,6 +1301,7 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
     """
 
     connector_id: str = "tw-finmind-kbar-1m"
+    max_records: int = 271  # all exact minute starts from 09:00 through 13:30
     secret_ref_id: str = "env://FINMIND_API_TOKEN"
     entitlement_tier: str = "sponsor"
     source_metadata: SourceMetadata | Mapping[str, Any] | None = None
@@ -1360,6 +1361,7 @@ class FinMindTaiwanKBarAdapter(SourceConnectorProvider):
             "mode": "provider_owned_adapter",
             "next_watermark": None,
             "adapter": "FinMindTaiwanKBarAdapter.records_from_kbar_payload",
+            "max_records": self.max_records,
             "adapter_config": {"secret_ref_id": self.secret_ref_id},
             "request": {},
             "base_url": FINMIND_BASE_URL,
