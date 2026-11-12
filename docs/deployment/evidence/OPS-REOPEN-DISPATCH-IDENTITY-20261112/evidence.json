@@ -45,5 +45,11 @@
   ],
   "limitations": [
     "The generated untracked worker task-brief file appears in the worktree after a real launch; it is allowed in the preservation assertion and is not owner WIP."
-  ]
+  ],
+  "refresh_on_fixed_dev": {
+    "dev_base": "a41eb0b5f5b6fe7712081acdd5faec3858cc941a (PR7256 shared CI fix)",
+    "source_bytes": "the 4 .orchestrator source/test files are byte-identical to f0c8534c; no change, no copy of the 3 outside-scope repaired tests or auto_integrator.py",
+    "local_reverification": "test_supervisor 417 tests OK from repo root (PYTHONPATH=.orchestrator); rewrite.test_worker_workspace 64 tests OK",
+    "not_claimed": "local passes are not required CI; actual new-head CI and independent review still required"
+  }
 }
