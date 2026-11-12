@@ -3,7 +3,7 @@
     "snapshot_date": "2026-11-12",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 615,
+    "total_routes": 621,
     "status_values": [
       "implemented",
       "alias",
@@ -134,6 +134,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/human-evidence/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/interaction-evidence/{param}",
       "family": "agora-core",
       "status": "implemented"
@@ -183,6 +189,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/performance/action-receipts/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/personas/{param}/human-evidence",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -512,6 +524,12 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/insights",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/interaction-evidence",
       "family": "agora-core",
       "status": "implemented"
@@ -561,6 +579,12 @@
     {
       "method": "POST",
       "path": "/bff/agora/management/consult-bundle",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/notes",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -644,6 +668,12 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/signal-feedback",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/strategies/{param}/trading-room/proposals",
       "family": "agora-core",
       "status": "implemented"
@@ -711,6 +741,12 @@
     {
       "method": "POST",
       "path": "/bff/agora/trading-room/workspaces/{param}/widgets/{param}/revision-proposals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/training-examples",
       "family": "agora-core",
       "status": "implemented"
     },
