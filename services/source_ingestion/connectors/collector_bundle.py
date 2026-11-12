@@ -588,6 +588,8 @@ class CollectorBundleAdapter:
         fetched_at = _utc(row.get("fetched_at"), f"item {item_id} fetched_at")
         published_raw = row.get("published_at")
         published_at = _utc(published_raw, f"item {item_id} published_at") if published_raw else fetched_at
+        if self.source_type == "market" and row.get("trade_date"):
+            published_at = self._market_event_time(item_id, row, published_raw, published_at)
         text = row.get("text")
         title = str(row.get("title") or (str(text).strip()[:80] if text else "") or item_id)
         raw_ref = f"raw/{_slug(self.connector_id)}/{_slug(self.dataset)}/date={bundle.date}/bundle-{bundle.run_id}/{PurePosixPath(manifest_item['raw_path']).name}"
@@ -719,6 +721,29 @@ class CollectorBundleAdapter:
             trace_id=trace_id,
         )
         return validate_external_source_record(record, connector=self.connector(), force=True)
+
+    def _market_event_time(
+        self, item_id: str, row: Mapping[str, Any], published_raw: Any, published_at: datetime
+    ) -> datetime:
+        """Point-in-time history: a market row's event time is its own trade date.
+
+        A backfilled bundle is fetched long after the trade date, so falling back to the fetch
+        time would stamp two years of history with today. The row's trade date (Taipei) is the
+        event date; a stated publish time on another date is rejected, never trusted.
+        """
+
+        try:
+            trade_date = date.fromisoformat(str(row["trade_date"]).strip())
+        except ValueError as exc:
+            raise SourceEvidenceError(f"collector item {item_id} has an invalid trade_date") from exc
+        if published_raw:
+            if published_at.astimezone(_TAIPEI_TZ).date() != trade_date:
+                raise SourceEvidenceError(
+                    f"collector item {item_id} published_at is not on its trade_date {trade_date.isoformat()}"
+                )
+            return published_at
+        close_utc = _MARKET_EVENT_CLOSE_UTC.get(str(row.get("dataset") or self.dataset), (6, 30))
+        return datetime(trade_date.year, trade_date.month, trade_date.day, *close_utc, tzinfo=timezone.utc)
 
     def _instrument_authority(self) -> dict[str, tuple[str, ...]]:
         authority = {k: set(v) for k, v in stored_instrument_authority(self._raw_root()).items()}
@@ -938,6 +963,8 @@ COMMUNITY_AUTHOR_DOMINANCE_SHARE = 0.5  # one author above this share of a day's
 _ENGAGEMENT_KEYS = ("engagement", "likes", "like_count", "comments", "comment_count", "replies", "reply_count", "shares", "share_count", "push_count", "upvotes")
 COMMUNITY_ZSCORE_MIN_HISTORY_DAYS = 5
 _TAIPEI_TZ = timezone(timedelta(hours=8))
+# Event time of a market row without a stated publish time: the day's published close (UTC).
+_MARKET_EVENT_CLOSE_UTC: dict[str, tuple[int, int]] = {"tw_institutional_flow": (8, 30)}
 _BULLISH_LABELS = frozenset({"bullish", "bull", "positive", "long", "看多", "多"})
 _BEARISH_LABELS = frozenset({"bearish", "bear", "negative", "short", "看空", "空"})
 
