@@ -2744,6 +2744,38 @@ class TestIncidentDeliveryRetryWindow:
                 delay = monitor.list_delivery_records()[0]["next_attempt_at"] - before
                 assert delay <= 60.5, (base, cap, attempt_count, delay)
 
+    def test_incident_backoff_high_attempt_count_does_not_overflow(self):
+        monitor = self._monitor()
+        for did in ("d1", "d2"):
+            monitor._store.queue_delivery(
+                delivery_id=did, event_id=f"e-{did}", channel="incident_open",
+                target_name="capital", url="http://inc:8090/x", body={"a": did},
+                dependency_ids=[], max_attempts=5,
+            )
+        for attempt_count in (1023, 1024, 5000):
+            with monitor._store._connect() as conn:
+                conn.execute(
+                    "UPDATE delivery_outbox SET status='claimed', claim_token='t' "
+                    "WHERE delivery_id='d1'"
+                )
+            row = dict(
+                [r for r in monitor.list_delivery_records() if r["delivery_id"] == "d1"][0],
+                claim_token="t", attempt_count=attempt_count,
+            )
+            before = time.time()
+            status = monitor._store.fail_delivery(
+                row, error="network_error", fatal=False,
+                base_backoff_seconds=1.0,
+                incident_retry_window_seconds=1800.0,
+                incident_max_backoff_seconds=1.0,
+            )
+            # waited = attempt_count * 1s cap >= 1800s window only past 1800.
+            expected = "dead_letter" if attempt_count >= 1800 else "retry"
+            assert status == expected, (attempt_count, status)
+        # The unrelated due row stays drainable (not claimed by the failure).
+        other = [r for r in monitor.list_delivery_records() if r["delivery_id"] == "d2"][0]
+        assert other["status"] != "claimed"
+
     def test_incident_non_retryable_dead_letters_at_once_and_telemetry_keeps_five(self):
         monitor = self._monitor()
         for ch in ("incident_open", "telemetry"):

@@ -1698,11 +1698,20 @@ class _DurableHealthStore:
                 INCIDENT_MAX_BACKOFF_SECONDS,
                 max(0.1, incident_max_backoff_seconds),
             )
-            waited = sum(
-                min(cap, base * (2 ** (k - 1))) for k in range(1, attempt)
-            )
+            # Saturated arithmetic: never form base * 2**k for large k.
+            waited = 0.0
+            term = base
+            saturated_at = None
+            for k in range(1, attempt):
+                if term >= cap:
+                    saturated_at = k
+                    break
+                waited += term
+                term *= 2
+            if saturated_at is not None:
+                waited += cap * (attempt - saturated_at)
             dead = fatal or waited >= incident_retry_window_seconds
-            delay = 0.0 if dead else min(cap, base * (2 ** (attempt - 1)))
+            delay = 0.0 if dead else min(cap, term)
         else:
             dead = fatal or attempt >= max_attempts
             delay = 0.0 if dead else base * (2 ** (attempt - 1))
