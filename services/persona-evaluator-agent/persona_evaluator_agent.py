@@ -5,8 +5,10 @@ evidence refs are read-only inputs), asks one agent (via the openclaw gateway
 structured-extraction route, which pins a data-only tool and denies every native
 tool) which supported recommendation each persona warrants, and persists the
 result keyed by quarter + ranking snapshot. The BFF and Human Inbox only read
-that saved result. The agent can only return recommendations; this process admits snapshots to Rankings and submits a governance ``persona_lifecycle_transition`` proposal for a
-supported lifecycle recommendation. It never decides, approves or applies one.
+that saved result. The agent can return non-promotion advice and write nomination rationale. This
+process admits snapshots to Rankings, submits existing lifecycle proposals, and
+uses fixed quarter-close rules for record-only ``paper_canary_candidacy``
+proposals. It never decides, approves or applies a proposal.
 """
 from __future__ import annotations
 
@@ -540,6 +542,12 @@ def _probe_persona(persona: dict[str, Any]) -> bool:
     metadata = persona.get("metadata") or {}
     text = json.dumps({k: persona.get(k) for k in ("persona_id", "id", "name", "mandate")}).lower()
     text += " ".join(str(v).lower() for v in metadata.values() if isinstance(v, str))
+    if any(str(source.get(k) or "").lower() in {"test", "acceptance", "fixture", "synthetic"}
+           for source in (persona, metadata) for k in ("data_scope", "dataScope")):
+        return True
+    if any(str(source.get(k) or "").lower() in {"true", "1", "yes"}
+           for source in (persona, metadata) for k in ("is_test", "test_data", "acceptance_run", "is_acceptance")):
+        return True
     return ("probe" in text and any(word in text for word in ("release", "acceptance"))) or any(
         metadata.get(k) is True for k in ("is_probe", "release_probe", "acceptance_probe", "is_test"))
 
@@ -870,7 +878,7 @@ def main() -> None:
             adapter_url=env("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-gateway-adapter:8104"),
             adapter_token=env("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", ""),
         )
-        print(json.dumps({"promotion": promotion}), flush=True)
+        print(json.dumps({"promotion": {k: promotion[k] for k in ("status", "reason", "quarter", "ranking_snapshot_id", "decision_id") if k in promotion}}), flush=True)
         pattern = pattern_review_once(
             persona_url=env("PERSONA_EVALUATOR_PERSONA_URL", "http://persona:8002").rstrip("/"),
             token=persona_token, tenant=env("PANTHEON_TENANT_ID", ""),
