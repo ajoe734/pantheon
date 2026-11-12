@@ -21,8 +21,9 @@ Design: `docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RE
 - `persona_provisioning_coordinator.py`: after the schedule is admitted, `agent_provisioner(persona_id)`
   runs best-effort. Result is stored as `result.openclaw_agent` = `ready` or `degraded` + `reason`;
   it never changes state, error or compensation, so paper admission is unaffected.
-- `personas/service.py` + `openclaw_ops_client.py`: the real entry wires the provisioner to the
-  Persona owner record and the adapter route.
+- `integrations/openclaw/persona_agent_client.py` + `default_agent_provisioner` (coordinator): the real
+  entry reads the Persona owner record and calls the adapter route through the existing ops client
+  (subclass; same URL/timeout/service-token handling).
 - `scripts/openclaw-sync-persona-agents.py`: second renderer and re-implemented reconcile removed;
   it delegates to the library (fails closed with `shared_reconciler_unavailable` otherwise) and has
   `--persona-id` for the backfill of the three current trading personas.

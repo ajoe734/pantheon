@@ -97,7 +97,6 @@ def _provision(adapter, monkeypatch, record):
         transport=fixtures.FakeOwnerTransport(),
         schedule_registrar=fixtures._schedule_receipt,
         lease_owner="test-worker",
-        agent_provisioner=persona_service._provision_persona_agent,
     )
     with mock.patch.object(persona_service, "_get_active_write_owner", return_value=_Owner(record)), \
             mock.patch.object(urllib.request, "urlopen", urlopen):
@@ -155,14 +154,15 @@ def test_agent_failure_is_readable_degraded_and_never_blocks_paper(monkeypatch, 
     assert agent["status"] == "degraded" and agent["reason"]
 
 
-def test_unconfigured_provisioner_is_degraded_with_reason():
+def test_missing_persona_owner_is_degraded_with_reason(monkeypatch):
     store, ledger = fixtures._record_and_store()
     coordinator = fixtures.PersonaProvisioningCoordinator(
         store=store, transport=fixtures.FakeOwnerTransport(),
         schedule_registrar=fixtures._schedule_receipt, lease_owner="test-worker",
     )
-    result = coordinator.coordinate(ledger)
+    with mock.patch.object(persona_service, "_get_active_write_owner", return_value=None):
+        result = coordinator.coordinate(ledger)
     assert result.result["openclaw_agent"] == {
-        "status": "degraded", "reason": "agent_provisioner_unconfigured",
+        "status": "degraded", "reason": "RuntimeError: persona_owner_unavailable_for_agent_provisioning",
     }
     assert result.current_step == "schedule_registered"

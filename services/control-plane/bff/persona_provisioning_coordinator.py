@@ -97,6 +97,30 @@ TERMINAL_RUNTIME_BINDING_STATUSES = frozenset({"retired", "failed", "failed_inac
 CHAIN_CAPITAL_LABEL_KEYS = frozenset({"chain_id", "task_id", "fixture", "paper_only"})
 
 
+def default_agent_provisioner(persona_id: str) -> Mapping[str, Any]:
+    """Production provisioner: Persona owner record -> adapter trading-agent route.
+
+    Imports are lazy so the coordinator stays importable without the BFF service
+    and so tests can substitute the persona owner / adapter HTTP.
+    """
+
+    from integrations.openclaw.persona_agent_client import TradingPersonaAgentClient
+
+    from .personas.service import _get_active_write_owner
+
+    writer = _get_active_write_owner()
+    getter = getattr(writer, "get_persona", None) if writer else None
+    if not callable(getter):
+        raise RuntimeError("persona_owner_unavailable_for_agent_provisioning")
+    persona = getter(persona_id)
+    if not isinstance(persona, Mapping):
+        raise RuntimeError("persona_record_missing_for_agent_provisioning")
+    client = TradingPersonaAgentClient()
+    if not client.configured:
+        raise RuntimeError("openclaw_adapter_unconfigured")
+    return client.ensure_trading_persona_agent(dict(persona))
+
+
 class PoolDispatchUncertain(Exception):
     """Pool envelope dispatch outcome could not be confirmed by readback."""
 
@@ -275,7 +299,7 @@ class PersonaProvisioningCoordinator:
         self.schedule_remover = schedule_remover
         self.runtime_binding_reader = runtime_binding_reader
         self.persona_archiver = persona_archiver
-        self.agent_provisioner = agent_provisioner
+        self.agent_provisioner = agent_provisioner or default_agent_provisioner
         self.lease_owner = lease_owner
         self.lease_seconds = lease_seconds
         self.actor_id = actor_id
@@ -552,8 +576,6 @@ class PersonaProvisioningCoordinator:
         state carrying its reason; success carries the agent projection.
         """
 
-        if self.agent_provisioner is None:
-            return {"status": "degraded", "reason": "agent_provisioner_unconfigured"}
         try:
             agent = dict(self.agent_provisioner(persona_id))
             memory = agent.get("memory") if isinstance(agent.get("memory"), Mapping) else {}

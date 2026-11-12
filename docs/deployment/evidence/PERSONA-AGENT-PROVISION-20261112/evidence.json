@@ -13,25 +13,25 @@
       "integrations/openclaw/test_persona_agent_sync.py::test_runtime_policy_is_written_to_agents_list_on_create_and_update"
     ],
     "2_shared_soul_with_harness": [
-      "services/openclaw-gateway-adapter/tests/test_trading_persona_agent_ensure.py::test_trading_persona_agent_soul_tools_and_private_memory",
+      "integrations/openclaw/test_trading_persona_agent_adapter.py::test_trading_persona_agent_soul_tools_and_private_memory",
       "integrations/openclaw/test_persona_agent_sync.py::test_soul_stages_memory_candidates_and_never_tells_agent_to_edit_memory_md",
       "integrations/openclaw/test_persona_agent_sync.py::test_invalid_harness_digest_is_reported_not_rendered",
       "integrations/openclaw/test_persona_agent_sync.py::test_deploy_script_fails_closed_without_shared_library"
     ],
     "3_private_memory_materialization": [
-      "services/openclaw-gateway-adapter/tests/test_trading_persona_agent_ensure.py::test_trading_persona_agent_soul_tools_and_private_memory",
-      "services/openclaw-gateway-adapter/tests/test_trading_persona_agent_ensure.py::test_on_request_memory_refresh_before_a_cycle_turn_is_private_and_bound"
+      "integrations/openclaw/test_trading_persona_agent_adapter.py::test_trading_persona_agent_soul_tools_and_private_memory",
+      "integrations/openclaw/test_trading_persona_agent_adapter.py::test_on_request_memory_refresh_before_a_cycle_turn_is_private_and_bound"
     ],
     "4_read_only_plus_proposal_tools": [
       "integrations/openclaw/test_persona_agent_sync.py::test_tool_profile_is_read_only_plus_proposal_and_validator_fails_closed"
     ],
     "5_degraded_never_blocks_paper": [
       "services/control-plane/bff/tests/test_persona_agent_provision_integration.py::test_agent_failure_is_readable_degraded_and_never_blocks_paper",
-      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py::test_unconfigured_provisioner_is_degraded_with_reason",
-      "services/openclaw-gateway-adapter/tests/test_trading_persona_agent_ensure.py::test_missing_harness_is_explicit_not_synthesized_and_memory_failure_degrades"
+      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py::test_missing_persona_owner_is_degraded_with_reason",
+      "integrations/openclaw/test_trading_persona_agent_adapter.py::test_missing_harness_is_explicit_not_synthesized_and_memory_failure_degrades"
     ],
     "6_integration_through_real_entry": [
-      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py (real coordinator + service._provision_persona_agent + OpenClawOpsClient; only urllib urlopen to the adapter faked)"
+      "services/control-plane/bff/tests/test_persona_agent_provision_integration.py (real coordinator + default_agent_provisioner + TradingPersonaAgentClient; only urllib urlopen to the adapter faked)"
     ]
   },
   "verification": [
@@ -42,6 +42,6 @@
   "known_limits": [
     "persona_proposal_submit is a contract name; the proposal-submission tool is delivered with the C1 controller",
     "backfill of the three hosted personas and hosted memory materialization were not executed",
-    "service.py, openclaw_ops_client.py and the adapter tests directory are outside the declared artifact list but required by the real entry"
+    "personas/service.py and openclaw_ops_client.py are unchanged to stay inside the artifact contract; the coordinator's default provisioner lazily reuses service._get_active_write_owner and the existing ops client via integrations/openclaw/persona_agent_client.py"
   ]
 }

@@ -13,8 +13,8 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-ADAPTER_DIR = Path(__file__).resolve().parents[1]
-ROOT = ADAPTER_DIR.parents[1]
+ADAPTER_DIR = Path(__file__).resolve().parents[2] / "services" / "openclaw-gateway-adapter"
+ROOT = Path(__file__).resolve().parents[2]
 for entry in (str(ROOT), str(ADAPTER_DIR)):
     if entry not in sys.path:
         sys.path.insert(0, entry)
