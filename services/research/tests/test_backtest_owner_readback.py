@@ -115,7 +115,7 @@ def test_producer_registration_carries_real_proof_and_owner_authenticates_verdic
 
     def factory(_child):
         run_id = store.record(evaluation)
-        module._PRODUCER_EVALUATIONS[run_id] = json.loads(json.dumps(evaluation))
+        gate.evaluations[run_id] = json.loads(json.dumps(evaluation))
         module._bind_backtest_run_owner(data_dir, run_id, tenant_id="tenant-a", decision_id="dec-1")
         return ReplicationRequest(
             candidate_id="cand-producer", source_task_id="RS-002",
@@ -131,7 +131,7 @@ def test_producer_registration_carries_real_proof_and_owner_authenticates_verdic
     verdict = search.judge_child_out_of_sample(child, gate=gate, request_factory=factory, family_id="fam-1")
     assert verdict["passed"] is True
     fields = module._producer_proof_registration(
-        data_dir=data_dir, child=child, verdict=verdict, decision_id="dec-1", run_id="research-run-1")
+        data_dir=data_dir, child=child, verdict=verdict, decision_id="dec-1", run_id="research-run-1", gate=gate)
     assert fields["producer_run_id"] == verdict["backtest_run_id"]
 
     # The Registry owner verifies the producer-built fields without any prebuilt verified entry.
@@ -144,3 +144,64 @@ def test_producer_registration_carries_real_proof_and_owner_authenticates_verdic
     assert body["gate_verdict"] == verified["owner_verified_binding"]["gate_verdict"]
     assert body["gate_verdict"]["admission_status"] == "admitted"
     assert body["evaluation_digest"] == verified["owner_verified_binding"]["evaluation_digest"]
+
+
+def test_concurrent_owner_and_verdict_writers_preserve_every_run(research):
+    import threading
+    module, _client, data_dir = research
+    errors = []
+
+    def bind(i):
+        try:
+            module._bind_backtest_run_owner(data_dir, f"run-{i}", tenant_id=f"t{i}", decision_id="d")
+            module._bind_backtest_run_gate_verdict(data_dir, f"run-{i}", {"verdict_digest": f"dg{i}"})
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=bind, args=(i,)) for i in range(16)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors
+    loaded = json.loads(module._backtest_owner_path(data_dir).read_text(encoding="utf-8"))
+    assert sorted(loaded) == sorted(f"run-{i}" for i in range(16))
+    assert all(loaded[f"run-{i}"]["gate_verdict"] == {"verdict_digest": f"dg{i}"} for i in range(16))
+    assert list(data_dir.glob("backtest_run_owners.json.*.tmp")) == []
+
+
+def test_corrupt_owner_state_fails_closed_without_overwrite(research):
+    module, _client, data_dir = research
+    path = module._backtest_owner_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        module._bind_backtest_run_owner(data_dir, "run-1", tenant_id="t", decision_id="d")
+    assert path.read_text(encoding="utf-8") == "{not json"
+
+
+def test_proof_gate_releases_rejected_trials(research):
+    module, _client, _data_dir = research
+
+    class R:
+        def __init__(self, run_id, passed):
+            self.passed = passed
+            self.results = [type("C", (), {"criterion_id": "real_backtest_validation",
+                                           "details": {"backtest_run_id": run_id}})()]
+
+        def to_dict(self):
+            return {"results": []}
+
+    class Inner:
+        def __init__(self):
+            self.n = 0
+
+        def evaluate_candidate(self, request):
+            self.n += 1
+            return R(f"run-{self.n}", self.n == 51)
+
+    gate = module._ProofCapturingGate(Inner())
+    for i in range(1, 52):
+        gate.evaluations[f"run-{i}"] = {"e": i}
+        gate.evaluate_candidate(None)
+    assert set(gate.proofs) == {"run-51"} and set(gate.evaluations) == {"run-51"}
+    gate.release("run-51")
+    assert not gate.proofs and not gate.evaluations

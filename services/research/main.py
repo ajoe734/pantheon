@@ -2260,7 +2260,7 @@ def _evolution_oos_context(
     def _record_owned(evaluation: Dict[str, Any]) -> Optional[str]:
         run_id = backtests.record(evaluation)
         if run_id:
-            _PRODUCER_EVALUATIONS[run_id] = copy.deepcopy(evaluation)  # the exact evaluation the gate judges
+            gate.evaluations[run_id] = copy.deepcopy(evaluation)  # the exact evaluation the gate judges
             _bind_backtest_run_owner(data_dir, run_id, tenant_id=tenant_id, decision_id=decision_id)
         return run_id
 
@@ -2272,33 +2272,50 @@ def _evolution_oos_context(
     return gate, factory
 
 
-_PRODUCER_PROOFS: Dict[str, Dict[str, Any]] = {}  # backtest run_id -> real gate response, consumed by the registration
-
-
 class _ProofCapturingGate:
-    """Delegates to the real gate and keeps each response so registration can send the real proof."""
+    """Delegates to the real gate and keeps each response so registration can send the real proof.
+
+    The proof/evaluation transport is scoped to this gate (one executing run); a rejected
+    judgement is released immediately and everything else dies with the gate.
+    """
 
     def __init__(self, gate: Any) -> None:
         self._gate = gate
+        self.proofs: Dict[str, Dict[str, Any]] = {}
+        self.evaluations: Dict[str, Dict[str, Any]] = {}
+
+    def release(self, run_id: Any) -> None:
+        self.proofs.pop(str(run_id or ""), None)
+        self.evaluations.pop(str(run_id or ""), None)
 
     def get_family_trial_count(self, family_id: str) -> int:
         return self._gate.get_family_trial_count(family_id)
 
     def evaluate_candidate(self, request: Any) -> Any:
-        response = self._gate.evaluate_candidate(request)
+        try:
+            response = self._gate.evaluate_candidate(request)
+        except BaseException:
+            self.proofs.clear()
+            self.evaluations.clear()
+            raise
         for result in getattr(response, "results", []) or []:
             if getattr(result, "criterion_id", "") == "real_backtest_validation":
                 run_id = str((getattr(result, "details", None) or {}).get("backtest_run_id") or "")
-                if run_id and callable(getattr(response, "to_dict", None)):
-                    _PRODUCER_PROOFS[run_id] = response.to_dict()
+                if not run_id:
+                    continue
+                if getattr(response, "passed", False) and callable(getattr(response, "to_dict", None)):
+                    self.proofs[run_id] = response.to_dict()
+                else:
+                    self.release(run_id)
+        # Evaluations recorded for runs that never produced a passing proof are not retained.
+        for run_id in [r for r in self.evaluations if r not in self.proofs]:
+            self.evaluations.pop(run_id, None)
         return response
-
-
-_PRODUCER_EVALUATIONS: Dict[str, Dict[str, Any]] = {}  # run_id -> evaluation, consumed by the registration
 
 
 def _producer_proof_registration(
     *, data_dir: Path, child: Dict[str, Any], verdict: Dict[str, Any], decision_id: str, run_id: str,
+    gate: Any = None,
 ) -> Dict[str, Any]:
     """Registration fields for a gate-passed child: the real proof, its run evaluation and lineage.
 
@@ -2307,12 +2324,12 @@ def _producer_proof_registration(
     """
     from services.registry.promotion.gate import real_backtest_verdict_digest
     backtest_run_id = str(verdict.get("backtest_run_id") or "")
-    proof = _PRODUCER_PROOFS.pop(backtest_run_id, None)
+    proof = getattr(gate, "proofs", {}).pop(backtest_run_id, None)
     results = (proof or {}).get("results") if isinstance(proof, dict) else None
     details = next(
         (r.get("details") for r in results or [] if r.get("criterion_id") == "real_backtest_validation"), None
     )
-    evaluation = _PRODUCER_EVALUATIONS.pop(backtest_run_id, None)
+    evaluation = getattr(gate, "evaluations", {}).pop(backtest_run_id, None)
     summary = {
         "out_of_sample_gate": dict(verdict),
         "decision_id": decision_id,
@@ -2419,7 +2436,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                         "producer_run_id": run_id,
                         **_producer_proof_registration(
                             data_dir=Path(ALPHA_REPLICATION_DATA_DIR), child=child, verdict=verdict,
-                            decision_id=decision_id, run_id=run_id,
+                            decision_id=decision_id, run_id=run_id, gate=gate,
                         ),
                         "metadata": {k: v for k, v in entry_meta.items() if k == "persona_id"},
                     },
@@ -2435,6 +2452,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                         raise RegistryVersionConflict(str(exc.detail)) from None
                 else:
                     raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+        getattr(gate, "release", lambda _run: None)(verdict.get("backtest_run_id"))  # adopted/registered: release
         if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") != "candidate":
             raise _RetrainFailure("register_candidate", "Registry did not report the child as a candidate")
         run = get_store().get_run(run_id) or {}
@@ -4198,35 +4216,63 @@ def _backtest_owner_path(data_dir: Path) -> Path:
     return Path(data_dir) / "backtest_run_owners.json"
 
 
+def _update_backtest_owner_file(data_dir: Path, mutate: Any) -> None:
+    """Serialised reload/merge/atomic-replace of the authoritative owner file.
+
+    An interprocess flock spans the whole cycle, the temp file is unique per writer, and a
+    present-but-corrupt file fails closed (never reset to empty, which would drop other tenants).
+    """
+    import fcntl
+    import tempfile
+
+    path = _backtest_owner_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_name(path.name + ".lock"), "a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            if path.exists():
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(loaded, dict):
+                    raise ValueError(f"{path.name} is not a JSON object")
+            else:
+                loaded = {}
+            if mutate(loaded) is False:
+                return
+            fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(loaded, indent=2, sort_keys=True) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp_name, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def _bind_backtest_run_owner(data_dir: Path, run_id: str, *, tenant_id: str, decision_id: str) -> None:
     """Server-side tenant/decision binding written by the code that ran the protocol."""
-    path = _backtest_owner_path(data_dir)
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except (OSError, ValueError):
-        loaded = {}
-    loaded = loaded if isinstance(loaded, dict) else {}
-    loaded[run_id] = {"tenant_id": tenant_id, "decision_id": decision_id}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(loaded, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    def mutate(loaded: Dict[str, Any]) -> None:
+        loaded[run_id] = {"tenant_id": tenant_id, "decision_id": decision_id}
+
+    _update_backtest_owner_file(data_dir, mutate)
 
 
 def _bind_backtest_run_gate_verdict(data_dir: Path, run_id: str, gate_verdict: Dict[str, Any]) -> None:
     """Persist the real gate decision context beside the run owner record (server-side only)."""
-    path = _backtest_owner_path(data_dir)
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except (OSError, ValueError):
-        loaded = {}
-    owner = loaded.get(run_id) if isinstance(loaded, dict) else None
-    if not isinstance(owner, dict):
-        return  # an unbound run never gains a verdict
-    owner["gate_verdict"] = gate_verdict
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(loaded, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    def mutate(loaded: Dict[str, Any]) -> Optional[bool]:
+        owner = loaded.get(run_id)
+        if not isinstance(owner, dict):
+            return False  # an unbound run never gains a verdict
+        owner["gate_verdict"] = gate_verdict
+        return None
+
+    _update_backtest_owner_file(data_dir, mutate)
 
 
 @app.get("/api/research-orchestrator/backtest-runs/{run_id}/owner-binding")
