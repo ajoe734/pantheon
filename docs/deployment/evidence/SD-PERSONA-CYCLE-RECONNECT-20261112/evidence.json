@@ -1,0 +1,44 @@
+{
+ "task_id": "SD-PERSONA-CYCLE-RECONNECT-20261112",
+ "kind": "design_document_evidence",
+ "read_date": "2026-11-12",
+ "document": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md",
+ "hosted_behavior_claimed": false,
+ "repo_base": "origin/dev 5183cbf91 (code facts read on a7ff97105)",
+ "operator_statements_2026_11_12": [
+  "persona的記憶跟各persona的討論會議機制是怎樣進行? 這些你詳細跟現在的L1-L12怎麼協作",
+  "跟這些到底互動關係是什麼?你詳細思考整理出來",
+  "你完整把規劃以及原先作法找出來",
+  "另外給你方向你要變成harness也能夠自己優化",
+  "這些感覺起來應該是要有的阿",
+  "好，加入完整版",
+  "寫成正式設計，也把任務開起來做一做，12同步也做一做 10原本的規劃加入完整版，並且把任務讓supervisor 跟auto worker做一做"
+ ],
+ "earlier_operator_decisions_kept": [
+  "2026-10-06/08 paper capital operations skip owner approval and separation of duties (services/governance/contract.md:406)",
+  "2026-11-07 no model call on the trade path; risk limits outside the mutation surface",
+  "2026-11-12 P-4 paper-only autonomy for pool actions",
+  "2026-11-12 canary candidacy built up to approval only; fixed nomination rule; agent writes rationale only (PAPER-CANARY-PROMOTION-PROPOSAL-20261112)"
+ ],
+ "changes_to_original_plan": [
+  "D5 paper-scope lesson endorsement by evaluation gates plus risk-persona review (was human endorsement)",
+  "D10 paper-scope persona harness mutation adopted by automated gate plus risk persona after pre-check and shadow comparison (EVOLUTION_REVIEW mutate was Risk Owner approval)"
+ ],
+ "coordinator_proposed_values_not_operator_decisions": [
+  "daily-cycle cadence weekdays 10:00Z",
+  "harness observation window 10 trading days",
+  "harness cooldown 7 days per component",
+  "panel composition initiator plus risk persona plus red-team persona; no voting"
+ ],
+ "planning_recovery_method": "10 document-family readers each followed by an adversarial verifier, plus a missed-document sweep and a consistency sweep, on a read-only export of origin/dev a7ff97105 (2026-11-12)",
+ "hosted_read_only_observations_2026_11_12": [
+  "memory service data directory empty; no governance authorization address on the memory service",
+  "OODA packet store file absent; 4 OpenClaw cron jobs all */15 first-evaluation; run logs show 0 tokens",
+  "no OpenClaw agent for the trading personas; agents: main, structured-extraction, 2 agora-servant, 7 persona-opinion",
+  "trade reflections: 2 rows on one release-probe persona",
+  "evolution decisions 664, all flag_for_review or freeze",
+  "persona.strategy_pools table absent; PERSONA_REGISTRY_BASE_URL unset on persona service",
+  "DISCOVERY_ALLOCATOR_ENABLED=true on research-orchestrator-svc"
+ ],
+ "verify_on_delivery": "Every path:line in sections 2 and 3 must resolve on the delivered base; moved references are corrected in place."
+}
