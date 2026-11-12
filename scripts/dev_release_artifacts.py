@@ -9,6 +9,7 @@ is provided here. Docker diagnostics are not copied into public evidence.
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 from pathlib import Path
@@ -476,6 +477,147 @@ def _protect_tag(service: str, image_id: str) -> str:
     return f"pantheon-protect/{service}:{image_id.removeprefix('sha256:')[:12]}"
 
 
+# Source alone owns this journal. The probe imports the codec in the exact
+# immutable image, never main/runtime (which would initialize product owners).
+# No live rows or exception text leave the isolated reader. The only writer
+# mode creates synthetic protocol witnesses in its private tmpfs, without a
+# Source volume, credentials, provider connection or application entrypoint.
+SOURCE_PATH_KEYS = ("SOURCE_INGEST_DATA_DIR", "SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH")
+SOURCE_PATH_FORMAT = _env_format(SOURCE_PATH_KEYS)
+SOURCE_SAMPLE_NAMES = frozenset({"official_daily", "collector_close", "close_reconciliation", *(
+    name + suffix for name in ("tw_price_1m", "tw_price_5m", "tw_price_15m", "tw_price_30m", "tw_price_60m")
+    for suffix in ("", "_withdrawal"))})
+SOURCE_PROBE = r'''
+import base64, fcntl, hashlib, json, os, re, sys
+from pathlib import Path
+from services.source_ingestion import requirement_state as m
+mode, arg = sys.argv[1:3]
+codec = hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()
+def projection(lines):
+    values = m._market_snapshots_from_lines(lines, path=Path("journal"))
+    rows = sorted((s.to_dict() for s in values.values()), key=lambda s: (s["symbol"], s.get("dataset", "tw_price_daily")))
+    return hashlib.sha256(m._canonical_json({"snapshots": rows}).encode()).hexdigest()
+try:
+    if mode == "writer":
+        samples = m.market_snapshot_writer_samples()
+        result = {"samples": samples, "projections": {k: projection(v.splitlines()) for k,v in samples.items()}}
+    elif mode == "samples":
+        samples = json.loads(base64.b64decode(arg, validate=True))
+        result = {"projections": {k: projection(v.splitlines()) for k,v in samples.items()}}
+    elif mode == "journal":
+        path = Path(arg)
+        # Missing state is not an empty journal proof. The owner must identify
+        # an existing file; do not create directories, lock files or projections.
+        with path.open("rb") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            before = os.fstat(f.fileno())
+            if before.st_size > 256 * 1024 * 1024:
+                raise ValueError("journal exceeds bounded qualification")
+            raw = f.read()
+            digest = projection(raw.decode("utf-8").splitlines())
+            after = os.fstat(f.fileno())
+            if (before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_ino,after.st_size,after.st_mtime_ns):
+                raise ValueError("journal changed")
+        result = {"journal_sha256": hashlib.sha256(raw).hexdigest(), "journal_size": len(raw), "projection_sha256": digest}
+    else:
+        raise ValueError("unknown probe mode")
+    print(json.dumps({"ok": True, "codec_sha256": codec, **result}, sort_keys=True))
+except Exception as error:
+    message = str(error)
+    reason = next((code for text,code in (
+        ("point schema", "point_schema"), ("checksum", "checksum"), ("lineage", "lineage"),
+        ("id does not match", "snapshot_identity"), ("schema", "schema"),
+        ("journal changed", "journal_changed")) if text in message), "reader_rejected")
+    line = re.search(r"journal:(\d+)", message)
+    print(json.dumps({"ok": False, "codec_sha256": codec, "reason": reason,
+                      "line": int(line[1]) if line else None}))
+'''
+
+
+def source_probe(*, docker, image_id, mode, argument="", container_id=None, check_lease):
+    _match(image_id, IMAGE, "Source probe image")
+    command = ["run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+               "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "512m",
+               "--cpus", "1", "--pids-limit", "32", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
+               "--env", "PYTHONDONTWRITEBYTECODE=1"]
+    if container_id is not None:
+        _match(container_id, re.compile(r"[0-9a-f]{12,64}"), "Source volume owner")
+        command.extend(("--volumes-from", container_id + ":ro"))
+    if mode not in ("journal", "writer", "samples") or (mode == "journal") != (container_id is not None):
+        raise ArtifactError("invalid Source probe scope")
+    check_lease()
+    try:
+        raw = docker.call(*command, "--entrypoint", "python3", image_id, "-c", SOURCE_PROBE, mode, argument)
+        if len(raw) > 120000:
+            raise ArtifactError("Source probe output exceeds bound")
+        result = _json(raw.encode())
+    except ArtifactError:
+        raise StackError("Source codec qualification unavailable", [API_SERVICE]) from None
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        reason = result.get("reason") if isinstance(result, dict) else None
+        if reason not in ("point_schema", "checksum", "lineage", "snapshot_identity", "schema", "journal_changed"):
+            reason = "reader_rejected"
+        line = result.get("line") if isinstance(result, dict) else None
+        suffix = f" at journal line {line}" if type(line) is int and 0 < line < 100000000 else ""
+        raise StackError("Source codec incompatible: " + reason + suffix, [API_SERVICE])
+    _match(result.get("codec_sha256"), DIGEST, "Source codec digest")
+    check_lease()
+    return result
+
+
+def qualify_source_reader(*, docker, image_id, check_lease):
+    rows = _stack_rows(docker).get(API_SERVICE, [])
+    if len(rows) != 1:
+        raise StackError("Source journal requires exactly one existing owner", [API_SERVICE])
+    owner = rows[0]
+    env = _stack_env(docker, owner["container_id"], SOURCE_PATH_KEYS, SOURCE_PATH_FORMAT)
+    path = env["SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH"] or str(
+        Path(env["SOURCE_INGEST_DATA_DIR"] or "/tmp/pantheon/source-ingest") / "latest_market_snapshots.jsonl")
+    if not Path(path).is_absolute() or ".." in Path(path).parts or any(c in path for c in "\r\n\0"):
+        raise StackError("Source journal path is invalid", [API_SERVICE])
+    result = source_probe(docker=docker, image_id=image_id, mode="journal", argument=path,
+                          container_id=owner["container_id"], check_lease=check_lease)
+    for key in ("journal_sha256", "projection_sha256"):
+        _match(result.get(key), DIGEST, "Source " + key)
+    if type(result.get("journal_size")) is not int or not 0 <= result["journal_size"] <= 256 * 1024 * 1024:
+        raise ArtifactError("invalid Source journal size")
+    if _stack_rows(docker).get(API_SERVICE) != rows:
+        raise StackError("Source owner changed during qualification", [API_SERVICE])
+    return {k: result[k] for k in ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256")}
+
+
+def qualify_source_writer(*, docker, retained_image, writer_image, check_lease):
+    """Reject a writer whose durable forms the required rollback reader loses.
+
+    This is a bounded Source protocol contract, not a generic compatibility
+    service. Equal codec bytes still require both real readers to replay the
+    current complete journal. Different bytes additionally require every
+    supported writer form through the retained decoder without projection loss.
+    """
+    retained = qualify_source_reader(docker=docker, image_id=retained_image, check_lease=check_lease)
+    writer = qualify_source_reader(docker=docker, image_id=writer_image, check_lease=check_lease)
+    if retained != writer and any(retained[k] != writer[k] for k in ("journal_sha256", "journal_size", "projection_sha256")):
+        raise StackError("Source readers disagree on journal identity", [API_SERVICE])
+    if retained["codec_sha256"] != writer["codec_sha256"]:
+        witness = source_probe(docker=docker, image_id=writer_image, mode="writer", check_lease=check_lease)
+        samples, expected = witness.get("samples"), witness.get("projections")
+        _keys(samples, SOURCE_SAMPLE_NAMES, "Source writer forms")
+        _keys(expected, SOURCE_SAMPLE_NAMES, "Source writer projections")
+        if witness["codec_sha256"] != writer["codec_sha256"] or any(
+            not isinstance(v, str) or not v or len(v) > 12000 for v in samples.values()
+        ):
+            raise ArtifactError("invalid Source writer protocol witnesses")
+        for value in expected.values():
+            _match(value, DIGEST, "Source witness projection")
+        argument = base64.b64encode(manifest_bytes(samples)).decode()
+        old = source_probe(docker=docker, image_id=retained_image, mode="samples", argument=argument, check_lease=check_lease)
+        new = source_probe(docker=docker, image_id=writer_image, mode="samples", argument=argument, check_lease=check_lease)
+        if old.get("projections") != expected or new.get("projections") != expected:
+            raise StackError("Source writer forms lose snapshot/provenance identity", [API_SERVICE])
+    return {"retained_image": retained_image, "writer_image": writer_image,
+            "retained": retained, "writer": writer}
+
+
 def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], None]) -> dict:
     """Record the image of every running (or completed one-shot) Compose service.
 
@@ -508,6 +650,10 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
             services[service]["control"] = _stack_control(docker, service, row["container_id"])
     if missing:
         raise StackImageMissing("recorded stack image is missing", missing)
+    if API_SERVICE in first:
+        if API_SERVICE not in services:
+            raise StackError("Source owner is not a capturable baseline", [API_SERVICE])
+        qualify_source_reader(docker=docker, image_id=services[API_SERVICE]["image_id"], check_lease=check_lease)
     if not services or len(services) > STACK_MAX_SERVICES:
         raise ArtifactError("stack baseline service count is out of bounds")
     for service, row in services.items():
@@ -738,6 +884,13 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
                 raise ArtifactError("archive changed before load")
             docker.call("image", "load", "--input", str(path))
             _image(docker, image_id)
+
+    # Always requalify the complete CURRENT journal, including historical lines
+    # appended after capture. A capture-time hash cannot prove restore safety.
+    # This precedes compose up, owner stop/start, and image-name re-pointing.
+    if stack is not None and API_SERVICE in stack["services"]:
+        qualify_source_reader(docker=docker, image_id=stack["services"][API_SERVICE]["image_id"],
+                              check_lease=check_lease)
 
     def pinned(service: str) -> dict:
         # A recreated container must keep the tenant and GIT_SHA it ran with at

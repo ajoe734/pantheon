@@ -517,6 +517,10 @@ class MarketSnapshotPoint:
 
     def __post_init__(self) -> None:
         if self.collector_close is not None:
+            if not isinstance(self.collector_close, Mapping) or set(self.collector_close) != {
+                "collector_source_id", "exchange_endpoint", "bundle_sha256", "trade_date"
+            }:
+                raise MarketSnapshotStateError("collector close lineage schema is invalid")
             validated = collector_close_lineage({COLLECTOR_CLOSE_KEY: {**dict(self.collector_close), "provisional": True, "official": False}})
             if validated is None:
                 raise MarketSnapshotStateError("collector close lineage must name collector source, exchange endpoint and bundle digest")
@@ -580,6 +584,8 @@ class MarketSnapshotPoint:
         }
         if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market", "collector_close"}):
             raise MarketSnapshotStateError("market snapshot point schema is invalid")
+        if "collector_close" in value and not isinstance(value["collector_close"], Mapping):
+            raise MarketSnapshotStateError("collector close lineage schema is invalid")
         return cls(
             event_time=value["event_time"],
             close=value["close"],
@@ -781,6 +787,11 @@ class LatestMarketSnapshot:
         points_value = value.get("points")
         if not isinstance(points_value, list):
             raise MarketSnapshotStateError("market snapshot points must be a list")
+        if "close_reconciliation" in value and (
+            not isinstance(value["close_reconciliation"], list)
+            or any(not isinstance(e, Mapping) for e in value["close_reconciliation"])
+        ):
+            raise MarketSnapshotStateError("close reconciliation schema is invalid")
         snapshot = cls(
             symbol=value.get("symbol"),
             points=tuple(MarketSnapshotPoint.from_dict(point) for point in points_value),
@@ -838,6 +849,7 @@ def _market_snapshots_from_lines(
                 raise MarketSnapshotStateError(
                     f"market snapshot withdrawal is invalid at {path}:{line_number}"
                 )
+            _market_snapshot_timestamp(state["observed_at"], field_name="withdrawal observed_at")
             snapshots.pop(
                 (_market_snapshot_symbol(state["symbol"]), _snapshot_dataset(state["dataset"])), None
             )
@@ -1274,6 +1286,57 @@ class LatestMarketSnapshotStore:
             "updated_snapshot_count": len(updated),
             "snapshots": [snapshot.to_public_dict() for snapshot in updated],
         }
+
+
+def market_snapshot_writer_samples() -> dict[str, str]:
+    """Isolated protocol witnesses, written by the real store, never provider replay.
+
+    Artifact admission executes this in a network-disabled container with only a
+    scratch /tmp. Extend this bounded contract whenever a persisted form changes.
+    The existing extended-v1 bytes and their snapshot/PIT/receipt IDs stay intact;
+    no downgrade serializer exists for provisional points or withdrawals.
+    """
+    import tempfile
+    from .connectors.base import SourceRecord
+
+    observed = "2026-11-12T08:00:00Z"
+    lineage = {
+        "collector_source_id": "collector-tw-twse-price-history",
+        "exchange_endpoint": "https://www.twse.com.tw/exchangeReport/MI_INDEX",
+        "bundle_sha256": "a" * 64, "trade_date": "2026-11-12",
+    }
+
+    def record(*, provisional=False, dataset=DAILY_SNAPSHOT_DATASET):
+        metadata = {"symbol": "2330.TWSE", "event_time": "2026-11-12T05:30:00Z",
+                    "close": 100.0, "market": "TW", "dataset": dataset}
+        if provisional:
+            metadata[COLLECTOR_CLOSE_KEY] = {**lineage, "provisional": True, "official": False}
+        return SourceRecord(
+            source_id=lineage["collector_source_id"] if provisional else "official-fixture",
+            connector_id="protocol-fixture", source_type="market",
+            title="isolated protocol witness", content_ref="fixture://source/protocol",
+            metadata=metadata, created_at=observed,
+        )
+
+    samples = {}
+    with tempfile.TemporaryDirectory(prefix="source-protocol-") as scratch:
+        for name in ("official_daily", "collector_close", "close_reconciliation", *_INTRADAY_SNAPSHOT_DATASETS):
+            path = Path(scratch) / (name + ".jsonl")
+            store = LatestMarketSnapshotStore(path)
+            dataset = name if name in _INTRADAY_SNAPSHOT_DATASETS else DAILY_SNAPSHOT_DATASET
+            provisional = name in ("collector_close", "close_reconciliation")
+            store.append_normalized_records([record(provisional=provisional, dataset=dataset)],
+                ingest_run_id="fixture-provisional" if provisional else "fixture-official",
+                observed_at=observed, dataset=dataset)
+            if name == "close_reconciliation":
+                store.append_normalized_records([record()], ingest_run_id="fixture-official",
+                                                observed_at=observed)
+            samples[name] = path.read_text(encoding="utf-8")
+            if dataset != DAILY_SNAPSHOT_DATASET:
+                if not store.withdraw_sessions("2330.TWSE", dataset, ["2026-11-12"], observed_at=observed):
+                    raise MarketSnapshotStateError("protocol witness did not exercise withdrawal")
+                samples[name + "_withdrawal"] = path.read_text(encoding="utf-8")
+    return dict(sorted(samples.items()))
 
 
 __all__ = [
