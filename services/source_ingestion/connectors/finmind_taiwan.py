@@ -14,7 +14,7 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlencode
 
@@ -106,6 +106,35 @@ FINMIND_TAIWAN_DATASETS: tuple[dict[str, Any], ...] = (
         "cadence": "daily_after_close",
     },
 )
+
+
+
+# FinMind notice 2026-10-06: broker daily reports are published 18:00 Asia/Taipei.
+FINMIND_BROKER_PUBLICATION_TIME_TAIPEI = time(18, 0)
+_TAIPEI_TZ = timezone(timedelta(hours=8))
+
+
+def latest_published_broker_session(
+    now: datetime,
+    *,
+    is_session_day: Any = None,
+    max_lookback_days: int = 20,
+) -> date:
+    """Latest trading date whose FinMind broker report is already published.
+
+    ``now`` must be timezone-aware; the Taipei calendar date/time is derived from
+    it so UTC/Taipei boundaries are handled. Today counts only at/after 18:00
+    Taipei; otherwise walk back over weekends and ``is_session_day`` closures.
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now_t = now.astimezone(_TAIPEI_TZ)
+    cursor = now_t.date() if now_t.timetz().replace(tzinfo=None) >= FINMIND_BROKER_PUBLICATION_TIME_TAIPEI else now_t.date() - timedelta(days=1)
+    for _ in range(max_lookback_days):
+        if cursor.weekday() < 5 and (is_session_day is None or is_session_day(cursor)):
+            return cursor
+        cursor -= timedelta(days=1)
+    raise ValueError("no published broker session found within lookback window")
 
 
 def _utc_now() -> str:
@@ -377,7 +406,7 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                 "source_profile": "broker_top20_from_full_daily_report",
                 "history_start": FINMIND_BROKER_REPORT_HISTORY_START,
                 "history_depth": f"{FINMIND_BROKER_REPORT_HISTORY_START}_to_now",
-                "update_cadence": "daily_after_close_21_00_taipei",
+                "update_cadence": "daily_after_close_18_00_taipei",
                 "completeness": "top20_buy_sell_aggregated_from_full_branch_daily_report",
                 "entitlement_tier": self.entitlement_tier,
                 "active_universe_tiers": ["core_universe", "candidate_universe"],

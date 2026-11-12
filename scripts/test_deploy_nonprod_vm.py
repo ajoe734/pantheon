@@ -2560,7 +2560,7 @@ def test_finmind_preflight_partial_coverage_is_not_already_fresh_and_retries_mis
     fresh_twse = _stored_tw_snapshot("2026-11-06", "2026-11-06T07:10:00Z")
     latest = {
         "connector_id": "tw-finmind-broker-daily-report",
-        "freshness": {"last_success_at": "2026-11-06T07:20:00Z"},
+        "freshness": {"last_success_at": "2026-11-06T10:20:00Z"},
         "latest_source_record": {
             "source_id": "finmind-broker-top:2330:x",
             "status": "normalized",
@@ -2646,7 +2646,7 @@ def test_finmind_readback_rejects_partial_coverage_and_accepts_union_of_batches(
     assert "bounded source refresh accepted" in complete.stdout
 
 
-def _prepare_finmind_dataset(symbol_count: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _prepare_finmind_dataset(symbol_count: int, extra_env: dict[str, str] | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Run the real PREPARE_DATASET_PY against a stub API that applies the real config validator."""
     import http.server
     import os
@@ -2656,6 +2656,19 @@ def _prepare_finmind_dataset(symbol_count: int) -> tuple[dict[str, Any], list[di
     body = script.split("<<'PREPARE_DATASET_PY'\n", 1)[1].split("\nPREPARE_DATASET_PY", 1)[0]
     posted: list[dict[str, Any]] = []
     symbols = [str(1101 + i) + ".TW" for i in range(symbol_count)]
+    env_in = dict(extra_env or {})
+    fixed_now = env_in.pop("_FIXED_NOW", "")
+    # Isolated-test clock: patch datetime.now inside the child process only; production has no override.
+    clock = (
+        "import datetime as _dt\n"
+        "_REAL = _dt.datetime\n"
+        f"_FIX = _dt.datetime.fromisoformat({fixed_now!r}.replace('Z', '+00:00')) if {fixed_now!r} else None\n"
+        "class _D(_dt.datetime):\n"
+        "    @classmethod\n"
+        "    def now(cls, tz=None):\n"
+        "        return (_FIX.astimezone(tz) if tz else _FIX.replace(tzinfo=None)) if _FIX else _REAL.now(tz)\n"
+        "_dt.datetime = _D\n"
+    )
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _reply(self, payload: dict[str, Any], code: int = 200) -> None:
@@ -2686,15 +2699,17 @@ def _prepare_finmind_dataset(symbol_count: int) -> tuple[dict[str, Any], list[di
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         proc = subprocess.run(
-            ["python3", "-c", f"import sys\nexec(compile({body!r}, 'prepare', 'exec'))\n",
+            ["python3", "-c", f"import sys\n{clock}exec(compile({body!r}, 'prepare', 'exec'))\n",
              "tw-finmind-broker-daily-report", "tw_broker_top", ",".join(symbols)],
             cwd=ROOT,
             env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
-                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t"},
+                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t", **env_in},
             capture_output=True, text=True, check=False,
         )
     finally:
         server.shutdown()
+    if env_in.get("_EXPECT_FAIL"):
+        return {"returncode": proc.returncode, "stderr": proc.stderr}, posted
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout), posted
 
@@ -3510,3 +3525,110 @@ def test_finmind_prepare_payload_passes_real_typed_configure_request_and_dispatc
     assert seen[0]["symbols"] == batch2
     assert seen[0]["dataset"] == "tw_broker_top"
     assert seen[0]["max_rank"] == 20
+
+
+def _finmind_dispatch(now: str, monkeypatch: pytest.MonkeyPatch, *, count: int = 3, fetch=None, extra_env=None):
+    """Real preparation -> typed request -> fanout -> provider dispatch; only the HTTP fetcher is faked."""
+    from services.source_ingestion import provider_adapters as pa
+    from services.source_ingestion.active_universe import build_active_universe_job_fanout
+
+    _, posted = _prepare_finmind_dataset(count, {"_FIXED_NOW": now, **(extra_env or {})})
+    schedule = next(item for item in posted if item["path"].endswith("/active-universe/schedule"))
+    jobs = build_active_universe_job_fanout(schedule["members"], rules=schedule["rules"], run_date=schedule["run_date"])["jobs"]
+    calls: list[tuple[str, str]] = []
+
+    class FakeFetcher:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def credential_status(self) -> dict[str, Any]:
+            return {"available": True}
+
+        def fetch_broker_report(self, symbol: str, date: str):
+            calls.append((symbol, date))
+            if fetch:
+                return fetch(symbol, date)
+            return {"data": [{"stock_id": symbol, "date": date, "securities_trader": "B", "securities_trader_id": "9", "buy": 5, "sell": 1}]}, {}
+
+    monkeypatch.setattr(pa, "FinMindLiveFetcher", FakeFetcher)
+    from services.source_ingestion.api_models import ConfigureConnectorRequest
+    from services.source_ingestion.connectors.base import SourceConnector
+
+    registration = next(item for item in posted if item["path"].endswith("/connectors"))
+    typed = ConfigureConnectorRequest.model_validate({"connector": registration["connector"], "fetch": registration["fetch"]})
+    typed_fetch = typed.fetch.to_config()
+    assert typed_fetch["max_records"] == 1000
+    connector = SourceConnector.from_dict(registration["connector"])
+    out = []
+    for job in jobs:
+        params = {**job, "run_date": job.get("run_date") or schedule["run_date"]}
+        out.extend(pa.execute_provider_owned_adapter(connector=connector, fetch=typed_fetch, trace_id="t", job_parameters=params))
+    return schedule, jobs, calls, out
+
+
+@pytest.mark.parametrize(
+    "now,expected",
+    [
+        ("2026-11-12T01:32:00Z", "2026-11-11"),  # 09:32 Taipei, before 18:00 publication
+        ("2026-11-12T10:00:00Z", "2026-11-12"),  # 18:00 Taipei, published
+        ("2026-11-12T09:59:00Z", "2026-11-11"),  # 17:59 Taipei
+        ("2026-11-14T10:00:00Z", "2026-11-13"),  # Saturday -> Friday
+        ("2026-11-15T20:00:00Z", "2026-11-13"),  # Monday 04:00 Taipei (UTC still Sunday) -> Friday
+        ("2026-10-12T10:00:00Z", "2026-10-12"),
+        ("2026-10-10T10:00:00Z", "2026-10-08"),  # holiday weekend -> Thursday
+    ],
+)
+def test_finmind_prepare_selects_latest_published_session(now: str, expected: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    schedule, jobs, calls, records = _finmind_dispatch(now, monkeypatch)
+    assert schedule["run_date"] == expected
+    assert {d for _, d in calls} == {expected}
+    assert sorted(s for s, _ in calls) == ["1101", "1102", "1103"]
+    assert len(records) == 3 * 1 * 2 or len(records) >= 3
+
+
+def test_finmind_prepare_keeps_all_symbols_and_batch_caps_across_publication(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, jobs, calls, _ = _finmind_dispatch("2026-11-12T01:32:00Z", monkeypatch, count=51)
+    assert [len(j["symbols"]) for j in jobs] == [25, 25, 1]
+    assert len(calls) == 51 and {d for _, d in calls} == {"2026-11-11"}
+    assert len({s for s, _ in calls}) == 51
+
+
+def test_finmind_prepare_explicit_historical_date_preserved_and_future_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    schedule, *_ = _finmind_dispatch("2026-11-12T01:32:00Z", monkeypatch, extra_env={"SOURCE_INGEST_BOUNDED_TRADE_DATE": "2026-11-05"})
+    assert schedule["run_date"] == "2026-11-05"
+    result, _ = _prepare_finmind_dataset(
+        1, {"_FIXED_NOW": "2026-11-12T01:32:00Z", "SOURCE_INGEST_BOUNDED_TRADE_DATE": "2026-11-12", "_EXPECT_FAIL": "1"}
+    )
+    assert result["returncode"] != 0 and "not yet published" in result["stderr"]
+
+
+def test_finmind_empty_published_session_stays_truthful_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.source_ingestion.provider_adapters import SourceEvidenceError
+
+    with pytest.raises(SourceEvidenceError, match="no rows"):
+        _finmind_dispatch("2026-11-12T10:00:00Z", monkeypatch, fetch=lambda s, d: ({"data": []}, {}))
+
+
+def test_finmind_auth_and_quota_failures_are_not_masked(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindCredentialError
+
+    def boom(symbol: str, date: str):
+        raise FinMindCredentialError("401")
+
+    with pytest.raises(FinMindCredentialError):
+        _finmind_dispatch("2026-11-12T10:00:00Z", monkeypatch, fetch=boom)
+
+
+def test_finmind_quota_failure_stops_dispatch_and_is_not_masked(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindQuotaError
+
+    seen: list[str] = []
+
+    def quota(symbol: str, date: str):
+        seen.append(symbol)
+        raise FinMindQuotaError("402")
+
+    with pytest.raises(SourceEvidenceError, match="402"):
+        _finmind_dispatch("2026-11-12T10:00:00Z", monkeypatch, fetch=quota)
+    assert len(seen) == 1  # stops at first 402, no retries/continuation
