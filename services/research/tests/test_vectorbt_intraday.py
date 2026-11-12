@@ -520,6 +520,25 @@ def test_evaluate_single_alpha_template_reports_minute_ic_next_to_daily(tmp_path
     assert set(intra["pooled_ic"]) == {"1b", "5b", "15b", "30b"}
 
 
+def test_missing_governed_vwap_reports_unavailable_through_public_entrypoint(tmp_path):
+    from services.registry.alpha_template import load_library_templates
+    from services.research.alpha_templates.evaluator import (
+        build_taiwan_point_in_time_universe,
+        evaluate_single_alpha_template,
+    )
+
+    universe = build_taiwan_point_in_time_universe()
+    ds = _replay_ds(tmp_path)
+    assert not any("vwap" in r for r in ds["records"])
+    by_id = {t["template_id"]: t for t in load_library_templates()}
+    for tid in ("qlib_alpha158:VWAP0", "alpha101:#41"):
+        intra = evaluate_single_alpha_template(by_id[tid], universe, intraday_replay_dataset=ds)["intraday"]
+        assert intra["available"] is False, tid
+        assert "vwap" in intra["reason"] and intra["evidence_mode"] == "replay"
+    # OHLCV-only template stays available (warmup/insufficient observations are a distinct state)
+    assert evaluate_single_alpha_template(_kmid(), universe, intraday_replay_dataset=ds)["intraday"]["available"]
+
+
 def test_evaluate_library_attaches_intraday_and_refuses_ungoverned_dataset(tmp_path):
     from services.research.alpha_templates.evaluator import (
         build_taiwan_point_in_time_universe,

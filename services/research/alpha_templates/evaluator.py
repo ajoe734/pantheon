@@ -1306,7 +1306,14 @@ def _iso(value: Any) -> str:
     return value.isoformat() if isinstance(value, datetime) else str(value)
 
 
-def _minute_bound_template(record: Mapping[str, Any], frequency: str) -> dict[str, Any]:
+_MINUTE_BAR_FIELDS = ("open", "high", "low", "close", "volume")
+
+
+def _minute_bound_template(
+    record: Mapping[str, Any],
+    frequency: str,
+    available_fields: Sequence[str] = _MINUTE_BAR_FIELDS,
+) -> dict[str, Any]:
     """Rebind a price/volume template onto the governed minute dataset; other inputs are unavailable."""
     from services.registry.factor_rule import PRICE_VOLUME_DATASETS
     from services.research.vectorbt.adapter.vectorbt_adapter import INTRADAY_DATASETS
@@ -1318,6 +1325,12 @@ def _minute_bound_template(record: Mapping[str, Any], frequency: str) -> dict[st
         if item.get("dataset") not in PRICE_VOLUME_DATASETS:
             raise IntradayEvaluationUnavailable(
                 f"input {item.get('name')!r} ({item.get('dataset')}) has no minute-bar form"
+            )
+        required = item.get("field") or item.get("name")
+        if required not in available_fields:
+            raise IntradayEvaluationUnavailable(
+                f"required minute input {required!r} is missing from governed minute bars; "
+                "no synthesized or daily substitute"
             )
         new_inputs.append({**item, "dataset": minute_ds, "availability_lag_days": 0})
     bound["inputs"] = new_inputs
@@ -1333,7 +1346,13 @@ def evaluate_intraday_replay_template(
 ) -> dict[str, Any]:
     """Governed, frequency-aware minute evaluation of one template: factor per bar -> 1/5/15/30-bar IC."""
     frequency, by_symbol, meta = govern_intraday_replay_dataset(replay_dataset)
-    bound = _minute_bound_template(record, frequency)
+    present = [
+        f for f in _MINUTE_BAR_FIELDS
+        if by_symbol and all(
+            r.get(f) is not None and math.isfinite(float(r[f])) for rows in by_symbol.values() for r in rows
+        )
+    ]
+    bound = _minute_bound_template(record, frequency, present)
     from services.research.vectorbt.adapter.vectorbt_adapter import INTRADAY_DATASETS
 
     ds_name = INTRADAY_DATASETS[frequency]
