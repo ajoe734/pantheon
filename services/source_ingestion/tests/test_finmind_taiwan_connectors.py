@@ -602,3 +602,25 @@ def test_broker_refresh_marks_partial_coverage_per_symbol(monkeypatch: pytest.Mo
         assert coverage["covered_symbols"] == ["2330"]
         with pytest.raises(SourceEvidenceError):
             _broker_refresh({"symbols": ["2317.TW"], "run_date": "2026-06-08"})
+
+
+def test_latest_published_broker_session_boundaries_and_metadata() -> None:
+    from datetime import date, datetime, timezone
+
+    from services.source_ingestion.connectors.finmind_taiwan import (
+        FinMindTaiwanBrokerDailyReportAdapter,
+        latest_published_broker_session,
+    )
+
+    utc = timezone.utc
+    assert latest_published_broker_session(datetime(2026, 11, 12, 9, 59, tzinfo=utc)) == date(2026, 11, 11)
+    assert latest_published_broker_session(datetime(2026, 11, 12, 10, 0, tzinfo=utc)) == date(2026, 11, 12)
+    assert latest_published_broker_session(datetime(2026, 11, 15, 20, 0, tzinfo=utc)) == date(2026, 11, 13)
+    closed = {date(2026, 11, 12)}
+    assert latest_published_broker_session(
+        datetime(2026, 11, 12, 11, 0, tzinfo=utc), is_session_day=lambda d: d not in closed
+    ) == date(2026, 11, 11)
+    with pytest.raises(ValueError):
+        latest_published_broker_session(datetime(2026, 11, 12, 11, 0))
+    meta = FinMindTaiwanBrokerDailyReportAdapter().connector().metadata
+    assert meta["update_cadence"] == "daily_after_close_18_00_taipei"
