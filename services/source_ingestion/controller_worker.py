@@ -429,6 +429,33 @@ def read_actual_state(*, api_url: str, timeout_seconds: float = 30.0) -> dict[st
     )
 
 
+def read_actual_state_with_fetch_bindings(*, api_url: str, timeout_seconds: float = 30.0) -> dict[str, Any]:
+    """Controller readback plus each connector's persisted fetch mode/adapter from the registry.
+
+    The controller readback omits the fetch config; the registry entry's fetch_policy is the
+    existing read-only view of it. A connector absent from the registry gets no binding and
+    therefore can never be admitted to a steady Collector pull.
+    """
+
+    actual = read_actual_state(api_url=api_url, timeout_seconds=timeout_seconds)
+    registry = _request_json(api_url.rstrip("/") + "/api/source-ingest/registry", timeout_seconds=timeout_seconds)
+    policies = {
+        str(entry.get("connector_id") or ""): entry.get("fetch_policy")
+        for entry in (registry.get("connectors") if isinstance(registry, Mapping) else None) or []
+        if isinstance(entry, Mapping)
+    }
+    for item in actual.get("connectors") or []:
+        if not isinstance(item, dict):
+            continue
+        policy = policies.get(str(item.get("connector_id") or ""))
+        if isinstance(policy, Mapping):
+            item["fetch_binding"] = {
+                "mode": str(policy.get("mode") or ""),
+                "adapter": str(policy.get("adapter") or ""),
+            }
+    return actual
+
+
 def read_frontier_state(*, api_url: str, timeout_seconds: float = 30.0) -> tuple[dict[str, Any], ...]:
     """Read the authoritative crawl frontier without mutating it."""
 
@@ -1822,7 +1849,7 @@ def run_controller_tick(
         steady_pull_ids: list[str] = []
         if config.mode == COLLECTOR_STEADY_PULL_MODE:
             steady_pull_ids = select_collector_pull_connectors(
-                read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds),
+                read_actual_state_with_fetch_bindings(api_url=config.api_url, timeout_seconds=config.timeout_seconds),
                 reconcile,
             )
         provider_egress_attempted = config.mode == RECONCILE_AND_PULL_MODE or bool(steady_pull_ids)
@@ -1837,7 +1864,11 @@ def run_controller_tick(
                     "total_provider_pulls": 0,
                 },
             }
-            actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+            actual = (
+                read_actual_state_with_fetch_bindings(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+                if config.mode == COLLECTOR_STEADY_PULL_MODE
+                else read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+            )
             _validate_due_state_readback(
                 reconcile=reconcile,
                 pre_actual=pre_actual,

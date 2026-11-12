@@ -1751,7 +1751,7 @@ def _steady_step(reconcile):
     from services.source_ingestion import controller_worker as cw
 
     api = "http://source-ingest.test:8097"
-    actual = cw.read_actual_state(api_url=api)
+    actual = cw.read_actual_state_with_fetch_bindings(api_url=api)
     selected = cw.select_collector_pull_connectors(actual, reconcile)
     schedule = (
         cw.run_schedule_tick(

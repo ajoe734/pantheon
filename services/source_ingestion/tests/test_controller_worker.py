@@ -3168,11 +3168,12 @@ def _patch_steady(
     monkeypatch.setattr(
         controller_worker, "reconcile_desired_state", lambda **kw: _collector_reconcile(*connector_ids)
     )
-    monkeypatch.setattr(
-        controller_worker,
-        "read_actual_state",
-        lambda **kw: _collector_actual(sequence_no=state.sequence_no, **actual_kwargs),
-    )
+    for reader in ("read_actual_state", "read_actual_state_with_fetch_bindings"):
+        monkeypatch.setattr(
+            controller_worker,
+            reader,
+            lambda **kw: _collector_actual(sequence_no=state.sequence_no, **actual_kwargs),
+        )
 
     def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
         schedule_calls.append(kwargs)

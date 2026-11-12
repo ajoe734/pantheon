@@ -11,7 +11,7 @@
     ],
     "scheduler": "no server change: the controller applies cadence by only selecting due connectors, because exclusive selection forces them; no due connector means no scheduler call and no provider egress",
     "deploy": "SOURCE_INGEST_STEADY_COLLECTOR_PULL=true plus PANTHEON_COLLECTOR_HOST selects collector_steady_pull; egress stays allowlist of exactly the collector host; restore (success, failure, interruption trap) returns to the recorded steady scheduler mode, else reconcile_only",
-    "adapter_binding": "steady admission also requires the persisted fetch config (readback fetch_binding: mode provider_owned_adapter + Collector bundle adapter token); a Collector definition_id over any other fetch mode/adapter is excluded before any scheduler call"
+    "adapter_binding": "steady admission also requires the persisted fetch config (controller-side read of the existing /api/source-ingest/registry fetch_policy: mode provider_owned_adapter + Collector bundle adapter token; absent registry entry fails closed); a Collector definition_id over any other fetch mode/adapter is excluded before any scheduler call"
   },
   "activation_instructions_for_H1_W1_owners": [
     "set PANTHEON_COLLECTOR_HOST (one hostname) and the protected bundle token as before",
@@ -34,6 +34,6 @@
     "full_tick_mismatch_test": "test_scheduled_connector.py::test_full_tick_excludes_definition_fetch_adapter_mismatch (direct adapter calls == [], collector reads == [])",
     "selector_negatives": "test_controller_worker.py selection exclusion params for direct adapter, static_records, external_feed",
     "env_parity": "section selection now anchored on egress-mode init block; asserts no twse/tpex/taifex host auto-append",
-    "suites": "controller+manual_once+scheduled_connector+collector_bundle 258 passed; dev_tw_market_refresh 71 passed; deploy_nonprod_vm 132 passed 2 skipped; env_parity 11 passed"
+    "suites": "controller+manual_once+scheduled_connector+collector_bundle+e2e_distillation 261 passed; dev_tw_market_refresh 71 passed; deploy_nonprod_vm 132 passed 2 skipped; env_parity 11 passed"
   }
 }

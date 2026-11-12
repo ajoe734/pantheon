@@ -1230,10 +1230,6 @@ class SourceIngestionRuntime:
                     "desired_state_sha256": reconciliation.get("desired_state_sha256"),
                     "schedule": schedule.to_dict() if schedule is not None else None,
                     "fetch_state": fetch_states[connector_id],
-                    "fetch_binding": {
-                        "mode": str(config.fetch.get("mode") or ""),
-                        "adapter": str(config.fetch.get("adapter") or ""),
-                    },
                     "freshness": freshness,
                     "latest_source_record": self._source_record_readback(latest_by_connector.get(connector_id)),
                     "source_health": health_payload,
