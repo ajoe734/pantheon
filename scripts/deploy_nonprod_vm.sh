@@ -140,8 +140,18 @@ if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_RESTART_POLICY="no"
 else
   # The default owner is a durable internal reconciler. Provider egress stays
-  # available only through the explicit bounded profile above.
-  SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
+  # available only through the explicit bounded profile above, or, when
+  # SOURCE_INGEST_STEADY_COLLECTOR_PULL=true is configured with exactly one
+  # PANTHEON_COLLECTOR_HOST, the continuous Collector-only pull.
+  if [[ "${SOURCE_INGEST_STEADY_COLLECTOR_PULL:-}" == "true" ]]; then
+    if [[ -z "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+      echo "[nonprod-deploy] ERROR: SOURCE_INGEST_STEADY_COLLECTOR_PULL=true requires PANTHEON_COLLECTOR_HOST" >&2
+      exit 1
+    fi
+    SOURCE_REFRESH_CONTROLLER_MODE="collector_steady_pull"
+  else
+    SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
+  fi
   SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"
   SOURCE_REFRESH_MAX_TICKS="0"
   SOURCE_REFRESH_RESTART_POLICY="unless-stopped"
@@ -1284,8 +1294,15 @@ validate_source_refresh_profile() {
       [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
         || error "external host allowlist requires the bounded source-ingest-scheduler profile"
     fi
-    [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
-      || error "default source-ingest owner must use reconcile_only mode"
+    if [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "collector_steady_pull" ]]; then
+      [[ -n "${PANTHEON_COLLECTOR_HOST:-}" \
+        && "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" \
+        && "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" == "${PANTHEON_COLLECTOR_HOST}" ]] \
+        || error "collector_steady_pull requires egress allowlist of exactly PANTHEON_COLLECTOR_HOST"
+    else
+      [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
+        || error "default source-ingest owner must use reconcile_only or collector_steady_pull mode"
+    fi
     [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
       || error "default source-ingest owner must use scheduled_tick truth"
     [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0" ]] \
@@ -2210,6 +2227,10 @@ for _ in range(20):
     cursor -= timedelta(days=1)
 session_date = cursor
 session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
+if connector_id == "tw-finmind-broker-daily-report":
+    from services.source_ingestion.connectors.finmind_taiwan import latest_published_broker_session
+    session_date = latest_published_broker_session(now_u, is_session_day=is_session_day)
+    session_close = datetime(session_date.year, session_date.month, session_date.day, 18, 0, tzinfo=tz).astimezone(timezone.utc)
 
 if connector_id in CHIP_CONNECTORS:
     if now_t.weekday() >= 5:
@@ -2407,10 +2428,15 @@ elif action == "restore":
     steady_host = (env.get("PANTHEON_COLLECTOR_HOST") or os.environ.get("PANTHEON_COLLECTOR_HOST") or "").strip().lower()
     if steady_host and not (len(steady_host) <= 253 and re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*", steady_host)):
         raise SystemExit("PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring")
+    # Keep an explicitly configured continuous Collector pull; never reset it to
+    # reconcile_only. It is only valid with the exact collector host egress.
+    steady_mode = (os.environ.get("SOURCE_INGEST_RESTORE_CONTROLLER_MODE") or env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip()
+    if steady_mode != "collector_steady_pull" or not steady_host:
+        steady_mode = "reconcile_only"
     env.update({
         "PANTHEON_EXTERNAL_EGRESS": "allowlist" if steady_host else "deny",
         "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
-        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+        "SOURCE_INGEST_CONTROLLER_MODE": steady_mode,
     })
 # "compose up --no-build" starts whatever image the Compose name resolves to, and
 # a stale plain tag left by an earlier failed deploy once pointed at a rejected
@@ -2692,7 +2718,11 @@ from services.source_ingestion.active_universe import (
     DEFAULT_SOURCE_UPDATE_RULES,
     build_active_universe_job_fanout,
 )
-from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
+from services.source_ingestion.connectors.finmind_taiwan import (
+    FinMindTaiwanBrokerDailyReportAdapter,
+    latest_published_broker_session,
+)
+from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
 from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
 
 api_url = (os.environ.get("SOURCE_INGEST_API_URL") or "http://127.0.0.1:18097").rstrip("/")
@@ -2711,7 +2741,24 @@ raw_symbols = [s.strip() for s in active_symbols_csv.split(",") if s.strip()]
 if not raw_symbols:
     raise SystemExit("No active Taiwan paper symbols available for the bounded refresh")
 
-run_date = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+def _twse_session_day(day):
+    # Governed TWSE calendar; dates outside its coverage fall back to weekday-only.
+    evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+    return not evidence or day.isoformat() not in (evidence.get("holidays") or {})
+
+# Real aware current time only; no runtime clock override (tests inject clocks in isolation).
+_now = datetime.now(timezone.utc)
+if is_finmind:
+    # Broker reports publish 18:00 Taipei: default to the latest genuinely published session.
+    run_date = latest_published_broker_session(_now, is_session_day=_twse_session_day).isoformat()
+    _explicit = os.environ.get("SOURCE_INGEST_BOUNDED_TRADE_DATE", "").strip()
+    if _explicit:
+        # Explicit historical intent is preserved; unpublished (future) sessions are rejected.
+        if _explicit > run_date:
+            raise SystemExit(f"Requested broker trade date {_explicit} is not yet published (latest published: {run_date})")
+        run_date = _explicit
+else:
+    run_date = _now.astimezone(timezone(timedelta(hours=8))).date().isoformat()
 members = [
     {
         "symbol": sym,
@@ -2806,8 +2853,13 @@ if is_finmind:
     ]
     if any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
         raise SystemExit("FinMind fanout produced a batch exceeding the fetch.max_records guard")
+    # The adapter's fetch_config() also carries provider-descriptive keys (base_url, endpoint,
+    # secret_ref_id, dataset, history_start, max_rank) that the strict ConfiguredFetchBody DTO
+    # forbids; their intent already lives in adapter_config (secret_ref_id, max_rank) and the
+    # registered adapter token. Keep only the typed fetch-body keys; DTO stays strict.
+    typed_fetch_keys = ("mode", "adapter", "adapter_config", "next_watermark")
     fetch_cfg = {
-        **fetch_cfg,
+        **{key: fetch_cfg[key] for key in typed_fetch_keys if key in fetch_cfg},
         "request": {"dataset": dataset, "symbols": list(finmind_batches[0])},
         "max_records": per_job_budget,
     }
@@ -3194,6 +3246,17 @@ lease = (env.get("SOURCE_INGEST_CONTROLLER_LEASE_SECONDS") or "").strip()
 print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS") or "60"))' "${steady_scheduler_env}")"
   fi
 
+  # Record the steady controller mode so every restore path (success, failure,
+  # interruption) returns to it instead of silently forcing reconcile_only.
+  # Deliberately not local: the EXIT trap can run after this function returns.
+  steady_controller_mode="$(python3 -c 'import json,sys
+env = dict(item.partition("=")[::2] for item in json.loads(sys.argv[1] or "[]"))
+print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_scheduler_env}")"
+  if [[ "${steady_controller_mode}" != "collector_steady_pull" || -z "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+    steady_controller_mode="reconcile_only"
+  fi
+  export SOURCE_INGEST_RESTORE_CONTROLLER_MODE="${steady_controller_mode}"
+
   restore_bounded_source_refresh() {
     local rc="${1:-$?}" invoked_from_trap="false" restore_rc=0
     (( $# == 0 )) && invoked_from_trap="true"
@@ -3206,13 +3269,13 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
         [[ -z "${sched_log}" ]] || printf '%s\n' "${sched_log}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
       fi
     fi
-    info "restoring steady collector-host egress posture and source controller to reconcile_only"
+    info "restoring steady collector-host egress posture and source controller to ${steady_controller_mode:-reconcile_only}"
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
       PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST:-}" \
-      SOURCE_INGEST_CONTROLLER_MODE=reconcile_only SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
+      SOURCE_INGEST_CONTROLLER_MODE="${steady_controller_mode:-reconcile_only}" SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
       SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
     fi
@@ -3240,7 +3303,17 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     fi
     return "${rc}"
   }
-  trap restore_bounded_source_refresh EXIT INT TERM
+  # A terminating signal must run the same restore, then really exit non-zero
+  # (128+signal) so the script never resumes into the projector launch or a
+  # later success outcome. restore clears the EXIT trap, so exit is not re-run.
+  handle_bounded_refresh_signal() {
+    local signal_rc="$1"
+    restore_bounded_source_refresh "${signal_rc}" || true
+    exit "${signal_rc}"
+  }
+  trap restore_bounded_source_refresh EXIT
+  trap 'handle_bounded_refresh_signal 130' INT
+  trap 'handle_bounded_refresh_signal 143' TERM
 
   # Stop (not remove) the steady controller/projector so only one controller owns the window.
   (( ${#steady_ids[@]} )) && docker stop "${steady_ids[@]}" >/dev/null

@@ -1,0 +1,91 @@
+{
+  "task_id": "HYPOTHESIS-CARD-PREDICTIONS-20261112",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "delivery_scope": "source functional change; independent review pending",
+  "design": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/7206",
+    "inspected_head": "6e5df1989a83d38fc9c7e391f754e8429ce8e6c9",
+    "section": "3.2 card part"
+  },
+  "implementation": {
+    "contract": "Optional predictions: statement, observable dataset/field, five fixed test kinds, + / - / 0 sign, before/after trading-day window, exact cited spans. Legacy cards remain valid.",
+    "extraction": "Model schema accepts 2-4 predictions when present. Code independently verifies each prediction citation, drops unverifiable predictions with prediction_dropped ledger events, and annotates catalogue testability. Stored array may have 0-4 survivors.",
+    "catalogue": "Same get_feature_definition(dataset, field) as rule inputs. Unknown dataset or field becomes needs_data:<dataset>; compiler counts with existing per-dataset/per-card accounting, including cached rule paths.",
+    "invariants": "Predictions excluded from proposer input and compile prompt; card_key, rule artifact, fingerprint, and support counting unchanged.",
+    "production_path": "Environment-constructed run_controller_tick -> DistillationWorker -> SemanticExtractionClient -> HypothesisExtractor -> HypothesisCompiler -> SQLite counts and seed persistence."
+  },
+  "fixture": {
+    "path": "services/source_ingestion/tests/fixtures/hypothesis_predictions_recorded.json",
+    "provenance": "Hand-authored real-shaped structured-extraction response; deterministic transport replay. No live provider call or captured-provider provenance claimed.",
+    "injection": "Stored source includes instructions to call a shell; requests use structured-extraction with no tools payload, closed schemas reject nested extra keys, and only validated card keys persist."
+  },
+  "acceptance_evidence": [
+    {
+      "criterion": 1,
+      "tests": [
+        "test_contract_file_matches_code",
+        "test_prediction_contract_and_old_cards",
+        "test_prediction_contract_rejects_invalid_values"
+      ]
+    },
+    {
+      "criterion": 2,
+      "tests": [
+        "test_predictions_survive_real_worker_entrypoint_and_are_catalogue_checked",
+        "test_bad_prediction_citations_are_dropped_individually_and_recorded",
+        "test_all_prediction_citations_invalid_keeps_valid_legacy_card",
+        "test_model_prediction_count_is_two_to_four_when_present"
+      ]
+    },
+    {
+      "criterion": 3,
+      "tests": [
+        "test_worker_prediction_demand_and_support_remain_independent",
+        "test_prediction_demand_counted_even_after_rule_cached_and_not_testable",
+        "test_controller_tick_uses_predictions_through_environment_wiring"
+      ]
+    },
+    {
+      "criterion": 4,
+      "tests": [
+        "test_injected_prediction_keys_fail_closed",
+        "test_predictions_survive_real_worker_entrypoint_and_are_catalogue_checked"
+      ]
+    },
+    {
+      "criterion": 5,
+      "tests": [
+        "test_predictions_do_not_change_proposer_input_artifact_or_fingerprint",
+        "test_worker_prediction_demand_and_support_remain_independent"
+      ]
+    }
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --mode venv --venv-dir /tmp/hypothesis-predictions-tests --print-python --quiet",
+      "exit_code": 0,
+      "result": "Provisioned checkout distribution using supervisor PANTHEON_DEPENDENCY_PYTHON."
+    },
+    {
+      "command": "timeout 120 /tmp/hypothesis-predictions-tests/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py -q",
+      "exit_code": 0,
+      "result": "60 passed, 2 warnings in 15.91s"
+    },
+    {
+      "command": "timeout 180 /tmp/hypothesis-predictions-tests/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_semantic_extraction_admission.py services/source_ingestion/tests/test_distillation_worker.py -q",
+      "exit_code": 0,
+      "result": "117 passed, 3 warnings in 39.55s"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "limits": [
+    "No hosted deployment or live model call performed.",
+    "Catalogue membership does not establish runtime market-data availability or statistical support.",
+    "Statistical mechanism gate is a separate task."
+  ]
+}

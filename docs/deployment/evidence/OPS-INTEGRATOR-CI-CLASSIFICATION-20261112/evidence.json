@@ -1,0 +1,14 @@
+{
+  "task_id": "OPS-INTEGRATOR-CI-CLASSIFICATION-20261112",
+  "scope": "source-only; no runtime promotion or service restart",
+  "changes": [
+    "auto_integrator.is_ignorable_diagnostic ignores only an explicitly optional, CANCELLED 'Publish canonical review status' check from workflow 'Canonical Review Gate'; required, unknown-requiredness, failed/timed-out, other-name and declared-required contexts still block; canonical context success remains separately required",
+    "unblock_contract.requires_source_reopen(reason, repository_id): repair-eligible blockers on non-Pantheon repositories reopen the source task (existing BEHIND protocol) instead of materializing a repair task declaring scripts/git/auto_integrator.py",
+    "supervisor passes repository_id and uses a reason-specific reopen message"
+  ],
+  "validation": [
+    "python3 -m unittest scripts.git.test_auto_integrator (181 OK)",
+    "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor (416 OK)"
+  ],
+  "runtime_adoption": "not performed; Ops retains normal runtime adoption and loaded-version verification"
+}

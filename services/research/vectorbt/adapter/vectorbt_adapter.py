@@ -16,7 +16,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Protocol, Sequence
 
 VECTORBT_VERSION_PIN = "1.1.1"
@@ -26,6 +26,18 @@ REQUIRED_OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
 MIN_INSTRUMENTS = 2
 MIN_BARS = 30
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# --- Intraday (SD_INTRADAY_MINUTE_BARS §6-§7 / K5) -----------------------------------
+TAIPEI_TZ = timezone(timedelta(hours=8))
+INTRADAY_FREQUENCY_MINUTES: dict[str, int] = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
+INTRADAY_DATASETS: dict[str, str] = {f: f"tw_price_{f}" for f in INTRADAY_FREQUENCY_MINUTES}
+SESSION_OPEN_MINUTE = 9 * 60
+SESSION_REGULAR_MINUTES = 270  # 09:00..13:30
+TRADING_SESSIONS_PER_YEAR = 252
+DEFAULT_FLAT_BY_MINUTE = 13 * 60 + 25  # positions flat by 13:25 unless holding = overnight
+REPLAY_LABEL = "replay"
+HOLDING_MODES = ("intraday", "overnight")
+_MINUTE_FREQ_PATTERN = re.compile(r"^\d+[mM]$")
 
 # Taiwan statutory transaction cost schedule (cited in task evidence.json):
 # - Broker commission ceiling: 0.1425% (14.25 bps) per fill on both buy and sell
@@ -72,6 +84,144 @@ class VectorbtWorkflowError(ValueError):
     """Raised when a governed vectorbt workflow cannot be built safely."""
 
 
+class IntradayDataUnavailable(VectorbtWorkflowError):
+    """Governed minute data is missing/quarantined/unavailable: reported, never substituted."""
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        self.reason = reason
+        super().__init__(f"intraday_data_unavailable:{reason}" + (f": {detail}" if detail else ""))
+
+
+def normalize_data_frequency(value: str) -> str:
+    """``daily``/``1d`` keep the legacy path; the §6.1 minute table is intraday; other minute codes fail."""
+    if value in INTRADAY_FREQUENCY_MINUTES:
+        return value
+    if _MINUTE_FREQ_PATTERN.fullmatch(value or ""):
+        raise VectorbtWorkflowError(f"data_frequency {value!r} is not an allowed intraday bar frequency")
+    return value
+
+
+def is_intraday_frequency(value: str) -> bool:
+    return value in INTRADAY_FREQUENCY_MINUTES
+
+
+def _is_intraday(dataset: Any) -> bool:
+    return is_intraday_frequency(getattr(dataset, "data_frequency", None) or "")
+
+
+def bars_per_session(frequency: str) -> int:
+    """Bars in a regular 09:00-13:30 session (the last bucket may be a half bucket)."""
+    if is_intraday_frequency(frequency):
+        return -(-SESSION_REGULAR_MINUTES // INTRADAY_FREQUENCY_MINUTES[frequency])
+    return 1
+
+
+def bars_per_year(frequency: str) -> int:
+    """Annualisation factor: 252 sessions x bars per session (daily stays 252)."""
+    return TRADING_SESSIONS_PER_YEAR * bars_per_session(frequency)
+
+
+def _annualized_sharpe(returns: Sequence[float], periods_per_year: int, *, ddof: int = 0) -> float:
+    n = len(returns)
+    if n == 0:
+        return 0.0
+    mean = sum(returns) / n
+    denom = n - ddof
+    if denom <= 0:
+        return 0.0
+    std = (sum((r - mean) ** 2 for r in returns) / denom) ** 0.5
+    return (mean / std) * (periods_per_year ** 0.5) if std > 1e-12 else 0.0
+
+
+def _parse_aware(value: Any, label: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise VectorbtWorkflowError(f"{label} must be a tz-aware ISO timestamp")
+    try:
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise VectorbtWorkflowError(f"{label} is not an ISO timestamp: {value!r}") from exc
+    if dt.tzinfo is None:
+        raise VectorbtWorkflowError(f"{label} must be timezone-aware: {value!r}")
+    return dt
+
+
+def _session_of(bar_start: str) -> str:
+    return datetime.fromisoformat(bar_start).astimezone(TAIPEI_TZ).date().isoformat()
+
+
+def _start_minute_of_day(bar_start: str) -> int:
+    local = datetime.fromisoformat(bar_start).astimezone(TAIPEI_TZ)
+    return local.hour * 60 + local.minute
+
+
+def _session_start_indexes(bar_starts: Sequence[str]) -> list[int]:
+    """Index of the first bar of each bar's session."""
+    out: list[int] = []
+    prev_session: str | None = None
+    start = 0
+    for i, st in enumerate(bar_starts):
+        sess = _session_of(st)
+        if sess != prev_session:
+            start, prev_session = i, sess
+        out.append(start)
+    return out
+
+
+def _flatten_indexes(bar_starts: Sequence[str], flat_minute: int = DEFAULT_FLAT_BY_MINUTE) -> dict[str, int]:
+    """Per session, the last bar that opens at or before 13:25 (forced-exit fill bar)."""
+    out: dict[str, int] = {}
+    for i, st in enumerate(bar_starts):
+        if _start_minute_of_day(st) <= flat_minute:
+            out[_session_of(st)] = i
+    return out
+
+
+def plan_intraday_orders(
+    bar_starts: Sequence[str],
+    actions: Sequence[str | None],
+    quantity: float,
+    *,
+    holding: str = "intraday",
+    flat_minute: int = DEFAULT_FLAT_BY_MINUTE,
+) -> list[float]:
+    """Signed per-bar order sizes filled at each bar's OPEN from the PREVIOUS bar's action.
+
+    A signal decided on bar ``i`` (using bar ``i`` data) executes at the open of bar ``i+1``
+    (never the signal bar's own close).  Unless ``holding == "overnight"`` the next bar must
+    be in the same session, entries stop at the flatten bar and any open position is closed
+    at that bar's open (the last bar opening at or before 13:25).  A session with no such
+    bar trades nothing (fail closed).
+    """
+    if holding not in HOLDING_MODES:
+        raise VectorbtWorkflowError(f"holding must be one of {HOLDING_MODES}, got {holding!r}")
+    n = len(bar_starts)
+    sizes = [float("nan")] * n
+    sessions = [_session_of(s) for s in bar_starts]
+    overnight = holding == "overnight"
+    flatten = {} if overnight else _flatten_indexes(bar_starts, flat_minute)
+    position = 0.0
+    for j in range(n):
+        if not overnight:
+            fi = flatten.get(sessions[j])
+            if fi is None or j > fi:
+                continue
+            if j == fi:
+                if position != 0.0:
+                    sizes[j] = -position
+                    position = 0.0
+                continue
+        if j == 0 or (not overnight and sessions[j - 1] != sessions[j]):
+            continue
+        act = actions[j - 1]
+        if act == "BUY":
+            sizes[j] = quantity
+            position += quantity
+        elif act == "SELL":
+            sizes[j] = -quantity
+            position -= quantity
+    return sizes
+
+
 @dataclass(frozen=True)
 class PreparedVectorbtDataset:
     dataset_id: str
@@ -86,8 +236,26 @@ class PreparedVectorbtDataset:
     total_bars: int
     dates_by_instrument: dict[str, tuple[str, ...]] = field(default_factory=dict)
     features_by_instrument: dict[str, dict[str, Any]] = field(default_factory=dict)
+    candidate_pool_market: dict[str, Any] | None = None
+    # Intraday only: simulated decision clock (= bar_end) per bar and the replay declaration.
+    decision_clock_by_instrument: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    replay: dict[str, Any] | None = None
+    # Intraday only: REAL bar_availability_ts per bar (provenance; never used as the simulated clock).
+    real_availability_by_instrument: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    @property
+    def is_intraday(self) -> bool:
+        return is_intraday_frequency(self.data_frequency)
 
     def dataset_summary(self) -> dict[str, Any]:
+        summary = self._base_summary()
+        if self.is_intraday:
+            summary["evidence_mode"] = REPLAY_LABEL
+            summary["bars_per_year"] = bars_per_year(self.data_frequency)
+            summary["replay"] = copy.deepcopy(self.replay)
+        return summary
+
+    def _base_summary(self) -> dict[str, Any]:
         return {
             "dataset_id": self.dataset_id,
             "strategy_id": self.strategy_id,
@@ -157,11 +325,17 @@ class GovernedVectorbtInputAdapter:
         strategy_id = self._req_str(dataset, "strategy_id")
         source_dataset_refs = self._normalize_refs(dataset)
         source_strategy_spec_id = self._opt_str(dataset.get("source_strategy_spec_id"))
-        data_frequency = self._opt_str(dataset.get("data_frequency")) or "daily"
+        data_frequency = normalize_data_frequency(self._opt_str(dataset.get("data_frequency")) or "daily")
+        intraday = is_intraday_frequency(data_frequency)
+        replay = self._require_replay(dataset, data_frequency) if intraday else None
 
         records = dataset.get("records")
         if not isinstance(records, Sequence) or not records:
+            if intraday:
+                raise IntradayDataUnavailable("no_records", "no governed minute bars; no daily/synthetic substitute")
             raise VectorbtWorkflowError("dataset.records must be a non-empty list of OHLCV dicts")
+        clocks_raw: dict[str, dict[str, str]] = {}
+        avail_raw: dict[str, dict[str, str]] = {}
 
         # Collect normalized ISO dates plus OHLCV tuples so sorting does not depend on input order.
         instrument_pairs: dict[
@@ -171,7 +345,10 @@ class GovernedVectorbtInputAdapter:
             if not isinstance(rec, Mapping):
                 raise VectorbtWorkflowError("Each record must be a mapping")
             instrument = self._req_str(rec, "instrument")
-            date_val = self._req_iso_date(rec, "date", instrument)
+            if intraday:
+                date_val = self._intraday_key(rec, instrument, data_frequency, replay, clocks_raw, avail_raw)
+            else:
+                date_val = self._req_iso_date(rec, "date", instrument)
             bar: list[float] = []
             for f in REQUIRED_OHLCV_FIELDS:
                 v = rec.get(f)
@@ -182,7 +359,7 @@ class GovernedVectorbtInputAdapter:
                 bar.append(float(v))
             extra_rec_fields: dict[str, Any] = {}
             for k, v in rec.items():
-                if k not in {"instrument", "date", *REQUIRED_OHLCV_FIELDS} and isinstance(
+                if k not in {"instrument", "date", "bar_start", "bar_end", "bar_availability_ts", *REQUIRED_OHLCV_FIELDS} and isinstance(
                     v, (int, float)
                 ) and not isinstance(v, bool):
                     extra_rec_fields[str(k)] = float(v)
@@ -204,10 +381,16 @@ class GovernedVectorbtInputAdapter:
         bars_per_instrument: dict[str, int] = {}
         ohlcv_by_instrument: dict[str, tuple[tuple[float, float, float, float, float], ...]] = {}
         dates_by_instrument: dict[str, tuple[str, ...]] = {}
+        decision_clock_by_instrument: dict[str, tuple[str, ...]] = {}
+        real_availability_by_instrument: dict[str, tuple[str, ...]] = {}
         features_by_instrument: dict[str, dict[str, Any]] = {}
         for inst in instruments:
-            # Dates are normalized to YYYY-MM-DD, so lexical order matches chronological order.
+            # Daily keys are YYYY-MM-DD (lexical == chronological); intraday keys are normalised
+            # Asia/Taipei bar_start timestamps (same offset, fixed width => lexical == chronological).
             sorted_pairs = sorted(instrument_pairs[inst], key=lambda p: p[0])
+            if intraday:
+                decision_clock_by_instrument[inst] = tuple(clocks_raw[inst][p[0]] for p in sorted_pairs)
+                real_availability_by_instrument[inst] = tuple(avail_raw[inst][p[0]] for p in sorted_pairs)
             dates = [p[0] for p in sorted_pairs]
             bars = [p[1] for p in sorted_pairs]
             extras = [p[2] for p in sorted_pairs]
@@ -256,7 +439,90 @@ class GovernedVectorbtInputAdapter:
             total_bars=total_bars,
             dates_by_instrument=dates_by_instrument,
             features_by_instrument=features_by_instrument,
+            candidate_pool_market=copy.deepcopy(dataset.get("candidate_pool_market")),
+            decision_clock_by_instrument=decision_clock_by_instrument,
+            replay=replay,
+            real_availability_by_instrument=real_availability_by_instrument,
         )
+
+    def _require_replay(self, dataset: Mapping[str, Any], frequency: str) -> dict[str, Any]:
+        """Intraday runs are historical simulations: an explicit replay clock + source snapshot are mandatory."""
+        replay = dataset.get("replay")
+        if not isinstance(replay, Mapping):
+            raise VectorbtWorkflowError("intraday dataset requires a 'replay' declaration (clock, source_snapshot)")
+        if replay.get("label", REPLAY_LABEL) != REPLAY_LABEL or replay.get("clock") != "bar_end":
+            raise VectorbtWorkflowError("intraday replay must declare label 'replay' and clock 'bar_end'")
+        snapshot = replay.get("source_snapshot")
+        if not isinstance(snapshot, Mapping) or not snapshot:
+            raise VectorbtWorkflowError("intraday replay requires a non-empty source_snapshot record")
+        if (
+            snapshot.get("reconciled_only") is not True
+            or snapshot.get("source_dataset") != "tw_price_1m"
+            or not snapshot.get("content_sha256")
+        ):
+            raise IntradayDataUnavailable(
+                "unreconciled_source_snapshot",
+                "source_snapshot must be a reconciled tw_price_1m snapshot with content_sha256",
+            )
+        records = dataset.get("records")
+        if isinstance(records, Sequence) and not isinstance(records, (str, bytes)) and records:
+            if _sha256_json(list(records)) != snapshot["content_sha256"]:
+                raise IntradayDataUnavailable(
+                    "source_snapshot_hash_mismatch", "records do not match the source_snapshot content_sha256"
+                )
+        ceiling = _parse_aware(replay.get("availability_ceiling"), "replay.availability_ceiling")
+        out = copy.deepcopy(dict(replay))
+        out.update(
+            label=REPLAY_LABEL,
+            clock="bar_end",
+            availability_ceiling=ceiling.isoformat(),
+            bar_frequency=frequency,
+            dataset=INTRADAY_DATASETS[frequency],
+            live_or_paper_evidence=False,
+        )
+        return out
+
+    def _intraday_key(
+        self,
+        rec: Mapping[str, Any],
+        instrument: str,
+        frequency: str,
+        replay: Mapping[str, Any] | None,
+        clocks_raw: dict[str, dict[str, str]],
+        avail_raw: dict[str, dict[str, str]],
+    ) -> str:
+        """Key a bar by its real ``bar_start`` (several bars may share a date); enforce PIT inputs."""
+        if rec.get("bar_start") in (None, ""):
+            raise IntradayDataUnavailable(
+                "missing_bar_start",
+                f"{instrument} record has no bar_start; a daily/date record cannot stand in for a minute bar",
+            )
+        declared = rec.get("dataset")
+        if declared is not None and declared != INTRADAY_DATASETS[frequency]:
+            raise VectorbtWorkflowError(
+                f"record for {instrument} is bound to dataset {declared!r}, expected {INTRADAY_DATASETS[frequency]!r}"
+            )
+        if any(rec.get(flag) for flag in ("quarantined", "unreconciled")):
+            raise IntradayDataUnavailable("quarantined_or_unreconciled_bar", f"{instrument} {rec.get('bar_start')}")
+        if rec.get("partial") or rec.get("waived"):
+            raise IntradayDataUnavailable("partial_or_waived_bar", f"{instrument} {rec.get('bar_start')}")
+        start = _parse_aware(rec.get("bar_start"), f"{instrument} bar_start").astimezone(TAIPEI_TZ)
+        end = _parse_aware(rec.get("bar_end"), f"{instrument} bar_end")
+        avail = _parse_aware(rec.get("bar_availability_ts"), f"{instrument} bar_availability_ts")
+        if end <= start:
+            raise VectorbtWorkflowError(f"{instrument} bar_end must be after bar_start")
+        assert replay is not None
+        if avail > _parse_aware(replay["availability_ceiling"], "availability_ceiling"):
+            raise IntradayDataUnavailable(
+                "bar_not_available_at_replay_ceiling", f"{instrument} {start.isoformat()} availability {avail.isoformat()}"
+            )
+        key = start.isoformat()
+        seen = clocks_raw.setdefault(instrument, {})
+        if key in seen:
+            raise VectorbtWorkflowError(f"duplicate bar for ({instrument}, {key})")
+        seen[key] = end.astimezone(TAIPEI_TZ).isoformat()  # replay decision clock = bar_end
+        avail_raw.setdefault(instrument, {})[key] = avail.astimezone(timezone.utc).isoformat()
+        return key
 
     def _normalize_refs(self, dataset: Mapping[str, Any]) -> list[str]:
         refs = dataset.get("source_dataset_refs")
@@ -391,6 +657,85 @@ def _compute_instrument_metrics(
     }
 
 
+def _compute_intraday_instrument_metrics(
+    bars: tuple[tuple[float, float, float, float, float], ...],
+    bar_starts: Sequence[str],
+    config: BacktestConfig,
+    short_window: int,
+    long_window: int,
+    *,
+    frequency: str,
+    cross_session: bool = False,
+    holding: str = "intraday",
+) -> dict[str, Any]:
+    """Bar-keyed MA-crossover: next-bar-open fills, per-session lookback, flat by 13:25, gross and net."""
+    if holding not in HOLDING_MODES:
+        raise VectorbtWorkflowError(f"holding must be one of {HOLDING_MODES}, got {holding!r}")
+    closes = [b[3] for b in bars]
+    sess_start = _session_start_indexes(bar_starts)
+    n = len(bars)
+
+    def sma(i: int, window: int) -> float | None:
+        lo = 0 if cross_session else sess_start[i]
+        if i - lo + 1 < window:
+            return None
+        return sum(closes[i - window + 1 : i + 1]) / window
+
+    actions: list[str | None] = [None] * n
+    for i in range(n):
+        s_ma, l_ma = sma(i, short_window), sma(i, long_window)
+        if s_ma is not None and l_ma is not None:
+            actions[i] = "BUY" if s_ma > l_ma else "SELL"
+    # BUY = be long, SELL = be flat: translate to entry/exit orders on the long-only book.
+    want_long = [a == "BUY" for a in actions]
+    sessions = [_session_of(st) for st in bar_starts]
+    flatten = {} if holding == "overnight" else _flatten_indexes(bar_starts)
+
+    def simulate(fee: float) -> tuple[list[float], float, int]:
+        cash, shares, trades = config.init_cash, 0.0, 0
+        values: list[float] = []
+        for j in range(n):
+            o, c = bars[j][0], bars[j][3]
+            fi = flatten.get(sessions[j]) if holding != "overnight" else None
+            flat_now = holding != "overnight" and (fi is None or j >= fi)
+            if flat_now and shares > 0 and fi is not None and j == fi:
+                cash += shares * o * (1.0 - fee)
+                shares, trades = 0.0, trades + 1
+            elif not flat_now and j > 0 and actions[j - 1] is not None and (
+                holding == "overnight" or sessions[j - 1] == sessions[j]
+            ):
+                if want_long[j - 1] and shares == 0:
+                    spend = cash * (1.0 - fee)
+                    shares, cash, trades = spend / o, cash - spend, trades + 1
+                elif not want_long[j - 1] and shares > 0:
+                    cash += shares * o * (1.0 - fee)
+                    shares, trades = 0.0, trades + 1
+            values.append(cash + shares * c)
+        if shares > 0 and bars:  # only reachable with holding=overnight: mark out at the last close
+            cash += shares * bars[-1][3] * (1.0 - fee)
+        return values, cash, trades
+
+    values, final_value, trade_count = simulate(config.fees)
+    gross_values, gross_final, _ = simulate(0.0)
+    rets = [(values[i] - values[i - 1]) / values[i - 1] for i in range(1, n) if values[i - 1] > 0]
+    peak, max_dd = config.init_cash, 0.0
+    for pv in values:
+        peak = max(peak, pv)
+        max_dd = max(max_dd, (peak - pv) / peak if peak > 0 else 0.0)
+    return {
+        "total_return": round((final_value - config.init_cash) / config.init_cash, 6),
+        "gross_total_return": round((gross_final - config.init_cash) / config.init_cash, 6),
+        "sharpe_ratio": round(_annualized_sharpe(rets, bars_per_year(frequency)), 6),
+        "max_drawdown": round(max_dd, 6),
+        "final_portfolio_value": round(final_value, 4),
+        "gross_final_portfolio_value": round(gross_final, 4),
+        "trade_count": trade_count,
+        "num_bars": n,
+        "bars_per_year": bars_per_year(frequency),
+        "fill_rule": "next_bar_open",
+    }
+
+
 class StubVectorbtBackend:
     """Deterministic stub for CI and smoke tests.
 
@@ -409,6 +754,18 @@ class StubVectorbtBackend:
         per_instrument: dict[str, dict[str, Any]] = {}
         for inst in dataset.instruments:
             bars = dataset.ohlcv_by_instrument[inst]
+            if _is_intraday(dataset):
+                per_instrument[inst] = _compute_intraday_instrument_metrics(
+                    bars,
+                    dataset.dates_by_instrument[inst],
+                    config,
+                    short_window,
+                    long_window,
+                    frequency=dataset.data_frequency,
+                    cross_session=bool(config.strategy_params.get("cross_session", False)),
+                    holding=str(config.strategy_params.get("holding", "intraday")),
+                )
+                continue
             per_instrument[inst] = _compute_instrument_metrics(bars, config, short_window, long_window)
 
         # Aggregate: mean of per-instrument metrics
@@ -427,6 +784,8 @@ class StubVectorbtBackend:
             "mean_max_drawdown": round(mean_drawdown, 6),
             "total_trades": total_trades,
         }
+        if _is_intraday(dataset):
+            aggregate.update(_intraday_aggregate(dataset, per_instrument))
         return BacktestRunResult(
             backend=STUB_BACKEND,
             run_id=run_id,
@@ -434,6 +793,23 @@ class StubVectorbtBackend:
             aggregate_metrics=aggregate,
             notes=("Stub backend is intended for governed smoke tests and packaging validation.",),
         )
+
+def _intraday_aggregate(
+    dataset: PreparedVectorbtDataset, per_instrument: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Replay label, annualisation and gross-vs-net costs for an intraday run."""
+    gross = [m["gross_total_return"] for m in per_instrument.values() if "gross_total_return" in m]
+    nets = [m["total_return"] for m in per_instrument.values() if "gross_total_return" in m]
+    return {
+        "evidence_mode": REPLAY_LABEL,
+        "live_or_paper_evidence": False,
+        "bar_frequency": dataset.data_frequency,
+        "bars_per_year": bars_per_year(dataset.data_frequency),
+        "mean_gross_total_return": round(sum(gross) / len(gross), 6) if gross else None,
+        "mean_net_total_return": round(sum(nets) / len(nets), 6) if nets else None,
+        "source_snapshot": copy.deepcopy((dataset.replay or {}).get("source_snapshot")),
+    }
+
 
 NO_TRADING_ACTIVITY = "no_trading_activity"
 ZERO_RETURN_VARIANCE = "zero_return_variance"
@@ -550,6 +926,13 @@ class VectorbtBackend:
         short_window = config.strategy_params.get("short_window", 5)
         long_window = config.strategy_params.get("long_window", 20)
 
+        if _is_intraday(dataset) and config.strategy_artifact is None:
+            raise VectorbtWorkflowError(
+                "intraday real-backend runs evaluate a canonical strategy artifact only; "
+                "the unbound MA-crossover path is daily/stub-only"
+            )
+        if config.strategy_artifact is not None:
+            _require_artifact_frequency(dataset, config.strategy_artifact)
         run_id = f"vbt-real-{uuid.uuid4().hex[:12]}"
         per_instrument: dict[str, dict[str, Any]] = {}
         artifact_orders = (
@@ -573,27 +956,65 @@ class VectorbtBackend:
             )
             if artifact_orders is not None:
                 sizes = pd.Series(artifact_orders[inst], dtype="float64")
-                if config.apply_taiwan_fill_costs:
-                    fee_series = pd.Series(
+                flatten_idx: list[int] = []
+                if _is_intraday(dataset):
+                    if _artifact_holding(config.strategy_artifact) != "overnight":
+                        flatten_idx = sorted(_flatten_indexes(dataset.dates_by_instrument[inst]).values())
+                    # Flatten closes the ACTUALLY executed position (target 0, never reverses) so
+                    # rejected / cash-limited / partial fills cannot leave or flip a residual.
+                    for fi in flatten_idx:
+                        sizes.iloc[fi] = 0.0
+                size_types = pd.Series(0, index=sizes.index, dtype="int64")  # SizeType.Amount
+                for fi in flatten_idx:
+                    size_types.iloc[fi] = 3  # SizeType.TargetAmount
+
+                def _fees_for(flatten_sells: dict[int, bool]) -> Any:
+                    if not config.apply_taiwan_fill_costs:
+                        return config.fees
+                    return pd.Series(
                         [
                             comm_rate + inst_tax_rate
-                            if (not math.isnan(float(s)) and float(s) < 0.0)
+                            if (
+                                flatten_sells.get(i, False)
+                                if i in flatten_sells
+                                else (not math.isnan(float(s_)) and float(s_) < 0.0)
+                            )
                             else comm_rate
-                            for s in artifact_orders[inst]
+                            for i, s_ in enumerate(sizes)
                         ],
                         dtype="float64",
                     )
+
+                if _is_intraday(dataset):
+                    # Orders are already shifted to the fill bar; fill at that bar's OPEN.
+                    opens = pd.Series([b[0] for b in bars], dtype="float64")
+                    order_freq = f"{INTRADAY_FREQUENCY_MINUTES[dataset.data_frequency]}min"
+                    order_kwargs = dict(price=opens, freq=order_freq)
                 else:
-                    fee_series = config.fees
-                pf = vbt.Portfolio.from_orders(
-                    closes,
-                    size=sizes,
-                    size_type="amount",
-                    direction="both",
-                    init_cash=config.init_cash,
-                    fees=fee_series,
-                    freq="1D",
-                )
+                    order_kwargs = dict(freq="1D")
+
+                def _simulate(fees_arg: Any) -> Any:
+                    return vbt.Portfolio.from_orders(
+                        closes,
+                        size=sizes,
+                        size_type=size_types if flatten_idx else "amount",
+                        direction="both",
+                        init_cash=config.init_cash,
+                        fees=fees_arg,
+                        **order_kwargs,
+                    )
+
+                flatten_sells = {fi: True for fi in flatten_idx}
+                pf = _simulate(_fees_for(flatten_sells))
+                for _ in range(len(flatten_idx) + 1):  # tax applies only to flatten SELLs (closing a long)
+                    if not flatten_idx or not config.apply_taiwan_fill_costs:
+                        break
+                    flows = pf.asset_flow().to_numpy()
+                    actual = {fi: bool(flows[fi] < 0.0) for fi in flatten_idx}
+                    if actual == flatten_sells:
+                        break
+                    flatten_sells = actual
+                    pf = _simulate(_fees_for(flatten_sells))
                 cost_summary = _extract_fill_cost_summary(
                     pf,
                     commission_rate=comm_rate,
@@ -609,6 +1030,20 @@ class VectorbtBackend:
                     "net_position": float(pf.asset_flow().sum()),
                     **cost_summary,
                 }
+                if _is_intraday(dataset):
+                    gross_pf = _simulate(0.0)
+                    per_instrument[inst].update(
+                        sharpe_ratio=round(
+                            _annualized_sharpe(
+                                [float(r) for r in pf.returns().dropna()], bars_per_year(dataset.data_frequency), ddof=1
+                            ),
+                            6,
+                        ),
+                        gross_total_return=round(float(gross_pf.total_return()), 6),
+                        gross_final_portfolio_value=round(float(gross_pf.final_value()), 4),
+                        bars_per_year=bars_per_year(dataset.data_frequency),
+                        fill_rule="next_bar_open",
+                    )
                 _annotate_sharpe_reason(per_instrument[inst])
                 continue
             short_ma = closes.rolling(short_window).mean()
@@ -672,6 +1107,8 @@ class VectorbtBackend:
             ),
             **_aggregate_sharpe_reason(per_instrument),
         }
+        if _is_intraday(dataset):
+            aggregate.update(_intraday_aggregate(dataset, per_instrument))
         return BacktestRunResult(
             backend=PRIMARY_BACKEND,
             run_id=run_id,
@@ -769,15 +1206,165 @@ def _bar_features_for_index(
             continue
         bar_features[fk] = _slice_aligned_feature(fv, total_len, 0, index + 1)
 
+    if _is_intraday(dataset):
+        # Replay clock: the simulated decision time of bar i is its bar_end, never later bars.
+        clocks = (getattr(dataset, "decision_clock_by_instrument", None) or {}).get(instrument)
+        if not clocks or index >= len(clocks):
+            raise IntradayDataUnavailable("missing_replay_clock", f"{instrument} bar {index}")
+        _attach_replay_minute_observations(dataset, instrument, index, bar_features)
+        return bar_features, clocks[index]
     dates = dataset.dates_by_instrument.get(instrument)
     decision_time = dates[index] if dates and index < len(dates) else None
     return bar_features, decision_time
+
+
+def _attach_replay_minute_observations(
+    dataset: PreparedVectorbtDataset, instrument: str, index: int, bar_features: dict[str, Any]
+) -> None:
+    """Replay-scoped governed observation bridge (SD §6.3).
+
+    Each bar ``<= index`` becomes a dataset-bound, timezone-aware observation of the governed
+    minute dataset (e.g. ``tw_price_5m.close``).  ``event_time`` is the bar close; the evaluator's
+    ``available_time`` is the explicit *simulated* replay clock (bar_end) and is marked as such, while the
+    bar's REAL ``bar_availability_ts`` is retained as ``real_available_time`` provenance.  Real
+    availability must already be at or before the replay ceiling (enforced in ``prepare``); live
+    point-in-time rules are untouched and later bars are never emitted.
+    """
+    replay = dataset.replay or {}
+    ds_name = INTRADAY_DATASETS[dataset.data_frequency]
+    clocks = dataset.decision_clock_by_instrument[instrument]
+    reals = (getattr(dataset, "real_availability_by_instrument", None) or {}).get(instrument)
+    if not reals or index >= len(reals):
+        raise IntradayDataUnavailable("missing_bar_availability", f"{instrument} bar {index}")
+    snapshot_sha = (replay.get("source_snapshot") or {}).get("content_sha256")
+    bars = dataset.ohlcv_by_instrument[instrument]
+    fields = ("open", "high", "low", "close", "volume")
+    observations: dict[str, list[dict[str, Any]]] = {f: [] for f in fields}
+    for i in range(index + 1):
+        for k, name in enumerate(fields):
+            observations[name].append({
+                "value": bars[i][k],
+                "event_time": clocks[i],
+                "available_time": clocks[i],
+                "dataset": ds_name,
+                "field": name,
+                "entity": instrument,
+                "bar_start": dataset.dates_by_instrument[instrument][i],
+                "real_available_time": reals[i],
+                "availability_basis": "replay_simulated_bar_end",
+                "evidence_mode": REPLAY_LABEL,
+                "source_snapshot_sha256": snapshot_sha,
+            })
+    bar_features[ds_name] = observations
+
+
+def _artifact_cross_session(artifact: Mapping[str, Any]) -> bool:
+    """True only when the recipe/feature definitions declare ``cross_session`` (default: session reset)."""
+    if (artifact.get("parameters") or {}).get("cross_session") is True:
+        return True
+    try:
+        from services.registry.factor_rule import get_feature_definition
+    except ImportError:  # pragma: no cover
+        return False
+    for item in (artifact.get("strategy_logic") or {}).get("inputs", ()) or ():
+        if isinstance(item, Mapping):
+            definition = get_feature_definition(str(item.get("dataset")), str(item.get("field")))
+            if definition is not None and getattr(definition, "cross_session", False):
+                return True
+    return False
+
+
+def _artifact_holding(artifact: Mapping[str, Any], config_params: Mapping[str, Any] | None = None) -> str:
+    holding = (artifact.get("parameters") or {}).get("holding") or (config_params or {}).get("holding") or "intraday"
+    if holding not in HOLDING_MODES:
+        raise VectorbtWorkflowError(f"holding must be one of {HOLDING_MODES}, got {holding!r}")
+    return str(holding)
+
+
+def _closes_window(
+    dataset: PreparedVectorbtDataset, instrument: str, index: int, cross_session: bool
+) -> list[float]:
+    """Closes visible at bar ``index``; intraday lookbacks reset at the session open unless cross_session."""
+    closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
+    if _is_intraday(dataset) and not cross_session:
+        lo = _session_start_indexes(dataset.dates_by_instrument[instrument])[index]
+        return closes[lo : index + 1]
+    return closes[: index + 1]
+
+
+def _canonical_frequency(value: Any) -> str:
+    return "1d" if value in (None, "", "daily", "1d") else str(value)
+
+
+def _require_artifact_frequency(dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]) -> None:
+    """SD 6.1: the strategy's declared bar_frequency must equal the prepared dataset frequency (fail closed)."""
+    params = artifact.get("parameters")
+    declared = _canonical_frequency(params.get("bar_frequency") if isinstance(params, Mapping) else None)
+    actual = _canonical_frequency(dataset.data_frequency)
+    if declared != actual:
+        raise VectorbtWorkflowError(
+            f"strategy artifact bar_frequency {declared!r} does not match prepared dataset "
+            f"data_frequency {actual!r}; refusing to rebind strategy inputs"
+        )
+
+
+def _screened_artifact_view_sequence(
+    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """Replay the production screen evaluator with explicit virtual holdings.
+
+    A complete market snapshot is required; parameters.symbols is a legacy
+    provisioning identity and does not restrict strategy-owned screens.
+    """
+    from services.registry.candidate_pool import canonical_symbol, evaluate_screened_views, _market
+    from services.registry.strategy_artifact import validate_strategy_artifact
+
+    _require_artifact_frequency(dataset, artifact)
+    if _is_intraday(dataset):
+        raise VectorbtWorkflowError("screen strategies are daily-only; no intraday screen replay is defined")
+    validate_strategy_artifact(artifact)
+    try:
+        _, symbols = _market(dataset.candidate_pool_market)
+        keyed = {canonical_symbol(inst): inst for inst in dataset.instruments}
+        if set(keyed) != set(symbols):
+            raise ValueError("screen backtest records must cover the complete governed market")
+        dates = sorted({d for inst in dataset.instruments for d in dataset.dates_by_instrument.get(inst, ())})
+        if not dates:
+            raise ValueError("screen backtest requires dated bars")
+        by_instrument = {inst: [] for inst in dataset.instruments}
+        positions = {s: {"current_direction": "FLAT", "holding_bars": 0} for s in symbols}
+        instrument_days = {inst: set(dataset.dates_by_instrument[inst]) for inst in dataset.instruments}
+        for day in dates:
+            for position in positions.values():
+                if position["current_direction"] != "FLAT":
+                    position["holding_bars"] += 1
+            views = evaluate_screened_views(artifact, dataset.candidate_pool_market, day, positions=positions)
+            for symbol, inst in keyed.items():
+                view = views[symbol]
+                if day not in instrument_days[inst]:
+                    if view["action"] != "HOLD":
+                        raise ValueError(f"screen decision for {inst} lacks an execution bar on {day}")
+                    continue
+                by_instrument[inst].append(view)
+                previous = positions[symbol]
+                positions[symbol] = {
+                    "current_direction": view.get("target_direction", previous["current_direction"]),
+                    "holding_bars": view.get("holding_bars", previous["holding_bars"]),
+                }
+        return by_instrument
+    except (ValueError, TypeError) as exc:
+        raise VectorbtWorkflowError(f"screen evaluation failed: {exc}") from exc
 
 
 def _artifact_action_sequence(
     dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
 ) -> dict[str, list[str | None]]:
     """Per-bar evaluated actions (BUY/SELL/HOLD or None on warmup bars) from the Registry interpreter."""
+    _require_artifact_frequency(dataset, artifact)
+    if "screen" in artifact.get("strategy_logic", {}):
+        return {inst: [v["action"] for v in views]
+                for inst, views in _screened_artifact_view_sequence(dataset, artifact).items()}
+
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
     from services.registry.factor_rule import required_history_bars
     from services.registry.strategy_artifact import (
@@ -801,6 +1388,10 @@ def _artifact_action_sequence(
         start_index = int(parameters[logic["lookback_parameter"]]) - 1
     elif kind == "factor_rule_v1":
         start_index = max(0, required_history_bars(logic, parameters) - 1)
+    elif kind == "persona_portfolio_v1":
+        from services.registry.portfolio_envelope import required_portfolio_history
+
+        start_index = required_portfolio_history(artifact) - 1
     else:
         raise VectorbtWorkflowError(f"unsupported strategy_logic kind {kind!r}")
 
@@ -821,18 +1412,25 @@ def _artifact_action_sequence(
         )
 
     actions_by_inst: dict[str, list[str | None]] = {}
+    cross_session = _artifact_cross_session(artifact)
     for instrument in selected:
         closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
         actions: list[str | None] = [None] * len(closes)
         evaluated_count = 0
+        session_starts = (
+            _session_start_indexes(dataset.dates_by_instrument[instrument]) if _is_intraday(dataset) else None
+        )
         for index in range(start_index, len(closes)):
+            if session_starts is not None and not cross_session and index - session_starts[index] < start_index:
+                continue  # lookback window resets at the session open: not enough in-session history yet
             bar_features, decision_time = _bar_features_for_index(dataset, instrument, index)
             try:
                 action = evaluate_strategy_action(
                     artifact,
-                    closes[: index + 1],
+                    _closes_window(dataset, instrument, index, cross_session),
                     features=bar_features,
                     decision_time=decision_time,
+                    symbol=instrument,
                 )
             except StrategyArtifactValidationError as exc:
                 msg = str(exc)
@@ -860,6 +1458,12 @@ def _artifact_order_sizes(
     actions_by_inst = _artifact_action_sequence(dataset, artifact)
     quantity = float(artifact["parameters"]["order_quantity"])
     sizes: dict[str, list[float]] = {}
+    if _is_intraday(dataset):
+        holding = _artifact_holding(artifact)
+        return {
+            inst: plan_intraday_orders(dataset.dates_by_instrument[inst], actions, quantity, holding=holding)
+            for inst, actions in actions_by_inst.items()
+        }
     for instrument, actions in actions_by_inst.items():
         orders = [float("nan")] * len(actions)
         for index, action in enumerate(actions):
@@ -891,6 +1495,75 @@ def run_vectorbt_workflow(
     )
 
 
+def build_intraday_replay_dataset(
+    store: Any,
+    *,
+    dataset_id: str,
+    strategy_id: str,
+    symbols: Sequence[str],
+    session_dates: Sequence[str],
+    bar_frequency: str,
+    availability_ceiling: datetime,
+    availability_lag_minutes: int = 0,
+    source_strategy_spec_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a replay dataset from reconciled ``tw_price_1m`` days (K4 loader) or report unavailable.
+
+    ``availability_ceiling`` is the explicit replay clock bound: only bars whose real
+    ``bar_availability_ts`` is at or before it are used.  Missing, quarantined, waived or not-yet
+    -reconciled data raises :class:`IntradayDataUnavailable`; there is no daily or synthetic fallback.
+    """
+    from services.research.intraday_bars import IntradayBarsError, InsufficientCleanHistory, load_bars
+
+    if not is_intraday_frequency(bar_frequency):
+        raise VectorbtWorkflowError(f"bar_frequency {bar_frequency!r} is not an intraday frequency")
+    records: list[dict[str, Any]] = []
+    per_symbol: dict[str, int] = {}
+    for symbol in sorted(set(symbols)):
+        try:
+            bars = load_bars(
+                store, symbol, session_dates, bar_frequency,
+                decision_time=availability_ceiling, availability_lag_minutes=availability_lag_minutes,
+            )
+        except InsufficientCleanHistory as exc:
+            raise IntradayDataUnavailable("insufficient_clean_history", str(exc)) from exc
+        except IntradayBarsError as exc:
+            raise IntradayDataUnavailable("loader_rejected", str(exc)) from exc
+        if not bars:
+            raise IntradayDataUnavailable("no_available_bars", f"{symbol} has no bar available by the replay ceiling")
+        per_symbol[symbol] = len(bars)
+        records.extend(
+            {
+                "instrument": symbol, "dataset": b.dataset, "bar_start": b.bar_start, "bar_end": b.bar_end,
+                "bar_availability_ts": b.bar_availability_ts, "open": b.open, "high": b.high, "low": b.low,
+                "close": b.close, "volume": b.volume, "half_bucket": b.half_bucket,
+            }
+            for b in bars
+        )
+    snapshot = {
+        "source_dataset": "tw_price_1m",
+        "derived_dataset": INTRADAY_DATASETS[bar_frequency],
+        "reconciled_only": True,
+        "sessions": sorted(set(session_dates)),
+        "bars_by_symbol": per_symbol,
+        "content_sha256": _sha256_json(records),
+    }
+    return {
+        "dataset_id": dataset_id,
+        "strategy_id": strategy_id,
+        "source_strategy_spec_id": source_strategy_spec_id,
+        "source_dataset_refs": ["source-ingest:kbar/tw_price_1m"],
+        "data_frequency": bar_frequency,
+        "records": records,
+        "replay": {
+            "label": REPLAY_LABEL,
+            "clock": "bar_end",
+            "availability_ceiling": availability_ceiling.isoformat(),
+            "source_snapshot": snapshot,
+        },
+    }
+
+
 def _artifact_view_strength(
     dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any] | None
 ) -> tuple[float | dict[str, float | None] | None, dict[str, list[float | None]] | None]:
@@ -898,6 +1571,10 @@ def _artifact_view_strength(
 
     if artifact is None:
         return None, None
+    if "screen" in artifact.get("strategy_logic", {}):
+        views = _screened_artifact_view_sequence(dataset, artifact)
+        by_instrument = {inst: [v["strength"] for v in seq] for inst, seq in views.items()}
+        return {inst: seq[-1] for inst, seq in by_instrument.items() if seq}, by_instrument
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
     from services.registry.factor_rule import required_history_bars
     from services.registry.strategy_artifact import (
@@ -912,6 +1589,10 @@ def _artifact_view_strength(
         start_index = int(parameters[logic["lookback_parameter"]]) - 1
     elif kind == "factor_rule_v1":
         start_index = max(0, required_history_bars(logic, parameters) - 1)
+    elif kind == "persona_portfolio_v1":
+        from services.registry.portfolio_envelope import required_portfolio_history
+
+        start_index = required_portfolio_history(artifact) - 1
     else:
         raise VectorbtWorkflowError(f"unsupported strategy_logic kind {kind!r}")
 
@@ -926,17 +1607,24 @@ def _artifact_view_strength(
             selected.append(instrument)
     by_instrument: dict[str, list[float | None]] = {}
     terminal: dict[str, float | None] = {}
+    cross_session = _artifact_cross_session(artifact)
     for instrument in selected:
         closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
         strengths: list[float | None] = [None] * len(closes)
+        session_starts = (
+            _session_start_indexes(dataset.dates_by_instrument[instrument]) if _is_intraday(dataset) else None
+        )
         for index in range(start_index, len(closes)):
+            if session_starts is not None and not cross_session and index - session_starts[index] < start_index:
+                continue
             bar_features, decision_time = _bar_features_for_index(dataset, instrument, index)
             try:
                 view = evaluate_strategy_view(
                     artifact,
-                    closes[: index + 1],
+                    _closes_window(dataset, instrument, index, cross_session),
                     features=bar_features,
                     decision_time=decision_time,
+                    symbol=instrument,
                 )
             except StrategyArtifactValidationError as exc:
                 msg = str(exc)
@@ -981,7 +1669,17 @@ def _build_artifact_bundle(
     config: BacktestConfig,
 ) -> dict[str, Any]:
     strength_summary, _ = _artifact_view_strength(dataset, config.strategy_artifact)
+    screen_evidence = {}
+    if config.strategy_artifact and "screen" in config.strategy_artifact["strategy_logic"]:
+        sequences = _screened_artifact_view_sequence(dataset, config.strategy_artifact)
+        snapshots = {v["candidate_pool_digest"]: v["candidate_pool_snapshot"]
+                     for seq in sequences.values() for v in seq}
+        screen_evidence = {
+            "candidate_pool_snapshots": list(snapshots.values()),
+            "survivorship_limited": any(s["survivorship_limited"] for s in snapshots.values()),
+        }
     return {
+        **screen_evidence,
         "schema_version": "1.0",
         "artifact_family": "vectorbt_backtest",
         "framework": "vectorbt",
@@ -1004,6 +1702,15 @@ def _build_artifact_bundle(
         },
         "per_instrument_metrics": copy.deepcopy(result.per_instrument_metrics),
         "aggregate_metrics": copy.deepcopy(result.aggregate_metrics),
+        **(
+            {
+                "evidence_mode": REPLAY_LABEL,
+                "replay": copy.deepcopy(dataset.replay),
+                "not_live_or_paper_evidence": True,
+            }
+            if _is_intraday(dataset)
+            else {}
+        ),
         "governance": {
             "required_ohlcv_fields": list(REQUIRED_OHLCV_FIELDS),
             "direct_live_influence": False,
@@ -1072,6 +1779,15 @@ def _build_registry_entry(
             "num_instruments": dataset.num_instruments,
             "total_bars": dataset.total_bars,
             "data_frequency": dataset.data_frequency,
+            **(
+                {
+                    "evidence_mode": REPLAY_LABEL,
+                    "live_or_paper_evidence": False,
+                    "source_snapshot": copy.deepcopy((dataset.replay or {}).get("source_snapshot")),
+                }
+                if _is_intraday(dataset)
+                else {}
+            ),
         },
         "approved_at": None,
         "approver": None,
@@ -1089,6 +1805,8 @@ def _slice_prepared_dataset(
     bars_per_inst: dict[str, int] = {}
     ohlcv_by_inst: dict[str, tuple[tuple[float, float, float, float, float], ...]] = {}
     dates_by_inst: dict[str, tuple[str, ...]] = {}
+    clock_by_inst: dict[str, tuple[str, ...]] = {}
+    avail_by_inst: dict[str, tuple[str, ...]] = {}
     features_by_inst: dict[str, dict[str, Any]] = {}
 
     for inst in dataset.instruments:
@@ -1099,6 +1817,10 @@ def _slice_prepared_dataset(
         ohlcv_by_inst[inst] = sliced_bars
         full_dates = dataset.dates_by_instrument.get(inst) or ()
         dates_by_inst[inst] = full_dates[start_idx:end_idx] if full_dates else ()
+        full_clock = (getattr(dataset, "decision_clock_by_instrument", None) or {}).get(inst) or ()
+        clock_by_inst[inst] = full_clock[start_idx:end_idx] if full_clock else ()
+        full_avail = (getattr(dataset, "real_availability_by_instrument", None) or {}).get(inst) or ()
+        avail_by_inst[inst] = full_avail[start_idx:end_idx] if full_avail else ()
 
         inst_features: dict[str, Any] = {
             "open": [b[0] for b in sliced_bars],
@@ -1127,6 +1849,10 @@ def _slice_prepared_dataset(
         total_bars=sum(bars_per_inst.values()),
         dates_by_instrument=dates_by_inst,
         features_by_instrument=features_by_inst,
+        candidate_pool_market=copy.deepcopy(getattr(dataset, "candidate_pool_market", None)),
+        decision_clock_by_instrument=clock_by_inst,
+        replay=copy.deepcopy(getattr(dataset, "replay", None)),
+        real_availability_by_instrument=avail_by_inst,
     )
 
 
@@ -1153,7 +1879,9 @@ def _measure_pit_history(
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
     parameters = strategy_artifact.get("parameters") or {}
-    wanted = {normalize_taiwan_symbol(s) for s in parameters.get("symbols", [])}
+    screened = "screen" in (strategy_artifact.get("strategy_logic") or {})
+    market_symbols = ((dataset.get("candidate_pool_market") or {}).get("symbols") or {})
+    wanted = {normalize_taiwan_symbol(s) for s in (market_symbols if screened else parameters.get("symbols", []))}
     records = dataset.get("records") or []
     dates_by_symbol: dict[str, list[str]] = {}
     for rec in records:
@@ -1171,6 +1899,8 @@ def _measure_pit_history(
             dates_by_symbol.setdefault(norm[0], []).append(dt_str[:10])
 
     per_symbol_span: dict[str, dict[str, Any]] = {}
+    if screened and {native for native, _ in wanted} - dates_by_symbol.keys():
+        return 0, 0, {"per_symbol": {}, "features": {}, "missing_market_symbols": True}
     min_calendar_days: int | None = None
     min_bars: int | None = None
     for code, raw_dates in dates_by_symbol.items():
@@ -1218,6 +1948,11 @@ def _measure_pit_history(
         roots: list[Any] = [logic.get("signal"), logic.get("strength")]
         for flt in logic.get("filters") or []:
             roots.append(flt)
+        for step in (logic.get("screen") or {}).get("steps", []):
+            roots.append(step.get("expression"))
+            group_input = (step.get("group_by") or {}).get("industry_input")
+            if group_input:
+                roots.append({"ref": group_input})
         for section in ("entry", "exit"):
             cfg = logic.get(section)
             if isinstance(cfg, Mapping):
@@ -1233,6 +1968,8 @@ def _measure_pit_history(
         }
         price_fields = set(BUILT_IN_PRICE_VOLUME_FIELDS) | {"open", "high", "low", "close", "volume"}
         raw_features = dataset.get("features_by_instrument") or dataset.get("features") or {}
+        if screened:
+            raw_features = {s: p.get("features", {}) for s, p in market_symbols.items()}
 
         def _present(value: Any) -> bool:
             if value is None:
@@ -1453,7 +2190,7 @@ def _compute_buy_and_hold_benchmark(
             else 0.0
         )
         std_ret = math.sqrt(var_ret)
-        sharpe = (mean_ret / std_ret) * math.sqrt(252.0) if std_ret > 1e-12 else 0.0
+        sharpe = (mean_ret / std_ret) * math.sqrt(float(bars_per_year(dataset.data_frequency))) if std_ret > 1e-12 else 0.0
         peak = equity_curve[0] if equity_curve else config.init_cash
         max_dd = 0.0
         for val in equity_curve:
@@ -1554,6 +2291,22 @@ def run_replication_backtest_protocol(
             f"replication backtest protocol requires governed Taiwan market ('TW'); got {market!r}"
         )
 
+    screened = "screen" in strategy_artifact["strategy_logic"]
+    if screened:
+        from services.registry.candidate_pool import _market
+
+        try:
+            pool_market, _ = _market(dataset.get("candidate_pool_market"))
+        except ValueError as exc:
+            raise VectorbtWorkflowError(str(exc)) from exc
+        if not (pool_market.get("includes_delisted") is True and pool_market.get("includes_suspended") is True):
+            return {
+                "status": "survivorship_limited", "survivorship_limited": True,
+                "reason": "screen history does not attest delisted and suspended symbol coverage",
+                "strategy_artifact": _artifact_identity(strategy_artifact),
+                "source_dataset_refs": list(pool_market["source_refs"]),
+            }
+
     pit_days, pit_bars, history_details = _measure_pit_history(dataset, strategy_artifact)
     history_sufficient = pit_days >= min_pit_history_days and pit_bars >= min_pit_history_bars
     history_check = {
@@ -1610,7 +2363,7 @@ def run_replication_backtest_protocol(
 
     wanted_norm = {
         normalize_taiwan_symbol(s)
-        for s in (strategy_artifact.get("parameters") or {}).get("symbols", [])
+        for s in (pool_market["symbols"] if screened else (strategy_artifact.get("parameters") or {}).get("symbols", []))
     }
     target_instruments = [
         inst

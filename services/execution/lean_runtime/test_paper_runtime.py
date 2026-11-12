@@ -701,6 +701,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(len(pnl_events), 1)
         self.assertEqual(len(drawdown_events), 1)
         self.assertAlmostEqual(pnl_events[0]["metrics"]["pnl"], 50.0)
+        self.assertGreater(pnl_events[0]["metrics"]["initial_cash"], 0)
+        self.assertTrue(pnl_events[0]["metrics"]["pnl_period_start_at"])
         self.assertEqual(pnl_events[0]["pnl_as_of"], mark_provider.as_of)
         self.assertNotIn("pnl_as_of", pnl_events[0]["metrics"])
         self.assertNotIn("drawdown_pct", pnl_events[0]["metrics"])
@@ -1172,7 +1174,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(len(noop_events), 1)
         self.assertEqual(fill_events, [])
         self.assertEqual(noop_events[0]["metrics"]["noop_count"], 1)
-        self.assertEqual(noop_events[0]["metrics"]["fill_rate"], 0.0)
+        self.assertNotIn("fill_rate", noop_events[0]["metrics"])
         self.assertEqual(noop_events[0]["metadata"]["alpha_source"], "llm_riskoff_agent")
         self.assertEqual(pnl_events, [])
         self.assertEqual(snapshot["paper_state"]["performance_telemetry"]["code"], "performance_no_fills")
@@ -6135,5 +6137,228 @@ class TestPaperFuturesFillEpisode(unittest.TestCase):
         self.assertEqual(algo.open_episodes, {})
 
 
+class PoolMemberBaselineRuntimeTest(unittest.TestCase):
+    """Production snapshot path: each member carries its own baseline/comparison."""
+
+    _identity = PaperRuntimeServiceTest._identity
+
+    def _outbox(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        return Path(directory.name) / "lifecycle.json"
+
+    def test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account(self):
+        """Recorded Taiwan gate proof -> registry entries -> runtime snapshot, per member."""
+        from services.evolution.test_approved_baselines import genuine_entry
+        from services.execution.lean_runtime.member_virtual_book import virtual_book_metrics
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        decay = genuine_entry(tenant="default")
+        good = genuine_entry("recorded_backtest_tw_2330_2317", ("2330.TW", "2317.TW"), tenant="default")
+        entries = {decay["registry_id"]: decay, good["registry_id"]: good}
+        service._member_entry_reader = lambda ref, tenant: entries.get(ref)
+        def member(entry, count):
+            return {entry["registry_id"]: {
+                "artifact_id": entry["registry_id"], "version": "1.0.0", "checksum": entry["checksum"],
+                "virtual_only": False, "underlying_count": count,
+                "view": {"direction": "LONG", "strength": 1}}}
+        decaying = (100, 97, 96, 92, 91)
+        steady = (100, 104, 108, 112, 120)
+        for day in range(5):
+            at = f"2024-10-0{day + 1}T05:30:00Z"
+            for symbol, price, members in (
+                ("2330.TW", decaying[day], member(decay, 1)),
+                ("2330.TW", steady[day], member(good, 2)),
+                ("2317.TW", steady[day], member(good, 2)),
+            ):
+                service._member_virtual_books.observe(
+                    binding_id="b", envelope_checksum="sha256:env", symbol=symbol, event_time=at,
+                    price=price, source_ref="recorded-twse", members=members, bar_frequency="1d")
+        books = {b["member_id"]: b for b in service.snapshot()["paper_state"]["member_virtual_books"]}
+        self.assertEqual(set(books), {decay["registry_id"], good["registry_id"]})
+        for entry in (decay, good):
+            book = books[entry["registry_id"]]
+            self.assertEqual(book["baseline"]["status"], "approved")
+            self.assertEqual(book["baseline"]["checksum"], book["checksum"])
+            self.assertEqual(book["baseline"]["oos_sharpe"],
+                             entry["evaluation_summary"]["out_of_sample_sharpe_ratio"])
+            # The member is scored on the gate's own share-sized return basis.
+            self.assertEqual(book["gate_basis"]["basis"], book["baseline"]["return_basis"])
+            self.assertEqual(book["baseline_comparison"]["status"], "compared")
+            self.assertAlmostEqual(
+                book["baseline_comparison"]["sharpe_delta"],
+                book["gate_basis"]["sharpe_ratio"] - book["baseline"]["oos_sharpe"])
+        self.assertNotEqual(books[decay["registry_id"]]["baseline"]["backtest_run_id"],
+                            books[good["registry_id"]]["baseline"]["backtest_run_id"])
+        weak = books[decay["registry_id"]]
+        # A combined account of both members would look healthy and hide the decaying member.
+        combined = virtual_book_metrics(
+            [(a + b) / 2 for a, b in zip(weak["net_of_costs"]["return_series"],
+                                         books[good["registry_id"]]["net_of_costs"]["return_series"])],
+            basis=weak["net_of_costs"]["basis"])
+        self.assertGreater(combined["sharpe_ratio"], 0)
+        self.assertGreater(combined["sharpe_ratio"], weak["net_of_costs"]["sharpe_ratio"])
+        self.assertTrue(books[decay["registry_id"]]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertFalse(books[good["registry_id"]]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertNotEqual(books[decay["registry_id"]]["baseline_comparison"]["sharpe_delta"],
+                            books[good["registry_id"]]["baseline_comparison"]["sharpe_delta"])
+        self.assertTrue(all(not b["is_real_order"] for b in books.values()))
+
+    def test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline(self):
+        from services.evolution.test_approved_baselines import genuine_entry
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        parent = genuine_entry(tenant="default")
+        service._member_entry_reader = lambda ref, tenant: parent if ref == parent["registry_id"] else {}
+        for day, price in ((1, 100), (2, 110)):
+            service._member_virtual_books.observe(
+                binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                members={"child": {"artifact_id": "child", "version": "1", "checksum": parent["checksum"],
+                                   "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
+                bar_frequency="1d")
+        [book] = service.snapshot()["paper_state"]["member_virtual_books"]
+        self.assertEqual(book["baseline"]["reason"], "registry_entry_missing")
+        self.assertNotIn("oos_sharpe", book["baseline"])
+
+    def test_without_registry_reader_each_member_reports_missing_reason(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        for day, price in ((1, 100), (2, 110)):
+            service._member_virtual_books.observe(
+                binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                members={"m": {"artifact_id": "m", "version": "1", "checksum": "sha256:m",
+                               "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
+                bar_frequency="1d")
+        [book] = service.snapshot()["paper_state"]["member_virtual_books"]
+        self.assertEqual(book["baseline"]["reason"], "registry_entry_missing")
+        self.assertEqual(book["baseline_comparison"]["status"], "no_approved_baseline")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+def _fill_rate_runtime_scenario(tmp_path, monkeypatch):
+    """Real signal consumer/runtime/emitter -> durable telemetry projection."""
+    from services.execution.lean_runtime import paper_runtime, signal_consumer
+    from services.execution.lean_runtime.signal_producer import build_decision_signals
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    class QuarterClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = cls(2026, 11, 12, 4, 10, tzinfo=timezone.utc)
+            return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+    # Freeze both execution event time and signal admission time. The HTTP
+    # test must continue proving Q4 after the wall clock enters a new quarter.
+    monkeypatch.setattr(paper_runtime, "datetime", QuarterClock)
+    monkeypatch.setattr(signal_consumer, "datetime", QuarterClock)
+    binding_id = str(uuid.uuid4())
+    runtime_id = "return-runtime-0"
+    binding = {
+        "binding_id": binding_id, "runtime_id": runtime_id,
+        "capital_pool_id": "pool-fill-rate", "artifact_id": "artifact-fill-rate",
+        "artifact_version": "1", "plan_id": "plan-fill-rate",
+        "persona_capital_binding_id": "pcb-fill-rate", "status": "active",
+        "deployment_mode": "paper", "execution_mode": "paper",
+    }
+    monkeypatch.setenv("PANTHEON_PERFORMANCE_STATE_PATH", str(tmp_path / "ledger.json"))
+    monkeypatch.setenv("PANTHEON_LIFECYCLE_OUTBOX_PATH", str(tmp_path / "outbox.json"))
+    projection_path = str(tmp_path / "projection.json")
+    events = []
+
+    class Emitter(RuntimeTelemetryEmitter):
+        def emit_payload(self, payload):
+            events.append(payload)
+            RuntimeSummaryProjectionStore(path=projection_path).project_event(payload)
+            return True
+
+    identity = RuntimeIdentity.from_env({
+        "PANTHEON_RUNTIME_ROLE": "paper", "PANTHEON_RUNTIME_MODE": "paper",
+        "PANTHEON_RUNTIME_ID": runtime_id, "PANTHEON_WORKSPACE_REF": "w",
+        "PANTHEON_AUTH_PROFILE_REF": "p", "PANTHEON_PERSONA_ID": "fill-persona",
+        "PANTHEON_SESSION_ID": "s", "PANTHEON_TRACE_ID": str(uuid.uuid4()),
+        "PANTHEON_REQUEST_ID": "r", "PANTHEON_TENANT_ID": "pantheon-dev",
+    })
+    queue = InMemoryPendingSignalStore()
+
+    def service():
+        return PaperRuntimeService(
+            store=queue, identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+            telemetry_emitter=Emitter(identity, _FakeBindingResolver(binding)),
+            poll_interval_seconds=3600,
+        )
+
+    def run(runtime, suffix, quantity, action="BUY"):
+        now = QuarterClock.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        [signal] = build_decision_signals({
+            "decision_id": f"decision-{suffix}", "signal_id": f"signal-{suffix}",
+            "strategy_id": "strategy-fill-rate", "timestamp": now,
+            "tenant_id": "pantheon-dev", "environment": "paper", "symbol": "2330.TW",
+            "action": action, "direction": "LONG", "quantity": quantity,
+            "quantity_type": "SHARES", "run_id": f"run-{suffix}", "order_type": "MARKET",
+            "metadata": {"market_data": {"close": 100.0, "event_time": now,
+                                         "source_ref": "local-test-owner://quote"}},
+        }, binding_id=binding_id, runtime_id=runtime_id)
+        queue.enqueue(signal)
+        runtime.drain_once()
+        runtime._consumer.flush_rebalance(signal["run_id"], runtime._algo)
+
+    monkeypatch.setattr(PaperExecutionAlgorithm, "_post_broker_paper_order", staticmethod(
+        lambda url, payload: {"order_id": "partial-order", "fill_price": 100.0, "fill_qty": 4, "side": "buy"}
+    ))
+    first = service()
+    run(first, "partial", 10)
+    partial = RuntimeSummaryProjectionStore(path=projection_path).get(runtime_id)
+    restarted = service()
+    assert restarted._processed_signal_count == 0
+    assert restarted._algo.performance_ledger()["fill_count"] == 1
+
+    def reject(url, payload):
+        raise RuntimeError("test broker rejection")
+
+    monkeypatch.setattr(PaperExecutionAlgorithm, "_post_broker_paper_order", staticmethod(reject))
+    run(restarted, "reject", 6)
+    run(restarted, "noop", 0, "HOLD")
+    # Duplicated delivery and projection restarts must not multiply quantities.
+    for event in events:
+        RuntimeSummaryProjectionStore(path=projection_path).project_event(event)
+    summary = RuntimeSummaryProjectionStore(path=projection_path).get(runtime_id)
+    return summary, partial, events, restarted
+
+
+def test_fill_rate_runtime_partial_fill_rejection_noop_and_restart(tmp_path, monkeypatch):
+    summary, partial, events, runtime = _fill_rate_runtime_scenario(tmp_path, monkeypatch)
+    assert partial["fill_rate"] == 0.4
+    assert summary["fill_rate"] == 0.25
+    details = summary["fill_rate_details"]
+    assert details["numerator"] == 4.0 and details["denominator"] == 16.0
+    assert details["window"]["timezone"] == "UTC"
+    rejection = next(e for e in events if e["event_type"] == "order_rejection")
+    noop = next(e for e in events if e["event_type"] == "paper_order_simulated")
+    assert "test broker rejection" in rejection["metadata"]["execution_error_message"]
+    assert noop["metadata"]["noop_reason"]
+    assert "fill_rate" not in runtime._performance_snapshot_metrics()
+    assert all("fill_rate" not in e["metrics"] for e in events)
+
+
+def test_set_holdings_records_native_order_quantity_not_percent():
+    events = []
+    algo = PaperExecutionAlgorithm(event_sink=events.append)
+    algo.SetCurrentSignalContext({"requested_quantity": 0.1, "quantity_type": "PERCENT_PORTFOLIO"})
+    algo.SetHoldings("TEST.US", 0.1)
+    assert events[0].quantity == 100.0
+    assert events[0].metadata["requested_quantity"] == 100.0

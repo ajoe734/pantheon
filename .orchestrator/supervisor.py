@@ -2203,6 +2203,17 @@ def _behind_reopen_message(target_branch: str) -> str:
     )
 
 
+def _source_owned_reopen_message(reason: str, target_branch: str, detail: str) -> str:
+    if reason == unblock_contract.EXACT_HEAD_BEHIND_BASE_REASON:
+        return _behind_reopen_message(target_branch)
+    return (
+        f"Auto-integrator source-owned return ({reason}): this repository's fix "
+        "belongs to the source task, not a Pantheon tooling repair. Repair the "
+        "source branch, push a new head and resubmit for exact-head review; "
+        f"prior approval does not carry to a changed head. Detail: {str(detail)[:500]}"
+    )
+
+
 def _validate_auto_integrator_unblock_request(
     config: dict[str, Any], request: Mapping[str, Any], filename: str, status: Mapping[str, Any]
 ) -> tuple[dict[str, Any], Mapping[str, Any]]:
@@ -2225,8 +2236,8 @@ def _validate_auto_integrator_unblock_request(
     source_task_id = str(request.get("source_task_id") or "")
     reason = unblock_contract.validate_reason(request.get("reason"))
     if not (
-        unblock_contract.requires_repair_task(reason)
-        or unblock_contract.requires_source_reopen(reason)
+        unblock_contract.requires_repair_task(reason, request.get("repository_id"))
+        or unblock_contract.requires_source_reopen(reason, request.get("repository_id"))
     ):
         raise ValueError("authority/evidence blocker must be resolved on its source task")
     if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(request):
@@ -2239,7 +2250,7 @@ def _validate_auto_integrator_unblock_request(
     # Enforce again under the canonical lock, including already queued requests
     # from older producers. A caller cannot reset depth in the request body.
     unblock_contract.require_root_repair_source(source_task_id, source)
-    if unblock_contract.requires_source_reopen(reason):
+    if unblock_contract.requires_source_reopen(reason, request.get("repository_id")):
         if str(source.get("status") or "") != "review_approved":
             raise ValueError("unblock request source task is not review_approved")
         if source.get("review_decision_intent") not in (None, {}, []):
@@ -2362,7 +2373,9 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
             request = load_json(path, default={})
             if not isinstance(request, Mapping):
                 raise ValueError("unblock request is not a JSON object")
-            if unblock_contract.requires_source_reopen(str(request.get("reason") or "")):
+            if unblock_contract.requires_source_reopen(
+                str(request.get("reason") or ""), request.get("repository_id")
+            ):
                 with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
                     status = load_status(config)
                     valid, source = _validate_auto_integrator_unblock_request(
@@ -2376,7 +2389,9 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                         str(binding.get("base") or repo_meta.get("default_branch") or "dev").strip()
                         or "dev"
                     )
-                    reopen_message = _behind_reopen_message(target_branch)
+                    reopen_message = _source_owned_reopen_message(
+                        str(valid["reason"]), target_branch, str(valid["detail"])
+                    )
                 script, env = status_command_subprocess_context(config)
                 env["AI_NAME"] = "Human/Ops"
                 env["PANTHEON_LOCAL_HUMAN_OPS"] = "1"
@@ -4014,14 +4029,21 @@ def process_queue(
             continue
         request_metadata = getattr(request, "metadata", {}) if hasattr(request, "metadata") else {}
         workspace_path = request_metadata.get("workspace_path") if isinstance(request_metadata, dict) else None
-        guard_ok, guard_message = check_worker_tree_clean(
-            config,
-            run_id=str(event_id or ""),
-            task_id=str(event.get("task_id") or ""),
-            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
-            queue_event_id=str(event_id or ""),
-            cwd=Path(str(workspace_path)) if workspace_path else None,
+        owner_wip_admitted = (
+            isinstance(request_metadata, dict)
+            and request_metadata.get("owner_wip_resume_admitted") is True
         )
+        if owner_wip_admitted:
+            guard_ok, guard_message = True, None
+        else:
+            guard_ok, guard_message = check_worker_tree_clean(
+                config,
+                run_id=str(event_id or ""),
+                task_id=str(event.get("task_id") or ""),
+                target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+                queue_event_id=str(event_id or ""),
+                cwd=Path(str(workspace_path)) if workspace_path else None,
+            )
         if not guard_ok:
             _set_pending_wait_reason(record, guard_message)
             record["dirty_tree_guard_at"] = utc_now()
@@ -15625,48 +15647,6 @@ def reconcile_review_requeue_materializations(
     return changed
 
 
-def task_review_reopen_revision(
-    task: Mapping[str, Any] | None,
-    activity_events: list[dict[str, Any]] | None = None,
-    *,
-    config: dict[str, Any] | None = None,
-) -> int:
-    """Return the bounded review-reopen revision for a task's dispatch identity.
-
-    A rejected review returns work to the unchanged owner. To prevent an
-    in-progress polling loop, the dispatch signature must distinguish a fresh
-    reopen from ordinary in-progress polling without mutating the assignment
-    generation.
-    """
-    raw_explicit: int | None = None
-    if isinstance(task, Mapping):
-        raw = task.get("review_reopen_revision")
-        if raw is None:
-            raw = task.get("reopen_revision")
-        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
-            raw_explicit = raw
-        elif isinstance(raw, str) and raw.strip().isdigit():
-            raw_explicit = int(raw.strip())
-
-    counted = 0
-    if activity_events is None and config is not None:
-        activity_events = recent_governance_activity_events(config)
-    if isinstance(activity_events, (list, tuple)) and isinstance(task, Mapping):
-        task_id = str(task.get("id") or "").strip()
-        if task_id:
-            for event in activity_events:
-                if not isinstance(event, Mapping):
-                    continue
-                if str(event.get("task_id") or "").strip() != task_id:
-                    continue
-                if str(event.get("type") or "").strip().lower() == "reopen":
-                    counted += 1
-
-    if raw_explicit is not None:
-        return max(raw_explicit, counted)
-    return counted
-
-
 def task_integration_resume_revision(
     task: Mapping[str, Any] | None,
     activity_events: list[dict[str, Any]] | None = None,
@@ -15725,9 +15705,6 @@ def ready_dispatch_signature(
             "depends_on": list(task.get("depends_on", []) or []),
             "owner": task.get("owner"),
             "reason": reason,
-            "review_reopen_revision": task_review_reopen_revision(
-                task, activity_events=activity_events, config=config
-            ),
             "review_requeue_intent_id": (
                 requeue_intent.get("intent_id") if requeue_intent else None
             ),
@@ -15761,9 +15738,6 @@ def build_dispatch_event(
         for item in (task.get("depends_on") or [])
         if str(item or "").strip()
     ]
-    reopen_revision = task_review_reopen_revision(
-        task, activity_events=activity_events, config=config
-    )
     resume_revision = (
         task_integration_resume_revision(
             task, activity_events=activity_events, config=config
@@ -15843,8 +15817,6 @@ def build_dispatch_event(
     ):
         if key in task:
             task_payload[key] = task.get(key)
-    if reopen_revision > 0:
-        task_payload["review_reopen_revision"] = reopen_revision
     if resume_revision > 0:
         task_payload["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:
@@ -15870,8 +15842,6 @@ def build_dispatch_event(
         "reason": reason,
         "task": task_payload,
     }
-    if reopen_revision > 0:
-        event["review_reopen_revision"] = reopen_revision
     if resume_revision > 0:
         event["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:

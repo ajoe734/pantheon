@@ -1419,5 +1419,520 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         )
 
 
+    # -- same-owner reopen WIP resumption -------------------------------------
+
+    def _resume_fixture(self, *, owner: str = "Claude2", reviewer: str = "Codex"):
+        config = {
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "activity_log": str(self.root / "ai-activity-log.jsonl"),
+            },
+            "worker_worktrees": {"path": str(self.root / "worktrees")},
+            "coordination": {"repositories": {"pantheon": {"local_path": str(self.repo), "default_branch": "dev"}}},
+        }
+        (self.root / "ai-status.json").write_text("{}", encoding="utf-8")
+        # No network fetch in this unit test: pin the remote-tracking base locally.
+        self._git(self.repo, "update-ref", "refs/remotes/origin/dev", self.current_dev_sha)
+        intent = {
+            "schema_version": 1,
+            "intent_id": "review-requeue-" + "a" * 64,
+            "status": "pending",
+            "task_id": self.task_id,
+            "task_generation": 1,
+            "owner": owner,
+            "reviewer": reviewer,
+            "reopened_at": "2026-11-12T14:37:57Z",
+            "reopened_by": "Human/Ops",
+            "reason": "resume",
+        }
+        task = {
+            "id": self.task_id,
+            "status": "in_progress",
+            "owner": owner,
+            "reviewer": reviewer,
+            "generation": 1,
+            "artifacts": ["scoped_service.py", "docs/evidence/"],
+            "review_requeue_intent": intent,
+        }
+        return config, task
+
+    def _prepare(self, config, task, agent, *, state=None):
+        request = worker_workspace.DeliveryRequest(
+            agent_id=agent, provider="test", delivery_mode="auto", message="launch",
+            task_id=self.task_id, reason=worker_workspace.REASON_OWNED_IN_PROGRESS,
+            metadata={
+                "workspace_path": str(self.worktree),
+                "task_generation": 1,
+                "task": {"review_requeue_intent": task.get("review_requeue_intent")},
+            },
+        )
+        state = state if state is not None else {"worker_worktrees": {"leases": {}}}
+        sup = worker_workspace._supervisor_module()
+        with (
+            mock.patch.object(worker_workspace, "load_status", return_value={}),
+            mock.patch.object(worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)),
+            mock.patch.object(sup, "task_index_from_status", return_value={self.task_id: task}),
+            mock.patch.object(sup, "canonical_agent_name", side_effect=lambda c, v: str(v or "")),
+            mock.patch.object(sup, "task_current_dispatch_responsibility", return_value="owner"),
+            mock.patch.object(worker_workspace, "validate_task_repository_scope", return_value="pantheon"),
+        ):
+            return worker_workspace.prepare_worker_workspace(
+                config, state, request, queue_event_id="evt-1", target_agent=agent,
+            ), state
+
+    def _snapshot(self):
+        return {
+            "head": self._git(self.worktree, "rev-parse", "HEAD"),
+            "status": self._git(self.worktree, "status", "--porcelain", "--untracked-files=all"),
+            "files": {
+                name: (self.worktree / name).read_bytes()
+                for name in ("scoped_service.py", "docs/evidence/new.json")
+                if (self.worktree / name).exists()
+            },
+        }
+
+    def _dirty_owned_wip(self):
+        (self.worktree / "scoped_service.py").write_text("def run():\n    return 'wip'\n", encoding="utf-8")
+        (self.worktree / "docs" / "evidence" / "new.json").write_text('{"wip": 1}\n', encoding="utf-8")
+
+    def test_same_owner_resumes_own_dirty_artifact_wip_byte_for_byte(self) -> None:
+        config, task = self._resume_fixture()
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        (ok, error), state = self._prepare(config, task, "Claude2")
+        self.assertTrue(ok, error)
+        after = self._snapshot()
+        self.assertEqual(after["files"], before["files"])
+        self.assertEqual(after["status"], before["status"])
+        self.assertEqual(self._git(self.worktree, "stash", "list"), "")
+        self.assertEqual(self._git(self.repo, "rev-parse", self.source_branch), self.source_head)
+        self.assertEqual(state["worker_worktrees"]["leases"][self.task_id]["last_target_agent"], "Claude2")
+
+    def test_reviewer_and_other_agents_never_inherit_dirty_wip(self) -> None:
+        config, task = self._resume_fixture()
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        for agent in ("Codex", "Claude"):
+            (ok, error), _ = self._prepare(config, task, agent)
+            self.assertFalse(ok)
+            self.assertIn("refresh failed (skipped_dirty_worktree)", error)
+        self.assertEqual(self._snapshot(), before)
+
+    def test_unrelated_file_or_missing_reopen_intent_or_wrong_state_refused(self) -> None:
+        config, task = self._resume_fixture()
+        self._dirty_owned_wip()
+        (self.worktree / "unrelated.py").write_text("# stray\n", encoding="utf-8")
+        (ok, error), _ = self._prepare(config, task, "Claude2")
+        self.assertFalse(ok)
+        self.assertIn("skipped_dirty_worktree", error)
+        self._git(self.worktree, "checkout", "--", "unrelated.py")
+
+        no_intent = {k: v for k, v in task.items() if k != "review_requeue_intent"}
+        (ok, error), _ = self._prepare(config, no_intent, "Claude2")
+        self.assertFalse(ok)
+
+        stale_generation = {**task, "generation": 2}
+        (ok, error), _ = self._prepare(config, stale_generation, "Claude2")
+        self.assertFalse(ok)
+
+        reviewing = {**task, "status": "review"}
+        (ok, error), _ = self._prepare(config, reviewing, "Claude2")
+        self.assertFalse(ok)
+
+        (ok, error), _ = self._prepare(
+            config, task, "Claude2",
+            state={"worker_worktrees": {"leases": {self.task_id: {
+                "path": str(self.worktree), "branch": self.source_branch,
+                "last_target_agent": "Codex",
+            }}}},
+        )
+        self.assertFalse(ok)
+        self.assertEqual(
+            (self.worktree / "scoped_service.py").read_text(encoding="utf-8"),
+            "def run():\n    return 'wip'\n",
+        )
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), self.source_head)
+
+    def _run_process_queue(self, config, task, agent, *, state):
+        """Real process_queue + real prepare + real block-mode tree guard."""
+        sup = worker_workspace._supervisor_module()
+        config = {**config, "worker_tree_guard": {"enabled": True, "mode": "block"},
+                  "ready_dispatcher": {"enabled": True}}
+        request = worker_workspace.DeliveryRequest(
+            agent_id=agent, provider="test", delivery_mode="auto", message="launch",
+            task_id=self.task_id, reason=worker_workspace.REASON_OWNED_IN_PROGRESS,
+            metadata={
+                "workspace_path": str(self.worktree), "task_generation": 1,
+                "task": {"review_requeue_intent": task.get("review_requeue_intent")},
+            },
+        )
+        event = {
+            "event_id": "evt-q", "task_id": self.task_id, "task_generation": 1,
+            "target_agent": agent, "delivery_endpoint_id": "ep",
+            "reason": worker_workspace.REASON_OWNED_IN_PROGRESS, "message": "wake",
+        }
+        import runtime_state
+        if "evt-q" not in (state.get("queue") or {}).get("events", {}):
+            runtime_state.store_queue_event(state, event)
+        launches = []
+        decision = mock.Mock(eligible=True)
+        with (
+            mock.patch.object(sup, "load_status", return_value={}),
+            mock.patch.object(worker_workspace, "load_status", return_value={}),
+            mock.patch.object(worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)),
+            mock.patch.object(sup, "task_index_from_status", return_value={self.task_id: task}),
+            mock.patch.object(sup, "canonical_agent_name", side_effect=lambda c, v: str(v or "")),
+            mock.patch.object(sup, "task_current_dispatch_responsibility", return_value="owner"),
+            mock.patch.object(worker_workspace, "validate_task_repository_scope", return_value="pantheon"),
+            mock.patch.object(sup, "ready_dispatch_settings", return_value={"enabled": True, "active_worker_statuses": []}),
+            mock.patch.object(sup, "command_runtime_dispatch_block_reason", return_value=None),
+            mock.patch.object(sup, "queue_events", return_value=[event]),
+            mock.patch.object(sup, "stale_dispatch_skip_message", return_value=None),
+            mock.patch.object(sup, "evaluate_queued_delivery_admission", return_value=decision),
+            mock.patch.object(sup, "build_request", return_value=request),
+            mock.patch.object(sup, "prepare_worker_workspace", worker_workspace.prepare_worker_workspace),
+            mock.patch.object(sup, "start_worker_for_request",
+                              side_effect=lambda *a, **k: launches.append(1) or (True, {}, {})),
+            mock.patch.object(sup, "write_activity_log"),
+            mock.patch.object(sup, "sync_dispatched_task_status", create=True),
+        ):
+            try:
+                sup.process_queue(config, state)
+            except Exception as exc:  # surfaced with context for iteration
+                raise AssertionError(f"process_queue failed: {exc!r}") from exc
+        return launches, state["queue"]["events"].get("evt-q", {})
+
+    def test_process_queue_launches_owner_wip_through_block_guard_but_not_others(self) -> None:
+        config, task = self._resume_fixture()
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        launches, record = self._run_process_queue(
+            config, task, "Claude2", state={"worker_worktrees": {"leases": {}}}
+        )
+        self.assertEqual(launches, [1], record)
+        self.assertEqual(self._snapshot(), before)
+        # Reviewer: refused at preparation, never launched, WIP untouched.
+        launches, record = self._run_process_queue(
+            config, task, "Codex", state={"worker_worktrees": {"leases": {}}}
+        )
+        self.assertEqual(launches, [])
+        self.assertEqual(record.get("status"), "pending")
+        self.assertEqual(self._snapshot(), before)
+        # Unrelated dirty file: refused.
+        (self.worktree / "unrelated.py").write_text("# stray\n", encoding="utf-8")
+        launches, record = self._run_process_queue(
+            config, task, "Claude2", state={"worker_worktrees": {"leases": {}}}
+        )
+        self.assertEqual(launches, [])
+
+    # -- real planner -> reservation -> process_queue reopen regression ------
+
+    def _real_flow_fixture(self, *, owner="Claude2", reviewer="Codex"):
+        import test_supervisor as ts
+        sup = worker_workspace._supervisor_module()
+        config, task = self._resume_fixture(owner=owner, reviewer=reviewer)
+        base = ts.config_fixture(self.root)
+        for key in ("schema", "ready_dispatcher", "providers", "worker_reassignment"):
+            config[key] = base[key]
+        config["paths"].update(base["paths"])
+        config["ready_dispatcher"] = {
+            **base["ready_dispatcher"], "enabled": True,
+            "max_concurrent_per_account": {"claude2_account": 2, "codex_account": 2},
+        }
+        config["agents"] = {
+            "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2", "adapter": "codex", "max_parallel": 2},
+            "codex": base["agents"]["codex"],
+        }
+        config["providers"] = {
+            "claude2": {"delivery_mode": "codex", "account": "claude2-account"},
+            "codex": base["providers"]["codex"],
+        }
+        config["worker_reassignment"] = {"enabled": False}
+        config["worker_tree_guard"] = {"enabled": True, "mode": "block"}
+        task = {**task, "depends_on": [], "last_update": "2026-11-12T14:00:00Z"}
+        return sup, ts, config, task
+
+    def _assert_wip_preserved(self, before):
+        """Owner WIP bytes/head/index are unchanged; only the generated,
+        untracked worker task-brief may appear beside them."""
+        after = self._snapshot()
+        self.assertEqual(after["head"], before["head"])
+        self.assertEqual(after["files"], before["files"])
+        generated = ".orchestrator/worker-runtime/task-context/"
+        extra = [
+            line for line in after["status"].splitlines()
+            if line not in before["status"].splitlines()
+        ]
+        self.assertTrue(all(generated in line and line.startswith("??") for line in extra), extra)
+        self.assertEqual(self._git(self.worktree, "diff", "--cached", "--name-only"), "")
+
+    def _write_status(self, config, task):
+        Path(config["paths"]["status_file"]).write_text(
+            json.dumps({"tasks": [task]}), encoding="utf-8"
+        )
+
+    def _flow_patches(self, sup, launches, *, health_refresh=None):
+        status_path = self.root / "ai-status.json"
+
+        def read_status(*_a, **_k):
+            return json.loads(status_path.read_text(encoding="utf-8"))
+
+        return [
+            mock.patch.object(sup, "load_status", side_effect=read_status),
+            mock.patch.object(worker_workspace, "load_status", side_effect=read_status),
+            mock.patch.object(sup, "write_activity_log"),
+            mock.patch.object(sup, "sync_dispatched_task_status", create=True),
+            mock.patch.object(sup, "command_runtime_dispatch_block_reason", return_value=None),
+            mock.patch.object(worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)),
+            mock.patch.object(worker_workspace, "validate_task_repository_scope", return_value="pantheon"),
+            mock.patch.object(sup, "prepare_worker_workspace", worker_workspace.prepare_worker_workspace),
+            mock.patch.object(
+                sup, "start_worker_for_request",
+                side_effect=lambda *a, **k: launches.append(1) or (True, {}, {}),
+            ),
+        ]
+
+    def test_shrinking_activity_reopen_wake_survives_real_plan_reserve_process(self) -> None:
+        import contextlib
+        sup, ts, config, task = self._real_flow_fixture()
+        self._write_status(config, task)
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        reopen = {"ts": "2026-11-12T14:37:57Z", "agent": "Human/Ops", "type": "reopen", "task_id": self.task_id}
+        state = ts.with_healthy_delivery_health(
+            config, {"workers": {}, "queue": {"events": {}}, "worker_worktrees": {"leases": {}}}
+        )
+        launches: list[int] = []
+        with contextlib.ExitStack() as stack:
+            for patcher in self._flow_patches(sup, launches):
+                stack.enter_context(patcher)
+            status = {"tasks": [task]}
+            # Plan sees two reopen history rows; the tail then rotates to one.
+            plan = sup.build_dispatch_plan(
+                config, state, status, [], live_total=0, activity_events=[reopen, reopen]
+            )
+            self.assertEqual(len(plan["events"]), 1, plan)
+            planned = plan["events"][0]
+            self.assertEqual(planned["reason"], worker_workspace.REASON_OWNED_IN_PROGRESS)
+            self.assertEqual(planned["review_requeue_intent_id"], task["review_requeue_intent"]["intent_id"])
+            self.assertNotIn("review_reopen_revision", planned)
+            self.assertTrue(sup.reserve_dispatch_plan(config, state, plan, activity_events=[reopen]))
+            events = sup.queue_events(state)
+            self.assertEqual(len(events), 1)
+            event_id = events[0]["event_id"]
+
+            # Pending -> materialized acknowledgement keeps the same wake valid.
+            acked = {**task, "review_requeue_intent": {
+                **task["review_requeue_intent"], "status": "materialized",
+                "queue_event_id": event_id, "event_key": planned["key"],
+                "materialized_at": "2026-11-12T14:38:00Z",
+            }}
+            self._write_status(config, acked)
+            task_map = {self.task_id: acked}
+            self.assertIsNone(
+                sup.stale_dispatch_skip_message(config, events[0], task_map, activity_events=[])
+            )
+
+            # Genuine health-refresh wait must leave the event pending.
+            healthy = state["delivery_health"]
+            state["delivery_health"] = {"version": 1, "endpoints": {}, "accounts": {}}
+            demand: list[dict[str, str]] = []
+            sup.process_queue(config, state, health_refresh_demand=demand)
+            self.assertEqual(launches, [])
+            self.assertEqual(state["queue"]["events"][event_id]["status"], "pending")
+            self.assertNotEqual(state["queue"]["events"][event_id].get("skip_reason"), "stale_dispatch_event")
+            self.assertEqual(self._snapshot(), before)
+
+            # Health recovered: exactly one same-owner launch, WIP untouched.
+            state["delivery_health"] = healthy
+            sup.process_queue(config, state)
+            self.assertEqual(launches, [1], state["queue"]["events"][event_id])
+            self._assert_wip_preserved(before)
+            self.assertEqual(self._git(self.worktree, "stash", "list"), "")
+
+            # Duplicate/restart replay of the same plan launches nothing more.
+            self.assertFalse(sup.reserve_dispatch_plan(config, state, plan, activity_events=[]))
+            sup.process_queue(config, state)
+            self.assertEqual(launches, [1])
+            self._assert_wip_preserved(before)
+
+    def test_real_flow_rejects_stale_identity_and_non_owner_without_launch(self) -> None:
+        import contextlib
+        sup, ts, config, task = self._real_flow_fixture()
+        self._write_status(config, task)
+        self._dirty_owned_wip()
+        before = self._snapshot()
+        state = ts.with_healthy_delivery_health(
+            config, {"workers": {}, "queue": {"events": {}}, "worker_worktrees": {"leases": {}}}
+        )
+        launches: list[int] = []
+        with contextlib.ExitStack() as stack:
+            for patcher in self._flow_patches(sup, launches):
+                stack.enter_context(patcher)
+            plan = sup.build_dispatch_plan(
+                config, state, {"tasks": [task]}, [], live_total=0, activity_events=[]
+            )
+            self.assertTrue(sup.reserve_dispatch_plan(config, state, plan, activity_events=[]))
+            event = sup.queue_events(state)[0]
+            event_id = event["event_id"]
+            intent = task["review_requeue_intent"]
+            variants = {
+                "intent": {**task, "review_requeue_intent": {**intent, "intent_id": "review-requeue-" + "b" * 64}},
+                "generation": {**task, "generation": 2, "review_requeue_intent": {**intent, "task_generation": 2}},
+                "owner": {**task, "owner": "Codex", "review_requeue_intent": {**intent, "owner": "Codex"}},
+                "reviewer": {**task, "reviewer": "Codex3", "review_requeue_intent": {**intent, "reviewer": "Codex3"}},
+                "dependency": {**task, "depends_on": ["OTHER-TASK"]},
+            }
+            for name, variant in variants.items():
+                self.assertIsNotNone(
+                    sup.stale_dispatch_skip_message(
+                        config, event, {self.task_id: variant}, activity_events=[]
+                    ),
+                    name,
+                )
+            # Stale in the real queue path: event is completed, never launched.
+            self._write_status(config, variants["intent"])
+            sup.process_queue(config, state)
+            record = state["queue"]["events"][event_id]
+            self.assertEqual(launches, [])
+            self.assertEqual(record.get("skip_reason"), "stale_dispatch_event")
+            self.assertEqual(self._snapshot(), before)
+
+    def test_real_flow_unrelated_file_refuses_launch_and_keeps_pending(self) -> None:
+        import contextlib
+        sup, ts, config, task = self._real_flow_fixture()
+        self._write_status(config, task)
+        self._dirty_owned_wip()
+        (self.worktree / "unrelated.py").write_text("# stray\n", encoding="utf-8")
+        before = self._snapshot()
+        state = ts.with_healthy_delivery_health(
+            config, {"workers": {}, "queue": {"events": {}}, "worker_worktrees": {"leases": {}}}
+        )
+        launches: list[int] = []
+        with contextlib.ExitStack() as stack:
+            for patcher in self._flow_patches(sup, launches):
+                stack.enter_context(patcher)
+            plan = sup.build_dispatch_plan(
+                config, state, {"tasks": [task]}, [], live_total=0, activity_events=[]
+            )
+            self.assertTrue(sup.reserve_dispatch_plan(config, state, plan, activity_events=[]))
+            event_id = sup.queue_events(state)[0]["event_id"]
+            sup.process_queue(config, state)
+        self.assertEqual(launches, [])
+        self.assertEqual(state["queue"]["events"][event_id]["status"], "pending")
+        self.assertEqual(self._snapshot(), before)
+
+    def test_real_flow_overlapping_ff_wip_not_stashed_or_conflicted(self) -> None:
+        """Full planner/reserve/process_queue: dev advances over a file the
+        owner has staged+unstaged WIP on, with merge.autoStash=true."""
+        import contextlib
+        sup, ts, config, task = self._real_flow_fixture()
+        self._write_status(config, task)
+        self._git(self.worktree, "config", "merge.autoStash", "true")
+        self._git(self.worktree, "config", "rebase.autoStash", "true")
+        # Advance dev as a true fast-forward of the task head that touches
+        # the very file the owner is editing.
+        tmp_wt = self.root / "upstream-wt"
+        self._git(self.repo, "worktree", "add", "--detach", str(tmp_wt), self.source_head)
+        (tmp_wt / "scoped_service.py").write_text("def run():\n    return 'upstream'\n", encoding="utf-8")
+        self._git(tmp_wt, "commit", "-qam", "upstream edit")
+        new_base = self._git(tmp_wt, "rev-parse", "HEAD")
+        self._git(self.repo, "worktree", "remove", "--force", str(tmp_wt))
+        self._git(self.repo, "update-ref", "refs/heads/dev", new_base)
+        self._git(self.repo, "update-ref", "refs/remotes/origin/dev", new_base)
+
+        self._dirty_owned_wip()
+        self._git(self.worktree, "add", "scoped_service.py", "docs/evidence/new.json")
+        (self.worktree / "scoped_service.py").write_text(
+            "def run():\n    return 'wip-unstaged'\n", encoding="utf-8")
+        before = self._snapshot()
+        index_before = self._git(self.worktree, "ls-files", "-s")
+        cached_before = self._git(self.worktree, "diff", "--cached")
+        unstaged_before = self._git(self.worktree, "diff")
+        self.assertIn("M", before["status"])
+        state = ts.with_healthy_delivery_health(
+            config, {"workers": {}, "queue": {"events": {}}, "worker_worktrees": {"leases": {}}}
+        )
+        launches: list[int] = []
+        with contextlib.ExitStack() as stack:
+            for patcher in self._flow_patches(sup, launches):
+                stack.enter_context(patcher)
+            plan = sup.build_dispatch_plan(
+                config, state, {"tasks": [task]}, [], live_total=0, activity_events=[]
+            )
+            self.assertTrue(sup.reserve_dispatch_plan(config, state, plan, activity_events=[]))
+            sup.process_queue(config, state)
+        # Owner WIP is resumed at its own head: never stashed, never conflicted,
+        # index/worktree/head/attribution byte-identical; no auto-commit.
+        self.assertEqual(self._git(self.worktree, "stash", "list"), "")
+        self.assertEqual(self._git(self.repo, "stash", "list"), "")
+        self.assertEqual(self._git(self.worktree, "diff", "--name-only", "--diff-filter=U"), "")
+        self.assertNotIn("<<<<<<<", (self.worktree / "scoped_service.py").read_text(encoding="utf-8"))
+        self.assertEqual(self._git(self.worktree, "ls-files", "-s"), index_before)
+        self.assertEqual(self._git(self.worktree, "diff", "--cached"), cached_before)
+        self.assertEqual(self._git(self.worktree, "diff"), unstaged_before)
+        self.assertEqual(self._git(self.repo, "rev-parse", self.source_branch), self.source_head)
+        after = self._snapshot()
+        self.assertEqual(after["head"], before["head"])
+        self.assertEqual(after["files"], before["files"])
+        self.assertEqual(
+            [l for l in after["status"].splitlines() if "task-context/" not in l],
+            before["status"].splitlines(),
+        )
+        self.assertEqual(launches, [1])
+
+
+class OwnerWipResumeAutostashTests(unittest.TestCase):
+    """Real-Git regression: WIP resume must never autostash or conflict-mark."""
+
+    def _git(self, cwd: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True,
+        ).stdout
+
+    def _repo(self, root: Path) -> tuple[Path, str]:
+        repo = root / "wt"
+        repo.mkdir()
+        self._git(repo, "init", "-q", "-b", "task")
+        self._git(repo, "config", "user.email", "t@example.invalid")
+        self._git(repo, "config", "user.name", "t")
+        self._git(repo, "config", "merge.autoStash", "true")
+        (repo / "scoped_service.py").write_text("a\nb\nc\n")
+        (repo / "other.py").write_text("x\n")
+        self._git(repo, "add", ".")
+        self._git(repo, "commit", "-qm", "base")
+        self._git(repo, "checkout", "-qb", "base")
+        (repo / "scoped_service.py").write_text("a\nBASE\nc\n")
+        self._git(repo, "commit", "-qam", "base edit")
+        sha = self._git(repo, "rev-parse", "HEAD").strip()
+        self._git(repo, "checkout", "-q", "task")
+        return repo, sha
+
+    def test_overlapping_wip_not_autostashed_or_conflicted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, sha = self._repo(Path(tmp))
+            (repo / "scoped_service.py").write_text("a\nOWNER\nc\n")
+            (repo / "other.py").write_text("y\n")
+            self._git(repo, "add", "other.py")
+            ok, status = worker_workspace._resume_owner_wip_worktree(repo, sha)
+            self.assertTrue(ok, status)
+            self.assertEqual(status, "owner_wip_resumed")
+            self.assertEqual((repo / "scoped_service.py").read_text(), "a\nOWNER\nc\n")
+            self.assertEqual((repo / "other.py").read_text(), "y\n")
+            self.assertEqual(self._git(repo, "stash", "list"), "")
+            self.assertNotIn("U", "".join(
+                e["status"] for e in worker_workspace._git_dirty_entries(repo)))
+
+    def test_non_overlapping_wip_fast_forwards(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, sha = self._repo(Path(tmp))
+            (repo / "other.py").write_text("y\n")
+            ok, status = worker_workspace._resume_owner_wip_worktree(repo, sha)
+            self.assertTrue(ok)
+            self.assertEqual(status, "owner_wip_resumed+ff")
+            self.assertEqual(self._git(repo, "stash", "list"), "")
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -463,15 +463,20 @@ if args[0] == "compose":
             # Model Compose interpolation: the recreated container carries the
             # egress/controller-mode keys the deploy script exported for this up.
             controlled_keys = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
-            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
+            # A restore is egress deny, or the steady collector-host allowlist with a steady
+            # (non-bounded) controller mode; the bounded window is allowlist + reconcile_and_pull.
+            is_restore = os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny" or (
+                os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist"
+                and os.environ.get("SOURCE_INGEST_CONTROLLER_MODE") in ("reconcile_only", "collector_steady_pull"))
+            if is_restore:
                 kept = [e for e in state["container_env"] if e.split("=", 1)[0] not in controlled_keys]
                 # Real compose passes SOURCE_INGEST_CONTROLLER_MODE only to the scheduler,
                 # so the source-ingest container carries it only if it did before.
                 had_mode = any(e.startswith("SOURCE_INGEST_CONTROLLER_MODE=") for e in state["container_env"])
                 state["container_env"] = kept + [f"{{k}}={{os.environ[k]}}" for k in controlled_keys if k in os.environ and (k != "SOURCE_INGEST_CONTROLLER_MODE" or had_mode)]
-            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist":
+            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist" and not is_restore:
                 state["source_ingest_cid"] = state.get("recreated_source_ingest_cid", "cid-source-ingest-recreated")
-            elif os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
+            elif is_restore:
                 state["source_ingest_cid"] = state.get("restored_source_ingest_cid", "cid-source-ingest-restored")
                 if "mutate_env_on_restore" in state:
                     state["container_env"] = state["mutate_env_on_restore"]
@@ -2819,3 +2824,138 @@ def test_finmind_prepare_and_missing_secret_paths_exist():
     guard = script.index('== "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}"')
     assert guard < script.index("resolve_bounded_source_refresh_active_symbols\n  preflight_output=")
     assert '"skipped" "missing_credential"' in script[guard:guard + 600]
+
+
+# --- COLLECTOR-STEADY-PULL-RESTORE-20261112: restore keeps the steady Collector pull ---
+
+_COLLECTOR_TEST_HOST = "collector.example.test"
+
+
+def _run_refresh_with_steady_mode(
+    tmp_path: Path, steady_mode_env: list[str], *, fail_readback: bool, collector_host: str | None = _COLLECTOR_TEST_HOST
+) -> tuple[subprocess.CompletedProcess[str], list[dict[str, Any]]]:
+    initial_state: dict[str, Any] = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "steady_lease_env": steady_mode_env,
+    }
+    if fail_readback:
+        initial_state["built_projector_image_id"] = "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e"
+        initial_state["projector_image_sha"] = "abc123"
+        initial_state["agora_projection"] = {
+            "row1": {
+                "connectorId": "tw-twse-tpex-official-market",
+                "ingestRunId": "ingest-e53a86463995",
+                "sourceId": "tw-official:tw_price_daily:TWSE:2330:90e323e6754e2e9e",
+            }
+        }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    if collector_host:
+        test_env["PANTHEON_COLLECTOR_HOST"] = collector_host
+    else:
+        test_env.pop("PANTHEON_COLLECTOR_HOST", None)
+    script = _deploy_script_with_readback(tmp_path) if fail_readback else _deploy_script_without_readback(tmp_path)
+    proc = subprocess.run(
+        ["bash", str(script), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    return proc, events
+
+
+def _last_restore_up(events: list[dict[str, Any]], egress: str) -> dict[str, Any]:
+    ups = [
+        e for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == egress
+    ]
+    assert ups, "no restore compose up observed"
+    return ups[-1]
+
+
+@pytest.mark.parametrize("fail_readback", [False, True])
+def test_bounded_refresh_restore_keeps_configured_steady_collector_pull(tmp_path: Path, fail_readback: bool):
+    proc, events = _run_refresh_with_steady_mode(
+        tmp_path, ["SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull", "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=1", "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"], fail_readback=fail_readback
+    )
+    assert (proc.returncode != 0) is fail_readback, f"{proc.stdout}\n{proc.stderr}"
+    restore = _last_restore_up(events, "allowlist")
+    assert restore["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == _COLLECTOR_TEST_HOST
+    assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "collector_steady_pull"
+    assert "to collector_steady_pull" in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("fail_readback", [False, True])
+def test_bounded_refresh_restore_never_invents_steady_pull(tmp_path: Path, fail_readback: bool):
+    # Prior steady posture was reconcile_only: restore must not widen it.
+    proc, events = _run_refresh_with_steady_mode(
+        tmp_path, ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1", "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=1"], fail_readback=fail_readback
+    )
+    restore = _last_restore_up(events, "allowlist")
+    assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "reconcile_only"
+
+
+def test_bounded_refresh_restore_drops_steady_pull_without_collector_host(tmp_path: Path):
+    proc, events = _run_refresh_with_steady_mode(
+        tmp_path, ["SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull", "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=1", "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"], fail_readback=False, collector_host=None
+    )
+    restore = _last_restore_up(events, "deny")
+    assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "reconcile_only"
+
+
+@pytest.mark.parametrize(("sig_name", "expected_rc"), [("INT", 130), ("TERM", 143)])
+def test_bounded_refresh_terminating_signal_restores_and_exits_nonzero(tmp_path: Path, sig_name: str, expected_rc: int):
+    # COLLECTOR-STEADY-PULL-RESTORE-20261112 (Codex2 P1): a terminating INT/TERM must
+    # restore the steady Collector pull, exit with 128+signal, and never go on to
+    # launch the projector or write a completed outcome.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "steady_lease_env": [
+            "SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull",
+            "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=1",
+            "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1",
+        ],
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+    docker = bin_dir / "docker"
+    delegate = bin_dir / "original-owned-docker-stub"
+    docker.rename(delegate)
+    docker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os,sys,json,signal\n"
+        "from pathlib import Path\n"
+        "a=sys.argv[1:]\n"
+        'if "run" in a and "--name" in a and "pantheon-bounded-refresh-source-ingest-scheduler" in a:\n'
+        f"    Path({repr(str(events_file))}).open('a').write(json.dumps({{'event':'QA_signal_sent'}})+'\\n')\n"
+        f"    os.kill(os.getppid(), signal.SIG{sig_name})\n"
+        "    sys.exit(0)\n"
+        f"os.execv({repr(str(delegate))}, [{repr(str(delegate))}]+a)\n"
+    )
+    docker.chmod(0o755)
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    test_env["PANTHEON_COLLECTOR_HOST"] = _COLLECTOR_TEST_HOST
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert proc.returncode == expected_rc, f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    assert any(e.get("event") == "QA_signal_sent" for e in events)
+    restore = _last_restore_up(events, "allowlist")
+    assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "collector_steady_pull"
+    sent = next(i for i, e in enumerate(events) if e.get("event") == "QA_signal_sent")
+    assert not any("projector" in json.dumps(e) and e.get("event") in {"docker_run", "run"} for e in events[sent + 1:])
+    assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"

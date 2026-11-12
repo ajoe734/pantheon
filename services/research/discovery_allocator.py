@@ -413,14 +413,9 @@ def make_production_ports(
     }
 
 
-def _env_true(value: Any) -> bool:
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def allocator_enabled(env: Mapping[str, str]) -> bool:
-    # Default on (paper-only, capped at 5); set DISCOVERY_ALLOCATOR_ENABLED=false to disable.
-    raw = env.get("DISCOVERY_ALLOCATOR_ENABLED")
-    return True if raw is None or not str(raw).strip() else _env_true(raw)
+    # Paper-only, capped at 5, and off unless explicitly enabled with true.
+    return str(env.get("DISCOVERY_ALLOCATOR_ENABLED", "")).strip().lower() == "true"
 
 
 def run_scheduled_allocation(

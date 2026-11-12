@@ -37,6 +37,41 @@ MAX_FACTOR_WINDOW_BARS = 504
 BUILT_IN_PRICE_VOLUME_FIELDS: frozenset[str] = frozenset(
     {"open", "high", "low", "close", "volume", "vwap"}
 )
+# SD_INTRADAY_MINUTE_BARS §6.1: governed minute datasets (1m stored, coarser derived).
+INTRADAY_PRICE_VOLUME_DATASETS: frozenset[str] = frozenset(
+    {"tw_price_1m", "tw_price_5m", "tw_price_15m", "tw_price_30m", "tw_price_60m"}
+)
+AVAILABILITY_LAG_UNITS: tuple[str, ...] = ("days", "minutes")
+# Declared ``parameters.bar_frequency`` -> governed intraday dataset (SD §6.1).
+# Mirrors strategy_artifact.BAR_FREQUENCY_DATASETS (a test pins equality).
+INTRADAY_FREQUENCY_DATASETS: dict[str, str] = {
+    "1m": "tw_price_1m",
+    "5m": "tw_price_5m",
+    "15m": "tw_price_15m",
+    "30m": "tw_price_30m",
+    "60m": "tw_price_60m",
+}
+_DAILY_BAR_FREQUENCY = "1d"
+
+
+def declared_intraday_frequency(parameters: Mapping[str, Any] | None) -> str | None:
+    """Return the declared intraday ``bar_frequency`` or None for daily/undeclared.
+
+    Any other declared value fails closed (SD §6.1: no frequencies outside the
+    governed set).
+    """
+    if not isinstance(parameters, Mapping) or "bar_frequency" not in parameters:
+        return None
+    freq = parameters["bar_frequency"]
+    if isinstance(freq, str) and freq in INTRADAY_FREQUENCY_DATASETS:
+        return freq
+    if freq == _DAILY_BAR_FREQUENCY:
+        return None
+    raise FactorRuleValidationError(
+        f"parameters.bar_frequency {freq!r} is not allowed; "
+        f"allowed: {_DAILY_BAR_FREQUENCY}, {', '.join(INTRADAY_FREQUENCY_DATASETS)}"
+    )
+
 PRICE_VOLUME_DATASETS: frozenset[str] = frozenset(
     {
         "tw_price_volume",
@@ -47,7 +82,7 @@ PRICE_VOLUME_DATASETS: frozenset[str] = frozenset(
         "STOCK_DAY_ALL",
         "tpex_mainboard_daily_close_quotes",
     }
-)
+) | INTRADAY_PRICE_VOLUME_DATASETS
 
 
 @dataclass(frozen=True)
@@ -58,6 +93,42 @@ class FeatureDefinition:
     field: str
     min_availability_lag_days: int = 0
     description: str = ""
+    # SD §6.3: ``min_availability_lag`` carries a unit.  Minute features are lagged
+    # in minutes beyond bar close; every other feature keeps its day-denominated lag.
+    availability_lag_unit: str = "days"
+    min_availability_lag: int | None = None
+    # Indicator windows reset at the 09:00 session start unless declared otherwise.
+    cross_session: bool = False
+    # Screen refreshes cannot outrun publication. Custom catalogue entries must
+    # declare this to participate in a screen; legacy evaluation is unaffected.
+    release_cadence: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.release_cadence not in {None, "daily", "weekly", "monthly", "quarterly"}:
+            raise FactorRuleValidationError("invalid feature release_cadence")
+        if self.availability_lag_unit not in AVAILABILITY_LAG_UNITS:
+            raise FactorRuleValidationError(
+                "feature definition availability_lag_unit must be one of "
+                + "/".join(AVAILABILITY_LAG_UNITS)
+            )
+        if self.min_availability_lag is None:
+            lag = self.min_availability_lag_days if self.availability_lag_unit == "days" else 0
+            object.__setattr__(self, "min_availability_lag", lag)
+        lag = self.min_availability_lag
+        if isinstance(lag, bool) or not isinstance(lag, int) or lag < 0:
+            raise FactorRuleValidationError(
+                "feature definition min_availability_lag must be a non-negative integer"
+            )
+        if self.availability_lag_unit == "minutes" and self.min_availability_lag_days != 0:
+            raise FactorRuleValidationError(
+                "minute-unit feature definitions must not carry a day lag"
+            )
+        if self.availability_lag_unit == "days" and lag != self.min_availability_lag_days:
+            raise FactorRuleValidationError(
+                "day-unit min_availability_lag must equal min_availability_lag_days"
+            )
+        if not isinstance(self.cross_session, bool):
+            raise FactorRuleValidationError("feature definition cross_session must be a boolean")
 
 
 # Seeded governed feature catalogue (Design §5, §8.5, §9.2 and Plan §3.4).
@@ -96,16 +167,25 @@ def list_feature_definitions() -> tuple[FeatureDefinition, ...]:
 
 def _seed_default_feature_catalogue() -> None:
     for ds in PRICE_VOLUME_DATASETS:
+        intraday = ds in INTRADAY_PRICE_VOLUME_DATASETS
         for fld in BUILT_IN_PRICE_VOLUME_FIELDS:
             register_feature_definition(
                 FeatureDefinition(
                     dataset=ds,
                     field=fld,
                     min_availability_lag_days=0,
-                    description=f"Daily price-volume {fld} ({ds})",
+                    description=(
+                        f"Intraday price-volume {fld} ({ds}), 0 minutes beyond bar close"
+                        if intraday
+                        else f"Daily price-volume {fld} ({ds})"
+                    ),
+                    availability_lag_unit="minutes" if intraday else "days",
+                    release_cadence="daily",
                 )
             )
     seeded: tuple[tuple[str, str, int, str], ...] = (
+        ("tw_industry_classification", "industry_code", 0, "Prospectively observed official industry category"),
+        ("tw_sector_flows", "net_shares", 0, "Sector institutional net shares; maximum constituent availability"),
         ("tw_monthly_revenue", "yoy", 10, "Taiwan listed company monthly revenue YoY (%)"),
         ("tw_monthly_revenue", "mom", 10, "Taiwan listed company monthly revenue MoM (%)"),
         ("tw_monthly_revenue", "revenue", 10, "Taiwan listed company monthly revenue"),
@@ -142,6 +222,13 @@ def _seed_default_feature_catalogue() -> None:
         ("tw_community_attention", "unique_authors", 0, "Distinct hashed community authors"),
         ("tw_community_attention", "engagement_weighted_sentiment", 0, "Engagement-weighted community sentiment"),
     )
+    from services.source_ingestion.feature_catalogue import PROVIDER_SERIES_MAP, get_dataset_spec
+
+    period_cadences = {"day": "daily", "month": "monthly", "quarter": "quarterly"}
+    field_cadences = {
+        (item.dataset, item.field): period_cadences[item.period_kind]
+        for mappings in PROVIDER_SERIES_MAP.values() for item in mappings
+    }
     for dataset, field, lag_days, desc in seeded:
         register_feature_definition(
             FeatureDefinition(
@@ -149,6 +236,7 @@ def _seed_default_feature_catalogue() -> None:
                 field=field,
                 min_availability_lag_days=lag_days,
                 description=desc,
+                release_cadence=field_cadences.get((dataset, field), get_dataset_spec(dataset).granularity),
             )
         )
 
@@ -175,6 +263,78 @@ def assert_governed_feature_inputs(strategy_logic: Mapping[str, Any]) -> None:
             )
 
 
+def _require_aware_timestamp(value: Any, label: str) -> None:
+    if isinstance(value, datetime):
+        aware = value.tzinfo is not None and value.utcoffset() is not None
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        if len(text) == 10:
+            raise FactorRuleValidationError(f"{label} must be a timezone-aware minute timestamp")
+        try:
+            parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text[-1:] in "Zz" else text)
+        except ValueError as exc:
+            raise FactorRuleValidationError(f"{label} is not a valid ISO timestamp: {value!r}") from exc
+        aware = parsed.tzinfo is not None and parsed.utcoffset() is not None
+    else:
+        aware = False
+    if not aware:
+        raise FactorRuleValidationError(f"{label} must be a timezone-aware minute timestamp")
+
+
+def _lookup_minute_feature(
+    features: Mapping[str, Any], *, name: str, dataset: str, field: str
+) -> Any | None:
+    """Minute-input lookup: input name or dataset-qualified keys only (no bare-field fallback)."""
+    if name in features and features[name] is not None:
+        return features[name]
+    for key in (f"{dataset}.{field}", f"{dataset}:{field}"):
+        if key in features and features[key] is not None:
+            return features[key]
+    ds_entry = features.get(dataset)
+    if isinstance(ds_entry, Mapping) and ds_entry.get(field) is not None:
+        return ds_entry[field]
+    return None
+
+
+def _require_aware_decision_time(decision_time: Any) -> None:
+    if isinstance(decision_time, datetime) or (
+        isinstance(decision_time, str) and decision_time.strip()
+    ):
+        _require_aware_timestamp(decision_time, "minute decision_time")
+        return
+    raise FactorRuleValidationError("minute decision_time must be a timezone-aware minute timestamp")
+
+
+def _require_minute_observations(
+    feature_map: Mapping[str, Any], *, name: str, dataset: str, field: str
+) -> None:
+    series = _lookup_minute_feature(feature_map, name=name, dataset=dataset, field=field)
+    if not isinstance(series, (list, tuple)) or not series:
+        raise FactorRuleValidationError(
+            f"minute input '{name}' ({dataset}.{field}) requires dataset-bound minute observations; "
+            "daily/generic close or synthetic vwap fallback is not allowed"
+        )
+    for idx, obs in enumerate(series):
+        if (
+            not isinstance(obs, Mapping)
+            or not _is_number(obs.get("value"))
+            or not obs.get("event_time")
+            or not obs.get("available_time")
+        ):
+            raise FactorRuleValidationError(
+                f"minute input '{name}[{idx}]' must carry value, event_time and available_time"
+            )
+        for meta_key, expected in (("dataset", dataset), ("field", field)):
+            declared = obs.get(meta_key)
+            if declared is not None and declared != expected:
+                raise FactorRuleValidationError(
+                    f"minute input '{name}[{idx}]' is bound to {meta_key}={declared!r}, "
+                    f"expected {expected!r}; cross-dataset substitution is not allowed"
+                )
+        _require_aware_timestamp(obs["event_time"], f"minute input '{name}[{idx}].event_time'")
+        _require_aware_timestamp(obs["available_time"], f"minute input '{name}[{idx}].available_time'")
+
+
 def assert_governed_feature_observations(
     strategy_logic: Mapping[str, Any],
     features: Mapping[str, Any] | None,
@@ -194,7 +354,13 @@ def assert_governed_feature_observations(
         if not isinstance(item, Mapping):
             continue
         name, dataset, field = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
-        if dataset in PRICE_VOLUME_DATASETS:
+        if dataset in PRICE_VOLUME_DATASETS and dataset not in INTRADAY_PRICE_VOLUME_DATASETS:
+            continue
+        if dataset in INTRADAY_PRICE_VOLUME_DATASETS:
+            # SD §6.3: minute inputs must be dataset-bound, timezone-aware observations
+            # evaluated at an explicit decision_time; no daily/generic/raw fallback.
+            _require_aware_decision_time(decision_time)
+            _require_minute_observations(feature_map, name=name, dataset=dataset, field=field)
             continue
         if not decision_checked:
             # decision_time stays optional for timestamp-free built-in price inputs;
@@ -382,6 +548,7 @@ def parse_factor_expression(
     node: Any,
     *,
     allow_cross_sectional: bool = False,
+    allow_industry_neutralize: bool = False,
     allow_literal_constants: bool = False,
     _depth: int = 1,
 ) -> dict[str, Any]:
@@ -393,6 +560,8 @@ def parse_factor_expression(
     When ``allow_cross_sectional=True`` (used when storing cross-sectional
     ``AlphaTemplate`` definitions), cross-sectional operators are accepted in
     the AST.
+    ``allow_industry_neutralize`` is used only by the market screen validator;
+    per-symbol evaluation still rejects it because it has no cross-section.
     """
     if _depth > MAX_FACTOR_AST_DEPTH:
         raise FactorRuleValidationError(
@@ -442,7 +611,7 @@ def parse_factor_expression(
         raise FactorRuleValidationError("factor expression op must be a non-empty string")
 
     if op in CROSS_SECTIONAL_OPERATORS:
-        if not allow_cross_sectional:
+        if not allow_cross_sectional and not (allow_industry_neutralize and op == "industry_neutralize"):
             raise FactorRuleValidationError(
                 f"cross-sectional operator '{op}' is not allowed in per-symbol factor_rule_v1 evaluation"
             )
@@ -463,6 +632,7 @@ def parse_factor_expression(
         parse_factor_expression(
             arg,
             allow_cross_sectional=allow_cross_sectional,
+            allow_industry_neutralize=allow_industry_neutralize,
             allow_literal_constants=allow_literal_constants,
             _depth=_depth + 1,
         )
@@ -569,7 +739,7 @@ def validate_factor_rule_logic(
 
     expected_keys = {"kind", "inputs", "signal", "entry", "exit", "strength"}
     actual_keys = set(strategy_logic.keys())
-    if actual_keys != expected_keys:
+    if actual_keys - {"screen"} != expected_keys:
         raise FactorRuleValidationError(
             f"factor_rule_v1 strategy_logic keys must be {sorted(expected_keys)}, got {sorted(actual_keys)}"
         )
@@ -583,7 +753,7 @@ def validate_factor_rule_logic(
         if not isinstance(item, Mapping):
             raise FactorRuleValidationError(f"inputs[{idx}] must be a JSON object")
         req_input_keys = {"name", "dataset", "field", "availability_lag_days"}
-        if set(item.keys()) != req_input_keys:
+        if set(item.keys()) - {"availability_lag_minutes"} != req_input_keys:
             raise FactorRuleValidationError(
                 f"inputs[{idx}] must have keys {sorted(req_input_keys)}, got {sorted(item.keys())}"
             )
@@ -606,7 +776,25 @@ def validate_factor_rule_logic(
                 f"inputs[{idx}].availability_lag_days must be a non-negative integer"
             )
         cat_def = get_feature_definition(dataset, field)
-        if cat_def is not None and lag_days < cat_def.min_availability_lag_days:
+        lag_minutes = item.get("availability_lag_minutes")
+        minute_feature = cat_def is not None and cat_def.availability_lag_unit == "minutes"
+        if lag_minutes is not None and (
+            not minute_feature or isinstance(lag_minutes, bool) or not isinstance(lag_minutes, int) or lag_minutes < 0
+        ):
+            raise FactorRuleValidationError(
+                f"inputs[{idx}].availability_lag_minutes must be a non-negative integer on a minute-unit feature"
+            )
+        if minute_feature:
+            assert cat_def is not None
+            if lag_days != 0:
+                raise FactorRuleValidationError(
+                    f"inputs[{idx}] ({dataset}.{field}) is minute-unit; availability_lag_days must be 0"
+                )
+            if (lag_minutes or 0) < int(cat_def.min_availability_lag or 0):
+                raise FactorRuleValidationError(
+                    f"inputs[{idx}] ({dataset}.{field}) availability_lag_minutes={lag_minutes or 0} is below governed minimum {cat_def.min_availability_lag} minutes"
+                )
+        elif cat_def is not None and lag_days < cat_def.min_availability_lag_days:
             raise FactorRuleValidationError(
                 f"inputs[{idx}] ({dataset}.{field}) availability_lag_days={lag_days} is below governed minimum {cat_def.min_availability_lag_days}"
             )
@@ -616,6 +804,8 @@ def validate_factor_rule_logic(
             "field": field,
             "availability_lag_days": lag_days,
         }
+        if lag_minutes is not None:
+            declared_inputs[name]["availability_lag_minutes"] = lag_minutes
 
     # Parse and validate signal expression
     signal_ast = parse_factor_expression(
@@ -624,7 +814,60 @@ def validate_factor_rule_logic(
         allow_literal_constants=False,
     )
     signal_refs, all_const_params = collect_expression_refs_and_params(signal_ast)
-    allowed_signal_refs = set(declared_inputs.keys()) | set(BUILT_IN_PRICE_VOLUME_FIELDS)
+    declared_freq = declared_intraday_frequency(parameters)
+    if (
+        declared_freq is None
+        and isinstance(parameters, Mapping)
+        and parameters.get("bar_frequency") == _DAILY_BAR_FREQUENCY
+    ):
+        daily_declared_minute = sorted(
+            {d["dataset"] for d in declared_inputs.values() if d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS}
+        )
+        if daily_declared_minute:
+            raise FactorRuleValidationError(
+                f"bar_frequency {_DAILY_BAR_FREQUENCY!r} contradicts declared minute input dataset(s) "
+                f"{daily_declared_minute}"
+            )
+    if declared_freq is not None:
+        # A declared minute frequency must read governed frequency-matching
+        # observations; zero/non-minute inputs would leave raw closes exposed.
+        freq_dataset = INTRADAY_FREQUENCY_DATASETS[declared_freq]
+        minute_datasets = {
+            d["dataset"] for d in declared_inputs.values() if d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS
+        }
+        if freq_dataset not in minute_datasets:
+            raise FactorRuleValidationError(
+                f"bar_frequency {declared_freq!r} requires at least one declared input "
+                f"from governed dataset {freq_dataset!r}; daily/generic closes are not allowed"
+            )
+        if minute_datasets - {freq_dataset}:
+            raise FactorRuleValidationError(
+                f"bar_frequency {declared_freq!r} contradicts declared minute input dataset(s) "
+                f"{sorted(minute_datasets - {freq_dataset})}"
+            )
+    minute_bound_strategy = declared_freq is not None or bool({
+        d["dataset"] for d in declared_inputs.values() if d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS
+    })
+    if minute_bound_strategy:
+        # Frequency isolation: a minute strategy may not read any daily/generic price
+        # input (a placeholder minute input must not admit raw daily prices).
+        daily_price_inputs = sorted(
+            n
+            for n, d in declared_inputs.items()
+            if d["dataset"] in PRICE_VOLUME_DATASETS and d["dataset"] not in INTRADAY_PRICE_VOLUME_DATASETS
+        )
+        if daily_price_inputs:
+            raise FactorRuleValidationError(
+                f"minute strategy must not declare daily/generic price input(s): {daily_price_inputs}"
+            )
+    has_minute_input = declared_freq is not None or any(
+        d["dataset"] in INTRADAY_PRICE_VOLUME_DATASETS for d in declared_inputs.values()
+    )
+    # Minute strategies must read every price field through a declared governed input;
+    # implicit built-ins would bypass minute dataset/PIT/lag/session constraints.
+    allowed_signal_refs = set(declared_inputs.keys()) | (
+        set() if has_minute_input else set(BUILT_IN_PRICE_VOLUME_FIELDS)
+    )
     unknown_signal_refs = signal_refs - allowed_signal_refs
     if unknown_signal_refs:
         raise FactorRuleValidationError(
@@ -744,6 +987,13 @@ def validate_factor_rule_logic(
         )
     _validate_window_And_param_constraints(strength_ast, parameters)
 
+    screen = None
+    if "screen" in strategy_logic:
+        from .candidate_pool import screen_param_names, validate_screen
+
+        screen = validate_screen(strategy_logic["screen"], declared_inputs, parameters)
+        all_const_params.update(screen_param_names(screen))
+
     # Every referenced const_param must exist in parameters as a finite number
     # and must be a declared mutable control in mutation_surface.controls.
     for param_name in sorted(all_const_params):
@@ -800,7 +1050,7 @@ def validate_factor_rule_logic(
                     f"factor_rule_v1 control '{param_name}' must declare a valid allowed_range and positive step"
                 )
 
-    return {
+    result = {
         "kind": "factor_rule_v1",
         "inputs": [declared_inputs[item["name"]] for item in raw_inputs],
         "signal": signal_ast,
@@ -814,6 +1064,9 @@ def validate_factor_rule_logic(
         },
         "strength": strength_ast,
     }
+    if screen is not None:
+        result["screen"] = screen
+    return result
 
 
 def _parse_timestamp_utc(value: Any, *, is_decision_time: bool = False) -> datetime:
@@ -847,14 +1100,30 @@ def _parse_timestamp_utc(value: Any, *, is_decision_time: bool = False) -> datet
     return dt.astimezone(timezone.utc)
 
 
+_TAIPEI_TZ = timezone(timedelta(hours=8))
+
+
 def _filter_point_in_time_series(
     raw_series: Any,
     *,
     input_name: str,
     availability_lag_days: int,
     decision_time: str | datetime | date | None,
+    lag_unit: str = "days",
+    session_reset: bool = False,
 ) -> tuple[float, ...]:
-    """Filter a feature series so only observations available at or before ``decision_time`` are visible."""
+    """Filter a feature series so only observations available at or before ``decision_time`` are visible.
+
+    ``lag_unit="minutes"`` applies the lag in minutes (intraday features).  With
+    ``session_reset`` only observations of the latest visible Asia/Taipei session
+    are returned, so a window never spans the overnight gap (SD §6.3).
+    """
+    lag_delta = (
+        timedelta(minutes=max(0, int(availability_lag_days)))
+        if lag_unit == "minutes"
+        else timedelta(days=max(0, int(availability_lag_days)))
+    )
+    session_days: list[date | None] = []
     if not isinstance(raw_series, Sequence) or isinstance(raw_series, (str, bytes)):
         raise FactorRuleValidationError(
             f"feature input '{input_name}' must be a sequence of observations, got {type(raw_series).__name__}"
@@ -872,6 +1141,7 @@ def _filter_point_in_time_series(
     for idx, item in enumerate(raw_series):
         if _is_number(item):
             visible_values.append(float(item))
+            session_days.append(None)
             continue
 
         if isinstance(item, Mapping):
@@ -885,6 +1155,7 @@ def _filter_point_in_time_series(
 
             if avail_raw is None and event_raw is None:
                 visible_values.append(float(raw_val))
+                session_days.append(None)
                 continue
 
             if decision_dt is None:
@@ -893,17 +1164,19 @@ def _filter_point_in_time_series(
                 )
 
             effective_avail: datetime | None = None
+            event_dt: datetime | None = None
             if avail_raw is not None:
                 effective_avail = _parse_timestamp_utc(avail_raw, is_decision_time=False)
             if event_raw is not None:
                 event_dt = _parse_timestamp_utc(event_raw, is_decision_time=False)
-                lagged_dt = event_dt + timedelta(days=max(0, int(availability_lag_days)))
+                lagged_dt = event_dt + lag_delta
                 if effective_avail is None or lagged_dt > effective_avail:
                     effective_avail = lagged_dt
 
             assert effective_avail is not None
             if effective_avail <= decision_dt:
                 visible_values.append(float(raw_val))
+                session_days.append((event_dt or effective_avail).astimezone(_TAIPEI_TZ).date())
             continue
 
         if isinstance(item, (tuple, list)) and len(item) == 2:
@@ -917,14 +1190,18 @@ def _filter_point_in_time_series(
                     f"decision_time is required when evaluating point-in-time timestamped feature input '{input_name}'"
                 )
             avail_dt = _parse_timestamp_utc(ts_raw, is_decision_time=False)
-            if avail_dt <= decision_dt:
+            if avail_dt + lag_delta <= decision_dt:
                 visible_values.append(float(raw_val))
+                session_days.append(avail_dt.astimezone(_TAIPEI_TZ).date())
             continue
 
         raise FactorRuleValidationError(
             f"feature input '{input_name}[{idx}]' must be a finite number or point-in-time observation mapping"
         )
 
+    if session_reset and session_days and session_days[-1] is not None:
+        last_day = session_days[-1]
+        return tuple(v for v, d in zip(visible_values, session_days) if d == last_day)
     return tuple(visible_values)
 
 
@@ -1014,6 +1291,7 @@ def _latest_visible_versions(
     *,
     availability_lag_days: int,
     decision_time: str | datetime | date | None,
+    lag_unit: str = "days",
 ) -> Any:
     """Governed read for catalogued non-price features.
 
@@ -1042,7 +1320,8 @@ def _latest_visible_versions(
             int(availability_lag_days),
             row_lag if isinstance(row_lag, int) and not isinstance(row_lag, bool) else 0,
         )
-        if avail_dt > decision_dt or event_dt + timedelta(days=lag) > decision_dt:
+        lag_delta = timedelta(minutes=lag) if lag_unit == "minutes" else timedelta(days=lag)
+        if avail_dt > decision_dt or event_dt + lag_delta > decision_dt:
             continue
         key = (obs.get("entity"), event_dt)
         rank = (avail_dt, str(obs.get("ingest_time") or ""))
@@ -1058,8 +1337,12 @@ def resolve_point_in_time_inputs(
     *,
     features: Mapping[str, Any] | None = None,
     decision_time: str | datetime | date | None = None,
+    bar_frequency: str | None = None,
 ) -> dict[str, tuple[float, ...]]:
     """Resolve and point-in-time filter all inputs required by ``strategy_logic``."""
+    declared_freq = declared_intraday_frequency(
+        {"bar_frequency": bar_frequency} if bar_frequency is not None else None
+    )
     feature_map: Mapping[str, Any] = features if isinstance(features, Mapping) else {}
 
     close_series: tuple[float, ...] = ()
@@ -1079,11 +1362,41 @@ def resolve_point_in_time_inputs(
         )
 
     env: dict[str, tuple[float, ...]] = {}
+    minute_datasets = {
+        i.get("dataset")
+        for i in strategy_logic.get("inputs", ())
+        if isinstance(i, Mapping) and i.get("dataset") in INTRADAY_PRICE_VOLUME_DATASETS
+    }
+    if bar_frequency == _DAILY_BAR_FREQUENCY and minute_datasets:
+        raise FactorRuleValidationError(
+            f"bar_frequency {_DAILY_BAR_FREQUENCY!r} contradicts declared minute input dataset(s) "
+            f"{sorted(minute_datasets)}"
+        )
+    if declared_freq is not None and minute_datasets != {INTRADAY_FREQUENCY_DATASETS[declared_freq]}:
+        raise FactorRuleValidationError(
+            f"bar_frequency {declared_freq!r} requires declared inputs from "
+            f"{INTRADAY_FREQUENCY_DATASETS[declared_freq]!r} only; daily/generic closes are not allowed"
+        )
+    minute_bound = declared_freq is not None or bool(minute_datasets)
+    if minute_bound:
+        daily_price_inputs = sorted(
+            str(i.get("name"))
+            for i in strategy_logic.get("inputs", ())
+            if isinstance(i, Mapping)
+            and i.get("dataset") in PRICE_VOLUME_DATASETS
+            and i.get("dataset") not in INTRADAY_PRICE_VOLUME_DATASETS
+        )
+        if daily_price_inputs:
+            raise FactorRuleValidationError(
+                f"minute strategy must not read daily/generic price input(s): {daily_price_inputs}"
+            )
+        # Never expose generic/raw closes or synthesized vwap to a minute strategy.
+        close_series = ()
     if close_series:
         env["close"] = close_series
 
     # Populate built-in price-volume fields if available in features
-    for pv_field in BUILT_IN_PRICE_VOLUME_FIELDS:
+    for pv_field in () if minute_bound else BUILT_IN_PRICE_VOLUME_FIELDS:
         if pv_field == "close":
             continue
         raw_pv = feature_map.get(pv_field)
@@ -1107,13 +1420,33 @@ def resolve_point_in_time_inputs(
         dataset = str(item["dataset"])
         field = str(item["field"])
         lag_days = int(item.get("availability_lag_days", 0))
+        lag_unit = "days"
+        session_reset = False
         cat_def = get_feature_definition(dataset, field)
-        if cat_def is not None:
+        if cat_def is not None and cat_def.availability_lag_unit == "minutes":
+            # Minute features lag in minutes beyond bar close; windows reset per session.
+            lag_unit = "minutes"
+            lag_days = max(int(item.get("availability_lag_minutes", 0)), int(cat_def.min_availability_lag or 0))
+            session_reset = not cat_def.cross_session
+        elif cat_def is not None:
             lag_days = max(lag_days, cat_def.min_availability_lag_days)
 
-        raw_series = _lookup_raw_feature(
-            feature_map, name=name, dataset=dataset, field=field
-        )
+        if dataset in INTRADAY_PRICE_VOLUME_DATASETS:
+            _require_aware_decision_time(decision_time)
+            raw_series = _lookup_minute_feature(
+                feature_map, name=name, dataset=dataset, field=field
+            )
+        else:
+            raw_series = _lookup_raw_feature(
+                feature_map, name=name, dataset=dataset, field=field
+            )
+        if raw_series is not None and dataset in INTRADAY_PRICE_VOLUME_DATASETS:
+            _require_minute_observations(feature_map, name=name, dataset=dataset, field=field)
+        if raw_series is None and dataset in INTRADAY_PRICE_VOLUME_DATASETS:
+            raise FactorRuleValidationError(
+                f"missing required minute feature input '{name}' ({dataset}.{field}); "
+                "daily/generic close or synthetic vwap fallback is not allowed"
+            )
         if raw_series is None:
             if field == "close" and close_series:
                 env[name] = close_series
@@ -1127,13 +1460,18 @@ def resolve_point_in_time_inputs(
 
         if dataset not in PRICE_VOLUME_DATASETS:
             raw_series = _latest_visible_versions(
-                raw_series, availability_lag_days=lag_days, decision_time=decision_time
+                raw_series,
+                availability_lag_days=lag_days,
+                decision_time=decision_time,
+                lag_unit=lag_unit,
             )
         filtered = _filter_point_in_time_series(
             raw_series,
             input_name=name,
             availability_lag_days=lag_days,
             decision_time=decision_time,
+            lag_unit=lag_unit,
+            session_reset=session_reset,
         )
         if len(filtered) == 0:
             raise FactorRuleValidationError(
@@ -1546,6 +1884,8 @@ def evaluate_factor_rule_view(
     decision_time: str | datetime | date | None = None,
     holding_bars: int | None = None,
     current_direction: str | None = None,
+    symbol: str | None = None,
+    include_position_state: bool = False,
 ) -> dict[str, Any]:
     """Evaluate a ``factor_rule_v1`` artifact into a structured directional view.
 
@@ -1567,6 +1907,16 @@ def evaluate_factor_rule_view(
         mutation_surface if isinstance(mutation_surface, Mapping) else None,
     )
 
+    if "screen" in validated_logic:
+        from .candidate_pool import MARKET_FEATURE_KEY, evaluate_screened_view
+
+        if not symbol:
+            raise FactorRuleValidationError("screen requires the decision symbol")
+        return evaluate_screened_view(
+            strategy_artifact, (features or {}).get(MARKET_FEATURE_KEY), symbol,
+            decision_time, current_direction=current_direction, holding_bars=holding_bars,
+        )
+
     # Shared evaluator (research/vectorbt + paper): features may only enter through
     # the governed catalogue with timestamped point-in-time observations.
     assert_governed_feature_inputs(validated_logic)
@@ -1577,6 +1927,7 @@ def evaluate_factor_rule_view(
         closes,
         features=features,
         decision_time=decision_time,
+        bar_frequency=parameters.get("bar_frequency"),
     )
 
     signal_series, _ = _eval_node_series(validated_logic["signal"], env, parameters)
@@ -1683,13 +2034,16 @@ def evaluate_factor_rule_view(
         clamped_strength = 0.0
 
     latest_signal = float(signal_series[-1])
-    return {
+    result = {
         "action": action,
         "direction": direction,
         "signal": latest_signal,
         "momentum": latest_signal,
         "strength": clamped_strength,
     }
+    if include_position_state:
+        result.update(target_direction=pos_dir, holding_bars=bars_held)
+    return result
 
 
 def evaluate_factor_rule_action(
@@ -1700,6 +2054,7 @@ def evaluate_factor_rule_action(
     decision_time: str | datetime | date | None = None,
     holding_bars: int | None = None,
     current_direction: str | None = None,
+    symbol: str | None = None,
 ) -> str:
     """Evaluate a ``factor_rule_v1`` artifact and return ``BUY``, ``SELL``, or ``HOLD``."""
     view = evaluate_factor_rule_view(
@@ -1709,6 +2064,7 @@ def evaluate_factor_rule_action(
         decision_time=decision_time,
         holding_bars=holding_bars,
         current_direction=current_direction,
+        symbol=symbol,
     )
     return str(view["action"])
 

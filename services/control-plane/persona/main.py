@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from integrations.openclaw.adapter import (
     OpenClawDockerGatewayRuntime,
@@ -37,7 +37,15 @@ from persona_registry import (
     SessionType,
     utc_now,
 )
+from persona_strategy_pool import (
+    AppendPoolVersionRequest,
+    PoolDecisionRequest,
+    PersonaStrategyPoolStore,
+    PoolError,
+    build_pool_store,
+)
 from services.persona.write_owner import (
+    _AUTHENTICATED_MUTATION_ROLES,
     PersonaAuthorityError,
     create_app as create_persona_owner_app,
     resolve_persona_tenant_scope,
@@ -433,6 +441,139 @@ def list_sessions(
 @app.get("/api/sessions/{session_id}")
 def get_session(session_id: str, tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"), authorization: str | None = Header(default=None)):
     return _session_for_tenant(session_id, _admitted_persona_tenant(authorization, tenant_id)).to_dict()
+
+
+POOL_STORE: PersonaStrategyPoolStore | None = None
+
+
+def _pool_store() -> PersonaStrategyPoolStore:
+    global POOL_STORE
+    if POOL_STORE is None:
+        POOL_STORE = build_pool_store()
+    return POOL_STORE
+
+
+def _pool_scope(persona_id: str, authorization: str | None, tenant_id: str | None, *, write: bool):
+    """Authenticate, admit the tenant, and require the persona to belong to it.
+
+    A persona owned by another tenant is refused: 403 on write, 404 on read
+    (so a read never confirms the persona exists elsewhere).
+    """
+    try:
+        authority, admitted = resolve_persona_tenant_scope(
+            authorization, tenant_id, *( (_AUTHENTICATED_MUTATION_ROLES,) if write else () )
+        )
+    except PersonaAuthorityError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
+    raw = getattr(getattr(PERSONA_OWNER_API.state, "persona_owner", None), "_records", None)
+    record = raw.get(persona_id) if raw is not None else None
+    if record is None:
+        raise HTTPException(status_code=404, detail="persona not found")
+    if record.get("tenant_id") != admitted:
+        raise HTTPException(
+            status_code=403 if write else 404,
+            detail="TENANT_SCOPE_DENIED: persona belongs to another tenant" if write else "persona not found",
+        )
+    return authority, admitted
+
+
+def _pool_call(fn):
+    try:
+        return fn()
+    except PoolError as exc:
+        reason = getattr(exc, "reason", None)
+        raise HTTPException(status_code=exc.status_code, detail=reason or str(exc)) from exc
+
+
+@app.get("/api/personas/{persona_id}/strategy-pool")
+def get_strategy_pool(
+    persona_id: str,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False)
+    return _pool_call(lambda: _pool_store().current(persona_id, admitted))
+
+
+@app.get("/api/personas/{persona_id}/strategy-pool/versions")
+def list_strategy_pool_versions(
+    persona_id: str,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False)
+    store = _pool_store()
+    return _pool_call(
+        lambda: {
+            "versions": store.versions(persona_id, admitted),
+            "refusals": store.refusals(persona_id, admitted),
+        }
+    )
+
+
+@app.get("/api/personas/{persona_id}/strategy-pool/versions/{pool_version}")
+def get_strategy_pool_version(
+    persona_id: str,
+    pool_version: int,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False)
+    return _pool_call(lambda: _pool_store().version(persona_id, admitted, pool_version))
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/versions", status_code=201)
+def append_strategy_pool_version(
+    persona_id: str,
+    body: AppendPoolVersionRequest,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    authority, admitted = _pool_scope(persona_id, authorization, tenant_id, write=True)
+    return _pool_call(
+        lambda: _pool_store().append(persona_id, admitted, body, actor_id=authority.actor_id)
+    )
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/seed", status_code=201)
+def seed_strategy_pool(
+    persona_id: str,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    """Create version 1 from the persona's approved paper artifact (owner records)."""
+    authority, admitted = _pool_scope(persona_id, authorization, tenant_id, write=True)
+    return _pool_call(
+        lambda: _pool_store().seed_from_owner_records(persona_id, admitted, actor_id=authority.actor_id)
+    )
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/decisions", status_code=201)
+def decide_strategy_pool(
+    persona_id: str,
+    body: PoolDecisionRequest,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    authority, admitted = _pool_scope(persona_id, authorization, tenant_id, write=True)
+    return _pool_call(lambda: _pool_store().decide(persona_id, admitted, body, actor_id=authority.actor_id))
+
+
+class PoolHealthRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    books: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/health")
+def strategy_pool_health(
+    persona_id: str,
+    body: PoolHealthRequest,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False)
+    return _pool_call(lambda: _pool_store().health(persona_id, admitted, body.books, body.observations))
 
 
 # The deployed control-plane Persona process owns the durable Registry and

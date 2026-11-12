@@ -1,0 +1,38 @@
+{
+  "task": "PYTEST-IMPORT-ISOLATION-COST-20261112",
+  "original_conftest_blob": "4c30ee249ab05572d07b81e289d48199214fec65",
+  "change": "_is_transient_local_module uses Path.resolve (unchanged resolution semantics incl. symlink-loop RuntimeError) + string prefix containment instead of per-module relative_to; uncached",
+  "measurement": {
+    "interpreter": "/tmp/gfd-venv/bin/python 3.12.3",
+    "original_conftest_blob": "4c30ee249ab05572d07b81e289d48199214fec65",
+    "reproduce": "git show 3b1ced8be~1:conftest.py > orig.py; import every pkgutil.iter_modules() top-level package (errors ignored) then time orig vs new _is_transient_local_module over sys.modules, 5 runs each, same process",
+    "modules": 3603,
+    "classifications_identical": true,
+    "transient": [],
+    "original_seconds": [
+      1.112973,
+      1.119537,
+      1.196181,
+      1.088993,
+      1.108781
+    ],
+    "new_seconds": [
+      0.218765,
+      0.211054,
+      0.218674,
+      0.2278,
+      0.22243
+    ]
+  },
+  "not_claimed": "No full Research suite/CI result is claimed; CI must run unchanged. Local interpreter lacks QuantLib/mlflow.",
+  "classifications": {
+    "summary": "complete classification map moved out of repo to keep diff under cap",
+    "entries": 3603,
+    "sha256_canonical_json": "99bb832a34587f92a67dcda6acbbf66732d8f8be34cbf466fdd4c2d685f2973d",
+    "durable_location": "/tmp/pantheon-pytest-import-isolation-cost-20261112-evidence/full-evidence.json (key \"classifications\")",
+    "full_file_sha256": "ecde870a38f760a07d536160b66847f817fc98d142e6fe85029c5c3fec8a2c9d",
+    "value_counts": {
+      "False": 3603
+    }
+  }
+}

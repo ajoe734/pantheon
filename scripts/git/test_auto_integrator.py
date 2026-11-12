@@ -2512,6 +2512,91 @@ class CheckClassifierTests(unittest.TestCase):
         self.assertEqual(summary.failing, ())
         self.assertEqual(summary.ignored_diagnostic, ("Audit signed canonical review (not required issuer) (4741)",))
 
+    PUBLISHER = {
+        "name": "Publish canonical review status",
+        "workflowName": "Canonical Review Gate",
+        "status": "COMPLETED",
+        "isRequired": False,
+    }
+
+    def _fe985_rollup(self, publisher_overrides=None, canonical="SUCCESS"):
+        rollup = [
+            {"name": "Component merge gate", "status": "IN_PROGRESS", "isRequired": True},
+            {"name": "Unit tests", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
+            dict(self.PUBLISHER, conclusion="CANCELLED", **(publisher_overrides or {})),
+        ]
+        if canonical:
+            rollup.append(
+                {
+                    "name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT,
+                    "state": canonical,
+                    "isRequired": True,
+                }
+            )
+        return rollup
+
+    def test_optional_cancelled_publisher_with_canonical_success_waits(self) -> None:
+        summary = auto_integrator.summarize_status_rollup(self._fe985_rollup())
+        self.assertEqual(summary.state, "pending")
+        self.assertEqual(summary.failing, ())
+        self.assertEqual(summary.pending, ("Component merge gate",))
+        self.assertIn("Publish canonical review status", summary.ignored_diagnostic)
+        self.assertTrue(
+            auto_integrator.is_canonical_review_gate_green(self._fe985_rollup())
+        )
+
+    def test_optional_cancelled_publisher_does_not_block_green_merge(self) -> None:
+        rollup = self._fe985_rollup()
+        rollup[0] = {"name": "Component merge gate", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True}
+        summary = auto_integrator.summarize_status_rollup(rollup)
+        self.assertEqual(summary.state, "green")
+
+    def test_canonical_failure_still_blocks_beside_cancelled_publisher(self) -> None:
+        rollup = self._fe985_rollup(canonical="FAILURE")
+        summary = auto_integrator.summarize_status_rollup(rollup)
+        self.assertEqual(summary.state, "red")
+        self.assertIn(auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, summary.failing)
+        self.assertFalse(auto_integrator.is_canonical_review_gate_green(rollup))
+
+    def test_missing_canonical_context_not_satisfied_by_successful_publisher(self) -> None:
+        rollup = self._fe985_rollup(canonical=None)
+        rollup[2]["conclusion"] = "SUCCESS"
+        self.assertFalse(auto_integrator.is_canonical_review_gate_green(rollup))
+        summary = auto_integrator.summarize_status_rollup(
+            rollup,
+            required_contexts=(auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT,),
+        )
+        self.assertNotEqual(summary.state, "green")
+
+    def test_cancelled_publisher_failure_modes_still_block(self) -> None:
+        cases = {
+            "required": {"isRequired": True},
+            "unknown requiredness": {"isRequired": None},
+            "unknown issuer workflow": {"workflowName": "Some Other Workflow"},
+            "failed not cancelled": {"conclusion": "FAILURE"},
+            "timed out": {"conclusion": "TIMED_OUT"},
+        }
+        for label, overrides in cases.items():
+            with self.subTest(label):
+                item = dict(self.PUBLISHER, conclusion="CANCELLED")
+                item.update(overrides)
+                if item.get("isRequired") is None:
+                    del item["isRequired"]
+                summary = auto_integrator.summarize_status_rollup([item])
+                self.assertEqual(summary.state, "red")
+
+    def test_other_optional_cancelled_check_with_same_workflow_still_blocks(self) -> None:
+        item = dict(self.PUBLISHER, conclusion="CANCELLED", name="Some other job")
+        summary = auto_integrator.summarize_status_rollup([item])
+        self.assertEqual(summary.state, "red")
+
+    def test_required_context_named_publisher_cannot_be_ignored(self) -> None:
+        item = dict(self.PUBLISHER, conclusion="CANCELLED")
+        summary = auto_integrator.summarize_status_rollup(
+            [item], required_contexts=("Publish canonical review status",)
+        )
+        self.assertEqual(summary.state, "red")
+
     def test_non_required_actual_ci_failure_still_blocks(self) -> None:
         summary = auto_integrator.summarize_status_rollup(
             [

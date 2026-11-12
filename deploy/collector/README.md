@@ -191,3 +191,14 @@ docker compose run --rm collector-worker ... backfill --source collector-tw-twse
   skips them. A block (429/403) or fetch failure stops the run (exit 2) and the date is retried next time.
 - `run --source ... --start-date/--end-date/--trading-days` passes the same dates to one ordinary run bundle.
 - Two years ≈ 487 requests per source ≈ 41 minutes; all three sources ≈ 123 minutes (run sequentially).
+
+## Same-day close capture (14:40-17:00 Taipei)
+
+OpenAPI publishes a day's rows only the next morning, so `pantheon-collector-close.timer` runs
+`capture-close` every 10 minutes Mon-Fri from 14:40 to 17:00 Asia/Taipei (first attempt after 14:40, last
+at 17:00). Each of the TWSE and TPEx price-history sources is requested once per trading day for *today's*
+date (one connection, >= 5 s between the two requests, same fetch policy); success is recorded in
+`/data/state/same-day-close/<source>.json` and later ticks skip it. A page that is not published yet or a
+failed fetch exits 2 (accepted by the unit) and is retried by the next tick. Outside the window, on weekends
+and on known holidays the command does nothing. Bundles are named `close-<date>-<HHMM>`.
+The existing 6-hourly `pantheon-collector@<source>.timer` keeps running unchanged.

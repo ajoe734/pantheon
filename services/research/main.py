@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import asyncio
 import hashlib
 import json
 import json as _json
@@ -60,6 +62,7 @@ from services.research.research_memory_outbox import (
     build_research_memory_outbox_store,
     get_outbox_store,
     validate_research_memory_writeback_eligibility,
+    resolve_memory_sponsor,
 )
 from services.research.memory_writeback_worker import MemoryWritebackWorker
 from services.research.retrieval_influence import (
@@ -417,7 +420,7 @@ class RegistryWritebackBody(BaseModel):
 
 class MemoryWritebackBody(BaseModel):
     artifact_id: Optional[str] = None
-    sponsor_persona_id: str = "persona-tw-equity"
+    sponsor_persona_id: Optional[str] = None
     summary: Optional[str] = None
     headline: Optional[str] = None
     confidence: float = 1.0
@@ -454,6 +457,47 @@ class RetrievalInfluenceBody(BaseModel):
 
 
 app = FastAPI(title="Pantheon Research Orchestrator Service", version="0.1.0")
+
+
+async def _drain_memory_outbox() -> None:
+    interval = max(1, float(os.getenv("RESEARCH_MEMORY_POLL_SECONDS", "30")))
+    while True:
+        try:
+            result = await asyncio.to_thread(MemoryWritebackWorker().drain)
+            if result["total_processed"]:
+                logger.info("Research memory deliveries: %s", result)
+        except Exception:
+            logger.exception("Research memory delivery tick failed")
+        await asyncio.sleep(interval)
+
+
+@app.on_event("startup")
+async def start_memory_writeback_worker() -> None:
+    if os.getenv("RESEARCH_MEMORY_WORKER_ENABLED", "false").lower() == "true":
+        app.state.memory_writeback_task = asyncio.create_task(_drain_memory_outbox())
+
+
+@app.on_event("shutdown")
+async def stop_memory_writeback_worker() -> None:
+    task = getattr(app.state, "memory_writeback_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+def _memory_sponsor(run: Dict[str, Any], requested: Optional[str] = None) -> str:
+    """Resolve attribution from the owning demand/member carried by the run/task."""
+    task = store.get_task(run["task_id"]) or {}
+    params = run.get("parameters") or {}
+    contexts = [run, params, params.get("metadata") or {}, task.get("constraints") or {}]
+    exp = params.get("experiment_run") or {}
+    contexts.extend([exp, exp.get("metadata") or {}])
+    return resolve_memory_sponsor(*contexts, requested=requested)
+
+
 store = build_research_orchestrator_store(DATA_DIR)
 def get_store() -> ResearchOrchestratorStore:
     return store
@@ -1793,6 +1837,40 @@ _RETRAIN_SEARCH_BUDGET_ENV = "RESEARCH_RETRAIN_SEARCH_BUDGET"
 _RETRAIN_TRIAL_COUNTER_ENV = "RESEARCH_REPLICATION_TRIAL_COUNTER_PATH"
 
 
+def _pool_owner(params):
+    if not params.get("pool_member"):
+        return None
+    from services.evolution.auto_consumer_runtime import PoolOwner
+    env = dict(os.environ, EVOLUTION_SCHEDULER_TENANT_ID=params["tenant_id"])
+    return PoolOwner(env)
+
+
+def _admit_evolution_child(params, child_id):
+    owner = _pool_owner(params)
+    if owner is not None:
+        ctx = params["pool_member"]
+        parent = next((m for m in owner.pool(ctx["persona_id"])["members"]
+                       if m["artifact_ref"] == ctx["artifact_ref"]), None)
+        if parent is None or parent["stage"] != "active" or any(
+                parent.get(k) != ctx.get(k) for k in ("checksum", "joined_at")):
+            raise _RetrainFailure("pool_trial", "approved parent membership changed")
+        owner.admit_child(ctx, child_id, params["decision_id"])
+
+
+@app.get("/api/research/evolution/families/{family_id}")
+def evolution_family_state(family_id: str, tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
+    from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
+    # The same family counter used by the real gate is durable across workers.
+    views = _retrain_call(step="family_state", service="registry", method="GET",
+        token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
+        url=os.getenv("REGISTRY_URL", "http://registry:8087").rstrip("/") +
+            "/api/registry/strategies/" + urllib.parse.quote(family_id, safe="") + "/strategy-artifacts")
+    if not any(((v or {}).get("entry") or {}).get("owner_tenant") == tenant_id for v in views or []):
+        raise HTTPException(status_code=404, detail="family not found")
+    trials = SharedFamilyTrialCounterStore(_retrain_trial_counter_path()).get(family_id)
+    return {"family_id": family_id, "trials": trials, "status": "tried" if trials >= 500 else "available"}
+
+
 def _retrain_trial_counter_path() -> Path:
     """Authoritative family counter: the file OOS admission's gate also uses."""
     explicit = os.environ.get(_RETRAIN_TRIAL_COUNTER_ENV)
@@ -1843,8 +1921,10 @@ def _retrain_search_update(
         dataset = _RETRAIN_DATASET_LOADER(parent_artifact, params)
     if not isinstance(dataset, dict):
         raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
-    budget = int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
+    budget = 50 if params.get("pool_member") else int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
     family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
+    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).get(family_id) >= 500:
+        raise _RetrainFinished("no_candidate", "family_tried")
     from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
 
     prev = os.environ.get("PANTHEON_VECTORBT_BACKEND")
@@ -1985,6 +2065,8 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
             "session_id", "baseline_job_id", "baseline_eval_id", "candidate_job_id", "candidate_eval_id",
             "baseline_metrics", "candidate_metrics", "candidate_artifact_id", "candidate_proof_ref", "persona_id"}}
         _retrain_record(run_id, **carried)
+        if state.get("candidate_artifact_id"):
+            _admit_evolution_child(params, state["candidate_artifact_id"])
         raise _RetrainFinished(
             str(state.get("outcome") or "candidate_created"),
             str(state.get("outcome_reason") or "resumed_from_recorded_outcome"),
@@ -2152,7 +2234,7 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
             try:
                 child, _descriptor = search.build_child_artifact(
                     parent_artifact, decision_id=decision_id, kind="retrain", parameter_updates=proposed,
-                    source_run_ids=source_runs, child_version=new_version,
+                    source_run_ids=source_runs, child_version=new_version, parent_registry_ref=target_artifact_id,
                 )
             except search.EvolutionSearchError as exc:
                 raise _RetrainFinished("no_candidate", f"retrain_child_invalid: {exc}") from None
@@ -2200,6 +2282,7 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     writebacks = list(run.get("registry_writebacks") or [])
     writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
     _retrain_record(run_id, candidate_artifact_id=child_id, registry_writebacks=writebacks)
+    _admit_evolution_child(params, child_id)
     raise _RetrainFinished("candidate_created", "candidate_passed_gate_and_beat_baseline")
 
 
@@ -2250,15 +2333,122 @@ def _evolution_oos_context(
     if not isinstance(dataset, dict):
         raise _RetrainFinished("evaluation_rejected", "governed_dataset_unavailable")
 
+    if params.get("pool_member") and _evolution_action(params) == "revalidate":
+        try:
+            dataset = executor.post_admission_dataset(dataset, params["pool_member"]["joined_at"])
+        except executor.ExecutorRefusal as exc:
+            raise _RetrainFinished(exc.outcome, exc.reason) from None
+
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
     backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
-    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    gate = _ProofCapturingGate(
+        SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    )
+
+    def _record_owned(evaluation: Dict[str, Any]) -> Optional[str]:
+        run_id = backtests.record(evaluation)
+        if run_id:
+            gate.evaluations[run_id] = copy.deepcopy(evaluation)  # the exact evaluation the gate judges
+            _bind_backtest_run_owner(data_dir, run_id, tenant_id=tenant_id, decision_id=decision_id)
+        return run_id
+
     factory = executor.build_gate_request_factory(
         spec=spec, dataset=dataset, decision_id=decision_id, tenant_id=tenant_id,
-        record_backtest=backtests.record, family_id=family_id, timestamp=utc_now(),
+        record_backtest=_record_owned, family_id=family_id, timestamp=utc_now(),
     )
 
     return gate, factory
+
+
+class _ProofCapturingGate:
+    """Delegates to the real gate and keeps each response so registration can send the real proof.
+
+    The proof/evaluation transport is scoped to this gate (one executing run); a rejected
+    judgement is released immediately and everything else dies with the gate.
+    """
+
+    def __init__(self, gate: Any) -> None:
+        self._gate = gate
+        self.proofs: Dict[str, Dict[str, Any]] = {}
+        self.evaluations: Dict[str, Dict[str, Any]] = {}
+
+    def release(self, run_id: Any) -> None:
+        self.proofs.pop(str(run_id or ""), None)
+        self.evaluations.pop(str(run_id or ""), None)
+
+    def get_family_trial_count(self, family_id: str) -> int:
+        return self._gate.get_family_trial_count(family_id)
+
+    def record_family_trial(self, family_id: str) -> int:
+        record = getattr(self._gate, "record_family_trial", None)
+        return record(family_id) if callable(record) else self._gate.get_family_trial_count(family_id)
+
+    def evaluate_candidate(self, request: Any) -> Any:
+        try:
+            response = self._gate.evaluate_candidate(request)
+        except BaseException:
+            self.proofs.clear()
+            self.evaluations.clear()
+            raise
+        for result in getattr(response, "results", []) or []:
+            if getattr(result, "criterion_id", "") == "real_backtest_validation":
+                run_id = str((getattr(result, "details", None) or {}).get("backtest_run_id") or "")
+                if not run_id:
+                    continue
+                if getattr(response, "passed", False) and callable(getattr(response, "to_dict", None)):
+                    self.proofs[run_id] = response.to_dict()
+                else:
+                    self.release(run_id)
+        # Evaluations recorded for runs that never produced a passing proof are not retained.
+        for run_id in [r for r in self.evaluations if r not in self.proofs]:
+            self.evaluations.pop(run_id, None)
+        return response
+
+
+def _producer_proof_registration(
+    *, data_dir: Path, child: Dict[str, Any], verdict: Dict[str, Any], decision_id: str, run_id: str,
+    gate: Any = None,
+) -> Dict[str, Any]:
+    """Registration fields for a gate-passed child: the real proof, its run evaluation and lineage.
+
+    Records the actual gate verdict (trial/mandate context + digest) in the server-owned run
+    record so the Registry can authenticate it through the owner-binding readback.
+    """
+    from services.registry.promotion.gate import real_backtest_verdict_digest
+    backtest_run_id = str(verdict.get("backtest_run_id") or "")
+    proof = getattr(gate, "proofs", {}).pop(backtest_run_id, None)
+    results = (proof or {}).get("results") if isinstance(proof, dict) else None
+    details = next(
+        (r.get("details") for r in results or [] if r.get("criterion_id") == "real_backtest_validation"), None
+    )
+    evaluation = getattr(gate, "evaluations", {}).pop(backtest_run_id, None)
+    summary = {
+        "out_of_sample_gate": dict(verdict),
+        "decision_id": decision_id,
+    }
+    if not isinstance(details, dict) or not evaluation:
+        return {"evaluation_summary": summary, "producer_run_id": run_id}
+    wire = json.loads(json.dumps(proof, default=str))
+    wire["replication_results"] = wire.pop("results")
+    wire["backtest_run_id"] = backtest_run_id
+    full = json.loads(json.dumps(evaluation, default=str))
+    summary.update(
+        backtest_run_id=backtest_run_id, out_of_sample_sharpe_ratio=details.get("out_of_sample_sharpe_ratio"),
+        max_drawdown=abs(float(details.get("out_of_sample_max_drawdown"))),
+        round_trips=details.get("out_of_sample_round_trips"),
+    )
+    wire["evaluation_summary"] = summary
+    _bind_backtest_run_gate_verdict(
+        data_dir, backtest_run_id,
+        {"admission_status": wire.get("admission_status"), "trial_count": details.get("trial_count"),
+         "mandate_max_drawdown": details.get("mandate_max_drawdown"), "family_id": details.get("family_id"),
+         "verdict_digest": real_backtest_verdict_digest(json.loads(json.dumps(details, default=str)))},
+    )
+    # The artifact checksum is fixed before the run exists, so the exact backtest run is the producer run.
+    return {
+        "evaluation_summary": summary, "producer_run_id": backtest_run_id, "replication_proof": wire,
+        "backtest_evaluation": full,
+    }
 
 
 def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
@@ -2309,6 +2499,28 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     if not isinstance(parent, dict):
         raise _RetrainFailure("read_target_artifact", "Registry entry carries no strategy_artifact")
     family_id = str(parent.get("strategy_id") or parent.get("artifact_id"))
+    if params.get("pool_member") and action == "revalidate":
+        from services.evolution.approved_baselines import resolve_member_baseline
+        ctx = params["pool_member"]
+        baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=ctx["persona_id"],
+            artifact_ref=ctx["artifact_ref"], checksum=ctx["checksum"], entry=entry)
+        dataset = _RETRAIN_DATASET_LOADER(parent, params) if callable(_RETRAIN_DATASET_LOADER) else None
+        if not isinstance(dataset, dict):
+            raise _RetrainFinished("evaluation_rejected", "governed_post_admission_dataset_unavailable")
+        try:
+            result = executor.revalidate_member(artifact=parent, dataset=dataset, member=ctx, baseline=baseline)
+        except executor.ExecutorRefusal as exc:
+            raise _RetrainFinished(exc.outcome, exc.reason) from None
+        if result["outcome"] == "revalidation_failed":
+            owner = _pool_owner(params)
+            pool = owner.pool(ctx["persona_id"])
+            member = next((m for m in pool["members"] if m["artifact_ref"] == ctx["artifact_ref"]
+                           and m["checksum"] == ctx["checksum"] and m["joined_at"] == ctx["joined_at"]), None)
+            if member is None:
+                raise _RetrainFailure("pool_revalidation", "approved member identity changed")
+            owner.remove_member(pool, member, reason="evolution:" + decision_id)
+        _retrain_record(run_id, evolution_result=result["verdict"])
+        raise _RetrainFinished(result["outcome"], result["reason"])
 
     gate, factory = _evolution_oos_context(
         parent=parent, entry_meta=entry_meta, params=params, tenant_id=tenant_id, decision_id=decision_id,
@@ -2336,7 +2548,10 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                         "artifact_state": "candidate",
                         "strategy_artifact": child,
                         "producer_run_id": run_id,
-                        "evaluation_summary": {"out_of_sample_gate": verdict, "decision_id": decision_id},
+                        **_producer_proof_registration(
+                            data_dir=Path(ALPHA_REPLICATION_DATA_DIR), child=child, verdict=verdict,
+                            decision_id=decision_id, run_id=run_id, gate=gate,
+                        ),
                         "metadata": {k: v for k, v in entry_meta.items() if k == "persona_id"},
                     },
                 )
@@ -2351,11 +2566,14 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                         raise RegistryVersionConflict(str(exc.detail)) from None
                 else:
                     raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
-        if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") != "candidate":
+        getattr(gate, "release", lambda _run: None)(verdict.get("backtest_run_id"))  # adopted/registered: release
+        if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") not in (
+                {"candidate", "approved"} if params.get("pool_member") else {"candidate"}):
             raise _RetrainFailure("register_candidate", "Registry did not report the child as a candidate")
         run = get_store().get_run(run_id) or {}
         writebacks = list(run.get("registry_writebacks") or [])
         writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
+        _admit_evolution_child(params, child_id)
         _retrain_record(run_id, registry_writebacks=writebacks, candidate_artifact_id=child_id)
         return existing
 
@@ -2367,6 +2585,8 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                 parent, decision_id=decision_id, family_id=family_id, gate=gate,
                 request_factory=factory, register_child=register_child,
                 family_versions=lambda: _registry_family_versions(registry_url, tenant_id, parent),
+                children=50 if params.get("pool_member") else 1,
+                parent_registry_ref=target_artifact_id,
             )
         else:
             result = executor.execute_revalidate(parent, family_id=family_id, gate=gate, request_factory=factory)
@@ -2649,6 +2869,8 @@ def _finish_run(
                 else {}
             )
             try:
+                if (exp_meta.get("replication_gate") or {}).get("passed") is not True:
+                    raise ResearchMemoryEligibilityError("Replication gate has not passed; memory finding refused")
                 outbox_store = get_outbox_store()
                 outbox_id = _next_id(
                     "mout",
@@ -2662,7 +2884,7 @@ def _finish_run(
                     artifact_id=str(bt_summary.get("backtest_run_id") or "") or None,
                     source_event_type="research_finding_published",
                     source_event_id=str(exp_run.get("run_id") or run_id),
-                    sponsor_persona_id="persona-tw-equity",
+                    sponsor_persona_id=_memory_sponsor(run),
                     summary=summary,
                     headline=f"Replicated Taiwan strategy {exp_run.get('strategy_id') or ''}",
                     confidence=1.0,
@@ -2707,8 +2929,10 @@ def _finish_run(
                     },
                 )
                 outbox_store.create_record(outbox_record)
-            except Exception:
-                pass
+            except Exception as exc:
+                run["memory_writeback_error"] = str(exc)
+                store.put_run(run)
+                logger.warning("Memory enqueue refused for %s: %s", run_id, exc)
     return run
 
 
@@ -3077,7 +3301,7 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
                 artifact_id=artifact["artifact_id"],
                 source_event_type="research_finding_published",
                 source_event_id=run_id,
-                sponsor_persona_id=_first_text(body.metadata.get("sponsor_persona_id"), run.get("sponsor_persona_id"), "persona-tw-equity") or "persona-tw-equity",
+                sponsor_persona_id=_memory_sponsor(run, body.metadata.get("sponsor_persona_id")),
                 summary=_first_text(artifact.get("title"), f"Reviewed research finding from {run_id}") or f"Reviewed research finding from {run_id}",
                 headline=_first_text(artifact.get("title"), f"Research Finding {artifact['artifact_id']}") or f"Research Finding {artifact['artifact_id']}",
                 confidence=float(body.metadata.get("confidence") or 1.0),
@@ -3096,11 +3320,14 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
                     "registry_id": entry["registry_id"],
                     "actor_id": body.actor_id,
                     "auto_enqueued": True,
+                    "tenant_id": run.get("tenant_id"),
                 },
             )
             outbox_store.create_record(outbox_record)
-    except Exception:
-        pass
+    except Exception as exc:
+        run["memory_writeback_error"] = str(exc)
+        store.put_run(run)
+        logger.warning("Memory enqueue refused for %s: %s", run_id, exc)
 
     return writeback
 
@@ -3121,6 +3348,10 @@ def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, An
     except ResearchMemoryEligibilityError as exc:
         raise HTTPException(status_code=400, detail={"reason": "memory_writeback_not_eligible", "detail": str(exc)})
 
+    try:
+        _memory_sponsor(run, body.sponsor_persona_id)
+    except ResearchMemoryEligibilityError as exc:
+        raise HTTPException(status_code=400, detail={"reason": "memory_attribution_missing_or_conflicting", "detail": str(exc)}) from exc
     outbox_store = get_outbox_store()
     timestamp = body.created_at or utc_now()
     existing = outbox_store.find_by_source_event("research_finding_published", run_id)
@@ -3139,7 +3370,7 @@ def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, An
         artifact_id=artifact.get("artifact_id"),
         source_event_type="research_finding_published",
         source_event_id=run_id,
-        sponsor_persona_id=body.sponsor_persona_id,
+        sponsor_persona_id=_memory_sponsor(run, body.sponsor_persona_id),
         summary=body.summary or str(artifact.get("title") or f"Reviewed finding for {run_id}"),
         headline=body.headline or str(artifact.get("title") or f"Finding {run_id}"),
         confidence=body.confidence,
@@ -3158,6 +3389,7 @@ def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, An
             **body.metadata,
             "actor_id": body.actor_id,
             "idempotency_key": body.idempotency_key,
+            "tenant_id": run.get("tenant_id"),
         },
     )
     saved = outbox_store.create_record(record)
@@ -4105,6 +4337,113 @@ def _visible_saved_artifacts(tenant_id: str) -> List[Dict[str, Any]]:
 _ARTIFACT_READ_ROLES = tuple(dict.fromkeys(
     ("viewer", "view_only", "operator", "approver", "admin", "reviewer", *AUTHENTICATED_SERVICE_ROLES)
 ))
+
+
+_BACKTEST_OWNER_READ_ROLES = tuple(dict.fromkeys(("registry-writer", *AUTHENTICATED_SERVICE_ROLES)))
+
+
+def _backtest_owner_path(data_dir: Path) -> Path:
+    return Path(data_dir) / "backtest_run_owners.json"
+
+
+def _update_backtest_owner_file(data_dir: Path, mutate: Any) -> None:
+    """Serialised reload/merge/atomic-replace of the authoritative owner file.
+
+    An interprocess flock spans the whole cycle, the temp file is unique per writer, and a
+    present-but-corrupt file fails closed (never reset to empty, which would drop other tenants).
+    """
+    import fcntl
+    import tempfile
+
+    path = _backtest_owner_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_name(path.name + ".lock"), "a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            if path.exists():
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(loaded, dict):
+                    raise ValueError(f"{path.name} is not a JSON object")
+            else:
+                loaded = {}
+            if mutate(loaded) is False:
+                return
+            fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(loaded, indent=2, sort_keys=True) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp_name, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _bind_backtest_run_owner(data_dir: Path, run_id: str, *, tenant_id: str, decision_id: str) -> None:
+    """Server-side tenant/decision binding written by the code that ran the protocol."""
+    def mutate(loaded: Dict[str, Any]) -> None:
+        loaded[run_id] = {"tenant_id": tenant_id, "decision_id": decision_id}
+
+    _update_backtest_owner_file(data_dir, mutate)
+
+
+def _bind_backtest_run_gate_verdict(data_dir: Path, run_id: str, gate_verdict: Dict[str, Any]) -> None:
+    """Persist the real gate decision context beside the run owner record (server-side only)."""
+    def mutate(loaded: Dict[str, Any]) -> Optional[bool]:
+        owner = loaded.get(run_id)
+        if not isinstance(owner, dict):
+            return False  # an unbound run never gains a verdict
+        owner["gate_verdict"] = gate_verdict
+        return None
+
+    _update_backtest_owner_file(data_dir, mutate)
+
+
+@app.get("/api/research-orchestrator/backtest-runs/{run_id}/owner-binding")
+def read_backtest_run_owner_binding(
+    run_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    """Read-only producer proof of a recorded backtest run, bound to the authenticated tenant.
+
+    The caller bearer is verified by the strict Research verifier (viewer roles are
+    not admitted).  The run is returned only when the server-owned run owner record
+    names the same tenant; foreign or unbound runs are 404, never disclosed.
+    """
+    try:
+        verified = authenticate_tenant(
+            authorization=authorization, tenant_id=x_tenant_id, service_prefix="RESEARCH",
+            required_roles=_BACKTEST_OWNER_READ_ROLES,
+        ).tenant_id
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except TenantBoundaryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore
+
+    record = SharedBacktestRunStore(data_dir / "backtest_runs.json").get(run_id)
+    try:
+        owners = json.loads(_backtest_owner_path(data_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        owners = {}
+    owner = owners.get(run_id) if isinstance(owners, dict) else None
+    if not record or not isinstance(owner, dict) or owner.get("tenant_id") != verified:
+        raise HTTPException(status_code=404, detail="backtest run not found for tenant")
+    return {
+        "backtest_run_id": run_id, "tenant_id": verified, "decision_id": owner.get("decision_id"),
+        "status": record.get("status"), "artifact_checksum": record.get("artifact_checksum"),
+        "dataset_id": record.get("dataset_id"), "source_dataset_refs": record.get("source_dataset_refs"),
+        "artifact_ref": record.get("artifact_ref"), "evaluation_digest": record.get("evaluation_digest"),
+        "gate_verdict": owner.get("gate_verdict"),
+    }
 
 
 def _authenticated_artifact_tenant(

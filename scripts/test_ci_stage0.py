@@ -314,6 +314,60 @@ class ImportSmokeTests(unittest.TestCase):
         self.assertTrue(ci_stage0.image_affected(scoped, ["services/research/mlflow/requirements.txt"]))
         self.assertFalse(ci_stage0.image_affected(scoped, ["services/telemetry/module.py"]))
 
+    def test_dockerignored_orchestrator_sources_select_no_image_through_real_cli(self) -> None:
+        """Real git diff + real compose parse + real CLI in a throwaway repo; the six paths are the OPS7248 incident shape."""
+        six = [
+            ".orchestrator/rewrite/test_worker_workspace.py",
+            ".orchestrator/rewrite/worker_workspace.py",
+            ".orchestrator/supervisor.py",
+            ".orchestrator/test_supervisor.py",
+            "docs/deployment/evidence/OPS-X/README.md",
+            "docs/deployment/evidence/OPS-X/evidence.json",
+        ]
+        compose = "services:\n  api:\n    build:\n      context: .\n      dockerfile: services/api/Dockerfile\n    command: [\"python\", \"services/api/main.py\"]\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "scripts").mkdir()
+            shutil.copy(Path(ci_stage0.__file__), repo / "scripts" / "ci_stage0.py")
+            (repo / "services/api").mkdir(parents=True)
+            (repo / "services/api/Dockerfile").write_text("FROM python:3.12\nCOPY services/api/main.py services/api/main.py\n", encoding="utf-8")
+            (repo / "docker-compose.yml").write_text(compose, encoding="utf-8")
+            (repo / "docker-compose.control.yml").write_text("services:\n  noop:\n    image: busybox\n", encoding="utf-8")
+            (repo / ".dockerignore").write_text(".orchestrator/*\n", encoding="utf-8")
+            git = lambda *a: subprocess.run(["git", "-C", tmpdir, "-c", "user.name=t", "-c", "user.email=t@t", *a], check=True, capture_output=True, text=True).stdout.strip()  # noqa: E731
+            git("init", "-q")
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+
+            def plan(files: list[str], full_sweep: bool = False) -> list[str]:
+                for f in files:
+                    (repo / f).parent.mkdir(parents=True, exist_ok=True)
+                    existing = (repo / f).read_text(encoding="utf-8") if (repo / f).exists() else ""
+                    (repo / f).write_text(f"{existing}# changed {f}\n", encoding="utf-8")
+                git("add", "-A")
+                git("commit", "-qm", "head", "--allow-empty")
+                cmd = [sys.executable, str(repo / "scripts/ci_stage0.py"), "import-smoke-plan"]
+                if not full_sweep:
+                    cmd += ["--base", base, "--head", git("rev-parse", "HEAD")]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                git("reset", "-q", "--hard", base)
+                return json.loads(result.stdout)
+
+            self.assertEqual(plan(six), [])  # fails on the old selector: it returned every root-context image
+            self.assertEqual(plan([*six, "services/api/main.py"]), ["services-api-Dockerfile"])
+            self.assertEqual(plan([*six, "services/api/other.py"]), ["services-api-Dockerfile"])
+            self.assertEqual(plan([*six, "services/api/Dockerfile"]), ["services-api-Dockerfile"])
+            self.assertEqual(plan([*six, "docker-compose.yml"]), ["services-api-Dockerfile"])
+            self.assertEqual(plan([*six, ".dockerignore"]), ["services-api-Dockerfile"])
+            self.assertEqual(plan([*six, "dependencies/locks/services-api.txt"]), [])  # lock selection is by the existing rule, unchanged
+            self.assertEqual(plan([], full_sweep=True), ["services-api-Dockerfile"])
+        # the unit rule: a Dockerfile/command that really names a .orchestrator path keeps it selected
+        named = {"context": ".", "dockerfile": "services/telemetry/Dockerfile", "services": {"x": {"entrypoint": None, "command": ["python", ".orchestrator/tool.py"]}}}
+        self.assertTrue(ci_stage0.image_affected(named, [".orchestrator/tool.py"]))
+        self.assertFalse(ci_stage0.image_affected({"context": ".", "dockerfile": "services/telemetry/Dockerfile"}, [".orchestrator/supervisor.py"]))
+
     def test_image_affected_by_compose_file_dockerignore_and_service_command_scripts(self) -> None:
         image = {
             "context": ".",

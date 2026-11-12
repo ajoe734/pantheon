@@ -11,6 +11,68 @@ from pathlib import Path
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
 
+def _quarter_valuation_event(at, equity, *, runtime_id="return-runtime-0", started_at="2026-10-01T00:00:00Z", fills=1):
+    event = _event("pnl_snapshot", created_at=at)
+    event.update(runtime_id=runtime_id, event_id=f"valuation-{at}-{equity}", pnl_as_of=at)
+    event["metrics"] = {
+        "pnl": equity - 1000.0, "portfolio_value": equity, "initial_cash": 1000.0,
+        "cash": 0.0, "pnl_period_start_at": started_at, "pnl_currency": "TWD",
+        "valuation_mark_count": 1, "fill_count": fills,
+    }
+    event["metadata"].update({
+        "valuation_method": "fill_cash_ledger_mark_to_market", "valuation_as_of": at,
+        "mark_refs": [{"symbol": "TEST.US", "price": equity, "as_of": at,
+                       "source_ref": "local-owner-test-quote"}],
+    })
+    return event
+
+
+def test_quarter_equity_history_survives_replay_out_of_order_and_restart(tmp_path):
+    path = str(tmp_path / "quarter.json")
+    store = RuntimeSummaryProjectionStore(path=path)
+    last = _quarter_valuation_event("2026-12-15T00:00:00Z", 1200.0)
+    store.project_event(last)
+    decline = _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0)
+    store.project_event(decline)
+    store.project_event({**decline, "event_id": "retry-with-new-id"})
+    summary = RuntimeSummaryProjectionStore(path=path).get("return-runtime-0")
+    assert summary["pnl"] == 200.0
+    assert [p["equity"] for p in summary["quarter_equity_observations"]] == [800.0, 1200.0]
+    assert [p["event_id"] for p in summary["quarter_equity_observations"]] == [decline["event_id"], last["event_id"]]
+
+
+def test_quarter_equity_keeps_conflicts_and_missing_mark_attempts(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "quarter.json"))
+    event = _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0)
+    store.project_event(event)
+    store.project_event(_quarter_valuation_event("2026-11-01T00:00:00Z", 850.0))
+    heartbeat = _event(created_at="2026-11-02T00:00:00Z")
+    heartbeat["runtime_id"] = "return-runtime-0"
+    heartbeat["metadata"]["performance_telemetry"] = {"status": "marks_unavailable", "attempted_at": heartbeat["created_at"]}
+    summary = store.project_event(heartbeat)
+    assert len(summary["quarter_equity_observations"]) == 3
+    assert summary["quarter_equity_observations"][-1]["reason"] == "marks_unavailable"
+
+
+def test_quarter_equity_history_is_scoped_to_tenant_and_binding(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "quarter.json"))
+    first = _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0)
+    first["tenant_id"] = "tenant-a"
+    first["metadata"]["runtime_binding_effective_at"] = "2026-10-01T00:00:00Z"
+    store.project_event(first)
+    other_tenant = _quarter_valuation_event("2026-11-01T00:00:00Z", 900.0)
+    other_tenant["tenant_id"] = "tenant-b"
+    store.project_event(other_tenant)
+    assert store.get("return-runtime-0", tenant_id="tenant-a")["quarter_equity_observations"][0]["equity"] == 800.0
+    assert store.get("return-runtime-0", tenant_id="tenant-b")["quarter_equity_observations"][0]["equity"] == 900.0
+    newer = _quarter_valuation_event("2026-12-01T00:00:00Z", 1100.0)
+    newer.update(tenant_id="tenant-a", binding_id="new-binding")
+    newer["metadata"]["runtime_binding_effective_at"] = "2026-12-01T00:00:00Z"
+    summary = store.project_event(newer)
+    assert len(summary["quarter_equity_observations"]) == 1
+    assert summary["quarter_equity_observations"][0]["binding_id"] == "new-binding"
+
+
 def _event(event_type: str = "heartbeat", *, created_at: str = "2026-05-01T00:00:00Z", stage: str = "paper"):
     return {
         "event_id": f"evt-{stage}-{event_type}",
@@ -4381,3 +4443,146 @@ class TestPositionNetPnlRecognizedCosts(unittest.TestCase):
         entry = again["_cost_by_symbol"][self._SRF]
         self.assertEqual(entry["realized_pnl"], 1800.0)
         self.assertAlmostEqual(entry["costs"], 19.884 + 14.0, places=9)
+
+
+def test_pnl_capital_and_period_are_one_observation_and_clear_on_legacy_update(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "summary.json"))
+    def pnl_event(at, **metrics):
+        event = _event("pnl_snapshot", created_at=at)
+        event["event_id"] = "pnl-" + at
+        event["metrics"] = {"pnl": 207.0, **metrics}
+        return event
+    source = pnl_event("2026-11-12T04:10:00Z", initial_cash=100000.0,
+                       pnl_period_start_at="2026-10-01T00:00:00Z")
+    summary = store.project_event(source)
+    assert summary["initial_cash"] == 100000.0
+    assert summary["pnl_period_start_at"] == "2026-10-01T00:00:00Z"
+    summary = store.project_event(pnl_event("2026-11-12T04:00:00Z", initial_cash=5.0))
+    assert summary["initial_cash"] == 100000.0
+    summary = store.project_event(_event("heartbeat", created_at="2026-11-12T04:11:00Z"))
+    assert summary["initial_cash"] == 100000.0 and summary["pnl_at"] == "2026-11-12T04:10:00Z"
+    summary = store.project_event(pnl_event("2026-11-12T04:12:00Z"))
+    assert "initial_cash" not in summary and "pnl_period_start_at" not in summary
+
+
+def _order_fact_event(kind, order_id, at, quantity=None, *, filled=None, runtime_id="return-runtime-0", binding_id="test-binding", fill_id=None):
+    event = _event(kind, created_at=at)
+    event.update(runtime_id=runtime_id, binding_id=binding_id, event_id=f"{kind}-{order_id}-{fill_id or at}")
+    event["metrics"] = {}
+    if quantity is not None:
+        event["metrics"]["order_quantity"] = quantity
+    if filled is not None:
+        event["metrics"]["fill_quantity"] = filled
+    event["metadata"].update(order_id=order_id)
+    if fill_id:
+        event["metadata"]["fill_id"] = fill_id
+    return event
+
+
+def test_period_fill_rate_quantity_weighting_replay_and_window(tmp_path):
+    from services.telemetry.runtime_summary import period_fill_rate
+    path = str(tmp_path / "orders.json")
+    events = [
+        _order_fact_event("order_submitted", "large", "2026-10-01T00:00:00Z", 100),
+        _order_fact_event("paper_fill_simulated", "large", "2026-10-02T00:00:00Z", filled=-25, fill_id="part-1"),
+        _order_fact_event("paper_fill_simulated", "large", "2026-10-03T00:00:00Z", filled=25, fill_id="part-2"),
+        _order_fact_event("order_rejection", "reject", "2026-11-01T00:00:00Z", 10),
+        _order_fact_event("order_rejection", "previous", "2026-09-30T23:59:59Z", 1000),
+        _order_fact_event("order_rejection", "next", "2027-01-01T00:00:00Z", 1000),
+        _order_fact_event("paper_order_simulated", "noop", "2026-11-02T00:00:00Z"),
+    ]
+    # Out-of-order deliveries, retries with fresh event IDs, and restarts.
+    for event in [*reversed(events), *events, {**events[1], "event_id": "fresh-retry-id"}]:
+        RuntimeSummaryProjectionStore(path=path).project_event(event)
+    summary = RuntimeSummaryProjectionStore(path=path).get("return-runtime-0")
+    window = {"start_at": "2026-10-01T08:00:00+08:00", "end_exclusive_at": "2027-01-01T00:00:00Z", "timezone": "UTC"}
+    result = period_fill_rate(["return-runtime-0"], [summary, summary], window)
+    assert result["fill_rate"] == 50 / 110
+    assert result["fill_rate_details"]["numerator"] == 50
+    assert result["fill_rate_details"]["denominator"] == 110
+    assert len(result["fill_rate_details"]["sources"]) == 2
+
+
+def test_fill_rate_reject_only_and_no_submissions_are_distinct(tmp_path):
+    path = str(tmp_path / "orders.json")
+    store = RuntimeSummaryProjectionStore(path=path)
+    noop = _order_fact_event("paper_order_simulated", "noop", "2026-11-02T00:00:00Z")
+    noop["metrics"]["fill_rate"] = 0.0
+    assert store.project_event(noop)["fill_rate"] is None
+    rejection = _order_fact_event("order_rejection", "reject", "2026-11-03T00:00:00Z", 10)
+    assert store.project_event(rejection)["fill_rate"] == 0.0
+    heartbeat = _order_fact_event("heartbeat", "hb", "2026-11-04T00:00:00Z")
+    heartbeat["metrics"]["fill_rate"] = 1.0
+    assert store.project_event(heartbeat)["fill_rate"] == 0.0
+
+
+def test_fill_rate_missing_or_conflicting_requests_fail_closed(tmp_path):
+    from services.telemetry.runtime_summary import period_fill_rate
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "orders.json"))
+    fill = _order_fact_event("paper_fill_simulated", "order", "2026-11-02T00:00:00Z", filled=4)
+    summary = store.project_event(fill)
+    assert summary["fill_rate"] is None
+    assert summary["fill_rate_details"]["reason"] == "missing_submitted_quantity"
+    submitted = _order_fact_event("order_submitted", "order", "2026-11-01T00:00:00Z", 10)
+    summary = store.project_event(submitted)
+    assert summary["fill_rate"] == 0.4
+    assert period_fill_rate(["return-runtime-0", "missing"], [summary])["fill_rate"] is None
+    for invalid in [None, 0, True, float("inf"), 3, 11]:
+        bad = {**submitted, "metrics": {"order_quantity": invalid}, "event_id": "conflicting"}
+        isolated = RuntimeSummaryProjectionStore(path=str(tmp_path / f"invalid-{invalid}.json"))
+        isolated.project_event(fill)
+        summary = isolated.project_event(bad)
+        # 11 is valid by itself, but conflicts with the original denominator.
+        if invalid == 11:
+            summary = isolated.project_event(submitted)
+        assert summary["fill_rate"] is None
+
+
+def test_fill_rate_isolated_by_tenant_and_binding_rollover(tmp_path):
+    path = str(tmp_path / "orders.json")
+    store = RuntimeSummaryProjectionStore(path=path)
+    event = _order_fact_event("order_rejection", "order", "2026-11-01T00:00:00Z", 10)
+    for tenant, qty in [("a", 10), ("b", 20)]:
+        store.project_event({**event, "tenant_id": tenant, "metrics": {"order_quantity": qty}})
+    for tenant, qty in [("a", 10), ("b", 20)]:
+        summary = RuntimeSummaryProjectionStore(path=path).get("return-runtime-0", tenant_id=tenant)
+        assert summary["fill_rate_details"]["denominator"] == qty
+    newer = _order_fact_event("order_rejection", "new", "2026-12-01T00:00:00Z", 3, binding_id="new-binding")
+    newer["tenant_id"] = "a"
+    newer["metadata"]["runtime_binding_effective_at"] = newer["created_at"]
+    summary = store.project_event(newer)
+    assert summary["fill_rate_details"]["denominator"] == 3
+    assert {fact["binding_id"] for fact in summary["order_execution_observations"]} == {"new-binding"}
+
+
+def test_fill_rate_malformed_sources_stay_unknown(tmp_path):
+    from copy import deepcopy
+    from services.telemetry.runtime_summary import period_fill_rate
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "malformed.json"))
+    summary = store.project_event(_order_fact_event("order_rejection", "order", "2026-11-01T00:00:00Z", 10))
+    assert summary["fill_rate_at"] == "2026-11-01T00:00:00Z"
+    for key, invalid in [("quantity", True), ("quantity", float("nan")), ("binding_id", []),
+                         ("runtime_id", "other"), ("order_id", {}), ("event_id", None),
+                         ("as_of", "2026-11-01T00:00:00")]:
+        record = deepcopy(summary)
+        record["order_execution_observations"][0][key] = invalid
+        assert period_fill_rate(["return-runtime-0"], [record])["fill_rate"] is None
+    for invalid in [None, 1, {}, "bad"]:
+        assert period_fill_rate(["return-runtime-0"], [{**summary, "order_execution_observations": invalid}])["fill_rate"] is None
+
+
+def test_fill_rate_submission_cohort_excludes_cross_quarter_fills(tmp_path):
+    from services.telemetry.runtime_summary import period_fill_rate
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "cross-quarter.json"))
+    for event in [
+        _order_fact_event("order_submitted", "old", "2026-09-30T23:59:59Z", 100),
+        _order_fact_event("paper_fill_simulated", "old", "2026-10-02T00:00:00Z", filled=100),
+        _order_fact_event("order_submitted", "new", "2026-12-31T23:59:59Z", 10),
+        _order_fact_event("paper_fill_simulated", "new", "2027-01-01T00:00:00Z", filled=10),
+    ]:
+        summary = store.project_event(event)
+    window = {"start_at": "2026-10-01T00:00:00Z", "end_exclusive_at": "2027-01-01T00:00:00Z"}
+    result = period_fill_rate(["return-runtime-0"], [summary], window)
+    assert result["fill_rate"] == 0.0
+    assert result["fill_rate_details"]["denominator"] == 10
+    assert all("paper_fill_simulated" not in event_id for event_id in result["fill_rate_details"]["sources"][0]["event_ids"])

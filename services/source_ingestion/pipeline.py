@@ -392,12 +392,56 @@ def persist_latest_market_snapshots(
             "updated_snapshot_count": 0,
             "snapshots": [],
         }
-    return latest_market_snapshot_store.append_normalized_records(
-        result.records,
+    # SD_INTRADAY_MINUTE_BARS §4/§6: tw_price_1m never enters the daily latest-close
+    # projection (a minute close would masquerade as the day's close). Permanent
+    # exclusion; K4's reconciled-only projection is a separate frequency-keyed writer.
+    records = [record for record in result.records if not is_minute_bar_record(record)]
+    excluded = len(result.records) - len(records)
+    if connector is not None and _connector_declares_minute_dataset(connector):
+        records, excluded = [], len(result.records)
+    projected = latest_market_snapshot_store.append_normalized_records(
+        records,
         ingest_run_id=result.run.ingest_run_id,
         observed_at=run_finished_at_iso(result.run),
         connector=connector,
     )
+    if excluded:
+        projected = {**projected, "excluded_minute_record_count": excluded}
+    return projected
+
+
+MINUTE_BAR_DATASET = "tw_price_1m"
+MINUTE_BAR_CONNECTOR_IDS = frozenset({"tw-finmind-kbar-1m"})
+MINUTE_BAR_SOURCE_DATASETS = frozenset({"TaiwanStockKBar"})
+
+
+def is_minute_bar_record(record: Any) -> bool:
+    """True for any record that belongs to the ``tw_price_1m`` dataset."""
+    if getattr(record, "connector_id", None) in MINUTE_BAR_CONNECTOR_IDS:
+        return True
+    metadata = getattr(record, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return False
+    normalized = metadata.get("normalized_row")
+    candidates = [
+        metadata.get("dataset"), metadata.get("normalized_target"), metadata.get("normalized_dataset"),
+        metadata.get("storage_dataset"),
+    ]
+    if isinstance(normalized, Mapping):
+        candidates.append(normalized.get("dataset"))
+    if MINUTE_BAR_DATASET in {str(c) for c in candidates if c}:
+        return True
+    return str(metadata.get("source_dataset") or "") in MINUTE_BAR_SOURCE_DATASETS
+
+
+def _connector_declares_minute_dataset(connector: Any) -> bool:
+    if getattr(connector, "connector_id", None) in MINUTE_BAR_CONNECTOR_IDS:
+        return True
+    metadata = getattr(connector, "metadata", None)
+    if isinstance(metadata, Mapping) and MINUTE_BAR_DATASET in {
+        str(metadata.get("normalized_dataset") or ""), str(metadata.get("dataset") or "")}:
+        return True
+    return MINUTE_BAR_DATASET in {str(d) for d in (getattr(connector, "datasets", None) or ())}
 
 
 def run_finished_at_iso(run: Any) -> str:

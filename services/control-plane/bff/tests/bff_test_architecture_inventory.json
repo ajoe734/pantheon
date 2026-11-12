@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 397,
+  "total_test_files": 398,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -99,7 +99,7 @@
   ],
   "layer_summary": {
     "adapter": 53,
-    "application": 190,
+    "application": 191,
     "composition": 19,
     "hosted": 12,
     "router": 121
@@ -110,7 +110,7 @@
     "hosted": 1
   },
   "disposition_summary": {
-    "DECOUPLED": 331,
+    "DECOUPLED": 332,
     "MIGRATED": 45,
     "ALLOWLIST": 21
   },
@@ -2066,7 +2066,7 @@
       "layer": "application",
       "imports_main": false,
       "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "rationale": "Registered persona HTTP routes exercise v2 return-on-capital scoring, unknown provenance, allocation adaptation and historical snapshot identity using owner-read adapters; no main composition globals"
     },
     {
       "file": "tests/test_bff_rebalance_proposals.py",
@@ -2526,6 +2526,13 @@
     {
       "file": "tests/test_persona_paper_registry_owner_contract.py",
       "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_persona_pool_publish_route.py",
+      "layer": "application",
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"

@@ -164,6 +164,38 @@ def test_ssh_startup_exit_is_not_replaced_by_generic_capture_failure(children, t
         assert row["failure_stage"] == "transport" and row["exit_code"] == 255
 
 
+@pytest.mark.parametrize("status,delay", [(255, "0"), (255, "0.3"), (3, "0.1")])
+def test_startup_epipe_is_attributed_to_known_child_exit(children, tmp_path, fake_ssh, status, delay):
+    # Large startup frame + closed stdin: the write hits EPIPE before/around exit.
+    fake_ssh.write_text(f"#!/bin/sh\nexec 0<&-\nsleep {delay}\nexit {status}\n")
+    process = launch_sender(children, tmp_path, fake_ssh, "true\n")
+    code, output, errors = finish(process)
+    assert code == status, (output, errors)
+    assert output == ""
+    if errors:  # empty when the child exit is observed by the normal poll path
+        row = json.loads(errors)
+        assert row["failure_stage"] == "transport" and row["exit_code"] == status
+
+
+@pytest.mark.parametrize("status", [255, 3])
+def test_startup_epipe_mid_write_preserves_child_exit(children, tmp_path, fake_ssh, status):
+    # Payload far exceeds the pipe buffer, so the write loop deterministically
+    # hits EPIPE while the child closes stdin and exits shortly afterwards.
+    fake_ssh.write_text(f"#!/bin/sh\nexec 0<&-\nsleep 0.2\nexit {status}\n")
+    process = launch_sender(children, tmp_path, fake_ssh, "# " + "x" * 300000 + "\ntrue\n")
+    code, output, errors = finish(process)
+    assert code == status, (output, errors)
+    assert output == ""
+
+
+def test_startup_epipe_without_child_exit_stays_generic_failure(children, tmp_path, fake_ssh):
+    # Stdin closed but the helper stays alive: no known exit status to preserve.
+    fake_ssh.write_text("#!/bin/sh\nexec 0<&-\nsleep 5\nexit 0\n")
+    process = launch_sender(children, tmp_path, fake_ssh, "true\n")
+    code, output, errors = finish(process)
+    assert code == 75, (output, errors)
+
+
 def test_sender_and_ssh_stay_in_existing_guard_pgid(children, tmp_path, fake_ssh):
     identity = tmp_path / "identity.json"
     process = launch_sender(children, tmp_path, fake_ssh, "sleep 0.4\n",
@@ -375,7 +407,8 @@ PY
     time.sleep(0.03)
     process.kill()
     process.wait(timeout=2)
-    wait_until(result.exists)
+    # open(..., "w") creates the file before the child writes it; wait for contents.
+    wait_until(lambda: result.exists() and result.read_text())
     assert result.read_text() == "EOF-before-mutation"
 
 

@@ -24,7 +24,10 @@ from .connectors.finmind_taiwan import (
     FinMindFetchError,
     FinMindLiveFetcher,
     FinMindTaiwanBrokerBulkBackfillAdapter,
+    FinMindTaiwanKBarAdapter,
     FinMindTaiwanBrokerDailyReportAdapter,
+    fetch_kbar as _finmind_fetch_kbar,
+    shared_kbar_budget as _finmind_shared_kbar_budget,
     FinMindTaiwanDatasetAdapter,
 )
 from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter
@@ -113,7 +116,13 @@ def execute_provider_owned_adapter(
         **_mapping(fetch.get("request")),
         **_mapping(job_parameters),
     }
-    max_records = int(fetch.get("max_records") or request.get("max_records") or 100)
+    if isinstance(adapter, FinMindTaiwanKBarAdapter):
+        # Honor both configured and caller caps without inheriting the generic
+        # 100-row default or hiding an explicit zero behind a truthy fallback.
+        limits = [int(value) for value in (fetch.get("max_records"), request.get("max_records")) if value is not None]
+        max_records = min(limits, default=adapter.max_records)
+    else:
+        max_records = int(fetch.get("max_records") or request.get("max_records") or 100)
     if max_records < 1:
         raise SourceEvidenceError("fetch.max_records must be > 0 for provider_owned_adapter")
     request[EFFECTIVE_MAX_RECORDS_KEY] = max_records
@@ -318,6 +327,67 @@ def _finmind_broker(
     return tuple(
         replace(record, metadata={**dict(record.metadata), "refresh_coverage": coverage})
         for record in records
+    )
+
+
+def _finmind_kbar(
+    adapter: FinMindTaiwanKBarAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    symbol = str(_require(request.get("symbol"), "symbol"))
+    session_date = str(_require(request.get("date") or request.get("run_date"), "date"))
+    payload = request.get("payload")
+    quota_meta = request.get("quota_meta")
+    fetched_at = request.get("fetched_at")
+    if payload is None:
+        # Production path: real budgeted FinMind fetch (shared 4,500/h, 402 stop).
+        fetcher = FinMindLiveFetcher(secret_ref_id=adapter.secret_ref_id)
+        if not fetcher.credential_status().get("available"):
+            raise FinMindCredentialError(f"missing credential at {adapter.secret_ref_id}")
+        result = _finmind_fetch_kbar(
+            fetcher, symbol, session_date, budget=_finmind_shared_kbar_budget()
+        )
+        if result.status != "ok":
+            raise SourceEvidenceError(
+                f"FinMind KBar fetch stopped ({result.status}) for {symbol}; "
+                f"resume after {result.resume_after_seconds}s; no retry in this window"
+            )
+        payload, quota_meta = result.payload, dict(result.quota_meta)
+        fetched_at = quota_meta.get("fetched_at")
+    records = adapter.records_from_kbar_payload(
+        payload,
+        symbol=symbol,
+        session_date=session_date,
+        fetched_at=_require(fetched_at, "fetched_at"),
+        reconciled_at=request.get("reconciled_at"),
+        provider_published_at=request.get("provider_published_at"),
+        quota_meta=quota_meta,
+        is_trading_day=_kbar_trading_day_gate(request),
+        trace_id=trace_id,
+    )
+    max_records = int(request.get(EFFECTIVE_MAX_RECORDS_KEY) or request.get("max_records") or adapter.max_records)
+    if len(records) > max_records:
+        raise SourceEvidenceError(
+            f"FinMind KBar {symbol} {session_date}: max_records cannot hold the complete symbol-day; "
+            f"required={len(records)} allowed={max_records}; no records emitted"
+        )
+    return records
+
+
+def _kbar_trading_day_gate(request: Mapping[str, Any]) -> Any:
+    """Caller calendar restrictions may add closures to the governed calendar."""
+    from services.execution.lean_runtime.instrument_candidates import is_trading_day
+
+    gate = request.get("is_trading_day")
+    closed = {
+        str(d)[:10]
+        for key in ("closed_dates", "holidays")
+        for d in (request.get(key) or ())
+    }
+    return lambda day: (
+        is_trading_day(day) and day.isoformat() not in closed
+        and (not callable(gate) or bool(gate(day)))
     )
 
 
@@ -1066,6 +1136,7 @@ PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
     "FinMindTaiwanDatasetAdapter": "FinMindTaiwanDatasetAdapter.records_from_data_payload",
     "FinMindTaiwanBrokerDailyReportAdapter": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
     "FinMindTaiwanBrokerBulkBackfillAdapter": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
+    "FinMindTaiwanKBarAdapter": "FinMindTaiwanKBarAdapter.records_from_kbar_payload",
     "YahooTaiwanBrokerTopAdapter": "YahooTaiwanBrokerTopAdapter.records_from_html",
     "YahooTaiwanRssAdapter": "YahooTaiwanRssAdapter.records_from_rss",
     "AnueTaiwanRssAdapter": "AnueTaiwanRssAdapter.records_from_rss",
@@ -1117,6 +1188,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         token="FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
         adapter_cls=FinMindTaiwanBrokerBulkBackfillAdapter,
         handler=_finmind_storage,
+        config_keys=("secret_ref_id",),
+    ),
+    "FinMindTaiwanKBarAdapter.records_from_kbar_payload": ProviderAdapterSpec(
+        token="FinMindTaiwanKBarAdapter.records_from_kbar_payload",
+        adapter_cls=FinMindTaiwanKBarAdapter,
+        handler=_finmind_kbar,
         config_keys=("secret_ref_id",),
     ),
     "YahooTaiwanBrokerTopAdapter.records_from_html": ProviderAdapterSpec(

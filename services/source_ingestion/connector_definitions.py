@@ -323,17 +323,21 @@ def calculate_source_allowed_actions(
 # no collector-tw-tpex-flows.
 # ==============================================================================
 
+# O-6 (counsel review of §6.4 is open): community sources stay at test volume, i.e. a small per-pull
+# record cap, until the operator records the review outcome.
+COLLECTOR_COMMUNITY_TEST_VOLUME = 50
+
 COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
     {"id": "collector-tw-threads", "provider": "Threads (web, collector host)", "type": "social", "class": "social",
-     "dataset": "collector_social_posts", "platform": "threads", "trust": 0.25, "cadence": 21600},
+     "dataset": "collector_social_posts", "platform": "threads", "trust": 0.25, "cadence": 21600, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-tw-instagram-popular", "provider": "Instagram popular tags (web, collector host)", "type": "social",
-     "class": "social", "dataset": "collector_social_posts", "platform": "instagram", "trust": 0.2, "cadence": 86400},
+     "class": "social", "dataset": "collector_social_posts", "platform": "instagram", "trust": 0.2, "cadence": 86400, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-tw-cmoney-forum", "provider": "CMoney forum (web, collector host)", "type": "social", "class": "social",
-     "dataset": "collector_social_posts", "platform": "cmoney", "trust": 0.3, "cadence": 21600},
+     "dataset": "collector_social_posts", "platform": "cmoney", "trust": 0.3, "cadence": 21600, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-tw-ptt-stock", "provider": "PTT Stock (web, collector host)", "type": "social", "class": "social",
-     "dataset": "collector_social_posts", "platform": "ptt", "trust": 0.3, "cadence": 21600},
+     "dataset": "collector_social_posts", "platform": "ptt", "trust": 0.3, "cadence": 21600, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-youtube-finance", "provider": "YouTube Data API (collector host)", "type": "social", "class": "social",
-     "dataset": "collector_social_posts", "platform": "youtube", "trust": 0.4, "cadence": 86400},
+     "dataset": "collector_social_posts", "platform": "youtube", "trust": 0.4, "cadence": 86400, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-news-rss", "provider": "RSSHub news feeds (collector host)", "type": "news", "class": "news",
      "dataset": "collector_news_articles", "publisher": "rss", "cadence": 3600},
     {"id": "collector-gdelt", "provider": "GDELT DOC 2.0 (collector host)", "type": "news", "class": "news",
@@ -347,9 +351,11 @@ COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
     {"id": "collector-tw-twse-t86", "provider": "TWSE T86 institutional flows (web, collector host)", "type": "market",
      "class": "taiwan_chip", "dataset": "tw_institutional_flow", "attribution": True, "cadence": 86400},
     {"id": "collector-tw-twse-price-history", "provider": "TWSE daily price history MI_INDEX (web, collector host)", "type": "market",
-     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 600,
+     "max_records": 1000},
     {"id": "collector-tw-tpex-price-history", "provider": "TPEx daily price history dailyQuotes (web, collector host)", "type": "market",
-     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 600,
+     "max_records": 1000},
     {"id": "collector-library-books", "provider": "Operator book library (collector host)", "type": "paper", "class": ("news", "book"),
      "dataset": "collector_book_sections", "cadence": 2678400},
 )
@@ -390,6 +396,7 @@ def _collector_definition(
     trust_score: float = 0.3,
     attribution_required: bool = False,
     cadence_seconds: int = 86400,
+    max_records: int = 500,
     extra_config: Mapping[str, Any] | None = None,
 ) -> ConnectorDefinition:
     host = collector_host()
@@ -413,7 +420,7 @@ def _collector_definition(
         },
         secret_fields=(),
         required_pit_fields=("event_time", "available_time", "ingest_time"),
-        default_limits={"max_records": 500, "max_bytes": 33554432, "timeout_seconds": 30, "max_rate_per_second": 1.0},
+        default_limits={"max_records": max_records, "max_bytes": 33554432, "timeout_seconds": 30, "max_rate_per_second": 1.0},
         allowed_host_patterns=(host,),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref=f"evidence://connector-definition/{definition_id}",
@@ -442,6 +449,7 @@ def _collector_definition(
 
 # Governed TWSE/TPEx OpenAPI fundamentals (feature catalogue datasets).
 GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS: tuple[str, ...] = (
+    "tw_industry_classification",
     "tw_monthly_revenue",
     "tw_financial_statement",
     "tw_valuation_bwibbu",
@@ -546,6 +554,37 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         allowed_host_patterns=("api.finmindtrade.com",),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/tw-finmind-broker-daily-report",
+    ),
+    ConnectorDefinition(
+        definition_id="tw-finmind-kbar-1m",
+        adapter_token="FinMindTaiwanKBarAdapter.records_from_kbar_payload",
+        adapter_version="1.0.0",
+        provider="FinMind",
+        source_kinds=("data_source",),
+        source_types=("market",),
+        source_classes=("market_intraday",),
+        datasets=("tw_price_1m",),
+        auth_modes=("api_key",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("time_watermark",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "secret_ref_id": {"type": "string"},
+            },
+        },
+        secret_fields=("secret_ref_id",),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 400, "max_bytes": 2097152, "timeout_seconds": 30, "max_rate_per_second": 1.0},
+        allowed_host_patterns=("api.finmindtrade.com",),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://connector-definition/tw-finmind-kbar-1m",
+        metadata={
+            "normalized_dataset": "tw_price_1m",
+            "storage_targets": ["normalized/tw_price_1m"],
+            "daily_truth_dataset": "tw_price_daily",
+            "hourly_self_limit": 4500,
+        },
     ),
     ConnectorDefinition(
         definition_id="tw-finmind-broker-bulk-parquet",
@@ -1114,6 +1153,7 @@ _CANONICAL_DEFINITIONS = _CANONICAL_DEFINITIONS + tuple(
         trust_score=spec.get("trust", 0.3),
         attribution_required=spec.get("attribution", False),
         cadence_seconds=spec["cadence"],
+        max_records=spec.get("max_records", 500),
         collector_source_id=spec["id"],
     )
     for spec in COLLECTOR_SOURCE_SPECS

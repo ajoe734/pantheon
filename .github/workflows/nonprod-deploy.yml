@@ -1367,6 +1367,9 @@ jobs:
           # connector and exact reviewed hosts. Callers cannot inject profiles,
           # wildcard domains, credentials, query strings, or arbitrary egress.
           PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'root,source-ingest-scheduler' || 'root' }}
+          # Existing opt-in flag; vars.* is not shell env, so map it explicitly.
+          # Only the literal 'true' selects collector_steady_pull; unset/other keeps reconcile_only.
+          SOURCE_INGEST_STEADY_COLLECTOR_PULL: ${{ vars.SOURCE_INGEST_STEADY_COLLECTOR_PULL == 'true' && 'true' || 'false' }}
           PANTHEON_EXTERNAL_EGRESS: ${{ (env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' || vars.PANTHEON_COLLECTOR_HOST != '') && 'allowlist' || 'deny' }}
           PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'openapi.twse.com.tw,www.tpex.org.tw' || vars.PANTHEON_COLLECTOR_HOST }}
           SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market
@@ -3566,6 +3569,82 @@ jobs:
             fail_evidence "retirement produced no parseable evidence"
           fi
           echo "- dev paper release case retirement (${RELEASE_OUTCOME}): \`$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status"))' "${evidence}")\`" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Checkout exact FE revision for original read-only QA CLI
+        id: original_qa_frontend
+        # Supplementary measurement after Root acceptance; never a release gate.
+        if: ${{ always() && steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && !inputs.run_exact_artifact_roundtrip }}
+        continue-on-error: true
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/execute-plans
+          ref: ${{ needs.deploy-dev.outputs.frontend_sha }}
+          path: .original-qa-frontend
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare original QA frontend dependencies (no credentials)
+        id: original_qa_prepare
+        # Pinned lockfile install + browser, in an isolated step that never sees
+        # any dev-login secret or SSH key.  Failure is surfaced by the caller as
+        # an explicit cli_not_ready unproven outcome, never as PASS.
+        if: ${{ always() && steps.original_qa_frontend.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        working-directory: .original-qa-frontend
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
+
+      - name: Original paired four-role read-only QA (supplementary, non-gating)
+        id: original_paired_readonly_qa
+        if: ${{ always() && steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && !inputs.run_exact_artifact_roundtrip }}
+        continue-on-error: true
+        timeout-minutes: 75
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID || 'pantheon-dev-admin-test' }}
+          DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET }}
+          QA_TENANT_ID: ${{ vars.DEV_ORIGINAL_QA_TENANT_ID }}
+          QA_PERSONA_ID: ${{ vars.DEV_ORIGINAL_QA_PERSONA_ID }}
+          QA_EXPECTED_ROLES_JSON: ${{ vars.DEV_ORIGINAL_QA_EXPECTED_ROLES_JSON }}
+          QA_BASELINE_REMOTE_PATH: ${{ vars.DEV_ORIGINAL_QA_BASELINE_PATH }}
+          QA_BASELINE_SHA256: ${{ vars.DEV_ORIGINAL_QA_BASELINE_SHA256 }}
+          QA_PAIR_ID: ${{ steps.frontend_release.outputs.pair_id }}
+          QA_BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          QA_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.frontend_sha }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          # Raw outcome (pass/failed/unproven) lives in the evidence file; this
+          # step is continue-on-error and is not read by the Root outcome gate.
+          evidence="${RELEASE_EVIDENCE_DIR}/original-paired-readonly-qa.json"
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          transport="${GITHUB_WORKSPACE}/.target/scripts/dev_vm_ssh.sh"
+          "${transport}" prepare "${credentials_dir}" >/dev/null 2>&1 || true
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key" DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          out_dir="${RUNNER_TEMP}/original-qa-private-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${out_dir}"
+          python3 "${GITHUB_WORKSPACE}/.target/scripts/run_dev_paired_readonly_qa.py" \
+            --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
+            --fe-sha "${QA_FRONTEND_SHA}" --bff-sha "${QA_BACKEND_SHA}" \
+            --root-run-id "${GITHUB_RUN_ID}" --run-attempt "${GITHUB_RUN_ATTEMPT}" --pair-id "${QA_PAIR_ID}" \
+            --tenant-id "${QA_TENANT_ID}" --persona-id "${QA_PERSONA_ID}" \
+            --expected-roles-json "${QA_EXPECTED_ROLES_JSON}" \
+            --frontend-checkout "${GITHUB_WORKSPACE}/.original-qa-frontend" \
+            --baseline-remote-path "${QA_BASELINE_REMOTE_PATH}" --baseline-sha256 "${QA_BASELINE_SHA256}" \
+            --out-dir "${out_dir}" --evidence-out "${evidence}"
+          qa_status=$?
+          echo "- original paired read-only QA (supplementary, non-gating): exit ${qa_status}; raw outcome in original-paired-readonly-qa.json" >> "${GITHUB_STEP_SUMMARY}"
+          exit "${qa_status}"
 
       - name: Upload accepted or compensated release evidence
         id: release_evidence_upload

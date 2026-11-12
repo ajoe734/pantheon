@@ -1647,6 +1647,8 @@ class PaperExecutionAlgorithm:
             "side": side,
             "instrument_id": resolved_inst_id,
             "kind": resolved_kind,
+            "requested_quantity": quantity,
+            "order_submitted_at": _iso_now(),
         }
         if resolved_kind == "stock_future":
             base_metadata["multiplier"] = resolved_multiplier
@@ -2767,7 +2769,10 @@ class PaperExecutionAlgorithm:
             next_quantity=target_quantity,
             next_cash=next_cash,
         )
-        self._publish("paper_fill_simulated", symbol, delta, "set_holdings")
+        self._publish(
+            "paper_fill_simulated", symbol, delta, "set_holdings",
+            metadata={"requested_quantity": abs(delta)},
+        )
 
     def MarketOrder(self, symbol: str, quantity: float) -> None:  # noqa: N802
         security = self._security(symbol)
@@ -5130,6 +5135,18 @@ class PaperRuntimeService:
                 Path("/data/runtime/lifecycle-outbox")
                 / f"{lifecycle_scope}.json"
             )
+        from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
+
+        member_book_path = str(resolved_lifecycle_path) + ".member-books.json"
+        # Deployment replaces runtime IDs when publishing an envelope. Keep
+        # immutable member histories under the persona identity across replacements.
+        if not configured_lifecycle_path and not performance_state_path and self._identity.persona_id:
+            import hashlib
+            member_scope = hashlib.sha256(json.dumps([
+                os.getenv("PANTHEON_TENANT_ID", "default"), self._identity.persona_id
+            ]).encode()).hexdigest()
+            member_book_path = str(Path(resolved_lifecycle_path).parent / "member-books" / (member_scope + ".json"))
+        self._member_virtual_books = MemberVirtualBooks(member_book_path)
         self._lifecycle_outbox = LifecycleTelemetryOutbox(resolved_lifecycle_path)
         try:
             self._lifecycle_chains = self._lifecycle_outbox.chains()
@@ -5566,6 +5583,7 @@ class PaperRuntimeService:
                     "recent_order_events": list(self._recent_order_events),
                     "futures_mark_diagnostic": self._algo.futures_mark_diagnostic(),
                     "performance_telemetry": dict(self._performance_telemetry),
+                    "member_virtual_books": self._member_book_snapshot(),
                     "last_error": self._last_error,
                 },
                 "stub_mode": False,
@@ -5920,9 +5938,48 @@ class PaperRuntimeService:
                 )
         return delivered
 
+    def _member_book_snapshot(self, **scope) -> list[dict[str, Any]]:
+        """Member virtual books with each member's own approved baseline and comparison."""
+        from services.evolution.approved_baselines import (
+            http_registry_entry_reader, resolve_member_baseline,
+        )
+
+        # Registry owner read by default; tests may inject a reader.
+        reader = getattr(self, "_member_entry_reader", None) or http_registry_entry_reader
+        persona_id = getattr(self._identity, "persona_id", None) or ""
+        tenant_id = os.getenv("PANTHEON_TENANT_ID", "default").strip() or "default"
+
+        def resolve(artifact_id, checksum, symbols):
+            try:
+                entry = reader(artifact_id, tenant_id) if callable(reader) else None
+            except Exception:  # noqa: BLE001 - an unreadable owner record is a missing baseline
+                log.exception("member baseline registry read failed for %s", artifact_id)
+                entry = None
+            return resolve_member_baseline(
+                tenant_id=tenant_id, persona_id=persona_id, artifact_ref=artifact_id,
+                checksum=checksum, entry=entry, universe=symbols,
+            )
+
+        return self._member_virtual_books.snapshot(baseline_resolver=resolve, **scope)
+
     def _handle_order_event(self, event: OrderEvent, *, replay: bool = False) -> None:
         if event.event_type == "signal_generation":
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
+            member_views = signal_metadata.get("portfolio_member_views")
+            if isinstance(member_views, dict) and member_views:
+                mark = signal_metadata.get("market_data") or {}
+                self._member_virtual_books.observe(
+                    binding_id=signal_metadata["binding_id"],
+                    envelope_checksum=signal_metadata["artifact_checksum"],
+                    symbol=event.symbol, event_time=mark.get("event_time"),
+                    price=mark.get("close"), source_ref=mark.get("source_ref"),
+                    members=member_views,
+                    bar_frequency=signal_metadata["portfolio_bar_frequency"],
+                )
+                signal_metadata["member_virtual_books"] = self._member_book_snapshot(
+                    binding_id=signal_metadata["binding_id"],
+                    envelope_checksum=signal_metadata["artifact_checksum"],
+                )
             signal_metadata.setdefault("symbol", event.symbol)
             signal_metadata.setdefault("order_type", event.metadata.get("order_type", "MARKET"))
             occurred_at = str(event.metadata.get("timestamp") or event.created_at)
@@ -6000,6 +6057,14 @@ class PaperRuntimeService:
         if event.broker_submission_status:
             telemetry_metadata["broker_submission_status"] = event.broker_submission_status
         telemetry_metadata.update(event.metadata)
+        if event.event_type in {"paper_fill_simulated", "order_rejection"}:
+            # Keep the requested amount even for partial fills and rejections.
+            # This identity travels with the durable lifecycle/fill outbox;
+            # replay must never turn one submitted order into two orders.
+            telemetry_metadata.setdefault(
+                "order_id", event.metadata.get("broker_order_id") or f"paper-order-{event.event_id}"
+            )
+            telemetry_metadata.setdefault("order_submitted_at", event.created_at)
         if event.event_type == "bracket_order_logged":
             metrics: dict[str, Any] = {
                 "action": (
@@ -6013,7 +6078,6 @@ class PaperRuntimeService:
             metrics = {
                 "rejected_order_count": 1,
                 "fill_quantity": 0.0,
-                "fill_rate": 0.0,
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
@@ -6044,7 +6108,6 @@ class PaperRuntimeService:
             metrics = {
                 "noop_count": 1,
                 "fill_quantity": 0.0,
-                "fill_rate": 0.0,
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
@@ -6064,6 +6127,20 @@ class PaperRuntimeService:
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
+        if event.event_type in {"paper_fill_simulated", "order_rejection"}:
+            requested = event.metadata.get("requested_quantity")
+            if requested is None:
+                requested = event.metadata.get("computed_quantity")
+            if requested is None and event.event_type == "paper_fill_simulated":
+                requested = abs(event.quantity)
+            try:
+                if isinstance(requested, bool):
+                    raise ValueError("boolean submitted order quantity")
+                requested = _finite_float(requested, field="submitted order quantity")
+                requested = abs(requested) if requested != 0 else None
+            except ValueError:
+                requested = None
+            metrics["order_quantity"] = requested
         lifecycle_payload = None
         canonical_lifecycle = (
             event.event_type in _CANONICAL_LIFECYCLE_EVENT_TYPES
@@ -6135,7 +6212,7 @@ class PaperRuntimeService:
                 "order_submitted",
                 {
                     "action": "paper_order_submitted",
-                    "order_quantity": abs(event.quantity),
+                    "order_quantity": metrics["order_quantity"],
                     "order_price": event.fill_price,
                 },
                 order_metadata,
@@ -6273,6 +6350,7 @@ class PaperRuntimeService:
             "sim_fill_flag": False,
             "capital_scale_pct": 0,
             "performance_telemetry": dict(self._performance_telemetry),
+            "member_virtual_books": self._member_book_snapshot(),
             "runtime_heartbeat": {"connectivity_status": "connected" if self._last_error is None else "degraded", "broker_status": "not_applicable", **lags},
             **lags,
         }
@@ -6440,6 +6518,7 @@ class PaperRuntimeService:
                 "pnl": sample.pnl,
                 **common_metrics,
                 "pnl_as_of": sample.as_of,
+                "pnl_period_start_at": ledger.get("ledger_started_at"),
             },
             pnl_metadata,
             event_id=str(uuid.uuid4()),
@@ -6611,12 +6690,10 @@ class PaperRuntimeService:
 
     def _performance_snapshot_metrics(self) -> dict[str, Any]:
         processed = int(self._processed_signal_count)
-        fill_rate = (float(self._fill_event_count) / processed) if processed > 0 else 0.0
         return {
             "processed_signal_count": processed,
             "execution_event_count": int(self._execution_event_count),
             "fill_event_count": int(self._fill_event_count),
-            "fill_rate": round(fill_rate, 6),
             "open_position_count": len(self._algo.positions()),
             "open_bracket_order_count": len(self._algo.open_bracket_orders()),
             "avg_slippage_bps": 0.0,

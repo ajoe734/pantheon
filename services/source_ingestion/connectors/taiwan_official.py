@@ -227,6 +227,7 @@ _DATASET_SCHEMA_HASHES = {
     "tw_monthly_revenue": "tw_monthly_revenue.v1",
     "tw_financial_statement": "tw_financial_statement.v1",
     "tw_valuation_bwibbu": "tw_valuation_bwibbu.v1",
+    "tw_industry_classification": "tw_industry_classification.v1",
 }
 
 
@@ -847,7 +848,7 @@ def _endpoint_for(dataset: str, venue: str) -> Mapping[str, Any]:
             "venue": canonical,
             "source_dataset": fundamental[canonical]["source_dataset"],
             "endpoint": fundamental[canonical]["endpoint"],
-            "cadence": "monthly_or_quarterly_filing" if dataset != "tw_valuation_bwibbu" else "daily_after_close",
+            "cadence": "daily_after_close" if dataset in {"tw_valuation_bwibbu", "tw_industry_classification"} else "monthly_or_quarterly_filing",
             "tier_scope": [],
         }
     for endpoint in TAIWAN_OFFICIAL_ENDPOINTS:
@@ -1663,6 +1664,8 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         canonical = _canonical_venue(venue)
         if dataset in TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS:
             common = {"source_dataset": source_dataset, "api_endpoint": api_endpoint}
+            if dataset == "tw_industry_classification":
+                return normalize_industry_classification_rows(canonical, payload, **common)
             if dataset == "tw_monthly_revenue":
                 return normalize_monthly_revenue_rows(canonical, payload, **common)
             if dataset == "tw_valuation_bwibbu":
@@ -3170,6 +3173,10 @@ _TWSE_OPENDATA_BASE_URL = f"{TWSE_OPENAPI_BASE_URL}/opendata"
 _TWSE_EXCHANGE_REPORT_BASE_URL = f"{TWSE_OPENAPI_BASE_URL}/exchangeReport"
 
 TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS: Mapping[str, Mapping[str, Mapping[str, str]]] = {
+    "tw_industry_classification": {
+        "TWSE": {"source_dataset": "t187ap03_L", "endpoint": f"{_TWSE_OPENDATA_BASE_URL}/t187ap03_L"},
+        "TPEx": {"source_dataset": "mopsfin_t187ap03_O", "endpoint": f"{TPEX_OPENAPI_BASE_URL}/mopsfin_t187ap03_O"},
+    },
     "tw_monthly_revenue": {
         "TWSE": {"source_dataset": "t187ap05_L", "endpoint": f"{_TWSE_OPENDATA_BASE_URL}/t187ap05_L"},
         "TPEx": {"source_dataset": "mopsfin_t187ap05_O", "endpoint": f"{TPEX_OPENAPI_BASE_URL}/mopsfin_t187ap05_O"},
@@ -3284,6 +3291,46 @@ def _version_available_time(
         except Exception:
             known = None
     return iso_utc(max(floor, known) if known else floor)
+
+
+def normalize_industry_classification_rows(
+    venue: str,
+    payload: Any,
+    *,
+    source_dataset: str,
+    api_endpoint: str,
+    ingest_time: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Observe company profiles prospectively; source report/listing dates are not history.
+
+    Verified official fields: TWSE 產業別 and TPEx SecuritiesIndustryCode.
+    The exchange code is a numeric category (01 stays in industry_code_raw).
+    Missing/invalid codes remain missing, never a shared 'unknown' sector.
+    """
+    from ..feature_catalogue import parse_time
+
+    canonical = _canonical_venue(venue)
+    # The shared legacy clock truncates microseconds. An acquired category must
+    # never become visible even a fraction of a second before it was observed.
+    observed = parse_time(ingest_time or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
+    symbol_key, industry_key = (
+        ("公司代號", "產業別") if canonical == "TWSE"
+        else ("SecuritiesCompanyCode", "SecuritiesIndustryCode")
+    )
+    out = []
+    for row in _rows_from_payload(payload):
+        symbol, code = _text(row.get(symbol_key)), _text(row.get(industry_key))
+        if not re.fullmatch(r"\d{4,6}", symbol) or not re.fullmatch(r"\d{2}", code) or int(code) == 0:
+            continue
+        item = _fundamental_base(
+            "tw_industry_classification", canonical, symbol, row,
+            source_dataset=source_dataset, api_endpoint=api_endpoint,
+            event_time=observed[:10], lag_days=0, available_time=observed, ingest_time=observed,
+        )
+        item.update(industry_code=int(code), industry_code_raw=code, observed_at=observed,
+                    source_report_date=_roc_date_to_iso(_first(row, "出表日期", "Date")))
+        out.append(item)
+    return tuple(out)
 
 
 def normalize_monthly_revenue_rows(
@@ -3486,6 +3533,8 @@ def fetch_fundamental_rows(
         "ingest_time": ingest_time,
     }
     payload = _get(spec["endpoint"])
+    if dataset == "tw_industry_classification":
+        return normalize_industry_classification_rows(canonical, payload, **common)
     if dataset == "tw_monthly_revenue":
         return normalize_monthly_revenue_rows(canonical, payload, **common)
     if dataset == "tw_valuation_bwibbu":

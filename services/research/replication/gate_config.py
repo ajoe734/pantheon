@@ -30,6 +30,18 @@ class GateConfig:
     DEFAULT_IN_SAMPLE_RATIO = 0.70
     DEFAULT_OUT_OF_SAMPLE_RATIO = 0.30
     DEFAULT_WALK_FORWARD_FOLDS = 3
+    # SD_STRATEGY_SCREEN_ENTRY_EXIT §4: a screen is admitted only when the screened
+    # version beats the same entry/exit rules over the whole boundary out of sample
+    # after costs by strictly more than this Sharpe margin.
+    DEFAULT_MIN_SCREEN_OOS_SHARPE_IMPROVEMENT = 0.0
+    # SD_DISCOVERY_DEMAND §3.2: fixed in-sample mechanism tests of card predictions.
+    DEFAULT_MECHANISM_ALPHA = 0.05  # Holm-corrected within the card
+    DEFAULT_MECHANISM_MIN_EVENTS = 5
+    DEFAULT_MECHANISM_MIN_OBSERVATIONS = 30
+    DEFAULT_MECHANISM_MIN_OBSERVATIONS_PER_SYMBOL = 15
+    DEFAULT_MECHANISM_MIN_SYMBOLS = 5
+    DEFAULT_MECHANISM_REGIME_MA_SESSIONS = 200
+    DEFAULT_MECHANISM_BENCHMARK_SYMBOL = "0050"
 
     def __init__(
         self,
@@ -43,6 +55,14 @@ class GateConfig:
         in_sample_ratio: float = DEFAULT_IN_SAMPLE_RATIO,
         out_of_sample_ratio: float = DEFAULT_OUT_OF_SAMPLE_RATIO,
         walk_forward_folds: int = DEFAULT_WALK_FORWARD_FOLDS,
+        min_screen_oos_sharpe_improvement: float = DEFAULT_MIN_SCREEN_OOS_SHARPE_IMPROVEMENT,
+        mechanism_alpha: float = DEFAULT_MECHANISM_ALPHA,
+        mechanism_min_events: int = DEFAULT_MECHANISM_MIN_EVENTS,
+        mechanism_min_observations: int = DEFAULT_MECHANISM_MIN_OBSERVATIONS,
+        mechanism_min_observations_per_symbol: int = DEFAULT_MECHANISM_MIN_OBSERVATIONS_PER_SYMBOL,
+        mechanism_min_symbols: int = DEFAULT_MECHANISM_MIN_SYMBOLS,
+        mechanism_regime_ma_sessions: int = DEFAULT_MECHANISM_REGIME_MA_SESSIONS,
+        mechanism_benchmark_symbol: str = DEFAULT_MECHANISM_BENCHMARK_SYMBOL,
     ):
         """Initialize gate with standard admission criteria."""
         self.base_oos_sharpe_threshold = float(base_oos_sharpe_threshold)
@@ -57,6 +77,14 @@ class GateConfig:
         self.in_sample_ratio = float(in_sample_ratio)
         self.out_of_sample_ratio = float(out_of_sample_ratio)
         self.walk_forward_folds = int(walk_forward_folds)
+        self.min_screen_oos_sharpe_improvement = float(min_screen_oos_sharpe_improvement)
+        self.mechanism_alpha = float(mechanism_alpha)
+        self.mechanism_min_events = int(mechanism_min_events)
+        self.mechanism_min_observations = int(mechanism_min_observations)
+        self.mechanism_min_observations_per_symbol = int(mechanism_min_observations_per_symbol)
+        self.mechanism_min_symbols = int(mechanism_min_symbols)
+        self.mechanism_regime_ma_sessions = int(mechanism_regime_ma_sessions)
+        self.mechanism_benchmark_symbol = str(mechanism_benchmark_symbol)
         self.required_criteria = self._build_required_criteria()
         self.optional_criteria = self._build_optional_criteria()
 

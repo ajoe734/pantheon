@@ -667,6 +667,55 @@ def previous_trading_day(decision_day: date, holidays: Collection[date] = ()) ->
     return day
 
 
+def next_trading_day(decision_day: date, holidays: Collection[date] = ()) -> date:
+    """First governed trading day strictly after ``decision_day`` (D -> D+1)."""
+    day = decision_day + timedelta(days=1)
+    while not _is_trading_day(day, holidays):
+        day += timedelta(days=1)
+    return day
+
+
+TAIPEI_TZ = timezone(timedelta(hours=8))
+SESSION_OPEN_LOCAL = (9, 0)  # regular session open, Asia/Taipei (SD_INTRADAY_MINUTE_BARS 6.2)
+SESSION_CLOSE_LOCAL = (13, 30)  # regular session close
+SUBMISSION_CUTOFF_LOCAL = (8, 55)  # next-session decision window closes (SD 6.4 step 3)
+
+
+def session_bounds(day: str | date, holidays: Collection[date] = ()) -> tuple[datetime, datetime]:
+    """``(open, close)`` of the regular session of a governed trading day, Asia/Taipei.
+
+    A non-trading day has no session and raises ``ValueError``; the calendar is the
+    existing governed one (``is_trading_day``), not a new calendar.
+    """
+    resolved = _as_date(day)
+    if not _is_trading_day(resolved, holidays):
+        raise ValueError(f"{resolved.isoformat()} is not a Taiwan trading day")
+
+    def at(hm: tuple[int, int]) -> datetime:
+        return datetime(resolved.year, resolved.month, resolved.day, hm[0], hm[1], tzinfo=TAIPEI_TZ)
+
+    return at(SESSION_OPEN_LOCAL), at(SESSION_CLOSE_LOCAL)
+
+
+def submission_cutoff(day: str | date) -> datetime:
+    """08:55 Asia/Taipei of ``day``: the latest instant a next-session decision may be submitted."""
+    resolved = _as_date(day)
+    return datetime(
+        resolved.year, resolved.month, resolved.day, *SUBMISSION_CUTOFF_LOCAL, tzinfo=TAIPEI_TZ
+    )
+
+
+def in_regular_session(moment: datetime, holidays: Collection[date] = ()) -> bool:
+    """True when ``moment`` falls inside a trading day's 09:00-13:30 regular session."""
+    if moment.tzinfo is None:
+        raise ValueError("moment must be timezone-aware")
+    local = moment.astimezone(TAIPEI_TZ)
+    if not _is_trading_day(local.date(), holidays):
+        return False
+    opened, closed = session_bounds(local.date(), holidays)
+    return opened <= local < closed
+
+
 def last_trading_day(contract_month: str, holidays: Collection[date] = ()) -> date:
     """Third Wednesday of the month; a non-trading day moves to the next trading day.
 

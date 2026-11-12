@@ -1126,3 +1126,48 @@ Failed receipts (no owner write happens):
 | `tenant_required` | 403 | the authenticated caller has no tenant claim |
 
 Dry run (`dryRun: true`, the existing command-admission mechanism) reads the provisioning record only and never calls the coordinator. The response is the usual dry-run submission with `meta.plan`: `persona_id`, `state`, `release_case`, `retirement_status`, `planned_steps` (steps not yet confirmed, in coordinator order) and `confirmed_steps`. A missing ledger or a release case is refused with the same codes as above.
+
+### PM-12 PnL formula version (2026-11-12)
+
+`GET /bff/management/quarterly-ranking`, its formula/drilldown reads, and persona
+league reads publish `pm12-return-on-capital-v2`. PnL is scored as
+`clamp(50 + 100 * (pnl / capital), 0, 100)`; the existing four component weights
+remain unchanged. Formula metadata includes the previous `pm12-default-v1`
+version and governance reference `pm12-quarterly-ranking-formula-v2-operator-20261112`.
+The operator decision is recorded in
+`docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/operator-decision.md`.
+
+Each item's `metrics` records `pnl_capital` (positive capital denominator),
+`pnl_unit=ledger_currency`, `pnl_return` and `pnl_return_unit=fraction`,
+`pnl_period` (`start_at`, `as_of`, `quarter`), `pnl_return_status`,
+`pnl_return_reason`, and `pnl_sources` (runtime, capital source, amount, optional
+currency and event ID). The denominator is the same PnL observation's
+`initial_cash`, never a persona budget or default. Projection carries capital
+and `pnl_period_start_at` with PnL atomically, clears them on binding rollover
+or a newer PnL without provenance, and retains them across unrelated heartbeats.
+
+The quarterly PnL period must lie inside `quarter_window`. A ledger opened
+within the quarter supplies a since-inception quarter-to-date return; older
+ledgers remain unknown until owner-backed quarter opening equity is available.
+Repeated cumulative telemetry observations are not added together for return
+scoring. Multiple runtimes require complete observations with matching period
+and currency; an incomplete or incompatible cohort stays unknown. Other score
+components retain their existing latest-telemetry semantics.
+
+When PnL/capital/period is unknown, `components.pnl_score`, `overall_score`,
+`score`, `rank`, and `allocation_policy_input` are null, `tier=unknown`,
+`eligible=false`, and `exclusion_codes` includes `unknown_pnl_return`. Drilldown
+keeps unknown scores/contributions null. Zero PnL with valid capital scores 50.
+Historical v1 snapshots keep their stored values and digest; the allocation
+input adapter and durable snapshot reader accept both formula versions and
+reject unsupported versions.
+
+## Publish a persona strategy-pool version (POOL-ENVELOPE-PUBLISH-20261112)
+
+`POST /bff/personas/{persona_id}/strategy-pool/publish` — operator role. Body (optional): `{"pool_version": <int>, "stage": "paper"}`; omitted `pool_version` publishes the current pool version. Any other field is `422`.
+
+Each pool version becomes one new immutable envelope artifact in the existing Registry: it pins every non-removed member's version, checksum and weight plus `pool_version`/`pool_digest`, with lineage to the previous envelope. Approval (automated, paper scope), the DeploymentPlan and the runtime binding move all use the existing Registry / Governance / Deployment owner paths; the BFF never calls RuntimeManager. Deployment moves the binding with the existing runtime-manager `replace` route, so the persona keeps one capital pool, one runtime, and its positions and ledger.
+
+Responses: `200 {data: {status: "published"|"dispatched", pool_version, envelope_artifact_id, envelope_version, approval_decision_id, deployment_plan_id, deployment_saga_id, source_binding_id, runtime_id, capital_pool_id, members[], idempotent_replay}}`. `published` means a separate RuntimeBinding readback shows the new envelope live; `dispatched` means Deployment admitted it but the binding has not moved yet (re-publish to reconcile). Publishing the same pool version again is idempotent.
+
+Fail-closed `409` (reason recorded in the publish history, previous envelope keeps running): member not approved / checksum mismatch / other-tenant artifact, pool digest differs from an already published snapshot, pool version not newer than the running envelope, not exactly one live RuntimeBinding, owner-chain readback mismatch. `403`: any stage other than `paper`. `404`: no pool. `503`: owner unavailable.
