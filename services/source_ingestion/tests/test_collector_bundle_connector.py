@@ -541,3 +541,165 @@ def test_public_cap_raw_only_reaches_every_item_and_bundle_across_fresh_adapters
     _, raw = _public_sweep(config, {}, tmp_path, monkeypatch, files, rounds=12)
     assert len(raw) == 4
     assert len(list((tmp_path / "raw_store" / "raw").rglob("manifest.json"))) == 2
+
+
+# COLLECTOR-HOSTED-ADMISSION-20261112: two-year price history is point-in-time per row ----------------
+def _market_files(source_id, rows):
+    files, entry, _ = make_bundle(source_id=source_id, attribution="TWSE")
+    base = f"bundles/{source_id}/{entry['date']}/{entry['run_id']}"
+    items = [
+        {"id": item_id, "url": f"https://example.test/{item_id}", "fetched_at": FETCHED, **row}
+        for item_id, row in zip(("a", "b"), rows)
+    ]
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in items).encode()
+    return files, entry
+
+
+_TWSE_ROW = {"symbol": "2330", "security_name": "台積電", "exchange": "TWSE", "dataset": "tw_price_daily",
+             "open": 940.0, "high": 955.0, "low": 938.0, "close": 950.0, "volume_shares": 20000000, "transactions": 12000}
+
+
+@pytest.mark.parametrize(
+    "source_id,dataset,expected_time",
+    [
+        ("collector-tw-twse-price-history", "tw_price_daily", "T06:30:00Z"),
+        ("collector-tw-tpex-price-history", "tw_price_daily", "T06:30:00Z"),
+        ("collector-tw-twse-t86", "tw_institutional_flow", "T08:30:00Z"),
+    ],
+)
+def test_backfilled_market_rows_use_their_own_trade_date_as_event_time(tmp_path, source_id, dataset, expected_time):
+    rows = [{**_TWSE_ROW, "dataset": dataset, "trade_date": "2024-11-12"},
+            {**_TWSE_ROW, "dataset": dataset, "trade_date": "2025-03-04"}]
+    files, entry = _market_files(source_id, rows)
+    adapter = adapter_for(files, [entry], tmp_path, source_id=source_id, source_type="market", platform=None,
+                          attribution_required=True, dataset=dataset)
+    records = adapter.pull().records
+    # Fetched in 2026, but each row is event-dated by its own trade date, and available when fetched.
+    assert [r.metadata["event_time"] for r in records] == ["2024-11-12" + expected_time, "2025-03-04" + expected_time]
+    assert all(r.metadata["available_time"] == FETCHED and r.metadata["pit"]["validated"] for r in records)
+    assert [r.metadata["trade_date"] for r in records] == ["2024-11-12", "2025-03-04"]
+
+
+def test_market_row_published_on_another_date_than_its_trade_date_is_rejected(tmp_path):
+    rows = [{**_TWSE_ROW, "trade_date": "2024-11-12", "published_at": "2026-11-10T06:30:00Z"}, {**_TWSE_ROW, "trade_date": "2024-11-13"}]
+    files, entry = _market_files("collector-tw-twse-price-history", rows)
+    adapter = adapter_for(files, [entry], tmp_path, source_id="collector-tw-twse-price-history", source_type="market",
+                          platform=None, attribution_required=True, dataset="tw_price_daily")
+    with pytest.raises(SourceEvidenceError, match="trade_date"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+def test_collector_history_rows_agree_with_official_tw_price_daily_and_leave_it_unchanged(tmp_path):
+    from services.source_ingestion.connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+    from services.source_ingestion.tests.test_taiwan_official_connectors import TWSE_PRICE_HISTORY_PAYLOAD
+
+    official = TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_price_history_payload(
+        "2330.TWSE", "TWSE", TWSE_PRICE_HISTORY_PAYLOAD,
+        api_endpoint="bundle://collector-tw-twse-price-history?date=20260601&symbol=2330", trace_id="official",
+    )
+    before = [r.to_dict() for r in official]
+    truth = official[0].metadata["normalized_row"]  # 2330.TWSE 2026-06-09
+
+    rows = [{**_TWSE_ROW, "trade_date": truth["date"]}, {**_TWSE_ROW, "trade_date": "2024-11-12", "close": 900.0}]
+    files, entry = _market_files("collector-tw-twse-price-history", rows)
+    adapter = adapter_for(files, [entry], tmp_path, source_id="collector-tw-twse-price-history", source_type="market",
+                          platform=None, attribution_required=True, dataset="tw_price_daily")
+    collector = adapter.pull().records
+
+    same_day = next(r for r in collector if r.metadata["trade_date"] == truth["date"])
+    row = same_day.metadata["normalized_row"]
+    assert (row["symbol"], row["trade_date"]) == (truth["symbol"], truth["date"])
+    for collector_key, official_key in (("open", "open"), ("high", "high"), ("low", "low"), ("close", "close"),
+                                        ("volume_shares", "volume"), ("transactions", "transactions")):
+        assert row[collector_key] == truth[official_key], collector_key
+    # The collector copy is a separate lineage, not an official record, and official truth is untouched.
+    assert same_day.connector_id != official[0].connector_id
+    assert same_day.source_id.startswith("collector:collector-tw-twse-price-history:")
+    assert not same_day.source_id.startswith("tw-official:")
+    assert [r.to_dict() for r in official] == before
+
+
+# COLLECTOR-HOSTED-ADMISSION-20261112: per-pull verification work is bounded by the cap ----------------
+class _CountingTransport(FakeTransport):
+    def __init__(self, files):
+        super().__init__(files)
+        self.reads: list[str] = []
+
+    def read(self, relative_path, *, max_bytes):
+        self.reads.append(relative_path)
+        return super().read(relative_path, max_bytes=max_bytes)
+
+
+def _day_bundle(source_id, run_no, n_rows, dataset="tw_price_daily"):
+    day = f"2024-11-{run_no:02d}"
+    run_id = f"run{run_no}"
+    finished = f"2026-11-10T02:{run_no:02d}:00Z"
+    manifest_items, rows, raw = [], [], {}
+    for i in range(n_rows):
+        body = f"<r>{run_no}-{i}</r>".encode()
+        sha = hashlib.sha256(body).hexdigest()
+        item_id = f"i{i}"
+        manifest_items.append({"item_id": item_id, "url": f"https://example.test/{run_no}/{i}", "http_status": 200,
+                               "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
+        rows.append({"id": item_id, "url": f"https://example.test/{run_no}/{i}", "fetched_at": FETCHED,
+                     **{**_TWSE_ROW, "dataset": dataset, "symbol": f"{1000 + i}", "trade_date": day}})
+        raw[sha] = body
+    manifest = {"schema_version": "collector_bundle.v1", "source_id": source_id, "run_id": run_id,
+                "collector_version": "1.0.0", "started_at": "2026-11-10T02:00:00Z", "finished_at": finished,
+                "fetch_policy_hash": "fph", "robots_decision": "allowed", "terms_ref": "https://example.test/terms",
+                "attribution": "TWSE", "items": manifest_items, "status": "complete",
+                "bundle_sha256": compute_bundle_sha256([m["content_sha256"] for m in manifest_items])}
+    base = f"bundles/{source_id}/{day}/{run_id}"
+    files = {f"{base}/manifest.json": json.dumps(manifest).encode(),
+             f"{base}/items.jsonl": "\n".join(json.dumps(r) for r in rows).encode()}
+    for sha, body in raw.items():
+        files[f"{base}/raw/{sha}.html"] = body
+    return files, {"source_id": source_id, "date": day, "run_id": run_id, "finished_at": finished}
+
+
+def test_multi_bundle_history_pull_reads_only_what_the_cap_can_return(tmp_path):
+    source_id = "collector-tw-twse-price-history"
+    files, entries = {}, []
+    for n in (1, 2, 3):
+        f, e = _day_bundle(source_id, n, 600)
+        files.update(f)
+        entries.append(e)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    transport = _CountingTransport(files)
+
+    def make():
+        return CollectorBundleAdapter(
+            connector_id="conn-x", raw_root=str(tmp_path / "store"), transport=transport, host=HOST,
+            source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+            max_records=500,
+        )
+
+    cursor, seen, max_raw_reads = None, [], 0
+    for _ in range(6):
+        transport.reads.clear()
+        result = make().pull(cursor=cursor)
+        raw_reads = [r for r in transport.reads if "/raw/" in r]
+        max_raw_reads = max(max_raw_reads, len(raw_reads))
+        assert len(raw_reads) <= 500 and len(transport.reads) <= 500 + 8
+        seen.extend((r.metadata["trade_date"], r.metadata["event_time"]) for r in result.records)
+        cursor = result.next_cursor
+        if result.complete:
+            break
+    # Every one of the 1800 rows is delivered exactly once, event-dated by its own trade date,
+    # while no single pull read more than the cap's worth of raw files.
+    assert len(seen) == 1800 and len(set(seen)) == 3
+    assert max_raw_reads <= 500
+    # A tampered raw file beyond the first window is still caught when its window is reached.
+    bad = dict(files)
+    key = next(k for k in bad if "/run3/raw/" in k)
+    bad[key] = b"tampered"
+    t2 = _CountingTransport(bad)
+    adapter = CollectorBundleAdapter(
+        connector_id="conn-y", raw_root=str(tmp_path / "store2"), transport=t2, host=HOST,
+        source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily", max_records=500)
+    cursor = None
+    with pytest.raises(SourceEvidenceError):
+        for _ in range(6):
+            r = adapter.pull(cursor=cursor)
+            cursor = r.next_cursor

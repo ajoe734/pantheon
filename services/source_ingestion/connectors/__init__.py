@@ -35,6 +35,7 @@ from .finmind_taiwan import (
     FinMindTaiwanBrokerBulkBackfillAdapter,
     FinMindTaiwanBrokerDailyReportAdapter,
     FinMindTaiwanDatasetAdapter,
+    FinMindTaiwanKBarAdapter,
 )
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistEntry, RepoAllowlistProvider
@@ -121,6 +122,7 @@ __all__ = [
     "FinMindTaiwanBrokerBulkBackfillAdapter",
     "FinMindTaiwanBrokerDailyReportAdapter",
     "FinMindTaiwanDatasetAdapter",
+    "FinMindTaiwanKBarAdapter",
     "FinraShortSaleAdapter",
     "FRED_CONNECTOR_ID",
     "FredMacroSeriesAdapter",
