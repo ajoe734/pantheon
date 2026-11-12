@@ -680,3 +680,38 @@ def test_pre_dispatch_owner_read_failure_is_503_and_recorded(world, monkeypatch,
     refusals = world.publisher.history(TENANT, PERSONA)["refusals"]
     assert refusals and refusals[-1]["step"] == "owner_unavailable"
     assert world.runtime.calls == calls_before
+
+
+def test_initial_saga_get_failure_before_dispatch_fails_closed_503(
+    world, monkeypatch, tmp_path
+):
+    import urllib.error
+
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 0.5)], 0)
+    real_get = world.transport.get
+    real_post = world.transport.post
+    dispatch_posts: list[str] = []
+
+    def lossy_get(owner, path):
+        if owner == "deployment" and "/sagas/" in path:
+            raise urllib.error.URLError("owner read failed")
+        return real_get(owner, path)
+
+    def counting_post(owner, path, payload):
+        if owner == "deployment" and path.endswith("/dispatch"):
+            dispatch_posts.append(path)
+        return real_post(owner, path, payload)
+
+    world.transport.get = lossy_get
+    world.transport.post = counting_post
+    response = client.post(PATH, json={}, headers=H)
+    world.transport.get = real_get
+    world.transport.post = real_post
+    assert response.status_code == 503, response.text
+    assert dispatch_posts == []
+    assert world.runtime.calls == ["deploy"]
+    assert _live(world)[0]["artifact_id"] == world.ids.strategy_artifact_id
+    history = world.publisher.history(TENANT, PERSONA)
+    assert history["refusals"] and "owner path unavailable" in history["refusals"][-1]["reason"]
+    assert "1" not in history["published"]

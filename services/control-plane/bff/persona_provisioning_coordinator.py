@@ -3769,12 +3769,15 @@ class PersonaProvisioningCoordinator:
                 "binding_already_moved": already_moved,
             }
 
-        try:
-            saga = self._transition_then_get(
-                owner="deployment",
-                get_path=saga_path,
-                post_path=f"/api/deployment/plans/{_path_id(plan_id)}/dispatch",
-                payload={
+        dispatch_attempted = False
+
+        def dispatch_payload(_receipt_in: Mapping[str, Any] | None) -> Mapping[str, Any]:
+            # Called only immediately before the dispatch POST is sent.
+            nonlocal dispatch_attempted
+            dispatch_attempted = True
+            return dispatch_body
+
+        dispatch_body = {
                     "trace_id": f"persona-pool-publish:{ids.token}:{pool_version}",
                     "correlation_id": record.idempotency_key,
                     "idempotency_key": f"{record.idempotency_key}:deployment-dispatch",
@@ -3789,11 +3792,22 @@ class PersonaProvisioningCoordinator:
                         "execution_context": "paper",
                         "pool_version": pool_version,
                     },
-                },
+                }
+        try:
+            saga = self._transition_then_get(
+                owner="deployment",
+                get_path=saga_path,
+                post_path=f"/api/deployment/plans/{_path_id(plan_id)}/dispatch",
+                payload=dispatch_payload,
                 ready=saga_ready,
                 validate=validate_saga,
             )
         except Exception as exc:
+            if not dispatch_attempted:
+                # Failed before any dispatch POST (e.g. initial saga GET):
+                # nothing was admitted, so surface the raw error and let the
+                # caller fail closed with the previous binding unchanged.
+                raise
             terminal = False
             cause: BaseException | None = exc
             while cause is not None:
