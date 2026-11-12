@@ -341,7 +341,16 @@ def test_management_cycle_health_and_private_packet_tenant_fencing(system):
             selected_tenant.reset(token)
 
 
-def test_private_packet_routes_do_not_trust_foreign_tenant_header(system):
+@pytest.mark.parametrize("authorization,requested_tenant,visible", [
+    ("Bearer reader:viewer:mfa::tenant-a", None, True),
+    ("Bearer reader:viewer:mfa::tenant-b", "tenant-a", False),
+    ("Bearer reader:viewer:mfa", None, False),
+    ("Bearer reader:viewer:mfa", "tenant-a", False),
+    ("Bearer reader:viewer:mfa::tenant-b", None, False),
+])
+def test_private_packet_routes_do_not_trust_foreign_tenant_header(
+    system, authorization, requested_tenant, visible,
+):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
@@ -353,12 +362,80 @@ def test_private_packet_routes_do_not_trust_foreign_tenant_header(system):
     app.add_middleware(OwnerReadContextMiddleware)
     app.include_router(create_control_loops_router(read_surface=OodaPacketsPort(records_provider=lambda: [packet])))
     with TestClient(app) as client:
-        assert len(client.get("/bff/ooda/packets", headers={"Authorization": "Bearer reader:viewer:mfa::tenant-a"}).json()["items"]) == 1
-        foreign = {"Authorization": "Bearer reader:viewer:mfa::tenant-b", "X-Tenant-Id": "tenant-a"}
-        assert client.get("/bff/ooda/packets", headers=foreign).json()["items"] == []
-        detail = client.get("/bff/ooda/packets/" + packet["packet_id"], headers=foreign)
-        assert detail.status_code in {200, 404}
-        assert "persona_cycle" not in detail.json().get("data", {})
+        headers = {"Authorization": authorization}
+        if requested_tenant:
+            headers["X-Tenant-Id"] = requested_tenant
+        listing = client.get("/bff/ooda/packets", headers=headers)
+        assert listing.status_code == 200
+        assert [p["packet_id"] for p in listing.json()["items"]] == ([packet["packet_id"]] if visible else [])
+        detail = client.get("/bff/ooda/packets/" + packet["packet_id"], headers=headers)
+        # Existing detail routes return an unavailable envelope for a missing
+        # record. The private payload must be absent from that envelope.
+        assert detail.status_code == 200
+        if not visible:
+            assert detail.json()["data"] is None
+        assert ("persona_cycle" in (detail.json().get("data") or {})) == visible
+        # A rejected request cannot leave tenant admission in a later request.
+        unscoped = client.get("/bff/ooda/packets", headers={"Authorization": "Bearer reader:viewer:mfa"})
+        assert unscoped.json()["items"] == []
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_deployed_persona_lifespan_consumes_cycle_and_stops(system, monkeypatch, enabled):
+    """Real app/controller/SDK startup; only HTTP and the DB write boundary are fixtures."""
+    import importlib
+    import importlib.util
+    import sys
+    from fastapi.testclient import TestClient
+    import services.persona.write_owner as write_owner
+
+    controller, state, owner, pool = system
+    persona = owner._records.get("persona-cycle-test")
+    assert owner._records.compare_and_set("persona-cycle-test", persona,
+        {**persona, "lifecycle_state": "consultable"})[0]
+    state["runs"]["job-1"] = [run(1)]
+    base = controller.owners.env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"]
+    for key, value in {
+        "PERSONA_DAILY_CYCLE_ENABLED": str(enabled).lower(),
+        "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL": base,
+        "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN": "fixture-adapter-token",
+        "PANTHEON_BFF_OODA_PACKET_STORE": str(controller.path),
+        "DATABASE_URL": "postgresql://unused-fixture/no-network",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(write_owner, "build_persona_owner", lambda: owner)
+    records = []
+    written = threading.Event()
+
+    async def capture_record(self, record):
+        records.append(copy.deepcopy(record))
+        written.set()
+
+    store_module = importlib.import_module("services.loop-control.store")
+    monkeypatch.setattr(store_module.LoopControllerStore, "upsert_record", capture_record)
+    path = Path(__file__).resolve().parents[1] / "control-plane/persona/main.py"
+    spec = importlib.util.spec_from_file_location("persona_daily_cycle_lifespan_test", path)
+    service = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, service)
+    spec.loader.exec_module(service)
+    monkeypatch.setattr(service, "POOL_STORE", pool)
+    with TestClient(service.app) as client:
+        assert client.get("/healthz").status_code == 200
+        if enabled:
+            assert written.wait(timeout=10), "controller did not publish its first reconciliation"
+        else:
+            assert state["paths"] == []
+    # Exiting the actual lifespan awaits the controller and releases its task.
+    assert state["turns"] == int(enabled)
+    assert len(records) == int(enabled)
+    if enabled:
+        packet = next(iter(read_packets(controller.path).values()))
+        assert packet["status"] == "closed"
+        assert records[0]["tenant_id"] == "tenant-a"
+        assert records[0]["loop_id"] == "per_persona_ooda"
+        assert records[0]["controller_name"] == "persona_cycle_controller"
+        assert records[0]["payload"]["persona_cycle_health"]["persona-cycle-test"]["last_packet_id"] == packet["packet_id"]
+        assert "last_success_at" not in records[0]
 
 
 def test_provider_outage_still_removes_member_using_real_deterministic_drawdown_rule(system):
