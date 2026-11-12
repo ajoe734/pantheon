@@ -1823,5 +1823,57 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self.assertEqual(self._snapshot(), before)
 
 
+class OwnerWipResumeAutostashTests(unittest.TestCase):
+    """Real-Git regression: WIP resume must never autostash or conflict-mark."""
+
+    def _git(self, cwd: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True,
+        ).stdout
+
+    def _repo(self, root: Path) -> tuple[Path, str]:
+        repo = root / "wt"
+        repo.mkdir()
+        self._git(repo, "init", "-q", "-b", "task")
+        self._git(repo, "config", "user.email", "t@example.invalid")
+        self._git(repo, "config", "user.name", "t")
+        self._git(repo, "config", "merge.autoStash", "true")
+        (repo / "scoped_service.py").write_text("a\nb\nc\n")
+        (repo / "other.py").write_text("x\n")
+        self._git(repo, "add", ".")
+        self._git(repo, "commit", "-qm", "base")
+        self._git(repo, "checkout", "-qb", "base")
+        (repo / "scoped_service.py").write_text("a\nBASE\nc\n")
+        self._git(repo, "commit", "-qam", "base edit")
+        sha = self._git(repo, "rev-parse", "HEAD").strip()
+        self._git(repo, "checkout", "-q", "task")
+        return repo, sha
+
+    def test_overlapping_wip_not_autostashed_or_conflicted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, sha = self._repo(Path(tmp))
+            (repo / "scoped_service.py").write_text("a\nOWNER\nc\n")
+            (repo / "other.py").write_text("y\n")
+            self._git(repo, "add", "other.py")
+            ok, status = worker_workspace._resume_owner_wip_worktree(repo, sha)
+            self.assertTrue(ok, status)
+            self.assertEqual(status, "owner_wip_resumed")
+            self.assertEqual((repo / "scoped_service.py").read_text(), "a\nOWNER\nc\n")
+            self.assertEqual((repo / "other.py").read_text(), "y\n")
+            self.assertEqual(self._git(repo, "stash", "list"), "")
+            self.assertNotIn("U", "".join(
+                e["status"] for e in worker_workspace._git_dirty_entries(repo)))
+
+    def test_non_overlapping_wip_fast_forwards(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, sha = self._repo(Path(tmp))
+            (repo / "other.py").write_text("y\n")
+            ok, status = worker_workspace._resume_owner_wip_worktree(repo, sha)
+            self.assertTrue(ok)
+            self.assertEqual(status, "owner_wip_resumed+ff")
+            self.assertEqual(self._git(repo, "stash", "list"), "")
+
+
+
 if __name__ == "__main__":
     unittest.main()

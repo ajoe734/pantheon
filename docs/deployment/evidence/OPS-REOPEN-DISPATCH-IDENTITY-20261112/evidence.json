@@ -23,6 +23,12 @@
         "cd .orchestrator && python3 -m unittest rewrite.test_worker_workspace.RecoveryCurrentbaseDeliveryTests -> 28 tests OK in 48.0s, exit 0",
         "cd .orchestrator && python3 -m unittest test_supervisor.SharedPlannerContractTests -> 36 tests OK in 0.18s, exit 0"
       ]
+    },
+    "autostash_fix": {
+      "defect": "git merge --ff-only honored merge.autoStash=true; overlapping fast-forward conflicted owner WIP, created autostash, and admission still returned success",
+      "fix": "_resume_owner_wip_worktree disables autostash (-c merge.autoStash=false, --no-autostash), snapshots dirty set and stash list, fails closed (owner_wip_resume_invalid_workspace / _dirty_set_changed) on unmerged paths, new stash or changed dirty set; owner_wip_resume_admitted is set only when refresh_ok",
+      "tests": "rewrite/test_worker_workspace.py OwnerWipResumeAutostashTests (real Git, merge.autoStash=true; fails on previous code, passes now)",
+      "results": "test_worker_workspace 63 tests OK; test_supervisor 417 tests OK from repo root; git diff --check clean"
     }
   },
   "not_claimed": [
@@ -31,7 +37,6 @@
     "product acceptance"
   ],
   "limitations": [
-    "Full test_supervisor and full rewrite.test_worker_workspace were not run to completion within the bounded batch; two pre-existing workspace cases hit git fetch timeouts in the reviewer's environment (base_fetch_failed), no regression claimed.",
     "The generated untracked worker task-brief file appears in the worktree after a real launch; it is allowed in the preservation assertion and is not owner WIP."
   ]
 }

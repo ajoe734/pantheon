@@ -30,3 +30,7 @@ no touching of the frontend worktrees. Actual worker receipts for the original Q
 ## Real-flow regressions (review reopen)
 
 `RecoveryCurrentbaseDeliveryTests` now drives the real `build_dispatch_plan` -> `reserve_dispatch_plan` -> `process_queue` path on a temporary Git worktree with a shrinking activity view (2 -> 1) and unchanged canonical intent. See `evidence.json` `verification.real_flow_regressions` for exact commands, results (3 / 28 / 36 tests OK, exit 0) and limitations. Runtime promotion and original-task worker receipts remain Ops duties.
+
+## Autostash fix (review round 2)
+
+`_resume_owner_wip_worktree` now disables autostash, validates the workspace (no unmerged paths, no new stash, unchanged dirty set) and only then does prepare admit the dirty-guard bypass. Regression: `OwnerWipResumeAutostashTests` (real Git, `merge.autoStash=true`). See `evidence.json` `verification.autostash_fix`.

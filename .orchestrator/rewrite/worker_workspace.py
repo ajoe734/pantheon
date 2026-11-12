@@ -1172,12 +1172,34 @@ def _same_owner_reopen_wip_may_resume(
 
 
 def _resume_owner_wip_worktree(worktree_path: Path, base_sha: str) -> tuple[bool, str]:
-    """Reuse owner WIP untouched; only a non-overwriting fast-forward is tried."""
+    """Reuse owner WIP untouched; only a non-overwriting fast-forward is tried.
 
-    merged = subprocess.run(
-        ["git", "merge", "--ff-only", base_sha],
-        cwd=worktree_path, capture_output=True, text=True, check=False,
+    Autostash is explicitly disabled so git can never stash, rewrite or
+    conflict-mark owner WIP. The resulting workspace is validated (no
+    unmerged paths, no new stash, identical dirty set) before admission.
+    """
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(worktree_path), *args],
+            capture_output=True, text=True, check=False,
+        )
+
+    def snapshot() -> tuple[list[tuple[str, str]], str]:
+        entries = sorted((e["status"], e["path"]) for e in _git_dirty_entries(worktree_path))
+        return entries, git("stash", "list", "--format=%H").stdout
+
+    before, stashes = snapshot()
+    merged = git(
+        "-c", "merge.autoStash=false", "-c", "rebase.autoStash=false",
+        "merge", "--ff-only", "--no-autostash", base_sha,
     )
+    after, stashes_after = snapshot()
+    unmerged = git("diff", "--name-only", "--diff-filter=U").stdout.strip()
+    if unmerged or stashes_after != stashes or any("U" in code for code, _ in after):
+        return False, "owner_wip_resume_invalid_workspace"
+    if after != before:
+        return False, "owner_wip_resume_dirty_set_changed"
     return True, "owner_wip_resumed" if merged.returncode else "owner_wip_resumed+ff"
 
 
@@ -1739,9 +1761,11 @@ def prepare_worker_workspace(
             refresh_ok, refresh_status = _resume_owner_wip_worktree(
                 worktree_path, base_sha
             )
-            # Freshly validated by the canonical checks above; the launch
-            # dirty-tree guard may admit exactly this scoped owner WIP.
-            request.metadata["owner_wip_resume_admitted"] = True
+            # Freshly validated by the canonical checks above and the
+            # post-merge workspace validation; only then may the launch
+            # dirty-tree guard admit exactly this scoped owner WIP.
+            if refresh_ok:
+                request.metadata["owner_wip_resume_admitted"] = True
         else:
             refresh_ok, refresh_status = _refresh_reused_worker_worktree(
                 worktree_path, base_sha, task_id=workspace_task_id, branch=branch,
