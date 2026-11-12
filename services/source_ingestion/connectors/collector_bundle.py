@@ -24,6 +24,7 @@ Fail-closed rules:
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
@@ -31,9 +32,9 @@ import shutil
 import tempfile
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from services.external_egress import open_external_url
 
@@ -167,10 +168,29 @@ class CollectorPullResult:
     bundle_count: int
     paused_reasons: tuple[str, ...] = ()
     observed: Mapping[str, Any] = field(default_factory=dict)
+    feature_rejected: tuple[Mapping[str, str], ...] = ()
+    complete: bool = True  # False: the output cap left raw items / derived rows for a later pull
 
 
 def _cursor_key(finished_at: datetime, run_id: str) -> str:
     return f"{_iso(finished_at)}#{run_id}"
+
+
+_PARTIAL_CURSOR_MARK = "|items="
+
+
+def _split_cursor(cursor: str | None) -> tuple[str | None, int]:
+    """Split ``<key>|items=<n>`` (a bundle partially consumed under the output cap)."""
+    if not cursor or _PARTIAL_CURSOR_MARK not in cursor:
+        return cursor, 0
+    base, _, raw_n = cursor.rpartition(_PARTIAL_CURSOR_MARK)
+    try:
+        n = int(raw_n)
+    except ValueError as exc:
+        raise SourceEvidenceError(f"collector cursor has an invalid partial item offset: {cursor!r}") from exc
+    if n < 0 or not base:
+        raise SourceEvidenceError(f"collector cursor has an invalid partial item offset: {cursor!r}")
+    return base, n
 
 
 def _safe_raw_path(raw_path: str) -> str:
@@ -355,6 +375,13 @@ class CollectorBundleAdapter:
     raw_root: str | None = None
     max_records: int = 500
     transport: BundleTransport | None = None
+    # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
+    # in addition to the symbols that have stored daily bars under the storage roots.
+    known_instruments: tuple[str, ...] = ()
+    # Extra provider-series mappings: (provider_series_id, dataset, field, source, period_kind).
+    macro_series_map: tuple[tuple[str, str, str, str, str], ...] = ()
+    # Injectable clock for ingest-time stamping (tests, replays); defaults to UTC now.
+    clock: Callable[[], datetime] | None = None
 
     def __post_init__(self) -> None:
         if self.source_type not in COLLECTOR_SOURCE_TYPES:
@@ -389,10 +416,30 @@ class CollectorBundleAdapter:
                 "access_scope": ["research"],
                 "allowed_use": ["research", "search_index", "experiment"],
                 "allowed_host_patterns": [self.host or collector_host()],
+                **self._feature_routing(),
                 "redistribution_allowed": False,
                 "governance": {"direct_execution_allowed": False, "canonical_sink": "SourceRecord/EvidenceBundle"},
             },
         )
+
+    def _feature_routing(self) -> dict[str, Any]:
+        """Derived governed feature dataset routing; raw items stay a raw-only dataset."""
+        derived = (
+            TW_MACRO_SERIES_DATASET
+            if self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro"
+            else TW_COMMUNITY_DAILY_DATASET
+            if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social"
+            else None
+        )
+        if derived is None:
+            return {}
+        original = [self.dataset] if self.dataset != derived else []
+        return {
+            "normalized_datasets": [derived, *original],
+            "feature_targets": [derived],
+            "raw_only_datasets": original,
+            "storage_targets": [f"normalized/{derived}", f"features/{derived}"],
+        }
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
@@ -417,63 +464,117 @@ class CollectorBundleAdapter:
             return None
         return doc if isinstance(doc, dict) else None
 
-    def pull(self, *, cursor: str | None = None, trace_id: str = "") -> CollectorPullResult:
+    def pull(
+        self,
+        *,
+        cursor: str | None = None,
+        trace_id: str = "",
+        max_records: int | None = None,
+    ) -> CollectorPullResult:
         transport = self._transport()
         index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
         entries = index.get("bundles") if isinstance(index, dict) else None
         if not isinstance(entries, list):
             raise SourceEvidenceError("collector bundle index.json must contain a bundles list")
 
+        base_cursor, partial_skip = _split_cursor(cursor)
         pending: list[tuple[datetime, str, Mapping[str, Any]]] = []
         for entry in entries:
             if not isinstance(entry, dict) or str(entry.get("source_id") or "") != self.source_id:
                 continue
             finished = _utc(entry.get("finished_at"), "index finished_at")
             key = _cursor_key(finished, str(entry.get("run_id") or ""))
-            if cursor is None or key > cursor:
+            if base_cursor is None or key > base_cursor or (partial_skip and key == base_cursor):
                 pending.append((finished, key, entry))
         pending.sort(key=lambda t: t[1])
 
         verified = [verify_bundle(transport, expected_source_id=self.source_id, entry=e) for _, _, e in pending]
 
-        records: list[SourceRecord] = []
-        raw_plan: list[tuple[VerifiedBundle, Mapping[str, Any]]] = []
+        all_records: list[SourceRecord] = []
         paused: list[str] = []
-        next_cursor = cursor
         for bundle in verified:
-            next_cursor = bundle.cursor
             if bundle.status == "paused":
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
                 continue
-            raw_plan.append((bundle, {}))
-            for row in bundle.items:
-                records.append(self._record(bundle, row, trace_id=trace_id))
-        records = records[: self.max_records]
-        # Truncation must not skip unconsumed bundles: only advance the cursor to the
-        # last bundle fully represented in `records`.
-        if len(records) < sum(len(b.items) for b, _ in raw_plan):
-            kept = len(records)
-            next_cursor = cursor
-            running = 0
-            for bundle in verified:
-                n = 0 if bundle.status == "paused" else len(bundle.items)
-                if running + n > kept:
-                    break
-                running += n
-                next_cursor = bundle.cursor
-            raw_plan = [(b, x) for b, x in raw_plan if b.cursor <= (next_cursor or "")]
+            skip = partial_skip if bundle.cursor == base_cursor else 0
+            for row in bundle.items[skip:]:
+                all_records.append(self._record(bundle, row, trace_id=trace_id))
 
+        # The caller's output cap covers raw + derived feature records together. Shrink the
+        # raw budget until both fit; derived rows are acknowledged (ledger / emission
+        # markers) only if actually returned, so a capped expansion stays pending.
+        total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
+        budget = total_cap
+        while True:
+            records, next_cursor, raw_plan = self._select_raw(
+                verified, all_records, cursor, budget, skips={base_cursor: partial_skip} if partial_skip else {}
+            )
+            plan = self._plan_governed_features(records)
+            # Already-acknowledged replays are idempotent and droppable; only pending
+            # rows must fit alongside the raw items.
+            pending = sum(1 for r in plan.rows if not plan.is_acked(r))
+            overflow = pending + len(records) - total_cap
+            if overflow <= 0 or budget <= 0:
+                break
+            budget = max(min(budget - 1, total_cap - pending), 0)
+        if not records and all_records and budget < total_cap:
+            # Even one bundle's expansion cannot fit alongside its raw items. Persist its
+            # posts to the durable ledger and return only the (capped) derived rows; raw
+            # items and the cursor stay put, and the unacknowledged rows flush on later
+            # pulls until the bundle's raw items fit.
+            first = next((b for b in verified if b.status != "paused"), None)
+            if first is not None:
+                first_skip = partial_skip if first.cursor == base_cursor else 0
+                candidate = [r for r in all_records[: max(len(first.items) - first_skip, 0)]]
+                plan = self._plan_governed_features(candidate)
+        feature_records, feature_rejected = self._commit_governed_features(
+            plan, limit=max(total_cap - len(records), 0), trace_id=trace_id
+        )
         self._write_raw(raw_plan, records)
         observed = observed_from_collector_status(
             self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self.cadence_seconds
         )
+        pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
+        complete = (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
         return CollectorPullResult(
-            records=tuple(records),
+            records=(*feature_records, *records),
             next_cursor=next_cursor,
             bundle_count=len(verified),
             paused_reasons=tuple(paused),
             observed=observed,
+            feature_rejected=feature_rejected,
+            complete=complete,
         )
+
+    # -- durable resume cursor (capped public pulls) -------------------------------
+    def _resume_cursor_path(self) -> Path:
+        return self._raw_root() / "state" / _slug(self.connector_id) / "resume_cursor.json"
+
+    def load_resume_cursor(self) -> str | None:
+        path = self._resume_cursor_path()
+        if not path.is_file():
+            return None
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        value = doc.get("cursor") if isinstance(doc, dict) and doc.get("source_id") == self.source_id else None
+        return str(value) if value else None
+
+    def save_resume_cursor(self, result: CollectorPullResult) -> None:
+        """Persist partial progress so a capped pull resumes instead of re-returning the head.
+
+        Cleared once a pull reaches the end, so a finished sweep replays from scratch exactly
+        like an un-cursored pull (idempotent downstream).
+        """
+        path = self._resume_cursor_path()
+        if result.complete or not result.next_cursor:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps({"source_id": self.source_id, "cursor": result.next_cursor}), encoding="utf-8")
+        os.replace(tmp, path)
 
     # -- mapping ---------------------------------------------------------------
     def _record(self, bundle: VerifiedBundle, row: Mapping[str, Any], *, trace_id: str) -> SourceRecord:
@@ -553,6 +654,7 @@ class CollectorBundleAdapter:
             "dealer_net_shares",
             "total_institutional_net_shares",
             "series_id",
+            "period_end",
             "value",
             "unit",
             "authors",
@@ -618,6 +720,164 @@ class CollectorBundleAdapter:
         )
         return validate_external_source_record(record, connector=self.connector(), force=True)
 
+    def _instrument_authority(self) -> dict[str, tuple[str, ...]]:
+        authority = {k: set(v) for k, v in stored_instrument_authority(self._raw_root()).items()}
+        explicit = os.environ.get("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT")
+        if explicit:
+            for k, v in stored_instrument_authority(explicit).items():
+                authority.setdefault(k, set()).update(v)
+        for symbol in self.known_instruments:
+            canonical = str(symbol).strip().upper()
+            if "." in canonical:
+                authority.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+        return {k: tuple(sorted(v)) for k, v in authority.items()}
+
+    def _select_raw(
+        self,
+        verified: Sequence[VerifiedBundle],
+        all_records: Sequence[SourceRecord],
+        cursor: str | None,
+        budget: int,
+        skips: Mapping[str, int] | None = None,
+    ) -> tuple[list[SourceRecord], str | None, list[tuple[VerifiedBundle, Mapping[str, Any]]]]:
+        skips = skips or {}
+        raw_plan = [(b, {}) for b in verified if b.status != "paused"]
+        next_cursor = verified[-1].cursor if verified else cursor
+        records = list(all_records[:budget])
+        # Truncation must not skip unconsumed bundles: advance the cursor past whole
+        # bundles fully represented in `records`. A bundle larger than the remaining
+        # budget is consumed partially (``<key>|items=<n>``) so a bundle bigger than the
+        # public cap still makes bounded progress instead of starving every later pull.
+        if len(records) < len(all_records):
+            kept = len(records)
+            next_cursor = cursor
+            running = 0
+            consumed_bundles: list[VerifiedBundle] = []
+            for bundle in verified:
+                n = 0 if bundle.status == "paused" else max(len(bundle.items) - skips.get(bundle.cursor, 0), 0)
+                if running + n > kept:
+                    take = kept - running
+                    if take > 0:
+                        next_cursor = f"{bundle.cursor}{_PARTIAL_CURSOR_MARK}{skips.get(bundle.cursor, 0) + take}"
+                        consumed_bundles.append(bundle)
+                        running += take
+                    break
+                running += n
+                next_cursor = bundle.cursor
+                consumed_bundles.append(bundle)
+            keep_ids = {id(b) for b in consumed_bundles}
+            raw_plan = [(b, x) for b, x in raw_plan if id(b) in keep_ids]
+            records = records[:running]
+        return records, next_cursor, raw_plan
+
+    def _macro_emitted_path(self) -> Path:
+        return self._raw_root() / "state" / _slug(self.connector_id) / "macro_emitted.jsonl"
+
+    @staticmethod
+    def _read_markers(path: Path) -> list[tuple[str, str, str]]:
+        if not path.is_file():
+            return []
+        return [
+            (d["symbol"], d["day"], d["step"])
+            for d in (json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip())
+        ]
+
+    def _community_ledger_path(self) -> Path:
+        return self._raw_root() / "state" / _slug(self.connector_id) / "community_ledger.jsonl"
+
+    def governed_feature_records(
+        self,
+        records: Sequence[SourceRecord],
+        *,
+        trace_id: str = "",
+    ) -> tuple[tuple[SourceRecord, ...], tuple[dict[str, str], ...]]:
+        """Derive storable governed feature records (macro series or community daily).
+
+        Community rows are rebuilt from a persisted per-post ledger (de-duplicated, so
+        replays and multiple pulls in one Taipei day aggregate the whole day). Returns
+        ``(records, rejected)``; other datasets yield nothing.
+        """
+        return self._commit_governed_features(self._plan_governed_features(records), limit=None, trace_id=trace_id)
+
+    def _plan_governed_features(self, records: Sequence[SourceRecord]) -> "_FeaturePlan":
+        """Derive feature rows without any durable write (ledger / emission markers)."""
+        if self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
+            extra: dict[str, list] = {}
+            for provider_id, dataset, field_name, source, period_kind in self.macro_series_map:
+                extra.setdefault(provider_id, []).append((dataset, field_name, source, period_kind))
+            rows, rejected = macro_feature_rows(records, extra_series_map=extra)
+            known = frozenset(self._read_markers(self._macro_emitted_path()))
+            return _FeaturePlan(tuple(rows), tuple(rejected), (), known)
+        if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
+            path = self._community_ledger_path()
+            ledger = dict(load_community_ledger(path))
+            now = _feature_iso(self.clock() if self.clock else datetime.now(timezone.utc))
+            entries, rejected_list = community_ledger_entries(
+                records, authority=self._instrument_authority(), seen_at=now
+            )
+            fresh = list({e["key"]: e for e in entries if e["key"] not in ledger}.values())
+            for entry in fresh:
+                ledger[entry["key"]] = entry
+            emitted_path = path.with_name("community_emitted.jsonl")
+            done = []
+            if emitted_path.is_file():
+                done = [
+                    (d["symbol"], d["day"], d["step"])
+                    for d in (json.loads(x) for x in emitted_path.read_text(encoding="utf-8").splitlines() if x.strip())
+                ]
+            rows = community_daily_rows_from_ledger(
+                ledger, {(e["symbol"], e["day"]) for e in entries}, now=_feature_time(now), emitted=done
+            )
+            known = set(done)
+            return _FeaturePlan(tuple(rows), tuple(rejected_list), tuple(fresh), frozenset(known))
+        return _FeaturePlan((), (), (), frozenset())
+
+    def _commit_governed_features(
+        self, plan: "_FeaturePlan", *, limit: int | None, trace_id: str = ""
+    ) -> tuple[tuple[SourceRecord, ...], tuple[dict[str, str], ...]]:
+        """Return up to ``limit`` rows; acknowledge ledger/markers only for what is returned."""
+        rows = plan.rows
+        if limit is not None and len(rows) > limit:
+            # An output cap must never starve unacknowledged revisions: keep those first
+            # (then already-acknowledged replays), preserving chronological order.
+            ranked = sorted(range(len(rows)), key=lambda i: (plan.is_acked(rows[i]), i))[:limit]
+            rows = tuple(rows[i] for i in sorted(ranked))
+        if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
+            path = self._community_ledger_path()
+            if plan.fresh_entries:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as handle:
+                    for entry in plan.fresh_entries:
+                        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+            known = set(plan.known_markers)
+            new_markers = []
+            for r in rows:
+                marker = (r["symbol"], r["event_time"], r["available_time"])
+                if marker not in known:
+                    known.add(marker)
+                    new_markers.append(marker)
+            if new_markers:
+                emitted_path = path.with_name("community_emitted.jsonl")
+                emitted_path.parent.mkdir(parents=True, exist_ok=True)
+                with emitted_path.open("a", encoding="utf-8") as handle:
+                    for m in new_markers:
+                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
+        elif self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
+            known = set(plan.known_markers)
+            new_markers = []
+            for r in rows:
+                marker = (r["symbol"], r["event_time"], r["available_time"])
+                if marker not in known:
+                    known.add(marker)
+                    new_markers.append(marker)
+            if new_markers:
+                emitted_path = self._macro_emitted_path()
+                emitted_path.parent.mkdir(parents=True, exist_ok=True)
+                with emitted_path.open("a", encoding="utf-8") as handle:
+                    for m in new_markers:
+                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
+        return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), plan.rejected
+
     def fetch_bundle(self, *, cursor: str | None = None, trace_id: str = "") -> CollectorPullResult:
         return self.pull(cursor=cursor, trace_id=trace_id)
 
@@ -650,7 +910,471 @@ class CollectorBundleAdapter:
                     shutil.rmtree(tmp, ignore_errors=True)
 
 
+@dataclass(frozen=True)
+class _FeaturePlan:
+    rows: tuple
+    rejected: tuple
+    fresh_entries: tuple
+    known_markers: frozenset
+
+    def is_acked(self, row: Mapping[str, Any]) -> bool:
+        return (row["symbol"], row["event_time"], row["available_time"]) in self.known_markers
+
+
 def _slug(value: str) -> str:
     import re
 
     return re.sub(r"[^A-Za-z0-9_.=-]+", "-", str(value).strip().lower()).strip("-") or "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Governed feature rows from collector bundles (task GOVERNED-FEATURE-DATASETS-20261110)
+# ---------------------------------------------------------------------------
+
+TW_MACRO_SERIES_DATASET = "tw_macro_series"
+TW_COMMUNITY_DAILY_DATASET = "tw_community_daily"
+COMMUNITY_ZSCORE_WINDOW_DAYS = 60  # design §8.5: attention vs 60-day mean
+COMMUNITY_AUTHOR_DOMINANCE_SHARE = 0.5  # one author above this share of a day's posts => down-weighted
+_ENGAGEMENT_KEYS = ("engagement", "likes", "like_count", "comments", "comment_count", "replies", "reply_count", "shares", "share_count", "push_count", "upvotes")
+COMMUNITY_ZSCORE_MIN_HISTORY_DAYS = 5
+_TAIPEI_TZ = timezone(timedelta(hours=8))
+_BULLISH_LABELS = frozenset({"bullish", "bull", "positive", "long", "看多", "多"})
+_BEARISH_LABELS = frozenset({"bearish", "bear", "negative", "short", "看空", "空"})
+
+
+def _feature_time(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise SourceEvidenceError("feature row time is empty")
+        dt = datetime.fromisoformat(text[:-1] + "+00:00" if text[-1] in "zZ" else text)
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def _feature_iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _month_end(year: int, month: int) -> date:
+    nxt = date(year + (month == 12), month % 12 + 1, 1)
+    return nxt - timedelta(days=1)
+
+
+def normalize_macro_period(raw: Any, period_kind: str) -> date:
+    """Normalize a provider period (``YYYY-MM-DD``, ``YYYY-MM``, ``YYYYMM``, ``YYYY-Qn``) to its event date.
+
+    ``day`` keeps the date; ``month`` and ``quarter`` use the period end so the declared
+    availability lag counts from when the period closed (never from its first day).
+    """
+    import re
+
+    text = str(raw or "").strip()
+    if not text:
+        raise SourceEvidenceError("macro period is empty")
+    quarter = re.fullmatch(r"(\d{4})-?Q([1-4])", text, re.IGNORECASE)
+    if quarter:
+        year, q = int(quarter.group(1)), int(quarter.group(2))
+        return _month_end(year, q * 3)
+    if re.fullmatch(r"\d{6}", text):
+        text = f"{text[:4]}-{text[4:]}"
+    month_only = re.fullmatch(r"(\d{4})-(\d{2})", text)
+    if month_only:
+        return _month_end(int(month_only.group(1)), int(month_only.group(2)))
+    day = _feature_time(text).astimezone(_TAIPEI_TZ).date() if "T" in text else date.fromisoformat(text[:10])
+    if period_kind == "month":
+        return _month_end(day.year, day.month)
+    if period_kind == "quarter":
+        return _month_end(day.year, (day.month - 1) // 3 * 3 + 3)
+    return day
+
+
+def _macro_source_value(meta: Mapping[str, Any], source: str) -> Any:
+    if source == "value":
+        return meta.get("value")
+    if source.startswith("metrics."):
+        metrics = meta.get("metrics") if isinstance(meta.get("metrics"), Mapping) else {}
+        return metrics.get(source.split(".", 1)[1])
+    return None
+
+
+def macro_feature_rows(
+    records: Sequence[SourceRecord],
+    *,
+    extra_series_map: Mapping[str, Sequence[Any]] | None = None,
+) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, str], ...]]:
+    """Normalize macro bundle records (CBC / NDC / DGBAS) into governed series rows.
+
+    Provider series ids (``CBC:BP01D01:01``, ``NDC:6099:MONITORING_SCORE``, ...) are mapped
+    through ``PROVIDER_SERIES_MAP`` (plus ``extra_series_map``); one record can expand into
+    several catalogue fields (NDC score + leading + coincident). Catalogue-native ids
+    (``<agency>_<field>``) are also accepted. Unmapped series, non-numeric values, or
+    availability earlier than the period are rejected, never imputed.
+    """
+    from ..feature_catalogue import MACRO_SERIES_MAP, PROVIDER_SERIES_MAP, ProviderSeriesMapping, lag_days_for
+
+    provider_map: dict[str, tuple[Any, ...]] = {k: tuple(v) for k, v in PROVIDER_SERIES_MAP.items()}
+    for key, mappings in (extra_series_map or {}).items():
+        provider_map[str(key)] = tuple(
+            m if isinstance(m, ProviderSeriesMapping) else ProviderSeriesMapping(*m) for m in mappings
+        )
+    rows: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+    for record in records:
+        meta = record.metadata
+        series_id = str(meta.get("series_id") or "").strip()
+        mappings = provider_map.get(series_id)
+        if mappings is None and series_id in MACRO_SERIES_MAP:
+            dataset, field_name = MACRO_SERIES_MAP[series_id]
+            mappings = (ProviderSeriesMapping(dataset, field_name, "value", "day"),)
+        if mappings is None:
+            rejected.append({"source_id": record.source_id, "reason": f"series_id {series_id!r} is not catalogued"})
+            continue
+        metrics = meta.get("metrics") if isinstance(meta.get("metrics"), Mapping) else {}
+        try:
+            available = _feature_time(meta.get("available_time"))
+            ingest = _feature_time(meta.get("ingest_time"))
+        except (ValueError, SourceEvidenceError) as exc:
+            rejected.append({"source_id": record.source_id, "reason": f"invalid time: {exc}"})
+            continue
+        for mapping in mappings:
+            value = _macro_source_value(meta, mapping.source)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+                rejected.append({"source_id": record.source_id, "reason": f"{mapping.field}: value is not numeric"})
+                continue
+            try:
+                period_raw = meta.get("period_end") or metrics.get("period") or meta.get("event_time")
+                period_day = normalize_macro_period(period_raw, mapping.period_kind)
+            except (ValueError, SourceEvidenceError) as exc:
+                rejected.append({"source_id": record.source_id, "reason": f"invalid time: {exc}"})
+                continue
+            if available.date() < period_day:
+                rejected.append({"source_id": record.source_id, "reason": "available_time precedes period"})
+                continue
+            rows.append(
+                {
+                    "dataset": TW_MACRO_SERIES_DATASET,
+                    "catalogue_dataset": mapping.dataset,
+                    "field": mapping.field,
+                    "series_id": f"{mapping.dataset.removeprefix('tw_macro_')}_{mapping.field}",
+                    "provider_series_id": series_id,
+                    "symbol": f"{mapping.dataset.removeprefix('tw_macro_')}_{mapping.field}",
+                    "event_time": period_day.isoformat(),
+                    "date": period_day.isoformat(),
+                    "available_time": _feature_iso(available),
+                    "ingest_time": _feature_iso(ingest),
+                    "availability_lag_days": lag_days_for(mapping.dataset, mapping.field),
+                    "value": float(value),
+                    "unit": str(meta.get("unit") or ""),
+                    "source_id": record.source_id,
+                    "connector_id": record.connector_id,
+                }
+            )
+    return tuple(rows), tuple(rejected)
+
+
+# -- community daily features -------------------------------------------------
+
+SOCIAL_SYMBOL_AUTHORITY_DATASET = "tw_price_daily"
+
+
+def stored_instrument_authority(*roots: str | Path) -> dict[str, tuple[str, ...]]:
+    """Governed instrument identities: venue-qualified symbols that have stored daily bars.
+
+    Returns ``{ticker: (canonical, ...)}`` (e.g. ``{"2330": ("2330.TWSE",)}``) read from the
+    normalized ``tw_price_daily`` rows under each root.
+    """
+    found: dict[str, set[str]] = {}
+    for root in roots:
+        base = Path(root) / "normalized" / _slug(SOCIAL_SYMBOL_AUTHORITY_DATASET)
+        if not base.is_dir():
+            continue
+        for path in sorted(base.glob("date=*/*.jsonl*")):
+            opener = gzip.open if path.suffix == ".gz" else Path.open
+            try:
+                with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[operator]
+                    for line in handle:
+                        if not line.strip():
+                            continue
+                        meta = (json.loads(line) or {}).get("metadata") or {}
+                        nrow = meta.get("normalized_row") or {}
+                        canonical = str(meta.get("symbol_canonical") or nrow.get("symbol_canonical") or "").upper()
+                        if "." in canonical:
+                            found.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+            except (OSError, ValueError):
+                continue
+    return {ticker: tuple(sorted(c)) for ticker, c in found.items()}
+
+
+def resolve_social_symbol(raw: Any, authority: Mapping[str, Sequence[str]]) -> str:
+    """Resolve a collector symbol to its venue-qualified canonical symbol.
+
+    Explicit suffixes (``2330.TW`` / ``.TWO``) are canonicalized. A bare ticker must match
+    exactly one governed instrument; unknown or ambiguous tickers raise (never guessed).
+    """
+    from .taiwan_official import canonical_taiwan_equity_symbol
+
+    text = str(raw or "").strip().upper()
+    if not text:
+        raise SourceEvidenceError("social symbol is empty")
+    if "." in text:
+        return canonical_taiwan_equity_symbol(text)
+    candidates = tuple(authority.get(text) or ())
+    if not candidates:
+        raise SourceEvidenceError(f"symbol {text!r} has no governed instrument (no stored daily bars)")
+    if len(candidates) > 1:
+        raise SourceEvidenceError(f"symbol {text!r} is ambiguous across venues: {', '.join(candidates)}")
+    return candidates[0]
+
+
+def community_ledger_entries(
+    records: Sequence[SourceRecord],
+    *,
+    authority: Mapping[str, Sequence[str]],
+    seen_at: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Per-(post, canonical symbol) ledger entries from social records; unresolvable symbols are rejected."""
+    entries: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+    for record in records:
+        meta = record.metadata
+        symbols = meta.get("symbols") or ([meta["symbol"]] if meta.get("symbol") else [])
+        if isinstance(symbols, str):
+            symbols = [symbols]
+        try:
+            event = _feature_time(meta.get("event_time"))
+            available = _feature_time(meta.get("available_time"))
+        except (ValueError, SourceEvidenceError) as exc:
+            rejected.append({"source_id": record.source_id, "reason": f"invalid time: {exc}"})
+            continue
+        post_key = str(meta.get("post_id") or record.source_id)
+        metrics = meta.get("metrics") if isinstance(meta.get("metrics"), Mapping) else {}
+        raw_stance = metrics.get("sentiment_tag") or metrics.get("sentiment") or metrics.get("stance") or meta.get("sentiment") or ""
+        if isinstance(raw_stance, Mapping):
+            raw_stance = raw_stance.get("label") or ""
+        stance = str(raw_stance).strip().lower()
+        stance = "bull" if stance in _BULLISH_LABELS else "bear" if stance in _BEARISH_LABELS else ""
+        raw_author = str(
+            meta.get("author_id_hash") or meta.get("author_hash") or meta.get("author_id") or meta.get("author") or ""
+        ).strip()
+        author = (
+            raw_author.lower()
+            if len(raw_author) == 64 and all(c in "0123456789abcdefABCDEF" for c in raw_author)
+            else (hashlib.sha256(raw_author.encode("utf-8")).hexdigest() if raw_author else "")
+        )
+        engagement = 0.0
+        for k in _ENGAGEMENT_KEYS:
+            try:
+                v = float(metrics.get(k) if k in metrics else meta.get(k) or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            if v > 0 and v == v and v != float("inf"):
+                engagement += v
+        canonical_symbols: set[str] = set()
+        for raw in symbols:
+            if not str(raw).strip():
+                continue
+            try:
+                canonical_symbols.add(resolve_social_symbol(raw, authority))
+            except SourceEvidenceError as exc:
+                rejected.append({"source_id": record.source_id, "reason": str(exc)})
+        for symbol in sorted(canonical_symbols):
+            entries.append(
+                {
+                    "key": f"{post_key}|{symbol}",
+                    "symbol": symbol,
+                    "day": event.astimezone(_TAIPEI_TZ).date().isoformat(),
+                    "stance": stance,
+                    "author": author,
+                    "engagement": engagement,
+                    "available": _feature_iso(available),
+                    "first_seen": seen_at,
+                }
+            )
+    return entries, rejected
+
+
+def load_community_ledger(path: Path) -> dict[str, dict[str, Any]]:
+    ledger: dict[str, dict[str, Any]] = {}
+    if not path.is_file():
+        return ledger
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            entry = json.loads(line)
+            ledger.setdefault(str(entry["key"]), entry)  # first sight wins: replays never rewrite history
+    return ledger
+
+
+def _known_at(entry: Mapping[str, Any]) -> datetime:
+    return max(_feature_time(entry["available"]), _feature_time(entry["first_seen"]))
+
+
+def _community_post_weights(entries: Sequence[Mapping[str, Any]]) -> list[float]:
+    """Per-post weights: 1.0, or 1/author_posts when one hashed author dominates the day (§8.5)."""
+    n = len(entries)
+    counts: dict[str, int] = {}
+    for e in entries:
+        if e.get("author"):
+            counts[e["author"]] = counts.get(e["author"], 0) + 1
+    if n and counts and max(counts.values()) / n > COMMUNITY_AUTHOR_DOMINANCE_SHARE and max(counts.values()) > 1:
+        return [1.0 / counts[e["author"]] if e.get("author") else 1.0 for e in entries]
+    return [1.0] * n
+
+
+def community_daily_rows_from_ledger(
+    ledger: Mapping[str, Mapping[str, Any]],
+    touched: Iterable[tuple[str, str]] | None = None,
+    *,
+    now: datetime | None = None,
+    emitted: Iterable[tuple[str, str, str]] | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Rebuild point-in-time daily rows for ``touched`` (symbol, Taipei day) pairs from the ledger.
+
+    Posts are de-duplicated by ledger key. A post is *known* at ``max(available, first_seen)``
+    (a late-arriving or backfilled post is not retroactively visible). A day has one row per
+    distinct knowledge step at or after the day close; later steps are new revisions and never
+    rewrite earlier ones. Each revision only uses posts known by its own ``available_time``,
+    including for the rolling history of earlier days. Revisions later than ``now`` (a day not
+    yet closed) are not emitted. ``touched`` pairs always re-emit their revisions
+    (deterministic, so replays are idempotent); other ledger pairs emit only revisions not in
+    ``emitted`` (days that closed since they were last seen).
+    """
+    from statistics import mean, pstdev
+
+    by_symbol: dict[str, list[Mapping[str, Any]]] = {}
+    for entry in ledger.values():
+        by_symbol.setdefault(str(entry["symbol"]), []).append(entry)
+    rows: list[dict[str, Any]] = []
+    touched_set = set(touched or ())
+    done = {tuple(x) for x in emitted or ()}
+    all_pairs = {(str(e["symbol"]), str(e["day"])) for e in ledger.values()}
+    pairs = all_pairs if touched is None else (all_pairs | touched_set if emitted is not None else touched_set)
+    for symbol, day in sorted(pairs):
+        day_date = date.fromisoformat(day)
+        close = datetime.combine(day_date + timedelta(days=1), datetime.min.time(), tzinfo=_TAIPEI_TZ)
+        day_entries = [e for e in by_symbol.get(symbol, []) if e["day"] == day]
+        steps = sorted({max(_known_at(e), close) for e in day_entries})
+        for step in steps:
+            if now is not None and step > now:
+                continue
+            if touched is not None and (symbol, day) not in touched_set and (symbol, day, _feature_iso(step)) in done:
+                continue
+            visible = [e for e in day_entries if _known_at(e) <= step]
+            bull = sum(e["stance"] == "bull" for e in visible)
+            bear = sum(e["stance"] == "bear" for e in visible)
+            weights = _community_post_weights(visible)
+            history_entries: dict[str, list[Mapping[str, Any]]] = {}
+            for e in by_symbol.get(symbol, []):
+                if e["day"] != day and _known_at(e) <= step:
+                    history_entries.setdefault(e["day"], []).append(e)
+            history_counts = {
+                d: sum(_community_post_weights(es)) for d, es in history_entries.items()
+            }
+            history = [
+                history_counts[(day_date - timedelta(days=offset)).isoformat()]
+                for offset in range(1, COMMUNITY_ZSCORE_WINDOW_DAYS + 1)
+                if (day_date - timedelta(days=offset)).isoformat() in history_counts
+            ]
+            row: dict[str, Any] = {
+                "dataset": TW_COMMUNITY_DAILY_DATASET,
+                "symbol": symbol,
+                "symbol_canonical": symbol,
+                "event_time": day,
+                "date": day,
+                "available_time": _feature_iso(step),
+                "ingest_time": max(str(e["first_seen"]) for e in visible),
+                "availability_lag_days": 0,
+                "post_volume": float(len(visible)),
+            }
+            authors = {e.get("author") for e in visible if e.get("author")}
+            if authors:
+                row["unique_authors"] = float(len(authors))
+            scored = [
+                (w * (1.0 + float(e.get("engagement") or 0.0)), 1.0 if e["stance"] == "bull" else -1.0)
+                for e, w in zip(visible, weights)
+                if e["stance"]
+            ]
+            total_weight = sum(w for w, _ in scored)
+            if total_weight > 0:
+                row["engagement_weighted_sentiment"] = sum(w * x for w, x in scored) / total_weight
+            effective_volume = sum(weights)
+            if len(history) >= COMMUNITY_ZSCORE_MIN_HISTORY_DAYS:
+                sd = pstdev(history)
+                if sd > 0:
+                    row["attention_zscore"] = (effective_volume - mean(history)) / sd
+            if bull + bear > 0:
+                row["bull_bear_ratio"] = (bull + 1) / (bear + 1)
+            rows.append(row)
+    return tuple(rows)
+
+
+def community_daily_feature_rows(
+    records: Sequence[SourceRecord],
+    *,
+    authority: Mapping[str, Sequence[str]],
+    ledger: Mapping[str, Mapping[str, Any]] | None = None,
+    seen_at: str | None = None,
+    rejected: list[dict[str, str]] | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Aggregate community posts into daily per-symbol features (design §8.5).
+
+    Days are Asia/Taipei days; symbols are venue-qualified through ``authority``. ``ledger``
+    holds previously seen posts (keyed, so replays do not double count); the rows returned
+    cover every (symbol, day) touched by ``records``. ``post_volume`` is the day's post
+    count, ``attention_zscore`` compares it with the preceding up to 60 observed days (needs
+    5, else omitted), ``bull_bear_ratio`` is ``(bull + 1) / (bear + 1)``. A day's row is
+    available only after that day closes and its latest contributing post was fetched.
+    """
+    merged: dict[str, dict[str, Any]] = {k: dict(v) for k, v in (ledger or {}).items()}
+    entries, rej = community_ledger_entries(
+        records, authority=authority, seen_at=seen_at or _feature_iso(datetime.now(timezone.utc))
+    )
+    if rejected is not None:
+        rejected.extend(rej)
+    touched: set[tuple[str, str]] = set()
+    for entry in entries:
+        merged.setdefault(entry["key"], entry)
+        touched.add((entry["symbol"], entry["day"]))
+    return community_daily_rows_from_ledger(merged, touched, now=_feature_time(seen_at) if seen_at else None)
+
+
+def feature_rows_to_records(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    connector_id: str,
+    trace_id: str = "",
+) -> tuple[SourceRecord, ...]:
+    """Wrap governed macro/community feature rows so the storage writer can persist them."""
+    out: list[SourceRecord] = []
+    for row in rows:
+        dataset = str(row["dataset"])
+        entity = str(row.get("series_id") or row.get("symbol") or "")
+        row_hash = hashlib.sha256(json.dumps(dict(row), sort_keys=True, default=str).encode()).hexdigest()[:24]
+        out.append(
+            SourceRecord(
+                source_id=f"{connector_id}:{dataset}:{entity}:{row.get('field') or 'daily'}:{row['event_time']}:{row_hash}",
+                connector_id=connector_id,
+                source_type="market",
+                title=f"{dataset} {entity} {row['event_time']}",
+                content_ref=f"collector-feature://{dataset}/{entity}/{row['event_time']}/{row_hash}",
+                metadata={
+                    "dataset": dataset,
+                    "symbol": entity,
+                    "symbol_canonical": row.get("symbol_canonical") or entity,
+                    "series_id": row.get("series_id"),
+                    "date": row["event_time"],
+                    "event_time": row["event_time"],
+                    "available_time": row["available_time"],
+                    "ingest_time": row["ingest_time"],
+                    "availability_lag_days": row["availability_lag_days"],
+                    "normalized_row": dict(row),
+                    "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                    "access_scope": ["public", "research"],
+                    "license_scope": "collector_public_web",
+                    "schema_hash": f"{dataset}.v1",
+                },
+                trace_id=trace_id,
+            )
+        )
+    return tuple(out)

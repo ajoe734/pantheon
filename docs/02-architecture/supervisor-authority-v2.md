@@ -345,10 +345,10 @@ A hot read never:
 - rewrites a checkpoint;
 - performs GitHub, provider, or git I/O.
 
-`refresh_checkpoint` remains temporarily as a call-signature compatibility
-argument. V2 has no checkpoint. `False` means a strictly observational read
-that requires an already provisioned journal, head, and lock and creates
-nothing.
+`load_snapshot(path, *, observational=False)` takes the keyword
+`observational`; the former `refresh_checkpoint` argument is removed. V2 has no
+checkpoint. `observational=True` means a strictly read-only read that requires
+an already provisioned journal, head, and lock and creates nothing.
 
 ### 6.6 Full audit
 

@@ -1086,6 +1086,41 @@ def planner_decision(
     )
 
 
+class SupervisorRuntimeStampTests(unittest.TestCase):
+    def test_stamp_records_the_pid_namespace_of_recorded_worker_pids(self) -> None:
+        state: dict[str, Any] = {}
+        with mock.patch.object(
+            supervisor, "current_pid_namespace", return_value="pid:[4026531836]"
+        ):
+            supervisor.stamp_supervisor_runtime_state(
+                config_fixture(),
+                state,
+                heartbeat_at="2026-11-11T02:00:00Z",
+                lifecycle="running",
+            )
+
+        self.assertEqual(state["supervisor"]["pid"], os.getpid())
+        self.assertEqual(state["supervisor"]["pid_namespace"], "pid:[4026531836]")
+
+    def test_stamped_pid_namespace_survives_runtime_state_save_and_load(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"paths": {"state_file": str(Path(tmpdir) / "state.json")}}
+            state = runtime_state.default_state()
+            with mock.patch.object(
+                supervisor, "current_pid_namespace", return_value="pid:[4026531836]"
+            ):
+                supervisor.stamp_supervisor_runtime_state(
+                    config,
+                    state,
+                    heartbeat_at="2026-11-11T03:13:36Z",
+                    lifecycle="running",
+                )
+            supervisor.save_runtime_state(config, state)
+            reloaded = supervisor.load_runtime_state(config)
+
+        self.assertEqual(reloaded["supervisor"]["pid_namespace"], "pid:[4026531836]")
+
+
 class ReviewOnlyAgentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()
@@ -2204,14 +2239,15 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 0)
 
     def test_repo_codex_slots_inherit_logical_lane_capacity(self) -> None:
-        # The operator stopped the Codex lanes on 2026-10-06 and restored one
-        # review-only slot each on 2026-10-24: the lane capacity, never a
-        # per-slot value, decides whether any slot can be dispatched.
+        # The operator stopped the Codex lanes on 2026-10-06, restored one
+        # review-only slot each on 2026-10-24 and on 2026-11-11 opened all four
+        # slots of each lane for owner and review work: the lane capacity, never
+        # a per-slot value, decides whether any slot can be dispatched.
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         for agent_id in ("codex", "codex2"):
             with self.subTest(agent_id=agent_id):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
-                self.assertEqual(lane.max_parallel, 1)
+                self.assertEqual(lane.max_parallel, 4)
                 self.assertTrue(lane.endpoints)
                 self.assertTrue(all(endpoint.enabled for endpoint in lane.endpoints))
                 self.assertTrue(
@@ -2230,8 +2266,9 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         account = supervisor.agent_account_id(config, "claude")
         self.assertTrue(bool(account) and account == supervisor.agent_account_id(config, "claude2"))
-        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 3)
-        expected_capacity = {"claude": 3, "claude2": 0}
+        # Operator 2026-11-11: run Claude2 at full capacity; both lanes share the claude1 account cap.
+        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 6)
+        expected_capacity = {"claude": 3, "claude2": 3}
         for agent_id, capacity in expected_capacity.items():
             with self.subTest(agent_id=agent_id, capacity=capacity):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
@@ -2531,16 +2568,91 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertTrue(self._materialize())
         self._assert_own_branch_wording(self._task_id())
 
-    def test_repair_task_states_own_branch_delivery_rule_execute_plans_source(self) -> None:
+    def test_execute_plans_ci_red_reopens_source_without_pantheon_repair_task(self) -> None:
         fe = self._make_execute_plans_source()
         reason = "ci-red"
-        unblock_id = self._fe_task_id(reason)
-        self._publish(
-            reason=reason, detail="required CI is red",
-            unblock_task_id=unblock_id, **fe,
+        self.assertTrue(supervisor.unblock_contract.requires_repair_task(reason))
+        self.assertFalse(supervisor.unblock_contract.requires_source_reopen(reason))
+        self.assertTrue(
+            supervisor.unblock_contract.requires_source_reopen(reason, "execute_plans")
         )
+        request = self._publish(
+            reason=reason, detail="required frontend CI is red",
+            unblock_task_id=self._fe_task_id(reason), **fe,
+        )
+        calls: list[tuple[list[str], dict[str, str], str]] = []
+        with mock.patch.object(
+            supervisor.subprocess, "run",
+            side_effect=self._run_real_reopen_subprocess(calls),
+        ):
+            self.assertTrue(self._materialize())
+        self.assertFalse(request.exists())
+        self.assertEqual(len(calls), 1)
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        tasks = snapshot["state"]["tasks"]
+        # No execute-plans repair task declaring Pantheon integrator tooling.
+        self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+        self.assertNotIn(
+            "scripts/git/auto_integrator.py",
+            json.dumps(tasks, sort_keys=True),
+        )
+        self.assertEqual(tasks[0]["status"], "in_progress")
+        self.assertIn("source-owned return (ci-red)", tasks[0]["next"])
+        self.assertIn("required frontend CI is red", tasks[0]["next"])
+
+    def test_execute_plans_integration_environment_faults_leave_source_untouched(self) -> None:
+        for reason in (
+            "missing-dedicated-integration-path", "integration-checkout-not-detached",
+            "contradictory-review-bridge-policy", "final-authority-timeout",
+            "final-pr-refresh-failed",
+        ):
+            with self.subTest(reason=reason):
+                fe = self._make_execute_plans_source()
+                self.assertFalse(
+                    supervisor.unblock_contract.requires_source_reopen(reason, "execute_plans")
+                )
+                self.assertFalse(
+                    supervisor.unblock_contract.requires_repair_task(reason, "execute_plans")
+                )
+                request = self._publish(
+                    reason=reason, detail="integration checkout fault",
+                    unblock_task_id=self._fe_task_id(reason), **fe,
+                )
+                calls: list[tuple[list[str], dict[str, str], str]] = []
+                with mock.patch.object(
+                    supervisor.subprocess, "run",
+                    side_effect=self._run_real_reopen_subprocess(calls),
+                ):
+                    self._materialize()
+                self.assertEqual(calls, [])
+                snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+                    self.config["task_state_store"]["event_log"]
+                )
+                tasks = snapshot["state"]["tasks"]
+                self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+                self.assertEqual(tasks[0]["status"], "review_approved")
+                self.assertEqual(tasks[0]["delivery_binding"]["pr"], 940)
+                self.assertFalse(request.exists())
+
+    def test_non_pantheon_source_reopen_is_limited_to_source_owned_reasons(self) -> None:
+        contract = supervisor.unblock_contract
+        for reason in contract.SOURCE_OWNED_REASONS:
+            self.assertTrue(contract.requires_source_reopen(reason, "execute_plans"), reason)
+        for reason in contract.REASONS - contract.SOURCE_OWNED_REASONS:
+            if reason == contract.EXACT_HEAD_BEHIND_BASE_REASON:
+                continue
+            self.assertFalse(contract.requires_source_reopen(reason, "execute_plans"), reason)
+            self.assertFalse(contract.requires_repair_task(reason, "execute_plans"), reason)
+
+    def test_pantheon_ci_red_still_materializes_one_level_repair(self) -> None:
+        self.assertFalse(
+            supervisor.unblock_contract.requires_source_reopen("ci-red", "pantheon")
+        )
+        self._publish()
         self.assertTrue(self._materialize())
-        self._assert_own_branch_wording(unblock_id)
+        self._assert_own_branch_wording(self._task_id())
 
     def test_queued_child_repair_is_rejected_without_mutating_source(self) -> None:
         for provenance in (
@@ -3085,32 +3197,6 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertFalse(self._materialize())
         self.assertEqual(supervisor.load_status(self.config), before)
         self.assertTrue(self._rejected_receipt(request).is_file())
-
-    def test_execute_plans_ci_red_creates_one_repair_task_in_execute_plans_workspace(self) -> None:
-        fe = self._make_execute_plans_source()
-        unblock_id = self._fe_task_id("ci-red")
-        request = self._publish(
-            reason="ci-red", unblock_task_id=unblock_id, detail="PR #940 has failing checks.",
-            **fe,
-        )
-        self.assertTrue(self._materialize())
-        self.assertFalse(request.exists())
-        status = supervisor.load_status(self.config)
-        repairs = [t for t in status["tasks"] if t["id"] == unblock_id]
-        self.assertEqual(len(repairs), 1)
-        self.assertEqual(len(status["tasks"]), 2)
-        repair = repairs[0]
-        self.assertEqual(
-            supervisor.task_target_repository_id(self.config, repair), "execute_plans"
-        )
-        self.assertEqual(
-            supervisor.task_primary_repository_id(self.config, repair), "execute_plans"
-        )
-        self.assertEqual(
-            supervisor.repository_slug(self.config, "execute_plans"), "ajoe734/execute-plans"
-        )
-        # Repair task must pass the same repository-scope validation used by dispatch.
-        supervisor.validate_task_repository_scope(self.config, repair)
 
     def test_exact_head_behind_base_reopen_failure_keeps_request_retryable(self) -> None:
         reason = "exact-head-behind-base"
@@ -22035,12 +22121,13 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                     "a Codex quota exhaustion would stop all dispatch",
                 )
 
-    def test_codex_reviewer_fallbacks_are_review_only_with_capacity(self) -> None:
-        # The operator stopped the Codex lanes on 2026-10-06 and restored them
-        # on 2026-10-24 only as last-resort reviewers for when the Antigravity
-        # account runs out of quota. A zero-capacity reviewer in a chain is
-        # only reassigned away again, and the lanes must never take owner work.
+    def test_codex_reviewer_fallbacks_have_capacity_and_come_last(self) -> None:
+        # The operator stopped the Codex lanes on 2026-10-06, restored them on
+        # 2026-10-24 as last-resort reviewers, and on 2026-11-11 opened them for
+        # owner work at full capacity. They stay last in every reviewer chain,
+        # and a zero-capacity reviewer in a chain is only reassigned away again.
         review_only = set(self.config["worker_reassignment"]["review_only_agents"])
+        self.assertFalse({"Codex", "Codex2"} & review_only)
         capacity: dict[str, int] = {}
         for agent in (self.config.get("agents") or {}).values():
             lane = str(agent.get("display_name") or "")
@@ -22050,7 +22137,6 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                 continue
             for name in {"Codex", "Codex2"} & set(chain):
                 with self.subTest(lane=lane, reviewer=name):
-                    self.assertIn(name, review_only)
                     self.assertGreater(
                         capacity.get(name, 0),
                         0,

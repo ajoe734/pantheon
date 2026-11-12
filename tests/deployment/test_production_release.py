@@ -121,7 +121,23 @@ PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-rea
 echo "$tool $*" >> "$BIN_LOG"
 case "$tool" in
   sudo)
-    if [[ "$1" == "-E" ]]; then shift; fi
+    preserve_env=false; target_home=false
+    while [[ "${1:-}" == -* ]]; do
+      case "$1" in
+        -E) preserve_env=true ;;
+        -H) target_home=true ;;
+        *) exit 2 ;;
+      esac
+      shift
+    done
+    if [[ -n "${FAKE_SUDO_ROOT_HOME:-}" && ( "$target_home" == true || "$preserve_env" == false ) ]]; then
+      export HOME="$FAKE_SUDO_ROOT_HOME"
+    fi
+    if [[ "$preserve_env" == true ]]; then exec "$@"; fi
+    if [[ "${FAKE_SUDO_RESET_ENV:-}" == "true" ]]; then
+      # Real sudo resets the environment unless -E: keep only harness plumbing, drop exported release/image vars.
+      exec env -i PATH="$PATH" BIN_LOG="$BIN_LOG" FAKE_STATE="$FAKE_STATE" HOME="${HOME:-/}" "$@"
+    fi
     exec "$@"
     ;;
   mountpoint) [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
@@ -131,10 +147,17 @@ case "$tool" in
       [[ "${FAKE_DOCKER_FAIL:-}" == *"login"* ]] && exit 1
       cat >/dev/null
       echo "$args" >> "$FAKE_STATE/docker_logins"
+      if [[ "${FAKE_DOCKER_REQUIRE_AUTH:-}" == true ]]; then
+        mkdir -p "${DOCKER_CONFIG:-$HOME/.docker}"
+        touch "${DOCKER_CONFIG:-$HOME/.docker}/fake-registry-login"
+      fi
       exit 0
     fi
     if [[ "$args" == "pull "* ]]; then
       [[ "${FAKE_DOCKER_FAIL:-}" == *"pull"* ]] && exit 1
+      if [[ "${FAKE_DOCKER_REQUIRE_AUTH:-}" == true ]]; then
+        [[ -f "${DOCKER_CONFIG:-$HOME/.docker}/fake-registry-login" ]] || exit 1
+      fi
       img="${2:-}"
       echo "$img" >> "$FAKE_STATE/pulled_images"
       exit 0
@@ -904,6 +927,13 @@ class BootstrapTests(OpsHarness):
             if line.startswith(("PANTHEON_POSTGRES_IMAGE=", "PANTHEON_NATS_IMAGE=")):
                 self.assertIn(line.split("=", 1)[1], pulled)
         self.assertTrue(any(i.startswith("postgres:") for i in pulled) and any(i.startswith("nats:") for i in pulled))
+        # Fresh defaults are the exact Stage111/112-qualified pair, never the stale alpine refs or mutable tags.
+        qpg = "postgres:16@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+        qnats = "nats:2.11@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00"
+        self.assertIn(f"PANTHEON_POSTGRES_IMAGE={qpg}", written.splitlines())
+        self.assertIn(f"PANTHEON_NATS_IMAGE={qnats}", written.splitlines())
+        self.assertIn(qpg, pulled); self.assertIn(qnats, pulled)
+        self.assertNotIn("6b202572e5a9", written); self.assertNotIn("d3eb053c882d", written)
         # Existing compose.env with operator-pinned refs and no shell variables: those exact refs are pulled.
         (self.state / "pulled_images").unlink()
         env_file.write_text(env_file.read_text() + f"PANTHEON_POSTGRES_IMAGE={pg}\nPANTHEON_NATS_IMAGE={nats}\n")
@@ -947,6 +977,50 @@ class BootstrapTests(OpsHarness):
         self.assertEqual(r_sudo.returncode, 0, r_sudo.stderr)
         self.assertIn("sudo ", self.log.read_text())
         self.assertTrue((self.state / "docker_logins").exists())
+
+    def test_bootstrap_sudo_env_reset_still_delivers_release_and_images_to_first_stateful_compose(self):
+        r = self._run(FAKE_OSLOGIN_NONROOT="true", FAKE_SUDO_RESET_ENV="true")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        seen = (self.state / "stateful_env").read_text()
+        self.assertIn("PANTHEON_RELEASE_ID=", seen)
+        self.assertRegex(seen, r"PANTHEON_[A-Z_]+_IMAGE=\S+@sha256:")
+
+    def test_workflow_privileged_entrypoints_share_bootstrap_docker_auth_home(self):
+        workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/production-release.yml").read_text())
+        remote_step = next(step for job in workflow["jobs"].values() for step in job["steps"]
+                           if step.get("name", "").startswith("Run atomic switch on"))
+        prefixes = re.findall(r"^\s*(sudo(?: -[A-Z])+ env) ", remote_step["run"], re.MULTILINE)
+        self.assertEqual(len(prefixes), 4)  # bootstrap, pre-pull, migrate, atomic switch
+        login_home = self.tmp / "oslogin-home"
+        root_home = self.tmp / "root-home"
+        login_home.mkdir()
+        root_home.mkdir()
+        env = self._env(HOME=str(login_home), FAKE_SUDO_ROOT_HOME=str(root_home),
+                        FAKE_DOCKER_REQUIRE_AUTH="true", PROD_USE_SUDO="false", PROD_REGISTRY_AUTH="true")
+        env.pop("DOCKER_CONFIG", None)  # actual failed VM context: Docker resolves $HOME/.docker
+
+        def run(prefix, *command):
+            return subprocess.run([*prefix.split(), *command], env=env,
+                                  capture_output=True, text=True, timeout=60)
+
+        boot = run(prefixes[0], "PROD_USE_SUDO=true", str(BOOTSTRAP))
+        self.assertEqual(boot.returncode, 0, boot.stderr)
+        self.assertTrue((root_home / ".docker/fake-registry-login").exists())
+        self.assertFalse((login_home / ".docker/fake-registry-login").exists())
+        # Control reproduces the old outer sudo -E pull after nested sudo login.
+        legacy = run("sudo -E env", str(OPS), "prepull_images", "rel-1")
+        self.assertNotEqual(legacy.returncode, 0)
+        self.assertIn("IMAGE_PULL_FAILED", legacy.stderr)
+        pulled = run(prefixes[1], str(OPS), "prepull_images", "rel-1")
+        self.assertEqual(pulled.returncode, 0, pulled.stderr)
+        # All four workflow hops must retain the release environment and the same
+        # root HOME, including migration/switch children which also invoke Docker.
+        probe = "import os,json; print(json.dumps([os.environ['HOME'],os.environ['PROD_ROOT']]))"
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                result = run(prefix, sys.executable, "-c", probe)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), [str(root_home), str(self.root)])
 
     def test_bootstrap_never_mounts_or_formats_and_rejects_bad_secrets(self):
         r = self._run(FAKE_MOUNTED="no")

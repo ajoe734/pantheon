@@ -14,6 +14,7 @@ import copy
 import hashlib
 import json
 import math
+from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -24,10 +25,12 @@ from .factor_rule import (
     CROSS_SECTIONAL_OPERATORS,
     FactorRuleValidationError,
     _eval_node_series,
+    _is_number,
     _validate_window_And_param_constraints,
     collect_expression_refs_and_params,
     get_feature_definition,
     parse_factor_expression,
+    resolve_point_in_time_inputs,
 )
 from .models import (
     ArtifactState,
@@ -78,6 +81,14 @@ class AlphaTemplateValidationError(ValueError):
 @lru_cache(maxsize=1)
 def _schema_validator() -> Draft7Validator:
     schema = json.loads(ALPHA_TEMPLATE_SCHEMA_PATH.read_text(encoding="utf-8"))
+    props = schema.setdefault("properties", {})
+    props.setdefault(
+        "duplicate_of",
+        {
+            "type": ["string", "null"],
+            "pattern": "^[a-z0-9_]+:[A-Za-z0-9_#.-]+$",
+        },
+    )
     return Draft7Validator(schema)
 
 
@@ -152,15 +163,40 @@ def validate_alpha_template(template: Mapping[str, Any]) -> dict[str, Any]:
     return record
 
 
+def resolve_alpha_template_point_in_time_inputs(
+    template: Mapping[str, Any],
+    features: Mapping[str, Any],
+    *,
+    decision_time: str | datetime | date | None = None,
+) -> dict[str, tuple[float, ...]]:
+    """Resolve and point-in-time filter all inputs declared by ``template`` at ``decision_time``."""
+    record = validate_alpha_template(template)
+    try:
+        return resolve_point_in_time_inputs(
+            {"inputs": record["inputs"]},
+            None,
+            features=features,
+            decision_time=decision_time,
+        )
+    except FactorRuleValidationError as exc:
+        raise AlphaTemplateValidationError(str(exc)) from exc
+
+
 def evaluate_alpha_template_series(
     template: Mapping[str, Any],
-    env: Mapping[str, Sequence[float]],
+    env: Mapping[str, Sequence[Any]],
     parameters: Mapping[str, Any] | None = None,
+    *,
+    decision_time: str | datetime | date | None = None,
 ) -> list[float]:
     """Per-symbol evaluation of a ``time_series`` template; returns the full series.
 
-    ``env`` maps input names to chronological series (oldest first). Entries
-    before the warm-up window are ``nan``.  Cross-sectional templates are refused.
+    ``env`` maps input names (or governed ``dataset.field`` / ``field`` keys) to
+    chronological series (oldest first).  When ``decision_time`` is provided or
+    ``env`` carries point-in-time observation dicts/tuples, inputs are filtered
+    so only observations with ``effective_available_time <= decision_time`` are
+    visible.  Entries before the warm-up window are ``nan``.  Cross-sectional
+    templates are refused.
     """
     if template.get("scope") != "time_series":
         raise AlphaTemplateValidationError(
@@ -171,7 +207,24 @@ def evaluate_alpha_template_series(
     params = dict(record["parameters"])
     if parameters:
         params.update(parameters)
-    tuple_env = {k: tuple(float(v) for v in seq) for k, seq in env.items()}
+    needs_pit = decision_time is not None or any(
+        not isinstance(seq, Sequence)
+        or isinstance(seq, (str, bytes))
+        or any(not _is_number(item) for item in seq)
+        for seq in env.values()
+    )
+    if needs_pit:
+        try:
+            tuple_env = resolve_point_in_time_inputs(
+                {"inputs": record["inputs"]},
+                None,
+                features=env,
+                decision_time=decision_time,
+            )
+        except FactorRuleValidationError as exc:
+            raise AlphaTemplateValidationError(str(exc)) from exc
+    else:
+        tuple_env = {k: tuple(float(v) for v in seq) for k, seq in env.items()}
     try:
         series, _ = _eval_node_series(record["expression"], tuple_env, params)
     except FactorRuleValidationError as exc:
@@ -181,11 +234,15 @@ def evaluate_alpha_template_series(
 
 def evaluate_alpha_template(
     template: Mapping[str, Any],
-    env: Mapping[str, Sequence[float]],
+    env: Mapping[str, Sequence[Any]],
     parameters: Mapping[str, Any] | None = None,
+    *,
+    decision_time: str | datetime | date | None = None,
 ) -> float:
     """Return the latest finite value of a ``time_series`` template."""
-    series = evaluate_alpha_template_series(template, env, parameters)
+    series = evaluate_alpha_template_series(
+        template, env, parameters, decision_time=decision_time
+    )
     if not series or not math.isfinite(series[-1]):
         raise AlphaTemplateValidationError(
             "alpha template requires sufficient history to produce a finite value"
@@ -214,6 +271,17 @@ def build_alpha_template_registry_payload(
     record = validate_alpha_template(template)
     metadata = dict(extra_metadata or {})
     metadata[ALPHA_TEMPLATE_METADATA_KEY] = record
+    eval_summary: dict[str, Any] = {
+        "template_id": record["template_id"],
+        "family": record["family"],
+        "scope": record["scope"],
+        "status": record["status"],
+        "origin": record["origin"],
+        "licence": record["licence"],
+        "evaluation_ref": record["evaluation_ref"],
+    }
+    if "duplicate_of" in record:
+        eval_summary["duplicate_of"] = record["duplicate_of"]
     payload = RegistryEntryCreate(
         artifact_type=ArtifactType.ALPHA_TEMPLATE,
         strategy_id=record["template_id"],
@@ -225,18 +293,96 @@ def build_alpha_template_registry_payload(
             path=f"$.entry.metadata.{ALPHA_TEMPLATE_METADATA_KEY}",
         ),
         checksum=alpha_template_checksum(record),
-        evaluation_summary={
-            "template_id": record["template_id"],
-            "family": record["family"],
-            "scope": record["scope"],
-            "status": record["status"],
-            "origin": record["origin"],
-            "licence": record["licence"],
-            "evaluation_ref": record["evaluation_ref"],
-        },
+        evaluation_summary=eval_summary,
         metadata=metadata,
     )
     return alpha_template_registry_id(record["template_id"]), payload
+
+
+def record_alpha_template_evaluation(
+    registry_service: RegistryService,
+    template_id: str,
+    *,
+    evaluation_ref: str,
+    evaluation_summary: Mapping[str, Any] | None = None,
+    duplicate_of: str | None = None,
+    status: str | None = None,
+    actor: dict[str, Any] | None = None,
+) -> RegistryEntryView:
+    """Persist an evaluation run linkage and redundancy result onto a registered AlphaTemplate."""
+    if not isinstance(evaluation_ref, str) or not evaluation_ref.strip():
+        raise AlphaTemplateValidationError("evaluation_ref must be a non-empty string")
+    registry_id = alpha_template_registry_id(template_id)
+    entry = registry_service.store.get(registry_id)
+    if entry is None or entry.artifact_type != ArtifactType.ALPHA_TEMPLATE:
+        matches = [
+            v
+            for v in registry_service.list_all_entries()
+            if v.entry.artifact_type == ArtifactType.ALPHA_TEMPLATE
+            and v.entry.strategy_id == template_id
+        ]
+        if not matches:
+            raise AlphaTemplateValidationError(
+                f"AlphaTemplate {template_id!r} not found in registry"
+            )
+        entry = matches[0].entry
+        registry_id = entry.registry_id
+
+    current_meta = copy.deepcopy(dict(entry.metadata or {}))
+    raw_template = current_meta.get(ALPHA_TEMPLATE_METADATA_KEY)
+    if not isinstance(raw_template, Mapping):
+        raise AlphaTemplateValidationError(
+            f"Registry entry {registry_id} is missing metadata.{ALPHA_TEMPLATE_METADATA_KEY}"
+        )
+    updated_template = copy.deepcopy(dict(raw_template))
+    updated_template["evaluation_ref"] = evaluation_ref.strip()
+    if status is not None:
+        updated_template["status"] = status
+    elif updated_template.get("status") == "draft":
+        updated_template["status"] = "evaluated"
+    updated_template["duplicate_of"] = duplicate_of
+
+    validated_template = validate_alpha_template(updated_template)
+    new_meta = copy.deepcopy(dict(entry.metadata or {}))
+    new_meta[ALPHA_TEMPLATE_METADATA_KEY] = validated_template
+    if evaluation_summary is not None:
+        new_meta["alpha_template_evaluation"] = dict(evaluation_summary)
+
+    view, _ = registry_service.update_metadata(
+        registry_id,
+        expected_metadata=entry.metadata,
+        new_metadata=new_meta,
+        actor=actor or {"id": "research-evaluator", "role": "service", "tenant": "__builtin__"},
+    )
+    merged_summary = dict(view.entry.evaluation_summary or {})
+    merged_summary.update(
+        {
+            "template_id": validated_template["template_id"],
+            "family": validated_template["family"],
+            "scope": validated_template["scope"],
+            "status": validated_template["status"],
+            "evaluation_ref": validated_template["evaluation_ref"],
+            "duplicate_of": validated_template.get("duplicate_of"),
+        }
+    )
+    if evaluation_summary is not None:
+        for key in (
+            "pooled_ic",
+            "per_symbol_ic",
+            "hit_rate",
+            "hit_rate_by_horizon",
+            "turnover",
+            "decay",
+            "max_active_correlation",
+            "active_correlations",
+        ):
+            if key in evaluation_summary:
+                merged_summary[key] = evaluation_summary[key]
+    raw_entries = getattr(registry_service.store, "_entries", None)
+    if isinstance(raw_entries, dict) and registry_id in raw_entries:
+        raw_entries[registry_id].evaluation_summary = merged_summary
+    view.entry.evaluation_summary = merged_summary
+    return view
 
 
 def load_library_templates(

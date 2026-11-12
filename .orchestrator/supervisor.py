@@ -47,6 +47,7 @@ from common import (
     canonical_task_state_identity,
     config_path,
     cmdline_is_worker_runner,
+    current_pid_namespace,
     display_name_for,
     load_config,
     load_json,
@@ -1234,6 +1235,9 @@ def stamp_supervisor_runtime_state(
     previous_pid = supervisor_state.get("pid")
 
     supervisor_state["pid"] = current_pid
+    # Worker PIDs in this state belong to the supervisor's PID namespace;
+    # readers in another namespace must not judge them through their /proc.
+    supervisor_state["pid_namespace"] = current_pid_namespace()
     supervisor_state["last_heartbeat_at"] = heartbeat_at
     if not supervisor_state.get("started_at") or previous_pid != current_pid:
         supervisor_state["started_at"] = heartbeat_at
@@ -2199,6 +2203,17 @@ def _behind_reopen_message(target_branch: str) -> str:
     )
 
 
+def _source_owned_reopen_message(reason: str, target_branch: str, detail: str) -> str:
+    if reason == unblock_contract.EXACT_HEAD_BEHIND_BASE_REASON:
+        return _behind_reopen_message(target_branch)
+    return (
+        f"Auto-integrator source-owned return ({reason}): this repository's fix "
+        "belongs to the source task, not a Pantheon tooling repair. Repair the "
+        "source branch, push a new head and resubmit for exact-head review; "
+        f"prior approval does not carry to a changed head. Detail: {str(detail)[:500]}"
+    )
+
+
 def _validate_auto_integrator_unblock_request(
     config: dict[str, Any], request: Mapping[str, Any], filename: str, status: Mapping[str, Any]
 ) -> tuple[dict[str, Any], Mapping[str, Any]]:
@@ -2221,8 +2236,8 @@ def _validate_auto_integrator_unblock_request(
     source_task_id = str(request.get("source_task_id") or "")
     reason = unblock_contract.validate_reason(request.get("reason"))
     if not (
-        unblock_contract.requires_repair_task(reason)
-        or unblock_contract.requires_source_reopen(reason)
+        unblock_contract.requires_repair_task(reason, request.get("repository_id"))
+        or unblock_contract.requires_source_reopen(reason, request.get("repository_id"))
     ):
         raise ValueError("authority/evidence blocker must be resolved on its source task")
     if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(request):
@@ -2235,7 +2250,7 @@ def _validate_auto_integrator_unblock_request(
     # Enforce again under the canonical lock, including already queued requests
     # from older producers. A caller cannot reset depth in the request body.
     unblock_contract.require_root_repair_source(source_task_id, source)
-    if unblock_contract.requires_source_reopen(reason):
+    if unblock_contract.requires_source_reopen(reason, request.get("repository_id")):
         if str(source.get("status") or "") != "review_approved":
             raise ValueError("unblock request source task is not review_approved")
         if source.get("review_decision_intent") not in (None, {}, []):
@@ -2358,7 +2373,9 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
             request = load_json(path, default={})
             if not isinstance(request, Mapping):
                 raise ValueError("unblock request is not a JSON object")
-            if unblock_contract.requires_source_reopen(str(request.get("reason") or "")):
+            if unblock_contract.requires_source_reopen(
+                str(request.get("reason") or ""), request.get("repository_id")
+            ):
                 with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
                     status = load_status(config)
                     valid, source = _validate_auto_integrator_unblock_request(
@@ -2372,7 +2389,9 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                         str(binding.get("base") or repo_meta.get("default_branch") or "dev").strip()
                         or "dev"
                     )
-                    reopen_message = _behind_reopen_message(target_branch)
+                    reopen_message = _source_owned_reopen_message(
+                        str(valid["reason"]), target_branch, str(valid["detail"])
+                    )
                 script, env = status_command_subprocess_context(config)
                 env["AI_NAME"] = "Human/Ops"
                 env["PANTHEON_LOCAL_HUMAN_OPS"] = "1"

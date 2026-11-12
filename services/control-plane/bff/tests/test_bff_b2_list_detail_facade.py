@@ -663,7 +663,6 @@ def _create_app() -> FastAPI:
         sse_buffers={},
         sse_subscribers={},
         gov_bff_action_command=lambda *a, **kw: {},
-        deprecated_bff_path_response=lambda *a, **kw: {},
         sem_command_response=lambda *a, **kw: {},
         stream_generic_events=lambda *a, **kw: None,
         surface_degradation_reason=lambda *a, **kw: None,

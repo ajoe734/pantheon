@@ -2266,7 +2266,6 @@ def _build_admission_entries_app(tmp_path, ports):
         sse_buffers={},
         sse_subscribers={},
         gov_bff_action_command=svc.submit_resource_action,
-        deprecated_bff_path_response=lambda **kwargs: (_ for _ in ()).throw(HTTPException(410)),
         sem_command_response=svc.sem_command_response,
         stream_generic_events=lambda *args: None,
         surface_degradation_reason=lambda *args: None,

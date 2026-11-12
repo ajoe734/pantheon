@@ -63,8 +63,6 @@ log = logging.getLogger(__name__)
 OPENCLAW_COMMAND_ROLES: Set[str] = {"operator", "admin"}
 MCP_TOOL_WRITE_ROLES: Set[str] = {"operator", "admin"}
 
-PATH_DEDUPE_DEPRECATED_SINCE = "2026-06-01"
-PATH_DEDUPE_SUNSET_HTTP_DATE = "Wed, 01 Jul 2026 00:00:00 GMT"
 
 SSE_CHANNEL_CATALOG: Tuple[str, ...] = (
     "approval",
@@ -167,51 +165,6 @@ def reject_body_idempotency_key(
             precondition_failed="body_idempotency_key",
             suggestion=f"Remove {body_key} from the body and set the Idempotency-Key header",
         )
-
-
-def deprecated_bff_path_response(*, route: str, replacement: str) -> JSONResponse:
-    message = f"{route} is deprecated; use {replacement}."
-    headers = {
-        "Deprecation": "true",
-        "Sunset": PATH_DEDUPE_SUNSET_HTTP_DATE,
-        "Link": f'<{replacement}>; rel="successor-version"',
-        "Warning": f'299 - "{message}"',
-        "X-Deprecated": "true",
-        "X-Deprecated-At": PATH_DEDUPE_DEPRECATED_SINCE,
-        "X-Pantheon-Deprecated-Route": route,
-        "X-Pantheon-Replacement-Route": replacement,
-    }
-    code_val = (
-        ErrorCode.OPERATION_NOT_ALLOWED.value
-        if hasattr(ErrorCode.OPERATION_NOT_ALLOWED, "value")
-        else str(ErrorCode.OPERATION_NOT_ALLOWED)
-    )
-    return JSONResponse(
-        status_code=410,
-        headers=headers,
-        content={
-            "detail": {
-                "error": {
-                    "code": code_val,
-                    "message": "Deprecated BFF route",
-                    "details": {
-                        "reason": "route_deprecated",
-                        "route": route,
-                        "replacement": replacement,
-                        "deprecated_since": PATH_DEDUPE_DEPRECATED_SINCE,
-                    },
-                }
-            },
-            "meta": {
-                "deprecated": True,
-                "deprecation": {
-                    "route": route,
-                    "replacement": replacement,
-                    "deprecated_since": PATH_DEDUPE_DEPRECATED_SINCE,
-                },
-            },
-        },
-    )
 
 
 REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)

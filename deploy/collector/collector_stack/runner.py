@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .bundle import BundleWriter, CollectedItem, WrittenBundle, utc_iso
 from .config import CollectorConfig, CollectorConfigError, SourceFetchPolicy
-from .fetchers import FetchAccessBlockedError, FetchTransport, LiveScraplingTransport
+from .fetchers import FetchAccessBlockedError, FetchBackendUnavailableError, FetchTransport, LiveScraplingTransport
 from .pollers import (
     ArxivPaperPoller,
     CbcMacroPoller,
@@ -46,6 +47,8 @@ class SourceDisabledError(CollectorConfigError):
 class SourcePausedError(RuntimeError):
     """Raised when attempting to run a source that was auto-paused after consecutive blocks."""
 
+logger = logging.getLogger("collector_stack.runner")
+
 
 @dataclass(frozen=True)
 class RunOutcome:
@@ -54,6 +57,7 @@ class RunOutcome:
     status: str
     bundle: WrittenBundle
     state: SourceRuntimeState
+    skipped_count: int = 0
 
 
 class CollectorRunner:
@@ -216,6 +220,29 @@ class CollectorRunner:
 
         try:
             items: Sequence[CollectedItem] = collector.collect(**kwargs)
+        except FetchBackendUnavailableError as unavailable:
+            logger.error("source %s failed: %s", source_id, unavailable)
+            self.bundle_writer.write_bundle(
+                policy=policy,
+                run_id=run_id,
+                items=(),
+                status="partial",
+                paused_reason=None,
+                started_at=started_iso,
+                finished_at=finished_iso,
+                reason="fetch_failed",
+            )
+            self.bundle_writer.update_host_status(
+                source_id=source_id,
+                status="partial",
+                last_run_at=finished_iso,
+                last_run_id=run_id,
+                paused_reason=None,
+                cadence_seconds=policy.cadence_seconds,
+                consecutive_blocks=current_state.consecutive_blocks,
+                reason="fetch_failed",
+            )
+            raise
         except FetchAccessBlockedError as blocked:
             updated_state = self.state_store.record_run_outcome(
                 source_id=source_id,
@@ -251,7 +278,19 @@ class CollectorRunner:
                 bundle=written,
                 state=updated_state,
             )
+        except FetchBackendUnavailableError:
+            raise
+        except Exception as parse_exc:  # noqa: BLE001 - a bad payload must still leave a manifest
+            logger.error("source %s parse failed: %s", source_id, parse_exc)
+            source_url = _first_request_url(collector) or (policy.base_urls[0] if policy.base_urls else None)
+            written = self.bundle_writer.write_bundle(
+                policy=policy, run_id=run_id, items=(), status="partial", paused_reason=None,
+                started_at=started_iso, finished_at=finished_iso,
+                reason="parse_failed", source_url=source_url,
+            )
+            return RunOutcome(source_id=source_id, run_id=run_id, status="partial", bundle=written, state=current_state)
 
+        skipped = _skipped_count(collector)
         updated_state = self.state_store.record_run_outcome(
             source_id=source_id,
             run_id=run_id,
@@ -259,22 +298,80 @@ class CollectorRunner:
             policy_hash=policy.policy_hash,
             block_reason=None,
         )
+        requests = _request_count(collector)
+        reason: str | None = None
+        if requests is not None and requests == 0:
+            reason = "no_targets"  # nothing was requested, so nothing can be called complete
+        elif requests is not None and not items:
+            reason = _zero_item_reason(collector)
+        bundle_status = "partial" if reason else "complete"
         written = self.bundle_writer.write_bundle(
             policy=policy,
             run_id=run_id,
             items=items,
-            status="complete",
+            status=bundle_status,
             paused_reason=None,
             started_at=started_iso,
             finished_at=finished_iso,
+            skipped_count=skipped,
+            reason=reason,
         )
         return RunOutcome(
             source_id=source_id,
             run_id=run_id,
-            status="complete",
+            status=bundle_status,
             bundle=written,
             state=updated_state,
+            skipped_count=skipped,
         )
+
+
+def _first_request_url(collector: Any) -> str | None:
+    for fetcher in _fetchers(collector):
+        for entry in getattr(fetcher, "request_log", ()):
+            if entry.get("url"):
+                return str(entry["url"])
+    return None
+
+
+def _fetchers(collector: Any) -> list[Any]:
+    parts = (collector, *(getattr(collector, n, None) for n in ("arxiv", "openalex", "nber")))
+    return [f for f in (getattr(p, "fetcher", None) for p in parts) if f is not None]
+
+
+def _zero_item_reason(collector: Any) -> str:
+    """Why a run that issued requests produced no items.
+
+    fetch_failed: a request errored or returned a non-2xx status.
+    no_data_for_date: only when the collector positively confirmed the source has no data (no_data_confirmed).
+    parse_zero: every response was fetched OK but nothing could be parsed into items.
+    """
+    for fetcher in _fetchers(collector):
+        for entry in getattr(fetcher, "request_log", ()):
+            status = entry.get("status")
+            if status is None or not 200 <= int(status) < 300:
+                return "fetch_failed"
+    if getattr(collector, "no_data_confirmed", False):
+        return "no_data_for_date"
+    return "parse_zero"
+
+
+def _request_count(collector: Any) -> int | None:
+    """Requests issued by a collector (composites sum parts); None when it has no fetcher (local library)."""
+    total: int | None = None
+    for part in (collector, *(getattr(collector, n, None) for n in ("arxiv", "openalex", "nber"))):
+        fetcher = getattr(part, "fetcher", None)
+        if fetcher is not None and hasattr(fetcher, "request_count"):
+            total = (total or 0) + int(fetcher.request_count)
+    return total
+
+
+def _skipped_count(collector: Any) -> int:
+    """Items a parser skipped as malformed/incomplete (composite collectors sum their parts)."""
+    total = int(getattr(collector, "skipped_count", 0) or 0)
+    for part in ("arxiv", "openalex", "nber"):
+        total += int(getattr(getattr(collector, part, None), "skipped_count", 0) or 0)
+    return total
 
 
 class _CompositePaperCollector:

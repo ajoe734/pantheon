@@ -182,7 +182,6 @@ def mounted(owner, tmp_path):
         reject_body_idempotency_key=lambda payload: None, request_dry_run_requested=lambda *args: False,
         publish_event=lambda *args: None, sse_buffers={}, sse_subscribers={},
         gov_bff_action_command=svc.submit_resource_action,
-        deprecated_bff_path_response=lambda **kwargs: (_ for _ in ()).throw(HTTPException(410)),
         sem_command_response=svc.sem_command_response, stream_generic_events=lambda *args: None,
         surface_degradation_reason=lambda *args: None,
     ))

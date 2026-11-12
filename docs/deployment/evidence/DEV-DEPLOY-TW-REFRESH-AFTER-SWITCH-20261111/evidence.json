@@ -1,0 +1,36 @@
+{
+  "task_id": "DEV-DEPLOY-TW-REFRESH-AFTER-SWITCH-20261111",
+  "failing_run": "https://github.com/ajoe734/pantheon/actions/runs/43011035366",
+  "root_cause": "The pre-mutation Taiwan refresh recreated source-ingest from the previous release image with the new configuration (host list without www.twse.com.tw); the old code still connected to the removed host, exited 1, and the restore then reported a controlled-env mismatch. Same class as the 2026-11-08 TAIFEX deadlock.",
+  "change": {
+    ".github/workflows/nonprod-deploy.yml": "market_refresh moved from before the predecessor/baseline/deploy steps to right after the candidate image seal upload (after 'Deploy dev VM stack under lease'), before TAIFEX refresh and the paper baseline. It still fails closed (no continue-on-error), records tw-market-refresh.json (outcome plus its own redacted log, exit codes) before re-raising, and a new always() upload step publishes it. Retire and compensation conditions now name steps.market_refresh.outcome == 'failure'.",
+    "scripts/deploy_nonprod_vm.sh": "bounded refresh failure outcome (with captured log) is written for every connector when --output is given, not only TAIFEX/non-blocking; non-blocking exit-0 behaviour stays TAIFEX-only.",
+    "scripts/auto_deploy_dev_pair.py": "step renamed 'Refresh Taiwan market session under lease after candidate stack deploy' and removed from PRE_MUTATION_STEPS (post-switch failures are compensated and not auto-retried for the same pair)."
+  },
+  "baseline_regressions": {
+    "classification": "Outdated test fixtures only, EXCEPT restore_env_mismatch, which was a real hosted fault later fixed in the scheduler-only restore_env_followup below.",
+    "stub_docker_compose_args": "The PIN-RUNNING-IMAGE change adds '-f <pin override>' to compose argv; the stub assumed exactly 5 prefix args, so 'compose config' returned nothing and the real guard correctly stopped ('compose image reference could not be resolved'). Stub now skips extra -f pairs.",
+    "restore_env_mismatch": "Initial fixture-level reading (superseded by restore_env_followup): stub did not model Compose interpolating controlled keys into the recreated container. The hosted run 43011035366 showed the real cause: SOURCE_INGEST_CONTROLLER_MODE is passed only to source-ingest-scheduler, not the source-ingest API container; restore now expects it only when the recorded pre-env had it. The wrong-env and wrong-image rejection controls are unchanged.",
+    "diagnostics_assertion": "test_nonprod_workflow_exposes_only_fixed_bounded_source_refresh expected the old egress expressions; updated to the truthful collector-host allowlist/deny and collector host expressions already in the workflow."
+  },
+  "acceptance": {
+    "1": "scripts/test_deploy_nonprod_vm.py, test_deploy_nonprod_bootstrap_contract.py, test_source_ingest_deploy_diagnostics_contract.py: deploy < market_refresh < taifex < paper_bootstrap; predecessor/baseline capture precede deploy",
+    "2": "paper_bootstrap keeps the default success() gate so it is skipped after a market_refresh failure; test_market_refresh_failure_is_a_post_switch_failure_handled_by_compensation",
+    "3": "compensation/retire conditions include market_refresh failure; tw-market-refresh.json + upload step; test_bounded_refresh_failure_outcome_with_log_is_recorded_for_every_connector",
+    "4": "updated step-order tests in the vm, bootstrap, diagnostics, lease-contract and auto-deploy-pair test files"
+  },
+  "verification": {
+    "scripts/test_dev_environment_lease_deploy_contract.py": "market_refresh tests pass; 7 other failures are unrelated stale assertions (provider-gate summary string, retire action, restart admission, post-up paper_bootstrap condition text) in code this task does not touch",
+    "scripts/test_deploy_nonprod_vm.py": "97 passed, 2 skipped (bounded 300s, exit 0) after fixing the source_refresh fixture; -k source_refresh: 11 passed",
+    "scripts/test_dev_tw_market_refresh.py": "55 passed (197s, exit 0)",
+    "scripts/test_deploy_nonprod_bootstrap_contract.py": "101 passed, 2 skipped",
+    "scripts/test_auto_deploy_dev_pair.py": "56 passed",
+    "scripts/test_source_ingest_deploy_diagnostics_contract.py": "21 passed",
+    "bash -n scripts/deploy_nonprod_vm.sh": "passed"
+  },
+  "scope_note": "Also edited scripts/auto_deploy_dev_pair.py, scripts/test_auto_deploy_dev_pair.py and scripts/test_dev_environment_lease_deploy_contract.py. These companion paths are outside the original contract but were admitted by the operator; they hard-code the old step name/order and would otherwise fail.",
+  "not_claimed": "No hosted dev run was executed; no new source acceptance is claimed.",
+  "restore_env_followup": "Hosted run 43011035366 failed restore with removed=[SOURCE_INGEST_CONTROLLER_MODE=reconcile_only]: docker-compose.yml passes that key only to source-ingest-scheduler. manage_source_ingest_refresh_runtime restore expects it only when the recorded pre-env had it; egress keys stay strict. Review P1 (fake inspect unconditionally appended MODE) fixed: fixture now emits MODE only when the pre-env carries it; new test test_source_refresh_restore_env_mode_key_presence_and_wrong_env covers MODE absent, MODE present, MODE added (rejected), and unrelated env drift (rejected). Prior 'only libpq errors' claim removed.",
+  "review_followup_ba21ee000": "Review regression: test_paper_step_and_compensation_share_the_one_applicability_decision failed because market_refresh was nested beside paper_bootstrap in the compensation/retire condition. Workflow condition restructured to '(PAPER_BOOTSTRAP_REQUESTED == true && paper_bootstrap.outcome != success) || market_refresh.outcome == failure' so the single applicability decision substring holds and market_refresh failure still compensates; no test changed or weakened. scripts/test_nonprod_dev_artifact_workflow.py: 181 passed exit 0. test_dev_tw_market_refresh.py: 55 passed (222s, exit 0). test_deploy_nonprod_bootstrap_contract.py: 101 passed, 2 skipped. diagnostics contract: 21 passed. Lease-contract: same 7 stale failures as listed above (unchanged set).",
+  "composition_6547": "Merged dev 6547ff3493dc110b1537941f3ddf24c61495d0a0 (shared CI apt repair, PR7183) into the original task branch; no conflicts, no deploy-logic files touched by the merge (nonprod-deploy.yml, deploy_nonprod_vm.sh, auto_deploy_dev_pair.py unchanged). Old head 78813d453 CI result and review 788 are historical and not claimed for the composed head; actual new-head CI and fresh independent review are required. Local pytest is unavailable in this worker env: only bash -n on deploy_nonprod_vm.sh and unittest-runnable diagnostics/gate-selection tests (15 passed) were run; the pytest-based suites rely on actual CI."
+}

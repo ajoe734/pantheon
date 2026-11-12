@@ -1,0 +1,11 @@
+{
+  "task_id": "DEV-ROLLBACK-PAPER-READER-POSTURE-20261111",
+  "root_cause": "Whole-stack capture recorded only PANTHEON_TENANT_ID and GIT_SHA for paper-signal-producer. A restore therefore re-derived PANTHEON_PAPER_EXPRESSION_LAYER and DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE from the restoring caller (docker-compose.yml ${VAR:-default}); an empty caller file reference left the capital reader unconfigured although the mounted credential file existed, so health degraded with 'capital_pool: capital reader is not configured'.",
+  "change": {
+    "scripts/dev_release_artifacts.py": "paper-signal-producer joins CONTROL_POSTURE with exactly three nonsecret names: PANTHEON_PAPER_EXPRESSION_LAYER, PANTHEON_CAPITAL_API_URL, DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE (a path reference, never the credential value; DEPLOYMENT_CAPITAL_SERVICE_TOKEN is not recorded). Same mechanism as source posture: required 'control' on a running producer, absent=null/empty='' preserved via Compose '!reset null', recreate on posture mismatch, readback fails closed. No old-manifest success fallback.",
+    "scripts/test_dev_release_artifacts.py": "stack fixture includes the producer; regression restores over an empty caller file reference with expression off and proves the recorded mounted-credential path is re-applied; no credential serialized; absent reference stays absent; drift and missing-control fail closed; real-compose render test covers the producer."
+  },
+  "not_changed": "No sealed capture/driver rewritten, no credential issued or rotated, no binding bootstrap or data purge, no healthcheck change, no deployment or VM mutation. The existing sealed baseline lacks this posture and is not claimed to contain it.",
+  "verification": "scripts/test_dev_release_artifacts.py, test_capture_dev_artifact_baseline.py, test_dev_release_artifact_driver.py: 592 passed, 1 skipped before final assertion tweak; test_dev_release_artifacts.py re-run 127 passed, 1 skipped. The skipped test is the real 'docker compose config' render, which skips when the environment cannot render the repository file; it was not exercised here.",
+  "not_claimed": "No hosted run executed; live rescue and final COMPAT report remain with root Human/Ops."
+}

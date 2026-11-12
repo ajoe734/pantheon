@@ -111,7 +111,6 @@ SAFE_DUPLICATE_NAMES = (
     "_management_number",
     "_management_avg",
     "_management_count_by",
-    "_deprecated_bff_path_response",
 )
 
 
@@ -147,7 +146,7 @@ def test_safe_duplicate_names_have_single_persona_service_owner(monkeypatch):
     monkeypatch.setattr(app_factory, "_resolve_default_dependency", recording_resolver)
     app_factory.compose_bff_app(app_deps=main.app_deps)
 
-    for name in ("_read_surface_state", "_deprecated_bff_path_response"):
+    for name in ("_read_surface_state",):
         assert original_resolver(name, main.app_deps) is getattr(persona_service, name), name
     for name, value in resolved.items():
         if name in SAFE_DUPLICATE_NAMES:

@@ -129,6 +129,7 @@ def _seed_default_feature_catalogue() -> None:
         ("tw_macro_cbc", "policy_rate", 1, "CBC policy discount rate"),
         ("tw_macro_cbc", "m1b_yoy", 25, "CBC M1B money supply YoY"),
         ("tw_macro_cbc", "m2_yoy", 25, "CBC M2 money supply YoY"),
+        ("tw_macro_cbc", "usd_twd", 1, "CBC NT$ per US$ exchange rate (BP01D01 column 01)"),
         ("tw_macro_ndc", "monitoring_score", 28, "NDC business cycle monitoring score"),
         ("tw_macro_ndc", "leading_index", 28, "NDC composite leading index"),
         ("tw_macro_ndc", "coincident_index", 28, "NDC composite coincident index"),
@@ -138,6 +139,8 @@ def _seed_default_feature_catalogue() -> None:
         ("tw_community_attention", "post_volume", 0, "Aggregated community post volume"),
         ("tw_community_attention", "attention_zscore", 0, "Community attention volume z-score"),
         ("tw_community_attention", "bull_bear_ratio", 0, "Community bull-to-bear mention ratio"),
+        ("tw_community_attention", "unique_authors", 0, "Distinct hashed community authors"),
+        ("tw_community_attention", "engagement_weighted_sentiment", 0, "Engagement-weighted community sentiment"),
     )
     for dataset, field, lag_days, desc in seeded:
         register_feature_definition(
@@ -151,6 +154,75 @@ def _seed_default_feature_catalogue() -> None:
 
 
 _seed_default_feature_catalogue()
+
+
+def assert_governed_feature_inputs(strategy_logic: Mapping[str, Any]) -> None:
+    """Require every declared ``inputs[]`` entry to exist in the governed feature catalogue.
+
+    Price-volume built-ins resolve through the seeded price datasets. Anything else
+    must be catalogued so its availability lag is governed; the paper signal producer
+    calls this before evaluating so features can only enter through the catalogue.
+    """
+    if not isinstance(strategy_logic, Mapping) or strategy_logic.get("kind") != "factor_rule_v1":
+        return
+    for idx, item in enumerate(strategy_logic.get("inputs") or ()):
+        if not isinstance(item, Mapping):
+            continue
+        dataset, field = str(item.get("dataset") or ""), str(item.get("field") or "")
+        if get_feature_definition(dataset, field) is None:
+            raise FactorRuleValidationError(
+                f"inputs[{idx}] ({dataset}.{field}) is not in the governed feature catalogue"
+            )
+
+
+def assert_governed_feature_observations(
+    strategy_logic: Mapping[str, Any],
+    features: Mapping[str, Any] | None,
+    decision_time: Any,
+) -> None:
+    """Require catalogued, timestamped, already-available observations for non-price inputs.
+
+    Raw numbers or untimestamped series cannot carry an availability lag, so they are
+    rejected, as is an observation lacking ``event_time`` / ``available_time``.
+    Future-available observations are hidden by the evaluator, never read.
+    """
+    if not isinstance(strategy_logic, Mapping) or strategy_logic.get("kind") != "factor_rule_v1":
+        return
+    feature_map: Mapping[str, Any] = features if isinstance(features, Mapping) else {}
+    decision_checked = False
+    for item in strategy_logic.get("inputs") or ():
+        if not isinstance(item, Mapping):
+            continue
+        name, dataset, field = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
+        if dataset in PRICE_VOLUME_DATASETS:
+            continue
+        if not decision_checked:
+            # decision_time stays optional for timestamp-free built-in price inputs;
+            # any non-price (point-in-time) input requires a valid one.
+            _parse_timestamp_utc(decision_time, is_decision_time=True)
+            decision_checked = True
+        cat_def = get_feature_definition(dataset, field)
+        if cat_def is None:
+            raise FactorRuleValidationError(f"{dataset}.{field} is not in the governed feature catalogue")
+        series = _lookup_raw_feature(feature_map, name=name, dataset=dataset, field=field)
+        if not isinstance(series, (list, tuple)) or not series:
+            raise FactorRuleValidationError(
+                f"feature input '{name}' ({dataset}.{field}) requires catalogued timestamped observations"
+            )
+        for idx, obs in enumerate(series):
+            if (
+                not isinstance(obs, Mapping)
+                or not _is_number(obs.get("value"))
+                or not obs.get("event_time")
+                or not obs.get("available_time")
+            ):
+                raise FactorRuleValidationError(
+                    f"feature input '{name}[{idx}]' must carry value, event_time and available_time"
+                )
+            # Observations that are not yet available (or still inside the declared lag)
+            # stay invisible: the evaluator drops them, and it raises when none remain.
+            _parse_timestamp_utc(obs["available_time"], is_decision_time=False)
+            _parse_timestamp_utc(obs["event_time"], is_decision_time=False)
 
 
 # Design §9.2 (22 operators) + Plan §3.4 (14 time-series operators) = 36 operators.
@@ -937,6 +1009,49 @@ def _derive_vwap_series(
     return close_series
 
 
+def _latest_visible_versions(
+    raw_series: Any,
+    *,
+    availability_lag_days: int,
+    decision_time: str | datetime | date | None,
+) -> Any:
+    """Governed read for catalogued non-price features.
+
+    Keeps exactly the latest *visible* version per (entity, event_time) so a late
+    revision replaces, rather than adds, a daily observation and replayed rows collapse.
+    Catalogue lag and any row-level ``availability_lag_days`` are applied; ordering is
+    by event time. Series without timestamped mapping rows pass through unchanged.
+    """
+    if (
+        not isinstance(raw_series, Sequence)
+        or isinstance(raw_series, (str, bytes))
+        or decision_time is None
+        or not all(
+            isinstance(o, Mapping) and o.get("event_time") and o.get("available_time")
+            for o in raw_series
+        )
+    ):
+        return raw_series
+    decision_dt = _parse_timestamp_utc(decision_time, is_decision_time=True)
+    latest: dict[tuple[Any, datetime], tuple[tuple[datetime, str], Mapping[str, Any]]] = {}
+    for obs in raw_series:
+        event_dt = _parse_timestamp_utc(obs["event_time"])
+        avail_dt = _parse_timestamp_utc(obs["available_time"])
+        row_lag = obs.get("availability_lag_days")
+        lag = max(
+            int(availability_lag_days),
+            row_lag if isinstance(row_lag, int) and not isinstance(row_lag, bool) else 0,
+        )
+        if avail_dt > decision_dt or event_dt + timedelta(days=lag) > decision_dt:
+            continue
+        key = (obs.get("entity"), event_dt)
+        rank = (avail_dt, str(obs.get("ingest_time") or ""))
+        if key not in latest or rank >= latest[key][0]:
+            latest[key] = (rank, obs)
+    ordered = sorted(latest.items(), key=lambda kv: (kv[0][1], str(kv[0][0] or "")))
+    return [entry[1][1] for entry in ordered]
+
+
 def resolve_point_in_time_inputs(
     strategy_logic: Mapping[str, Any],
     closes: Sequence[float] | None,
@@ -1010,6 +1125,10 @@ def resolve_point_in_time_inputs(
                 f"missing required feature input '{name}' ({dataset}.{field})"
             )
 
+        if dataset not in PRICE_VOLUME_DATASETS:
+            raw_series = _latest_visible_versions(
+                raw_series, availability_lag_days=lag_days, decision_time=decision_time
+            )
         filtered = _filter_point_in_time_series(
             raw_series,
             input_name=name,
@@ -1448,6 +1567,11 @@ def evaluate_factor_rule_view(
         mutation_surface if isinstance(mutation_surface, Mapping) else None,
     )
 
+    # Shared evaluator (research/vectorbt + paper): features may only enter through
+    # the governed catalogue with timestamped point-in-time observations.
+    assert_governed_feature_inputs(validated_logic)
+    assert_governed_feature_observations(validated_logic, features, decision_time)
+
     env = resolve_point_in_time_inputs(
         validated_logic,
         closes,
@@ -1587,3 +1711,342 @@ def evaluate_factor_rule_action(
         current_direction=current_direction,
     )
     return str(view["action"])
+
+
+# ---------------------------------------------------------------------------
+# Structural mutation operators (design §12.2 "Mutate", EVOLUTION-AUTO-CONSUMER-SEARCH)
+# ---------------------------------------------------------------------------
+# Operators act only on the bounded grammar: they never emit free code, never
+# introduce literal constants (every new number is a declared const_param with
+# an allowed_range and step) and only draw features from the governed catalogue.
+
+MUTATION_OPERATORS: tuple[str, ...] = (
+    "change_window",
+    "swap_operator",
+    "add_filter",
+    "remove_filter",
+    "change_exit",
+)
+
+# Same-type operator families: a swap never changes arity, window-slot shape or
+# value type (boolean vs numeric).
+_SWAP_FAMILIES: tuple[tuple[str, ...], ...] = (
+    ("ts_mean", "ts_min", "ts_max", "ts_sum", "ts_zscore", "ts_rank", "ts_std"),
+    ("lag", "delta", "pct_change"),
+    ("gt", "lt"),
+    ("and", "or"),
+    ("add", "sub", "mul", "div", "ratio"),
+)
+_ADDED_FILTER_PREFIX = "mut_filter_"
+_FILTER_WINDOW_RANGE = (2, 24)
+_FILTER_THRESHOLD_RANGE = (-2.0, 2.0)
+_FILTER_THRESHOLD_STEP = 0.1
+
+
+class FactorRuleMutationError(FactorRuleValidationError):
+    """Raised when no structural mutation can be produced for a rule."""
+
+
+def _control_index(controls: Sequence[Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:
+    return {str(c.get("parameter_key")): c for c in controls if isinstance(c, Mapping)}
+
+
+def _control_bounds(control: Mapping[str, Any]) -> tuple[float, float]:
+    rng = control["allowed_range"]
+    if isinstance(rng, Mapping):
+        return float(rng["min"]), float(rng["max"])
+    return float(rng[0]), float(rng[1])
+
+
+def _walk_nodes(node: Any, path: tuple = ()):  # yields (path, node)
+    if isinstance(node, Mapping):
+        yield path, node
+        for key, value in node.items():
+            if isinstance(value, (Mapping, list)):
+                yield from _walk_nodes(value, path + (key,))
+    elif isinstance(node, list):
+        for idx, value in enumerate(node):
+            yield from _walk_nodes(value, path + (idx,))
+
+
+def _logic_roots(logic: Mapping[str, Any]) -> list[tuple[str, Any]]:
+    entry, exit_ = logic["entry"], logic["exit"]
+    return [
+        ("signal", logic["signal"]),
+        ("entry.long_when", entry.get("long_when")),
+        ("entry.short_when", entry.get("short_when")),
+        ("exit.flat_when", exit_.get("flat_when")),
+        ("strength", logic["strength"]),
+    ]
+
+
+def _snap(value: float, lo: float, hi: float, step: float, integer: bool) -> float | int:
+    steps = round((value - lo) / step)
+    snapped = lo + steps * step
+    snapped = min(max(snapped, lo), hi)
+    if integer:
+        return int(round(snapped))
+    return round(snapped, 10)
+
+
+def sample_control_value(control: Mapping[str, Any], rng: Any) -> float | int:
+    """Draw one on-grid value inside a control's declared ``allowed_range``."""
+    lo, hi = _control_bounds(control)
+    step = float(control["step"])
+    n_steps = int(math.floor((hi - lo) / step + 1e-9))
+    value = lo + rng.randint(0, max(n_steps, 0)) * step
+    return _snap(value, lo, hi, step, control.get("value_type") == "integer")
+
+
+def _set_param(
+    parameters: dict[str, Any], controls: list[dict[str, Any]], key: str, value: Any
+) -> None:
+    parameters[key] = value
+    for control in controls:
+        if control.get("parameter_key") == key:
+            control["current_value"] = value
+
+
+def _window_param_keys(logic: Mapping[str, Any]) -> list[str]:
+    keys: list[str] = []
+    for _, root in _logic_roots(logic):
+        for _, node in _walk_nodes(root):
+            op = node.get("op")
+            slot = 1 if op in _WINDOW_ARG1_OPERATORS else 2 if op in _WINDOW_ARG2_OPERATORS else None
+            if slot is not None:
+                arg = node["args"][slot]
+                if "const_param" in arg and arg["const_param"] not in keys:
+                    keys.append(str(arg["const_param"]))
+    return keys
+
+
+def _referenced_params(logic: Mapping[str, Any]) -> set[str]:
+    params: set[str] = set()
+    for _, root in _logic_roots(logic):
+        for _, node in _walk_nodes(root):
+            if "const_param" in node:
+                params.add(str(node["const_param"]))
+    hold = logic["exit"].get("max_holding_bars")
+    if isinstance(hold, Mapping) and "const_param" in hold:
+        params.add(str(hold["const_param"]))
+    return params
+
+
+def _mutate_change_window(logic, parameters, controls, rng):
+    index = _control_index(controls)
+    keys = [k for k in _window_param_keys(logic) if k in index]
+    if not keys:
+        raise FactorRuleMutationError("rule has no window parameter to change")
+    key = rng.choice(keys)
+    old = parameters[key]
+    lo, hi = _control_bounds(index[key])
+    candidates = [
+        v for v in (sample_control_value(index[key], rng) for _ in range(16)) if v != old
+    ]
+    if not candidates:
+        raise FactorRuleMutationError(f"window control '{key}' has no alternative value")
+    _set_param(parameters, controls, key, candidates[0])
+    return {"operator": "change_window", "parameter": key, "from": old, "to": candidates[0]}
+
+
+def _mutate_swap_operator(logic, parameters, controls, rng):
+    sites: list[tuple[Mapping[str, Any], tuple[str, ...]]] = []
+    for _, root in _logic_roots(logic):
+        for _, node in _walk_nodes(root):
+            op = node.get("op")
+            for family in _SWAP_FAMILIES:
+                if op in family and len(family) > 1:
+                    sites.append((node, family))
+    if not sites:
+        raise FactorRuleMutationError("rule has no swappable operator")
+    node, family = rng.choice(sites)
+    old = node["op"]
+    new = rng.choice([o for o in family if o != old])
+    node["op"] = new
+    return {"operator": "swap_operator", "from": old, "to": new}
+
+
+def _unique_name(base: str, taken: set[str]) -> str:
+    candidate, n = base, 1
+    while candidate in taken:
+        n += 1
+        candidate = f"{base}_{n}"
+    return candidate
+
+
+def _catalogue_candidates(logic: Mapping[str, Any]) -> list[FeatureDefinition]:
+    used = {(i["dataset"], i["field"]) for i in logic["inputs"]}
+    out = [
+        d
+        for d in list_feature_definitions()
+        if (d.dataset, d.field) not in used and d.dataset not in PRICE_VOLUME_DATASETS
+    ]
+    return sorted(out, key=lambda d: (d.dataset, d.field))
+
+
+def _mutate_add_filter(logic, parameters, controls, rng):
+    long_when = logic["entry"].get("long_when")
+    if long_when is None:
+        raise FactorRuleMutationError("add_filter requires an entry.long_when to extend")
+    if any(i["name"].startswith(_ADDED_FILTER_PREFIX) for i in logic["inputs"]):
+        raise FactorRuleMutationError("rule already carries a mutation filter")
+    candidates = _catalogue_candidates(logic)
+    if not candidates:
+        raise FactorRuleMutationError("feature catalogue has no unused feature")
+    feature = rng.choice(candidates)
+    taken_inputs = {i["name"] for i in logic["inputs"]}
+    name = _unique_name(f"{_ADDED_FILTER_PREFIX}{feature.field}", taken_inputs)
+    win_key = _unique_name(f"{name}_window", set(parameters))
+    thr_key = _unique_name(f"{name}_threshold", set(parameters) | {win_key})
+    logic["inputs"].append(
+        {
+            "name": name,
+            "dataset": feature.dataset,
+            "field": feature.field,
+            "availability_lag_days": feature.min_availability_lag_days,
+        }
+    )
+    win_lo, win_hi = _FILTER_WINDOW_RANGE
+    thr_lo, thr_hi = _FILTER_THRESHOLD_RANGE
+    controls.append(
+        {
+            "parameter_key": win_key,
+            "value_type": "integer",
+            "current_value": 4,
+            "allowed_range": {"min": win_lo, "max": win_hi},
+            "step": 1,
+        }
+    )
+    controls.append(
+        {
+            "parameter_key": thr_key,
+            "value_type": "number",
+            "current_value": 0.0,
+            "allowed_range": {"min": thr_lo, "max": thr_hi},
+            "step": _FILTER_THRESHOLD_STEP,
+        }
+    )
+    parameters[win_key] = 4
+    parameters[thr_key] = 0.0
+    filter_node = {
+        "op": "gt",
+        "args": [
+            {"op": "ts_zscore", "args": [{"ref": name}, {"const_param": win_key}]},
+            {"const_param": thr_key},
+        ],
+    }
+    logic["entry"]["long_when"] = {"op": "and", "args": [long_when, filter_node]}
+    return {
+        "operator": "add_filter",
+        "input": name,
+        "dataset": feature.dataset,
+        "field": feature.field,
+        "parameters": [win_key, thr_key],
+    }
+
+
+def _mutate_remove_filter(logic, parameters, controls, rng):
+    long_when = logic["entry"].get("long_when")
+    added = [i for i in logic["inputs"] if i["name"].startswith(_ADDED_FILTER_PREFIX)]
+    if (
+        not added
+        or not isinstance(long_when, Mapping)
+        or long_when.get("op") != "and"
+    ):
+        raise FactorRuleMutationError("rule has no removable filter")
+    target = rng.choice(added)["name"]
+    base, filt = long_when["args"]
+
+    def _refs(node: Any) -> set[str]:
+        return {n["ref"] for _, n in _walk_nodes(node) if "ref" in n}
+
+    if target not in _refs(filt):
+        base, filt = filt, base
+    if target not in _refs(filt) or target in _refs(base):
+        raise FactorRuleMutationError("filter structure does not match a removable filter")
+    dropped = {n["const_param"] for _, n in _walk_nodes(filt) if "const_param" in n}
+    logic["entry"]["long_when"] = base
+    logic["inputs"] = [i for i in logic["inputs"] if i["name"] != target]
+    still_used = _referenced_params(logic)
+    for key in sorted(dropped - still_used):
+        parameters.pop(key, None)
+    controls[:] = [c for c in controls if c.get("parameter_key") not in (dropped - still_used)]
+    return {"operator": "remove_filter", "input": target, "parameters": sorted(dropped)}
+
+
+def _mutate_change_exit(logic, parameters, controls, rng):
+    index = _control_index(controls)
+    options: list[str] = []
+    hold = logic["exit"].get("max_holding_bars")
+    if isinstance(hold, Mapping) and hold.get("const_param") in index:
+        options.append("hold")
+    flat = logic["exit"].get("flat_when")
+    if isinstance(flat, Mapping) and flat.get("op") in ("gt", "lt"):
+        options.append("flat_comparator")
+    if not options:
+        raise FactorRuleMutationError("rule has no exit to change")
+    choice = rng.choice(options)
+    if choice == "hold":
+        key = hold["const_param"]
+        old = parameters[key]
+        alts = [v for v in (sample_control_value(index[key], rng) for _ in range(16)) if v != old]
+        if not alts:
+            raise FactorRuleMutationError(f"exit control '{key}' has no alternative value")
+        _set_param(parameters, controls, key, alts[0])
+        return {"operator": "change_exit", "exit": "max_holding_bars", "parameter": key, "from": old, "to": alts[0]}
+    old = flat["op"]
+    flat["op"] = "gt" if old == "lt" else "lt"
+    return {"operator": "change_exit", "exit": "flat_when", "from": old, "to": flat["op"]}
+
+
+_MUTATORS = {
+    "change_window": _mutate_change_window,
+    "swap_operator": _mutate_swap_operator,
+    "add_filter": _mutate_add_filter,
+    "remove_filter": _mutate_remove_filter,
+    "change_exit": _mutate_change_exit,
+}
+
+
+def mutate_factor_rule_structure(
+    strategy_logic: Mapping[str, Any],
+    parameters: Mapping[str, Any],
+    controls: Sequence[Mapping[str, Any]],
+    *,
+    rng: Any,
+    operator: str | None = None,
+) -> dict[str, Any]:
+    """Apply one structural mutation to a ``factor_rule_v1`` rule.
+
+    Inputs are never modified. Returns ``strategy_logic``, ``parameters``,
+    ``controls`` (deep copies) and a ``mutation`` descriptor. When ``operator``
+    is None the operators are tried in a seeded-random order until one applies.
+    The result is re-validated with :func:`validate_factor_rule_logic`.
+    """
+    import copy
+
+    if operator is not None and operator not in _MUTATORS:
+        raise FactorRuleMutationError(f"unknown mutation operator '{operator}'")
+    order = [operator] if operator else rng.sample(list(MUTATION_OPERATORS), len(MUTATION_OPERATORS))
+    last_error: Exception | None = None
+    for name in order:
+        logic = copy.deepcopy(dict(strategy_logic))
+        params = copy.deepcopy(dict(parameters))
+        ctrls = [copy.deepcopy(dict(c)) for c in controls]
+        try:
+            descriptor = _MUTATORS[name](logic, params, ctrls, rng)
+            validate_factor_rule_logic(
+                logic,
+                params,
+                {"controls": ctrls, "immutable_parameters": []},
+            )
+        except FactorRuleValidationError as exc:
+            last_error = exc
+            continue
+        return {
+            "strategy_logic": logic,
+            "parameters": params,
+            "controls": ctrls,
+            "mutation": descriptor,
+        }
+    raise FactorRuleMutationError(f"no structural mutation applies: {last_error}")

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
@@ -16,6 +18,8 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .config import CollectorConfigError, EXCHANGE_WEBSITE_SOURCE_IDS, SourceFetchPolicy
 from .state import classify_access_block
+
+logger = logging.getLogger("collector_stack.fetch")
 
 
 class FetchAccessBlockedError(RuntimeError):
@@ -126,8 +130,69 @@ class FixtureTransport(FetchTransport):
         return FetchResponse(requested_url=url, final_url=url, http_status=200, body=raw)
 
 
+class FetchBackendUnavailableError(RuntimeError):
+    """Raised when a Scrapling fetcher class cannot be imported or its browser cannot launch.
+
+    There is deliberately no fallback to urllib: a plain HTTP fetch of a JavaScript page returns an
+    empty shell that looks like "no data", which hides the real cause of the failure.
+    """
+
+    def __init__(self, backend: str, detail: str) -> None:
+        super().__init__(f"fetch backend unavailable ({backend}): {detail}")
+        self.backend = backend
+        self.detail = detail
+
+
+def _page_to_response(url: str, page: Any) -> FetchResponse:
+    body = getattr(page, "body", None)
+    if isinstance(body, str):
+        body = body.encode("utf-8")
+    if not isinstance(body, (bytes, bytearray)):
+        body = str(getattr(page, "html_content", "")).encode("utf-8")
+    headers = getattr(page, "headers", None) or {}
+    return FetchResponse(
+        requested_url=url,
+        final_url=str(getattr(page, "url", url)),
+        http_status=int(getattr(page, "status", 200)),
+        body=bytes(body),
+        headers={str(k).lower(): str(v) for k, v in dict(headers).items()},
+    )
+
+
+# DOM-ready + a post selector replaces network_idle, which never settles on some pages (CMoney).
+_BROWSER_WAIT_SELECTORS = {"www.cmoney.tw": "article.articleContent"}
+
+
+def _raw_http_get(url: str, headers: Mapping[str, str]) -> FetchResponse:  # pragma: no cover - network path
+    """GET returning the untouched wire bytes.
+
+    Scrapling 0.2.99 ``Response.body`` is the lxml re-serialisation (``html_content``), which wraps JSON/XML
+    in ``<html><body>`` and corrupts it, so http/api/rss fetches use httpx (a Scrapling dependency) directly.
+    """
+    import httpx
+
+    with httpx.Client(follow_redirects=True, timeout=30.0) as client:
+        resp = client.get(url, headers=dict(headers))
+    return _httpx_to_response(url, resp)
+
+
+def _httpx_to_response(url: str, resp: Any) -> FetchResponse:
+    return FetchResponse(
+        requested_url=url,
+        final_url=str(resp.url),
+        http_status=int(resp.status_code),
+        body=bytes(resp.content),
+        headers={str(k).lower(): str(v) for k, v in resp.headers.items()},
+    )
+
+
 class LiveScraplingTransport(FetchTransport):
-    """Production transport using Scrapling (Fetcher / DynamicFetcher) and urllib for APIs."""
+    """Production transport: Scrapling ``Fetcher`` (http) and ``PlayWrightFetcher`` (browser).
+
+    Pinned to scrapling==0.2.99, whose browser class is ``PlayWrightFetcher`` (there is no
+    ``DynamicFetcher``). A missing/broken import raises FetchBackendUnavailableError instead of
+    silently degrading to urllib. Non-GET API calls (POST bodies) still use urllib.
+    """
 
     def request(
         self,
@@ -137,52 +202,40 @@ class LiveScraplingTransport(FetchTransport):
         headers: Mapping[str, str] | None = None,
         body: bytes | None = None,
         fetcher_kind: str = "http",
-    ) -> FetchResponse:  # pragma: no cover - never called in unit tests
+    ) -> FetchResponse:  # pragma: no cover - network path; covered by the in-image/offline-browser tests
         req_headers = dict(headers or {})
-        if fetcher_kind == "browser" and method == "GET":
+        if fetcher_kind == "browser":
+            if method != "GET":
+                raise CollectorConfigError("browser fetcher supports GET only")
             try:
-                from scrapling.fetchers import DynamicFetcher  # type: ignore[import-not-found]
-
-                page = DynamicFetcher.fetch(
+                from scrapling.fetchers import PlayWrightFetcher  # type: ignore[import-not-found]
+            except ImportError as exc:
+                raise FetchBackendUnavailableError("scrapling.PlayWrightFetcher", repr(exc)) from exc
+            wait_selector = _BROWSER_WAIT_SELECTORS.get(urllib.parse.urlparse(url).hostname or "", "body")
+            user_agent = next((v for k, v in req_headers.items() if k.lower() == "user-agent"), None)
+            try:
+                page = PlayWrightFetcher.fetch(
                     url,
                     headless=True,
                     stealth=False,
                     disable_resources=True,
-                    network_idle=True,
+                    network_idle=False,
+                    wait_selector=wait_selector,
+                    wait_selector_state="attached",
+                    timeout=60000,
+                    useragent=user_agent,
+                    google_search=False,
                 )
-                raw = (
-                    page.body
-                    if isinstance(getattr(page, "body", None), bytes)
-                    else str(getattr(page, "html_content", "")).encode("utf-8")
-                )
-                return FetchResponse(
-                    requested_url=url,
-                    final_url=str(getattr(page, "url", url)),
-                    http_status=int(getattr(page, "status", 200)),
-                    body=raw,
-                    headers={},
-                )
-            except ImportError:
-                pass
-        elif fetcher_kind == "http" and method == "GET":
+            except Exception as exc:
+                raise FetchBackendUnavailableError("playwright-browser", repr(exc)) from exc
+            return _page_to_response(url, page)
+        if fetcher_kind == "http" and method == "GET":
             try:
                 from scrapling.fetchers import Fetcher  # type: ignore[import-not-found]
-
-                page = Fetcher(auto_match=False).get(url, headers=req_headers, stealthy_headers=False)
-                raw = (
-                    page.body
-                    if isinstance(getattr(page, "body", None), bytes)
-                    else str(getattr(page, "html_content", "")).encode("utf-8")
-                )
-                return FetchResponse(
-                    requested_url=url,
-                    final_url=str(getattr(page, "url", url)),
-                    http_status=int(getattr(page, "status", 200)),
-                    body=raw,
-                    headers={},
-                )
-            except ImportError:
-                pass
+            except ImportError as exc:
+                raise FetchBackendUnavailableError("scrapling.Fetcher", repr(exc)) from exc
+            del Fetcher  # import kept as the fail-loud guard; the body must come from the raw wire bytes
+            return _raw_http_get(url, req_headers)
 
         req = urllib.request.Request(url, data=body, headers=req_headers, method=method)
         try:
@@ -213,7 +266,7 @@ class PolicyEnforcedFetcher:
         *,
         transport: FetchTransport,
         contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
-        sleep_fn: Callable[[float], None] = lambda _: None,
+        sleep_fn: Callable[[float], None] | None = None,
         allow_browser: bool = False,
     ) -> None:
         if policy.logged_in:
@@ -242,11 +295,12 @@ class PolicyEnforcedFetcher:
         self.policy = policy
         self.transport = transport
         self.contact_user_agent = contact_user_agent
-        self.sleep_fn = sleep_fn
+        self.sleep_fn = sleep_fn if sleep_fn is not None else (lambda s: time.sleep(s))
         self.request_count = 0
         self.max_connections = policy.max_connections
         self._active_connections = 0
         self.sleep_calls: list[float] = []
+        self.request_log: list[dict[str, Any]] = []  # url/status/bytes per request, for zero-item diagnosis
 
     def fetch(
         self,
@@ -288,6 +342,9 @@ class PolicyEnforcedFetcher:
 
         self.request_count += 1
         self._active_connections += 1
+        logger.info("collector request source=%s kind=%s %s %s", self.policy.source_id, self.policy.fetcher, method, url)
+        entry: dict[str, Any] = {"url": url, "status": None, "bytes": 0}
+        self.request_log.append(entry)
         try:
             response = self.transport.request(
                 url,
@@ -296,8 +353,18 @@ class PolicyEnforcedFetcher:
                 body=body,
                 fetcher_kind=self.policy.fetcher,
             )
+        except Exception as exc:
+            entry["error"] = repr(exc)
+            logger.error("collector request failed source=%s url=%s error=%r", self.policy.source_id, url, exc)
+            raise
         finally:
             self._active_connections -= 1
+        entry["status"] = response.http_status
+        entry["bytes"] = len(response.body)
+        logger.info(
+            "collector response source=%s url=%s status=%s bytes=%d final_url=%s",
+            self.policy.source_id, url, response.http_status, len(response.body), response.final_url,
+        )
 
         block_reason = classify_access_block(
             http_status=response.http_status,
@@ -320,7 +387,7 @@ class ScraplingHttpFetcher(PolicyEnforcedFetcher):
         *,
         transport: FetchTransport,
         contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
-        sleep_fn: Callable[[float], None] = lambda _: None,
+        sleep_fn: Callable[[float], None] | None = None,
     ) -> None:
         if policy.fetcher != "http":
             raise CollectorConfigError(
@@ -344,7 +411,7 @@ class ScraplingBrowserFetcher(PolicyEnforcedFetcher):
         *,
         transport: FetchTransport,
         contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
-        sleep_fn: Callable[[float], None] = lambda _: None,
+        sleep_fn: Callable[[float], None] | None = None,
     ) -> None:
         super().__init__(
             policy,

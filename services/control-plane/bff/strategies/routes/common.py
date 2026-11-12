@@ -482,7 +482,6 @@ class StrategyRouteContext:
     list_governance_audit_events: Optional[Callable[[], List[Dict[str, Any]]]] = None
     ooda_packet_list_payload: Optional[Callable[..., Dict[str, Any]]] = None
     require_ooda_packet_routes_enabled: Optional[Callable[[], None]] = None
-    deprecated_bff_path_response: Optional[Callable[..., Any]] = None
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None
     # The Persona list route's own directory read and state projection, so the

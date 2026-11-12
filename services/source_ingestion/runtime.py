@@ -1253,6 +1253,17 @@ class SourceIngestionRuntime:
             status.value: sum(1 for entry in dlq_entries if entry.status == status)
             for status in DeadLetterStatus
         }
+        dlq_status_counts_by_connector: dict[str, dict[str, int]] = {}
+        for entry in dlq_entries:
+            connector_id = entry.event.payload.get("connector_id")
+            # Preserve unattributed entries in the totals. The terminal validator
+            # rejects this bucket (and unknown connector IDs) for scoped admission.
+            if not isinstance(connector_id, str) or not connector_id.strip():
+                connector_id = ""
+            counts = dlq_status_counts_by_connector.setdefault(
+                connector_id, {status.value: 0 for status in DeadLetterStatus}
+            )
+            counts[entry.status.value] += 1
         unresolved_dlq_count = sum(
             dlq_status_counts[status.value]
             for status in (
@@ -1273,6 +1284,7 @@ class SourceIngestionRuntime:
             "pending_dlq_count": dlq_status_counts[DeadLetterStatus.PENDING.value],
             "unresolved_dlq_count": unresolved_dlq_count,
             "dlq_status_counts": dlq_status_counts,
+            "dlq_status_counts_by_connector": dict(sorted(dlq_status_counts_by_connector.items())),
             "frontier_backlog": frontier_backlog,
             "frontier_backlog_by_connector": dict(sorted(frontier_backlog_by_connector.items())),
             "max_lag_seconds": max(staleness_values, default=0),

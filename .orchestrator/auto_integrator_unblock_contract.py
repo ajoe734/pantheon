@@ -111,7 +111,16 @@ def task_id(
     return f"{readable[: TASK_ID_LIMIT - len(suffix) - 1].rstrip('-')}-{suffix}"
 
 
-def requires_repair_task(reason: str) -> bool:
+# Demonstrated source-owned failures: only these may rework a non-Pantheon
+# source. Policy validation, unknown-outcome timeouts and PR readback failures
+# are tooling/provider faults and keep the unchanged exact-head approval.
+SOURCE_OWNED_REASONS = frozenset({
+    "ci-red", "final-ci-red", "smoke-failed", "rebase-conflict",
+    "exact-head-merge-conflict", "merge-state-dirty",
+})
+
+
+def requires_repair_task(reason: str, repository_id: str | None = None) -> bool:
     """Authority/evidence failures stay on the source; they are not code work.
 
     The candidate still reports blocked. This never grants approval or hides
@@ -120,6 +129,12 @@ def requires_repair_task(reason: str) -> bool:
     configuration repairs remain eligible.
     """
     validate_reason(reason)
+    if (
+        repository_id not in (None, "", "pantheon")
+        and reason not in SOURCE_OWNED_REASONS
+        and reason != EXACT_HEAD_BEHIND_BASE_REASON
+    ):
+        return False
     return not (reason.startswith("review-gate-") or reason in {
         "canonical-authority-lock-failed", "canonical-state-refresh-failed",
         EXACT_HEAD_BEHIND_BASE_REASON,
@@ -127,11 +142,22 @@ def requires_repair_task(reason: str) -> bool:
     })
 
 
-def requires_source_reopen(reason: str) -> bool:
-    """BEHIND returns reopen the source task rather than creating a child repair."""
+def requires_source_reopen(reason: str, repository_id: str | None = None) -> bool:
+    """Return the blocker to the source task instead of creating a child repair.
+
+    BEHIND always reopens its source. A source-code repair-eligible blocker on a non-Pantheon
+    repository (not an integration-environment fault) also reopens its source: a generated repair task declares Pantheon
+    integrator tooling and must not be bound to another repository's code.
+    """
 
     validate_reason(reason)
-    return reason == EXACT_HEAD_BEHIND_BASE_REASON
+    if reason == EXACT_HEAD_BEHIND_BASE_REASON:
+        return True
+    return (
+        repository_id not in (None, "", "pantheon")
+        and reason in SOURCE_OWNED_REASONS
+        and requires_repair_task(reason)
+    )
 
 
 def require_root_repair_source(source_task_id: str, source: Mapping[str, Any]) -> None:

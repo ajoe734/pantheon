@@ -255,8 +255,16 @@ class HypothesisCompiler:
         return self._store
 
     def compile(self, card: Mapping[str, Any]) -> CompileOutcome:
+        from services.source_ingestion.hypothesis_card import prediction_missing_dataset
+
         testability = str(card.get("testability") or "")
         key = card_key(card)
+        for prediction in card.get("predictions", ()):
+            dataset = prediction_missing_dataset(prediction)
+            if dataset:
+                # Same per-dataset/per-card demand accounting as rule inputs,
+                # including cached compilations. Predictions do not block the rule.
+                self._store.count_needs_data(dataset, key)
         if testability == "not_testable":
             return CompileOutcome(SKIPPED, "not_testable")
         if testability.startswith("needs_data:"):
@@ -279,7 +287,7 @@ class HypothesisCompiler:
                 extra={"cached": True},
             )
         try:
-            proposal = self._proposer(card, catalogue_summary())
+            proposal = self._proposer({k: v for k, v in card.items() if k != "predictions"}, catalogue_summary())
         except Exception as exc:
             return CompileOutcome(SKIPPED, f"proposer_failed:{type(exc).__name__}")
         kind, reason, dataset, artifact = validate_proposal(proposal)
@@ -297,11 +305,65 @@ class HypothesisCompiler:
         return CompileOutcome(status, fingerprint=fp, support_count=support, artifact=artifact)
 
 
+_PROPOSAL_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": True}
+_PROPOSE_TIMEOUT_SECONDS = 15.0
+
+
+def client_proposer(client: Any) -> Proposer:
+    """Proposer that asks the governed extraction client's transport for one JSON proposal."""
+
+    def propose(card: Mapping[str, Any], catalogue: Mapping[str, Any]) -> Mapping[str, Any]:
+        from services.source_ingestion.semantic_extraction import (
+            ExtractionTaskType,
+            SemanticExtractionRequest,
+        )
+
+        spans = card.get("cited_spans") or [{}]
+        request = SemanticExtractionRequest(
+            source_id=str(spans[0].get("source_record_id") or "hypothesis-compiler"),
+            text=str(card.get("claim") or ""),
+            task_type=ExtractionTaskType.HYPOTHESIS_CARD,
+        )
+        raw = client._dispatch_turn(
+            prompt=build_compile_prompt(card, catalogue),
+            schema=_PROPOSAL_SCHEMA,
+            request=request,
+            timeout_seconds=_PROPOSE_TIMEOUT_SECONDS,
+        )
+        out = raw.get("output") or raw.get("data") or raw
+        structured = out.get("structured_data") if isinstance(out, Mapping) else None
+        proposal = structured if isinstance(structured, Mapping) else out
+        if not isinstance(proposal, Mapping):
+            raise ValueError("compiler proposal is not an object")
+        return proposal
+
+    return propose
+
+
+def compiler_from_env(
+    client: Any | None = None, store_path: str | Path | None = None
+) -> Optional[HypothesisCompiler]:
+    """Build the compiler only when L2 extraction is enabled (same switch as the extractor)."""
+    from services.source_ingestion.hypothesis_card import ENABLED_ENV
+
+    import os
+
+    if str(os.environ.get(ENABLED_ENV, "")).strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    if client is None:
+        from services.source_ingestion.semantic_extraction_client import SemanticExtractionClient
+
+        client = SemanticExtractionClient()
+    return HypothesisCompiler(client_proposer(client), CompilerStore(store_path))
+
+
 __all__ = [
     "CompileOutcome",
     "CompilerStore",
     "HypothesisCompiler",
     "build_compile_prompt",
+    "client_proposer",
+    "compiler_from_env",
     "card_key",
     "catalogue_summary",
     "rule_fingerprint",

@@ -28,11 +28,11 @@
 #   test configuration across two files would make rootdir resolution depend on
 #   which file happens to be found first.
 # * No automatic (flat-layout) package discovery. Flat-layout discovery would
-#   sweep the repository-root modules — cli.py, gate.py, workflows.py,
-#   conftest.py, mlflow_adapter.py — into the distribution as top-level names
-#   like `cli`, `gate`, and `workflows`, which collide with widely used PyPI
-#   distributions and would shadow or be shadowed by them. `packages.find`
-#   below is therefore an explicit allowlist.
+#   sweep repository-root modules such as workflows.py, conftest.py, and
+#   mlflow_adapter.py into the distribution as top-level names. Retired root
+#   aliases `cli` and `gate` must also stay unexported if reintroduced. These
+#   generic names can collide with PyPI distributions. `packages.find` below
+#   is therefore an explicit allowlist.
 #
 # Install it through scripts/dev/provision_python_distribution.py, never by
 # hand: that script is the governed entry point shared by dev CI and the

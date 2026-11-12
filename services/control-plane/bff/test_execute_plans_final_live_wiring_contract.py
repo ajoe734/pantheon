@@ -158,7 +158,6 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("POST", "/bff/v1/commands"),
     ("GET", "/bff/strategies"),
     ("GET", "/bff/strategies/stg_001"),
-    ("POST", "/bff/strategies/stg_001/actions/submit"),
     ("GET", "/bff/personas"),
     ("GET", "/bff/personas/persona_001"),
     ("GET", "/bff/capital-pools"),

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -74,18 +75,74 @@ class PromotionGate:
         if target_state not in allowed.get(current_state, []):
             raise PromotionError(f"Forbidden transition: {current_state.value} -> {target_state.value}")
 
+    @staticmethod
+    def build_draft_entry_from_replication_request(
+        promotion_request: Any,
+        *,
+        registry_id: str | None = None,
+        strategy_id: str | None = None,
+        checksum: str = "sha256:replication-verified",
+    ) -> dict[str, Any]:
+        """
+        Build a draft registry entry from a ReplicationGate RegistryPromotionRequest,
+        preserving real replication_success, out-of-sample sharpe_ratio, and backtest lineage.
+        """
+        payload = (
+            promotion_request.to_dict()
+            if hasattr(promotion_request, "to_dict")
+            else dict(promotion_request)
+        )
+        reg_entry = copy.deepcopy(dict(payload.get("registry_entry") or {}))
+        content = reg_entry.get("content") if isinstance(reg_entry.get("content"), Mapping) else {}
+        resolved_strategy_id = (
+            strategy_id
+            or reg_entry.get("strategy_id")
+            or content.get("strategy_id")
+            or content.get("name")
+            or payload.get("candidate_id")
+            or "unknown-strategy"
+        )
+        version = str(reg_entry.get("version") or "1.0.0")
+        resolved_registry_id = registry_id or f"reg-{resolved_strategy_id}-{version}"
+        lineage = copy.deepcopy(dict(payload.get("lineage") or {}))
+        eval_summary = copy.deepcopy(dict(reg_entry.get("evaluation_summary") or {}))
+        rep_proof = payload.get("replication_proof")
+        if not eval_summary and isinstance(rep_proof, Mapping):
+            if isinstance(rep_proof.get("evaluation_summary"), Mapping):
+                eval_summary = copy.deepcopy(dict(rep_proof["evaluation_summary"]))
+
+        return {
+            "registry_id": resolved_registry_id,
+            "artifact_type": reg_entry.get("artifact_type", "strategy_spec"),
+            "strategy_id": resolved_strategy_id,
+            "version": version,
+            "lifecycle_state": "draft",
+            "checksum": checksum,
+            "replication_success": bool(reg_entry.get("replication_success")),
+            "evaluation_summary": eval_summary,
+            "replication_proof": copy.deepcopy(rep_proof) if isinstance(rep_proof, Mapping) else {},
+            "lineage": lineage,
+            "storage_ref": {
+                "backend": payload.get("storage_backend", "object_store"),
+                "path": payload.get("storage_path", ""),
+            },
+        }
+
     def check_requirements(self, target_state: PromotionState, metadata: Mapping[str, Any]) -> None:
         """Enforces metadata requirements for each promotion state."""
         lineage = _normalize_lineage(metadata.get("lineage"))
 
         if target_state == PromotionState.CANDIDATE:
-            if not metadata.get("replication_success"):
+            if metadata.get("replication_success") is not True:
                 raise PromotionError("Candidate promotion requires 'replication_success' flag.")
             if not _has_source_reference(lineage):
                 raise PromotionError(
                     "Candidate promotion requires lineage with source_run_ids, "
                     "source_strategy_spec_id, or source_dataset_refs."
                 )
+            eval_summary = metadata.get("evaluation_summary")
+            if isinstance(eval_summary, Mapping) and eval_summary:
+                _validate_sharpe_summary(eval_summary, stage_label="Candidate")
 
         elif target_state == PromotionState.PAPER:
             eval_summary = metadata.get("evaluation_summary", {})
@@ -95,6 +152,7 @@ class PromotionGate:
                 raise PromotionError("Paper promotion requires 'risk_review_passed' in evaluation_summary.")
             if eval_summary.get("sharpe_ratio") in (None, ""):
                 raise PromotionError("Paper promotion requires Sharpe Ratio metric.")
+            _validate_sharpe_summary(eval_summary, stage_label="Paper")
             if not _has_source_reference(lineage):
                 raise PromotionError("Paper promotion requires lineage with at least one source reference.")
 
@@ -106,6 +164,7 @@ class PromotionGate:
                 raise PromotionError("Canary promotion requires 'risk_review_passed' in evaluation_summary.")
             if eval_summary.get("sharpe_ratio") in (None, ""):
                 raise PromotionError("Canary promotion requires Sharpe Ratio metric.")
+            _validate_sharpe_summary(eval_summary, stage_label="Canary")
             if not metadata.get("approver"):
                 raise PromotionError("Canary promotion requires an explicit 'approver'.")
             if not _has_source_reference(lineage):
@@ -283,6 +342,37 @@ def _extract_rollback(entry: Mapping[str, Any]) -> dict[str, Any] | None:
             return rollback_payload
 
     return None
+
+
+def _validate_sharpe_summary(
+    eval_summary: Mapping[str, Any],
+    *,
+    stage_label: str,
+) -> None:
+    raw_sharpe = eval_summary.get("sharpe_ratio")
+    if raw_sharpe in (None, ""):
+        raise PromotionError(f"{stage_label} promotion requires Sharpe Ratio metric.")
+    try:
+        sharpe_value = float(raw_sharpe)
+    except (TypeError, ValueError) as exc:
+        raise PromotionError(f"{stage_label} promotion requires a numeric sharpe_ratio.") from exc
+    if not math.isfinite(sharpe_value) or sharpe_value <= 0.0:
+        raise PromotionError(
+            f"{stage_label} promotion requires a positive out-of-sample sharpe_ratio (got {sharpe_value})."
+        )
+    deflated_threshold = eval_summary.get("deflated_sharpe_threshold")
+    if deflated_threshold not in (None, ""):
+        try:
+            threshold_val = float(deflated_threshold)
+        except (TypeError, ValueError) as exc:
+            raise PromotionError(
+                f"{stage_label} promotion deflated_sharpe_threshold must be numeric."
+            ) from exc
+        if sharpe_value <= threshold_val:
+            raise PromotionError(
+                f"{stage_label} promotion requires sharpe_ratio ({sharpe_value:.3f}) > "
+                f"deflated_sharpe_threshold ({threshold_val:.3f})."
+            )
 
 
 def _validate_rollback(
