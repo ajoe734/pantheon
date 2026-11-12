@@ -381,3 +381,59 @@ def test_human_inbox_persona_readiness_reads_persona_owner_with_caller_identity(
         assert request["thread"].startswith("bff-human-inbox-read")
     assert response.json()["meta"]["surfaces"]["persona_readiness"]["status"] == "ok"
 
+
+# Moved from test_management_read_budget.py (a migrated suite may not import main).
+def _real_registry_reader(monkeypatch, env, delay, slots=None):
+    monkeypatch.delenv("PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS", raising=False)
+    if env is None:
+        monkeypatch.delenv("PANTHEON_ENV", raising=False)
+    else:
+        monkeypatch.setenv("PANTHEON_ENV", env)
+    if slots is not None:
+        monkeypatch.setattr(bff_main, "_MANAGEMENT_DATA_SOURCES_READ_SLOTS", slots)
+
+    class _Store:
+        def get_source_connector_registry(self):
+            time.sleep(delay)
+            return {"source": "service_client", "connectors": [{"connector_id": "c"}]}
+
+    return bff_main, _Store()
+
+
+def test_data_sources_budget_defaults_by_environment(monkeypatch) -> None:
+    for env, expected in (("dev", 2.5), ("staging", 0.75), ("production", 0.75), (None, 0.75)):
+        bff_main, _ = _real_registry_reader(monkeypatch, env, 0)
+        assert bff_main._management_data_sources_read_timeout_seconds() == expected
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS", "1.5")
+    assert bff_main._management_data_sources_read_timeout_seconds() == 1.5
+    monkeypatch.setenv("PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS", "bad")
+    assert bff_main._management_data_sources_read_timeout_seconds() == 2.5
+
+
+def test_dev_healthy_slow_registry_completes_but_staging_stays_unavailable(monkeypatch) -> None:
+    bff_main, store = _real_registry_reader(monkeypatch, "dev", 1.0)
+    result = asyncio.run(bff_main._read_management_source_connector_registry(store))
+    assert result["source"] == "service_client" and len(result["connectors"]) == 1
+
+    bff_main, store = _real_registry_reader(monkeypatch, "staging", 1.0)
+    result = asyncio.run(bff_main._read_management_source_connector_registry(store))
+    assert result["source"] == "unavailable" and result["reason"] == "read_timeout"
+    time.sleep(1.1)
+
+
+def test_dev_registry_beyond_budget_and_saturation_stay_unavailable(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS", "0.1")
+    bff_main, store = _real_registry_reader(monkeypatch, "dev", 0.4)
+    monkeypatch.setenv("PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS", "0.1")
+    result = asyncio.run(bff_main._read_management_source_connector_registry(store))
+    assert result["reason"] == "read_timeout" and result["connectors"] == []
+    time.sleep(0.5)
+
+    import threading
+
+    full = threading.BoundedSemaphore(1)
+    full.acquire()
+    bff_main, store = _real_registry_reader(monkeypatch, "dev", 0, slots=full)
+    result = asyncio.run(bff_main._read_management_source_connector_registry(store))
+    assert result["source"] == "unavailable" and result["reason"] == "read_capacity_saturated"
