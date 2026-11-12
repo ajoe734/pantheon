@@ -26,7 +26,8 @@
         "Review REOPEN fix 3: govern_intraday_replay_dataset and compute_intraday_ic_metrics enforce reconciled source_snapshot (hash must match records), replay label/clock, availability ceiling and no quarantined/partial/waived flags; failures raise IntradayEvaluationUnavailable.",
         "Review REOPEN 2 fix A: GovernedVectorbtInputAdapter.prepare (the actual backtest boundary) now rejects intraday replay unless source_snapshot is reconciled_only=true tw_price_1m with content_sha256 that matches the records hash, and rejects quarantined/unreconciled records even with a refreshed hash (IntradayDataUnavailable).",
         "Review REOPEN 3 fix: _minute_bound_template preflights every required minute input field against the governed bars; a missing field (e.g. vwap) raises IntradayEvaluationUnavailable -> available=false with a concrete reason, never synthesized or daily-substituted.",
-        "Review REOPEN 2 fix B: forced flatten bars are simulated as SizeType.TargetAmount=0 (closes the ACTUALLY executed position, never reverses), so cash-limited/partial fills cannot leave or flip a residual; Taiwan sell tax on the flatten leg is resolved from the actual flow direction."
+        "Review REOPEN 2 fix B: forced flatten bars are simulated as SizeType.TargetAmount=0 (closes the ACTUALLY executed position, never reverses), so cash-limited/partial fills cannot leave or flip a residual; Taiwan sell tax on the flatten leg is resolved from the actual flow direction.",
+        "Declared strategy bar_frequency must equal the prepared dataset data_frequency (legacy daily aliases normalised); mismatch (e.g. daily strategy on 5m replay dataset) fails closed with VectorbtWorkflowError before strategy evaluation/order simulation; no silent rebinding. Public run_vectorbt_workflow regression + matching-frequency positive control added. Source-only replay; 119 passed, 5 subtests in 137s."
       ]
     },
     "tests": {

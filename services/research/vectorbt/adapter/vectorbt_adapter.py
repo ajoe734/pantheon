@@ -931,6 +931,8 @@ class VectorbtBackend:
                 "intraday real-backend runs evaluate a canonical strategy artifact only; "
                 "the unbound MA-crossover path is daily/stub-only"
             )
+        if config.strategy_artifact is not None:
+            _require_artifact_frequency(dataset, config.strategy_artifact)
         run_id = f"vbt-real-{uuid.uuid4().hex[:12]}"
         per_instrument: dict[str, dict[str, Any]] = {}
         artifact_orders = (
@@ -1290,6 +1292,22 @@ def _closes_window(
     return closes[: index + 1]
 
 
+def _canonical_frequency(value: Any) -> str:
+    return "1d" if value in (None, "", "daily", "1d") else str(value)
+
+
+def _require_artifact_frequency(dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]) -> None:
+    """SD 6.1: the strategy's declared bar_frequency must equal the prepared dataset frequency (fail closed)."""
+    params = artifact.get("parameters")
+    declared = _canonical_frequency(params.get("bar_frequency") if isinstance(params, Mapping) else None)
+    actual = _canonical_frequency(dataset.data_frequency)
+    if declared != actual:
+        raise VectorbtWorkflowError(
+            f"strategy artifact bar_frequency {declared!r} does not match prepared dataset "
+            f"data_frequency {actual!r}; refusing to rebind strategy inputs"
+        )
+
+
 def _screened_artifact_view_sequence(
     dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any],
 ) -> dict[str, list[dict[str, Any]]]:
@@ -1301,6 +1319,7 @@ def _screened_artifact_view_sequence(
     from services.registry.candidate_pool import canonical_symbol, evaluate_screened_views, _market
     from services.registry.strategy_artifact import validate_strategy_artifact
 
+    _require_artifact_frequency(dataset, artifact)
     if _is_intraday(dataset):
         raise VectorbtWorkflowError("screen strategies are daily-only; no intraday screen replay is defined")
     validate_strategy_artifact(artifact)
@@ -1341,6 +1360,7 @@ def _artifact_action_sequence(
     dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
 ) -> dict[str, list[str | None]]:
     """Per-bar evaluated actions (BUY/SELL/HOLD or None on warmup bars) from the Registry interpreter."""
+    _require_artifact_frequency(dataset, artifact)
     if "screen" in artifact.get("strategy_logic", {}):
         return {inst: [v["action"] for v in views]
                 for inst, views in _screened_artifact_view_sequence(dataset, artifact).items()}

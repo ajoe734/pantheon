@@ -623,3 +623,23 @@ def test_flatten_closes_actual_position_when_cash_limited(tmp_path, monkeypatch,
         for m in metrics.values():
             assert m["net_position"] == pytest.approx(0.0, abs=1e-6)
             assert m["final_portfolio_value"] > 0.0
+
+
+# --- declared strategy frequency must match the prepared dataset frequency ----------------------
+
+def test_daily_strategy_on_minute_dataset_fails_closed_through_public_entrypoint(tmp_path, monkeypatch):
+    pytest.importorskip("vectorbt")
+    from services.registry.tests.test_strategy_artifact_bar_frequency import _declared_art, _min_input
+    from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
+
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    ds = _replay_ds(tmp_path)
+    art = _declared_art("1d", inputs=[_min_input("1d")], ref="px")
+    with pytest.raises(VectorbtWorkflowError, match="does not match prepared dataset"):
+        run_vectorbt_workflow(ds, config=BacktestConfig(strategy_artifact=art), backend=VectorbtBackend())
+
+
+def test_matching_frequency_positive_control(tmp_path, monkeypatch):
+    pytest.importorskip("vectorbt")
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    assert _real_run(_replay_ds(tmp_path))
