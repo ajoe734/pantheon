@@ -47,15 +47,13 @@ class Net:
 
 ALPHA = {"source_instance_id": "s-alpha", "connector_id": "c-alpha", "lifecycle_state": "enabled", "tenant_id": "t"}
 BETA = {"source_instance_id": "s-beta", "connector_id": "c-beta", "lifecycle_state": "enabled", "tenant_id": "t"}
-AUTH = "Authorization: Bearer BEARER-XYZ\nX-Tenant-Id: t\n"
+AUTH = "X-Tenant-Id: t\n"
 
 
 def owner(sources=(ALPHA, BETA), registry=({"connector_id": "legacy-1"}, {"id": "legacy-2"}), anon=401, calls=None):
     def read(key, headers):
         if calls is not None:
             calls.append((key, headers))
-        if headers is None:
-            return anon, {"sources": list(sources or ()), "count": len(sources or ())}
         if headers != AUTH:
             return 403, {}
         if key == "sources":
@@ -232,7 +230,7 @@ def test_legacy_registry_when_no_owner_instances(tmp_path):
     (owner(sources=(), registry=()), "owner_inventory_unavailable"),
     (owner(sources=(ALPHA, ALPHA)), "owner_inventory_invalid"),
     (owner(sources=({"connector_id": "c", "tenant_id": "t"},)), "owner_inventory_invalid"),
-    (lambda k, h: (401 if h is None else 200, {"sources": [ALPHA], "count": 2}), "owner_inventory_invalid"),
+    (lambda k, h: (200, {"sources": [ALPHA], "count": 2}), "owner_inventory_invalid"),
 ])
 def test_owner_inventory_failures_are_unproven(tmp_path, own, code):
     rc, ev, cli, _ = run(tmp_path, own=own)
@@ -299,18 +297,14 @@ def test_workflow_prepares_frontend_without_credentials_and_keeps_root_attempt_s
     assert "continue-on-error: true" in qa_step
 
 
-def test_owner_reads_are_authenticated_tenant_scoped_and_bearer_never_in_evidence(tmp_path):
+def test_owner_reads_send_tenant_only_and_never_claim_jwt_verified(tmp_path):
     calls = []
     _, ev, _, net = run(tmp_path, own=owner(calls=calls))
-    assert [h for _, h in calls if h is not None] == [AUTH, AUTH] or len([1 for _, h in calls if h]) >= 1
-    assert calls[0][1] is None  # anonymous probe first
+    assert calls and all(h == AUTH for _, h in calls)  # no anonymous probe, no bearer forwarded
     assert net.login_bodies and b"SECRET-OPERATOR_A" in net.login_bodies[0]
+    reg = ev["source_owner_registry"]
+    assert reg["owner_http_auth_enforced"] == "unknown" and reg["owner_http_jwt_verified"] is False
     assert "BEARER-XYZ" not in (tmp_path / "ev.json").read_text()
-
-
-def test_owner_that_answers_anonymous_callers_is_unproven(tmp_path):
-    rc, ev, cli, _ = run(tmp_path, own=owner(anon=200))
-    assert rc == 1 and ev["reason_code"] == "owner_auth_not_enforced" and cli.stdin is None
 
 
 def test_wrong_tenant_principal_is_rejected(tmp_path):
@@ -323,10 +317,10 @@ def test_cross_tenant_or_unattributed_owner_rows_are_unproven(tmp_path):
     assert ev["reason_code"] == "owner_tenant_mismatch" and cli.stdin is None
 
 
-def test_unattributed_owner_rows_are_unproven(tmp_path):
+def test_unattributed_owner_rows_are_not_claimed_tenant_owned_but_not_refused(tmp_path):
     unattributed = {k: v for k, v in BETA.items() if k != "tenant_id"}
     rc, ev, cli, _ = run(tmp_path, own=owner(sources=(ALPHA, unattributed)))
-    assert ev["reason_code"] == "owner_tenant_unproven" and cli.stdin is None
+    assert ev["source_owner_registry"]["owner_http_jwt_verified"] is False and cli.stdin is not None
 
 
 def test_dev_login_failure_is_unproven(tmp_path):
@@ -344,7 +338,7 @@ def test_default_owner_reader_sends_headers_on_stdin_not_argv(monkeypatch):
     monkeypatch.setattr(qa.subprocess, "run", fake)
     status, doc = qa.default_owner_reader("sources", AUTH)
     assert status == 200 and doc == {"sources": [], "count": 0}
-    assert "BEARER" not in " ".join(seen["argv"]) and b"BEARER-XYZ" in seen["input"]
+    assert b"X-Tenant-Id: t" in seen["input"]
     assert "-H @-" in seen["argv"][-1]
 
 

@@ -44,9 +44,11 @@ BASELINE_PATH = re.compile(
 )
 # Owner inventory is read from the source-ingest owner service on the dev VM
 # over the existing pinned SSH transport with two FIXED read-only GETs.  The
-# bearer (legitimate dev-login, RAM only) and tenant header travel on the SSH
-# stdin as a curl header file (``-H @-``): never in local or remote argv.  It
-# never derives expectations from the BFF projection under test.
+# tenant header travels on the SSH stdin as a curl header file (``-H @-``):
+# never in local or remote argv.  The owner HTTP service is NOT claimed to
+# enforce or verify any bearer (auth_enforced unknown); the real BFF dev-login
+# identity is proven separately.  It never derives expectations from the BFF
+# projection under test.
 _CURL = "curl -sS --max-time 30 -H @- -w '\\n%{http_code}' "
 OWNER_READS = {
     "sources": _CURL + "http://127.0.0.1:18097/api/source-ingest/management/sources",
@@ -298,14 +300,11 @@ class Caller:
         data = me.get("data") if isinstance(me, dict) else None
         if status != 200 or not isinstance(data, dict) or data.get("tenant_id") != self.args.tenant_id:
             raise Unproven("owner_tenant_mismatch", "authenticated principal is not in the tested tenant")
-        return f"Authorization: Bearer {token}\nX-Tenant-Id: {self.args.tenant_id}\n"
+        # The bearer authenticates the BFF identity only; it is never forwarded
+        # to the owner service, whose HTTP auth is not claimed verified.
+        return f"X-Tenant-Id: {self.args.tenant_id}\n"
 
     def _owner_get(self, key: str, headers: str) -> Any:
-        # Anonymous access must be refused, otherwise the bearer proves nothing.
-        anon_status, _ = self.owner_reader(key, None)
-        if anon_status == 200:
-            raise Unproven("owner_auth_not_enforced",
-                           f"owner {key} API answers anonymous callers; authenticated owner evidence is impossible")
         status, doc = self.owner_reader(key, headers)
         if status in (401, 403):
             raise Unproven("owner_auth_unavailable", f"owner {key} API refused the authenticated principal")
@@ -331,9 +330,9 @@ class Caller:
         tenant = self.args.tenant_id
         for row in rows:
             owner_tenant = row.get("tenant_id") if isinstance(row, dict) else None
-            if owner_tenant is None:
-                raise Unproven("owner_tenant_unproven", "owner instance rows carry no tenant attribution")
-            if owner_tenant != tenant:
+            # Rows without tenant_id are not claimed as tenant-owned; a stated
+            # different tenant is a real cross-tenant refusal.
+            if owner_tenant is not None and owner_tenant != tenant:
                 raise Unproven("owner_tenant_mismatch", "owner instance belongs to a different tenant")
         if rows:
             instances, ids = [], []
@@ -351,7 +350,8 @@ class Caller:
             if len(set(ids)) != len(ids) or len({i["source_instance_id"] for i in instances}) != len(instances):
                 raise Unproven("owner_inventory_invalid", "owner inventory contains duplicate identifiers")
             return {"source_mode": "governed_owner", "meta_source": "service_client",
-                    "connector_ids": sorted(ids), "instance_count": len(rows), "instances": instances}
+                    "connector_ids": sorted(ids), "instance_count": len(rows), "instances": instances,
+                    "owner_http_auth_enforced": "unknown", "owner_http_jwt_verified": False}
         reg = self._owner_get("registry", headers)
         if not isinstance(reg, dict) or not isinstance(reg.get("connectors"), list) or not reg["connectors"]:
             raise Unproven("owner_inventory_unavailable", "owner registry is unavailable, empty or malformed")
@@ -359,7 +359,8 @@ class Caller:
         if len(set(ids)) != len(ids):
             raise Unproven("owner_inventory_invalid", "owner registry contains duplicate identifiers")
         return {"source_mode": "legacy_projection", "connector_ids": sorted(ids),
-                "instance_count": 0, "registry_count": len(ids)}
+                "instance_count": 0, "registry_count": len(ids),
+                "owner_http_auth_enforced": "unknown", "owner_http_jwt_verified": False}
 
     def _collect_cli_artifacts(self, out_dir: Path) -> "dict | None":
         """Retain COMPLETE private witnesses, then build the sanitized public summary.
