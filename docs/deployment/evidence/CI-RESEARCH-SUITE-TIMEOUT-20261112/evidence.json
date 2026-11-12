@@ -1,0 +1,131 @@
+{
+  "task": "CI-RESEARCH-SUITE-TIMEOUT-20261112",
+  "inputs": {
+    "timing_capture": {
+      "path": "/tmp/pantheon-goal-resume-20261111/Research-second-timeout-versus-success-real-timings-20261112.json",
+      "sha256": "76ac030764ac2b3a44416ae98c929478e5feb760625eed81c351a47bd6ac35f0"
+    },
+    "workflow_blob_old": "cd101e7723f77aea99732ef74432ab02ba86ad5b",
+    "checkout_identities": {
+      "a53cf176e862262307a3717c7c63c18e445ecab3": "branch-ci.yml cd101e77",
+      "896e22f50e78487e244f9bc074c57a91c18efac0": "branch-ci.yml cd101e77",
+      "ebdcb7e409fe6ca1f055f64ecc005fee6de000d6": "branch-ci.yml cd101e77"
+    },
+    "comparison_receipt": {
+      "path": "/tmp/pantheon-goal-resume-20261111/goal0222-DLQ-Research-CI-input-comparison.json",
+      "sha256": "133583312fd2aa05e7c552936ad01025562d819204614389cf70e9a134521ba4"
+    },
+    "runs": {
+      "first_failure": 130920917367,
+      "failed_retry": 130933368126,
+      "successful_reference": 130916259636
+    }
+  },
+  "observations": {
+    "installed_packages_identical": true,
+    "installed_count": 140,
+    "runner_image": "ubuntu-24.04 20261101.360.1, runner 2.338.2, provisioner 20261028.624 (both runs)",
+    "physical_host_cause": "unknown; equal runner labels are not hardware or load proof",
+    "failed_runs": "both terminated at the 20 minute step limit with continuous dots, no assertion failure; first failure not re-parsed here (only its id is recorded)",
+    "success_reference": {
+      "result": "833 passed, 2 skipped, 5 subtests, 636.33s"
+    },
+    "elapsed_to_94pct_s": {
+      "failed_retry": 1103.5,
+      "success": 585.2
+    },
+    "slowdown_ratio_at_94pct": 1.89,
+    "segment_comparison": [
+      {
+        "pct": 8,
+        "fail_seg_s": 114.2,
+        "ok_seg_s": 63.4,
+        "ratio": 1.8
+      },
+      {
+        "pct": 17,
+        "fail_seg_s": 85.0,
+        "ok_seg_s": 43.6,
+        "ratio": 1.95
+      },
+      {
+        "pct": 25,
+        "fail_seg_s": 61.5,
+        "ok_seg_s": 32.5,
+        "ratio": 1.89
+      },
+      {
+        "pct": 34,
+        "fail_seg_s": 68.1,
+        "ok_seg_s": 36.1,
+        "ratio": 1.89
+      },
+      {
+        "pct": 43,
+        "fail_seg_s": 94.7,
+        "ok_seg_s": 49.5,
+        "ratio": 1.91
+      },
+      {
+        "pct": 51,
+        "fail_seg_s": 108.2,
+        "ok_seg_s": 55.8,
+        "ratio": 1.94
+      },
+      {
+        "pct": 60,
+        "fail_seg_s": 91.8,
+        "ok_seg_s": 48.1,
+        "ratio": 1.91
+      },
+      {
+        "pct": 77,
+        "fail_seg_s": 213.3,
+        "ok_seg_s": 112.2,
+        "ratio": 1.9
+      },
+      {
+        "pct": 86,
+        "fail_seg_s": 106.1,
+        "ok_seg_s": 57.8,
+        "ratio": 1.84
+      },
+      {
+        "pct": 94,
+        "fail_seg_s": 160.7,
+        "ok_seg_s": 86.2,
+        "ratio": 1.86
+      }
+    ],
+    "failed_retry_cutoff": "step killed ~102s after the 94% marker, at 1205s"
+  },
+  "analysis": {
+    "conclusion": "Every segment slowed roughly uniformly (see ratios), i.e. a slower execution environment rather than one hung test; no product-code fault is asserted.",
+    "projected_full_duration_s_at_same_slowdown": 1200.0,
+    "budget": "25 min (1500s) step budget is ~25% above the ~1200s projection at the observed 1.89x slowdown; the unchanged 30 min job-level timeout still hard-bounds the whole job"
+  },
+  "change": {
+    "file": ".github/workflows/branch-ci.yml",
+    "job": "research-suite",
+    "before": {
+      "step_timeout_minutes": 20,
+      "command": "pytest -q services/research"
+    },
+    "after": {
+      "step_timeout_minutes": 25,
+      "command": "pytest -q --durations=20 services/research"
+    },
+    "unchanged": [
+      "job timeout-minutes 30",
+      "install timeout 15",
+      "venv",
+      "needs",
+      "triggers",
+      "check names",
+      "no continue-on-error",
+      "no deselection or skips"
+    ]
+  },
+  "validation_required_at_exact_head": "CI must run the full research suite to a real terminal result with counts and durations; timeout or partial run is not PASS",
+  "post_integration": "record exact merge; existing unchanged-source parents (e.g. SOURCE-BOUNDED-DLQ-SCOPE-20261112) refresh onto corrected dev, get fresh exact-head review and real CI; old checks are not relabelled"
+}
