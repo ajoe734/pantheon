@@ -26,6 +26,7 @@ _EXCLUSION_FLAGS = (
     "human_review_blocked",
 )
 _PM12_FORMULA_VERSION = "pm12-default-v1"
+_PM12_SUPPORTED_FORMULA_VERSIONS = {_PM12_FORMULA_VERSION, "pm12-return-on-capital-v2"}
 _PM12_ALLOCATION_INPUT_SCHEMA_VERSION = "persona-allocation-policy-input/v1"
 _PM12_ALLOCATION_ADAPTER_VERSION = "pm12-quarterly-overall-tier-v1"
 _ALLOCATION_POLICY_VERSION = "persona-real-allocation-v1"
@@ -64,7 +65,7 @@ def build_pm12_allocation_policy_input(
     formula_version = str(row.get("formula_version") or "").strip()
     if not formula_version and ("overall_score" in row or "score" in row):
         formula_version = _PM12_FORMULA_VERSION
-    if formula_version != _PM12_FORMULA_VERSION:
+    if formula_version not in _PM12_SUPPORTED_FORMULA_VERSIONS:
         raise ValueError(
             f"unsupported PM-12 formula_version: {formula_version or 'missing'}"
         )
@@ -115,7 +116,7 @@ def _allocation_policy_input(row: Dict[str, Any]) -> Dict[str, Any] | None:
     if (
         "allocation_policy_input" in row
         or tier.startswith("tier-")
-        or formula_version == _PM12_FORMULA_VERSION
+        or formula_version in _PM12_SUPPORTED_FORMULA_VERSIONS
         or "overall_score" in row
         or "score" in row
     ):

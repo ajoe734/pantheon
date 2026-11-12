@@ -9,6 +9,8 @@ from typing import Any, Dict, List
 from .store import RankingSnapshotRecord, RankingConflictError, utc_now
 
 FORMULA_VERSION = "pm12-default-v1"
+RETURN_ON_CAPITAL_FORMULA_VERSION = "pm12-return-on-capital-v2"
+SUPPORTED_FORMULA_VERSIONS = frozenset({FORMULA_VERSION, RETURN_ON_CAPITAL_FORMULA_VERSION})
 
 
 def _stable_json_hash(value: Any) -> str:
@@ -111,10 +113,15 @@ def _pm12_ranking_snapshot_content(
     surface: str,
     period: str,
 ) -> Dict[str, Any]:
+    # Preserve the original digest for v1/implicit-v1 snapshots. New snapshots
+    # carry their formula on each item; never relabel historical stored rows.
+    versions = {str(item.get("formula_version") or FORMULA_VERSION) for item in items}
+    if len(versions) > 1 or versions - SUPPORTED_FORMULA_VERSIONS:
+        raise ValueError("ranking snapshot has mixed or unsupported formula versions")
     return {
         "surface": surface,
         "period": period,
-        "formula_version": FORMULA_VERSION,
+        "formula_version": next(iter(versions), FORMULA_VERSION),
         "items": _pm12_ranking_snapshot_payload_items(items),
     }
 

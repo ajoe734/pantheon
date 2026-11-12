@@ -199,7 +199,7 @@ from services.control_plane.bff.persona_provisioning import (
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.ports.rankings import RankingSnapshotReadPort
 from services.rankings.snapshots import (
-    FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION,
+    RETURN_ON_CAPITAL_FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION,
     snapshot_record, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
 )
 from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
@@ -5712,8 +5712,8 @@ _PM12_LEAGUE_TIER_DEFINITIONS = [
 
 
 # --- _pm12_persona_league_scores ---
-def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, float]:
-    pnl = _management_number(metrics.get("pnl"))
+def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    pnl_return = _pm12_finite_number(metrics.get("pnl_return"))
     drawdown = _management_number(metrics.get("drawdown"))
     fill_rate = _management_number(metrics.get("fill_rate"))
     slippage = _management_number(metrics.get("avg_slippage_bps"))
@@ -5722,7 +5722,7 @@ def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) ->
     capabilities = row.get("capability_summary") if isinstance(row.get("capability_summary"), dict) else {}
     memory = row.get("memory_summary") if isinstance(row.get("memory_summary"), dict) else {}
 
-    pnl_score = 50.0 if pnl is None else _pm12_clamp_score(50.0 + (pnl * 100.0))
+    pnl_score = None if pnl_return is None else _pm12_clamp_score(50.0 + pnl_return * 100.0)
     risk_floor = {
         "low": 90.0,
         "medium": 70.0,
@@ -5745,14 +5745,14 @@ def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) ->
         + (float(row.get("routed_strategy_count") or 0) * 5.0)
         + min(float(memory.get("total") or 0) * 2.0, 10.0)
     )
-    overall = (
+    overall = None if pnl_score is None else (
         pnl_score * _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]
         + risk_score * _PM12_LEAGUE_SCORE_WEIGHTS["risk"]
         + execution_score * _PM12_LEAGUE_SCORE_WEIGHTS["execution"]
         + activity_score * _PM12_LEAGUE_SCORE_WEIGHTS["activity"]
     )
     return {
-        "overall_score": round(overall, 6),
+        "overall_score": round(overall, 6) if overall is not None else None,
         "pnl_score": pnl_score,
         "risk_score": risk_score,
         "execution_score": execution_score,
@@ -5805,10 +5805,18 @@ def _pm12_quarter_formula_version_history() -> List[Dict[str, Any]]:
             "version": _PM12_LEAGUE_FORMULA_VERSION,
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
             "effective_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
-            "change_type": "baseline",
+            "change_type": "pnl_return_on_capital",
             "governance_evidence_refs": evidence_ref_ids,
-            "description": "Baseline formula accepted for PM-12 quarterly ranking reads.",
-        }
+            "description": "Operator decision 2026-11-12: PnL divided by persona capital; weights unchanged.",
+        },
+        {
+            "version": "pm12-default-v1",
+            "formula_version": "pm12-default-v1",
+            "effective_at": "2026-05-23T00:00:00Z",
+            "change_type": "baseline",
+            "governance_evidence_refs": ["pm12-quarterly-ranking-formula-v1-governance"],
+            "description": "Historical absolute-PnL formula; existing snapshots remain readable.",
+        },
     ]
 
 
@@ -5830,6 +5838,9 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
         "version": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
+        "pnl_formula": "clamp(50 + 100 * (pnl / capital), 0, 100)",
+        "pnl_return_unit": "fraction",
+        "missing_pnl_policy": "unknown_component_and_overall_score_ineligible_for_allocation",
         "score_field": "overall_score",
         "components": [
             {"key": "pnl", "label": "PnL", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]},
