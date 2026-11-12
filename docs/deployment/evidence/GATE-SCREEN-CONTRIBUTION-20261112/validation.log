@@ -1,3 +1,1 @@
-........................................................................ [ 79%]
-...................                                                      [100%]
-91 passed in 125.15s (0:02:05)
+93 passed in 170.55s, exit 0 (.venv-pantheon/bin/python3 -m pytest services/research/replication services/research/alpha_replication/test_revalidation_worker.py -q)

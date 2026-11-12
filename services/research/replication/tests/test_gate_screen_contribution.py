@@ -111,7 +111,9 @@ def test_screen_that_adds_nothing_is_dropped_and_reregistered_entry_only():
     assert response.admission_status.value == "rejected"
     registration = contribution["re_registration"]
     assert registration["candidate_kind"] == "entry_only"
-    assert "screen" not in registration["strategy_artifact"]["strategy_logic"]
+    # entry-only: no selection step remains, only the governed daily boundary
+    (only_step,) = registration["strategy_artifact"]["strategy_logic"]["screen"]["steps"]
+    assert only_step["kind"] == "filter"
     assert registration["strategy_artifact"]["parameters"]["symbols"] == contribution["boundary_symbols"]
     assert registration["artifact_checksum"] == strategy_artifact_checksum(
         registration["strategy_artifact"])
@@ -164,3 +166,35 @@ def test_candidate_without_screen_keeps_primary_checks_and_counts_one_trial():
     assert "screen_contribution" not in result.details
     assert result.details["trial_count"] == 1
     assert gate.get_family_trial_count(result.details["family_id"]) == 1
+
+
+def test_control_keeps_daily_boundary_exclusions_for_suspended_symbols():
+    """0050 is suspended on every recorded day (test-side injection of the flag only).
+
+    The screened run already excludes it; the whole-boundary control must too, so a
+    suspended name can neither trade in the control nor flatter the contribution.
+    """
+    from services.registry.candidate_pool import build_candidate_pool_snapshot
+
+    market = recorded_market(attest_coverage=True)
+    for bar in market["symbols"]["0050.TW"]["bars"]:
+        bar["suspended"] = True
+    gate = ReplicationGate(config=GateConfig(**SHORT_HISTORY))
+    ds = dataset(market)
+    request = build_request(artifact("top"), ds)
+    result = backtest_result(gate.evaluate_candidate(request))
+    contribution = result.details["screen_contribution"]
+    control_run = gate.backtest_run_store.get(contribution["control_backtest_run_id"])
+    assert control_run is not None
+    control_art = ReplicationGate._whole_boundary_control_artifact(
+        artifact("top"), contribution["boundary_symbols"])
+    session = market["trading_sessions"][-1]
+    snapshot = build_candidate_pool_snapshot(control_art, market, f"{session}T23:00:00+08:00")
+    assert "0050.TW" not in snapshot["members"]
+    assert {"symbol": "0050.TW", "reason": "suspended"} in snapshot["excluded"]
+    # and the control run itself never takes a position in the suspended symbol
+    from services.research.vectorbt.adapter import vectorbt_adapter as va
+    prepared = va.GovernedVectorbtInputAdapter().prepare(ds)
+    views = va._screened_artifact_view_sequence(prepared, control_art)
+    inst = next(i for i in views if i.startswith("0050"))
+    assert {v["action"] for v in views[inst]} == {"HOLD"}

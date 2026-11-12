@@ -672,6 +672,58 @@ class ReplicationGate:
             dataset if isinstance(dataset, dict) and dataset.get("candidate_pool_market") else None,
         )
 
+    @staticmethod
+    def _whole_boundary_control_artifact(
+        artifact: Dict[str, Any], boundary: List[str]
+    ) -> Dict[str, Any]:
+        """The candidate's own entry/exit rules with every *selection* step removed.
+
+        The governed daily boundary exclusions (suspension, liquidity, history, stale
+        data) are market-eligibility safety, not selection, so they stay in force: the
+        screen keeps its eligibility block and ``min_size`` and its steps become one
+        pass-everything filter (governed close > 0 floor), so the control trades exactly
+        the eligible whole boundary and nothing the screened run could not.
+        """
+        control = copy.deepcopy(artifact)
+        logic = control["strategy_logic"]
+        parameters = control["parameters"]
+        parameters["symbols"] = boundary
+        floor_key = "screen_control_close_floor"
+        input_name = "screen_control_close"
+        declared = {i["name"] for i in logic["inputs"]}
+        if input_name not in declared:
+            logic["inputs"].append(
+                {
+                    "name": input_name,
+                    "dataset": "tw_price_daily",
+                    "field": "close",
+                    "availability_lag_days": 0,
+                }
+            )
+        parameters[floor_key] = 0
+        controls = control.setdefault("mutation_surface", {}).setdefault("controls", [])
+        if not any(c.get("parameter_key") == floor_key for c in controls):
+            controls.append(
+                {
+                    "parameter_key": floor_key,
+                    "value_type": "integer",
+                    "current_value": 0,
+                    "allowed_range": {"min": 0, "max": 1},
+                    "step": 1,
+                }
+            )
+        logic["screen"]["steps"] = [
+            {
+                "kind": "filter",
+                "expression": {
+                    "op": "gt",
+                    "args": [{"ref": input_name}, {"const_param": floor_key}],
+                },
+                "refresh": "daily",
+            }
+        ]
+        return control
+
     def _measure_screen_contribution(
         self,
         request: ReplicationRequest,
@@ -707,10 +759,8 @@ class ReplicationGate:
         if not boundary:
             return {**measured, "status": "control_unavailable", "reason": "market_boundary_empty"}
 
-        control = copy.deepcopy(artifact)
-        control["strategy_logic"].pop("screen")
-        control["parameters"]["symbols"] = boundary
         try:
+            control = self._whole_boundary_control_artifact(artifact, boundary)
             control_checksum = strategy_artifact_checksum(control)
             control_eval = run_replication_backtest_protocol(
                 strategy_artifact=control,
