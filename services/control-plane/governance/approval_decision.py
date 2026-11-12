@@ -66,6 +66,7 @@ class TargetType(str, Enum):
     CAPITAL_BINDING_ACTIVATION = "capital_binding_activation"
     CAPITAL_POOL_ACTIVATION = "capital_pool_activation"
     PERSONA_LIFECYCLE_TRANSITION = "persona_lifecycle_transition"
+    PAPER_CANARY_CANDIDACY = "paper_canary_candidacy"
     EVOLUTION_EXECUTE = "evolution_execute"
 
 
@@ -504,6 +505,14 @@ class ApprovalDecision:
             errors.append("decision is required for decided decisions")
         if self.decision_state == DecisionState.DECIDED and not self.rationale:
             errors.append("rationale is required for decided decisions")
+
+        if approval_targets.target_name(self.target_type) == "paper_canary_candidacy":
+            errors.extend(approval_targets.subject_errors(self.target_type, self.metadata))
+            subject = approval_targets.subject_of(self.metadata)
+            if (subject.get("persona_id") != self.target_id
+                    or subject.get("ranking_snapshot_id") != self.target_version
+                    or subject.get("proposal_content_digest") != self.proposal_content_digest):
+                errors.append("candidacy subject must match target, snapshot and proposal digest")
 
         # Structural scope check plus the dedicated paper subject binding:
         # that subject can never hold an unscoped or broadened decision.
