@@ -116,7 +116,7 @@ Sources: `provider_adapters.py:103-130` (`max_records = fetch.max_records or req
 | Normalized official `tw_price_daily` two-year history | **Absent** (61 labels, ≤ 2026-11-11, recent OpenAPI slice). Raw bundle presence would not by itself make it normalized truth. |
 | Publication / PIT availability | **Unproven.** Partition labels are paths. Collector rows are stamped `published_at = <trade_date>T06:30:00Z` (T86 `08:30Z`) by the collector; that is a collector-side convention, not proof of when Pantheon could have known it. Backdating availability is not allowed. |
 | FinMind reference closes | Reference-only dataset `finmind_tw_price_reference`; never `tw_price_daily`. |
-| Industry classification PIT, delisted/suspended history | **Unverified / absent.** Monthly-revenue rows carry `industry` from the filing snapshot (`taiwan_official.py:3327`), a present-day label, not a PIT classification. Belongs to `TW-INDUSTRY-CLASSIFICATION-DATASET`; no fix invented here. |
+| Industry classification PIT, delisted/suspended history | **Unverified / absent.** Monthly-revenue rows carry `industry` from the filing snapshot (`taiwan_official.py:3327`), a present-day label, not a PIT classification. Belongs to `TW-INDUSTRY-CLASSIFICATION-DATASET`; no fix invented here. **Primary schema source (observed 2026-11-12T10:01Z, schema docs only):** TWSE `https://openapi.twse.com.tw/v1/swagger.json` (HTTP 200, sha256 `6f47523aead8cf9da8bba6e9b511198eb1b491080c6cb2e20dda927cc31d8bac`) documents `/opendata/t187ap03_L` with fields 公司代號 / 產業別 / 出表日期; TPEx `https://www.tpex.org.tw/openapi/swagger.json` (HTTP 200, sha256 `05af7755…`) documents `/mopsfin_t187ap03_O` (OTC) and `_R` (emerging) with SecuritiesCompanyCode / SecuritiesIndustryCode / Date. No date query parameter is declared on these routes. data.gov.tw/dataset/18419 also lists industry among listed-company-profile fields. This shows a primary current company/industry schema source exists; it does **not** prove historic classification-effective dates, actual response rows, an ingested dataset, delisted coverage or PIT history, and a newly observed current classification must not be backdated. Two-year historical PIT/industry dataset work remains the already-approved named work; no new task, worker or runtime action. |
 
 ## 6. Minimal existing-flow activation / repair matrix (for original Ops owners)
 
@@ -135,7 +135,7 @@ No new tool, service, grant, issuer, endpoint, queue or platform. Executed only 
 | 6 | Opt in steady pull | `SOURCE_INGEST_STEADY_COLLECTOR_PULL=true` (+ `PANTHEON_COLLECTOR_HOST`), existing workflow var wired by `04e9` | deploy var | scheduler `collector_steady_pull`; egress = collector host only |
 | 7 | Fundamentals | one official-connector requirement per dataset (`tw_monthly_revenue`, `tw_financial_statement`, `tw_valuation_bwibbu`) | these datasets are **not** in `_OFFICIAL_TW_DATASETS` (§4.2), so the existing reconciler cannot bind them; direct OpenAPI egress is not in the steady allowlist. Needs a separately reviewed owner decision (extend reconciler / bounded profile); not solved here | a scheduled receipt and a `normalized/<dataset>` directory |
 | 8 | Legacy price slice | existing legacy instance `limits.max_records` / `priority_symbols` | cap large enough to cover both venues; required value unknown | TPEx rows in a run |
-| 9 | Industry, delisted history | out of this audit's authority | - | stays unverified until `TW-INDUSTRY-CLASSIFICATION-DATASET` |
+| 9 | Industry, delisted history | out of this audit's authority; primary current-profile schema exists (§5) but no historic effective-date parameter is declared | - | stays unverified until `TW-INDUSTRY-CLASSIFICATION-DATASET` ingests and proves PIT history |
 
 **Only if the owners later authorise the management-command surface** (it is not authorised now): each command requires a non-empty `reason` (`source_management_commands.py:204`) and an `Idempotency-Key` header (replay with a different payload gives 409, `:216-225`); `create` takes `source_instance_id`, `connector_id`, `definition_id`, `limits`, `schedule.interval_seconds`, `connector_config.public`; `change_schedule` needs `schedule.cadence` and `expected_revision`; `enable` needs a passed canary, `expected_revision` and the `enable_schedule` confirmation (`:888`). Canary is not data proof (§4.4).
 
@@ -147,7 +147,7 @@ No new tool, service, grant, issuer, endpoint, queue or platform. Executed only 
 4. Why the legacy connector failed with `host_not_allowlisted` on 2026-11-11T19:17:57Z and how the 09:21Z scheduled success obtained egress.
 5. Hosted values of the two management-command flags (authorised posture is off; not flipped by this audit). Also: the historical cause of the empty governed owner inventory.
 6. Whether TWSE/TPEx fundamentals endpoints respond from the dev VM.
-7. Industry classification source, PIT history and delisted-symbol history.
+7. Industry classification PIT history and delisted-symbol history (a primary current-profile schema source is now documented, but actual rows, effective dates and historical support are unverified).
 8. Whether any watchdog or GitHub outage contributed: no evidence read; no cause is asserted.
 
 ## 8. Non-claims

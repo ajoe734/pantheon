@@ -265,7 +265,7 @@
     "cause of host_not_allowlisted on 2026-11-11T19:17:57Z and how the 09:21Z scheduled run obtained egress",
     "hosted values of SOURCE_MANAGEMENT_COMMANDS_ENABLED and PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED",
     "whether TWSE/TPEx fundamentals endpoints respond from the dev VM",
-    "industry classification source, point-in-time history, delisted/suspended history",
+    "industry classification PIT history and delisted/suspended history (current-profile primary schema documented; rows/effective dates unverified)",
     "any watchdog or GitHub outage cause (no evidence read; none asserted)",
     "historical cause of the empty governed owner inventory"
   ],
@@ -279,7 +279,9 @@
     "current publication",
     "PIT availability",
     "two-year history imported",
-    "raw collector coverage"
+    "raw collector coverage",
+    "historical industry API support",
+    "industry dataset ingested"
   ],
   "authority": {
     "runtime_writes": false,
@@ -294,5 +296,42 @@
     "proof_sha256": "5558904df68705a8d78061651e1be5454c59ec503312ca992be07f39a5f7312a",
     "note": "cited separately from the 09:22Z legacy registry; historical cause of empty inventory UNKNOWN"
   },
-  "authorised_activation_path": "Source management commands OFF / UI legacy no-action (Human/Ops 09:44:15Z). Provisioning owner: COLLECTOR-HOSTED-ADMISSION-20261112 (deployment desired-state holder -> persona-source reconciler -> registry/scheduler -> steady pull); not implemented/deployed by this audit; no flag flip, no policy-gate waiver, no manual compat-route registration"
+  "authorised_activation_path": "Source management commands OFF / UI legacy no-action (Human/Ops 09:44:15Z). Provisioning owner: COLLECTOR-HOSTED-ADMISSION-20261112 (deployment desired-state holder -> persona-source reconciler -> registry/scheduler -> steady pull); not implemented/deployed by this audit; no flag flip, no policy-gate waiver, no manual compat-route registration",
+  "industry_primary_schema_1001Z": {
+    "scope": "public API schema documentation only; no rows fetched; not hosted industry/PIT proof",
+    "twse": {
+      "url": "https://openapi.twse.com.tw/v1/swagger.json",
+      "status": 200,
+      "sha256": "6f47523aead8cf9da8bba6e9b511198eb1b491080c6cb2e20dda927cc31d8bac",
+      "route": "/opendata/t187ap03_L",
+      "fields": [
+        "公司代號",
+        "產業別",
+        "出表日期"
+      ]
+    },
+    "tpex": {
+      "url": "https://www.tpex.org.tw/openapi/swagger.json",
+      "status": 200,
+      "sha256": "05af7755d0d528626c104f7a8ccd7b00c6a0cf228d30bcb4669020e514eb0c7e",
+      "routes": [
+        "/mopsfin_t187ap03_O",
+        "/mopsfin_t187ap03_R"
+      ],
+      "fields": [
+        "SecuritiesCompanyCode",
+        "SecuritiesIndustryCode",
+        "Date"
+      ]
+    },
+    "catalog": "https://data.gov.tw/dataset/18419",
+    "date_query_parameters_declared": false,
+    "not_proved": [
+      "historic classification-effective dates",
+      "actual response rows",
+      "ingested dataset",
+      "delisted coverage",
+      "point-in-time history"
+    ]
+  }
 }
