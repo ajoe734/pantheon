@@ -68,12 +68,27 @@ Record that evidence through `milestone hosted done` before terminal closeout.
 
 Local validation results are in `evidence.json`; they prove source behavior only.
 
-## Review admission hold
+## Review admission recovery
 
 PR #7262 was pushed, but canonical handoff rejected head
 `0d75e27563cabb7b5d93cacb1f529cc8bbaccff0`: required Memory schema/store/writeback
 files, Alpha writer files and the Postmortem regression test are absent from the
 task artifact contract. The eight exact paths are listed in `evidence.json`.
-Only Human/Ops may correct the contract through the governed `artifact-contract`
-command on a blocked task. After correction, reopen and repeat owner handoff at
-the current committed PR head; no review approval or merge is currently present.
+Human/Ops admitted all eight existing paths through the governed
+`artifact-contract` command and reopened the same task on 2026-11-12. The live
+governed `show` confirms Codex ownership, Claude review, the original six acceptance
+criteria and hosted `external_wait`. The historical rejection remains in
+`evidence.json`; it is no longer a contract blocker.
+
+The fetched `origin/dev` remains `8f0445559a19474d7e7da29ed3f175c0800df558`, already
+an ancestor of this branch. Gate PR #7257 is still open at
+`3b9273c7b7e08f6c47b76d56388eeb86becad9b2`; its separate mechanism input/support
+changes have not entered `dev`. No other task's commits or trailers were copied.
+There is currently no merge conflict. If Gate lands first, refresh from current
+`dev`, preserve both owners' Alpha worker/test changes, rerun composed regressions
+and freeze a new review head through the existing workflow.
+
+The next owner handoff binds this committed manifest to the exact new PR head.
+Independent Claude approval and native integration remain required. Source
+functional validation is recorded separately from the outstanding hosted proof;
+neither an open PR nor local tests establish hosted acceptance or terminal `done`.
