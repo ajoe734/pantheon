@@ -6137,5 +6137,113 @@ class TestPaperFuturesFillEpisode(unittest.TestCase):
         self.assertEqual(algo.open_episodes, {})
 
 
+class PoolMemberBaselineRuntimeTest(unittest.TestCase):
+    """Production snapshot path: each member carries its own baseline/comparison."""
+
+    _identity = PaperRuntimeServiceTest._identity
+
+    def _outbox(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        return Path(directory.name) / "lifecycle.json"
+
+    def test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account(self):
+        """Recorded Taiwan gate proof -> registry entries -> runtime snapshot, per member."""
+        from services.evolution.test_approved_baselines import genuine_entry
+        from services.execution.lean_runtime.member_virtual_book import virtual_book_metrics
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        decay = genuine_entry(tenant="default")
+        good = genuine_entry("recorded_backtest_tw_2330_2317", ("2330.TW", "2317.TW"), tenant="default")
+        entries = {decay["registry_id"]: decay, good["registry_id"]: good}
+        service._member_entry_reader = lambda ref, tenant: entries.get(ref)
+        def member(entry, count):
+            return {entry["registry_id"]: {
+                "artifact_id": entry["registry_id"], "version": "1.0.0", "checksum": entry["checksum"],
+                "virtual_only": False, "underlying_count": count,
+                "view": {"direction": "LONG", "strength": 1}}}
+        decaying = (100, 97, 96, 92, 91)
+        steady = (100, 104, 108, 112, 120)
+        for day in range(5):
+            at = f"2024-10-0{day + 1}T05:30:00Z"
+            for symbol, price, members in (
+                ("2330.TW", decaying[day], member(decay, 1)),
+                ("2330.TW", steady[day], member(good, 2)),
+                ("2317.TW", steady[day], member(good, 2)),
+            ):
+                service._member_virtual_books.observe(
+                    binding_id="b", envelope_checksum="sha256:env", symbol=symbol, event_time=at,
+                    price=price, source_ref="recorded-twse", members=members, bar_frequency="1d")
+        books = {b["member_id"]: b for b in service.snapshot()["paper_state"]["member_virtual_books"]}
+        self.assertEqual(set(books), {decay["registry_id"], good["registry_id"]})
+        for entry in (decay, good):
+            book = books[entry["registry_id"]]
+            self.assertEqual(book["baseline"]["status"], "approved")
+            self.assertEqual(book["baseline"]["checksum"], book["checksum"])
+            self.assertEqual(book["baseline"]["oos_sharpe"],
+                             entry["evaluation_summary"]["out_of_sample_sharpe_ratio"])
+            # The member is scored on the gate's own share-sized return basis.
+            self.assertEqual(book["gate_basis"]["basis"], book["baseline"]["return_basis"])
+            self.assertEqual(book["baseline_comparison"]["status"], "compared")
+            self.assertAlmostEqual(
+                book["baseline_comparison"]["sharpe_delta"],
+                book["gate_basis"]["sharpe_ratio"] - book["baseline"]["oos_sharpe"])
+        self.assertNotEqual(books[decay["registry_id"]]["baseline"]["backtest_run_id"],
+                            books[good["registry_id"]]["baseline"]["backtest_run_id"])
+        weak = books[decay["registry_id"]]
+        # A combined account of both members would look healthy and hide the decaying member.
+        combined = virtual_book_metrics(
+            [(a + b) / 2 for a, b in zip(weak["net_of_costs"]["return_series"],
+                                         books[good["registry_id"]]["net_of_costs"]["return_series"])],
+            basis=weak["net_of_costs"]["basis"])
+        self.assertGreater(combined["sharpe_ratio"], 0)
+        self.assertGreater(combined["sharpe_ratio"], weak["net_of_costs"]["sharpe_ratio"])
+        self.assertTrue(books[decay["registry_id"]]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertFalse(books[good["registry_id"]]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertNotEqual(books[decay["registry_id"]]["baseline_comparison"]["sharpe_delta"],
+                            books[good["registry_id"]]["baseline_comparison"]["sharpe_delta"])
+        self.assertTrue(all(not b["is_real_order"] for b in books.values()))
+
+    def test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline(self):
+        from services.evolution.test_approved_baselines import genuine_entry
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        parent = genuine_entry(tenant="default")
+        service._member_entry_reader = lambda ref, tenant: parent if ref == parent["registry_id"] else {}
+        for day, price in ((1, 100), (2, 110)):
+            service._member_virtual_books.observe(
+                binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                members={"child": {"artifact_id": "child", "version": "1", "checksum": parent["checksum"],
+                                   "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
+                bar_frequency="1d")
+        [book] = service.snapshot()["paper_state"]["member_virtual_books"]
+        self.assertEqual(book["baseline"]["reason"], "registry_entry_missing")
+        self.assertNotIn("oos_sharpe", book["baseline"])
+
+    def test_without_registry_reader_each_member_reports_missing_reason(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        for day, price in ((1, 100), (2, 110)):
+            service._member_virtual_books.observe(
+                binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                members={"m": {"artifact_id": "m", "version": "1", "checksum": "sha256:m",
+                               "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
+                bar_frequency="1d")
+        [book] = service.snapshot()["paper_state"]["member_virtual_books"]
+        self.assertEqual(book["baseline"]["reason"], "registry_entry_missing")
+        self.assertEqual(book["baseline_comparison"]["status"], "no_approved_baseline")
+
+
 if __name__ == "__main__":
     unittest.main()
