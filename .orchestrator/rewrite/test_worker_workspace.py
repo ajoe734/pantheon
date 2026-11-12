@@ -1822,6 +1822,65 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"][event_id]["status"], "pending")
         self.assertEqual(self._snapshot(), before)
 
+    def test_real_flow_overlapping_ff_wip_not_stashed_or_conflicted(self) -> None:
+        """Full planner/reserve/process_queue: dev advances over a file the
+        owner has staged+unstaged WIP on, with merge.autoStash=true."""
+        import contextlib
+        sup, ts, config, task = self._real_flow_fixture()
+        self._write_status(config, task)
+        self._git(self.worktree, "config", "merge.autoStash", "true")
+        self._git(self.worktree, "config", "rebase.autoStash", "true")
+        # Advance dev as a true fast-forward of the task head that touches
+        # the very file the owner is editing.
+        tmp_wt = self.root / "upstream-wt"
+        self._git(self.repo, "worktree", "add", "--detach", str(tmp_wt), self.source_head)
+        (tmp_wt / "scoped_service.py").write_text("def run():\n    return 'upstream'\n", encoding="utf-8")
+        self._git(tmp_wt, "commit", "-qam", "upstream edit")
+        new_base = self._git(tmp_wt, "rev-parse", "HEAD")
+        self._git(self.repo, "worktree", "remove", "--force", str(tmp_wt))
+        self._git(self.repo, "update-ref", "refs/heads/dev", new_base)
+        self._git(self.repo, "update-ref", "refs/remotes/origin/dev", new_base)
+
+        self._dirty_owned_wip()
+        self._git(self.worktree, "add", "scoped_service.py", "docs/evidence/new.json")
+        (self.worktree / "scoped_service.py").write_text(
+            "def run():\n    return 'wip-unstaged'\n", encoding="utf-8")
+        before = self._snapshot()
+        index_before = self._git(self.worktree, "ls-files", "-s")
+        cached_before = self._git(self.worktree, "diff", "--cached")
+        unstaged_before = self._git(self.worktree, "diff")
+        self.assertIn("M", before["status"])
+        state = ts.with_healthy_delivery_health(
+            config, {"workers": {}, "queue": {"events": {}}, "worker_worktrees": {"leases": {}}}
+        )
+        launches: list[int] = []
+        with contextlib.ExitStack() as stack:
+            for patcher in self._flow_patches(sup, launches):
+                stack.enter_context(patcher)
+            plan = sup.build_dispatch_plan(
+                config, state, {"tasks": [task]}, [], live_total=0, activity_events=[]
+            )
+            self.assertTrue(sup.reserve_dispatch_plan(config, state, plan, activity_events=[]))
+            sup.process_queue(config, state)
+        # Owner WIP is resumed at its own head: never stashed, never conflicted,
+        # index/worktree/head/attribution byte-identical; no auto-commit.
+        self.assertEqual(self._git(self.worktree, "stash", "list"), "")
+        self.assertEqual(self._git(self.repo, "stash", "list"), "")
+        self.assertEqual(self._git(self.worktree, "diff", "--name-only", "--diff-filter=U"), "")
+        self.assertNotIn("<<<<<<<", (self.worktree / "scoped_service.py").read_text(encoding="utf-8"))
+        self.assertEqual(self._git(self.worktree, "ls-files", "-s"), index_before)
+        self.assertEqual(self._git(self.worktree, "diff", "--cached"), cached_before)
+        self.assertEqual(self._git(self.worktree, "diff"), unstaged_before)
+        self.assertEqual(self._git(self.repo, "rev-parse", self.source_branch), self.source_head)
+        after = self._snapshot()
+        self.assertEqual(after["head"], before["head"])
+        self.assertEqual(after["files"], before["files"])
+        self.assertEqual(
+            [l for l in after["status"].splitlines() if "task-context/" not in l],
+            before["status"].splitlines(),
+        )
+        self.assertEqual(launches, [1])
+
 
 class OwnerWipResumeAutostashTests(unittest.TestCase):
     """Real-Git regression: WIP resume must never autostash or conflict-mark."""

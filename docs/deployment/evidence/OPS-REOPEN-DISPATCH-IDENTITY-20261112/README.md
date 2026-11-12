@@ -34,3 +34,7 @@ no touching of the frontend worktrees. Actual worker receipts for the original Q
 ## Autostash fix (review round 2)
 
 `_resume_owner_wip_worktree` now disables autostash, validates the workspace (no unmerged paths, no new stash, unchanged dirty set) and only then does prepare admit the dirty-guard bypass. Regression: `OwnerWipResumeAutostashTests` (real Git, `merge.autoStash=true`). See `evidence.json` `verification.autostash_fix`.
+
+## Full-pipeline overlapping fast-forward (review round 3)
+
+`test_real_flow_overlapping_ff_wip_not_stashed_or_conflicted` drives the real planner/reserve/`process_queue` path with `merge.autoStash=true`, dev advanced over a file carrying staged+unstaged owner WIP: no stash, no conflict markers, index/worktree/HEAD bytes unchanged, one launch. It fails with `--autostash` restored. `test_worker_workspace`: 64 tests OK.
