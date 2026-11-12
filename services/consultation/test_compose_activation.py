@@ -35,6 +35,18 @@ def test_root_compose_wires_consultation_service_boundary() -> None:
     assert "os.environ.get('PORT','8096')" in healthcheck
     assert "/readyz" in healthcheck
 
+    # Consult-policy panels need working governance, evolution and memory addresses.
+    assert consultation_env["CONSULTATION_HANDOFF_SINK_URL"] == (
+        "http://governance:8082/api/governance/consultation-handoffs"
+    )
+    assert consultation_env["PANTHEON_MEMORY_API_URL"] == "http://memory:8086"
+    assert consultation_env["PANTHEON_EVOLUTION_API_URL"] == "http://evolution:8093"
+    for dependency in ("governance", "memory"):
+        assert consultation["depends_on"][dependency]["condition"] == "service_healthy"
+    # evolution transitively depends on consultation-svc (via runtime-manager),
+    # so it is an address, not a start-order dependency.
+    assert "evolution" in services and "evolution" not in consultation["depends_on"]
+
     dockerfile = (
         Path(__file__).resolve().parent / "Dockerfile"
     ).read_text(encoding="utf-8")

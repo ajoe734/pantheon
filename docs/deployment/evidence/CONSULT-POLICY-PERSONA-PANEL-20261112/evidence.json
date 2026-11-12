@@ -1,0 +1,51 @@
+{
+  "task_id": "CONSULT-POLICY-PERSONA-PANEL-20261112",
+  "kind": "source_implementation_evidence",
+  "owner": "Claude",
+  "assigned_reviewer": "Codex",
+  "independent_review": "pending",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md (6.4 / D6 / D7 / D8)",
+  "hosted_behavior_claimed": false,
+  "acceptance_evidence": {
+    "1_trigger_engine": [
+      "services/persona/test_consult_triggers.py::test_every_gated_decision_requires_risk_persona",
+      "services/persona/test_consult_triggers.py::test_patch_touching_guardrails_or_consult_policy_adds_red_team",
+      "services/persona/test_consult_triggers.py::test_red_team_only_for_patches_and_only_for_those_scopes"
+    ],
+    "2_persona_opens_and_independent_panel": [
+      "services/consultation/tests/test_persona_panel_integration.py::test_panel_open_requires_persona_service_caller_and_policy_complete_panel",
+      "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (3 separate provider asks, distinct idempotency keys, no peer answer in any ask, one synthesis memo with Agreements/Disagreements, no vote)"
+    ],
+    "3_risk_veto": [
+      "services/persona/test_consult_triggers.py::test_risk_oppose_vetoes_even_when_everyone_else_approves",
+      "services/persona/test_consult_triggers.py::test_missing_required_answer_fails_closed",
+      "services/consultation/tests/test_persona_panel_integration.py::test_risk_oppose_blocks_auto_adoption_and_becomes_operator_decision"
+    ],
+    "4_idempotent_bootstrap": [
+      "services/persona/test_consult_triggers.py::test_bootstrap_creates_both_non_trading_personas_once",
+      "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (real Persona owner POST /api/personas; second run creates nothing)"
+    ],
+    "5_memo_evidence_and_memory": [
+      "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (memo listed under the gated decision target; real governance handoff acknowledged with memo evidence ref; real memory service strict-auth writes initiator consultation_outcome + institutional cross_persona_observation)"
+    ],
+    "6_deployed_addresses": [
+      "services/consultation/test_compose_activation.py::test_root_compose_wires_consultation_service_boundary (governance sink, memory, evolution addresses; memory/governance start order; no compose depends_on cycle)"
+    ],
+    "7_protocol_document": ["CONSULTATION_SESSION_PROTOCOL.md"],
+    "8_integration_real_entry_points": [
+      "services/consultation/tests/test_persona_panel_integration.py (real consultation-svc + executor, Persona owner, governance, evolution health, memory; only the provider HTTP is faked)"
+    ]
+  },
+  "verification": {
+    "command": "pytest services/consultation services/persona/test_consult_triggers.py; pytest services/control-plane/persona/test_persona_policy_resolver.py",
+    "result": "99 passed (consultation + triggers); 34 passed (policy resolver)"
+  },
+  "not_claimed": [
+    "Hosted/deployed run: no real hosted cycle or consultation was executed.",
+    "OpenClaw adapter per-persona routing: services/openclaw-gateway-adapter is outside this task's artifacts and still validates provider output against the structured-extraction agent. The executor sends participant {persona_id, role, agent:'persona_own_agent'} and rejects an answer not attributed to that persona; the adapter must route that ask to the persona's own agent before a hosted panel can complete.",
+    "Governance ingress stores the handoff (target_gate, memo_ids, evidence_refs); it does not persist the extra gated_decision/gate fields the executor also sends. The memo is linked to the decision via the request target and the handoff evidence ref.",
+    "Risk and red team personas are created in draft; advancing to consultable is a governed lifecycle step, not automated.",
+    "The three-persona hosted backfill / private-memory obligation and real P1-fix hosted evidence stay outstanding.",
+    "Env: no source-level change to evolution; it is an address plus health probe only."
+  ]
+}
