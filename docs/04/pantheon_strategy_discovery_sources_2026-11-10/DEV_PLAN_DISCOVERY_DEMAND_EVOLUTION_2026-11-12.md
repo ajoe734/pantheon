@@ -9,7 +9,7 @@
 
 ## 0. 中文摘要
 
-使用者 11/12 回覆「都依照你的建議處理」，所以 SD 的 O-13 到 O-20 全部採用建議方案（§1）。第 5 節的實作拆成 9 筆任務，另加 1 筆 hosted 驗收。有改到同一個檔案的任務一律排先後，不平行；完整清單見 §2。
+使用者 11/12 回覆「都依照你的建議處理」，所以 SD 的 O-13 到 O-20 全部採用建議方案（§1）。第 5 節的實作拆成 9 筆任務，另加 1 筆 hosted 驗收。有改到同一個檔案的任務盡量排先後；目前已知有一組例外（`services/source_ingestion/hypothesis_compiler.py`，見 §2），仍可能同時修改，需由後到的 worker 自行 rebase；完整清單見 §2。
 
 另外兩件事：
 - 會碰到 gate.py 的兩筆 INTRADAY 任務，排在 GATE-MECHANISM-STAGE 之後。
@@ -55,7 +55,15 @@ discovery personas only).
 Ordering added to existing tasks: `INTRADAY-REPLICATION-GATE-20261111` and `INTRADAY-EVOLUTION-SEARCH-20261111` now
 depend on `GATE-MECHANISM-STAGE-20261112` (shared `services/research/replication/gate.py`).
 
-Dependencies follow shared files, not only logic: every pair of tasks that edits the same file is ordered.
+Dependencies follow shared files, not only logic, but not every pair is ordered. Known remaining concurrent writers:
+
+* `services/source_ingestion/hypothesis_compiler.py` is declared by both `HYPOTHESIS-CARD-PREDICTIONS-20261112`
+  (depends on nothing) and `RESEARCH-DEMAND-RECORD-20261112` (depends only on the allocator task, which itself has no
+  dependencies). Neither depends on the other, so they can run concurrently; whichever merges second rebases and
+  re-runs its tests. This plan does not add an ordering edge because the existing dependency contracts belong to
+  those tasks and are not changed here; reconciling them is left to the coordinator.
+
+Other shared-file pairs not listed above were not re-audited beyond the two INTRADAY orderings in this section.
 
 ## 3. Rules carried into every task
 

@@ -22,5 +22,8 @@
   "INTRADAY-REPLICATION-GATE-20261111 += GATE-MECHANISM-STAGE-20261112",
   "INTRADAY-EVOLUTION-SEARCH-20261111 += GATE-MECHANISM-STAGE-20261112"
  ],
- "allocator_switch": "not added; DISCOVERY_ALLOCATOR_ENABLED only has the compose default (docker-compose.yml:788) and its files are held by DISCOVERY-ALLOCATOR-RUNS-ADMITTED-STRATEGY-20261112"
+ "allocator_switch": "not added; DISCOVERY_ALLOCATOR_ENABLED only has the compose default (docker-compose.yml:788) and its files are held by DISCOVERY-ALLOCATOR-RUNS-ADMITTED-STRATEGY-20261112",
+ "known_concurrent_writers": [
+  "services/source_ingestion/hypothesis_compiler.py: HYPOTHESIS-CARD-PREDICTIONS-20261112 and RESEARCH-DEMAND-RECORD-20261112 have no ordering path; not serialized by this plan"
+ ]
 }
