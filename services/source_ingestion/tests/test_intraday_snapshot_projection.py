@@ -146,3 +146,45 @@ def test_dry_run_reconcile_never_projects(tmp_path):
                             write=False, snapshot_store=snap)
     assert results[0].outcome == "pass"
     assert not (tmp_path / "snap.jsonl").exists()
+
+
+def test_previously_published_day_is_withdrawn_when_it_stops_passing(tmp_path, monkeypatch: Any):
+    """pass -> GET 200, then the same day fails reconciliation: GET 404, also after restart,
+    and the daily snapshot is untouched."""
+    module = _load_source_main(monkeypatch, tmp_path / "svc")
+    client = TestClient(module.app)
+    snap = module.runtime.latest_market_snapshot_store
+    _ingest_prices(client)
+    daily_before = client.get("/api/source-ingest/snapshots/latest?symbol=AAPL.US").content
+    istore = _store(tmp_path / "intraday")
+    istore.put_symbol_day("2330", DAY, _bars())
+    assert [r.outcome for r in _run(istore, OfficialDaily([_official()], [DAY]), snap)] == ["pass"]
+    resp = _get(client, "1m")
+    assert resp.status_code == 200 and len(resp.json()["closes"]) == 60
+
+    report: dict[str, Any] = {}
+    results = _run(istore, OfficialDaily([_official(c=150.0)], [DAY]), snap, report=report)
+    assert [r.outcome for r in results] == ["fail"]
+    assert report["withdrawn"] == [{"symbol": "2330", "session_date": DAY, "outcome": "fail"}]
+    assert _get(client, "1m").status_code == 404
+
+    snap.reload()  # restart: the withdrawal is durable, quarantined points do not come back
+    assert _get(client, "1m").status_code == 404
+    assert snap.get("2330", "tw_price_1m") is None
+    assert client.get("/api/source-ingest/snapshots/latest?symbol=AAPL.US").content == daily_before
+
+
+def test_withdrawal_keeps_other_published_sessions(tmp_path):
+    from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
+
+    istore = _store(tmp_path / "intraday")
+    snap = LatestMarketSnapshotStore(tmp_path / "snap.jsonl", max_closes=400)
+    istore.put_symbol_day("2330", DAY, _bars())
+    results = reconcile_day(istore, OfficialDaily([_official()], [DAY]), DAY, CFG, clock=lambda: NOW,
+                            snapshot_store=snap)
+    assert results[0].outcome == "pass" and snap.get("2330", "tw_price_1m") is not None
+    assert snap.withdraw_sessions("2330", "tw_price_1m", ["2099-01-01"]) is False  # other day: no-op
+    assert snap.get("2330", "tw_price_1m") is not None
+    assert snap.withdraw_sessions("2330", "tw_price_1m", [DAY]) is True
+    reloaded = LatestMarketSnapshotStore(tmp_path / "snap.jsonl", max_closes=400)
+    assert reloaded.get("2330", "tw_price_1m") is None

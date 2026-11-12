@@ -45,6 +45,12 @@ def _record(row: Mapping[str, Any], *, content_ref: str) -> Any:
     )
 
 
+def _withdraw(store: LatestMarketSnapshotStore, res: ReconciliationResult, out: list[dict[str, str]]) -> None:
+    """Durably remove points an earlier pass published for a day that is no longer a clean pass."""
+    if store.withdraw_sessions(res.symbol, MINUTE_SNAPSHOT_DATASET, [res.session_date]):
+        out.append({"symbol": res.symbol, "session_date": res.session_date, "outcome": res.outcome})
+
+
 def project_reconciled_minute_snapshots(
     store: LatestMarketSnapshotStore,
     results: Iterable[ReconciliationResult],
@@ -55,11 +61,13 @@ def project_reconciled_minute_snapshots(
     """Project reconciled ``pass`` symbol-days into the minute-keyed latest snapshot store."""
     passed: list[ReconciliationResult] = []
     skipped: dict[str, int] = {}
+    withdrawn: list[dict[str, str]] = []
     for res in results:
         if res.outcome == OUTCOME_PASS:
             passed.append(res)
         else:
             skipped[res.outcome] = skipped.get(res.outcome, 0) + 1
+            _withdraw(store, res, withdrawn)  # a day that no longer passes is un-published
     passed.sort(key=lambda r: (r.session_date, r.symbol))
 
     projected = 0
@@ -69,6 +77,7 @@ def project_reconciled_minute_snapshots(
         rows = read_reconciled_rows(intraday_store, res.symbol, res.session_date)
         if not rows:  # tampered, withheld, waived or no longer reconciled: never project
             withheld.append({"symbol": res.symbol, "session_date": res.session_date})
+            _withdraw(store, res, withdrawn)
             continue
         minute_ref = (res.source_refs or {}).get("minute") or {}
         sha = minute_ref.get("shard_sha256") or minute_ref.get("readmitted_rows_sha256") or "unknown"
@@ -88,6 +97,7 @@ def project_reconciled_minute_snapshots(
         "projected_symbol_days": projected,
         "updated_snapshot_count": updated,
         "withheld": withheld,
+        "withdrawn": withdrawn,
         "skipped_outcome_counts": dict(sorted(skipped.items())),
     }
 

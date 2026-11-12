@@ -19,7 +19,7 @@ import os
 import re
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
@@ -387,6 +387,11 @@ _FREQUENCY_SNAPSHOT_DATASETS: Mapping[str, str] = MappingProxyType(
 _SNAPSHOT_DATASET_FIELDS = ("dataset", "normalized_target", "normalized_dataset", "storage_dataset")
 _INTRADAY_SNAPSHOT_DATASETS = frozenset(
     d for d in _FREQUENCY_SNAPSHOT_DATASETS.values() if d != DAILY_SNAPSHOT_DATASET
+)
+
+
+_MARKET_SNAPSHOT_WITHDRAWAL_FIELDS = frozenset(
+    {"schema_version", "symbol", "dataset", "observed_at", "withdrawn"}
 )
 
 
@@ -782,6 +787,18 @@ def _market_snapshots_from_lines(
             raise MarketSnapshotStateError("market snapshot envelope state or checksum is invalid")
         if _SHA256_RE.fullmatch(checksum) is None or not hmac.compare_digest(checksum, _checksum(state)):
             raise MarketSnapshotStateError("market snapshot checksum mismatch")
+        if state.get("withdrawn") is True:
+            # Durable invalidation tombstone: the (symbol, dataset) is no longer published.
+            if set(state) != _MARKET_SNAPSHOT_WITHDRAWAL_FIELDS or state.get(
+                "schema_version"
+            ) != MARKET_SNAPSHOT_SCHEMA_VERSION:
+                raise MarketSnapshotStateError(
+                    f"market snapshot withdrawal is invalid at {path}:{line_number}"
+                )
+            snapshots.pop(
+                (_market_snapshot_symbol(state["symbol"]), _snapshot_dataset(state["dataset"])), None
+            )
+            continue
         try:
             snapshot = LatestMarketSnapshot.from_dict(state)
         except MarketSnapshotStateError as exc:
@@ -836,6 +853,90 @@ class LatestMarketSnapshotStore:
         key_dataset = _snapshot_dataset(dataset)
         with self._lock:
             return self._latest_by_symbol.get((_market_snapshot_lookup_symbol(symbol), key_dataset))
+
+    def withdraw_sessions(
+        self,
+        symbol: str,
+        dataset: str,
+        session_dates: Iterable[str],
+        *,
+        observed_at: str | None = None,
+    ) -> bool:
+        """Durably remove published points of the given Asia/Taipei sessions (intraday only).
+
+        Appends a checksummed replacement snapshot without those points, or a withdrawal
+        tombstone when nothing remains, so the invalidation survives a reload/restart.
+        Returns ``True`` when something was withdrawn.  The daily dataset is never touched.
+        """
+        dataset = _snapshot_dataset(dataset)
+        if dataset == DAILY_SNAPSHOT_DATASET:
+            raise MarketSnapshotStateError("daily snapshots are not withdrawn by session")
+        days = {str(day) for day in session_dates}
+        observed = _market_snapshot_timestamp(
+            observed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            field_name="observed_at",
+        )
+        lookup = _market_snapshot_lookup_symbol(symbol)
+        taipei = timezone(timedelta(hours=8))
+
+        def _session(point: MarketSnapshotPoint) -> str:
+            parsed = datetime.fromisoformat(point.event_time.replace("Z", "+00:00"))
+            return parsed.astimezone(taipei).date().isoformat()
+
+        with self._lock:
+            try:
+                if not self.path.exists():
+                    return False
+                with self.path.open("a+", encoding="utf-8") as handle:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        handle.seek(0)
+                        current = _market_snapshots_from_lines(handle, path=self.path)
+                        prior = current.get((lookup, dataset))
+                        if prior is None or not any(_session(pt) in days for pt in prior.points):
+                            self._latest_by_symbol = current
+                            return False
+                        kept = tuple(pt for pt in prior.points if _session(pt) not in days)
+                        if kept:
+                            candidate = LatestMarketSnapshot(
+                                symbol=prior.symbol,
+                                points=kept,
+                                observed_at=observed,
+                                calendar_evidence=prior.calendar_evidence,
+                                market=prior.market,
+                                dataset=dataset,
+                            )
+                            state = candidate.to_dict()
+                            current[(lookup, dataset)] = candidate
+                        else:
+                            state = {
+                                "schema_version": MARKET_SNAPSHOT_SCHEMA_VERSION,
+                                "symbol": prior.symbol,
+                                "dataset": dataset,
+                                "observed_at": observed,
+                                "withdrawn": True,
+                            }
+                            current.pop((lookup, dataset), None)
+                        envelope = {
+                            "state": state,
+                            "checksum_algorithm": MARKET_SNAPSHOT_CHECKSUM_ALGORITHM,
+                            "checksum": _checksum(state),
+                        }
+                        handle.seek(0, os.SEEK_END)
+                        handle.write(_canonical_json(envelope) + "\n")
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                        self._latest_by_symbol = current
+                        return True
+                    finally:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except MarketSnapshotStateError:
+                self._latest_by_symbol = {}
+                raise
+            except (OSError, UnicodeError) as exc:
+                raise MarketSnapshotStateError(
+                    f"market snapshot withdrawal failed: {self.path}"
+                ) from exc
 
     @staticmethod
     def _point_from_record(

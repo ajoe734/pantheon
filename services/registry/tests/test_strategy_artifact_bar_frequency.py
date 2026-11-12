@@ -66,3 +66,60 @@ def test_feature_definition_lag_unit_validation():
     ):
         with pytest.raises(factor_rule.FactorRuleValidationError):
             FD("x", "y", **kwargs)
+
+
+def _minute_logic(*, lag_minutes=None, window=2):
+    item = {"name": "px", "dataset": "tw_price_1m", "field": "close", "availability_lag_days": 0}
+    if lag_minutes is not None:
+        item["availability_lag_minutes"] = lag_minutes
+    return {
+        "kind": "factor_rule_v1",
+        "inputs": [item],
+        "signal": {"op": "ts_mean", "args": [{"ref": "px"}, {"const_param": "w"}]},
+        "entry": {"long_when": {"op": "gt", "args": [{"ref": "signal"}, {"const_param": "w"}]}, "short_when": None},
+        "exit": {"max_holding_bars": None, "flat_when": {"op": "lt", "args": [{"ref": "signal"}, {"const_param": "w"}]}},
+        "strength": {"op": "clip01", "args": [{"ref": "signal"}]},
+    }
+
+
+def _obs(event, value, avail=None):
+    return {"value": value, "event_time": event, "available_time": avail or event}
+
+
+@pytest.fixture
+def _restore_catalogue():
+    key = ("tw_price_1m", "close")
+    original = factor_rule.get_feature_definition(*key)
+    yield
+    factor_rule.register_feature_definition(original)
+
+
+def test_minute_lag_is_applied_in_minutes_by_validation_and_resolution(_restore_catalogue):
+    factor_rule.register_feature_definition(
+        factor_rule.FeatureDefinition(
+            "tw_price_1m", "close", availability_lag_unit="minutes", min_availability_lag=3
+        )
+    )
+    with pytest.raises(factor_rule.FactorRuleValidationError, match="below governed minimum 3 minutes"):
+        factor_rule.validate_factor_rule_logic(_minute_logic(lag_minutes=2), {"w": 2})
+    factor_rule.validate_factor_rule_logic(_minute_logic(lag_minutes=3), {"w": 2})
+    series = [_obs("2026-11-10T09:01:00+08:00", 104.0)]
+    early = "2026-11-10T09:02:00+08:00"
+    with pytest.raises(factor_rule.FactorRuleValidationError, match="no visible observations"):
+        factor_rule.resolve_point_in_time_inputs(_minute_logic(lag_minutes=3), None, features={"px": series}, decision_time=early)
+    ok = factor_rule.resolve_point_in_time_inputs(
+        _minute_logic(lag_minutes=3), None, features={"px": series}, decision_time="2026-11-10T09:04:00+08:00"
+    )
+    assert ok["px"] == (104.0,)  # exactly event + 3 minutes: visible, never earlier
+
+
+@pytest.mark.parametrize("cross, expected", [(False, (200.0,)), (True, (100.0, 200.0))])
+def test_cross_session_controls_window_reset(_restore_catalogue, cross, expected):
+    factor_rule.register_feature_definition(
+        factor_rule.FeatureDefinition("tw_price_1m", "close", availability_lag_unit="minutes", cross_session=cross)
+    )
+    series = [_obs("2026-11-09T13:30:00+08:00", 100.0), _obs("2026-11-10T09:00:00+08:00", 200.0)]
+    env = factor_rule.resolve_point_in_time_inputs(
+        _minute_logic(), None, features={"px": series}, decision_time="2026-11-10T09:05:00+08:00"
+    )
+    assert env["px"] == expected

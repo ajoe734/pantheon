@@ -34,14 +34,14 @@ def test_session_anchored_buckets_and_half_bucket():
     bars = aggregate_session(_rows(), "60m", symbol="2330", session_date=DAY)
     assert [b.bar_start[11:16] for b in bars] == ["09:00", "10:00", "11:00", "12:00", "13:00"]
     last = bars[-1]
-    assert last.half_bucket and last.expected_bars == 31 and last.bar_count == 31 and not last.partial
+    assert last.half_bucket and last.expected_bars == 30 and last.bar_count == 31 and last.bar_end[11:16] == "13:30" and not last.partial
     assert not any(b.half_bucket for b in bars[:-1])
     assert all(b.dataset == "tw_price_60m" for b in bars)
     first = bars[0]  # real aggregation of the source rows
     assert (first.open, first.high, first.low, first.volume) == (100.0, 110.0, 95.0, 60 * 100)
     assert first.close == 100.5
     five = aggregate_session(_rows(), "5m", symbol="2330", session_date=DAY)
-    assert len(five) == 55 and five[-1].expected_bars == 1 and five[-1].half_bucket
+    assert len(five) == 54 and five[-1].expected_bars == 5 and not five[-1].half_bucket and five[-1].bar_count == 6
     assert five[-1].close == 104.0
 
 
@@ -96,7 +96,7 @@ def test_loader_reads_reconciled_days_and_enforces_pit(tmp_path):
     sixty = load_bars(istore, "2330", [DAY], "60m", decision_time=after)
     assert len(sixty) == 5 and sixty[-1].half_bucket
     # NOW (09:00Z) == reconciled availability: usable at 09:00Z, not one second earlier
-    assert len(load_bars(istore, "2330", [DAY], "5m", decision_time=NOW)) == 55
+    assert len(load_bars(istore, "2330", [DAY], "5m", decision_time=NOW)) == 54
     assert load_bars(istore, "2330", [DAY], "5m", decision_time=datetime(2026, 11, 10, 8, 59, 59, tzinfo=timezone.utc)) == []
     # minute-unit availability lag shifts the gate
     assert load_bars(istore, "2330", [DAY], "5m", decision_time=NOW, availability_lag_minutes=1) == []

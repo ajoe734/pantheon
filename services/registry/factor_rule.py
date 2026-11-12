@@ -626,7 +626,7 @@ def validate_factor_rule_logic(
         if not isinstance(item, Mapping):
             raise FactorRuleValidationError(f"inputs[{idx}] must be a JSON object")
         req_input_keys = {"name", "dataset", "field", "availability_lag_days"}
-        if set(item.keys()) != req_input_keys:
+        if set(item.keys()) - {"availability_lag_minutes"} != req_input_keys:
             raise FactorRuleValidationError(
                 f"inputs[{idx}] must have keys {sorted(req_input_keys)}, got {sorted(item.keys())}"
             )
@@ -649,7 +649,25 @@ def validate_factor_rule_logic(
                 f"inputs[{idx}].availability_lag_days must be a non-negative integer"
             )
         cat_def = get_feature_definition(dataset, field)
-        if cat_def is not None and lag_days < cat_def.min_availability_lag_days:
+        lag_minutes = item.get("availability_lag_minutes")
+        minute_feature = cat_def is not None and cat_def.availability_lag_unit == "minutes"
+        if lag_minutes is not None and (
+            not minute_feature or isinstance(lag_minutes, bool) or not isinstance(lag_minutes, int) or lag_minutes < 0
+        ):
+            raise FactorRuleValidationError(
+                f"inputs[{idx}].availability_lag_minutes must be a non-negative integer on a minute-unit feature"
+            )
+        if minute_feature:
+            assert cat_def is not None
+            if lag_days != 0:
+                raise FactorRuleValidationError(
+                    f"inputs[{idx}] ({dataset}.{field}) is minute-unit; availability_lag_days must be 0"
+                )
+            if (lag_minutes or 0) < int(cat_def.min_availability_lag or 0):
+                raise FactorRuleValidationError(
+                    f"inputs[{idx}] ({dataset}.{field}) availability_lag_minutes={lag_minutes or 0} is below governed minimum {cat_def.min_availability_lag} minutes"
+                )
+        elif cat_def is not None and lag_days < cat_def.min_availability_lag_days:
             raise FactorRuleValidationError(
                 f"inputs[{idx}] ({dataset}.{field}) availability_lag_days={lag_days} is below governed minimum {cat_def.min_availability_lag_days}"
             )
@@ -659,6 +677,8 @@ def validate_factor_rule_logic(
             "field": field,
             "availability_lag_days": lag_days,
         }
+        if lag_minutes is not None:
+            declared_inputs[name]["availability_lag_minutes"] = lag_minutes
 
     # Parse and validate signal expression
     signal_ast = parse_factor_expression(
@@ -890,14 +910,30 @@ def _parse_timestamp_utc(value: Any, *, is_decision_time: bool = False) -> datet
     return dt.astimezone(timezone.utc)
 
 
+_TAIPEI_TZ = timezone(timedelta(hours=8))
+
+
 def _filter_point_in_time_series(
     raw_series: Any,
     *,
     input_name: str,
     availability_lag_days: int,
     decision_time: str | datetime | date | None,
+    lag_unit: str = "days",
+    session_reset: bool = False,
 ) -> tuple[float, ...]:
-    """Filter a feature series so only observations available at or before ``decision_time`` are visible."""
+    """Filter a feature series so only observations available at or before ``decision_time`` are visible.
+
+    ``lag_unit="minutes"`` applies the lag in minutes (intraday features).  With
+    ``session_reset`` only observations of the latest visible Asia/Taipei session
+    are returned, so a window never spans the overnight gap (SD §6.3).
+    """
+    lag_delta = (
+        timedelta(minutes=max(0, int(availability_lag_days)))
+        if lag_unit == "minutes"
+        else timedelta(days=max(0, int(availability_lag_days)))
+    )
+    session_days: list[date | None] = []
     if not isinstance(raw_series, Sequence) or isinstance(raw_series, (str, bytes)):
         raise FactorRuleValidationError(
             f"feature input '{input_name}' must be a sequence of observations, got {type(raw_series).__name__}"
@@ -915,6 +951,7 @@ def _filter_point_in_time_series(
     for idx, item in enumerate(raw_series):
         if _is_number(item):
             visible_values.append(float(item))
+            session_days.append(None)
             continue
 
         if isinstance(item, Mapping):
@@ -928,6 +965,7 @@ def _filter_point_in_time_series(
 
             if avail_raw is None and event_raw is None:
                 visible_values.append(float(raw_val))
+                session_days.append(None)
                 continue
 
             if decision_dt is None:
@@ -936,17 +974,19 @@ def _filter_point_in_time_series(
                 )
 
             effective_avail: datetime | None = None
+            event_dt: datetime | None = None
             if avail_raw is not None:
                 effective_avail = _parse_timestamp_utc(avail_raw, is_decision_time=False)
             if event_raw is not None:
                 event_dt = _parse_timestamp_utc(event_raw, is_decision_time=False)
-                lagged_dt = event_dt + timedelta(days=max(0, int(availability_lag_days)))
+                lagged_dt = event_dt + lag_delta
                 if effective_avail is None or lagged_dt > effective_avail:
                     effective_avail = lagged_dt
 
             assert effective_avail is not None
             if effective_avail <= decision_dt:
                 visible_values.append(float(raw_val))
+                session_days.append((event_dt or effective_avail).astimezone(_TAIPEI_TZ).date())
             continue
 
         if isinstance(item, (tuple, list)) and len(item) == 2:
@@ -960,14 +1000,18 @@ def _filter_point_in_time_series(
                     f"decision_time is required when evaluating point-in-time timestamped feature input '{input_name}'"
                 )
             avail_dt = _parse_timestamp_utc(ts_raw, is_decision_time=False)
-            if avail_dt <= decision_dt:
+            if avail_dt + lag_delta <= decision_dt:
                 visible_values.append(float(raw_val))
+                session_days.append(avail_dt.astimezone(_TAIPEI_TZ).date())
             continue
 
         raise FactorRuleValidationError(
             f"feature input '{input_name}[{idx}]' must be a finite number or point-in-time observation mapping"
         )
 
+    if session_reset and session_days and session_days[-1] is not None:
+        last_day = session_days[-1]
+        return tuple(v for v, d in zip(visible_values, session_days) if d == last_day)
     return tuple(visible_values)
 
 
@@ -1057,6 +1101,7 @@ def _latest_visible_versions(
     *,
     availability_lag_days: int,
     decision_time: str | datetime | date | None,
+    lag_unit: str = "days",
 ) -> Any:
     """Governed read for catalogued non-price features.
 
@@ -1085,7 +1130,8 @@ def _latest_visible_versions(
             int(availability_lag_days),
             row_lag if isinstance(row_lag, int) and not isinstance(row_lag, bool) else 0,
         )
-        if avail_dt > decision_dt or event_dt + timedelta(days=lag) > decision_dt:
+        lag_delta = timedelta(minutes=lag) if lag_unit == "minutes" else timedelta(days=lag)
+        if avail_dt > decision_dt or event_dt + lag_delta > decision_dt:
             continue
         key = (obs.get("entity"), event_dt)
         rank = (avail_dt, str(obs.get("ingest_time") or ""))
@@ -1150,8 +1196,15 @@ def resolve_point_in_time_inputs(
         dataset = str(item["dataset"])
         field = str(item["field"])
         lag_days = int(item.get("availability_lag_days", 0))
+        lag_unit = "days"
+        session_reset = False
         cat_def = get_feature_definition(dataset, field)
-        if cat_def is not None:
+        if cat_def is not None and cat_def.availability_lag_unit == "minutes":
+            # Minute features lag in minutes beyond bar close; windows reset per session.
+            lag_unit = "minutes"
+            lag_days = max(int(item.get("availability_lag_minutes", 0)), int(cat_def.min_availability_lag or 0))
+            session_reset = not cat_def.cross_session
+        elif cat_def is not None:
             lag_days = max(lag_days, cat_def.min_availability_lag_days)
 
         raw_series = _lookup_raw_feature(
@@ -1170,13 +1223,18 @@ def resolve_point_in_time_inputs(
 
         if dataset not in PRICE_VOLUME_DATASETS:
             raw_series = _latest_visible_versions(
-                raw_series, availability_lag_days=lag_days, decision_time=decision_time
+                raw_series,
+                availability_lag_days=lag_days,
+                decision_time=decision_time,
+                lag_unit=lag_unit,
             )
         filtered = _filter_point_in_time_series(
             raw_series,
             input_name=name,
             availability_lag_days=lag_days,
             decision_time=decision_time,
+            lag_unit=lag_unit,
+            session_reset=session_reset,
         )
         if len(filtered) == 0:
             raise FactorRuleValidationError(

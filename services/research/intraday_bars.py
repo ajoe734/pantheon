@@ -31,7 +31,8 @@ from services.registry.strategy_artifact import (
 
 TAIPEI = timezone(timedelta(hours=8))
 SESSION_OPEN_MINUTE = 9 * 60  # 09:00 Asia/Taipei
-SESSION_BARS = 271  # 09:00 .. 13:30 inclusive (matches config/intraday_reconciliation.json)
+SESSION_CLOSE_MINUTE = 13 * 60 + 30  # regular session ends 13:30 (SD §6.3); a 13:30 closing-auction bar folds into the last bucket
+SESSION_BARS = SESSION_CLOSE_MINUTE - SESSION_OPEN_MINUTE  # 270 regular minutes (09:00..13:29)
 MINUTE_DATASET = "tw_price_1m"
 FREQUENCY_MINUTES: Mapping[str, int] = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
 
@@ -116,7 +117,12 @@ def _out(value: Decimal) -> float:
 
 
 def aggregate_session(
-    rows: Sequence[Mapping[str, Any]], bar_frequency: str, *, symbol: str, session_date: str
+    rows: Sequence[Mapping[str, Any]],
+    bar_frequency: str,
+    *,
+    symbol: str,
+    session_date: str,
+    session_close_minute: int = SESSION_CLOSE_MINUTE,
 ) -> list[Bar]:
     """Aggregate one reconciled session of 1-minute rows to ``bar_frequency`` bars.
 
@@ -126,6 +132,11 @@ def aggregate_session(
     nothing is silently dropped or repaired.
     """
     width = minutes_for_frequency(bar_frequency)
+    if isinstance(session_close_minute, bool) or not isinstance(session_close_minute, int) or not (
+        SESSION_OPEN_MINUTE < session_close_minute <= SESSION_CLOSE_MINUTE
+    ):
+        raise IntradayBarsError("session_close_minute must be a minute-of-day within (09:00, 13:30]")
+    session_bars = session_close_minute - SESSION_OPEN_MINUTE  # early close shortens the session
     buckets: dict[int, dict[int, tuple[Mapping[str, Any], datetime, datetime, datetime]]] = {}
     for row in rows:
         start, end, avail = _ts(row.get("bar_start")), _ts(row.get("bar_end")), _ts(row.get("bar_availability_ts"))
@@ -135,9 +146,10 @@ def aggregate_session(
         if local.date().isoformat() != session_date:
             raise IntradayBarsError(f"minute row {row.get('bar_start')!r} is outside session {session_date}")
         offset = local.hour * 60 + local.minute - SESSION_OPEN_MINUTE
-        if local.second or local.microsecond or not 0 <= offset < SESSION_BARS:
+        if local.second or local.microsecond or not 0 <= offset <= session_bars:
             raise IntradayBarsError(f"minute row {row.get('bar_start')!r} is outside the regular session grid")
-        slot = buckets.setdefault(offset // width, {})
+        # The close-minute bar (13:30 auction) is a real source bar: keep it in the last bucket.
+        slot = buckets.setdefault((min(offset, session_bars - 1) if width > 1 else offset) // width, {})
         if offset in slot:
             raise IntradayBarsError(f"duplicate minute row at {row.get('bar_start')!r}")
         slot[offset] = (row, start, end, avail)
@@ -145,7 +157,7 @@ def aggregate_session(
     out: list[Bar] = []
     for idx in sorted(buckets):
         first_offset = idx * width
-        expected = min(width, SESSION_BARS - first_offset)
+        expected = min(width, session_bars - first_offset) if width > 1 else 1
         members = [buckets[idx][k] for k in sorted(buckets[idx])]
         values: list[list[Decimal]] = []
         for row, *_ in members:
@@ -174,7 +186,7 @@ def aggregate_session(
                 volume=_out(sum((v[4] for v in values), Decimal(0))),
                 bar_count=len(members),
                 expected_bars=expected,
-                partial=len(members) < expected,
+                partial=width > 1 and sum(1 for k in buckets[idx] if k < session_bars) < expected,
                 half_bucket=expected < width,
                 bar_availability_ts=_iso(avail),
             )
@@ -191,6 +203,7 @@ def load_bars(
     decision_time: datetime,
     availability_lag_minutes: int = 0,
     include_partial: bool = False,
+    session_close_minute: int = SESSION_CLOSE_MINUTE,
 ) -> list[Bar]:
     """Frequency→dataset loader over reconciled ``tw_price_1m`` days only.
 
@@ -217,7 +230,7 @@ def load_bars(
         if not rows:
             missing.append(day)
             continue
-        for bar in aggregate_session(rows, bar_frequency, symbol=symbol, session_date=day):
+        for bar in aggregate_session(rows, bar_frequency, symbol=symbol, session_date=day, session_close_minute=session_close_minute):
             if bar.partial and not include_partial:
                 continue
             if _ts(bar.bar_availability_ts) + lag <= decision_time:  # type: ignore[operator]
