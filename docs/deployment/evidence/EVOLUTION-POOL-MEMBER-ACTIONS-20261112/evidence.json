@@ -1,0 +1,163 @@
+{
+  "schema_version": "task_review_evidence.v1",
+  "task_id": "EVOLUTION-POOL-MEMBER-ACTIONS-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "review": {
+    "status": "pending_independent_review"
+  },
+  "base_commit": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
+  "source_anchors": [
+    "c1a8086fcb66bce9da62552501248f2744fa9287",
+    "56b839151c9f9cf898368a8a43d5e99dd07f93fe",
+    "4566b9cc3a21b1fbcdefd61c10709e4e58e6f131",
+    "9f18ed4371791c31d473c8f6e2fccec0f672576b"
+  ],
+  "scope": "Paper pool-member evolution inside the existing consumer tick, governed research dispatch, zero-weight child trials, 60-day competition, dated virtual-book continuity and R6 publication including empty pools.",
+  "production_entrypoint": "services/evolution/scheduler_worker.py:135 -> run_consumer_tick -> PoolEvolutionScheduler.tick / AutoConsumer.tick; approved research -> existing ResearchPlaneAdapter -> research executor -> pool owner/publisher.",
+  "validation": [
+    {
+      "command": "timeout 180 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/evolution/test_auto_consumer.py services/evolution/test_pool_evolution_scheduler.py services/evolution/test_auto_consumer_runtime.py services/evolution/test_auto_consumer_dispatch.py services/evolution/test_dispatch_worker.py services/evolution/test_approved_baselines.py services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py services/execution/lean_runtime/test_paper_runtime.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/persona/test_pool_policy.py services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/bff/test_persona_pool_publisher.py services/research/alpha_replication/test_evolution_search.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_pool_evolution_integration.py services/research/tests/test_retrain_search_update.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "372 passed, 522 warnings, 58 subtests passed in 123.39s (0:02:03)",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/validation.txt",
+      "note": "372-test regression before the final early-gate-refusal trial-counter addition; that addition is covered by the next batch and post-rebase validation."
+    },
+    {
+      "command": "timeout 240 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/research/tests/test_retrain_oos_gate.py -q --disable-warnings --maxfail=1",
+      "exit_code": 0,
+      "result": "1 passed, 697 warnings in 60.10s (0:01:00)",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/retrain-oos.txt",
+      "note": "Existing real-search/real-OOS refusal regression, using its explicitly generated test dataset; no claim that those are recorded market bars."
+    },
+    {
+      "command": "timeout 60 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/research/alpha_replication/test_evolution_search.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_pool_evolution_integration.py -q --disable-warnings --maxfail=1",
+      "exit_code": 0,
+      "result": "26 passed, 72 warnings in 8.66s",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/counter-final.txt",
+      "note": "Final trial-accounting guard and exact source paths."
+    },
+    {
+      "command": "timeout 90 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/execution/lean_runtime/test_paper_runtime.py services/evolution/test_pool_evolution_scheduler.py services/research/tests/test_pool_evolution_integration.py services/research/tests/test_evolution_gate_executor.py services/research/alpha_replication/test_evolution_search.py services/control-plane/bff/tests/test_persona_pool_publish_route.py -q --disable-warnings --maxfail=1",
+      "exit_code": 0,
+      "result": "185 passed, 243 warnings, 27 subtests passed in 51.30s",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/post-rebase.txt",
+      "note": "After rebase onto the recorded dev base; final source includes the publication reconciliation and trial-accounting guards."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "nonpassing_batches": [
+    {
+      "command": "Initial combined regression with timeout 180",
+      "exit_code": 124,
+      "result": "timed out, not counted as passed; split/completed batches above replace it"
+    },
+    {
+      "command": "Combined regression with timeout 120",
+      "exit_code": 124,
+      "result": "timed out, not counted as passed; completed timeout-180 batch above replaces it"
+    }
+  ],
+  "acceptance": {
+    "1": [
+      "test_automatic_retire_removes_member_and_never_touches_persona_lifecycle",
+      "test_removal_retries_publication_without_repeating_pool_mutation",
+      "test_last_member_removal_publishes_empty_flat_envelope_and_keeps_runtime"
+    ],
+    "2": [
+      "test_decay_uses_member_own_baseline_and_three_distinct_observations",
+      "test_missing_baseline_is_skipped_with_durable_reason",
+      "services/evolution/test_approved_baselines.py"
+    ],
+    "3": [
+      "test_twenty_observed_days_revalidate_and_weekly_retrain_as_low_risk_controller",
+      "test_pool_revalidation_uses_only_recorded_post_admission_bars",
+      "services/research/main.py:_execute_evolution_gate"
+    ],
+    "4": [
+      "test_factor_rule_uses_mutate_with_fifty_variants",
+      "test_family_500_is_tried_and_does_not_suppress_revalidation",
+      "test_early_gate_refusal_still_counts_a_built_family_trial",
+      "test_corrupt_shared_family_counter_fails_closed_on_read",
+      "test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal"
+    ],
+    "5": [
+      "test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal",
+      "test_retrain_child_preserves_registry_alias_lineage",
+      "services/evolution/test_approved_baselines.py"
+    ],
+    "6": [
+      "test_auto_approved_research_work_is_dispatched_with_real_governance_authority",
+      "test_changed_owner_facts_fail_closed",
+      "services/evolution/scheduler_worker.py:135",
+      "test_pending_publication_is_retried_before_scheduling"
+    ],
+    "7": [
+      "test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal"
+    ]
+  },
+  "recorded_market_data": {
+    "fixture": "services/research/tests/fixtures/pool_admission_tw_recorded.json",
+    "source": "TWSE STOCK_DAY",
+    "symbols": [
+      "2330",
+      "2317"
+    ],
+    "months": [
+      "202409",
+      "202410",
+      "202411",
+      "202412"
+    ],
+    "usage": "Unmodified recorded exchange prices feed dated member books, real scheduling/orchestration and competition; fresh-data replay uses these bars separately."
+  },
+  "boundaries": [
+    "Source/API delivery only; no hosted deployment, natural hosted event, live trading, credential issuance or capital change is claimed.",
+    "The positive orchestration test controls external owner HTTP, baseline attestations, member views and gate verdicts. It does not forge or rewrite a recorded proof, and does not claim a genuine admission or profitable mutation for its children.",
+    "The original candidate OOS gate/proof requirement remains mandatory in production. Periodic revalidation uses only post-admission governed data with existing decay-policy Sharpe/drawdown limits on the member gate basis; unavailable data is an evaluation rejection.",
+    "Existing operator-only BFF publication authorization and distinct proposer/gate credentials must be configured for the worker and research; missing configuration fails closed.",
+    "Default persona-scoped virtual-book storage preserves immutable member histories across envelope changes. Explicit custom lifecycle/performance paths must be preserved by deployments across replacements.",
+    "Membership changes remain CAS-versioned. Refused owner decisions may append unchanged history without a runtime membership change. Successful changes reconcile immutable publication before new proposals."
+  ],
+  "artifact_sha256": {
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/README.md": "ac3e3bf43b7c53d90d2b5846e8d8efd20a2b563a437467ee8c9fb0bc51411541",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/counter-final.txt": "39387ec85e14827c43ae41e261adf1b35fcb037ab26e3b4c0e34f4b5797791f6",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/post-rebase.txt": "1853e1a3dd2035b752cd63f5ec6708bc0cbcc2315d5bf500c3cb67dafd0f698c",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/retrain-oos.txt": "61ac1c321809e47a91f69a37187ed13017d2c0c295bad4aff211fdd39e02b422",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/validation.txt": "1b9848cf9874002c31bd91c89c3912e938ae0c1f19e562f12c357cd3ffdd592c",
+    "services/control-plane/bff/persona_pool_publisher.py": "b9f240b7e4342668ef8d1e8028d124da2d45b92dfc092efbde4ae0aa0440c5af",
+    "services/control-plane/bff/tests/test_persona_pool_publish_route.py": "be6a18ae3da943eca2dc48d174f926528e9302b23a0e5ccddbaf4b9c0dc838cb",
+    "services/control-plane/persona/persona_strategy_pool.py": "1d3bb3e25912bac4e0fcc48f6d897516e24c0fce022792ed914ac99046c86626",
+    "services/evolution/auto_consumer.py": "99ae96c3757f10e35a6e2487bdc8752535de04553ec0c7a710bea5bd8d19ddef",
+    "services/evolution/auto_consumer_runtime.py": "269698222a4108f93c5b53a62588c0e0a6776ea30b8f841141252abbd03e8601",
+    "services/evolution/decay_monitor.py": "4249923da42fa672e89cf40c5f8754a487697d8e15c333c051fcaa99a8048f2e",
+    "services/evolution/dispatch_outbox.py": "63e86b650486736572e2443661ebde4c4605401853f8d7170697561645da12ac",
+    "services/evolution/dispatch_receipts.py": "e9f663d0190d073343fe6e32e7109faec40fc35c0372b59573fe88781d944e0d",
+    "services/evolution/dispatch_worker.py": "76871e356e5ce1a187fde0ac5e6c413f2ac63688a50e40e338b6634a7a2ad259",
+    "services/evolution/main.py": "f0988615171c3f32387633339886f2c119d4bbbb002fbb34825db03cf7f3cb04",
+    "services/evolution/pool_evolution_scheduler.py": "2d04400c669c42dd1392b64d5c38502d692dc251591e9464c001bf67cd485989",
+    "services/evolution/test_auto_consumer.py": "40fdbe11d3f6d35b100dd6617cf4ec197eafe203c18900dbe742a6969fdccb43",
+    "services/evolution/test_auto_consumer_dispatch.py": "9730170c4dcc98895139c7d7d10f6e2d05e5add643d3595ae0a878e48f867e0d",
+    "services/evolution/test_auto_consumer_runtime.py": "88c383035d5885151ea430c4a9268a8700dd0e7a9547021799cebc5819c67feb",
+    "services/evolution/test_pool_evolution_scheduler.py": "7b663f836dfed65d8537eda9e42c6dbe9b74c19c52b3ebd60f69b31d1aaad699",
+    "services/execution/lean_runtime/member_virtual_book.py": "590520062918cee16430b6906e7a8c6ba1783a395233cce8a630ec07372ffce4",
+    "services/execution/lean_runtime/paper_runtime.py": "2fe4779f1db320b298335ef7f7476b0235dca3153a562859028180691c8c5c15",
+    "services/execution/lean_runtime/test_member_virtual_book.py": "ef1bf8e2086caabe8d1451420c52339b8448ed58dd30fa7820bb756712c5a656",
+    "services/registry/portfolio_envelope.py": "45729ea9960b1b5546bf85586dcbac1808bf1491d43cac9a0761cdc0811da513",
+    "services/registry/strategy_artifact.schema.json": "1b5adad1487c7e7a8229e55abd17a5f814862d45b97c8ad35e3bc5fcc4824d7e",
+    "services/registry/test_portfolio_envelope.py": "be76a3d5cb7076a79d70f7f7acded885aefb7e1a1fe2a88b54a60a0116f1c217",
+    "services/research/alpha_replication/evolution_executor.py": "99164ef3edf5d417bfcf712edb6bc569d665a34d2580344ea20580d1b0cbe054",
+    "services/research/alpha_replication/evolution_search.py": "d3f566490e8f9e8b5039b0edc9559cd97c699dbceb73055b137b28455e29a140",
+    "services/research/alpha_replication/shared_stores.py": "63d83267d1e5f79f042bd43c28e87bca41d01f898272708a2d6ea351d85f675c",
+    "services/research/alpha_replication/test_evolution_search.py": "b6a7131071ea66ce17f23589bfc8a97599f4f7eae98d3789019b56fda19cd7ed",
+    "services/research/main.py": "68afe81fc50c2e48bdfb41c3a0c198d7b50bc8fa80c8f5ab81c312d5f8625402",
+    "services/research/replication/fixtures/recorded_backtest_tw_2330.json": "0dc3496aa93fe472e6694af88a913974ef546f60f6fa9a549a39ad0893770897",
+    "services/research/tests/fixtures/pool_admission_tw_recorded.json": "8108807c99ae2d6b9aba26b75fc761263842375b8518136eb0250ef3652474d1",
+    "services/research/tests/test_evolution_gate_executor.py": "2bc7c041a5c7c197970c07ba9ea37dc950a520aa29f72f6a6c15f49b24d6fa3e",
+    "services/research/tests/test_pool_evolution_integration.py": "86cf21276afed1f8f44f7b02f78208a920506ce5495109aac0a85d1c796419e5"
+  }
+}
