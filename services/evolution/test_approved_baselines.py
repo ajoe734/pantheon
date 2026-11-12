@@ -191,5 +191,33 @@ class ApprovedBaselineTests(unittest.TestCase):
         self.assertEqual((missing["status"], missing["reason"]), ("no_approved_baseline", "registry_entry_missing"))
 
 
+class RunRecordReaderTests(unittest.TestCase):
+    def test_reads_only_the_owner_store_and_is_missing_without_it(self):
+        import os, tempfile
+        from unittest import mock
+        from services.evolution.approved_baselines import backtest_run_record_reader
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "backtest_runs.json").write_text(json.dumps({"run-1": {"backtest_run_id": "run-1"}}))
+            with mock.patch.dict(os.environ, {"ALPHA_REPLICATION_DATA_DIR": directory}):
+                self.assertEqual(backtest_run_record_reader("run-1"), {"backtest_run_id": "run-1"})
+                self.assertIsNone(backtest_run_record_reader("run-2"))  # foreign/unknown run
+            with mock.patch.dict(os.environ, {"ALPHA_REPLICATION_DATA_DIR": ""}):
+                self.assertIsNone(backtest_run_record_reader("run-1"))  # no store configured
+        entry = genuine_entry()
+        missing = resolve_member_baseline(
+            tenant_id="t1", persona_id="p", artifact_ref=entry["registry_id"], checksum=entry["checksum"],
+            entry=entry, run_record=None)
+        self.assertEqual(missing["reason"], "backtest_run_binding_unavailable")
+        failed = resolve_member_baseline(
+            tenant_id="t1", persona_id="p", artifact_ref=entry["registry_id"], checksum=entry["checksum"],
+            entry={**entry, "replication_success": False}, run_record=run_record_reader(
+                entry["evaluation_summary"]["backtest_run_id"]))
+        self.assertEqual(failed["reason"], "gate_not_passed")
+        approved = resolve_member_baseline(
+            tenant_id="t1", persona_id="p", artifact_ref=entry["registry_id"], checksum=entry["checksum"],
+            entry=entry, run_record=run_record_reader(entry["evaluation_summary"]["backtest_run_id"]))
+        self.assertGreater(approved["order_quantity"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

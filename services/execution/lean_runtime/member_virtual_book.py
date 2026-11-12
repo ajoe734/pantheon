@@ -31,6 +31,60 @@ def _net_interval_costs(symbol, rows):
     return costs
 
 
+GATE_INIT_CASH = 100_000.0  # vectorbt adapter BacktestConfig.init_cash default
+
+
+def gate_basis_metrics(books, order_quantity, *, periods_per_year=252):
+    """Replay the gate's share-sized cash portfolio from the recorded directions.
+
+    Mirrors the vectorbt gate path: per instrument, a BUY/SELL view is a signed
+    ``order_quantity``-share order filled at the mark (FLAT is no order), buys are
+    capped by cash, commission on every fill plus sell tax, equity = cash + shares
+    * mark from ``GATE_INIT_CASH``, Sharpe = mean/stdev(ddof=1)*sqrt(252) of the
+    daily equity returns, and the aggregate is the mean of per-instrument Sharpe
+    and drawdown.  Returns ``(metrics, None)`` or ``(None, reason)``.
+    """
+    if isinstance(order_quantity, bool) or not isinstance(order_quantity, (int, float)) \
+            or not math.isfinite(order_quantity) or order_quantity <= 0:
+        return None, "order_quantity_unavailable"
+    sharpes, drawdowns, counts = [], [], []
+    for book in books:
+        rows = book["observations"]
+        if any("direction" not in row for row in rows):
+            return None, "direction_not_recorded"
+        tax = _ETF_TAX_RATE if str(book["symbol"]).split(".")[0].startswith("00") else _EQUITY_TAX_RATE
+        cash, shares, previous, peak, drawdown = GATE_INIT_CASH, 0.0, GATE_INIT_CASH, GATE_INIT_CASH, 0.0
+        returns = []
+        for row in rows:
+            price, sign = row["price"], row["direction"]
+            if sign > 0:
+                size = min(order_quantity, cash / (price * (1 + _COMMISSION_RATE)))
+                cash -= size * price * (1 + _COMMISSION_RATE)
+                shares += size
+            elif sign < 0:
+                cash += order_quantity * price * (1 - _COMMISSION_RATE - tax)
+                shares -= order_quantity
+            equity = cash + shares * price
+            returns.append(equity / previous - 1)
+            previous = equity
+            peak = max(peak, equity)
+            drawdown = max(drawdown, (peak - equity) / peak)
+        deviation = statistics.stdev(returns) if len(returns) > 1 else 0.0
+        if deviation <= 0:
+            return None, "insufficient_or_constant_returns"
+        sharpes.append(statistics.mean(returns) / deviation * math.sqrt(periods_per_year))
+        drawdowns.append(drawdown)
+        counts.append(len(returns))
+    if not sharpes:
+        return None, "no_underlyings"
+    from services.evolution.approved_baselines import RETURN_BASIS
+    return {"sharpe_ratio": math.fsum(sharpes) / len(sharpes),
+            "max_drawdown": math.fsum(drawdowns) / len(drawdowns),
+            "observation_count": min(counts), "basis": RETURN_BASIS,
+            "periods_per_year": periods_per_year, "order_quantity": order_quantity,
+            "init_cash": GATE_INIT_CASH, "is_real_order": False}, None
+
+
 def virtual_book_metrics(returns, *, periods_per_year=252, basis=GROSS_BASIS):
     equity = peak = 1.0
     drawdown = 0.0
@@ -88,7 +142,8 @@ class MemberVirtualBooks:
                 raise ValueError("invalid member virtual strength")
             exposure = {"LONG": 1, "SHORT": -1, "FLAT": 0}[view["direction"]] * strength
             observation = {"event_time": event_time, "price": price,
-                           "source_ref": source_ref, "exposure": exposure}
+                           "source_ref": source_ref, "exposure": exposure,
+                           "direction": {"LONG": 1, "SHORT": -1, "FLAT": 0}[view["direction"]]}
             rows = book["observations"]
             if rows:
                 previous_at = datetime.fromisoformat(rows[-1]["event_time"].replace("Z", "+00:00"))
@@ -172,5 +227,9 @@ class MemberVirtualBooks:
                 baseline = baseline_resolver(member["artifact_id"], member["checksum"],
                                              [u["symbol"] for u in member["underlyings"]])
                 member["baseline"] = baseline
+                if isinstance(baseline, dict) and baseline.get("status") == "approved" and all_underlyings:
+                    gate_book, reason = gate_basis_metrics(
+                        [b for b, _, _ in group], baseline.get("order_quantity"))
+                    member["gate_basis"] = gate_book if gate_book else {"unavailable_reason": reason}
                 member["baseline_comparison"] = compare_member_book(baseline, member)
         return result

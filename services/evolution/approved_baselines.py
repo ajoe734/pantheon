@@ -142,6 +142,9 @@ def resolve_member_baseline(
         return _missing(key, "validated_universe_missing")
     if str(parameters.get("bar_frequency") or "").lower() not in _DAILY_BARS:
         return _missing(key, "gate_return_basis_unknown")
+    quantity = parameters.get("order_quantity")
+    if not _finite(quantity) or quantity <= 0:
+        return _missing(key, "order_quantity_missing")
     if universe is not None and {_code(s) for s in universe} != {_code(s) for s in validated}:
         return _missing(key, "universe_not_validated")
     return {
@@ -149,7 +152,7 @@ def resolve_member_baseline(
         "persona_id": persona_id, "artifact_ref": artifact_ref, "checksum": checksum,
         "oos_sharpe": float(sharpe), "oos_max_drawdown": abs(float(drawdown)),
         "backtest_run_id": run_id, "validated_universe": validated,
-        "return_basis": RETURN_BASIS, "periods_per_year": PERIODS_PER_YEAR,
+        "return_basis": RETURN_BASIS, "order_quantity": quantity, "periods_per_year": PERIODS_PER_YEAR,
         "source_refs": {"registry_id": artifact_ref,
                         "approval_decision_id": entry.get("approval_decision_id"),
                         "backtest_run_id": run_id},
@@ -187,14 +190,39 @@ def http_registry_entry_reader(registry_id: str, tenant_id: str) -> Mapping[str,
     return entry
 
 
+def backtest_run_record_reader(run_id: str) -> Mapping[str, Any] | None:
+    """Read-only view of the research owner's ``BacktestRunStore`` file.
+
+    Uses the owner's existing ``ALPHA_REPLICATION_DATA_DIR``; with it unset there is
+    no authoritative store and the result is ``None`` (explicit missing proof).
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    directory = (os.getenv("ALPHA_REPLICATION_DATA_DIR") or "").strip()
+    if not directory or not run_id:
+        return None
+    path = Path(directory) / "backtest_runs.json"
+    if not path.is_file():
+        return None
+    runs = json.loads(path.read_text(encoding="utf-8"))
+    record = runs.get(run_id) if isinstance(runs, dict) else None
+    return dict(record) if isinstance(record, dict) else None
+
+
 def compare_member_book(baseline: Mapping[str, Any] | None, book: Mapping[str, Any]) -> dict[str, Any]:
     """Compare a member's own virtual-book metrics with its baseline; report only, no action."""
     if not isinstance(baseline, Mapping) or baseline.get("status") != "approved":
         reason = baseline.get("reason") if isinstance(baseline, Mapping) else "baseline_not_resolved"
         return {"status": "no_approved_baseline", "reason": reason or "baseline_not_resolved"}
     # Use the member metric block that is on the gate's return basis.
-    candidates = [b for b in (book, book.get("net_of_costs")) if isinstance(b, Mapping)]
+    book_in = book
+    candidates = [b for b in (book, book.get("net_of_costs"), book.get("gate_basis")) if isinstance(b, Mapping)]
     book = next((b for b in candidates if b.get("basis") == baseline.get("return_basis")), None)
+    if book is None and isinstance(book_in.get("gate_basis"), Mapping) \
+            and book_in["gate_basis"].get("unavailable_reason"):
+        return {"status": "member_metric_missing", "reason": book_in["gate_basis"]["unavailable_reason"]}
     if book is None or book.get("periods_per_year") != baseline.get("periods_per_year"):
         return {"status": "incomparable_return_basis",
                 "reason": "gate and virtual book differ in return basis or annualisation"}

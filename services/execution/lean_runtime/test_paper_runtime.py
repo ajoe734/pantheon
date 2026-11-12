@@ -6147,7 +6147,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
 
     def test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account(self):
         """Recorded Taiwan gate proof -> registry entries -> runtime snapshot, per member."""
-        from services.evolution.test_approved_baselines import genuine_entry, run_record_reader
+        from services.evolution.test_approved_baselines import RUN_RECORDS, genuine_entry
         from services.execution.lean_runtime.member_virtual_book import virtual_book_metrics
         service = PaperRuntimeService(
             store=InMemoryPendingSignalStore([]), identity=self._identity(),
@@ -6158,15 +6158,23 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
         good = genuine_entry("recorded_backtest_tw_2330_2317", ("2330.TW", "2317.TW"), tenant="default")
         entries = {decay["registry_id"]: decay, good["registry_id"]: good}
         service._member_entry_reader = lambda ref, tenant: entries.get(ref)
-        service._member_run_record_reader = run_record_reader
+        # Production construction: the run record comes from the research owner's
+        # BacktestRunStore file via ALPHA_REPLICATION_DATA_DIR, no injected reader.
+        data_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(data_dir.cleanup)
+        (Path(data_dir.name) / "backtest_runs.json").write_text(json.dumps(RUN_RECORDS))
+        patcher = patch.dict(os.environ, {"ALPHA_REPLICATION_DATA_DIR": data_dir.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.assertIsNone(getattr(service, "_member_run_record_reader", None))
 
         def member(entry, count):
             return {entry["registry_id"]: {
                 "artifact_id": entry["registry_id"], "version": "1.0.0", "checksum": entry["checksum"],
                 "virtual_only": False, "underlying_count": count,
                 "view": {"direction": "LONG", "strength": 1}}}
-        decaying = (100, 90, 99, 90, 100)
-        steady = (100, 101, 102.1, 103.0, 104.2)
+        decaying = (100, 97, 96, 92, 91)
+        steady = (100, 104, 108, 112, 120)
         for day in range(5):
             at = f"2024-10-0{day + 1}T05:30:00Z"
             for symbol, price, members in (
@@ -6185,10 +6193,12 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
             self.assertEqual(book["baseline"]["checksum"], book["checksum"])
             self.assertEqual(book["baseline"]["oos_sharpe"],
                              entry["evaluation_summary"]["out_of_sample_sharpe_ratio"])
-            # The exposure-fraction book is not the gate's share-sized basis, so the
-            # comparison is explicitly incomparable rather than a fabricated delta.
-            self.assertEqual(book["baseline_comparison"]["status"], "incomparable_return_basis")
-            self.assertNotIn("sharpe_delta", book["baseline_comparison"])
+            # The member is scored on the gate's own share-sized return basis.
+            self.assertEqual(book["gate_basis"]["basis"], book["baseline"]["return_basis"])
+            self.assertEqual(book["baseline_comparison"]["status"], "compared")
+            self.assertAlmostEqual(
+                book["baseline_comparison"]["sharpe_delta"],
+                book["gate_basis"]["sharpe_ratio"] - book["baseline"]["oos_sharpe"])
         self.assertNotEqual(books[decay["registry_id"]]["baseline"]["backtest_run_id"],
                             books[good["registry_id"]]["baseline"]["backtest_run_id"])
         weak = books[decay["registry_id"]]
@@ -6199,6 +6209,10 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
             basis=weak["net_of_costs"]["basis"])
         self.assertGreater(combined["sharpe_ratio"], 0)
         self.assertGreater(combined["sharpe_ratio"], weak["net_of_costs"]["sharpe_ratio"])
+        self.assertTrue(books[decay["registry_id"]]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertFalse(books[good["registry_id"]]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertNotEqual(books[decay["registry_id"]]["baseline_comparison"]["sharpe_delta"],
+                            books[good["registry_id"]]["baseline_comparison"]["sharpe_delta"])
         self.assertTrue(all(not b["is_real_order"] for b in books.values()))
 
     def test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline(self):

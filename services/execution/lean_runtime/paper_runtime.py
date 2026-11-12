@@ -5929,7 +5929,7 @@ class PaperRuntimeService:
     def _member_book_snapshot(self, **scope) -> list[dict[str, Any]]:
         """Member virtual books with each member's own approved baseline and comparison."""
         from services.evolution.approved_baselines import (
-            http_registry_entry_reader, resolve_member_baseline,
+            backtest_run_record_reader, http_registry_entry_reader, resolve_member_baseline,
         )
 
         # Registry owner read by default; tests may inject a reader.
@@ -5937,9 +5937,9 @@ class PaperRuntimeService:
         persona_id = getattr(self._identity, "persona_id", None) or ""
         tenant_id = os.getenv("PANTHEON_TENANT_ID", "default").strip() or "default"
 
-        # Authoritative gate run record reader (BacktestRunStore.get); no default
-        # store is provisioned, so absent injection stays an explicit missing proof.
-        run_reader = getattr(self, "_member_run_record_reader", None)
+        # Authoritative gate run record (research owner's BacktestRunStore file);
+        # unavailable store stays an explicit missing proof, never a fallback.
+        run_reader = getattr(self, "_member_run_record_reader", None) or backtest_run_record_reader
 
         def run_record(entry):
             summary = (entry or {}).get("evaluation_summary") if isinstance(entry, Mapping) else None

@@ -265,7 +265,9 @@ class PersonaStrategyPoolStore:
         now: Callable[[], str] = _utc_now,
         run_record_reader: Callable[[str], Mapping[str, Any] | None] | None = None,
     ) -> None:
-        self._run_reader = run_record_reader  # BacktestRunStore.get; none provisioned by default
+        from services.evolution.approved_baselines import backtest_run_record_reader
+
+        self._run_reader = run_record_reader or backtest_run_record_reader
         self._records = records
         self._reader = registry_reader or http_registry_entry_reader
         self._lister = owner_lister or http_owner_artifact_lister

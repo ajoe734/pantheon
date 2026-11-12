@@ -325,3 +325,9 @@ def test_member_baselines_resolve_each_member_from_its_own_gate_proof(env, tmp_p
     # the trial child has no pass of its own: it never inherits the parent's proof
     assert by_ref["art-2"]["baseline"]["reason"] == "strategy_artifact_missing"
     assert by_ref["art-2"]["stage"] == "trial" and by_ref["art-2"]["pool_version"] == 1
+
+
+def test_store_defaults_to_the_owner_run_record_reader_without_injection():
+    from persona_strategy_pool import PersonaStrategyPoolStore
+    from services.evolution.approved_baselines import backtest_run_record_reader
+    assert PersonaStrategyPoolStore(object())._run_reader is backtest_run_record_reader

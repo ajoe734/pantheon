@@ -89,3 +89,34 @@ class MemberVirtualBookTests(unittest.TestCase):
         [row] = books.snapshot()
         # entry commission + exit commission + 0.3% equity tax, none omitted
         self.assertAlmostEqual(row["net_of_costs"]["total_return"], -(0.001425 * 2 + 0.003), places=6)
+
+
+class GateBasisTests(unittest.TestCase):
+    def _book(self, directions, prices, symbol="2330.TW"):
+        return {"symbol": symbol, "observations": [
+            {"price": p, "direction": d} for d, p in zip(directions, prices)]}
+
+    def test_share_sized_cash_portfolio_hand_computed(self):
+        from services.execution.lean_runtime.member_virtual_book import gate_basis_metrics
+        # Buy 10 shares at 100, hold, sell 10 at 110 (commission + 0.3% tax).
+        metrics, reason = gate_basis_metrics(
+            [self._book((1, 0, -1), (100, 105, 110))], 10)
+        self.assertIsNone(reason)
+        e0 = 100000 - 1000 * 1.001425 + 1000
+        e2 = 100000 - 1000 * 1.001425 + 1100 * (1 - 0.001425 - 0.003)
+        r = [e0 / 100000 - 1, (100000 - 1001.425 + 1050) / e0 - 1, e2 / (100000 - 1001.425 + 1050) - 1]
+        import math, statistics
+        self.assertAlmostEqual(metrics["sharpe_ratio"],
+                               statistics.mean(r) / statistics.stdev(r) * math.sqrt(252), places=9)
+        self.assertEqual(metrics["basis"],
+                         "gate_share_sized_per_instrument_mean_sharpe_taiwan_fill_costs")
+        self.assertEqual(metrics["periods_per_year"], 252)
+
+    def test_unavailable_when_unsized_or_direction_not_recorded_or_constant(self):
+        from services.execution.lean_runtime.member_virtual_book import gate_basis_metrics
+        good = self._book((1, 0, -1), (100, 105, 110))
+        self.assertEqual(gate_basis_metrics([good], None)[1], "order_quantity_unavailable")
+        legacy = {"symbol": "2330.TW", "observations": [{"price": 100, "exposure": 1}] * 3}
+        self.assertEqual(gate_basis_metrics([legacy], 10)[1], "direction_not_recorded")
+        flat = self._book((0, 0, 0), (100, 105, 110))
+        self.assertEqual(gate_basis_metrics([flat], 10)[1], "insufficient_or_constant_returns")
