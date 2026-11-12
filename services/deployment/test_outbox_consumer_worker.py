@@ -3589,3 +3589,57 @@ def test_one_shot_aggregate_run_writes_no_controller_record(worker, monkeypatch)
 def test_loop_writer_disabled_without_database_url(worker, monkeypatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert worker.build_loop_writer(consumer_name="deployment-outbox-consumer") is None
+
+
+def test_binding_created_before_inbox_receipt_replay_does_not_compensate(worker):
+    """Real run_poll + real dispatch adapter; only owner IO is mocked."""
+    sys.path[:0] = [str(Path(__file__).resolve().parent)]
+    from runtime_manager_dispatch_adapter import dispatch_to_runtime_manager
+    from services.deployment.test_runtime_manager_dispatch_adapter import (
+        _binding_created_replay_fixture,
+    )
+
+    saga, context, client = _binding_created_replay_fixture()
+    report = context["metadata"]["authoritative_loader_attestation"]
+    plan = {
+        **saga,
+        "binding_id": "rb-new",
+        "status": "executing",
+        "sponsor_persona_id": "persona-001",
+        "metadata": {
+            "tenant_id": "tenant-deployment-test",
+            "persona_capital_binding_id": "pcb-001",
+            "runtime_lifecycle": {"binding_id": "rb-new", "runtime_id": "rt-001"},
+        },
+    }
+    event = _outbox_record("evt-replay")
+    event["event"].update(
+        event_type="runtime.binding.requested", aggregate_id=saga["saga_id"]
+    )
+    compat = {
+        "ok": True,
+        "persona_binding_id": "pcb-001",
+        "persona_scope_ok": True,
+        "allowed_deployment_scope": "paper",
+    }
+    with (
+        patch.object(worker, "fetch_pending_outbox", return_value=[event]),
+        patch.object(worker, "fetch_saga", return_value=saga),
+        patch.object(worker, "fetch_plan", return_value=plan),
+        patch.object(worker, "run_compatibility_check", return_value=compat),
+        patch.object(worker, "verify_deploy_authorities", return_value=report),
+        patch.object(worker, "RuntimeManagerClient", return_value=client),
+        patch.object(
+            worker, "dispatch_to_runtime_manager", side_effect=dispatch_to_runtime_manager
+        ),
+        patch.object(worker, "consume_event", return_value=_inbox_receipt("evt-replay")),
+        patch.object(worker, "record_binding_created") as record,
+        patch.object(worker, "_trigger_delivery_compensation") as compensation,
+        patch.object(worker, "record_delivery_failure", return_value={}),
+    ):
+        result = worker.run_poll(api_url="http://127.0.0.1:1", consumer_name="test-consumer")
+    assert result["errors"] == []
+    assert result["consumed"] == 1
+    compensation.assert_not_called()
+    client.replace.assert_not_called()
+    client.deploy.assert_not_called()

@@ -926,3 +926,60 @@ class TestReproduceRecordedZeroBindingFailure:
         assert replay_result.succeeded()
         assert replay_result.idempotent_replay is True
         replay_client.deploy.assert_not_called()
+
+
+def _binding_created_replay_fixture():
+    """Replay state after record_binding_created overwrote plan.binding_id."""
+    saga, context, client = _paper_replace_fixture()
+    report = {
+        **context["metadata"]["authoritative_loader_attestation"],
+        "plan_status": "executing",
+        "deployment_plan_binding_id": "rb-new",
+        "deployment_plan_runtime_lifecycle": {
+            "binding_id": "rb-new",
+            "runtime_id": "rt-001",
+        },
+        "deployment_plan_sha256": "sha256:" + "b" * 64,
+    }
+    saga.update(
+        binding_id="rb-new",
+        status="awaiting_runtime_load",
+        metadata={"tenant_id": "tenant-deployment-test"},
+    )
+    context.update(
+        current_binding_id="rb-new",  # mutable plan.binding_id is now the child
+        plan_status="executing",
+        metadata={"authoritative_loader_attestation": report},
+    )
+    return saga, context, client
+
+
+def test_paper_replace_replay_after_binding_created_keeps_immutable_source():
+    saga, context, client = _binding_created_replay_fixture()
+    result = dispatch_to_runtime_manager(saga=saga, deploy_context=context, client=client)
+    assert result.succeeded(), result.error_message
+    assert result.idempotent_replay is True
+    client.replace.assert_not_called()
+    client.deploy.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"capital_pool_id": "pool-other"},
+        {"persona_capital_binding_id": "pcb-other"},
+        {"runtime_id": "rt-other"},
+        {"deployment_mode": "canary"},
+        {"artifact_id": "artifact-002", "artifact_version": "v2.0.0"},
+    ],
+)
+def test_paper_replace_replay_rejects_unverifiable_parent_lineage(override):
+    saga, context, client = _binding_created_replay_fixture()
+    base_get = client.get.side_effect
+    client.get.side_effect = lambda bid: (
+        {**base_get(bid), **override} if bid == "rb-old" else base_get(bid)
+    )
+    result = dispatch_to_runtime_manager(saga=saga, deploy_context=context, client=client)
+    assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+    assert result.error_code == "BINDING_READBACK_MISMATCH"
+    client.replace.assert_not_called()

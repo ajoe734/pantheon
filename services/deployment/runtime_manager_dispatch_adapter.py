@@ -543,6 +543,54 @@ def dispatch_to_runtime_manager(
                 error_code="BINDING_NOT_FOUND_AFTER_SAGA_RECORDED",
             )
 
+        replay_source_binding_id = deploy_context.get("current_binding_id")
+        if (
+            _is_paper_forward_replace(saga)
+            and replay_source_binding_id == existing_binding_id
+            and isinstance(binding.get("metadata"), Mapping)
+        ):
+            # record_binding_created overwrites the mutable plan.binding_id with
+            # the NEW binding, so the plan can no longer name the admitted
+            # source.  Recover it from the immutable child lineage, but only
+            # accept it after independently verifying the parent in the owner.
+            parent_id = str(
+                binding["metadata"].get("replacement_parent_binding_id") or ""
+            ).strip()
+            if parent_id and parent_id != existing_binding_id:
+                try:
+                    parent = client.get(parent_id)
+                except Exception as exc:  # noqa: BLE001
+                    return DispatchResult(
+                        outcome=_classify_runtime_manager_error(exc),
+                        binding_id=existing_binding_id,
+                        error_message=f"replace source lineage readback failed: {exc}",
+                        error_code="REPLACE_SOURCE_LINEAGE_READBACK_ERROR",
+                    )
+                parent_ok = (
+                    isinstance(parent, Mapping)
+                    and parent.get("binding_id") == parent_id
+                    and parent.get("deployment_mode") == "paper"
+                    and parent.get("capital_pool_id") == saga.get("capital_pool_id")
+                    and parent.get("persona_capital_binding_id")
+                    == deploy_context.get("persona_capital_binding_id")
+                    and bool(str(parent.get("runtime_id") or "").strip())
+                    and parent.get("runtime_id") == binding.get("runtime_id")
+                    and (parent.get("artifact_id"), parent.get("artifact_version"))
+                    != (saga.get("artifact_id"), saga.get("artifact_version"))
+                )
+                if not parent_ok:
+                    return DispatchResult(
+                        outcome=DispatchOutcome.TERMINAL_ERROR,
+                        binding_id=existing_binding_id,
+                        binding=binding,
+                        error_message=(
+                            "RuntimeBinding authoritative readback mismatch: "
+                            "replacement parent lineage failed independent verification"
+                        ),
+                        error_code="BINDING_READBACK_MISMATCH",
+                    )
+                replay_source_binding_id = parent_id
+
         mismatch = validate_authoritative_readback(
             saga=saga,
             binding=binding,
@@ -552,7 +600,7 @@ def dispatch_to_runtime_manager(
             ),
             expected_sponsor_persona_id=deploy_context.get("sponsor_persona_id"),
             expected_authority_report=expected_authority_report,
-            expected_source_binding_id=deploy_context.get("current_binding_id"),
+            expected_source_binding_id=replay_source_binding_id,
             allow_plan_lifecycle_recovery=True,
         )
         if mismatch:
