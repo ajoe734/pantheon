@@ -84,6 +84,7 @@ Only designated services may write to either memory store. No session (interacti
 | `trainer-svc` | Yes (`episodic`, `semantic`) | No |
 | `consultation-svc` | Yes (`consultation_outcome`) | Yes (`cross_persona_observation`) |
 | `research-svc` | Yes (`strategy_lesson`) | Yes (`research_finding`) |
+| `persona-svc` | Yes (`strategy_lesson`: pool outcomes, harness experiences) | Yes (`cross_persona_observation`) |
 | `governance-svc` | No | Yes (`policy_precedent`, `regime_pattern`) |
 
 **Why this restriction:** Memory entries constitute a knowledge truth source. Allowing direct session writes would create unaudited mutation paths. All writes must go through a service that owns the triggering lifecycle event.
@@ -111,11 +112,51 @@ Write-back is the process by which platform lifecycle events cause new memory en
 |---|---|---|
 | `SessionPersona` reaches `terminated` (normal end) | `session_id`, `persona_id` | PersonaMemory `episodic` — session outcome summary |
 | `Postmortem` reaches `published` status | `postmortem_id`, `incident_id`, `persona_id` (via binding) | PersonaMemory `strategy_lesson` + InstitutionalMemory `incident_lesson` |
-| `EvolutionDecision` reaches `approved` | `evolution_decision_id`, affected `persona_id` | PersonaMemory `strategy_lesson` + InstitutionalMemory `evolution_rationale` |
+| `EvolutionDecision` reaches `executed` with a terminal result and outcome summary | `evolution_decision_id`, affected `persona_id` | PersonaMemory `strategy_lesson` + InstitutionalMemory `evolution_rationale` |
 | Consultation session closes | `session_id`, `persona_id` | PersonaMemory `consultation_outcome`; InstitutionalMemory `cross_persona_observation` (if committee scope) |
 | Trainer epoch completes | epoch metadata | PersonaMemory `episodic` + `semantic` |
 | Operator confirms preference | operator feedback event | PersonaMemory `preference` |
 | Research task reaches `done` | `task_id`, `persona_id` | PersonaMemory `strategy_lesson` + InstitutionalMemory `research_finding` |
+| Pool admit/remove/re-weight finishes | `pool_outcome`, source event id, owning persona, reason/evidence | PersonaMemory `strategy_lesson` + InstitutionalMemory `cross_persona_observation` |
+| Harness observation window finishes | `harness_experience`, source event id, owning persona, cue/lesson/outcome/evidence | PersonaMemory `strategy_lesson` + InstitutionalMemory `cross_persona_observation` |
+
+### 4.1.1 Deployed writeback wiring
+
+`learning-feedback-bridge` polls the Evolution and Postmortem owner APIs every
+30 seconds. Evolution reads carry the existing service bearer and tenant header.
+Only terminal executed decisions with an outcome and published postmortems are
+written. Source or attribution failures are reported, never replaced with invented
+events. Local-file fallback is available only when explicitly supplied by a caller;
+the deployed worker reads owner APIs and does not sync OpenClaw workspaces.
+
+Research enqueues findings after its existing eligibility/replication gates.
+The sponsor comes from the demand/member attribution carried by the task or run;
+missing or conflicting attribution records a failure rather than selecting a
+default persona. Its service startup owns one periodic outbox consumer in the
+same process as the producers, sharing their store and delivery lock. There is
+no second process with a stale JSON snapshot. Interrupted `in_flight` deliveries
+are replayed on restart. Failed deliveries retain their reason and retry count;
+after five attempts they remain in `dead_letter` until explicitly retried through
+the existing Research outbox retry route.
+
+Both clients send the existing `PANTHEON_MEMORY_AUTH_TOKEN` bearer, or read
+`PANTHEON_MEMORY_AUTH_TOKEN_FILE` at delivery time for rotation. These must be
+already issued credentials accepted by Memory's strict JWT configuration; the
+worker does not mint credentials or fall back to an operator-shaped string.
+For file credentials, the configured path must be mounted in the caller container.
+Missing credentials are delivery failures, not unauthenticated requests.
+The writeback route binds the verified tenant and requires an authorized writer
+role before applying the event/authority whitelist. Retrieval continues through
+the existing Governance authorization endpoint; execution never reads memory.
+
+All feedback writers use `/api/memory/writebacks/learn-feedback`, keyed by source
+event type/id. Replays return the same stable persona/institutional identifiers;
+a retry repairs either missing half of a partially persisted pair. New owner
+emitters use `persona-svc` with `pool_outcome`/`harness_experience`, and
+`consultation-svc` with `consultation_closed`. Event details such as cue, lesson,
+outcome, reason, member, harness version and memo references survive in both
+structured payloads. This registration does not implement the separate pool,
+harness or consultation lifecycle controllers.
 
 ### 4.2 Write-Back Sequence (Postmortem Example)
 

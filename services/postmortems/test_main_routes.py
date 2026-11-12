@@ -499,6 +499,7 @@ def test_list_postmortems_bounded_paging_status_search_newest_first_and_total():
 
 
 def test_unpaged_published_caller_learning_feedback_bridge_unchanged(monkeypatch):
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", "fixture-memory-service-token")
     import io
     import json
     import urllib.request

@@ -108,6 +108,7 @@ def _registry_entry(payload: dict | None = None, spec: dict | None = None) -> di
         "approver": queue_payload["approver"],
         "approved_at": queue_payload["approved_at"],
         "metadata": {
+            "persona_id": "persona-research-owner",
             "tenant_id": queue_payload["tenant_id"],
             "strategy_spec": strategy_spec,
         },
@@ -1635,6 +1636,7 @@ def test_worker_end_to_end_real_backtest_promotion_gate_and_research_finding_out
     assert len(records) == 1
     finding = records[0].to_dict()
     assert finding["source_event_type"] == "research_finding_published"
+    assert finding["sponsor_persona_id"] == "persona-research-owner"
     assert finding["run_id"] == run.run_id
     assert finding["metadata"]["artifact_refs"] == [
         {"artifact_type": "backtest_run", "uri": f"backtest://{bt_run_id}"}
