@@ -764,7 +764,12 @@ class AlphaRevalidationWorker:
             dataset=dataset,
             run_id=f"bt-{run_id}",
         )
-        self._backtest_run_store.record(evaluated)
+        from services.research.alpha_replication.shared_stores import dataset_symbol_universe
+
+        try:
+            self._backtest_run_store.record(evaluated, dataset_symbols=dataset_symbol_universe(dataset))
+        except TypeError:  # a store without the universe parameter: record the run unchanged
+            self._backtest_run_store.record(evaluated)
         return evaluated
 
     def _publish_research_finding(

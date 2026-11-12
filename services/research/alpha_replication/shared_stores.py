@@ -15,7 +15,7 @@ import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional, Sequence
 
 from services.research.replication.gate import BacktestRunStore, FamilyTrialCounterStore, ReplicationGate
 
@@ -77,9 +77,21 @@ class SharedFamilyTrialCounterStore(FamilyTrialCounterStore):
 
 
 class SharedBacktestRunStore(BacktestRunStore):
-    def record(self, evaluation: Dict[str, Any]) -> Optional[str]:
+    def record(
+        self,
+        evaluation: Dict[str, Any],
+        dataset_symbols: Optional[Sequence[str]] = None,
+    ) -> Optional[str]:
+        """Record the run; ``dataset_symbols`` is the gate dataset's instrument universe.
+
+        The universe is stored beside (not inside) the evaluation so the
+        evaluation digest the gate verifies is unchanged.  It is never guessed:
+        callers without a real dataset pass nothing and the field is absent.
+        """
         if self._path is None:
-            return super().record(evaluation)
+            run_id = super().record(evaluation)
+            self._attach_symbols(run_id, dataset_symbols)
+            return run_id
         with _locked(self._path):
             try:  # merge what other writers recorded since this instance loaded
                 loaded = json.loads(self._path.read_text(encoding="utf-8")) if self._path.exists() else {}
@@ -88,7 +100,23 @@ class SharedBacktestRunStore(BacktestRunStore):
             except Exception:
                 pass
             run_id = super().record(evaluation)  # rewrites the merged map
+            self._attach_symbols(run_id, dataset_symbols)  # still under the file lock
             return run_id
+
+    def _attach_symbols(self, run_id: Optional[str], dataset_symbols: Optional[Sequence[str]]) -> None:
+        symbols = sorted({str(s).strip() for s in (dataset_symbols or []) if str(s).strip()})
+        if not run_id or not symbols:
+            return
+        self._runs[run_id]["dataset_symbols"] = symbols
+        if self._path is not None:
+            _atomic_write(self._path, self._runs)
+
+
+def dataset_symbol_universe(dataset: Any) -> list[str]:
+    """Sorted distinct ``instrument`` values of a governed dataset's records."""
+    records = dataset.get("records") if isinstance(dataset, dict) else None
+    out = {str(r.get("instrument")).strip() for r in records or [] if isinstance(r, dict) and str(r.get("instrument") or "").strip()}
+    return sorted(out)
 
 
 class SharedReplicationGate(ReplicationGate):
