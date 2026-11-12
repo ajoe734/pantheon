@@ -1767,3 +1767,130 @@ def test_worker_never_reuses_cached_results_across_candidates() -> None:
     )
 
     assert not hasattr(AlphaRevalidationWorker, "_CACHED_DEFAULT_TW_BACKTEST")
+
+
+def _capture_gate_requests(worker, registry_entry):
+    captured = []
+
+    def _evaluate(self, request):
+        captured.append(request)
+        return FakeGateResponse(passed=True, summary="captured")
+
+    with mock.patch.object(
+        worker, "_fetch_strategy_spec_entry", return_value=registry_entry
+    ), mock.patch(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        _evaluate,
+    ):
+        result = worker.run_once(tenant_id="tenant-a")
+    assert result["errors"] == []
+    return captured
+
+
+def test_screened_candidate_hands_artifact_and_market_to_gate_contribution_test(tmp_path) -> None:
+    from services.research.replication.tests import test_gate_screen_contribution as sc
+
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+    spec = _strategy_spec(strategy_id=payload["strategy_id"])
+    dataset_ref = next(d["ref"] for d in spec["data_dependencies"] if d.get("kind") == "dataset")
+    artifact = sc.artifact("top")
+    artifact["strategy_id"] = spec["strategy_id"]
+    market_dataset = sc.dataset(sc.recorded_market(attest_coverage=True))
+    market_dataset["dataset_id"] = dataset_ref
+    spec["strategy_artifact"] = artifact
+    spec["backtest_dataset"] = market_dataset
+
+    (request,) = _capture_gate_requests(worker, _registry_entry(payload, spec))
+
+    assert request.research_handoff["strategy_artifact"] == artifact
+    assert request.research_handoff["backtest_dataset"] == market_dataset
+
+
+def test_unscreened_candidate_handoff_is_unchanged(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+
+    (request,) = _capture_gate_requests(worker, _tw_registry_entry(payload))
+
+    assert "strategy_artifact" not in request.research_handoff
+    assert "backtest_dataset" not in request.research_handoff
+
+
+def _dropped_screen_worker(tmp_path):
+    from services.research.alpha_replication import shared_stores
+    from services.research.replication.gate_config import GateConfig
+    from services.research.replication.tests import test_gate_screen_contribution as sc
+
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    spec = _strategy_spec(strategy_id=payload["strategy_id"])
+    dataset_ref = next(d["ref"] for d in spec["data_dependencies"] if d.get("kind") == "dataset")
+    artifact = sc.artifact("bottom")  # concentrates the pool on the worse symbol
+    artifact["strategy_id"] = spec["strategy_id"]
+    market_dataset = sc.dataset(sc.recorded_market(attest_coverage=True))
+    market_dataset["dataset_id"] = dataset_ref
+    spec["strategy_artifact"] = artifact
+    spec["backtest_dataset"] = market_dataset
+    real_gate = shared_stores.SharedReplicationGate
+
+    def short_history_gate(**kwargs):  # only the history minimums are relaxed (2-month recording)
+        return real_gate(config=GateConfig(**sc.SHORT_HISTORY), **kwargs)
+
+    from services.research.vectorbt.adapter import vectorbt_adapter
+
+    real_protocol = vectorbt_adapter.run_replication_backtest_protocol
+
+    def short_history_protocol(**kwargs):
+        return real_protocol(
+            min_oos_round_trips=sc.SHORT_HISTORY["min_oos_round_trips"],
+            min_pit_history_days=sc.SHORT_HISTORY["min_pit_history_days"],
+            min_pit_history_bars=sc.SHORT_HISTORY["min_pit_history_bars"],
+            **kwargs,
+        )
+
+    return queue, worker, authority, payload, spec, (short_history_gate, short_history_protocol)
+
+
+def test_dropped_screen_is_durably_and_idempotently_registered_entry_only(tmp_path) -> None:
+    queue, worker, authority, payload, spec, (short_history_gate, short_history_protocol) = _dropped_screen_worker(tmp_path)
+    entry = _registry_entry(payload, spec)
+    for attempt in range(2):  # the second run is a retry of the same rejected candidate
+        queue.enqueue(payload)
+        with mock.patch.object(
+            worker, "_fetch_strategy_spec_entry", return_value=entry
+        ), mock.patch(
+            "services.research.alpha_replication.shared_stores.SharedReplicationGate",
+            short_history_gate,
+        ), mock.patch(
+            "services.research.vectorbt.adapter.vectorbt_adapter.run_replication_backtest_protocol",
+            short_history_protocol,
+        ):
+            result = worker.run_once(tenant_id="tenant-a")
+        (error,) = result["errors"]  # the gate rejection is still reported as a failed run
+        assert "does not exceed required" in error["error"]
+        run = list(authority.runs.values())[-1]
+        assert run.status == "failed"
+        meta = run.metadata["entry_only_registration"]
+        assert meta["created"] is (attempt == 0)
+
+    (record,) = worker.list_entry_only_registrations(tenant_id="tenant-a")
+    assert record["registration_id"] == meta["registration_id"]
+    assert record["candidate_kind"] == "entry_only" and record["screen_dropped"] is True
+    assert "does not exceed required" in record["reason"]
+    lineage = record["lineage"]
+    assert lineage["parent_strategy_spec_id"] == payload["strategy_spec_id"]
+    assert lineage["parent_strategy_spec_checksum"] == payload["checksum"]
+    assert lineage["screened_backtest_run_id"] and lineage["entry_only_backtest_run_id"]
+    assert record["screen_contribution"]["status"] == "screen_dropped"
+    assert "re_registration" not in record["screen_contribution"]
+    assert worker.list_entry_only_registrations(parent_strategy_spec_id="other") == []
+
+    # survives a worker restart: a fresh worker over the same data dir reads it back
+    _, restarted = _worker(tmp_path, FakeAuthority())
+    assert restarted.list_entry_only_registrations() == [record]
