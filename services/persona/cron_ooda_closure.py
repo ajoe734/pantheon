@@ -64,7 +64,9 @@ packet store contract (`services/control-plane/ooda/jsonl_store.py`) so
 from __future__ import annotations
 
 import json
+import fcntl
 import os
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -216,15 +218,32 @@ def append_ooda_packet(store_path: Path, packet_dict: Mapping[str, Any]) -> dict
         return store.append_packet(packet_dict)
 
     record = _build_packet_record(packet_dict)
-    existing: list[Any] = []
-    if store_path.exists():
-        text = store_path.read_text(encoding="utf-8").strip()
-        if text:
-            loaded = json.loads(text)
-            if isinstance(loaded, list):
+    with store_path.with_suffix(store_path.suffix + ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        existing: list[Any] = []
+        if store_path.exists():
+            text = store_path.read_text(encoding="utf-8").strip()
+            if text:
+                loaded = json.loads(text)
+                if not isinstance(loaded, list):
+                    raise CronOodaClosureError("OODA JSON store must contain record envelopes")
                 existing = loaded
-    existing.append(record)
-    store_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        existing.append(record)
+        descriptor, temporary = tempfile.mkstemp(dir=store_path.parent)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(existing, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, store_path)
+            directory = os.open(store_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
     return record
 
 

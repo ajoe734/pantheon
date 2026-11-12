@@ -21,6 +21,7 @@ from typing import Any
 
 from .models import utc_now
 from .workflows import (
+    PERSONA_DAILY_CYCLE_WORKFLOW_ID,
     PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
     WORKFLOW_CATALOG,
     WorkflowDefinition,
@@ -1409,6 +1410,71 @@ class PersonaCronRegistrar:
             if pid and workflow_id:
                 pairs.add((pid, workflow_id))
         return pairs
+
+    def reconcile_daily_cycles(self, personas: list[dict[str, Any]]) -> dict[str, Any]:
+        """Converge the daily overlay without touching provisioning schedules.
+
+        Discovery must be a complete authoritative persona list. A failed list
+        never authorizes orphan deletion. Old four-workflow jobs are retired
+        only after the replacement has passed exact readback.
+        """
+        eligible = {
+            str(p["persona_id"]): p for p in personas
+            if p.get("lifecycle_state") in {"paper_running", "paper_owner", "consultable"}
+            and p.get("status", "active") == "active" and p.get("tenant_id")
+        }
+        runtime = None if self._dry_run else self._get_runtime()
+        if runtime is None:
+            raise RuntimeError("daily-cycle reconciliation requires a live cron transport")
+        jobs = self._list_jobs(runtime)
+        workflow = WORKFLOW_CATALOG[PERSONA_DAILY_CYCLE_WORKFLOW_ID]
+        failures: list[dict[str, Any]] = []
+        converged: dict[str, str] = {}
+        legacy = {"pantheon.ingest", "pantheon.review", "pantheon.retrain", "pantheon.deploy"}
+        for pid in sorted(eligible):
+            try:
+                matches = self._matching_workflow_jobs(jobs, pid, workflow.workflow_id)
+                request_id = f"persona-provisioning:{pid}:{workflow.workflow_id}"
+                identity = dict(workflow=workflow, persona_id=pid, request_id=request_id,
+                                runtime_id=None, runtime_binding_id=None, capital_pool_id=None,
+                                persona_capital_binding_id=None)
+                if matches:
+                    keeper = sorted(matches, key=lambda j: str(j.get("id") or ""))[0]
+                    if not keeper.get("id"):
+                        raise RuntimeError("daily-cycle job has no authoritative id")
+                    if not self._is_exact_workflow_job(keeper, **identity):
+                        patch = self._build_job_patch(**identity)
+                        runtime.gateway_call("cron.update", {"id": keeper["id"], "patch": patch})
+                else:
+                    self._register_one(runtime, workflow, pid, None, None, None, None)
+                readback = self._matching_workflow_jobs(self._list_jobs(runtime), pid, workflow.workflow_id)
+                exact = [j for j in readback if self._is_exact_workflow_job(j, **identity)]
+                if not exact:
+                    raise RuntimeError("daily-cycle exact readback failed")
+                keep_id = sorted(str(j["id"]) for j in exact)[0]
+                for job in readback:
+                    if job.get("id") != keep_id:
+                        runtime.gateway_call("cron.remove", {"id": job["id"]})
+                final = self._matching_workflow_jobs(self._list_jobs(runtime), pid, workflow.workflow_id)
+                if len(final) != 1 or not self._is_exact_workflow_job(final[0], **identity):
+                    raise RuntimeError("daily-cycle duplicate cleanup did not converge")
+                converged[pid] = keep_id
+            except Exception as exc:
+                failures.append({"persona_id": pid, "reason": str(exc)[:300]})
+        for job in jobs:
+            event = self._decode_job_event(job) if isinstance(job, dict) else None
+            if not event or event.get("kind") != "pantheon.workflow.dispatch":
+                continue
+            pid, wid = event.get("persona_id"), event.get("workflow_id")
+            orphan = wid == workflow.workflow_id and pid not in eligible
+            replaced = pid in converged and wid in legacy
+            if not (orphan or replaced):
+                continue
+            try:
+                runtime.gateway_call("cron.remove", {"id": job["id"]})
+            except Exception as exc:
+                failures.append({"persona_id": pid, "reason": str(exc)[:300]})
+        return {"jobs": converged, "failures": failures, "eligible_count": len(eligible)}
 
     def reconcile_personas(
         self, persona_ids: list[str]

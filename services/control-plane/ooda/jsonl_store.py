@@ -8,6 +8,8 @@ append/replay semantics that later API and BFF routes can reuse.
 from __future__ import annotations
 
 import json
+import fcntl
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -177,9 +179,14 @@ class OodaJsonlAppendStore:
     def _append_record(self, record: Mapping[str, Any]) -> None:
         record_payload = _json_copy(record)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
-        self._apply_record(record_payload)
+        with self.path.with_suffix(self.path.suffix + ".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self.reload()
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            self._apply_record(record_payload)
 
     def _build_record(self, *, record_type: str, packet_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         return {
