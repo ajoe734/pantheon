@@ -366,7 +366,7 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         cooldown_seconds=0,
         idempotency_required=True,
         required_roles=["operator", "approver"],
-        description="Generic persona lifecycle action (edit, retire, route-policy update, test-prompt wiring); precondition gates flow through the action catalog and command queue.",
+        description="Persona lifecycle alias route; accepts only AdvanceLifecycle, Promote, PromoteCandidate and Demote (other action ids return 404) and forwards them through the same command admission as AdvanceLifecycle.",
     ),
     # ------------------------------------------------------------------ #
     # Capital / ranking / rebalance resource actions (BFF-LUV-GAP-003)

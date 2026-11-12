@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import sqlite3
 import threading
 import time
 import types
@@ -2786,6 +2787,62 @@ class TestGovernedServantAgentSync(unittest.TestCase):
                 invoke_fn=lambda: calls.append("must-not-run"),
             )
         self.assertNotIn("must-not-run", calls)
+
+    def test_slow_agent_ensure_does_not_block_other_persona_completion(self):
+        """A reconciling ensure must not hold the SQLite writer lock (real DB)."""
+        req = adapter_main.OpenClawAgentEnsureRequest.model_validate(self._PAYLOAD)
+        in_reconcile = threading.Event()
+        release = threading.Event()
+
+        def slow_reconcile(_req):
+            in_reconcile.set()
+            self.assertTrue(release.wait(timeout=30))
+            return {"status": "created", "agent_id": self._PERSONA_ID}
+
+        def other_persona_invocation():
+            # The claim ledger only fingerprints the request; skip admission.
+            provider = adapter_main.AssistantProviderInvokeRequest.model_construct(
+                mode="user", prompt="opinion", agent_id="persona-opinion-other",
+                metadata={"allowed_tools": []},
+            )
+            calls = []
+
+            def upstream():
+                calls.append("upstream")
+                return {"status": "ok", "data": {"status": "completed", "output": {}}}
+
+            # Short busy timeout proves completion does not wait on ensure.
+            real_connect = sqlite3.connect
+            with patch.object(
+                adapter_main.sqlite3, "connect",
+                side_effect=lambda *a, **k: real_connect(*a, **{**k, "timeout": 1.0}),
+            ):
+                first = adapter_main._invoke_persona_opinion_idempotently(
+                    provider, idempotency_key="other-invocation", invoke_fn=upstream,
+                )
+                replay = adapter_main._invoke_persona_opinion_idempotently(
+                    provider, idempotency_key="other-invocation", invoke_fn=upstream,
+                )
+            return first, replay, calls
+
+        with (
+            patch.object(adapter_main, "_sync_servant_agent", side_effect=slow_reconcile),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            ensure_future = executor.submit(
+                adapter_main._ensure_agent_idempotently,
+                req, idempotency_key="slow-ensure", request_id="request-slow",
+            )
+            self.assertTrue(in_reconcile.wait(timeout=10))
+            try:
+                first, replay, calls = other_persona_invocation()
+            finally:
+                release.set()
+            status, _payload = ensure_future.result(timeout=30)
+
+        self.assertEqual(status, 201)
+        self.assertEqual(first, replay)
+        self.assertEqual(calls, ["upstream"])
 
 
 class TestSessions(unittest.TestCase):

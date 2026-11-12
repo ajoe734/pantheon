@@ -1,0 +1,12 @@
+{
+  "task_id": "ADAPTER-PERSONA-INVOCATION-LOCK-20261112",
+  "defect": "_ensure_agent_idempotently held a SQLite BEGIN IMMEDIATE writer transaction across CLI reconcile and postcondition wait (timeout 130s) on the same DB as persona_opinion_invocation_replays, so _complete_persona_opinion_invocation (timeout 10s) failed with 'database is locked' while another Persona was being ensured.",
+  "fix": "CLI list/add/set-identity serialization moved to an fcntl advisory lock on <db>.ensure.lock; SQLite statements during ensure are short autocommit; replay row + admission still committed atomically in a short BEGIN IMMEDIATE after reconcile success.",
+  "preserved": ["cross-thread/process ensure serialization", "admission committed before upstream invocation claim", "actor-bound exact replay and conflicts", "in-doubt fence", "no timeout increases", "paper/no-execution"],
+  "tests": {
+    "command": "PYTHONPATH=.:services/openclaw-gateway-adapter pytest services/openclaw-gateway-adapter/test_main.py",
+    "result": "137 passed",
+    "new_regression": "test_slow_agent_ensure_does_not_block_other_persona_completion (real SQLite, threads; fails on prior main.py, passes now)"
+  },
+  "scope": "source only; no VM/deploy; coordinator retains hosted proof"
+}
