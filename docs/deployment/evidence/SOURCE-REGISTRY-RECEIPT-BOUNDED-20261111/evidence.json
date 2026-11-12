@@ -2,9 +2,9 @@
   "task_id": "SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111",
   "owner": "Codex",
   "reviewer": "Claude",
-  "delivery_status": "incomplete_acceptance_2_actual_hosted_size_limit_failed",
-  "review_decision": "not_requested_draft_only",
-  "base_commit": "bee62bc2978618539984aff9db136b064adc14a0",
+  "delivery_status": "source_validation_in_progress",
+  "review_decision": "pending_independent_Claude_review",
+  "base_commit": "86ab46e44410a43af171285f9c876f868b267198",
   "scope": {
     "owned_layer": "Source registry/freshness receipt read projection",
     "changed": [
@@ -21,81 +21,20 @@
       "catalog controller response sections, endpoints, caches and settings"
     ]
   },
-  "fixture": {
-    "provenance": "Local reconstruction using seven production adapter definitions and LatestMarketSnapshotStore.append_normalized_records; not a captured hosted registry",
-    "missing_context": "The brief gives hosted sizes and receipt shape but does not include the actual seven persisted connector rows. The seven definitions below are explicit reconstruction choices, not a claim about hosted identities or metadata.",
-    "connector_ids": [
-      "tw-anue-news-rss",
-      "tw-finmind-datasets",
-      "tw-taifex-futures-options-chip",
-      "tw-tdcc-shareholding-distribution",
-      "tw-twse-tpex-official-market",
-      "tw-yahoo-broker-top15",
-      "tw-yahoo-stock-rss"
+  "scope_correction": {
+    "authority": "Canonical Human/Ops reopen at 2026-11-12T20:52:40Z, generation 3, same task and PR #7200; read through governed AI_NAME=Codex show.",
+    "provenance": "/tmp/pantheon-goal-resume-20261111/goal-source7200-assistant-budget-gate-minimal-existing-scope-repair-readonly-20261112.json",
+    "engineering_erratum": "The total 150000-byte premise originated in this assistant task, not the original user product acceptance or runtime/deploy guard. It is withdrawn by the canonical reopen reason. No user approval of 200 KB, replacement byte cap, field deletion or API migration is inferred.",
+    "preserved_obligations": "AC1 and AC3-8 plus AC2 real seven-connector/96-snapshot shape and bounded growth remain. All connector identities, receipt status/times/counts/evidence bundle, static sections, full raw receipt/store bytes, readers, auth/tenant/secret boundaries and original hosted performance/UI/13-query parity remain required.",
+    "historical_failures": "At bf42eb38b06b8fec40dcda6849b7030470012762 the task-added four 150000-byte assertions FAILED (6 passed, 4 failed). That head is not relabelled PASS. Its entire evidence record is preserved below.",
+    "assertion_replacements": [
+      "Captured size test: exact response and all non-receipt fields still match the capture; every receipt is independently checked against a fixed field/count contract with no bulk bodies.",
+      "Captured growth test: 0/4/96/960 snapshots; full payload identical after normalizing only four counters; unchanged full raw endpoint and journal bytes at each size; original <=8-byte growth assertion retained.",
+      "Current-dev production-writer size test: independently checked receipt field/count contract, original before >700000 and after <before/4 assertions retained; current-dev static sections compared before/after.",
+      "Production-writer growth test: same full payload/counter/raw/store checks including snapshot store integrity; original <=8-byte growth assertion retained. Test clock pinned so elapsed time does not alter freshness age/generated_at."
     ],
-    "snapshot_writer": "services/source_ingestion/requirement_state.py:LatestMarketSnapshotStore.append_normalized_records",
-    "calendar_writer": "services/source_ingestion/connectors/taiwan_official.py:governed_taiwan_calendar_evidence(venue=TWSE, trade_date=2026-11-11)",
-    "calendar_version": "twse-2026-schedule-v1",
-    "historical_closes_per_symbol": 23,
-    "refresh_records": 100,
-    "accepted_record_count": 100,
-    "updated_snapshot_count": 96,
-    "closes_per_snapshot": 24,
-    "lineage": "Production writer generates connector_ids, source_ids, content_refs and ingest_run_ids from normalized records; each snapshot has 24 content refs and full governed calendar evidence.",
-    "market_snapshot_batch_bytes": 779206,
-    "evidence_lists": "100 source IDs, evidence item IDs, knowledge object IDs and per-source admitted distillation entries; receipt includes evidence_bundle_id"
-  },
-  "local_measurement": {
-    "method": "FastAPI TestClient GET /api/source-ingest/registry; one warmup plus five timed requests per variant; identical stored fixture; old behavior reproduced by binding the new projection helper to IngestReceipt.to_dict",
-    "wire_encoding": "UTF-8 compact response bytes, uncompressed",
-    "before": {
-      "bytes": 980304,
-      "median_ms": 34.439459996065125,
-      "samples_ms": [
-        44.08976901322603,
-        36.06427100021392,
-        32.6291749952361,
-        34.439459996065125,
-        25.391003000549972
-      ]
-    },
-    "after": {
-      "bytes": 169284,
-      "median_ms": 14.18849200126715,
-      "samples_ms": [
-        13.168782999855466,
-        14.18849200126715,
-        34.41525799280498,
-        24.94291499897372,
-        12.099850995582528
-      ]
-    },
-    "after_section_value_bytes": {
-      "schema_version": 30,
-      "connectors": 37423,
-      "provider_examples": 36592,
-      "policy_registry": 11819,
-      "financial_data_source_catalog": 70428,
-      "active_universe_policy": 12860
-    },
-    "section_size_note": "Sizes are independently serialized top-level values; the response adds keys, separators and braces. The provider/catalog/active-universe values sum to 119880 bytes.",
-    "scaling": {
-      "snapshot_counts": [
-        0,
-        4,
-        96,
-        960
-      ],
-      "response_bytes": [
-        169278,
-        169278,
-        169282,
-        169286
-      ],
-      "difference_bytes": 8,
-      "result": "Only decimal widths of the four changed counters grow; snapshot bodies and source ID lists are absent from the projection. The separate 150000-byte assertion still fails."
-    },
-    "limitations": "Local serialization/response measurements do not prove hosted latency or the BFF 0.75-second budget. No VM, SSH, operator key, or hosted access was used. Hosted acceptance belongs to STRAT-DATASRC-HOSTED-ACCEPT-20261110."
+    "current_dev_composition": "Normal non-force merge of current dev at 86ab46e44410a43af171285f9c876f868b267198; upstream bounded DLQ and all current source writers preserved. No BFF, auth, receipt endpoint/store, catalog controller or snapshot writer edits.",
+    "capture_replay_adjustment": "Current dev adds catalog entries after the 2026-11-12 capture. Test-only captured replay pins provider_examples and financial catalog to the original capture, just as connector non-receipt fields were already pinned. Original hash, byte-identical legacy response and complete non-receipt equality assertions remain. Separate real-writer fixture uses current-dev generators and checks static section preservation. No original product-semantic test is weakened or deleted."
   },
   "receipt_contract": {
     "schema_version": "source_ingest_receipt_summary.v1",
@@ -204,68 +143,6 @@
       "compatibility": "BFF source and these tests are unchanged; independent rich-projection behavior remains covered."
     }
   ],
-  "validation": [
-    {
-      "command": "python3 scripts/dev/provision_python_distribution.py",
-      "exit_code": 0,
-      "result": "Checkout-scoped .venv-pantheon provisioned and import mapping verified."
-    },
-    {
-      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q -s services/source_ingestion/tests/test_registry_receipt_summary.py",
-      "exit_code": 1,
-      "result": "5 passed, 2 failed in 10.66s. Both failures are the retained acceptance-2 150000-byte assertions. All identity/status/count, empty evidence, full endpoint and unchanged stored-byte assertions pass. Final fixture chooses the 24 dates from the governed calendar trading_days, excluding holidays."
-    },
-    {
-      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_latest_market_snapshot.py scripts/test_project_market_data_to_bff_agora_surfaces.py scripts/test_dev_tw_market_refresh.py",
-      "exit_code": 124,
-      "result": "Timed out before terminal pytest summary. Not passed. Split follow-up batches below collect terminal results."
-    },
-    {
-      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_latest_market_snapshot.py scripts/test_project_market_data_to_bff_agora_surfaces.py",
-      "exit_code": 1,
-      "result": "79 passed, 1 failed in 46.05s. Failure: scripts/test_project_market_data_to_bff_agora_surfaces.py::test_projector_wrong_role_fails_closed, local mock server accepts viewer instead of raising expected 403. This test and projector/auth implementations are unchanged by this task; no unrelated fix or assertion relaxation is included."
-    },
-    {
-      "command": "timeout 360 .venv-pantheon/bin/python3 -m pytest -q -x scripts/test_dev_tw_market_refresh.py",
-      "exit_code": 0,
-      "result": "64 passed in 240.41s. The bounded foreground command completed and terminal output was collected."
-    },
-    {
-      "command": "timeout 30 .venv-pantheon/bin/python3 -m pytest -q scripts/test_project_market_data_to_bff_agora_surfaces.py::test_projector_wrong_role_fails_closed",
-      "exit_code": 1,
-      "result": "Same failure reproduced in isolation in 2.08s; no scheduled/source test ordering is needed to trigger it. Projector script, its test and runtime_auth_inbound.py are byte-identical to task base."
-    },
-    {
-      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_source_ingest_deploy_diagnostics_contract.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py",
-      "exit_code": 1,
-      "result": "26 passed, 1 failed in 23.24s. Failure: test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse rejects existing tw-finmind-broker-daily-report workflow connector. All six BFF compact/rich persona tests pass. Test and workflow inputs are byte-identical to base bee62bc29; no unrelated change is made."
-    },
-    {
-      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q -s services/source_ingestion/tests/test_registry_receipt_summary.py",
-      "exit_code": 1,
-      "result": "6 passed, 4 failed in 8.07s. All four failures are strict 150000-byte size assertions: the original two reconstruction failures remain unchanged, plus the complete captured shape and captured-shape scaling checks. Exact original wire bytes, all non-receipt fields, bounded growth, seven full receipt endpoint readbacks, receipt journal integrity and the independent writer snapshot-store integrity checks pass."
-    },
-    {
-      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_latest_market_snapshot.py",
-      "exit_code": 0,
-      "result": "52 passed in 33.77s; bounded foreground batch completed and terminal output collected."
-    }
-  ],
-  "existing_test_assertions_changed": [],
-  "test_changes": "No existing test or assertion is changed, weakened or deleted. Adds three exact hosted-shape tests with the same strict 150000-byte limit, unchanged full-receipt readback for all seven connectors, fixture hash/byte checks, and an explicit non-receipt preservation wrapper. Both prior size failures remain visible. The existing scheduled test additions remain as previously recorded.",
-  "blocker": {
-    "acceptance": 2,
-    "observed": "Complete actual hosted registry is 758698 bytes before and 176588 bytes after the receipt-only projection (26588 over the fixed 150000-byte target). Snapshot growth 0/4/96/960 produces 176583/176583/176587/176591 bytes. Even replacing every latest_receipt with null leaves 170923 bytes.",
-    "required_for_resumption": "Human/Ops must provide a scoped decision for the remaining non-receipt response overhead or revise the acceptance contract. The requested exact input now exists and is tested; another fixture request is not appropriate. Do not remove static sections, add endpoints/caches/settings or weaken the limit without explicit scoped authorization.",
-    "policy": "Brief requires exact sizes and cause to be reported before any scoped acceptance decision. PR #7200 remains draft and incomplete; no reviewer approval or done claim is made. Assigned Claude frozen-head review, required CI and native integrator remain required after a viable scope is authorized."
-  },
-  "historical_blocker": {
-    "acceptance": 2,
-    "observed": "The seven-production-definition fixture still returns 169284 bytes after receipt projection, above the required 150000 bytes. The size regression assertions are deliberately retained and failing.",
-    "required_for_resumption": "Supply the actual seven persisted registry rows as a task-authorized fixture to establish the brief's hosted shape, or revise the scoped acceptance/response-projection contract to address the remaining static catalog and connector metadata overhead. Do not claim this reconstruction proves the hosted seven rows exceed the bound.",
-    "policy": "Task brief: if an item is wrong or a needed file is missing from the artifact contract, block with the exact reason instead of working around it. No static sections are removed and no limit is weakened.",
-    "input_resolution": "Resolved by the operator-provided unchanged actual hosted fixture on 2026-11-12. Prior measurements and both original 150000-byte failing assertions remain intact; the actual captured shape also fails the same bound."
-  },
   "hosted_fixture": {
     "path": "services/source_ingestion/tests/fixtures/hosted_registry_20261112.json",
     "provenance": "Operator-authorized exact complete existing source-owner registry GET, captured with a real viewer session; copied unchanged. No hosted access, credentials, provider calls or deployment by this worker.",
@@ -288,44 +165,66 @@
     "bff_image": "sha256:3a54a97f00a974c26c89bcd838975f2ec15c41e9efdb421ebc4d018369c3af1b",
     "bff_identity_stable_during_capture": true,
     "logout_status": 200,
-    "acceptance_limitations": "Input provenance only. Capture occurred while root run 43123219914 was publishing; FE metadata still named d9c730ea4/acf3efa. This is not final paired product acceptance. Original sole publisher retains hosted verification; no second deployment flow or Pattern/Prod/frozen pair change.",
-    "test_hydration": "Real SourceIngestionRuntime registers all seven captured connector identities/policies, persists all seven unchanged IngestReceipt.from_dict receipts, and executes original registry receipt selection and freshness projection. A test-only wrapper freezes every captured non-receipt row field because the GET payload is not the missing config/run/schedule/state journals. The real catalog controller and full receipt endpoint execute. Existing provider/catalog/universe generators are unchanged and compared to the capture; policy generation freezes only capture time/default infrastructure guards. Legacy HTTP response is asserted byte-identical to the 758698-byte capture; projected response is asserted identical at every field except latest_receipt. The local route timing includes this test-only preservation wrapper and is not hosted latency.",
-    "writer_proof": "Existing independent seven-provider reconstruction and real writer-generated 100-record/96-snapshot governed-calendar/24-close-lineage tests are retained unchanged, including their two size-limit failures."
+    "acceptance_limitations": "Input provenance only. Capture occurred while root run 43123219914 was publishing; FE metadata still named d9c730ea4/acf3efa. This is not final paired product acceptance. Original sole publisher retains hosted verification; no second deployment flow or Pattern/Prod/frozen pair change."
   },
-  "hosted_local_measurement": {
-    "method": "FastAPI TestClient, existing registry route, one warmup and five timed reads per variant on the complete unchanged captured shape; legacy projection uses IngestReceipt.to_dict. Non-receipt capture preservation is described in hosted_fixture.test_hydration.",
-    "wire_encoding": "UTF-8 compact response bytes, uncompressed",
-    "before": {
-      "bytes": 758698,
-      "median_ms": 31.46343400294427,
-      "samples_ms": [
-        31.46343400294427,
-        30.643196005257778,
-        31.576794004649855,
-        31.985138994059525,
-        30.773949998547323
-      ]
+  "current_measurements": {
+    "HOSTED_REGISTRY_BENCHMARK": {
+      "before": {
+        "bytes": 758698,
+        "median_ms": 35.502482001902536,
+        "samples_ms": [
+          35.502482001902536,
+          33.424330002162606,
+          30.958805000409484,
+          38.41351400478743,
+          38.769617007346824
+        ]
+      },
+      "after": {
+        "bytes": 176588,
+        "median_ms": 30.11801600223407,
+        "samples_ms": [
+          28.478574997279793,
+          31.944882008247077,
+          30.431230989051983,
+          29.97250101179816,
+          30.11801600223407
+        ]
+      },
+      "after_section_value_bytes": {
+        "schema_version": 30,
+        "connectors": 44686,
+        "provider_examples": 36592,
+        "policy_registry": 11860,
+        "financial_data_source_catalog": 70428,
+        "active_universe_policy": 12860
+      }
     },
-    "after": {
-      "bytes": 176588,
-      "median_ms": 27.38000199315138,
-      "samples_ms": [
-        28.182937996461987,
-        27.38000199315138,
-        27.060211999923922,
-        27.51414199883584,
-        27.304144998197444
-      ]
+    "REGISTRY_BENCHMARK": {
+      "before": {
+        "bytes": 983570,
+        "median_ms": 14.469970017671585,
+        "samples_ms": [
+          13.550274015869945,
+          13.307646004250273,
+          14.469970017671585,
+          16.992099001072347,
+          14.819582022028044
+        ]
+      },
+      "after": {
+        "bytes": 172550,
+        "median_ms": 10.225710982922465,
+        "samples_ms": [
+          9.72221398842521,
+          9.686650009825826,
+          10.225710982922465,
+          10.647474991856143,
+          12.974776996998116
+        ]
+      }
     },
-    "after_section_value_bytes": {
-      "schema_version": 30,
-      "connectors": 44686,
-      "provider_examples": 36592,
-      "policy_registry": 11860,
-      "financial_data_source_catalog": 70428,
-      "active_universe_policy": 12860
-    },
-    "scaling": {
+    "HOSTED_REGISTRY_SCALING": {
       "snapshot_counts": [
         0,
         4,
@@ -337,16 +236,367 @@
         176583,
         176587,
         176591
+      ]
+    }
+  },
+  "measurement_limits": "Local TestClient only: exact captured historical static replay and separate current-dev seven-adapter real writer reconstruction. Timings include disk reads and test-only wrappers; no hosted latency, browser, private/raw parity, tenant/auth or final paired acceptance claim. Original hosted owner STRAT-DATASRC-HOSTED-ACCEPT-20261110 retains those obligations. No VM/SSH/provider/business/data/secret operation or publisher432880 intervention.",
+  "unchanged_bff_budget": {
+    "path": "services/control-plane/bff/main.py",
+    "current_dev_default_seconds": 2.5,
+    "stage_prod_default_seconds": 0.75,
+    "change": "none; constants verified from current dev, not increased by this task"
+  },
+  "validation": [],
+  "historical_evidence_at_bf42eb38b06b8fec40dcda6849b7030470012762": {
+    "task_id": "SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "delivery_status": "incomplete_acceptance_2_actual_hosted_size_limit_failed",
+    "review_decision": "not_requested_draft_only",
+    "base_commit": "bee62bc2978618539984aff9db136b064adc14a0",
+    "scope": {
+      "owned_layer": "Source registry/freshness receipt read projection",
+      "changed": [
+        "services/source_ingestion/runtime.py",
+        "services/source_ingestion/tests/test_registry_receipt_summary.py",
+        "services/source_ingestion/tests/test_scheduled_connector.py",
+        "services/source_ingestion/tests/fixtures/hosted_registry_20261112.json",
+        "docs/deployment/evidence/SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111/evidence.json"
       ],
-      "difference_bytes": 8,
-      "result": "Only four counter widths grow. The fixed 150000-byte assertion fails for all four snapshot counts."
+      "unchanged": [
+        "BFF source and data-sources read budget",
+        "receipt persistence and full-receipt endpoint",
+        "market snapshot selection, writer and storage",
+        "catalog controller response sections, endpoints, caches and settings"
+      ]
     },
-    "excess_over_150000_bytes": 26588,
-    "non_connector_section_value_bytes": 131770,
-    "non_receipt_connector_value_bytes_with_latest_receipt_null": 39021,
-    "hypothetical_all_latest_receipt_null_response_bytes": 170923,
-    "lower_bound_method": "Diagnostic only: set all seven latest_receipt values to null in a copy of the exact captured JSON and serialize with ensure_ascii=False and compact separators. Every other field/section is unchanged. Even removing receipt contents entirely exceeds the 150000-byte target by 20923 bytes; this is not an implemented or acceptable receipt projection.",
-    "cause": "The full policy/provider/catalog/universe plus non-receipt connector metadata already exceeds the bound. Receipt-only projection cannot satisfy acceptance 2 without a separately authorized response/acceptance scope change.",
-    "limitations": "Local replay timings do not prove the unchanged BFF 0.75-second deadline or final hosted paired acceptance. Actual fixture retains original snapshots/calendar/lineage; the separate production-writer fixture proves growth and stored snapshot bytes are unchanged."
+    "fixture": {
+      "provenance": "Local reconstruction using seven production adapter definitions and LatestMarketSnapshotStore.append_normalized_records; not a captured hosted registry",
+      "missing_context": "The brief gives hosted sizes and receipt shape but does not include the actual seven persisted connector rows. The seven definitions below are explicit reconstruction choices, not a claim about hosted identities or metadata.",
+      "connector_ids": [
+        "tw-anue-news-rss",
+        "tw-finmind-datasets",
+        "tw-taifex-futures-options-chip",
+        "tw-tdcc-shareholding-distribution",
+        "tw-twse-tpex-official-market",
+        "tw-yahoo-broker-top15",
+        "tw-yahoo-stock-rss"
+      ],
+      "snapshot_writer": "services/source_ingestion/requirement_state.py:LatestMarketSnapshotStore.append_normalized_records",
+      "calendar_writer": "services/source_ingestion/connectors/taiwan_official.py:governed_taiwan_calendar_evidence(venue=TWSE, trade_date=2026-11-11)",
+      "calendar_version": "twse-2026-schedule-v1",
+      "historical_closes_per_symbol": 23,
+      "refresh_records": 100,
+      "accepted_record_count": 100,
+      "updated_snapshot_count": 96,
+      "closes_per_snapshot": 24,
+      "lineage": "Production writer generates connector_ids, source_ids, content_refs and ingest_run_ids from normalized records; each snapshot has 24 content refs and full governed calendar evidence.",
+      "market_snapshot_batch_bytes": 779206,
+      "evidence_lists": "100 source IDs, evidence item IDs, knowledge object IDs and per-source admitted distillation entries; receipt includes evidence_bundle_id"
+    },
+    "local_measurement": {
+      "method": "FastAPI TestClient GET /api/source-ingest/registry; one warmup plus five timed requests per variant; identical stored fixture; old behavior reproduced by binding the new projection helper to IngestReceipt.to_dict",
+      "wire_encoding": "UTF-8 compact response bytes, uncompressed",
+      "before": {
+        "bytes": 980304,
+        "median_ms": 34.439459996065125,
+        "samples_ms": [
+          44.08976901322603,
+          36.06427100021392,
+          32.6291749952361,
+          34.439459996065125,
+          25.391003000549972
+        ]
+      },
+      "after": {
+        "bytes": 169284,
+        "median_ms": 14.18849200126715,
+        "samples_ms": [
+          13.168782999855466,
+          14.18849200126715,
+          34.41525799280498,
+          24.94291499897372,
+          12.099850995582528
+        ]
+      },
+      "after_section_value_bytes": {
+        "schema_version": 30,
+        "connectors": 37423,
+        "provider_examples": 36592,
+        "policy_registry": 11819,
+        "financial_data_source_catalog": 70428,
+        "active_universe_policy": 12860
+      },
+      "section_size_note": "Sizes are independently serialized top-level values; the response adds keys, separators and braces. The provider/catalog/active-universe values sum to 119880 bytes.",
+      "scaling": {
+        "snapshot_counts": [
+          0,
+          4,
+          96,
+          960
+        ],
+        "response_bytes": [
+          169278,
+          169278,
+          169282,
+          169286
+        ],
+        "difference_bytes": 8,
+        "result": "Only decimal widths of the four changed counters grow; snapshot bodies and source ID lists are absent from the projection. The separate 150000-byte assertion still fails."
+      },
+      "limitations": "Local serialization/response measurements do not prove hosted latency or the BFF 0.75-second budget. No VM, SSH, operator key, or hosted access was used. Hosted acceptance belongs to STRAT-DATASRC-HOSTED-ACCEPT-20261110."
+    },
+    "receipt_contract": {
+      "schema_version": "source_ingest_receipt_summary.v1",
+      "preserved": [
+        "ingest_run_id",
+        "connector_id",
+        "status",
+        "trigger_type",
+        "trace_id",
+        "started_at",
+        "finished_at",
+        "created_at",
+        "source_timestamp",
+        "source_timestamp_status",
+        "raw_count",
+        "normalized_count",
+        "rejected_count",
+        "watermark",
+        "evidence_refs.evidence_bundle_id"
+      ],
+      "counts": [
+        "evidence_refs.source_id_count",
+        "evidence_refs.evidence_item_id_count",
+        "evidence_refs.knowledge_object_id_count",
+        "evidence_refs.distillation_admission_count",
+        "evidence_refs.market_snapshots.accepted_record_count",
+        "evidence_refs.market_snapshots.updated_snapshot_count",
+        "evidence_refs.market_snapshots.snapshot_count"
+      ],
+      "omitted_from_summary": [
+        "evidence lists",
+        "distillation admission entries",
+        "market snapshot bodies",
+        "storage_refs",
+        "typed_failure"
+      ],
+      "failure_visibility": "Freshness last_failure_at and last_typed_failure remain unchanged; the full receipt endpoint retains typed_failure.",
+      "full_receipt": "GET /api/source-ingest/receipts/{ingest_run_id} returns the unchanged IngestReceipt.to_dict payload. Regression compares every field, including every snapshot, calendar and lineage, and verifies receipt journal and snapshot store bytes before/after registry/freshness/detail reads."
+    },
+    "reader_audit": [
+      {
+        "path": "scripts/deploy_nonprod_vm.sh",
+        "reader": "bounded refresh freshness checks and TAIFEX warm-cache admission",
+        "latest_receipt_fields": [
+          "ingest_run_id",
+          "source_timestamp",
+          "finished_at",
+          "created_at"
+        ],
+        "compatibility": "All fields preserved at their existing paths. No evidence lists read."
+      },
+      {
+        "path": "scripts/project_market_data_to_bff_agora_surfaces.py",
+        "reader": "project",
+        "latest_receipt_fields": [
+          "ingest_run_id",
+          "source_proof_receipt_id (fallback)",
+          "receipt_id (fallback)"
+        ],
+        "compatibility": "ingest_run_id preserved. The two fallback aliases were never emitted by IngestReceipt.to_dict and are not removed fields; existing record proof/run fallbacks are unchanged."
+      },
+      {
+        "path": "services/control-plane/bff/console_gap/datasources.py",
+        "reader": "_sanitize_legacy_projection_row",
+        "latest_receipt_fields": [],
+        "compatibility": "Pass-through/redaction of the connector row; no evidence-list or snapshot-body dependency."
+      },
+      {
+        "path": "services/control-plane/bff/personas/service.py",
+        "reader": "_read_source_ingest_truth_locked and _source_truth_projection / _overlay_source_health_truth",
+        "latest_receipt_fields": [],
+        "compatibility": "Clones connector rows and freshness; health projection reads outer freshness scalars. Rich detail retains the now-bounded freshness projection without requiring full receipts."
+      },
+      {
+        "path": "services/source_ingestion/runtime.py",
+        "reader": "freshness and latest-record selection",
+        "latest_receipt_fields": [
+          "durable receipt status",
+          "durable receipt timestamps",
+          "durable receipt ingest_run_id"
+        ],
+        "compatibility": "Internal selection still receives the original durable IngestReceipt objects. Only emitted latest_receipt is projected."
+      },
+      {
+        "path": "scripts/test_dev_tw_market_refresh.py",
+        "reader": "local refresh harness",
+        "latest_receipt_fields": [
+          "ingest_run_id"
+        ],
+        "compatibility": "Harness fixtures preserve the same run-ID path; separate receipts endpoint remains full."
+      },
+      {
+        "path": "services/source_ingestion/tests/test_scheduled_connector.py",
+        "reader": "scheduled registry freshness assertion",
+        "latest_receipt_fields": [
+          "status"
+        ],
+        "compatibility": "Original assertions unchanged; adds summary schema/count checks plus full-receipt evidence-list readback."
+      },
+      {
+        "path": "services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py",
+        "reader": "rich vs compact persona projection tests",
+        "latest_receipt_fields": [
+          "synthetic payload used to test rich BFF clone behavior"
+        ],
+        "compatibility": "BFF source and these tests are unchanged; independent rich-projection behavior remains covered."
+      }
+    ],
+    "validation": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "exit_code": 0,
+        "result": "Checkout-scoped .venv-pantheon provisioned and import mapping verified."
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q -s services/source_ingestion/tests/test_registry_receipt_summary.py",
+        "exit_code": 1,
+        "result": "5 passed, 2 failed in 10.66s. Both failures are the retained acceptance-2 150000-byte assertions. All identity/status/count, empty evidence, full endpoint and unchanged stored-byte assertions pass. Final fixture chooses the 24 dates from the governed calendar trading_days, excluding holidays."
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_latest_market_snapshot.py scripts/test_project_market_data_to_bff_agora_surfaces.py scripts/test_dev_tw_market_refresh.py",
+        "exit_code": 124,
+        "result": "Timed out before terminal pytest summary. Not passed. Split follow-up batches below collect terminal results."
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_latest_market_snapshot.py scripts/test_project_market_data_to_bff_agora_surfaces.py",
+        "exit_code": 1,
+        "result": "79 passed, 1 failed in 46.05s. Failure: scripts/test_project_market_data_to_bff_agora_surfaces.py::test_projector_wrong_role_fails_closed, local mock server accepts viewer instead of raising expected 403. This test and projector/auth implementations are unchanged by this task; no unrelated fix or assertion relaxation is included."
+      },
+      {
+        "command": "timeout 360 .venv-pantheon/bin/python3 -m pytest -q -x scripts/test_dev_tw_market_refresh.py",
+        "exit_code": 0,
+        "result": "64 passed in 240.41s. The bounded foreground command completed and terminal output was collected."
+      },
+      {
+        "command": "timeout 30 .venv-pantheon/bin/python3 -m pytest -q scripts/test_project_market_data_to_bff_agora_surfaces.py::test_projector_wrong_role_fails_closed",
+        "exit_code": 1,
+        "result": "Same failure reproduced in isolation in 2.08s; no scheduled/source test ordering is needed to trigger it. Projector script, its test and runtime_auth_inbound.py are byte-identical to task base."
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_source_ingest_deploy_diagnostics_contract.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py",
+        "exit_code": 1,
+        "result": "26 passed, 1 failed in 23.24s. Failure: test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse rejects existing tw-finmind-broker-daily-report workflow connector. All six BFF compact/rich persona tests pass. Test and workflow inputs are byte-identical to base bee62bc29; no unrelated change is made."
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q -s services/source_ingestion/tests/test_registry_receipt_summary.py",
+        "exit_code": 1,
+        "result": "6 passed, 4 failed in 8.07s. All four failures are strict 150000-byte size assertions: the original two reconstruction failures remain unchanged, plus the complete captured shape and captured-shape scaling checks. Exact original wire bytes, all non-receipt fields, bounded growth, seven full receipt endpoint readbacks, receipt journal integrity and the independent writer snapshot-store integrity checks pass."
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_latest_market_snapshot.py",
+        "exit_code": 0,
+        "result": "52 passed in 33.77s; bounded foreground batch completed and terminal output collected."
+      }
+    ],
+    "existing_test_assertions_changed": [],
+    "test_changes": "No existing test or assertion is changed, weakened or deleted. Adds three exact hosted-shape tests with the same strict 150000-byte limit, unchanged full-receipt readback for all seven connectors, fixture hash/byte checks, and an explicit non-receipt preservation wrapper. Both prior size failures remain visible. The existing scheduled test additions remain as previously recorded.",
+    "blocker": {
+      "acceptance": 2,
+      "observed": "Complete actual hosted registry is 758698 bytes before and 176588 bytes after the receipt-only projection (26588 over the fixed 150000-byte target). Snapshot growth 0/4/96/960 produces 176583/176583/176587/176591 bytes. Even replacing every latest_receipt with null leaves 170923 bytes.",
+      "required_for_resumption": "Human/Ops must provide a scoped decision for the remaining non-receipt response overhead or revise the acceptance contract. The requested exact input now exists and is tested; another fixture request is not appropriate. Do not remove static sections, add endpoints/caches/settings or weaken the limit without explicit scoped authorization.",
+      "policy": "Brief requires exact sizes and cause to be reported before any scoped acceptance decision. PR #7200 remains draft and incomplete; no reviewer approval or done claim is made. Assigned Claude frozen-head review, required CI and native integrator remain required after a viable scope is authorized."
+    },
+    "historical_blocker": {
+      "acceptance": 2,
+      "observed": "The seven-production-definition fixture still returns 169284 bytes after receipt projection, above the required 150000 bytes. The size regression assertions are deliberately retained and failing.",
+      "required_for_resumption": "Supply the actual seven persisted registry rows as a task-authorized fixture to establish the brief's hosted shape, or revise the scoped acceptance/response-projection contract to address the remaining static catalog and connector metadata overhead. Do not claim this reconstruction proves the hosted seven rows exceed the bound.",
+      "policy": "Task brief: if an item is wrong or a needed file is missing from the artifact contract, block with the exact reason instead of working around it. No static sections are removed and no limit is weakened.",
+      "input_resolution": "Resolved by the operator-provided unchanged actual hosted fixture on 2026-11-12. Prior measurements and both original 150000-byte failing assertions remain intact; the actual captured shape also fails the same bound."
+    },
+    "hosted_fixture": {
+      "path": "services/source_ingestion/tests/fixtures/hosted_registry_20261112.json",
+      "provenance": "Operator-authorized exact complete existing source-owner registry GET, captured with a real viewer session; copied unchanged. No hosted access, credentials, provider calls or deployment by this worker.",
+      "captured_at": "2026-11-12T00:24:00.183101+00:00",
+      "wire_bytes": 758698,
+      "sha256": "01104cfb18918d5ef95b394219507f2ae7b74c9b44b3782930bbbf8a67abb1e2",
+      "connector_ids": [
+        "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+        "dev-paper-us-equity-simulation",
+        "hosted-all12-h12-01a11-20261023-9aeb-conn",
+        "hosted-all12-h12-01a11-20261026-d834-conn",
+        "hosted-all12-h12-claude-20261027-4923-conn",
+        "tw-taifex-futures-options-chip",
+        "tw-twse-tpex-official-market"
+      ],
+      "owner_read_elapsed_ms": 663.394,
+      "source_ingest_image": "sha256:238782113a721db91a65486ad79652510e3857fa44ab4ad4375a714208b0d5ef",
+      "source_ingest_source_sha": null,
+      "bff_source_sha": "bee62bc2978618539984aff9db136b064adc14a0",
+      "bff_image": "sha256:3a54a97f00a974c26c89bcd838975f2ec15c41e9efdb421ebc4d018369c3af1b",
+      "bff_identity_stable_during_capture": true,
+      "logout_status": 200,
+      "acceptance_limitations": "Input provenance only. Capture occurred while root run 43123219914 was publishing; FE metadata still named d9c730ea4/acf3efa. This is not final paired product acceptance. Original sole publisher retains hosted verification; no second deployment flow or Pattern/Prod/frozen pair change.",
+      "test_hydration": "Real SourceIngestionRuntime registers all seven captured connector identities/policies, persists all seven unchanged IngestReceipt.from_dict receipts, and executes original registry receipt selection and freshness projection. A test-only wrapper freezes every captured non-receipt row field because the GET payload is not the missing config/run/schedule/state journals. The real catalog controller and full receipt endpoint execute. Existing provider/catalog/universe generators are unchanged and compared to the capture; policy generation freezes only capture time/default infrastructure guards. Legacy HTTP response is asserted byte-identical to the 758698-byte capture; projected response is asserted identical at every field except latest_receipt. The local route timing includes this test-only preservation wrapper and is not hosted latency.",
+      "writer_proof": "Existing independent seven-provider reconstruction and real writer-generated 100-record/96-snapshot governed-calendar/24-close-lineage tests are retained unchanged, including their two size-limit failures."
+    },
+    "hosted_local_measurement": {
+      "method": "FastAPI TestClient, existing registry route, one warmup and five timed reads per variant on the complete unchanged captured shape; legacy projection uses IngestReceipt.to_dict. Non-receipt capture preservation is described in hosted_fixture.test_hydration.",
+      "wire_encoding": "UTF-8 compact response bytes, uncompressed",
+      "before": {
+        "bytes": 758698,
+        "median_ms": 31.46343400294427,
+        "samples_ms": [
+          31.46343400294427,
+          30.643196005257778,
+          31.576794004649855,
+          31.985138994059525,
+          30.773949998547323
+        ]
+      },
+      "after": {
+        "bytes": 176588,
+        "median_ms": 27.38000199315138,
+        "samples_ms": [
+          28.182937996461987,
+          27.38000199315138,
+          27.060211999923922,
+          27.51414199883584,
+          27.304144998197444
+        ]
+      },
+      "after_section_value_bytes": {
+        "schema_version": 30,
+        "connectors": 44686,
+        "provider_examples": 36592,
+        "policy_registry": 11860,
+        "financial_data_source_catalog": 70428,
+        "active_universe_policy": 12860
+      },
+      "scaling": {
+        "snapshot_counts": [
+          0,
+          4,
+          96,
+          960
+        ],
+        "response_bytes": [
+          176583,
+          176583,
+          176587,
+          176591
+        ],
+        "difference_bytes": 8,
+        "result": "Only four counter widths grow. The fixed 150000-byte assertion fails for all four snapshot counts."
+      },
+      "excess_over_150000_bytes": 26588,
+      "non_connector_section_value_bytes": 131770,
+      "non_receipt_connector_value_bytes_with_latest_receipt_null": 39021,
+      "hypothetical_all_latest_receipt_null_response_bytes": 170923,
+      "lower_bound_method": "Diagnostic only: set all seven latest_receipt values to null in a copy of the exact captured JSON and serialize with ensure_ascii=False and compact separators. Every other field/section is unchanged. Even removing receipt contents entirely exceeds the 150000-byte target by 20923 bytes; this is not an implemented or acceptable receipt projection.",
+      "cause": "The full policy/provider/catalog/universe plus non-receipt connector metadata already exceeds the bound. Receipt-only projection cannot satisfy acceptance 2 without a separately authorized response/acceptance scope change.",
+      "limitations": "Local replay timings do not prove the unchanged BFF 0.75-second deadline or final hosted paired acceptance. Actual fixture retains original snapshots/calendar/lineage; the separate production-writer fixture proves growth and stored snapshot bytes are unchanged."
+    }
   }
 }

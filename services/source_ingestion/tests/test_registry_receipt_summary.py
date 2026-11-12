@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from statistics import median
@@ -41,7 +41,9 @@ def hosted_registry_fixture(tmp_path, monkeypatch):
     journals. Freeze its non-receipt fields rather than inventing missing
     history. Real registered connectors, durable receipts, registry receipt
     selection, freshness projection and both HTTP routes still execute.
-    The separate writer fixture below exercises actual calendar/lineage writes.
+    The separate writer fixture below exercises current-dev catalogs and actual
+    calendar/lineage writes. Captured static sections stay pinned here even
+    when dev adds catalog entries after the capture.
     """
     wire = (Path(__file__).parent / "fixtures" / "hosted_registry_20261112.json").read_bytes()
     assert len(wire) == 758_698
@@ -86,6 +88,12 @@ def hosted_registry_fixture(tmp_path, monkeypatch):
 
     monkeypatch.setattr(runtime, "_source_connector_entries", frozen_rows_with_live_receipt_projection)
     monkeypatch.setattr(runtime, "_source_policy_registry_payload", frozen_capture_posture)
+    monkeypatch.setattr(runtime, "_provider_example_payloads",
+                        lambda: deepcopy(captured["provider_examples"]))
+    monkeypatch.setattr(
+        "services.source_ingestion.routers.catalog_controller.financial_data_source_catalog_payload",
+        lambda: deepcopy(captured["financial_data_source_catalog"]),
+    )
     app = FastAPI()
     app.include_router(create_catalog_controller_router(runtime))
     app.include_router(create_ingest_operations_router(runtime))
@@ -208,6 +216,59 @@ def _measure(client):
                       "samples_ms": elapsed}
 
 
+def _assert_fixed_receipt_projection(summary, receipt):
+    """Assert the public contract independently of the projection helper."""
+    full = receipt.to_dict()
+    scalar_fields = {
+        "ingest_run_id", "connector_id", "status", "trigger_type", "trace_id",
+        "started_at", "finished_at", "created_at", "source_timestamp",
+        "source_timestamp_status", "raw_count", "normalized_count",
+        "rejected_count", "watermark",
+    }
+    assert set(summary) == scalar_fields | {"schema_version", "evidence_refs"}
+    assert summary["schema_version"] == "source_ingest_receipt_summary.v1"
+    for key in scalar_fields:
+        assert summary[key] == full[key]
+    refs = full["evidence_refs"]
+    batch = refs.get("market_snapshots") or {}
+    assert summary["evidence_refs"] == {
+        "evidence_bundle_id": refs.get("evidence_bundle_id"),
+        "source_id_count": len(refs.get("source_ids") or []),
+        "evidence_item_id_count": len(refs.get("evidence_item_ids") or []),
+        "knowledge_object_id_count": len(refs.get("knowledge_object_ids") or []),
+        "distillation_admission_count": len(refs.get("distillation_admissions") or {}),
+        "market_snapshots": {
+            "accepted_record_count": batch.get("accepted_record_count", 0),
+            "updated_snapshot_count": batch.get("updated_snapshot_count", 0),
+            "snapshot_count": len(batch.get("snapshots") or []),
+        },
+    }
+
+
+def _assert_growth_preserves_payload_and_raw(runtime, client, response, receipt, baseline):
+    """Only four counter values may vary as evidence bodies grow."""
+    stored_before = runtime.SCHEDULE_STORE_PATH.read_bytes()
+    snapshot_path = runtime.LATEST_MARKET_SNAPSHOT_PATH
+    snapshots_before = snapshot_path.read_bytes() if snapshot_path.exists() else None
+    payload = response.json()
+    summary = _registry_receipt(payload, receipt.connector_id)
+    _assert_fixed_receipt_projection(summary, receipt)
+    assert runtime._connector_freshness_summary(receipt.connector_id)["latest_receipt"] == summary
+    detail = client.get(f"/api/source-ingest/receipts/{receipt.ingest_run_id}")
+    assert detail.status_code == 200
+    assert detail.json()["receipt"] == receipt.to_dict()
+    assert runtime.store.get_receipt(receipt.ingest_run_id).to_dict() == receipt.to_dict()
+    assert runtime.SCHEDULE_STORE_PATH.read_bytes() == stored_before
+    assert (snapshot_path.read_bytes() if snapshot_path.exists() else None) == snapshots_before
+    refs = summary["evidence_refs"]
+    refs["source_id_count"] = 0
+    for key in ("accepted_record_count", "updated_snapshot_count", "snapshot_count"):
+        refs["market_snapshots"][key] = 0
+    if baseline is not None:
+        assert payload == baseline
+    return payload
+
+
 def test_complete_hosted_registry_size_and_timing(hosted_registry_fixture, monkeypatch):
     _, client, receipts, captured, wire = hosted_registry_fixture
     with monkeypatch.context() as legacy:
@@ -225,7 +286,8 @@ def test_complete_hosted_registry_size_and_timing(hosted_registry_fixture, monke
         "before": before_metrics, "after": after_metrics, "after_section_value_bytes": sections,
     }))
     assert before_metrics["bytes"] == 758_698
-    assert after_metrics["bytes"] < 150_000
+    for receipt in receipts:
+        _assert_fixed_receipt_projection(_registry_receipt(after.json(), receipt.connector_id), receipt)
 
 
 def test_complete_hosted_receipts_remain_readable_and_stored_bytes_unchanged(hosted_registry_fixture):
@@ -254,24 +316,27 @@ def test_complete_hosted_snapshot_growth_changes_only_counts(hosted_registry_fix
     runtime, client, receipts, _, _ = hosted_registry_fixture
     receipt = receipts[-1]
     lengths = []
+    baseline = None
     for count in (0, 4, 96, 960):
         refs = deepcopy(receipt.evidence_refs)
         batch = refs["market_snapshots"]
         batch.update(snapshots=(batch["snapshots"] * 10)[:count],
                      accepted_record_count=count, updated_snapshot_count=count)
         refs["source_ids"] = [receipt.evidence_refs["source_ids"][0]] * count
-        runtime.store.upsert_receipt(replace(receipt, evidence_refs=refs))
+        grown_receipt = replace(receipt, evidence_refs=refs)
+        runtime.store.upsert_receipt(grown_receipt)
         response = client.get("/api/source-ingest/registry")
         assert response.status_code == 200
         summary = _registry_receipt(response.json(), receipt.connector_id)
         assert summary["evidence_refs"]["market_snapshots"]["snapshot_count"] == count
         assert summary["evidence_refs"]["source_id_count"] == count
         lengths.append(len(response.content))
+        baseline = _assert_growth_preserves_payload_and_raw(
+            runtime, client, response, grown_receipt, baseline)
     print("HOSTED_REGISTRY_SCALING=" + json.dumps({
         "snapshot_counts": [0, 4, 96, 960], "response_bytes": lengths,
     }))
     assert max(lengths) - min(lengths) <= 8
-    assert max(lengths) < 150_000
 
 
 def test_real_registry_size_and_local_before_after_timing(registry_fixture, monkeypatch):
@@ -285,7 +350,10 @@ def test_real_registry_size_and_local_before_after_timing(registry_fixture, monk
     assert _registry_receipt(before.json(), receipt.connector_id) == receipt.to_dict()
     assert _registry_receipt(after.json(), receipt.connector_id) == _receipt_summary(receipt)
     assert before_metrics["bytes"] > 700_000
-    assert after_metrics["bytes"] < 150_000
+    _assert_fixed_receipt_projection(_registry_receipt(after.json(), receipt.connector_id), receipt)
+    # Current-dev static sections are complete and identical in both variants.
+    for key in ("provider_examples", "financial_data_source_catalog", "active_universe_policy"):
+        assert after.json()[key] == before.json()[key]
     assert after_metrics["bytes"] < before_metrics["bytes"] / 4
 
 
@@ -319,9 +387,19 @@ def test_registry_and_freshness_are_bounded_and_full_receipt_unchanged(registry_
     assert runtime.LATEST_MARKET_SNAPSHOT_PATH.read_bytes() == snapshots_before
 
 
-def test_snapshot_and_evidence_list_growth_changes_only_counts(registry_fixture):
+def test_snapshot_and_evidence_list_growth_changes_only_counts(registry_fixture, monkeypatch):
     runtime, client, receipt = registry_fixture
+    # Elapsed wall time must not masquerade as receipt-driven payload growth.
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 12, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr("services.source_ingestion.runtime.datetime", FixedDatetime)
+    monkeypatch.setattr("services.source_ingestion.policy_registry.utc_now_iso",
+                        lambda: "2026-11-12T00:00:00Z")
     lengths = []
+    baseline = None
     try:
         for count in (0, 4, 96, 960):
             refs = dict(receipt.evidence_refs)
@@ -330,18 +408,20 @@ def test_snapshot_and_evidence_list_growth_changes_only_counts(registry_fixture)
                          accepted_record_count=count, updated_snapshot_count=count)
             refs["market_snapshots"] = batch
             refs["source_ids"] = [receipt.evidence_refs["source_ids"][0]] * count
-            runtime.store.upsert_receipt(replace(receipt, evidence_refs=refs))
+            grown_receipt = replace(receipt, evidence_refs=refs)
+            runtime.store.upsert_receipt(grown_receipt)
             response = client.get("/api/source-ingest/registry")
             assert response.status_code == 200
             summary = _registry_receipt(response.json(), receipt.connector_id)
             assert summary["evidence_refs"]["market_snapshots"]["snapshot_count"] == count
             assert summary["evidence_refs"]["source_id_count"] == count
             lengths.append(len(response.content))
+            baseline = _assert_growth_preserves_payload_and_raw(
+                runtime, client, response, grown_receipt, baseline)
     finally:
         runtime.store.upsert_receipt(receipt)
     # Only the decimal widths of four counters can change, never the bodies.
     assert max(lengths) - min(lengths) <= 8
-    assert max(lengths) < 150_000
 
 
 @pytest.mark.parametrize("status", ["processing", "failed", "rejected", "completed"])
