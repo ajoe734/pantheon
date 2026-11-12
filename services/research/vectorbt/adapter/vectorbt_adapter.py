@@ -86,6 +86,7 @@ class PreparedVectorbtDataset:
     total_bars: int
     dates_by_instrument: dict[str, tuple[str, ...]] = field(default_factory=dict)
     features_by_instrument: dict[str, dict[str, Any]] = field(default_factory=dict)
+    candidate_pool_market: dict[str, Any] | None = None
 
     def dataset_summary(self) -> dict[str, Any]:
         return {
@@ -256,6 +257,7 @@ class GovernedVectorbtInputAdapter:
             total_bars=total_bars,
             dates_by_instrument=dates_by_instrument,
             features_by_instrument=features_by_instrument,
+            candidate_pool_market=copy.deepcopy(dataset.get("candidate_pool_market")),
         )
 
     def _normalize_refs(self, dataset: Mapping[str, Any]) -> list[str]:
@@ -774,10 +776,59 @@ def _bar_features_for_index(
     return bar_features, decision_time
 
 
+def _screened_artifact_view_sequence(
+    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """Replay the production screen evaluator with explicit virtual holdings.
+
+    A complete market snapshot is required; parameters.symbols is a legacy
+    provisioning identity and does not restrict strategy-owned screens.
+    """
+    from services.registry.candidate_pool import canonical_symbol, evaluate_screened_views, _market
+    from services.registry.strategy_artifact import validate_strategy_artifact
+
+    validate_strategy_artifact(artifact)
+    try:
+        _, symbols = _market(dataset.candidate_pool_market)
+        keyed = {canonical_symbol(inst): inst for inst in dataset.instruments}
+        if set(keyed) != set(symbols):
+            raise ValueError("screen backtest records must cover the complete governed market")
+        dates = sorted({d for inst in dataset.instruments for d in dataset.dates_by_instrument.get(inst, ())})
+        if not dates:
+            raise ValueError("screen backtest requires dated bars")
+        by_instrument = {inst: [] for inst in dataset.instruments}
+        positions = {s: {"current_direction": "FLAT", "holding_bars": 0} for s in symbols}
+        instrument_days = {inst: set(dataset.dates_by_instrument[inst]) for inst in dataset.instruments}
+        for day in dates:
+            for position in positions.values():
+                if position["current_direction"] != "FLAT":
+                    position["holding_bars"] += 1
+            views = evaluate_screened_views(artifact, dataset.candidate_pool_market, day, positions=positions)
+            for symbol, inst in keyed.items():
+                view = views[symbol]
+                if day not in instrument_days[inst]:
+                    if view["action"] != "HOLD":
+                        raise ValueError(f"screen decision for {inst} lacks an execution bar on {day}")
+                    continue
+                by_instrument[inst].append(view)
+                previous = positions[symbol]
+                positions[symbol] = {
+                    "current_direction": view.get("target_direction", previous["current_direction"]),
+                    "holding_bars": view.get("holding_bars", previous["holding_bars"]),
+                }
+        return by_instrument
+    except (ValueError, TypeError) as exc:
+        raise VectorbtWorkflowError(f"screen evaluation failed: {exc}") from exc
+
+
 def _artifact_action_sequence(
     dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
 ) -> dict[str, list[str | None]]:
     """Per-bar evaluated actions (BUY/SELL/HOLD or None on warmup bars) from the Registry interpreter."""
+    if "screen" in artifact.get("strategy_logic", {}):
+        return {inst: [v["action"] for v in views]
+                for inst, views in _screened_artifact_view_sequence(dataset, artifact).items()}
+
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
     from services.registry.factor_rule import required_history_bars
     from services.registry.strategy_artifact import (
@@ -903,6 +954,10 @@ def _artifact_view_strength(
 
     if artifact is None:
         return None, None
+    if "screen" in artifact.get("strategy_logic", {}):
+        views = _screened_artifact_view_sequence(dataset, artifact)
+        by_instrument = {inst: [v["strength"] for v in seq] for inst, seq in views.items()}
+        return {inst: seq[-1] for inst, seq in by_instrument.items() if seq}, by_instrument
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
     from services.registry.factor_rule import required_history_bars
     from services.registry.strategy_artifact import (
@@ -991,7 +1046,17 @@ def _build_artifact_bundle(
     config: BacktestConfig,
 ) -> dict[str, Any]:
     strength_summary, _ = _artifact_view_strength(dataset, config.strategy_artifact)
+    screen_evidence = {}
+    if config.strategy_artifact and "screen" in config.strategy_artifact["strategy_logic"]:
+        sequences = _screened_artifact_view_sequence(dataset, config.strategy_artifact)
+        snapshots = {v["candidate_pool_digest"]: v["candidate_pool_snapshot"]
+                     for seq in sequences.values() for v in seq}
+        screen_evidence = {
+            "candidate_pool_snapshots": list(snapshots.values()),
+            "survivorship_limited": any(s["survivorship_limited"] for s in snapshots.values()),
+        }
     return {
+        **screen_evidence,
         "schema_version": "1.0",
         "artifact_family": "vectorbt_backtest",
         "framework": "vectorbt",
@@ -1137,6 +1202,7 @@ def _slice_prepared_dataset(
         total_bars=sum(bars_per_inst.values()),
         dates_by_instrument=dates_by_inst,
         features_by_instrument=features_by_inst,
+        candidate_pool_market=copy.deepcopy(dataset.candidate_pool_market),
     )
 
 
@@ -1563,6 +1629,22 @@ def run_replication_backtest_protocol(
         raise VectorbtWorkflowError(
             f"replication backtest protocol requires governed Taiwan market ('TW'); got {market!r}"
         )
+
+    screened = "screen" in strategy_artifact["strategy_logic"]
+    if screened:
+        from services.registry.candidate_pool import _market
+
+        try:
+            pool_market, _ = _market(dataset.get("candidate_pool_market"))
+        except ValueError as exc:
+            raise VectorbtWorkflowError(str(exc)) from exc
+        if not (pool_market.get("includes_delisted") is True and pool_market.get("includes_suspended") is True):
+            return {
+                "status": "survivorship_limited", "survivorship_limited": True,
+                "reason": "screen history does not attest delisted and suspended symbol coverage",
+                "strategy_artifact": _artifact_identity(strategy_artifact),
+                "source_dataset_refs": list(pool_market["source_refs"]),
+            }
 
     pit_days, pit_bars, history_details = _measure_pit_history(dataset, strategy_artifact)
     history_sufficient = pit_days >= min_pit_history_days and pit_bars >= min_pit_history_bars

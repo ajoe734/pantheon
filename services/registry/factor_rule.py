@@ -1878,6 +1878,8 @@ def evaluate_factor_rule_view(
     decision_time: str | datetime | date | None = None,
     holding_bars: int | None = None,
     current_direction: str | None = None,
+    symbol: str | None = None,
+    include_position_state: bool = False,
 ) -> dict[str, Any]:
     """Evaluate a ``factor_rule_v1`` artifact into a structured directional view.
 
@@ -1898,6 +1900,16 @@ def evaluate_factor_rule_view(
         parameters,
         mutation_surface if isinstance(mutation_surface, Mapping) else None,
     )
+
+    if "screen" in validated_logic:
+        from .candidate_pool import MARKET_FEATURE_KEY, evaluate_screened_view
+
+        if not symbol:
+            raise FactorRuleValidationError("screen requires the decision symbol")
+        return evaluate_screened_view(
+            strategy_artifact, (features or {}).get(MARKET_FEATURE_KEY), symbol,
+            decision_time, current_direction=current_direction, holding_bars=holding_bars,
+        )
 
     # Shared evaluator (research/vectorbt + paper): features may only enter through
     # the governed catalogue with timestamped point-in-time observations.
@@ -2016,13 +2028,16 @@ def evaluate_factor_rule_view(
         clamped_strength = 0.0
 
     latest_signal = float(signal_series[-1])
-    return {
+    result = {
         "action": action,
         "direction": direction,
         "signal": latest_signal,
         "momentum": latest_signal,
         "strength": clamped_strength,
     }
+    if include_position_state:
+        result.update(target_direction=pos_dir, holding_bars=bars_held)
+    return result
 
 
 def evaluate_factor_rule_action(
@@ -2033,6 +2048,7 @@ def evaluate_factor_rule_action(
     decision_time: str | datetime | date | None = None,
     holding_bars: int | None = None,
     current_direction: str | None = None,
+    symbol: str | None = None,
 ) -> str:
     """Evaluate a ``factor_rule_v1`` artifact and return ``BUY``, ``SELL``, or ``HOLD``."""
     view = evaluate_factor_rule_view(
@@ -2042,6 +2058,7 @@ def evaluate_factor_rule_action(
         decision_time=decision_time,
         holding_bars=holding_bars,
         current_direction=current_direction,
+        symbol=symbol,
     )
     return str(view["action"])
 

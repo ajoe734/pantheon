@@ -141,8 +141,21 @@ def _anchor(day: date, cadence: str) -> date:
 def _market(raw: Any) -> tuple[dict, dict[str, dict]]:
     if not isinstance(raw, Mapping) or raw.get("schema_version") != "candidate_pool_market.v1":
         raise fr.FactorRuleValidationError("screen requires candidate_pool_market.v1")
-    if raw.get("scope") != "all_governed_tw" or not raw.get("source_refs"):
+    source_refs = raw.get("source_refs")
+    if (raw.get("scope") != "all_governed_tw" or not isinstance(source_refs, list)
+            or not source_refs or not all(isinstance(s, str) and s.strip() for s in source_refs)):
         raise fr.FactorRuleValidationError("screen requires complete all_governed_tw market with source_refs")
+    sessions = raw.get("trading_sessions")
+    if (not isinstance(sessions, list) or not sessions
+            or not all(isinstance(s, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) for s in sessions)
+            or not raw.get("calendar_coverage_through")):
+        raise fr.FactorRuleValidationError("screen requires a governed trading calendar and coverage date")
+    try:
+        for session in sessions:
+            date.fromisoformat(session)
+        date.fromisoformat(raw["calendar_coverage_through"])
+    except (TypeError, ValueError) as exc:
+        raise fr.FactorRuleValidationError("invalid screen trading calendar") from exc
     symbols = raw.get("symbols")
     if not isinstance(symbols, Mapping) or not symbols:
         raise fr.FactorRuleValidationError("screen market symbols are missing")
@@ -184,10 +197,21 @@ def _features(payload: Mapping, cutoff: datetime) -> tuple[dict, list[float]]:
             for row in bars if field in row
         ]
         if observations:
-            features.setdefault(field, observations)
+            features[field] = observations
             if field == "close":
                 closes = [row["value"] for row in observations]
     return features, closes
+
+
+def _require_dated_inputs(inputs: list, features: Mapping) -> None:
+    # Screen inputs must be dated even when legacy per-symbol price evaluation
+    # admits aligned arrays. No price/vwap/close fallback is used here.
+    for spec in inputs:
+        rows = fr._lookup_raw_feature(features, name=spec["name"], dataset=spec["dataset"], field=spec["field"])
+        if not isinstance(rows, list) or not rows or not all(
+            isinstance(r, Mapping) and r.get("event_time") and r.get("available_time") for r in rows
+        ):
+            raise fr.FactorRuleValidationError(f"missing_dated_input:{spec['name']}")
 
 
 def _step_value(step: Mapping, logic: Mapping, payload: Mapping, parameters: Mapping,
@@ -197,14 +221,7 @@ def _step_value(step: Mapping, logic: Mapping, payload: Mapping, parameters: Map
     needed = refs | ({group} if group else set())
     inputs = [i for i in logic["inputs"] if i["name"] in needed]
     features, closes = _features(payload, cutoff)
-    # Screen inputs must be dated even when legacy per-symbol price evaluation
-    # admits aligned arrays. No price/vwap/close fallback is used here.
-    for spec in inputs:
-        rows = fr._lookup_raw_feature(features, name=spec["name"], dataset=spec["dataset"], field=spec["field"])
-        if not isinstance(rows, list) or not rows or not all(
-            isinstance(r, Mapping) and r.get("event_time") and r.get("available_time") for r in rows
-        ):
-            raise fr.FactorRuleValidationError(f"missing_dated_input:{spec['name']}")
+    _require_dated_inputs(inputs, features)
     env = fr.resolve_point_in_time_inputs({"inputs": inputs}, closes, features=features, decision_time=cutoff)
     score = fr.evaluate_factor_expression(step["expression"], env, parameters)
     industry = env[group][-1] if group else None
@@ -224,6 +241,8 @@ def build_candidate_pool_snapshot(artifact: Mapping, market: Mapping, decision_t
     screen = validated["screen"]
     raw, symbols = _market(market)
     day = _day(decision_time)
+    if date.fromisoformat(raw["calendar_coverage_through"]) < day:
+        raise fr.FactorRuleValidationError("screen trading calendar does not cover decision day")
     eligibility = screen["eligibility"]
     history = _param(eligibility["min_history_bars"], parameters, "history", integer=True)
     window = _param(eligibility["liquidity_window"], parameters, "liquidity", integer=True)
@@ -237,9 +256,8 @@ def build_candidate_pool_snapshot(artifact: Mapping, market: Mapping, decision_t
                 all_bars[symbol] = _visible_bars(payload, _cutoff(on))
             except fr.FactorRuleValidationError as exc:
                 reasons[symbol] = str(exc)
-        latest_day = max((
-            _day(rows[-1]["event_time"]) for rows in all_bars.values() if rows
-        ), default=None)
+        latest_day = max((date.fromisoformat(s) for s in raw["trading_sessions"]
+                          if date.fromisoformat(s) < on), default=None)
         for symbol, bars in all_bars.items():
             if not bars or _day(bars[-1]["event_time"]) != latest_day:
                 reasons[symbol] = "missing_prior_session"
@@ -251,7 +269,9 @@ def build_candidate_pool_snapshot(artifact: Mapping, market: Mapping, decision_t
                 reasons[symbol] = "insufficient_history"
             else:
                 values = [row.get("traded_value") for row in bars[-window:]]
-                if not all(fr._is_number(v) and v >= 0 for v in values):
+                if not all(fr._is_number(row.get("close")) and row["close"] > 0 for row in bars):
+                    reasons[symbol] = "invalid_price_history"
+                elif not all(fr._is_number(v) and v >= 0 for v in values):
                     reasons[symbol] = "missing_liquidity"
                 elif median(values) < min_value:
                     reasons[symbol] = "illiquid"
@@ -314,15 +334,13 @@ def build_candidate_pool_snapshot(artifact: Mapping, market: Mapping, decision_t
     return {**snapshot, "digest": digest(snapshot)}
 
 
-def evaluate_screened_view(artifact: Mapping, market: Mapping, symbol: str, decision_time: Any,
-                           *, current_direction: str | None = None,
-                           holding_bars: int | None = None) -> dict:
+def _member_view(artifact: Mapping, symbols: Mapping, snapshot: Mapping, symbol: str,
+                 decision_time: Any, current_direction: str | None,
+                 holding_bars: int | None) -> dict:
     """The shared screen/entry/exit entry point. Explicit holdings prevent phantom
     positions inferred from pre-membership signals. Feed owners supply the actual
     prior position; absent state starts flat (the research adapter replays it).
     """
-    snapshot = build_candidate_pool_snapshot(artifact, market, decision_time)
-    _, symbols = _market(market)
     key = canonical_symbol(symbol)
     hold = {"action": "HOLD", "direction": "FLAT", "signal": 0.0, "momentum": 0.0, "strength": 0.0}
     if snapshot["below_minimum"]:
@@ -347,10 +365,34 @@ def evaluate_screened_view(artifact: Mapping, market: Mapping, symbol: str, deci
         cutoff = fr._parse_timestamp_utc(decision_time, is_decision_time=True)
         features, closes = _features(symbols[key], cutoff)
         try:
+            _require_dated_inputs(logic["inputs"], features)
             view = fr.evaluate_factor_rule_view(
                 member, closes, features=features, decision_time=cutoff,
                 current_direction=current_direction or "FLAT", holding_bars=holding_bars or 0,
+                include_position_state=True,
             )
         except fr.FactorRuleValidationError as exc:
             view = {**hold, "hold_reason": f"missing_entry_input:{exc}"}
     return {**view, "candidate_pool_snapshot": snapshot, "candidate_pool_digest": snapshot["digest"]}
+
+
+def evaluate_screened_views(artifact: Mapping, market: Mapping, decision_time: Any,
+                            *, positions: Mapping[str, Mapping] | None = None) -> dict[str, dict]:
+    """Evaluate the whole governed market with one shared screen snapshot."""
+    snapshot = build_candidate_pool_snapshot(artifact, market, decision_time)
+    _, symbols = _market(market)
+    positions = {canonical_symbol(s): p for s, p in (positions or {}).items()}
+    keys = set(symbols) | positions.keys()
+    return {s: _member_view(
+        artifact, symbols, snapshot, s, decision_time,
+        positions.get(s, {}).get("current_direction"), positions.get(s, {}).get("holding_bars"),
+    ) for s in sorted(keys)}
+
+
+def evaluate_screened_view(artifact: Mapping, market: Mapping, symbol: str, decision_time: Any,
+                           *, current_direction: str | None = None,
+                           holding_bars: int | None = None) -> dict:
+    snapshot = build_candidate_pool_snapshot(artifact, market, decision_time)
+    _, symbols = _market(market)
+    return _member_view(artifact, symbols, snapshot, symbol, decision_time,
+                        current_direction, holding_bars)
