@@ -262,3 +262,113 @@ def test_strategy_spec_candidate_can_recommend_rapid_eval() -> None:
     assert match.matched_object_type == "strategy_spec"
     assert match.recommended_action.type == "run_rapid_eval"
     assert match.blockers == ()
+
+
+def _admitted_spec(strategy_id: str, **mechanism) -> dict:
+    return {
+        "strategy_id": strategy_id,
+        "title": "TWSE Momentum Rotation",
+        "hypothesis": "Momentum rotation remains effective on TWSE equities.",
+        "lifecycle_state": "approved",
+        "market_scope": {"symbols": ["2330"], "venues": ["TWSE"], "asset_classes": ["equity"],
+                         "frequency": "daily"},
+        "data_dependencies": [{"ref": "ohlcv", "kind": "dataset"},
+                              {"ref": "return labels", "kind": "feature_set"}],
+        "execution_profile": {"signal_schema_version": "research-signal-v1",
+                              "quantity_type": "PERCENT_PORTFOLIO", "execution_mode_hint": "paper",
+                              "rebalance_cadence": "swing"},
+        "governance": {"approval_required": True, "risk_profile": "medium"},
+        "provenance": {"source_kind": "workflow", "source_refs": ["note-momentum"],
+                       "created_at": "2026-06-09T00:00:00Z"},
+        "citation_bundle": {"evidence_refs": [{"ref_id": "evref-momentum-001"}]},
+        **mechanism,
+    }
+
+
+def test_mechanism_support_feeds_evidence_quality_and_untested_ranks_lower() -> None:
+    profile = extract_persona_strategy_profile(_persona())
+    specs = [
+        _admitted_spec("strat-untested", mechanism_status="mechanism_untested", mechanism_support=None),
+        _admitted_spec("strat-half", mechanism_status="tested", mechanism_support=0.5),
+        _admitted_spec("strat-supported", mechanism_status="tested", mechanism_support=1.0),
+        _admitted_spec("strat-plain"),  # no mechanism record at all behaves as untested
+    ]
+    matches = PersonaStrategyDiscoveryService().match_candidates(
+        profile, strategy_specs=specs, created_at="2026-06-10T00:00:00Z"
+    )
+    by_id = {m.matched_object_id: m for m in matches}
+    quality = {k: v.score_breakdown.evidence_quality for k, v in by_id.items()}
+    assert quality["strat-supported"] == quality["strat-untested"] + 3.0
+    assert quality["strat-half"] == quality["strat-untested"] + 1.5
+    assert quality["strat-plain"] == quality["strat-untested"]
+    # equal in every other factor: supported ranks above untested, untested is not blocked
+    assert by_id["strat-supported"].rank < by_id["strat-untested"].rank
+    assert by_id["strat-untested"].blockers == ()
+    assert by_id["strat-untested"].recommended_action.type == "run_rapid_eval"
+
+
+def test_nested_gate_mechanism_record_and_contradicted_blocker() -> None:
+    profile = extract_persona_strategy_profile(_persona())
+    supported = _admitted_spec("strat-nested", mechanism={"mechanism_status": "tested", "mechanism_support": 1.0})
+    contradicted = _admitted_spec("strat-contradicted", mechanism_status="contradicted", mechanism_support=0.0)
+    matches = PersonaStrategyDiscoveryService().match_candidates(
+        profile, strategy_specs=[supported, contradicted], created_at="2026-06-10T00:00:00Z"
+    )
+    by_id = {m.matched_object_id: m for m in matches}
+    assert by_id["strat-nested"].score_breakdown.evidence_quality > 0
+    assert "mechanism_contradicted" in by_id["strat-contradicted"].blockers
+    assert by_id["strat-contradicted"].recommended_action.type == "ignore"
+
+
+def test_gate_to_registry_to_persona_ranks_supported_above_untested_without_injection(monkeypatch) -> None:
+    """Real gate -> promotion/draft builders -> registry read projection -> persona scorer."""
+    import urllib.parse  # noqa: F401
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.ports.research_knowledge_source import (
+        DefaultResearchKnowledgeSourcePort,
+    )
+    from services.registry.promotion.gate import PromotionGate
+    from services.research.replication.gate import create_promotion_request
+    from services.research.replication.tests.test_gate_mechanism import EVENT, evaluate, gate_request
+
+    items = []
+    for sid, predictions in (("strat-gate-untested", None), ("strat-gate-supported", [EVENT("-")])):
+        gate, response = evaluate(predictions, mechanism_alpha=0.5)
+        assert response.passed
+        spec = _admitted_spec(sid)
+        promotion = create_promotion_request(response, gate_request(gate, None).proposed_strategy_spec)
+        draft = PromotionGate.build_draft_entry_from_replication_request(
+            promotion, strategy_id=sid, checksum="sha256:test"
+        )
+        # the registry stores the draft entry; the spec rides in metadata beside the gate's record
+        items.append({
+            **{k: v for k, v in draft.items() if k != "metadata"},
+            "metadata": {**draft.get("metadata", {}), "strategy_spec": spec},
+            "artifact_state": "approved",
+            "owner_tenant": "tenant-dev",
+        })
+
+    monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: items)
+    monkeypatch.setattr(adapter_base, "registry_url", lambda path: "http://registry" + path)
+    monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda **k: "tenant-dev")
+    token = owner_reads.authorization.set("Bearer test")
+    try:
+        specs = DefaultResearchKnowledgeSourcePort()._fetch_canonical_strategy_specs_uncached()
+    finally:
+        owner_reads.authorization.reset(token)
+
+    projected = {s["strategy_id"]: s["metadata"] for s in specs}
+    assert projected["strat-gate-supported"]["mechanism_support"] == 1.0
+    assert projected["strat-gate-untested"].get("mechanism_support") is None
+
+    matches = PersonaStrategyDiscoveryService().match_candidates(
+        extract_persona_strategy_profile(_persona()),
+        strategy_specs=specs,
+        created_at="2026-06-10T00:00:00Z",
+    )
+    by_id = {m.matched_object_id: m for m in matches}
+    supported, untested = by_id["strat-gate-supported"], by_id["strat-gate-untested"]
+    assert supported.score_breakdown.evidence_quality == untested.score_breakdown.evidence_quality + 3.0
+    assert supported.rank < untested.rank
+    assert untested.blockers == ()

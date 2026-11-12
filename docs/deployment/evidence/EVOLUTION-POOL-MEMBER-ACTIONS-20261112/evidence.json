@@ -6,8 +6,9 @@
   "review": {
     "status": "pending_independent_review"
   },
-  "base_commit": "2e9d3f2849219b58fa644619ef5837f6b0a8becf",
+  "base_commit": "caec3f40727c6bf7dd73c710625deff81b5fd4eb",
   "source_anchors": [
+    "9a50232a40c767ab89fa35ca8e6dad03281ac6b3",
     "c1a8086fcb66bce9da62552501248f2744fa9287",
     "56b839151c9f9cf898368a8a43d5e99dd07f93fe",
     "4566b9cc3a21b1fbcdefd61c10709e4e58e6f131",
@@ -42,7 +43,7 @@
       "exit_code": 0,
       "result": "185 passed, 243 warnings, 27 subtests passed in 51.30s",
       "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/post-rebase.txt",
-      "note": "After rebase onto the recorded dev base; final source includes the publication reconciliation and trial-accounting guards."
+      "note": "Completed on dev 70a5bb860e855beacd14445c29bff64ccfa7e8f2 before later base refreshes and member-ref/fresh-window hardening; final composition is verified separately below."
     },
     {
       "command": "git diff --check",
@@ -69,6 +70,13 @@
       "result": "10 passed, 80 warnings in 8.40s",
       "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/mechanism-context.txt",
       "note": "Approved card/predictions/mechanism inputs are transported outside schema-only StrategySpec fields for composition with the incoming mechanism gate."
+    },
+    {
+      "command": "timeout 120 env NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/persona-portfolio-venv/bin/python -m pytest services/evolution/test_pool_evolution_scheduler.py services/evolution/test_approved_baselines.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_pool_evolution_integration.py services/research/alpha_replication/test_evolution_search.py services/research/replication/tests/test_gate_mechanism.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/bff/tests/test_persona_pool_publish_route.py -q --disable-warnings --maxfail=1",
+      "exit_code": 0,
+      "result": "124 passed, 631 warnings, 18 subtests passed in 63.40s (0:01:03)",
+      "log": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/composition-final.txt",
+      "note": "Final composed source on dev caec3f40727c6bf7dd73c710625deff81b5fd4eb, including incoming mechanism-stage gate, registry promotion metadata, new BFF imports, registry-ref identity and the fresh-window guard."
     }
   ],
   "nonpassing_batches": [
@@ -191,7 +199,8 @@
     "services/research/tests/test_pool_evolution_integration.py": "2cdc53103e061eec75d514aee31dc56c637c0ec1c07bd95dbe5ce0bebcd2db90",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/member-ref-final.txt": "70e3bda30b3ba4eee375d62c62fdf7a79d00443e03d2f9280b6178c123023086",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/fresh-window-final.txt": "9fb32df0b48d8baa7710a86fb592cd625c8099e66b58e74e265ec784ec13913e",
-    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/mechanism-context.txt": "4632cffac63226f80d83b54d6e699119c7a9724ebe65690934837be94c77c02e"
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/mechanism-context.txt": "4632cffac63226f80d83b54d6e699119c7a9724ebe65690934837be94c77c02e",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/composition-final.txt": "bbfe27d1034f241ba5d6a07371f3f9658c095cb74bfeb3190fb0736bddf9cc33"
   },
   "base_refresh": {
     "previous_base": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
@@ -201,5 +210,55 @@
       "docs/deployment/evidence/INTRADAY-STORE-RUNTIME-CONFIG-20261112/evidence.json"
     ],
     "verification": "No task-owned source changed; all 35 recorded artifact hashes still match. Normal merge refresh preserves the already published task history without force pushing."
-  }
+  },
+  "base_refresh_history": [
+    {
+      "previous_base": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
+      "current_base": "2e9d3f2849219b58fa644619ef5837f6b0a8becf",
+      "upstream_files": [
+        "docker-compose.yml",
+        "docs/deployment/evidence/INTRADAY-STORE-RUNTIME-CONFIG-20261112/evidence.json"
+      ],
+      "verification": "No task-owned source changed; all 35 recorded artifact hashes still match. Normal merge refresh preserves the already published task history without force pushing."
+    },
+    {
+      "previous_base": "2e9d3f2849219b58fa644619ef5837f6b0a8becf",
+      "current_base": "caec3f40727c6bf7dd73c710625deff81b5fd4eb",
+      "upstream_files": [
+        "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/README.md",
+        "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/composition-tests.txt",
+        "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/dev-composition-tests.txt",
+        "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/evidence.json",
+        "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/human-evidence-tests.txt",
+        "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/postgres-regression-tests.txt",
+        "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/refreshed-regression-tests.txt",
+        "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/regression-tests.txt",
+        "docs/deployment/evidence/AGORA-LEARNING-EVIDENCE-RESTORE-20261112/route-manifest-check.txt",
+        "docs/deployment/evidence/GATE-MECHANISM-STAGE-R2-20261112/evidence.json",
+        "services/agora/service.py",
+        "services/agora/store.py",
+        "services/control-plane/bff/agora/dataset_extraction/router.py",
+        "services/control-plane/bff/agora/evidence/__init__.py",
+        "services/control-plane/bff/agora/evidence/router.py",
+        "services/control-plane/bff/agora/evidence/worker.py",
+        "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+        "services/control-plane/bff/core/app_factory.py",
+        "services/control-plane/bff/ports/research_knowledge_source.py",
+        "services/control-plane/bff/tests/test_agora_human_evidence.py",
+        "services/control-plane/persona/persona_strategy_discovery.py",
+        "services/control-plane/persona/test_persona_strategy_discovery.py",
+        "services/registry/promotion/gate.py",
+        "services/research/alpha_replication/revalidation_worker.py",
+        "services/research/alpha_replication/test_revalidation_worker.py",
+        "services/research/replication/GATE_CONTRACT.md",
+        "services/research/replication/fixtures/recorded_mechanism_tw.json",
+        "services/research/replication/gate.py",
+        "services/research/replication/gate_config.py",
+        "services/research/replication/mechanism_tests.py",
+        "services/research/replication/test_gate.py",
+        "services/research/replication/tests/test_gate_mechanism.py"
+      ],
+      "verification": "124 passed, 631 warnings, 18 subtests passed in 63.40s (0:01:03); inherited upstream changes are unchanged as the second merge parent; task artifact hashes remain exact."
+    }
+  ]
 }
