@@ -167,7 +167,9 @@ def test_degraded_runs_create_nothing_and_are_recorded(tmp_path):
         out = _run(tmp_path, fetch)
         assert out["status"] == "degraded" and out["created"] == 0 and _proposals(log) == []
     state = pea.Store(tmp_path / "state.json").load()
-    assert state["last_run"]["status"] == "degraded" and state["results"] == {}
+    assert state["last_run"]["status"] == "degraded"
+    assert next(iter(state["results"].values()))["items"] == []
+    assert next(iter(state["results"].values()))["agent_status"] == "unavailable"
 
 
 def test_unavailable_evidence_records_degraded_and_creates_nothing(tmp_path):
@@ -608,3 +610,142 @@ def test_collect_pool_health_records_the_reason_when_the_pool_is_missing(tmp_pat
     assert got["p2"]["risk_budget_factor"] == 1.0 and "pool health unavailable" in got["p2"]["reason"]
     none = pea.collect_pool_health(["p1"], persona_url="http://persona", token="", tenant="t1", fetch=_cycle_fetch([]))
     assert none["p1"]["risk_budget_factor"] == 1.0 and none["p1"]["status"] == "unavailable"
+
+
+def _promotion_item(pid="p1", *, days=30, orders=20, score=90, rank=1):
+    from datetime import timedelta
+    start = pea.datetime(2026, 7, 1, tzinfo=pea.timezone.utc)
+    refs = [{"ref_id": f"event-{n}", "source_type": "quarter_equity",
+             "observed_at": (start + timedelta(days=n)).isoformat()} for n in range(days)]
+    return {**_item(pid, score=score), "rank": rank, "exclusion_codes": [],
+            "formula_version": "pm12-return-on-capital-v2", "evidence_ref_ids": ["ev-" + pid],
+            "metrics": {"pnl_return_status": "known", "pnl_return": 0.9,
+                        "drawdown_status": "known", "drawdown": 0.01,
+                        "pnl_period": {"quarter": QUARTER}, "fill_rate": 0.99,
+                        "telemetry_evidence_refs": refs,
+                        "fill_rate_details": {"status": "known", "window": {"quarter": QUARTER}, "sources": [
+                            {"runtime_id": "r1", "binding_id": "b1", "order_id": f"o{n}",
+                             "submitted_at": start.isoformat(), "submitted_quantity": 10, "filled_quantity": 9,
+                             "event_ids": [f"submit-{n}", f"fill-{n}"]} for n in range(orders)]}}}
+
+
+def _seed_promotion(tmp_path, items=None):
+    items = items if items is not None else [_promotion_item()]
+    snapshot = pea.snapshot_record(items, surface="quarterly", period=QUARTER)
+    pea.admit_snapshot(pea.build_rankings_store(), snapshot)
+    store = pea.Store(tmp_path / "state.json")
+    store.update(lambda s: s.update(latest={QUARTER: snapshot.ranking_snapshot_id}, results={
+        f"{QUARTER}|{snapshot.ranking_snapshot_id}": {"items": [], "run_id": "r", "evaluated_at": "t"}}))
+    return store, snapshot
+
+
+def _promotion_fetch(log, *, agent_down=False, gov_down=False, probe=False, tenant="t1"):
+    def fetch(url, data=None, headers=None, timeout=20):
+        log.append((url, data))
+        if "/api/personas/" in url:
+            return {"persona_id": "p1", "tenant_id": tenant, "metadata": {"acceptance_probe": probe}}
+        if "/structured" in url:
+            if agent_down:
+                raise OSError("agent down")
+            return {"data": {"output": {"structured_data": {"rationale": "Fixed evidence supports nomination."}}}}
+        if gov_down:
+            raise TimeoutError("outcome unknown")
+        return {**data, "metadata": {"subject": data["subject"]}, "decision_state": "proposed"}
+    return fetch
+
+
+def _promote(store, fetch, **kwargs):
+    return pea.promotion_once(store=store, tenant="t1", actor="evaluator", governance_url="http://gov",
+                              governance_token="g", persona_url="http://persona", persona_token="p",
+                              adapter_url="http://ad", adapter_token="a", fetch=fetch,
+                              now=lambda: NEXT_QUARTER_NOW, **kwargs)
+
+
+def test_fixed_promotion_survives_agent_outage_and_rerun_and_catchup(tmp_path):
+    store, snapshot = _seed_promotion(tmp_path)
+    log = []
+    first = _promote(store, _promotion_fetch(log, agent_down=True))
+    assert first["status"] == "proposed", first
+    assert first["recommendation"]["provider"] == "fixed_rule"
+    assert first["request"]["body"]["target_type"] == pea.PROMOTION_TARGET
+    assert first["request"]["body"]["target_version"] == snapshot.ranking_snapshot_id
+    assert _promote(pea.Store(store.path), _promotion_fetch(log))["reused"] is True
+    # A different later snapshot for this closed quarter must never nominate a second persona.
+    store.update(lambda s: s["latest"].update({QUARTER: "later-snapshot"}))
+    assert _promote(store, _promotion_fetch(log))["decision_id"] == first["decision_id"]
+    assert len(_proposals(log)) == 1
+    assert "observed_trading_days" in first["recommendation"]["rationale"]
+
+
+@pytest.mark.parametrize("items,reason", [
+    ([_promotion_item(), _promotion_item("p2", rank=1)], "rank_one_tie"),
+    ([_promotion_item(), _promotion_item("p2", rank=2)], "rank_one_tie_or_inconsistent_order"),
+    ([_promotion_item(days=29)], "insufficient_quarter_sample"),
+    ([_promotion_item(orders=19)], "insufficient_quarter_sample"),
+    ([_promotion_item() | {"eligible": False}], "rank_one_excluded_or_eligibility_unknown"),
+    ([_promotion_item() | {"exclusion_codes": ["release_probe"]}], "rank_one_excluded_or_eligibility_unknown"),
+    ([_promotion_item() | {"score": None}], "unknown_ranking_metric"),
+    ([_promotion_item() | {"metrics": {}}], "unknown_ranking_metric"),
+    ([_promotion_item() | {"formula_version": "unknown"}], "unknown_ranking_formula"),
+])
+def test_promotion_fail_closed_records_readable_reason(tmp_path, items, reason):
+    store, snapshot = _seed_promotion(tmp_path, items)
+    log = []
+    record = _promote(store, _promotion_fetch(log))
+    assert record["reason"] == reason
+    assert _proposals(log) == []
+    assert store.load()["last_promotion"]["reason"] == reason
+    if record["status"] == "no_nomination":
+        assert pea.saved_result(store.load(), QUARTER, snapshot.ranking_snapshot_id)["promotion_nomination"][0]["reason"] == reason
+
+
+@pytest.mark.parametrize("probe,tenant,reason", [(True, "t1", "release_or_acceptance_probe"),
+                                                (False, "foreign", "persona_identity_or_tenant_mismatch")])
+def test_probe_or_foreign_persona_is_never_nominated(tmp_path, probe, tenant, reason):
+    store, _ = _seed_promotion(tmp_path)
+    log = []
+    assert _promote(store, _promotion_fetch(log, probe=probe, tenant=tenant))["reason"] == reason
+    assert _proposals(log) == []
+
+
+def test_unknown_governance_outcome_replays_frozen_request(tmp_path):
+    store, _ = _seed_promotion(tmp_path)
+    log = []
+    assert _promote(store, _promotion_fetch(log, gov_down=True))["status"] == "degraded"
+    assert _promote(pea.Store(store.path), _promotion_fetch(log))["status"] == "proposed"
+    proposals = _proposals(log)
+    assert len(proposals) == 2 and proposals[0] == proposals[1]
+
+
+def test_promotion_config_and_sample_identity_deduplication(tmp_path):
+    item = _promotion_item(days=2, orders=1)
+    item["metrics"]["fill_rate_details"]["sources"] *= 50
+    item["metrics"]["telemetry_evidence_refs"] *= 40
+    candidate, summary = pea.nomination_rule([item], QUARTER, min_days=3, min_orders=2)
+    assert candidate is None and summary["observed_trading_days"] == 2 and summary["filled_orders"] == 1
+    store, _ = _seed_promotion(tmp_path, [item])
+    assert _promote(store, _promotion_fetch([]), min_days=2, min_orders=1)["status"] == "proposed"
+
+
+def test_agent_cannot_choose_promotion():
+    assert "promote_to_canary_candidate" not in pea.ACTIONS
+    fetch, _ = _fetch([_item("p1")], [_rec("p1", "promote_to_canary_candidate")])
+    assert pea.ask_agent([{"persona_id": "p1", "evidence_ref_ids": ["ev-p1"]}], "http://ad", "t", fetch) == []
+
+
+@pytest.mark.parametrize('metadata', [{'data_scope': 'acceptance'}, {'is_acceptance': 'true'}, {'release_probe': True}])
+def test_canonical_test_scope_always_excludes_nomination(metadata):
+    assert pea._probe_persona({'persona_id': 'ordinary-name', 'metadata': metadata})
+    assert not pea._probe_persona({'persona_id': 'ordinary-name', 'metadata': {'acceptance_probe': False}})
+
+
+def test_promotion_threshold_environment_is_configurable_and_invalid_values_fail_closed(tmp_path, monkeypatch):
+    store, _ = _seed_promotion(tmp_path, [_promotion_item(days=2, orders=1)])
+    monkeypatch.setenv('PERSONA_EVALUATOR_PROMOTION_MIN_TRADING_DAYS', '2')
+    monkeypatch.setenv('PERSONA_EVALUATOR_PROMOTION_MIN_FILLED_ORDERS', '1')
+    assert _promote(store, _promotion_fetch([]))['status'] == 'proposed'
+    store, _ = _seed_promotion(tmp_path / 'invalid')
+    monkeypatch.setenv('PERSONA_EVALUATOR_PROMOTION_MIN_FILLED_ORDERS', '0')
+    log = []
+    assert _promote(store, _promotion_fetch(log))['reason'] == 'invalid_sample_thresholds'
+    assert _proposals(log) == []

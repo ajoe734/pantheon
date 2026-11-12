@@ -5,8 +5,10 @@ evidence refs are read-only inputs), asks one agent (via the openclaw gateway
 structured-extraction route, which pins a data-only tool and denies every native
 tool) which supported recommendation each persona warrants, and persists the
 result keyed by quarter + ranking snapshot. The BFF and Human Inbox only read
-that saved result. The agent can only return recommendations; this process admits snapshots to Rankings and submits a governance ``persona_lifecycle_transition`` proposal for a
-supported lifecycle recommendation. It never decides, approves or applies one.
+that saved result. The agent can return non-promotion advice and write nomination rationale. This
+process admits snapshots to Rankings, submits existing lifecycle proposals, and
+uses fixed quarter-close rules for record-only ``paper_canary_candidacy``
+proposals. It never decides, approves or applies a proposal.
 """
 from __future__ import annotations
 
@@ -33,7 +35,6 @@ MAX_SNAPSHOTS_KEPT = 20
 MAX_PATTERN_PERSONAS = 200
 DEDUPE_TTL_SECONDS = 7 * 86400
 ACTIONS = (
-    "promote_to_canary_candidate",
     "increase_research_budget",
     "grant_tool_access",
     "reduce_capital_access",
@@ -290,16 +291,24 @@ def run_once(
     moment = datetime.fromtimestamp(now(), timezone.utc)
     quarter = quarter_of(moment)
     try:
-        items, snapshot = collect_evidence(bff_url, quarter, bff_headers, fetch)
+        items, snapshot = collect_evidence(bff_url, quarter, {**bff_headers, "X-Tenant-Id": tenant}, fetch)
         try:
             admitted = admit_snapshot(ranking_store if ranking_store is not None else build_rankings_store(), snapshot)
         except Exception as exc:
             raise Degraded(f"ranking snapshot admission unavailable: {exc}") from exc
         snapshot_id = admitted.ranking_snapshot_id
         saved = store.load()["results"].get(f"{quarter}|{snapshot_id}")
-        if saved:
-            recs, reused = saved["items"], True  # refresh/retry/restart reads the same recommendation
+        if saved and saved.get("agent_status") != "unavailable":
+            recs, reused = [r for r in saved["items"] if r.get("action_id") in ACTIONS], True  # refresh/retry/restart reads the same recommendation
         else:
+            def remember_admission(state):
+                state["latest"][quarter] = snapshot_id
+                state["results"][f"{quarter}|{snapshot_id}"] = {
+                    "ranking_snapshot_id": snapshot_id, "items": [], "agent_status": "unavailable",
+                    "evaluated_at": moment.isoformat(), "run_id": None,
+                    "paper_persona_ids": sorted(i["persona_id"] for i in items if i.get("stage") == "paper_running"),
+                }
+            store.update(remember_admission)
             recs = [
                 {**r, "recommendation_id": f"pm12-{quarter.lower()}-{r['persona_id']}-{r['action_id']}",
                  "ranking_snapshot_id": snapshot_id, "quarter": quarter, "governance_request": None}
@@ -520,6 +529,227 @@ def paper_cycle_once(
 
 
 
+# Record-only candidacy is deliberately distinct from lifecycle transitions.
+PROMOTION_TARGET = "paper_canary_candidacy"
+
+
+def promotion_content(rec: dict[str, Any]) -> dict[str, Any]:
+    return {k: rec[k] for k in ("persona_id", "quarter", "ranking_snapshot_id", "from_stage", "to_stage",
+                               "rule_summary", "rationale", "evidence_ref_ids")}
+
+
+def _probe_persona(persona: dict[str, Any]) -> bool:
+    metadata = persona.get("metadata") or {}
+    text = json.dumps({k: persona.get(k) for k in ("persona_id", "id", "name", "mandate")}).lower()
+    text += " ".join(str(v).lower() for v in metadata.values() if isinstance(v, str))
+    if any(str(source.get(k) or "").lower() in {"test", "acceptance", "fixture", "synthetic"}
+           for source in (persona, metadata) for k in ("data_scope", "dataScope")):
+        return True
+    if any(str(source.get(k) or "").lower() in {"true", "1", "yes"}
+           for source in (persona, metadata) for k in ("is_test", "test_data", "acceptance_run", "is_acceptance")):
+        return True
+    return ("probe" in text and any(word in text for word in ("release", "acceptance"))) or any(
+        metadata.get(k) is True for k in ("is_probe", "release_probe", "acceptance_probe", "is_test"))
+
+
+def nomination_rule(items: list[dict[str, Any]], quarter: str, *, min_days: int, min_orders: int) -> tuple[Any, dict[str, Any]]:
+    """Only saved owner facts count. No elapsed-day, fill-count or rolling-metric proxies."""
+    summary: dict[str, Any] = {"rule": "paper-canary-quarter-v1", "min_observed_trading_days": min_days,
+                               "min_filled_orders": min_orders}
+    def refuse(reason: str):
+        return None, {**summary, "reason": reason}
+    if min_days < 1 or min_orders < 1:
+        return refuse("invalid_sample_thresholds")
+    paper = [i for i in items if i.get("stage") == "paper_running"]
+    if not paper:
+        return refuse("no_paper_personas")
+    if any(_fraction(i.get("score")) is None or i.get("rank") is None for i in paper):
+        return refuse("unknown_ranking_metric")
+    top = [i for i in paper if i.get("rank") == 1 and not isinstance(i.get("rank"), bool)]
+    if len(top) != 1:
+        return refuse("rank_one_tie" if len(top) > 1 else "no_rank_one_paper_persona")
+    candidate = top[0]
+    summary.update(persona_id=candidate["persona_id"], rank=1, score=candidate["score"])
+    if any(i is not candidate and i["score"] >= candidate["score"] for i in paper):
+        return refuse("rank_one_tie_or_inconsistent_order")
+    if candidate.get("eligible") is not True or candidate.get("exclusion_codes") != []:
+        return refuse("rank_one_excluded_or_eligibility_unknown")
+    metrics = candidate.get("metrics") or {}
+    if any(metrics.get(k + "_status") != "known" or _fraction(metrics.get(k)) is None
+           for k in ("pnl_return", "drawdown")):
+        return refuse("unknown_ranking_metric")
+    fill = metrics.get("fill_rate_details") or {}
+    if (fill.get("status") != "known" or _fraction(metrics.get("fill_rate")) is None
+            or (fill.get("window") or {}).get("quarter") != quarter
+            or (metrics.get("pnl_period") or {}).get("quarter") != quarter):
+        return refuse("unknown_quarter_sample")
+    dates = set()
+    try:
+        for ref in metrics.get("telemetry_evidence_refs") or []:
+            if ref.get("source_type") != "quarter_equity" or not ref.get("ref_id"):
+                continue
+            at = datetime.fromisoformat(ref["observed_at"].replace("Z", "+00:00"))
+            if at.tzinfo is None or quarter_of(at.astimezone(timezone.utc)) != quarter:
+                return refuse("invalid_quarter_observation")
+            dates.add(at.astimezone(timezone.utc).date().isoformat())
+        orders = set()
+        for order in fill.get("sources") or []:
+            qty = _fraction(order.get("filled_quantity"))
+            submitted = _fraction(order.get("submitted_quantity"))
+            at = datetime.fromisoformat(order["submitted_at"].replace("Z", "+00:00"))
+            if (qty is None or submitted is None or qty < 0 or submitted <= 0 or qty > submitted
+                    or at.tzinfo is None or quarter_of(at.astimezone(timezone.utc)) != quarter
+                    or not all(order.get(k) for k in ("runtime_id", "binding_id", "order_id", "event_ids"))):
+                return refuse("invalid_quarter_order_sample")
+            if qty > 0:
+                orders.add((order["runtime_id"], order["binding_id"], order["order_id"]))
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return refuse("invalid_quarter_sample")
+    summary.update(observed_trading_days=len(dates), filled_orders=len(orders),
+                   observation_basis="distinct_UTC_days_with_owner_quarter_equity_observations",
+                   order_basis="distinct_submitted_orders_with_positive_quarter_filled_quantity")
+    if len(dates) < min_days or len(orders) < min_orders:
+        return refuse("insufficient_quarter_sample")
+    return candidate, summary
+
+
+def promotion_once(
+    *, store: Store, tenant: str, actor: str, governance_url: str, governance_token: str,
+    persona_url: str, persona_token: str, adapter_url: str, adapter_token: str,
+    ranking_store: Any = None, fetch: Callable[..., Any] = _http, now: Callable[[], float] = time.time,
+    min_days: int | None = None, min_orders: int | None = None,
+) -> dict[str, Any]:
+    """Existing schedule's quarter-close trigger. Persist one tenant+quarter identity before POST."""
+    moment = datetime.fromtimestamp(now(), timezone.utc)
+    record: dict[str, Any] = {"status": "waiting_for_quarter_close", "at": moment.isoformat()}
+    def apply(state: dict[str, Any]) -> None:
+        nonlocal record
+        target = closed_quarter_snapshot(state, quarter_of(moment))
+        if target is None:
+            state["last_promotion"] = record
+            return
+        quarter, snapshot_id = target
+        key = f"{tenant}|{quarter}"
+        nominations = state.setdefault("promotions", {})
+        existing = nominations.get(key) or {}
+        if existing.get("status") == "proposed":
+            record = {**existing, "reused": True}
+            state["last_promotion"] = record
+            return
+        record = {"quarter": quarter, "ranking_snapshot_id": snapshot_id, "tenant_id": tenant,
+                  "at": moment.isoformat()}
+        try:
+            if not tenant or not actor or not governance_token:
+                raise Degraded("promotion_identity_or_credential_missing")
+            request = existing.get("request")
+            if request is None:
+                owner = ranking_store if ranking_store is not None else build_rankings_store()
+                snapshot = owner.get_ranking_snapshot(snapshot_id)
+                if (snapshot is None or snapshot.ranking_snapshot_id != snapshot_id
+                        or snapshot.period != quarter or snapshot.surface != "quarterly"):
+                    raise Degraded("closed_quarter_snapshot_unavailable")
+                from services.rankings.snapshots import snapshot_content_digest, SUPPORTED_FORMULA_VERSIONS
+                snapshot_items = snapshot.to_canonical_dict()["items"]
+                if snapshot.content_digest != snapshot_content_digest(snapshot_items, surface="quarterly", period=quarter):
+                    raise Degraded("snapshot_content_digest_mismatch")
+                if snapshot.formula_version not in SUPPORTED_FORMULA_VERSIONS or any(
+                    i.get("formula_version") not in SUPPORTED_FORMULA_VERSIONS for i in snapshot_items
+                ):
+                    raise Degraded("unknown_ranking_formula")
+                days = int(os.getenv("PERSONA_EVALUATOR_PROMOTION_MIN_TRADING_DAYS", "30")) if min_days is None else min_days
+                orders = int(os.getenv("PERSONA_EVALUATOR_PROMOTION_MIN_FILLED_ORDERS", "20")) if min_orders is None else min_orders
+                candidate, summary = nomination_rule(snapshot_items, quarter, min_days=days, min_orders=orders)
+                record["rule_summary"] = summary
+                if candidate is None:
+                    record.update(status="no_nomination", reason=summary["reason"])
+                    nominations[key] = record
+                    state["last_promotion"] = record
+                    return
+                if not persona_token or not persona_url:
+                    raise Degraded("persona_identity_unavailable")
+                persona = fetch(f"{persona_url}/api/personas/{quote(candidate['persona_id'], safe='')}",
+                                headers={"Authorization": f"Bearer {persona_token}", "X-Tenant-Id": tenant})
+                if (persona.get("tenant_id") != tenant
+                        or (persona.get("persona_id") or persona.get("id")) != candidate["persona_id"]):
+                    raise Degraded("persona_identity_or_tenant_mismatch")
+                if _probe_persona(persona) or _probe_persona(candidate):
+                    record.update(status="no_nomination", reason="release_or_acceptance_probe")
+                    nominations[key] = record
+                    state["last_promotion"] = record
+                    return
+                factual = json.dumps(summary, sort_keys=True)
+                rationale = factual
+                provider = "fixed_rule"
+                try:
+                    response = fetch(f"{adapter_url}/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                        data={"prompt": "Write a rationale for this already fixed nomination. Do not choose an action. FACTS=" + factual,
+                              "extraction_schema": {"type": "object", "properties": {"rationale": {"type": "string", "maxLength": 1500}},
+                                                    "required": ["rationale"], "additionalProperties": False}},
+                        headers={"X-Operator-Id": actor, "X-Pantheon-Service-Token": adapter_token},
+                        timeout=float(os.getenv("PERSONA_EVALUATOR_TIMEOUT_SECONDS", "180")))
+                    text = response["data"]["output"]["structured_data"]["rationale"]
+                    if isinstance(text, str) and text.strip():
+                        rationale += "\n" + text.strip()[:1500]
+                        provider = "openclaw_rationale"
+                except Exception:
+                    pass  # the agent cannot veto a rule-selected nomination
+                rec = {"persona_id": candidate["persona_id"], "quarter": quarter, "ranking_snapshot_id": snapshot_id,
+                       "from_stage": "paper", "to_stage": "canary_candidate", "action_id": "promote_to_canary_candidate",
+                       "rule_summary": summary, "rationale": rationale, "provider": provider,
+                       "evidence_ref_ids": sorted(candidate.get("evidence_ref_ids") or []),
+                       "recommendation_id": f"pm12-{quarter.lower()}-{candidate['persona_id']}-promote_to_canary_candidate"}
+                digest = hashlib.sha256(json.dumps(promotion_content(rec), sort_keys=True).encode()).hexdigest()
+                identity = hashlib.sha256(f"paper-canary-candidacy|{tenant}|{quarter}".encode()).hexdigest()
+                subject = {k: rec[k] for k in ("persona_id", "from_stage", "to_stage", "quarter", "ranking_snapshot_id")}
+                subject.update(proposal_content_digest=digest, rule_summary=factual, rationale=rationale)
+                request = {"key": identity, "body": {
+                    "decision_id": f"pcc-{identity[:40]}", "expected_version": 0, "target_type": PROMOTION_TARGET,
+                    "target_id": rec["persona_id"], "target_version": snapshot_id, "persona_id": rec["persona_id"],
+                    "tenant_id": tenant, "owner_user_id": actor, "risk_level": "low", "subject": subject,
+                    "proposal_id": rec["recommendation_id"], "proposal_revision": 1, "proposal_content_digest": digest,
+                    "validation_result_digest": snapshot.content_digest}}
+                rec["governance_request"] = {"decision_id": request["body"]["decision_id"], "target_type": PROMOTION_TARGET,
+                                             "subject": subject, "proposal_content_digest": digest}
+                record.update(request=request, recommendation=rec)
+                nominations[key] = {**record, "status": "pending"}
+                store.save(state)  # unknown HTTP outcomes must replay the original content and identity
+            else:
+                record = {**existing, "at": moment.isoformat()}
+            response = propose_lifecycle(request, governance_url=governance_url, token=governance_token, fetch=fetch)
+            if not isinstance(response, dict) or response.get("_http_status", 201) not in (200, 201):
+                response = readback_lifecycle(request["body"]["decision_id"], governance_url=governance_url,
+                                             token=governance_token, fetch=fetch)
+            body = request["body"]
+            if not isinstance(response, dict) or any(response.get(k) != body[k] for k in (
+                "decision_id", "tenant_id", "target_type", "target_id", "target_version", "proposal_id", "proposal_content_digest"
+            )) or (response.get("metadata") or {}).get("subject") != body["subject"]:
+                raise Degraded("promotion_governance_readback_mismatch")
+            record.update(status="proposed", decision_id=body["decision_id"])
+            record.pop("reason", None)
+        except Exception as exc:
+            record.update(status="degraded", reason=str(exc))
+        nominations[key] = record
+        state["last_promotion"] = record
+    store.update(apply)
+    return record
+
+
+def saved_result(state: dict[str, Any], quarter: str, snapshot_id: str) -> Any:
+    """Combine saved advice with the frozen quarter nomination for owner readback."""
+    result = state["results"].get(f"{quarter}|{snapshot_id}")
+    if result is None:
+        return None
+    result = {**result, "items": list(result.get("items") or [])}
+    for record in state.get("promotions", {}).values():
+        rec = record.get("recommendation")
+        if rec and rec.get("quarter") == quarter:
+            result["items"].append(rec)
+    result["promotion_nomination"] = [
+        {k: r[k] for k in ("status", "reason", "quarter", "ranking_snapshot_id", "rule_summary", "decision_id") if k in r}
+        for r in state.get("promotions", {}).values() if r.get("quarter") == quarter]
+    return result
+
+
 def pattern_review_once(
     *, persona_url: str, token: str, tenant: str, fetch: Callable[..., Any] = _http,
 ) -> dict[str, Any]:
@@ -569,8 +799,8 @@ def serve(store: Store, token: str, port: int) -> ThreadingHTTPServer:
                 query = parse_qs(url.query)
                 quarter = (query.get("quarter") or [""])[0].upper()
                 snapshot_id = (query.get("snapshot_id") or [state["latest"].get(quarter, "")])[0]
-                code, body = 200, {"data": {"quarter": quarter, "result": state["results"].get(f"{quarter}|{snapshot_id}"),
-                                            "last_run": state["last_run"]}}
+                code, body = 200, {"data": {"quarter": quarter, "result": saved_result(state, quarter, snapshot_id),
+                                            "last_run": state["last_run"], "last_promotion": state.get("last_promotion")}}
             payload = json.dumps(body).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
@@ -641,6 +871,15 @@ def main() -> None:
         )
         store.update(lambda s: s.update(last_paper_cycle=paper_cycle))
         print(json.dumps({"paper_cycle": paper_cycle}), flush=True)
+        promotion = promotion_once(
+            store=store, tenant=env("PANTHEON_TENANT_ID", "default"),
+            actor=env("PERSONA_EVALUATOR_ACTOR_ID", "persona-evaluator-agent"),
+            governance_url=env("PANTHEON_GOVERNANCE_API_URL", "http://governance:8082"), governance_token=governance_token,
+            persona_url=env("PERSONA_EVALUATOR_PERSONA_URL", "http://persona:8002").rstrip("/"), persona_token=persona_token,
+            adapter_url=env("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-gateway-adapter:8104"),
+            adapter_token=env("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", ""),
+        )
+        print(json.dumps({"promotion": {k: promotion[k] for k in ("status", "reason", "quarter", "ranking_snapshot_id", "decision_id") if k in promotion}}), flush=True)
         pattern = pattern_review_once(
             persona_url=env("PERSONA_EVALUATOR_PERSONA_URL", "http://persona:8002").rstrip("/"),
             token=persona_token, tenant=env("PANTHEON_TENANT_ID", ""),

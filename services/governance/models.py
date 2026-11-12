@@ -50,6 +50,7 @@ class TargetType(str, Enum):
     CAPITAL_BINDING_ACTIVATION = "capital_binding_activation"
     CAPITAL_POOL_ACTIVATION = "capital_pool_activation"
     PERSONA_LIFECYCLE_TRANSITION = "persona_lifecycle_transition"
+    PAPER_CANARY_CANDIDACY = "paper_canary_candidacy"
     EVOLUTION_EXECUTE = "evolution_execute"
 
 
