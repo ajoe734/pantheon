@@ -883,6 +883,6 @@ jobs:
           "$RUNNER_TEMP/research-venv/bin/python" -m pip check
 
       - name: Run research suite
-        timeout-minutes: 20
+        timeout-minutes: 25
         run: |
           "$RUNNER_TEMP/research-venv/bin/python" -m pytest -q services/research

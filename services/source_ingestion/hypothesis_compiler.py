@@ -255,8 +255,16 @@ class HypothesisCompiler:
         return self._store
 
     def compile(self, card: Mapping[str, Any]) -> CompileOutcome:
+        from services.source_ingestion.hypothesis_card import prediction_missing_dataset
+
         testability = str(card.get("testability") or "")
         key = card_key(card)
+        for prediction in card.get("predictions", ()):
+            dataset = prediction_missing_dataset(prediction)
+            if dataset:
+                # Same per-dataset/per-card demand accounting as rule inputs,
+                # including cached compilations. Predictions do not block the rule.
+                self._store.count_needs_data(dataset, key)
         if testability == "not_testable":
             return CompileOutcome(SKIPPED, "not_testable")
         if testability.startswith("needs_data:"):
@@ -279,7 +287,7 @@ class HypothesisCompiler:
                 extra={"cached": True},
             )
         try:
-            proposal = self._proposer(card, catalogue_summary())
+            proposal = self._proposer({k: v for k, v in card.items() if k != "predictions"}, catalogue_summary())
         except Exception as exc:
             return CompileOutcome(SKIPPED, f"proposer_failed:{type(exc).__name__}")
         kind, reason, dataset, artifact = validate_proposal(proposal)
