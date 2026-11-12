@@ -9,18 +9,47 @@
   "hosted_behavior_claimed": false,
   "production_adoption_enabled": false,
   "limitations": [
-    "No default model provider is wired; the caller supplies provider(persona_id, prompt). Without one the record is incomplete/KEEP_BASE.",
-    "Virtual-book effect uses the trailing frozen window (remove, and reweight with weight_delta only); other decision kinds are unmeasurable and not counted.",
+    "Replay requires a DenyAllReplayProvider: a dedicated replay agent (never the persona's own) whose live policy probe reports no tools and no side effects; raw callables or failed probes record incomplete/KEEP_BASE. The concrete gateway policy probe is supplied by the caller and is not wired by default.",
+    "Consult outcomes are read only from the frozen bundle's consult_outcomes; a required role with no recorded verdict makes the comparison incomplete.",
+    "Decisions are compared on effective actions (gate-passing and consult-approved) with full parameters; rejected actions are no-ops.",
+    "Virtual-book effect uses the trailing frozen window (remove, and reweight with weight_delta only); other kinds are unmeasurable.",
     "CANDIDATE_BETTER is a recommendation only; adoption stays with the adoption verifier and risk-persona sign-off."
   ],
   "acceptance_evidence": {
-    "1_bounded_deny_all_replay": ["test_replays_and_comparisons_are_bounded", "test_threshold_candidate_equal_keeps_base"],
-    "2_recorded_criteria": ["test_candidate_better_when_gates_and_book_improve", "test_virtual_book_regression_keeps_base"],
-    "3_keep_base_and_incomplete": ["test_threshold_candidate_equal_keeps_base", "test_unavailable_provider_is_incomplete_never_pass", "test_turn_error_status_is_incomplete", "test_missing_or_unusable_bundles_fail_closed_with_reason"],
-    "4_bounds_and_usage": ["test_replays_and_comparisons_are_bounded"],
-    "5_real_entry_point_integration": ["run_shadow_comparison over real PersistentHarnessOwner and OODA JSONL packet store"]
+    "1_bounded_deny_all_replay": [
+      "test_replays_and_comparisons_are_bounded",
+      "test_threshold_candidate_equal_keeps_base",
+      "test_unverified_or_raw_provider_is_never_replayed",
+      "test_real_transport_uses_dedicated_replay_agent"
+    ],
+    "2_recorded_criteria": [
+      "test_candidate_better_when_gates_and_book_improve",
+      "test_virtual_book_regression_keeps_base",
+      "test_same_kind_different_parameters_and_gate_outcome_is_a_difference",
+      "test_rejected_actions_are_noops_not_effects",
+      "test_frozen_consult_outcomes_drive_the_comparison"
+    ],
+    "3_keep_base_and_incomplete": [
+      "test_threshold_candidate_equal_keeps_base",
+      "test_unavailable_provider_is_incomplete_never_pass",
+      "test_turn_error_status_is_incomplete",
+      "test_missing_or_unusable_bundles_fail_closed_with_reason",
+      "test_required_consult_outcome_missing_is_incomplete_not_better"
+    ],
+    "4_bounds_and_usage": [
+      "test_replays_and_comparisons_are_bounded",
+      "test_failed_call_usage_is_recorded"
+    ],
+    "5_real_entry_point_integration": [
+      "run_shadow_comparison over real PersistentHarnessOwner and OODA JSONL packet store"
+    ]
   },
   "validation": [
-    {"command": "COMPOSE_PROFILES=root pytest -q services/persona services/control-plane/persona", "exit_code": 0, "result": "390 passed, 1 skipped"}
-  ]
+    {
+      "command": "pytest -q services/persona/test_harness_shadow_eval.py services/persona/test_harness.py",
+      "exit_code": 0,
+      "result": "harness+shadow suites pass; services/persona full: 216 passed, 1 skipped, 1 failed (test_lifecycle_approval_verifier compose render, unchanged file, environment)"
+    }
+  ],
+  "review_round": "2: addresses Codex2 findings on head 3c5d696b7 (P1 signature/gates, P1 deny-all, P2 consult, P2 failure usage)"
 }

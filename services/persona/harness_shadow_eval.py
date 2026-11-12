@@ -15,6 +15,7 @@ synthesized: bundles, proposals and book metrics all come from recorded data.
 from __future__ import annotations
 
 import copy
+import json
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -31,6 +32,31 @@ MAX_COMPARISONS_PER_PATCH = 3
 KIND_TO_CONSULT_ACTION = {"admit": "trial_admission"}
 DENY_ALL_NOTICE = ("SHADOW REPLAY (deny-all): this is a frozen historical bundle. You have no tools. "
                    "Nothing you return is executed. Return the JSON proposal only.\n")
+
+
+class DenyAllReplayProvider:
+    """The only provider a replay accepts: a dedicated replay agent whose isolation is probed first.
+
+    ``policy_probe(agent_id)`` must report the live agent policy; replay proceeds only when it is the
+    dedicated replay agent (never the persona's own agent) with no tools and no side effects.
+    ``turn_fn(agent_id, prompt)`` is the transport (``run_persona_ooda_turn`` bound to the gateway).
+    """
+
+    def __init__(self, agent_id: str, policy_probe: Callable[[str], Mapping[str, Any]], turn_fn: Callable):
+        self.agent_id, self._probe, self._turn = agent_id, policy_probe, turn_fn
+
+    def verify(self, persona_id: str) -> bool:
+        if not self.agent_id or self.agent_id == persona_id:
+            return False
+        try:
+            policy = self._probe(self.agent_id)
+        except Exception:
+            return False
+        return (isinstance(policy, Mapping) and policy.get("agent_id") == self.agent_id
+                and policy.get("tools") == [] and policy.get("side_effects") == "none")
+
+    def run(self, prompt: str) -> Any:
+        return self._turn(self.agent_id, prompt)
 
 
 def _action(kind: str) -> str:
@@ -78,6 +104,19 @@ def _gates(surface: HarnessSurface, proposal: Any) -> tuple[list[str], list[str]
     return failures, roles
 
 
+def _consult(roles: list[str], frozen: Mapping[str, Any]) -> str:
+    """Outcome of the required roles from FROZEN recorded outcomes: n/a | approved | rejected | missing."""
+    if not roles:
+        return "n/a"
+    verdicts = []
+    for role in roles:
+        entry = frozen.get(role)
+        verdicts.append(entry.get("verdict") if isinstance(entry, Mapping) else None)
+    if any(v == "reject" for v in verdicts):
+        return "rejected"
+    return "approved" if all(v == "approve" for v in verdicts) else "missing"
+
+
 def _effect(proposal: Any, books: Mapping[str, Any]) -> float | None:
     """Virtual-book effect of one decision on the frozen trailing window, or None if unmeasurable."""
     member = proposal.parameters.get("member_id")
@@ -99,18 +138,20 @@ class ProviderUnavailable(Exception):
     pass
 
 
-def _replay(provider: Callable, persona: Mapping[str, Any], surface: HarnessSurface, label: str,
+def _replay(provider: DenyAllReplayProvider, persona: Mapping[str, Any], surface: HarnessSurface, label: str,
             version_row: Mapping[str, Any], bundle: Mapping[str, Any], usage: dict) -> dict[str, Any]:
     from integrations.openclaw.persona_ooda_runtime import CycleTurnOutput, build_daily_cycle_prompt
     observe = copy.deepcopy(dict(bundle))
     observe["harness"], observe["harness_version"] = dict(version_row), version_row.get("version")
     prompt = DENY_ALL_NOTICE + build_daily_cycle_prompt(persona, observe)
     started = time.monotonic()
+    usage["model_calls"] += 1  # an attempt is usage whether or not it returns
     try:
-        turn = provider(persona["persona_id"], prompt)
+        turn = provider.run(prompt)
     except Exception as exc:
+        usage["failed_calls"] += 1
+        usage["elapsed_ms"] += int((time.monotonic() - started) * 1000)
         raise ProviderUnavailable(type(exc).__name__) from None
-    usage["model_calls"] += 1
     usage["elapsed_ms"] += int((time.monotonic() - started) * 1000)
     for key in ("input_tokens", "output_tokens"):
         value = getattr(turn, key, None)
@@ -122,19 +163,30 @@ def _replay(provider: Callable, persona: Mapping[str, Any], surface: HarnessSurf
     try:
         output = CycleTurnOutput.model_validate_json(turn.decision)
     except ValidationError:
-        return {"arm": label, "schema_valid": False, "proposals": [], "passed": 0, "total": 0}
+        return {"arm": label, "schema_valid": False, "proposals": [], "passed": 0, "total": 0,
+                "consult_rejected": 0, "consult_missing": 0}
     rows = []
+    frozen = bundle.get("consult_outcomes") or {}
     for proposal in output.proposals:
         failures, roles = _gates(surface, proposal)
+        consult = _consult(roles, frozen) if not failures else "n/a"
+        # Only gate-passing, consult-approved actions are effective; everything else is a no-op.
+        effective = (proposal.kind != "no_action" and not failures and consult in ("n/a", "approved"))
         rows.append({"kind": proposal.kind, "target": proposal.parameters.get("member_id"),
-                     "gate_failures": failures, "consult_roles": roles,
-                     "effect": _effect(proposal, bundle.get("books") or {})})
+                     "parameters": copy.deepcopy(proposal.parameters),
+                     "gate_failures": failures, "consult_roles": roles, "consult_outcome": consult,
+                     "effective": effective,
+                     "effect": _effect(proposal, bundle.get("books") or {}) if effective else None})
     return {"arm": label, "schema_valid": True, "proposals": rows,
-            "passed": sum(not r["gate_failures"] for r in rows), "total": len(rows)}
+            "passed": sum(not r["gate_failures"] for r in rows), "total": len(rows),
+            "consult_rejected": sum(r["consult_outcome"] == "rejected" for r in rows),
+            "consult_missing": sum(r["consult_outcome"] == "missing" for r in rows)}
 
 
 def _signature(arm: Mapping[str, Any]) -> list:
-    return sorted((r["kind"], r["target"] or "") for r in arm["proposals"])
+    """Effective decisions with their full parameters (a changed delta is a different decision)."""
+    return sorted(json.dumps([r["kind"], r["parameters"]], sort_keys=True, default=str)
+                  for r in arm["proposals"] if r["effective"])
 
 
 def _rate(arms: list[Mapping[str, Any]]) -> float:
@@ -143,25 +195,15 @@ def _rate(arms: list[Mapping[str, Any]]) -> float:
     return sum(a["passed"] for a in arms) / total if total else 0.0
 
 
-def _consult_regressions(base: Mapping[str, Any], cand: Mapping[str, Any]) -> int:
-    """Base proposals also made by the candidate with fewer required consult roles."""
-    count = 0
-    seen = {(r["kind"], r["target"]): set(r["consult_roles"]) for r in cand["proposals"]}
-    for r in base["proposals"]:
-        key = (r["kind"], r["target"])
-        if key in seen and not set(r["consult_roles"]).issubset(seen[key]):
-            count += 1
-    return count
-
-
 def run_shadow_comparison(harness: PersistentHarnessOwner, persona_id: str, patch_id: str, *,
-                          packet_store_path: Path | str, provider: Callable | None, actor: str,
+                          packet_store_path: Path | str, provider: DenyAllReplayProvider | None, actor: str,
                           max_replays: int = MAX_REPLAY_BUNDLES) -> dict[str, Any]:
     """Compare base and candidate on recorded bundles and record the result in the owner.
 
-    ``provider(persona_id, prompt)`` returns an object shaped like ``PersonaOodaTurn``
-    (``status``, ``decision``, ``model``; optional token counts). It is the only
-    external call and receives no tool or command capability.
+    ``provider`` must be a :class:`DenyAllReplayProvider` whose isolation probe passes; anything else
+    is an incomplete comparison. Its turn returns a ``PersonaOodaTurn``-shaped object. Consult outcomes
+    come only from the frozen bundle's ``consult_outcomes``; a required outcome that was not recorded
+    leaves the comparison incomplete.
     """
     max_replays = max(1, min(int(max_replays), MAX_REPLAY_BUNDLES))
     persona = harness.personas.get(persona_id)
@@ -188,12 +230,13 @@ def run_shadow_comparison(harness: PersistentHarnessOwner, persona_id: str, patc
 
     bundles, skipped = load_frozen_bundles(packet_store_path, persona.tenant_id, persona_id, max_replays)
     usage = {"model_calls": 0, "elapsed_ms": 0, "models": [], "input_tokens": None, "output_tokens": None,
-             "max_model_calls": 2 * max_replays}
+             "failed_calls": 0, "max_model_calls": 2 * max_replays}
     record: dict[str, Any] = {
         "schema_version": "persona_harness_shadow.v1", "persona_id": persona_id, "patch_id": patch_id,
         "base_version": patch.base_version, "base_digest": base_row.content_digest,
         "candidate_digest": candidate_row["content_digest"], "environment": "paper",
-        "replay": {"deny_all": True, "side_effects": "none", "max_bundles": max_replays,
+        "replay": {"deny_all_verified": False, "replay_agent_id": getattr(provider, "agent_id", None),
+                   "side_effects": "none", "max_bundles": max_replays,
                    "min_bundles": MIN_REPLAY_BUNDLES, "bundle_packet_ids": [b["packet_id"] for b in bundles],
                    "skipped": skipped},
         "usage": usage, "bundles": [], "criteria": None, "status": "incomplete",
@@ -204,7 +247,10 @@ def run_shadow_comparison(harness: PersistentHarnessOwner, persona_id: str, patc
         record["reasons"].append("insufficient_frozen_bundles")
     elif provider is None:
         record["reasons"].append("provider_unavailable")
+    elif not isinstance(provider, DenyAllReplayProvider) or not provider.verify(persona_id):
+        record["reasons"].append("deny_all_provider_unverified")
     else:
+        record["replay"]["deny_all_verified"] = True
         try:
             for item in bundles:
                 arms = [_replay(provider, persona_ctx, surface, label, version, item["bundle"], usage)
@@ -214,10 +260,11 @@ def run_shadow_comparison(harness: PersistentHarnessOwner, persona_id: str, patc
                 differs = _signature(base_arm) != _signature(cand_arm)
                 measurable = None
                 if differs:
-                    b_eff = [r["effect"] for r in base_arm["proposals"] if r["effect"] is not None]
-                    c_eff = [r["effect"] for r in cand_arm["proposals"] if r["effect"] is not None]
-                    unmeasured = any(r["effect"] is None for r in base_arm["proposals"] + cand_arm["proposals"]
-                                     if r["kind"] != "no_action" and r["kind"] in {"remove", "reweight"})
+                    eff = lambda arm: [r for r in arm["proposals"] if r["effective"]]
+                    b_eff = [r["effect"] for r in eff(base_arm) if r["effect"] is not None]
+                    c_eff = [r["effect"] for r in eff(cand_arm) if r["effect"] is not None]
+                    unmeasured = any(r["effect"] is None for r in eff(base_arm) + eff(cand_arm)
+                                     if r["kind"] in {"remove", "reweight"})
                     if (b_eff or c_eff) and not unmeasured:
                         measurable = sum(c_eff) - sum(b_eff)
                 record["bundles"].append({"packet_id": item["packet_id"], "base": base_arm,
@@ -226,12 +273,17 @@ def run_shadow_comparison(harness: PersistentHarnessOwner, persona_id: str, patc
         except ProviderUnavailable as exc:
             record["reasons"].append("provider_unavailable:" + str(exc))
             record["bundles"] = []  # a partial replay is never evidence of a pass
+    if not record["reasons"] and any(b[arm]["consult_missing"] for b in record["bundles"]
+                                     for arm in ("base", "candidate")):
+        record["reasons"].append("consult_outcomes_missing")
+        record["bundles"] = []
     if not record["reasons"]:
         base_arms = [b["base"] for b in record["bundles"]]
         cand_arms = [b["candidate"] for b in record["bundles"]]
         deltas = [b["virtual_book_delta"] for b in record["bundles"] if b["virtual_book_delta"] is not None]
         crit = {"base_gate_pass_rate": _rate(base_arms), "candidate_gate_pass_rate": _rate(cand_arms),
-                "consult_regressions": sum(_consult_regressions(b["base"], b["candidate"]) for b in record["bundles"]),
+                "consult_regressions": max(0, sum(b["candidate"]["consult_rejected"] - b["base"]["consult_rejected"]
+                                          for b in record["bundles"])),
                 "decisions_differing": sum(b["decisions_differ"] for b in record["bundles"]),
                 "virtual_book_measured": len(deltas), "virtual_book_delta_total": sum(deltas)}
         record["criteria"], record["status"] = crit, "complete"
