@@ -72,11 +72,6 @@ class CapitalOwnerWriter:
     def evaluate_allocation(self, payload, *, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
         return http_request_json(capital_url("/api/allocation-evaluations"), method="POST", payload=payload, auth_token=auth_token, tenant_id=self._tenant(tenant_id, auth_token))
 
-    def run_paper_allocation_cycle(self, payload, *, actor_id, actor_role, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
-        """Trigger the owner's governed paper quarterly cycle; the owner alone decides, paper scope only."""
-        body = {**{k: v for k, v in payload.items() if k not in _BOUND_FIELDS}, "actor_id": actor_id, "actor_role": actor_role}
-        return http_request_json(capital_url("/api/paper-allocation-cycles"), method="POST", payload=body, auth_token=auth_token, tenant_id=self._tenant(tenant_id, auth_token))
-
     def pool_action(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
         action = str(payload.get("action_id") or "").strip()
         status = _POOL_ACTION_STATUS.get(action.lower())

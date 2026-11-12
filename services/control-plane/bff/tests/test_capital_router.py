@@ -19,7 +19,7 @@ TASK_REVIEW_MANIFEST = {
     "owned_layer": "standalone Capital Allocation router and service",
     "not_changing": "main.py composition and existing persona-capital port behavior",
     "review_scope": {
-        "route_count": 25,  # 23 + the two paper-allocation-cycle routes (PAPER-ALLOCATION-QUARTERLY-RUN-20261112)
+        "route_count": 23,
         "durable_readback": "Capital pool id, normalized risk limits, and allocation digest",
         "write_boundary": "Capital Allocation Manager only; missing owner mutation methods return 503",
     },
@@ -160,7 +160,7 @@ def _client_with_auth(store: _CapitalStore, extract_identity: Any) -> TestClient
     return TestClient(app)
 
 
-def test_capital_router_registers_the_25_owner_backed_routes() -> None:
+def test_capital_router_registers_the_23_owner_backed_routes() -> None:
     router = create_capital_router()
     routes = {(method, route.path) for route in router.routes for method in route.methods}
     expected = {
@@ -172,8 +172,6 @@ def test_capital_router_registers_the_25_owner_backed_routes() -> None:
         ("PATCH", "/bff/capital-pools/{pool_id}"),
         ("POST", "/bff/capital-pools/{pool_id}/actions/{action_id}"),
         ("POST", "/bff/management/allocation-policy/evaluate"),
-        ("POST", "/bff/management/paper-allocation-cycles"),
-        ("GET", "/bff/management/paper-allocation-cycles"),
         ("GET", "/bff/rebalances"),
         ("POST", "/bff/rebalances"),
         ("POST", "/bff/rebalances/{rebalance_id}/apply"),
@@ -191,7 +189,7 @@ def test_capital_router_registers_the_25_owner_backed_routes() -> None:
         ("PATCH", "/bff/rebalances/{rebalance_id}"),
     }
     assert routes == expected
-    assert len(router.routes) == 25
+    assert len(router.routes) == 23
     assert TASK_REVIEW_MANIFEST["review_scope"]["route_count"] == len(router.routes)
 
 

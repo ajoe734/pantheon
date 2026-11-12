@@ -405,7 +405,10 @@ def run_once(
     return record
 
 
-PAPER_CYCLE_PATH = "/bff/management/paper-allocation-cycles"
+# The governed paper cycle rides the existing allocation-evaluation route with this authority_mode; the Capital owner
+# (operator role, paper pool and paper environment only) runs the cycle and is idempotent per tenant+quarter+pool.
+PAPER_CYCLE_PATH = "/bff/management/allocation-policy/evaluate"
+PAPER_CYCLE_MODE = "governed_paper_quarterly_cycle"
 
 
 def _fraction(value: Any) -> float | None:
@@ -503,7 +506,8 @@ def paper_cycle_once(
     saved = state["results"].get(f"{quarter}|{snapshot_id}") or {}
     health = collect_pool_health(saved.get("paper_persona_ids") or [], persona_url=persona_url, token=persona_token,
                                  tenant=tenant, fetch=fetch)
-    body = {"quarter": quarter, "ranking_snapshot_id": snapshot_id, "capital_pool_id": paper_pool_id, "pool_health": health}
+    body = {"authority_mode": PAPER_CYCLE_MODE, "quarter": quarter, "ranking_snapshot_id": snapshot_id,
+            "capital_pool_id": paper_pool_id, "pool_health": health}
     headers = {**bff_headers, "X-Tenant-Id": tenant, "Idempotency-Key": f"paper-cycle:{tenant}:{quarter}:{paper_pool_id}"}
     try:
         resp = fetch(f"{bff_url}{PAPER_CYCLE_PATH}", data=body, headers=headers)

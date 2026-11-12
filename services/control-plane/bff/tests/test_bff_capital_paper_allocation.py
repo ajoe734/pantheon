@@ -79,8 +79,8 @@ class _World:
                     "health": {"gross_utilisation": {"status": "known", "value": 0.4},
                                "idle_day_share": {"status": "known", "value": 0.25}}}}
             raise OSError("no strategy pool")
-        assert "/bff/management/paper-allocation-cycles" in url, url
-        response = self.harness.client.post("/bff/management/paper-allocation-cycles", json=data, headers=headers)
+        assert "/bff/management/allocation-policy/evaluate" in url, url
+        response = self.harness.client.post("/bff/management/allocation-policy/evaluate", json=data, headers=headers)
         if response.status_code >= 400:
             raise RuntimeError(f"HTTP {response.status_code}: {response.text[-300:]}")
         return response.json()
@@ -150,9 +150,9 @@ def test_quarter_close_runs_one_paper_cycle_across_three_personas_and_applies_it
     assert lines["p2"]["risk_budget_factor"] == 1.0 and "pool health unavailable" in lines["p2"]["pool_health_factors"]["reason"]
 
     # the evaluator's own state shows the cycle once; a rerun never reaches the owner a second time
-    calls = len([e for e in w.log if "paper-allocation-cycles" in e[0]])
+    calls = len([e for e in w.log if "allocation-policy/evaluate" in e[0]])
     assert _cycle(world, tmp_path, Q1_CLOSE_TIME + 900)["reused"] is True
-    assert len([e for e in w.log if "paper-allocation-cycles" in e[0]]) == calls
+    assert len([e for e in w.log if "allocation-policy/evaluate" in e[0]]) == calls
 
 
 def test_catch_up_with_lost_evaluator_state_is_idempotent_at_the_owner(world) -> None:
@@ -167,21 +167,23 @@ def test_catch_up_with_lost_evaluator_state_is_idempotent_at_the_owner(world) ->
     assert _weights(harness) == FIRST_QUARTER
 
 
-def test_management_reads_show_the_cycle_proposal_lines_and_reasons(world) -> None:
+def test_management_rebalance_read_shows_the_cycle_proposal_lines_and_reasons(world) -> None:
     harness, w, tmp_path = world
     _evaluate(world, tmp_path, Q4_RANK_TIME)
     _cycle(world, tmp_path, Q1_CLOSE_TIME)
     for owner_record in harness.capital_client.get("/api/rebalances").json():  # the BFF read store is fed by owner reads
         harness.read_surface.add_authoritative_rebalance(owner_record)
-    cycles = harness.client.get("/bff/management/paper-allocation-cycles?quarter=2026-Q4", headers=HEADERS).json()["data"]
-    assert len(cycles) == 1 and cycles[0]["applied"] is True and cycles[0]["quarter"] == "2026-Q4"
-    assert cycles[0]["paper_total"] == 1000.0 and cycles[0]["rollback_target"]["allocations"]
-    by_persona = {l["persona_id"]: l for l in cycles[0]["lines"]}
-    assert by_persona["p3"]["target_weight"] == 0.08 and "live_b_tier_cap" in by_persona["p3"]["cap_reasons"]
-    assert by_persona["p1"]["risk_budget_factor"] == 0.5
-    assert harness.client.get("/bff/management/paper-allocation-cycles?quarter=2099-Q1", headers=HEADERS).json()["data"] == []
     listed = harness.client.get("/bff/rebalances", headers=HEADERS).json()["items"]
-    assert [r["rebalance_id"] for r in listed] == [cycles[0]["rebalance_id"]]  # also the existing rebalance read
+    assert len(listed) == 1
+    cycle = listed[0]
+    assert cycle["status"] == "applied" and cycle["allocation_policy_version"] == "persona-paper-quarterly-allocation-v1"
+    assert cycle["simulation"]["kind"] == "paper_quarterly_cycle" and cycle["simulation"]["quarter"] == "2026-Q4"
+    assert cycle["simulation"]["paper_total"] == 1000.0 and cycle["rollback_target"]["allocations"]
+    by_persona = {l["persona_id"]: l for l in cycle["lines"]}
+    assert by_persona["p3"]["target_weight"] == 0.08 and "live_b_tier_cap" in by_persona["p3"]["cap_reasons"]
+    assert by_persona["p1"]["risk_budget_factor"] == 0.5 and by_persona["p1"]["pool_health_factors"]["status"] == "known"
+    detail = harness.client.get(f"/bff/rebalances/{cycle['rebalance_id']}", headers=HEADERS).json()["data"]
+    assert detail["apply_receipt"]["live_capital_side_effects"] is False
 
 
 def test_next_quarter_applies_the_increase_cap_through_the_same_path(world) -> None:
@@ -207,10 +209,10 @@ def test_real_capital_path_is_unchanged_and_a_paper_cycle_cannot_touch_it(world)
     assert refused["status"] == "degraded"
     assert harness.capital_client.get("/api/rebalances").json() == []
     # a viewer cannot trigger the cycle; an operator cannot smuggle a real-scope line through it
-    viewer = harness.client.post("/bff/management/paper-allocation-cycles", json={
-        "quarter": "2026-Q4", "ranking_snapshot_id": snapshot_id, "capital_pool_id": POOL},
+    viewer = harness.client.post("/bff/management/allocation-policy/evaluate", json={
+        "authority_mode": "governed_paper_quarterly_cycle", "quarter": "2026-Q4", "ranking_snapshot_id": snapshot_id, "capital_pool_id": POOL},
         headers={"Authorization": "Bearer viewer-1:viewer", "Idempotency-Key": "k"})
-    assert viewer.status_code in (401, 403)
+    assert viewer.status_code in (401, 403)  # the cycle needs an operator; a plain evaluation stays read-only
     assert harness.capital_client.get("/api/rebalances").json() == []
     # the real policy still excludes paper-stage rows (real evaluation is unchanged)
     from services.capital.allocation_policy import calculate_target_allocations

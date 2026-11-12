@@ -557,7 +557,7 @@ def test_cycle_waits_for_quarter_close_and_needs_a_configured_pool(tmp_path):
     log = []
     assert _paper_cycle(store, _cycle_fetch(log), now=NOW)["status"] == "waiting_for_quarter_close"  # same quarter
     assert _paper_cycle(store, _cycle_fetch(log), pool="")["status"] == "not_configured"
-    assert not [e for e in log if "paper-allocation-cycles" in e[0]]
+    assert not [e for e in log if "allocation-policy/evaluate" in e[0]]
 
 
 def test_quarter_close_triggers_exactly_one_cycle_with_the_persisted_snapshot_and_is_remembered(tmp_path):
@@ -566,13 +566,13 @@ def test_quarter_close_triggers_exactly_one_cycle_with_the_persisted_snapshot_an
     log = []
     record = _paper_cycle(store, _cycle_fetch(log))
     assert record["status"] == "applied" and record["quarter"] == QUARTER and record["rebalance_id"] == "rb-1"
-    calls = [e for e in log if "paper-allocation-cycles" in e[0]]
+    calls = [e for e in log if "allocation-policy/evaluate" in e[0]]
     assert len(calls) == 1
     _, body, headers = calls[0]
     assert body["ranking_snapshot_id"] == snapshot_id and body["quarter"] == QUARTER and body["capital_pool_id"] == "pool-paper"
     assert headers["Idempotency-Key"] == f"paper-cycle:t1:{QUARTER}:pool-paper"
     assert _paper_cycle(store, _cycle_fetch(log))["reused"] is True
-    assert len([e for e in log if "paper-allocation-cycles" in e[0]]) == 1
+    assert len([e for e in log if "allocation-policy/evaluate" in e[0]]) == 1
 
 
 def test_failed_cycle_is_recorded_and_retried_with_the_same_idempotency_key(tmp_path):
@@ -581,7 +581,7 @@ def test_failed_cycle_is_recorded_and_retried_with_the_same_idempotency_key(tmp_
     failed = _paper_cycle(store, _cycle_fetch(log, fail=True))
     assert failed["status"] == "degraded" and "owner refused" in failed["reason"]
     assert _paper_cycle(store, _cycle_fetch(log))["status"] == "applied"
-    keys = {e[2]["Idempotency-Key"] for e in log if "paper-allocation-cycles" in e[0]}
+    keys = {e[2]["Idempotency-Key"] for e in log if "allocation-policy/evaluate" in e[0]}
     assert len(keys) == 1
 
 

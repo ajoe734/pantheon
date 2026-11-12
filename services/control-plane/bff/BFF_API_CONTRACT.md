@@ -339,26 +339,26 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 #### 9.2.1 Governed quarterly paper allocation cycle
 
 Paper personas compete for paper capital once per quarter through the existing ranking and allocation
-path. Real capital allocation and its human approval path are unchanged; this surface can never create or
-apply a real (canary/live) rebalance.
+path. Real capital allocation and its human approval path are unchanged; this mode can never create or
+apply a real (canary/live) rebalance. No new BFF route: it rides the existing evaluation route.
 
 | Route | Method | Role | Response |
 |---|---|---|---|
-| `/bff/management/paper-allocation-cycles` | POST | operator | `{ data: { cycle, rebalance, applied, replayed, receipt }, meta }` |
-| `/bff/management/paper-allocation-cycles` | GET | read | `{ data: [PaperCycle], items, meta }`; filters `quarter`, `capital_pool_id` |
+| `/bff/management/allocation-policy/evaluate` with `authority_mode=governed_paper_quarterly_cycle` | POST | operator | `{ data: { cycle, rebalance, applied, replayed, receipt }, meta }` |
+| `/bff/rebalances`, `/bff/rebalances/{rebalance_id}` | GET | read | the cycle proposal with its lines, cap reasons, exclusions, factors, `simulation`, `constraints`, `rollback_target` and apply receipt |
 
-* POST body: `quarter` (`YYYY-Qn`), `ranking_snapshot_id` (admitted quarterly snapshot of that quarter),
-  `capital_pool_id` (paper pool, `metadata.execution_context=paper`), optional `pool_health` (per persona
-  `risk_budget_factor` / `capacity_factor` / provenance). `Idempotency-Key` is required.
+* Body: `authority_mode`, `quarter` (`YYYY-Qn`), `ranking_snapshot_id` (admitted quarterly snapshot of that
+  quarter), `capital_pool_id` (paper pool, `metadata.execution_context=paper`), optional `pool_health` (per
+  persona `risk_budget_factor` / `capacity_factor` / provenance). Without that `authority_mode` the route
+  stays a read-only evaluation.
 * The Capital owner recomputes targets from the snapshot with policy `persona-paper-quarterly-allocation-v1`
   (real tier caps S 25 % / A 15 % / B 8 %, +25 % quarterly increase cap, existing exclusions, total weight
-  never above 1.0), creates one proposal per tenant + quarter + pool, applies it automatically in the paper
-  ledger with an audit receipt and a rollback target. A rerun or catch-up returns the existing cycle.
+  never above 1.0), creates one proposal per tenant + quarter + pool and applies it automatically in the
+  paper ledger with an audit receipt and a rollback target. A rerun or catch-up returns the existing cycle.
 * Pool-health factors default to 1.0; the reason is stored per persona line (`pool_health_factors`).
-* Missing paper ledger / unique paper-owner binding skips that persona with a recorded reason; unknown
-  snapshot, period mismatch, non-paper pool or non-paper environment fail closed (4xx).
-* GET projects each cycle proposal with its lines, cap reasons, exclusions and factors; the same proposal is
-  also visible through `GET /bff/rebalances`.
+* A persona without a paper ledger on its ranking item or without exactly one active paper-owner binding is
+  skipped with a recorded reason (`simulation.skipped`); an unknown snapshot, period mismatch, non-paper pool,
+  non-paper environment or a caller without the operator role fails closed (4xx) and creates nothing.
 
 ### 9.3 Deployment Surfaces (DP-01–DP-04)
 

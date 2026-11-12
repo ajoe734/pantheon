@@ -34,8 +34,9 @@ from .service import (
     stable_digest,
 )
 
-# Policy version the Capital owner stamps on the governed quarterly paper cycle (read projection filter only).
-PAPER_QUARTERLY_POLICY_VERSION = "persona-paper-quarterly-allocation-v1"
+# authority_mode of the governed quarterly paper cycle on the allocation-evaluation route; the cycle writes
+# (paper scope only, owner-enforced), so it needs an operator, unlike a plain read-only evaluation.
+PAPER_QUARTERLY_CYCLE_MODE = "governed_paper_quarterly_cycle"
 
 try:
     from ..pm12.service import (
@@ -466,63 +467,13 @@ def create_capital_router(
     def bff_evaluate_persona_allocation_policy(
         payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = _require_read(authorization)
+        cycle = str(payload.get("authority_mode") or "").strip().lower() == PAPER_QUARTERLY_CYCLE_MODE
+        identity = _require_operator(authorization) if cycle else _require_read(authorization)
         try:
             evaluation = service.write("evaluate_allocation", payload, actor_id=_identity_id(identity), actor_role=_owner_actor_role(identity), auth_token=authorization)
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
         return _readback_response(evaluation, meta={"snapshot_at": utc_now(), "allocation_evaluation_id": evaluation.get("allocation_evaluation_id")})
-
-    # 8b. Governed quarterly paper allocation cycle: idempotent per tenant+quarter+pool, paper scope only.
-    @router.post("/bff/management/paper-allocation-cycles")
-    def bff_run_paper_allocation_cycle(
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        identity = _require_operator(authorization)
-        missing = [f for f in ("quarter", "ranking_snapshot_id", "capital_pool_id") if not str(payload.get(f) or "").strip()]
-        if missing:
-            raise bff_error(422, ErrorCode.VALIDATION_FAILED, f"{', '.join(missing)} required")
-        return _mutate("run_paper_allocation_cycle", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key)
-
-    # 8c. Management read of the paper cycle proposals with their lines and reasons.
-    @router.get("/bff/management/paper-allocation-cycles")
-    def bff_list_paper_allocation_cycles(
-        quarter: Optional[str] = None,
-        capital_pool_id: Optional[str] = None,
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        _require_read(authorization)
-        snapshot_at = utc_now()
-        try:
-            rows = service.list_rebalances(capital_pool_id_value=capital_pool_id)
-        except Exception as exc:
-            raise _error_for_capital_exception(exc, bff_error) from exc
-        cycles = []
-        for row in rows:
-            simulation = row.get("simulation") or {}
-            if row.get("allocation_policy_version") != PAPER_QUARTERLY_POLICY_VERSION or (quarter and simulation.get("quarter") != quarter):
-                continue
-            cycles.append({
-                "rebalance_id": rebalance_id(row), "capital_pool_id": first_present(row, "capital_pool_id", "pool_id"),
-                "quarter": simulation.get("quarter"), "status": row.get("status"), "applied": row.get("applied"),
-                "applied_at": row.get("applied_at"), "ranking_snapshot_id": row.get("ranking_snapshot_id"),
-                "allocation_policy_version": row.get("allocation_policy_version"), "reason": row.get("reason"),
-                "paper_total": simulation.get("paper_total"), "target_weight_sum": simulation.get("target_weight_sum"),
-                "skipped_personas": simulation.get("skipped") or [], "constraints": row.get("constraints") or {},
-                "rollback_target": row.get("rollback_target") or {}, "apply_receipt_ref": row.get("apply_receipt_ref"),
-                "apply_audit_ref": row.get("apply_audit_ref"), "failure": row.get("failure"),
-                "lines": [{
-                    "persona_id": line.get("persona_id"), "current_weight": line.get("current_weight"),
-                    "target_weight": line.get("target_weight"), "delta": line.get("delta"), "rank_score": line.get("rank_score"),
-                    "cap_reasons": line.get("cap_reasons") or [], "exclusions": line.get("exclusions") or [],
-                    "risk_budget_factor": line.get("risk_budget_factor"), "capacity_factor": line.get("capacity_factor"),
-                    "pool_health_factors": line.get("pool_health_factors"),
-                } for line in row.get("lines") or []],
-            })
-        return _readback_response(cycles, meta={"snapshot_at": snapshot_at, "total": len(cycles), "policy": "read_only_paper_allocation_cycles"}, items=cycles)
 
     # 11. Rebalance list.
     @router.get("/bff/rebalances")
