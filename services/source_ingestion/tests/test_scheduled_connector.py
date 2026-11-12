@@ -199,6 +199,48 @@ def test_run_scheduled_force_reconciles_changed_connector_before_cadence(client)
     assert forced.json()["summary"]["forced_connector_count"] == 1
 
 
+def test_run_scheduled_respect_cadence_runs_once_then_suppresses_without_failing(client) -> None:
+    test_client, _, _ = client
+    assert _configure_with_records(test_client).status_code == 201
+    test_client.put(
+        "/api/source-ingest/connectors/conn-sched-notes/schedule",
+        json={"interval_seconds": 3600, "enabled": True},
+    )
+    payload = {"exclusive_connector_ids": ["conn-sched-notes"], "respect_cadence": True}
+
+    first = test_client.post("/api/source-ingest/run-scheduled", json=payload).json()
+    second = test_client.post("/api/source-ingest/run-scheduled", json=payload).json()
+
+    assert first["summary"]["total_ran"] == 1
+    assert first["summary"]["forced_connector_count"] == 0
+    # Cadence suppression is accounted, never reported as "not runnable".
+    assert second["summary"]["total_ran"] == 0
+    assert second["summary"]["total_skipped"] == 1
+    assert second["summary"]["total_failed"] == 0
+    # Old behaviour (no respect_cadence) still forces the exclusive selection.
+    forced = test_client.post(
+        "/api/source-ingest/run-scheduled",
+        json={"exclusive_connector_ids": ["conn-sched-notes"]},
+    ).json()
+    assert forced["summary"]["total_ran"] == 1
+
+
+def test_run_scheduled_respect_cadence_requires_exclusive_and_rejects_force(client) -> None:
+    test_client, _, _ = client
+    assert _configure_with_records(test_client).status_code == 201
+    unscoped = test_client.post("/api/source-ingest/run-scheduled", json={"respect_cadence": True})
+    forced = test_client.post(
+        "/api/source-ingest/run-scheduled",
+        json={
+            "exclusive_connector_ids": ["conn-sched-notes"],
+            "force_connector_ids": ["conn-sched-notes"],
+            "respect_cadence": True,
+        },
+    )
+    assert unscoped.status_code == 400
+    assert forced.status_code == 400
+
+
 def test_two_scheduler_threads_create_one_run_and_one_source_record(client) -> None:
     test_client, _, module = client
     configured = _configure_with_records(test_client, connector_id="conn-two-workers")

@@ -3248,7 +3248,7 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
 
   # Record the steady controller mode so every restore path (success, failure,
   # interruption) returns to it instead of silently forcing reconcile_only.
-  local steady_controller_mode
+  # Deliberately not local: the EXIT trap can run after this function returns.
   steady_controller_mode="$(python3 -c 'import json,sys
 env = dict(item.partition("=")[::2] for item in json.loads(sys.argv[1] or "[]"))
 print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_scheduler_env}")"
@@ -3269,13 +3269,13 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
         [[ -z "${sched_log}" ]] || printf '%s\n' "${sched_log}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
       fi
     fi
-    info "restoring steady collector-host egress posture and source controller to ${steady_controller_mode}"
+    info "restoring steady collector-host egress posture and source controller to ${steady_controller_mode:-reconcile_only}"
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
       PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST:-}" \
-      SOURCE_INGEST_CONTROLLER_MODE="${steady_controller_mode}" SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
+      SOURCE_INGEST_CONTROLLER_MODE="${steady_controller_mode:-reconcile_only}" SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
       SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
     fi
