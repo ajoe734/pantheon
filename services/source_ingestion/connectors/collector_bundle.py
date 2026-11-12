@@ -177,6 +177,7 @@ class CollectorPullResult:
 
 
 PRIORITY_LATEST_DATASETS = frozenset({"tw_price_daily"})
+PRIORITY_LATEST_MAX_CADENCE_SECONDS = 3600
 _BUNDLE_TRADE_DATE_RE = re.compile(r"^(?:backfill|close)-(\d{4}-\d{2}-\d{2})")
 
 
@@ -400,8 +401,6 @@ class CollectorBundleAdapter:
     host: str | None = None
     raw_root: str | None = None
     max_records: int = 500
-    # Deliver the newest-trading-day bundle ahead of the cursor sweep (price history only).
-    priority_latest: bool = False
     transport: BundleTransport | None = None
     # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
     # in addition to the symbols that have stored daily bars under the storage roots.
@@ -537,6 +536,16 @@ class CollectorBundleAdapter:
             priority_done=done,
         )
 
+    def _priority_latest_enabled(self) -> bool:
+        # A sub-hourly Pantheon pull cadence (price-history definitions: 30 min) means the newest
+        # session must not wait behind the oldest-first backfill sweep; daily cadence keeps the
+        # plain cursor order.
+        return (
+            self.source_type == "market"
+            and self.dataset in PRIORITY_LATEST_DATASETS
+            and 0 < self.cadence_seconds <= PRIORITY_LATEST_MAX_CADENCE_SECONDS
+        )
+
     def _health_cadence_seconds(self) -> int | None:
         # The Pantheon pull cadence of a price-history source (30 min) is faster than the collector's
         # own run cadence; staleness is judged against the host's cadence from status.json.
@@ -561,7 +570,7 @@ class CollectorBundleAdapter:
         self, cursor: str | None, *, trace_id: str, total_cap: int
     ) -> tuple[list[SourceRecord], str, tuple[str, ...], int, bool] | None:
         if (
-            not self.priority_latest
+            not self._priority_latest_enabled()
             or self.source_type != "market"
             or self.dataset not in PRIORITY_LATEST_DATASETS
             or total_cap <= 0

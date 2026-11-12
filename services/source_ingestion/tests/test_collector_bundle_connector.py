@@ -719,7 +719,7 @@ def _priority_setup(tmp_path, *, priority=True):
         return CollectorBundleAdapter(
             connector_id="conn-p", raw_root=str(tmp_path / "store"), transport=FakeTransport(files), host=HOST,
             source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
-            max_records=1000, priority_latest=priority,
+            max_records=1000, cadence_seconds=1800 if priority else 86400,
         )
     return make
 
@@ -756,10 +756,10 @@ def test_priority_disabled_keeps_oldest_first_cursor_order(tmp_path):
     assert result.records[0].metadata["trade_date"] == "2024-11-01"
 
 
-def test_definitions_enable_priority_for_price_history_at_30_minutes():
+def test_definitions_pull_price_history_every_30_minutes():
     from services.source_ingestion.connector_definitions import DEPLOYED_CONNECTOR_DEFINITIONS
     defs = {d.definition_id: d for d in DEPLOYED_CONNECTOR_DEFINITIONS}
     for sid in ("collector-tw-twse-price-history", "collector-tw-tpex-price-history"):
         meta = defs[sid].metadata["collector"]
-        assert meta["cadence_seconds"] <= 1800 and meta["priority_latest"] is True
-    assert not defs["collector-tw-twse-t86"].metadata["collector"]["priority_latest"]
+        assert meta["cadence_seconds"] <= 1800
+    assert defs["collector-tw-twse-t86"].metadata["collector"]["cadence_seconds"] == 86400

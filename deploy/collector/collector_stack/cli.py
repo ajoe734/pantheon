@@ -129,7 +129,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "capture-close":
-        from .close_capture import capture_same_day_close
+        from .runner import capture_same_day_close
 
         runner = CollectorRunner(config, root_dir=args.root_dir, hasher=AuthorHasher.from_file(args.salt_file))
         result = capture_same_day_close(runner, now=datetime.now(timezone.utc))
