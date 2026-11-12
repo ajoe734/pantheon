@@ -30,6 +30,10 @@ class GateConfig:
     DEFAULT_IN_SAMPLE_RATIO = 0.70
     DEFAULT_OUT_OF_SAMPLE_RATIO = 0.30
     DEFAULT_WALK_FORWARD_FOLDS = 3
+    # SD_STRATEGY_SCREEN_ENTRY_EXIT §4: a screen is admitted only when the screened
+    # version beats the same entry/exit rules over the whole boundary out of sample
+    # after costs by strictly more than this Sharpe margin.
+    DEFAULT_MIN_SCREEN_OOS_SHARPE_IMPROVEMENT = 0.0
 
     def __init__(
         self,
@@ -43,6 +47,7 @@ class GateConfig:
         in_sample_ratio: float = DEFAULT_IN_SAMPLE_RATIO,
         out_of_sample_ratio: float = DEFAULT_OUT_OF_SAMPLE_RATIO,
         walk_forward_folds: int = DEFAULT_WALK_FORWARD_FOLDS,
+        min_screen_oos_sharpe_improvement: float = DEFAULT_MIN_SCREEN_OOS_SHARPE_IMPROVEMENT,
     ):
         """Initialize gate with standard admission criteria."""
         self.base_oos_sharpe_threshold = float(base_oos_sharpe_threshold)
@@ -57,6 +62,7 @@ class GateConfig:
         self.in_sample_ratio = float(in_sample_ratio)
         self.out_of_sample_ratio = float(out_of_sample_ratio)
         self.walk_forward_folds = int(walk_forward_folds)
+        self.min_screen_oos_sharpe_improvement = float(min_screen_oos_sharpe_improvement)
         self.required_criteria = self._build_required_criteria()
         self.optional_criteria = self._build_optional_criteria()
 
