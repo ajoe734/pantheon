@@ -80,11 +80,13 @@ governed `show` confirms Codex ownership, Claude review, the original six accept
 criteria and hosted `external_wait`. The historical rejection remains in
 `evidence.json`; it is no longer a contract blocker.
 
-The fetched `origin/dev` remains `8f0445559a19474d7e7da29ed3f175c0800df558`, already
-an ancestor of this branch. Gate PR #7257 is still open at
+During verification `dev` advanced from `8f0445559` to
+`7b685a15d4804942c06279c6de4f22c4df1e3161` with Harness and Intraday owner
+deliveries. The task branch incorporates that base through a normal merge with
+no conflicts, retaining the incoming implementations. Gate PR #7257 was open at
 `3b9273c7b7e08f6c47b76d56388eeb86becad9b2`; its separate mechanism input/support
 changes have not entered `dev`. No other task's commits or trailers were copied.
-There is currently no merge conflict. If Gate lands first, refresh from current
+If Gate lands first, refresh from current
 `dev`, preserve both owners' Alpha worker/test changes, rerun composed regressions
 and freeze a new review head through the existing workflow.
 
@@ -92,3 +94,11 @@ The next owner handoff binds this committed manifest to the exact new PR head.
 Independent Claude approval and native integration remain required. Source
 functional validation is recorded separately from the outstanding hosted proof;
 neither an open PR nor local tests establish hosted acceptance or terminal `done`.
+
+After the current-dev merge, bounded Alpha regression completed with 49 passed
+(exit 0), and bounded Memory/Research HTTP/Postmortem regression completed with
+181 passed, 1 skipped and 2 subtests passed (exit 0). The skipped test requires a
+local Postgres container. Compose configuration, Python compilation, trailer and
+whitespace checks passed. The original combined 240-second batch timed out at
+92% (exit 124); it is retained as an incomplete attempt, not a passing result.
+Exact commands and the successful split reruns are recorded in `evidence.json`.
