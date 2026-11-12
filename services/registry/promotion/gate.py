@@ -185,8 +185,30 @@ class PromotionGate:
 
         try:
             from services.research.replication.gate_config import GateConfig
+            from services.research.vectorbt.adapter.vectorbt_adapter import (
+                TAIWAN_BROKER_COMMISSION_RATE, TAIWAN_EQUITY_TRANSACTION_TAX_RATE,
+                TAIWAN_ETF_TRANSACTION_TAX_RATE,
+            )
 
             cfg = GateConfig()
+            # Every non-metric prerequisite the ReplicationGate enforces before it computes checks.
+            hist, proto = ev["history_check"], ev["protocol"]
+            costs, benches = ev["transaction_costs"], ev["benchmarks"]
+            if not (
+                hist["sufficient"] is True and int(hist["calendar_days"]) >= cfg.min_history_calendar_days
+                and int(hist["trading_days"]) >= cfg.min_history_trading_days
+                and abs(float(proto["in_sample_ratio"]) - cfg.in_sample_ratio) <= 1e-6
+                and abs(float(proto["out_of_sample_ratio"]) - cfg.out_of_sample_ratio) <= 1e-6
+                and int(proto["walk_forward_folds"]) >= cfg.walk_forward_folds
+                and abs(float(costs["commission_rate"]) - TAIWAN_BROKER_COMMISSION_RATE) <= 1e-9
+                and abs(float(costs["equity_transaction_tax_rate"]) - TAIWAN_EQUITY_TRANSACTION_TAX_RATE) <= 1e-9
+                and abs(float(costs["etf_transaction_tax_rate"]) - TAIWAN_ETF_TRANSACTION_TAX_RATE) <= 1e-9
+                and costs["applied_on_every_fill"] is True
+                and isinstance(costs["citations"], Mapping) and costs["citations"]
+                and isinstance(benches["buy_and_hold_same_symbols"], Mapping)
+                and isinstance(benches["tw_0050"], Mapping)
+            ):
+                raise PromotionError("backtest_evaluation fails the gate's history/protocol/cost/benchmark prerequisites.")
             oos, ins = ev["out_of_sample"], ev["in_sample"]
             bench = ev["benchmarks"]["buy_and_hold_same_symbols"]
             folds = ev["walk_forward"]["folds"]

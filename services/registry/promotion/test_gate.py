@@ -215,6 +215,20 @@ class TestPromotionGate(unittest.TestCase):
             with self.assertRaises(PromotionError):
                 PromotionGate.verify_admitted_replication_proof(bad_proof, bad_summary, bad_lineage, **kw)
 
+        # Gate prerequisites beyond the six metric checks must also hold on the evaluation.
+        for mutate in (
+            lambda e: e["history_check"].update(sufficient=False, calendar_days=1, trading_days=1),
+            lambda e: e["protocol"].update(in_sample_ratio=1.0, out_of_sample_ratio=0.0),
+            lambda e: e["protocol"].update(walk_forward_folds=0),
+            lambda e: e["transaction_costs"].update(applied_on_every_fill=False, commission_rate=0.0),
+            lambda e: e["benchmarks"].pop("tw_0050"),
+        ):
+            weak = _copy.deepcopy(bt_eval)
+            mutate(weak)
+            with self.assertRaises(PromotionError):
+                PromotionGate.verify_admitted_replication_proof(
+                    proof, summary, lineage, backtest_evaluation=weak, artifact_checksum=checksum)
+
         candidate_entry = self.gate.promote(draft_entry, PromotionState.CANDIDATE)
         self.assertEqual(candidate_entry["lifecycle_state"], "candidate")
 
