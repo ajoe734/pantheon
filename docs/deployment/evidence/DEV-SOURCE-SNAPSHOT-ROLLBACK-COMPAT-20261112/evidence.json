@@ -4,7 +4,7 @@
   "reviewer": "Claude",
   "scope": "Source codec and existing retained-artifact qualification; isolated local validation only",
   "source_delivery": "local implementation and validation complete; assigned independent review, required CI and native integration pending",
-  "hosted_recovery": "not executed; original sole product publisher retains authority",
+  "hosted_recovery": "Supplied original-publisher receipts prove temporary compatible-image forward recovery and runtime availability. Exact Bee rollback and accepted full release remain unproved; this worker performed no hosted operations.",
   "sanitized_inputs": [
     {
       "file": "goal-current-Source-selected-service-log-diagnostic-readonly-20261112.json",
@@ -92,7 +92,7 @@
     "stack_truth": "All recorded running and completed initializer images remain part of existing exact-stack readback; successful initializer exit never substitutes for exact image identity"
   },
   "existing_owner_recovery_procedure": {
-    "execution_status": "PREPARED ONLY; no VM, SSH, service control, owner-data or provider operation performed by this worker",
+    "execution_status": "Prepared maintained procedure plus exact supplied publisher temporary-live configuration/receipts above; this worker executes no VM/SSH/service/provider operation",
     "authority": "Original sole product publisher using its already governed dev recovery channel; preserve the original Root quarantine and incomplete verdict",
     "selected_mode": "Operator-selected compatible retained-image FORWARD RECOVERY, if explicitly selected; never exact Bee rollback",
     "steps": [
@@ -135,12 +135,18 @@
       "command": "git fetch --no-tags origin '+refs/heads/dev:refs/remotes/origin/dev'",
       "exit_status": 0,
       "summary": "origin/dev remains 452eb1a6a973863ef26492ab99efce0a36de79ab; task branch contains this base"
+    },
+    {
+      "command": "timeout 240 .venv/bin/python -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_requirement_state.py services/source_ingestion/tests/test_tw_close_reconcile.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_snapshot_frequency_isolation.py services/source_ingestion/tests/test_pipeline_snapshot_dataset_isolation.py services/source_ingestion/tests/test_registry_receipt_summary.py services/source_ingestion/tests/test_scheduled_connector.py",
+      "exit_status": 0,
+      "summary": "147 passed in 71.45s after merging dev 50990c35a83ee884097c3371bc52436f0e9b5249; prior focused codec/artifact inputs unchanged",
+      "output_sha256": "b08e6a0255827090670306753837019ea29457ed178a2c26d41e68fefb34e5c5"
     }
   ],
   "limits": [
     "Local protocol tests use real exact Git codecs and actual lifecycle entrypoints; Docker/HTTP/owner transports in guarded-path tests are fixtures.",
-    "No hosted recovery, Docker-isolation execution, 57-service recovery or hosted product acceptance is claimed.",
-    "No runtime.py or catalog_controller.py edit; active registry receipt work and completed producer tasks remain separate.",
+    "The worker performed no hosted operations. Named publisher receipts prove limited temporary forward recovery; they do not prove this PR is hosted, exact Bee rollback, accepted full-stack release or functional product acceptance.",
+    "No runtime.py or catalog_controller.py edit by this task. Independently delivered registry receipt work is composed from dev 50990c35a; producer tasks stay completed.",
     "Source qualification must be shipped through the existing pinned publisher/controller delivery before it can protect real operations; local source changes do not activate a live controller."
   ],
   "validation_interpreter": "CPython 3.11.16 in task-local .venv; required repository CI uses Python 3.12",
@@ -148,5 +154,169 @@
     "Initial system python3 pytest invocation exited 1 because pytest was absent; installed dependencies in a task-local venv and reran.",
     "First guarded-seal regression run: 1 failed, 2 passed due to missing copy import in test; fixed.",
     "Intermediate complete focused run: 1 failed, 441 passed, 1 skipped. Existing slow-start test incorrectly counted preflight inspect calls as startup polls. Simulator now starts its slow-health sequence after the recorded Source image is recreated; original bounded health-wait assertion retained."
-  ]
+  ],
+  "publisher_temporary_live_repair": {
+    "label": "TEMPORARY LIVE REPAIR / FORWARD RECOVERY / NOT ACCEPTED RELEASE",
+    "authority": "Canonical task next supplied by Ops at 2026-11-12T21:27Z; executed solely by original publisher Root01a15322. Codex2 only reads these named receipts and formalizes them in this scoped manifest.",
+    "evidence_root": "/tmp/pantheon-root01a15322-resume-20261111",
+    "receipts": [
+      {
+        "file": "actual-temporary-live-Source-reader-recovery-432880-20261112.json",
+        "sha256": "313b4cc2ddaca1c366e787a48ab95b806b830852e5c480b25e77eac1c50c48d7"
+      },
+      {
+        "file": "actual-temporary-live-baseline-dependent-services-start-432880-20261112.json",
+        "sha256": "1102e33d5f1b8df3905e816a385c0242415502db1710cd214fd8af92885a135e"
+      },
+      {
+        "file": "actual-temporary-live-recovery-full57-and-original-data-preservation-20261112.json",
+        "sha256": "7e67eac93b47518f4aeb6dc9fbebba88885097bedb5ec6cabaca703f5bc49330"
+      },
+      {
+        "file": "temporary-live-Source-reader-recovery-432880.override.yml",
+        "sha256": "b914b60ab9c885fb66fcd9c9b460cbb7dd5e53fe0b55f3da4959c548145bbc89"
+      },
+      {
+        "file": "actual-Root432880-same-readonly-snapshot-old-vs-candidate-decoder-replay-20261112.json",
+        "sha256": "ea1ab777558d4d872198a90d5a3d73f7a896c8183444c2cfb7567aab93e30c7c"
+      }
+    ],
+    "same_readonly_snapshot_decoder_replay": {
+      "old_reader": {
+        "image": "sha256:238782113a721db91a65486ad79652510e3857fa44ab4ad4375a714208b0d5ef",
+        "transport_exit": 0,
+        "parser": "rejected",
+        "bytes": 30304528,
+        "sha256": "fdd3b2820736066ffba42a384b47e26c532c972942e7f0d0422f3d156cc0bd04",
+        "lines": 5882,
+        "failure_line": 4883,
+        "reason": "point schema"
+      },
+      "candidate_reader": {
+        "image": "sha256:9569ea97ed033b6fdf28b95fcc686a61658ef3868d5616090a95b1b9ec67ca06",
+        "transport_exit": 0,
+        "parser": "accepted",
+        "bytes": 30304528,
+        "sha256": "fdd3b2820736066ffba42a384b47e26c532c972942e7f0d0422f3d156cc0bd04",
+        "lines": 5882,
+        "parsed_count": 2107
+      }
+    },
+    "exact_public_override_configuration": {
+      "services": {
+        "source-ingest": {
+          "image": "sha256:9569ea97ed033b6fdf28b95fcc686a61658ef3868d5616090a95b1b9ec67ca06",
+          "pull_policy": "never",
+          "environment": {
+            "PANTHEON_TENANT_ID": "tenant-dev",
+            "PANTHEON_EXTERNAL_EGRESS": "allowlist",
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "165-232-172-111.sslip.io",
+            "GIT_SHA": "70a5bb860e855beacd14445c29bff64ccfa7e8f2"
+          },
+          "restart": "unless-stopped"
+        },
+        "source-ingest-scheduler": {
+          "image": "sha256:07b4290958d50753012a3b7fc9adeeb517a2ec08c724fb3a9c58630a82923bb1",
+          "pull_policy": "never",
+          "environment": {
+            "GIT_SHA": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
+            "PANTHEON_TENANT_ID": "tenant-dev",
+            "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS": "",
+            "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": "",
+            "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
+            "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+            "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "scheduled_tick"
+          },
+          "restart": "unless-stopped"
+        }
+      }
+    },
+    "override_reproduction": "json.dumps(exact_public_override_configuration, indent=2) + newline reproduces the original public override bytes and SHA256 b914b60ab9c885fb66fcd9c9b460cbb7dd5e53fe0b55f3da4959c548145bbc89; no private env-file content is included.",
+    "executed_procedure": [
+      "Original publisher used the existing Bee snapshot Compose entry and existing normal service env-file internally; neither credential values nor private env-file contents were extracted or retained here.",
+      "Explicitly pinned only Source API/scheduler to the compatible retained 70a images using the exact public override above, preserving tenant, egress allowlist, scheduler reconcile_only/maxTicks0, empty force/exclusive connector sets, scheduled_tick truth and unless-stopped restart.",
+      "Existing compose up --no-build --pull never --no-deps --wait recreated only source-ingest and source-ingest-scheduler. Receipt preflight_exit=0 and apply_exit=0; the preflight_service_count=0 is retained as observed and is not interpreted as a full-stack gate.",
+      "Existing compose start --wait --wait-timeout 120 started only the 20 already-created baseline-running services named below after their exact sealed images were checked; start_exit=0. No builds, pulls, journal rewrites, data quarantine/stripping, provider replay or paper resume.",
+      "At 21:27:19Z the publisher re-read both Source owner journal size/hash and all 57 baseline image/state/health entries. Preserve the exact mismatch and nonbaseline service results below; this restores availability without changing Root432880 or FE432924 FAIL verdicts."
+    ],
+    "baseline_created_services_started": [
+      "reconciliation-drift-consumer",
+      "reconciliation-drift-incident-listener",
+      "reconciliation-drift-scheduler",
+      "evolution-threshold-sweep-producer",
+      "reconciliation-drift-svc",
+      "postmortems",
+      "monitor-agent",
+      "incidents",
+      "search-index-scheduler",
+      "training-session-preview-worker",
+      "evolution-dispatch-worker",
+      "evolution-daily-sweep-scheduler",
+      "paper-signal-producer",
+      "paper-fleet-reconciler",
+      "evolution",
+      "deployment-outbox-consumer",
+      "telemetry",
+      "training-session-svc",
+      "search-svc",
+      "runtime-manager"
+    ],
+    "source_owner_readback": {
+      "source-ingest": {
+        "image_id": "sha256:9569ea97ed033b6fdf28b95fcc686a61658ef3868d5616090a95b1b9ec67ca06",
+        "state": "running",
+        "health": "healthy",
+        "restart_count": 0,
+        "source_metadata": {
+          "journal_bytes": 30304528,
+          "original_prefix_bytes_read": 30304528,
+          "original_prefix_sha256": "fdd3b2820736066ffba42a384b47e26c532c972942e7f0d0422f3d156cc0bd04",
+          "nonsecret_mode": null,
+          "intraday_store_root": null
+        }
+      },
+      "source-ingest-scheduler": {
+        "image_id": "sha256:07b4290958d50753012a3b7fc9adeeb517a2ec08c724fb3a9c58630a82923bb1",
+        "state": "running",
+        "health": "healthy",
+        "restart_count": 0,
+        "source_metadata": {
+          "journal_bytes": 30304528,
+          "original_prefix_bytes_read": 30304528,
+          "original_prefix_sha256": "fdd3b2820736066ffba42a384b47e26c532c972942e7f0d0422f3d156cc0bd04",
+          "nonsecret_mode": "reconcile_only",
+          "intraday_store_root": null
+        }
+      }
+    },
+    "full57_summary": {
+      "baseline_count": 57,
+      "exact_baseline_image_matches": 54,
+      "state_failures": [],
+      "health_failures": [],
+      "nonbaseline_services": [
+        "source-ingest-agora-projector"
+      ],
+      "intentional_forward_source_images": [
+        "source-ingest",
+        "source-ingest-scheduler"
+      ],
+      "other_image_mismatches": [
+        "source-ingest-controller-migrate"
+      ]
+    },
+    "initializer_readback": {
+      "image_id": "sha256:ed9935346920f6eee55fad7f31566fa851c90e02799afde01ade33c5a4ebf126",
+      "state": "exited",
+      "exit_code": 0,
+      "health": null
+    },
+    "nonbaseline_projector_state": "created",
+    "acceptance_limits": "54/57 exact baseline images, 2 deliberate compatible Source forward images, 1 unresolved initializer image mismatch. Zero baseline state/health failures. INTRADAY_STORE_ROOT remains unset; no new-fill/three-day claims. Original release, protected QA and functional acceptance still required; no every-release twelve-loop requirement."
+  },
+  "base_refresh": {
+    "base_sha": "50990c35a83ee884097c3371bc52436f0e9b5249",
+    "composition_commit": "e4f18fed7",
+    "reason": "First handoff rejected because dev advanced to the independently delivered registry receipt task; merged current dev without rewriting published history and ran actual composed Source regressions."
+  }
 }
