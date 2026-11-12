@@ -1,0 +1,88 @@
+{
+  "task_id": "COLLECTOR-HOST-PROVISION-20261110",
+  "kind": "operator-host-provision-source-evidence",
+  "collected_by": "Human/Ops (read-only probes); source worker only recorded the receipt",
+  "probe_at": "2026-11-12T06:01:39.952852+00:00",
+  "secret_values_included": false,
+  "acceptance": [
+    {
+      "id": 1,
+      "clause": "Host runs under a provider account not linked to GCP billing and holds no GCP credential",
+      "result": "supported_within_scope",
+      "evidence": {
+        "dmi_vendor": {
+          "sys_vendor": "DigitalOcean",
+          "product_name": "Droplet",
+          "bios_vendor": "DigitalOcean"
+        },
+        "scoped_credential_inventory": {
+          "forbidden_nonempty_env_keys": [],
+          "gcp_credential_mount_flags": [],
+          "standard_gcloud_config_present": false
+        },
+        "operator_account_attestation": {
+          "source": "Canonical COLLECTOR-HOST-PROVISION-20261110 at2026-11-12T05:07:37Z records direct operator answer in original Claude chatbox b1134a03",
+          "shares_gcp_login": false,
+          "shares_gcp_payment_card": false,
+          "kind": "operator-provided account fact; not inferred from DMI or HTTPS"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "clause": "status.json served over HTTPS on collector host name; bundle request without token refused",
+      "result": "met",
+      "evidence": {
+        "host": "165-232-172-111.sslip.io",
+        "requests": [
+          {
+            "path": "/status.json",
+            "authenticated": true,
+            "http": 200,
+            "verified_https": true,
+            "redirects_followed": false,
+            "source_count": 16
+          },
+          {
+            "path": "/status.json",
+            "authenticated": false,
+            "http": 401,
+            "redirects_followed": false
+          },
+          {
+            "path": "/bundles/index.json",
+            "authenticated": false,
+            "http": 401,
+            "redirects_followed": false
+          }
+        ],
+        "bundle_server_running": true
+      }
+    },
+    {
+      "id": 3,
+      "clause": "Deployment variable and bundle token secret set for dev without token value in any log or repo file",
+      "result": "met",
+      "evidence": {
+        "host_variable": {
+          "name": "PANTHEON_COLLECTOR_HOST",
+          "value": "165-232-172-111.sslip.io",
+          "updated_at": "2026-11-11T11:10:42Z"
+        },
+        "bundle_token_secret": {
+          "name": "PANTHEON_COLLECTOR_BUNDLE_TOKEN",
+          "updated_at": "2026-11-11T11:10:44Z",
+          "value_not_read": true
+        },
+        "secret_values_returned": false
+      }
+    }
+  ],
+  "limitations": [
+    "Credential absence is scoped to Collector project container environment/mounts and standard root gcloud configuration; no universal filesystem scan claim.",
+    "Host acceptance only; not activation or three governed ingestion days or final joint release or W1 acceptance.",
+    "No service or configuration or token or host trust or provider/account or data writes.",
+    "AC1 account-isolation fact is an operator-provided attestation, not independently verifiable from the host.",
+    "Not claimed: COLLECTOR-STEADY-PULL-RESTORE-20261112, Ops activation, three governed ingestion days."
+  ]
+}
