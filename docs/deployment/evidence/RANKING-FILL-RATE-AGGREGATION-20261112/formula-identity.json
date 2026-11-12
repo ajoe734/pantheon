@@ -1,0 +1,8 @@
+{
+  "base_commit": "421c13abc87a44e2b05d1bf638d9a5866e4d8400",
+  "source_commit": "ed2f8c9f7f7ab56b41dd072c151b50408c803e80",
+  "function": "_pm12_persona_league_scores",
+  "ast_sha256": "e77a3593e02be8271a14065fcaa19107eab473938d1f5aa3315682056aeee412",
+  "unchanged": true,
+  "method": "AST equality against delivery base; admission guard is outside scorer"
+}
