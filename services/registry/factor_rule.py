@@ -218,6 +218,47 @@ def assert_governed_feature_inputs(strategy_logic: Mapping[str, Any]) -> None:
             )
 
 
+def _require_aware_timestamp(value: Any, label: str) -> None:
+    if isinstance(value, datetime):
+        aware = value.tzinfo is not None and value.utcoffset() is not None
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        if len(text) == 10:
+            raise FactorRuleValidationError(f"{label} must be a timezone-aware minute timestamp")
+        try:
+            parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text[-1:] in "Zz" else text)
+        except ValueError as exc:
+            raise FactorRuleValidationError(f"{label} is not a valid ISO timestamp: {value!r}") from exc
+        aware = parsed.tzinfo is not None and parsed.utcoffset() is not None
+    else:
+        aware = False
+    if not aware:
+        raise FactorRuleValidationError(f"{label} must be a timezone-aware minute timestamp")
+
+
+def _require_minute_observations(
+    feature_map: Mapping[str, Any], *, name: str, dataset: str, field: str
+) -> None:
+    series = _lookup_raw_feature(feature_map, name=name, dataset=dataset, field=field)
+    if not isinstance(series, (list, tuple)) or not series:
+        raise FactorRuleValidationError(
+            f"minute input '{name}' ({dataset}.{field}) requires dataset-bound minute observations; "
+            "daily/generic close or synthetic vwap fallback is not allowed"
+        )
+    for idx, obs in enumerate(series):
+        if (
+            not isinstance(obs, Mapping)
+            or not _is_number(obs.get("value"))
+            or not obs.get("event_time")
+            or not obs.get("available_time")
+        ):
+            raise FactorRuleValidationError(
+                f"minute input '{name}[{idx}]' must carry value, event_time and available_time"
+            )
+        _require_aware_timestamp(obs["event_time"], f"minute input '{name}[{idx}].event_time'")
+        _require_aware_timestamp(obs["available_time"], f"minute input '{name}[{idx}].available_time'")
+
+
 def assert_governed_feature_observations(
     strategy_logic: Mapping[str, Any],
     features: Mapping[str, Any] | None,
@@ -237,7 +278,13 @@ def assert_governed_feature_observations(
         if not isinstance(item, Mapping):
             continue
         name, dataset, field = str(item.get("name")), str(item.get("dataset")), str(item.get("field"))
-        if dataset in PRICE_VOLUME_DATASETS:
+        if dataset in PRICE_VOLUME_DATASETS and dataset not in INTRADAY_PRICE_VOLUME_DATASETS:
+            continue
+        if dataset in INTRADAY_PRICE_VOLUME_DATASETS:
+            # SD §6.3: minute inputs must be dataset-bound, timezone-aware observations
+            # evaluated at an explicit decision_time; no daily/generic/raw fallback.
+            _parse_timestamp_utc(decision_time, is_decision_time=True)
+            _require_minute_observations(feature_map, name=name, dataset=dataset, field=field)
             continue
         if not decision_checked:
             # decision_time stays optional for timestamp-free built-in price inputs;
@@ -1210,6 +1257,13 @@ def resolve_point_in_time_inputs(
         raw_series = _lookup_raw_feature(
             feature_map, name=name, dataset=dataset, field=field
         )
+        if raw_series is not None and dataset in INTRADAY_PRICE_VOLUME_DATASETS:
+            _require_minute_observations(feature_map, name=name, dataset=dataset, field=field)
+        if raw_series is None and dataset in INTRADAY_PRICE_VOLUME_DATASETS:
+            raise FactorRuleValidationError(
+                f"missing required minute feature input '{name}' ({dataset}.{field}); "
+                "daily/generic close or synthetic vwap fallback is not allowed"
+            )
         if raw_series is None:
             if field == "close" and close_series:
                 env[name] = close_series

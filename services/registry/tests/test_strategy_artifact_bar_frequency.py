@@ -123,3 +123,43 @@ def test_cross_session_controls_window_reset(_restore_catalogue, cross, expected
         _minute_logic(), None, features={"px": series}, decision_time="2026-11-10T09:05:00+08:00"
     )
     assert env["px"] == expected
+
+
+def _art(lag=3):
+    return {"strategy_logic": _minute_logic(lag_minutes=lag), "parameters": {"w": 2}}
+
+
+DT = "2026-11-10T09:02:00+08:00"
+
+
+def test_shared_evaluator_rejects_daily_close_fallback_for_minute_input(_restore_catalogue):
+    factor_rule.register_feature_definition(
+        factor_rule.FeatureDefinition("tw_price_1m", "close", availability_lag_unit="minutes", min_availability_lag=3)
+    )
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.evaluate_factor_rule_view(
+            _art(), [100, 101], features={"tw_price_daily.close": [100, 101]}, decision_time=DT
+        )
+    generic = [_obs("2026-11-10T09:00:00+08:00", 100.0), _obs("2026-11-10T09:01:00+08:00", 101.0)]
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.evaluate_factor_rule_view(_art(), generic, features={}, decision_time=DT)
+
+
+@pytest.mark.parametrize(
+    "series, decision_time",
+    [
+        ([100, 101], None),
+        ([100, 101], DT),
+        ([_obs("2026-11-10T09:00:00", 100.0), _obs("2026-11-10T09:01:00", 101.0)], DT),
+        ([{"value": 100.0}, {"value": 101.0}], DT),
+        ([_obs("2026-11-10T09:00:00+08:00", 100.0), _obs("2026-11-10T09:01:00+08:00", 101.0)], DT),
+    ],
+)
+def test_shared_evaluator_rejects_raw_or_unstamped_minute_features(_restore_catalogue, series, decision_time):
+    factor_rule.register_feature_definition(
+        factor_rule.FeatureDefinition("tw_price_1m", "close", availability_lag_unit="minutes", min_availability_lag=3)
+    )
+    with pytest.raises(factor_rule.FactorRuleValidationError):
+        factor_rule.evaluate_factor_rule_view(
+            _art(), None, features={"tw_price_1m.close": series}, decision_time=decision_time
+        )

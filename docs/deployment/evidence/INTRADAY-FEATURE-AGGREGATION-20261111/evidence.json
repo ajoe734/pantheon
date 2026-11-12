@@ -57,5 +57,15 @@
     "Not exercised against real provider data; KBar unit and publication time remain K1/K3 unverified items. No hosted evidence.",
     "Pre-existing failing tests listed under tests.result are unchanged by this task."
   ],
-  "boundaries": "source-only; no provider/token/VM/SSH/hosted/config/trading access; tw_price_daily never written; no retired route or FinMind daily bypass restored"
+  "boundaries": "source-only; no provider/token/VM/SSH/hosted/config/trading access; tw_price_daily never written; no retired route or FinMind daily bypass restored",
+  "review_reject_fix_round3": {
+    "defects": [
+      "minute inputs fell back to generic/daily close or derived vwap, bypassing lag/session filter",
+      "intraday datasets exempt from assert_governed_feature_observations let raw numeric minute features through"
+    ],
+    "fix": "services/registry/factor_rule.py: minute datasets now require dataset-bound, timezone-aware event_time/available_time observations plus decision_time (_require_minute_observations); missing minute input raises, no daily/generic close or synthetic vwap fallback; daily path unchanged",
+    "tests": "services/registry/tests/test_strategy_artifact_bar_frequency.py: shared-evaluator negative tests (daily/generic fallback, raw/naive/unstamped minute series, missing decision_time)",
+    "source_test_results": "4 task files + new tests: 46 passed; 442 passed across all factor_rule-referencing test files (persona-portfolio venv)",
+    "not_tested": "hosted remains W5"
+  }
 }
