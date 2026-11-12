@@ -149,3 +149,44 @@ def test_environment_examples_document_durable_persona_contract(env_path: str) -
     assert environment["PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA"] == "bff"
     assert environment["PANTHEON_REGISTRY_API_URL"] == "http://registry:8087"
     assert "PANTHEON_PAPER_FLEET_RECONCILER_URL" in environment
+
+
+def test_memory_dev_compose_reaches_real_governance_policy_path() -> None:
+    from services.governance.authz import evaluate_authz_request
+
+    compose = yaml.load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"), Loader=_ComposeLoader)
+    environment = compose["services"]["memory"]["environment"]
+
+    assert environment["PANTHEON_GOVERNANCE_AUTHZ_URL"] == (
+        "${PANTHEON_GOVERNANCE_AUTHZ_URL:-http://governance:8082}"
+    )
+    # No local-policy bypass and strict inbound JWT auth stay intact.
+    assert "PANTHEON_MEMORY_AUTHZ_MODE" not in environment
+    assert environment["PANTHEON_MEMORY_AUTH_MODE"] == "strict"
+
+    # Rendered default must be what memory resolves to the governance authz route.
+    import os
+    from unittest import mock
+
+    from services.memory import main as memory_main
+
+    with mock.patch.dict(os.environ, {"PANTHEON_GOVERNANCE_AUTHZ_URL": "http://governance:8082"}, clear=False):
+        assert memory_main._governance_authz_url() == "http://governance:8082/api/governance/authz/check"
+
+    def check(roles: list[str], resource: dict[str, str], context: dict[str, str]) -> dict[str, object]:
+        return evaluate_authz_request(
+            action="memory.retrieve",
+            actor_id="pantheon-dev-operator-a",
+            actor_roles=roles,
+            resource=resource,
+            context={"session_id": "s", **context},
+        )
+
+    persona_resource = {"scope": "persona", "persona_id": "persona-a"}
+    assert check(["operator"], persona_resource, {})["allowed"] is True
+    assert check(["operator"], {"scope": "institutional"}, {})["allowed"] is True
+    assert check(["viewer"], persona_resource, {})["reason"] == "persona_memory_role_denied"
+    assert check(["viewer"], {"scope": "institutional"}, {})["reason"] == "institutional_memory_role_denied"
+    assert check(["persona_session"], persona_resource, {"session_persona_id": "persona-b"})["reason"] == (
+        "persona_scope_mismatch"
+    )

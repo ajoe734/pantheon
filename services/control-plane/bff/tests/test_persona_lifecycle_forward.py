@@ -518,3 +518,23 @@ def test_mounted_lifecycle_requires_authenticated_caller(mounted, entry):
     assert response.status_code == 401, response.text
     assert mounted.boundary.calls == []
     assert mounted.store._get_all_commands() == []
+
+
+@pytest.mark.parametrize("action", ["EditPersona", "RetirePersona", "UpdateRoutePolicy", "TestPrompt"])
+def test_declared_persona_surface_rejects_actions_it_does_not_advertise(boundary, action):
+    from services.control_plane.bff.action_catalog import _CATALOG_ENTRIES as BFF_ACTION_CATALOG
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.personas import PersonaService, create_personas_router
+    entry = next(e for e in BFF_ACTION_CATALOG if e.action_id == "PersonaAction")
+    for stale in ("edit", "retire", "route-policy", "test-prompt"):
+        assert stale not in entry.description
+    for supported in ("AdvanceLifecycle", "Promote", "PromoteCandidate", "Demote"):
+        assert supported in entry.description
+    calls = []
+    persona = PersonaService(read_store=boundary.port, write_owner=boundary.port,
+                             ranking_write_owner=SimpleNamespace(), command_store=SimpleNamespace())
+    app = FastAPI()
+    app.state.command_adapter_service = SimpleNamespace(submit_command_admission=lambda **k: calls.append(k))
+    app.include_router(create_personas_router(service=persona, extract_identity_fn=extract_identity_jwt))
+    resp = TestClient(app).post(f"/bff/personas/{PERSONA}/actions/{action}", json={})
+    assert resp.status_code == 404 and calls == []

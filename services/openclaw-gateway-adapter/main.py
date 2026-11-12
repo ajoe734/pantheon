@@ -40,6 +40,7 @@ GET  /api/openclaw-adapter/broker/audit              — paper intent/result aud
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import hmac
 import json
@@ -3041,14 +3042,52 @@ def _ensure_agent_idempotently(
 ) -> tuple[int, Dict[str, Any]]:
     """Serialize reconciliation and durably replay an exact request.
 
-    The write transaction spans the CLI reconcile. SQLite's writer lock keeps
-    list/add/set-identity sequences from racing across request threads or
-    adapter workers. A crash rolls back the replay row; the underlying
-    reconcile safely observes any agent created before that crash.
+    CLI list/add/set-identity sequences are serialized across request threads
+    and adapter workers by an advisory file lock beside the SQLite file, NOT by
+    a SQLite writer transaction: the same database also holds invocation
+    claims/completions, and a writer transaction held over a slow CLI
+    reconcile would make another Persona's finished provider result fail with
+    "database is locked". SQLite writes here are short and committed
+    separately; the replay row and admission are still committed atomically
+    after the reconcile succeeds. A crash before that leaves no replay row, and
+    the underlying reconcile safely observes any agent created before it.
     """
 
     fingerprint = _agent_ensure_fingerprint(req)
     _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = _OPENCLAW_AGENT_IDEMPOTENCY_DB.with_name(
+        _OPENCLAW_AGENT_IDEMPOTENCY_DB.name + ".ensure.lock"
+    )
+    with open(lock_path, "a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            return _ensure_agent_locked(
+                req,
+                fingerprint=fingerprint,
+                idempotency_key=idempotency_key,
+                request_id=request_id,
+                sync_fn=sync_fn,
+                preflight_fn=preflight_fn,
+                commit_fn=commit_fn,
+                postcondition_fn=postcondition_fn,
+                replay_fn=replay_fn,
+            )
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _ensure_agent_locked(
+    req: BaseModel,
+    *,
+    fingerprint: str,
+    idempotency_key: str,
+    request_id: str,
+    sync_fn: Optional[Any],
+    preflight_fn: Optional[Any],
+    commit_fn: Optional[Any],
+    postcondition_fn: Optional[Any],
+    replay_fn: Optional[Any],
+) -> tuple[int, Dict[str, Any]]:
     connection = sqlite3.connect(
         str(_OPENCLAW_AGENT_IDEMPOTENCY_DB),
         timeout=130.0,
@@ -3065,7 +3104,8 @@ def _ensure_agent_idempotently(
             )
             """
         )
-        connection.execute("BEGIN IMMEDIATE")
+        # Short autocommit statements only: no SQLite writer lock is held
+        # across the CLI reconcile or postcondition wait below.
         if preflight_fn is not None:
             preflight_fn(connection, req)
         replay = connection.execute(
@@ -3087,7 +3127,6 @@ def _ensure_agent_idempotently(
                 replay_fn(connection, req, payload)
             if postcondition_fn is not None:
                 postcondition_fn(req)
-            connection.commit()
             return int(replay_status), payload
 
         agent = (sync_fn or _sync_servant_agent)(req)
@@ -3101,25 +3140,27 @@ def _ensure_agent_idempotently(
             "agent": agent,
         }
         response_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        connection.execute(
-            """
-            INSERT INTO agent_ensure_replays (
-                idempotency_key,
-                request_fingerprint,
-                http_status,
-                response_json
-            ) VALUES (?, ?, ?, ?)
-            """,
-            (idempotency_key, fingerprint, status_code, response_json),
-        )
-        if commit_fn is not None:
-            commit_fn(connection, req)
-        connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO agent_ensure_replays (
+                    idempotency_key,
+                    request_fingerprint,
+                    http_status,
+                    response_json
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (idempotency_key, fingerprint, status_code, response_json),
+            )
+            if commit_fn is not None:
+                commit_fn(connection, req)
+            connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
         return status_code, payload
-    except Exception:
-        if connection.in_transaction:
-            connection.rollback()
-        raise
     finally:
         connection.close()
 
