@@ -390,11 +390,34 @@ class PersonaPoolPublisher:
             )
         except PersonaProvisioningCoordinationError as exc:
             self._refuse(tenant_id, persona_id, number, str(exc), status_code=409, step="owner_chain")
-        except Exception as exc:  # owner unavailable: nothing moved, previous keeps running
-            self._refuse(
-                tenant_id, persona_id, number,
-                f"owner path unavailable: {exc}", status_code=503, step="owner_unavailable",
-            )
+        except Exception as exc:  # owner unavailable
+            if done is not None and done.get("status") == "dispatched":
+                # An earlier request already (possibly) had its dispatch
+                # accepted; an unavailable owner now cannot prove otherwise.
+                # Preserve that uncertainty instead of claiming nothing moved.
+                receipt = {
+                    "persona_id": persona_id,
+                    "pool_version": number,
+                    "envelope_artifact_id": artifact_id,
+                    "envelope_version": version,
+                    "approval_decision_id": done["approval_decision_id"],
+                    "deployment_plan_id": done["deployment_plan_id"],
+                    "previous_envelope_id": previous["artifact_id"],
+                    "source_binding_id": live_binding.get("binding_id"),
+                    "runtime_id": live_binding.get("runtime_id"),
+                    "capital_pool_id": ids.capital_pool_id,
+                    "persona_capital_binding_id": ids.persona_capital_binding_id,
+                    "saga_status": None,
+                }
+                dispatch_note = (
+                    f"dispatch outcome unconfirmed (earlier accepted dispatch; "
+                    f"owner now unavailable: {exc}); reconcile via owners"
+                )
+            else:
+                self._refuse(
+                    tenant_id, persona_id, number,
+                    f"owner path unavailable: {exc}", status_code=503, step="owner_unavailable",
+                )
 
         try:
             moved = self._binding_moved(ids, receipt)

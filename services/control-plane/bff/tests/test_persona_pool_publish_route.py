@@ -715,3 +715,44 @@ def test_initial_saga_get_failure_before_dispatch_fails_closed_503(
     history = world.publisher.history(TENANT, PERSONA)
     assert history["refusals"] and "owner path unavailable" in history["refusals"][-1]["reason"]
     assert "1" not in history["published"]
+
+
+def test_retry_while_queued_and_saga_get_unavailable_preserves_uncertainty(
+    world, monkeypatch, tmp_path
+):
+    import urllib.error
+
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 0.5)], 0)
+    world.transport.queue_dispatch = True
+    real_get = world.transport.get
+
+    def lossy_get(owner, path):
+        if owner == "deployment" and "/sagas/" in path and world.transport.queued:
+            raise urllib.error.URLError("readback lost")
+        return real_get(owner, path)
+
+    world.transport.get = lossy_get
+    first = client.post(PATH, json={}, headers=H)
+    assert first.status_code == 200, first.text
+    assert first.json()["data"]["status"] == "dispatched"
+
+    def always_lossy(owner, path):
+        if owner == "deployment" and "/sagas/" in path:
+            raise urllib.error.URLError("readback still lost")
+        return real_get(owner, path)
+
+    world.transport.get = always_lossy
+    retry = client.post(PATH, json={}, headers=H)
+    world.transport.get = real_get
+    assert retry.status_code == 200, retry.text
+    data = retry.json()["data"]
+    assert data["status"] == "dispatched"
+    history = world.publisher.history(TENANT, PERSONA)
+    assert not history["refusals"]
+    assert history["published"]["1"]["status"] == "dispatched"
+    assert len(world.transport.queued) == 1
+    for run in world.transport.queued:
+        run()
+    assert world.runtime.calls == ["deploy", "replace"]
+    assert _live(world)[0]["artifact_id"] == data["envelope_artifact_id"]
