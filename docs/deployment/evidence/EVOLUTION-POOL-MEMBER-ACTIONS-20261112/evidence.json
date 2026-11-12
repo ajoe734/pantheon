@@ -4,11 +4,13 @@
   "owner": "Codex2",
   "reviewer": "Claude",
   "review": {
-    "status": "blocked_artifact_contract_revision",
-    "blocker": {
-      "required_actor": "Human/Ops",
-      "reason": "Governed exact-head handoff refused because 14 necessary changed files are outside the immutable task artifact contract.",
-      "request": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/artifact-contract-revision-request.json"
+    "status": "pending_independent_review",
+    "scope_resolution": {
+      "actor": "Human/Ops",
+      "contract_updated_at": "2026-11-12T19:55:36Z",
+      "reopened_at": "2026-11-12T19:55:50Z",
+      "request": "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/artifact-contract-revision-request.json",
+      "result": "All 14 requested paths admitted through the governed artifact-contract command; same owner, reviewer, dependencies and seven acceptance criteria. No review approval is claimed."
     }
   },
   "base_commit": "caec3f40727c6bf7dd73c710625deff81b5fd4eb",
@@ -174,7 +176,7 @@
     "A child must pass its fresh gate-basis Sharpe/drawdown window as well as outperform the parent. A failed fresh window removes the child even if its exposure-return rank exceeds the parent."
   ],
   "artifact_sha256": {
-    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/README.md": "e4500b4f52b36e88da6aef688b111ff924aad40940185a5a3859b0b164498eb9",
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/README.md": "4ef41a7497a60e8908ddca5dc880d7f7036f72c84686fbf51692284de50a23e1",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/counter-final.txt": "39387ec85e14827c43ae41e261adf1b35fcb037ab26e3b4c0e34f4b5797791f6",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/post-rebase.txt": "1853e1a3dd2035b752cd63f5ec6708bc0cbcc2315d5bf500c3cb67dafd0f698c",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/retrain-oos.txt": "61ac1c321809e47a91f69a37187ed13017d2c0c295bad4aff211fdd39e02b422",
@@ -182,7 +184,7 @@
     "services/control-plane/bff/persona_pool_publisher.py": "b9f240b7e4342668ef8d1e8028d124da2d45b92dfc092efbde4ae0aa0440c5af",
     "services/control-plane/bff/tests/test_persona_pool_publish_route.py": "be6a18ae3da943eca2dc48d174f926528e9302b23a0e5ccddbaf4b9c0dc838cb",
     "services/control-plane/persona/persona_strategy_pool.py": "1d48f87fd4e0e1bbc10ec8f7e705b316a0edbd6c53404332266df578c9eca38d",
-    "services/evolution/auto_consumer.py": "99ae96c3757f10e35a6e2487bdc8752535de04553ec0c7a710bea5bd8d19ddef",
+    "services/evolution/auto_consumer.py": "15c7613a8455085d178daf26dcfa4c4e1597d2da8f9b6f41007ce0476c889495",
     "services/evolution/auto_consumer_runtime.py": "e77cedb3cd6f8be9565a5b12bcf7d43cfd421db49b2075b0745969bd0def02b9",
     "services/evolution/decay_monitor.py": "4249923da42fa672e89cf40c5f8754a487697d8e15c333c051fcaa99a8048f2e",
     "services/evolution/dispatch_outbox.py": "63e86b650486736572e2443661ebde4c4605401853f8d7170697561645da12ac",
@@ -214,7 +216,7 @@
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/mechanism-context.txt": "4632cffac63226f80d83b54d6e699119c7a9724ebe65690934837be94c77c02e",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/composition-final.txt": "bbfe27d1034f241ba5d6a07371f3f9658c095cb74bfeb3190fb0736bddf9cc33",
     "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/memory-composition.txt": "149f0f98795e4c32cdb737701e87cb0497f2eb1b6e7c67bc3a649ab61ae08976",
-    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/artifact-contract-revision-request.json": "3191e7f661d89deced4bb16ce08375a0423249e243d1ca02a94cf0fcfa6101a2"
+    "docs/deployment/evidence/EVOLUTION-POOL-MEMBER-ACTIONS-20261112/artifact-contract-revision-request.json": "2188aa91071aa8913557889d1399b4d77bb0f28d99649a1976d99bc7e044221c"
   },
   "base_refresh": {
     "previous_base": "70a5bb860e855beacd14445c29bff64ccfa7e8f2",
@@ -300,5 +302,6 @@
       ],
       "verification": "43 passed, 129 warnings in 13.52s; task source hash delta is research/main.py only, inherited unchanged from the accepted upstream Memory task."
     }
-  ]
+  ],
+  "resumed_source_head": "df618258d86979eeda3742db78682f3a30046fc1"
 }

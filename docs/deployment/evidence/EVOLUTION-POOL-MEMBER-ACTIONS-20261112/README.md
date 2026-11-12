@@ -77,3 +77,14 @@ or a hosted natural event. Genuine recorded baseline proofs, real post-admission
 replay, real retrain/OOS refusal, and the mounted publisher/coordinator/dispatch
 path are covered separately. There is no hosted deployment or live-capital
 evidence in this task.
+
+## Review resumption
+
+Human/Ops admitted all 14 requested exact paths through the governed artifact
+contract on 2026-11-12 and reopened the same task for Codex2, retaining Claude
+as reviewer and all seven acceptance criteria. The earlier contract revision
+request is retained as history with its resolution recorded. Source head
+`df618258d86979eeda3742db78682f3a30046fc1` already contains current dev base
+`caec3f40727c6bf7dd73c710625deff81b5fd4eb`; resumption refreshes validation and
+the review manifest without changing the implementation contract. Independent
+review and the canonical integrator remain required before owner closeout.

@@ -3,7 +3,14 @@
   "task_id": "EVOLUTION-POOL-MEMBER-ACTIONS-20261112",
   "requester": "Codex2",
   "required_actor": "Human/Ops",
-  "status": "awaiting_governed_contract_revision",
+  "status": "resolved_by_governed_contract_revision",
+  "resolution": {
+    "actor": "Human/Ops",
+    "contract_updated_at": "2026-11-12T19:55:36Z",
+    "reopened_at": "2026-11-12T19:55:50Z",
+    "source": "Governed ai-status.sh show EVOLUTION-POOL-MEMBER-ACTIONS-20261112; contract_revision and review_requeue_intent",
+    "result": "All 14 requested exact paths are admitted; same task, owner Codex2, reviewer Claude and original seven acceptance criteria. Scope admission is not review approval."
+  },
   "pr": "https://github.com/ajoe734/pantheon/pull/7265",
   "guard_source": "scripts/ai_status.py:command_artifact_contract",
   "guard_rule": "Only Human/Ops can revise task artifact contracts; task must be todo or blocked.",

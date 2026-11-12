@@ -125,8 +125,8 @@ def auto_approval_id(decision_id: str) -> str:
 def expected_binding_id(decision: Mapping[str, Any]) -> str:
     """The governance approval id this decision must carry once the gate has acted.
 
-    A retire is carried out by the persona lifecycle's own governed steps and keeps
-    the gate's evidence id.  Research work (retrain / mutate / revalidate) is run by
+    A retire removes a pool member through the pool owner and keeps the gate's
+    evidence id. Research work (retrain / mutate / revalidate) is run by
     the dispatch worker, which only accepts the real, deterministic Governance
     ``evolution_execute`` request bound to the immutable proposal content.
     """
@@ -253,7 +253,7 @@ class AutoConsumer:
     def tick(self) -> ConsumerReport:
         """Advance every decision one resumable step at a time.
 
-        ``proposed -> reviewed -> approved`` and the retire's persona steps are
+        ``proposed -> reviewed -> approved`` and pool removal/publication are
         each durable; a later tick resumes from whatever state a failure left
         behind, using the original governance binding.
         """
