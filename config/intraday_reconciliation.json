@@ -1,0 +1,25 @@
+{
+  "schema_version": "intraday_reconciliation.v1",
+  "spec": "SD_INTRADAY_MINUTE_BARS_2026-11-11 section 5; DEV_PLAN section 4 K3",
+  "price_tolerance_pct": "0.001",
+  "price_tolerance_ticks": 1,
+  "volume_tolerance_pct": "0.02",
+  "min_coverage": "0.95",
+  "max_consecutive_missing_minutes": 10,
+  "session_open": "09:00",
+  "session_last_bar_start": "13:30",
+  "expected_bars": 271,
+  "volume_unit_factor": "1000",
+  "volume_unit_status": "inferred_unverified_not_acceptance",
+  "tick_size_bands": [
+    {"min_price": "0", "tick": "0.01"},
+    {"min_price": "10", "tick": "0.05"},
+    {"min_price": "50", "tick": "0.1"},
+    {"min_price": "100", "tick": "0.5"},
+    {"min_price": "500", "tick": "1"},
+    {"min_price": "1000", "tick": "5"}
+  ],
+  "pass_rate_operator_review_below": "0.90",
+  "pass_rate_window_trading_days": 10,
+  "auto_widen_tolerance": false
+}
