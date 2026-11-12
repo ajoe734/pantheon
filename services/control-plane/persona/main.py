@@ -39,6 +39,7 @@ from persona_registry import (
 )
 from persona_strategy_pool import (
     AppendPoolVersionRequest,
+    PoolDecisionRequest,
     PersonaStrategyPoolStore,
     PoolError,
     build_pool_store,
@@ -545,6 +546,33 @@ def seed_strategy_pool(
     return _pool_call(
         lambda: _pool_store().seed_from_owner_records(persona_id, admitted, actor_id=authority.actor_id)
     )
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/decisions", status_code=201)
+def decide_strategy_pool(
+    persona_id: str,
+    body: PoolDecisionRequest,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    authority, admitted = _pool_scope(persona_id, authorization, tenant_id, write=True)
+    return _pool_call(lambda: _pool_store().decide(persona_id, admitted, body, actor_id=authority.actor_id))
+
+
+class PoolHealthRequest(BaseModel):
+    books: dict[str, dict[str, Any]] = {}
+    observations: list[dict[str, Any]] = []
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/health")
+def strategy_pool_health(
+    persona_id: str,
+    body: PoolHealthRequest,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False)
+    return _pool_call(lambda: _pool_store().health(persona_id, admitted, body.books, body.observations))
 
 
 # The deployed control-plane Persona process owns the durable Registry and

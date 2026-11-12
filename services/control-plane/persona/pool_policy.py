@@ -156,10 +156,11 @@ def member_statistics(member, book, policy):
             "sharpe": sharpe(values, policy.periods_per_year), "drawdown": max(0, 1 - equity / peak)}
 
 
-def reweight(members, books, policy, now):
+def reweight(members, books, policy, now, previous_statistics=None):
     result = [dict(m) for m in members]
     live = [m for m in result if m["stage"] != "removed"]
     stats = {m["artifact_ref"]: member_statistics(m, books.get(m["artifact_ref"]), policy) for m in live}
+    previous_statistics = previous_statistics or {}
     scores = {}
     for member in live:
         stat = stats[member["artifact_ref"]]
@@ -177,8 +178,11 @@ def reweight(members, books, policy, now):
             continue
         stat = stats[ref]
         weight = scores[ref] / total
+        stat["drawdown_cap"] = None
         if stat["drawdown"] + 1e-12 >= policy.halve_drawdown:
-            weight *= 0.5
+            prior_cap = previous_statistics.get(ref, {}).get("drawdown_cap")
+            stat["drawdown_cap"] = prior_cap if finite(prior_cap) else member["risk_weight"] * 0.5
+            weight = min(weight, stat["drawdown_cap"])
         if member["stage"] == "trial" and stat["days"] < policy.trial_history_days:
             weight = min(weight, policy.trial_risk_cap)
         member["risk_weight"] = weight
