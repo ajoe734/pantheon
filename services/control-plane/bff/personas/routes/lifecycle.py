@@ -78,7 +78,22 @@ def _pool_publisher(authorization: Optional[str]) -> PersonaPoolPublisher:
         ).strip().rstrip("/")
         if not base:
             raise PoolPublishRefused("persona owner is unconfigured", status_code=503, step="pool")
-        return _get_json(base + path, auth_token=authorization, tenant_id=tenant_id)
+        import urllib.error
+
+        try:
+            return _get_json(base + path, auth_token=authorization, tenant_id=tenant_id)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None  # OwnerPoolReader maps None to PoolNotFound (404)
+            raise PoolPublishRefused(
+                f"persona owner pool read failed: HTTP {exc.code}",
+                status_code=503, step="owner_unavailable",
+            ) from exc
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise PoolPublishRefused(
+                f"persona owner pool read unavailable: {type(exc).__name__}: {exc}",
+                status_code=503, step="owner_unavailable",
+            ) from exc
 
     def tenant_coordinator(tenant_id: str) -> PersonaProvisioningCoordinator:
         return PersonaProvisioningCoordinator(

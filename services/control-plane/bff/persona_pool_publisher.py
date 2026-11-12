@@ -151,6 +151,17 @@ class PersonaPoolPublisher:
         self._save(tenant_id, persona_id, mutate)
         raise PoolPublishRefused(reason, status_code=status_code, step=step)
 
+    def _refuse_pool_read(self, tenant_id, persona_id, pool_version, reason, status_code, step):
+        try:
+            self._refuse(
+                tenant_id, persona_id, int(pool_version or 0), reason,
+                status_code=status_code, step=step,
+            )
+        except PoolPublishRefused as exc:
+            if exc.step != step:  # record contention must not mask the pool read cause
+                raise PoolPublishRefused(reason, status_code=status_code, step=step) from exc
+            raise
+
     # -- member snapshot ---------------------------------------------------
     def _member_entry(self, tenant_id: str, ref: str, checksum: str) -> Mapping[str, Any]:
         receipt = self.coordinator.transport.get(
@@ -205,7 +216,19 @@ class PersonaPoolPublisher:
                 else self.pool_store.version(persona_id, tenant_id, pool_version)
             )
         except PoolError as exc:
-            raise PoolPublishRefused(str(exc), status_code=exc.status_code, step="pool") from exc
+            self._refuse_pool_read(
+                tenant_id, persona_id, pool_version, str(exc), exc.status_code, "pool"
+            )
+        except PoolPublishRefused as exc:
+            self._refuse_pool_read(
+                tenant_id, persona_id, pool_version, exc.reason, exc.status_code, exc.step
+            )
+        except Exception as exc:  # owner HTTP/transport failure: nothing moved
+            self._refuse_pool_read(
+                tenant_id, persona_id, pool_version,
+                f"persona owner pool read unavailable: {type(exc).__name__}: {exc}",
+                503, "owner_unavailable",
+            )
         number = int(pool["pool_version"])
         digest = canonical_digest(pool)
         history = self._load(tenant_id, persona_id)

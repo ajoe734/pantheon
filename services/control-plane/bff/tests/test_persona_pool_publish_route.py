@@ -524,3 +524,37 @@ def test_older_pool_version_refused_after_newer_published(world, monkeypatch, tm
     assert client.post(PATH, json={"pool_version": 2}, headers=H).status_code == 200
     stale = client.post(PATH, json={"pool_version": 1}, headers=H)
     assert stale.status_code == 409 and "not newer" in stale.text
+
+
+@pytest.mark.parametrize("owner_status,expected", [(404, 404), (503, 503), (500, 503), (None, 503)])
+def test_real_pool_factory_translates_owner_errors(
+    world, monkeypatch, tmp_path, owner_status, expected
+):
+    """Real _pool_publisher factory + real route; only the owner GET is faked."""
+    import urllib.error
+    from services.control_plane.bff.personas import service as persona_service
+
+    real_factory = personas_lifecycle._pool_publisher
+    client = _client(world, monkeypatch, tmp_path)
+    monkeypatch.setattr(personas_lifecycle, "_pool_publisher", real_factory)
+    monkeypatch.setattr(personas_lifecycle, "_POOL_PUBLISH_RECORDS", None)
+    monkeypatch.setattr(persona_service, "_persona_provisioning_store", lambda: world.coordinator.store)
+    monkeypatch.setenv("PANTHEON_PERSONA_API_URL", "http://persona-owner.invalid")
+    error = (
+        urllib.error.HTTPError("http://persona-owner.invalid/pool", owner_status, "x", None, None)
+        if owner_status
+        else urllib.error.URLError("connection refused")
+    )
+
+    def owner_get(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(persona_service, "_get_json", owner_get)
+    calls_before = list(world.runtime.calls)
+    response = client.post(PATH, json={}, headers=H)
+    assert response.status_code == expected, response.text
+    assert world.runtime.calls == calls_before
+    assert len(_live(world)) == 1
+    record = personas_lifecycle._POOL_PUBLISH_RECORDS.get("tenant-a:persona-a")
+    assert record is not None and record["refusals"]
+    assert record["refusals"][-1]["step"] in {"pool", "owner_unavailable"}
