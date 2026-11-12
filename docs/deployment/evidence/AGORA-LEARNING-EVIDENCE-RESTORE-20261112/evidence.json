@@ -3,36 +3,53 @@
   "owner": "Codex",
   "reviewer": "Claude2",
   "date": "2026-11-12",
-  "base_commit": "bbf50f025dfdecaf4c602675942c3b34fd4173b8",
-  "anchor_commit": "cdeb3b920",
+  "base_commit": "0c1e435c691d6ea8c73cf48fa5026dbad94b9275",
+  "anchor_commit": "837bcce39500c99304753a345d2db037640986e0",
   "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md#67-restored-agora-learning-surfaces-c7",
-  "authority": ["Pantheon_總索引版系統分析文件.md: axiom 12, sections 6.5 and 9.4.3"],
+  "authority": [
+    "Pantheon_總索引版系統分析文件.md: axiom 12, sections 6.5 and 9.4.3"
+  ],
   "scope": "Agora human evidence owner admission and private Observe reads; automatic L5 extraction into existing L6 handoff scheduler",
   "acceptance": [
     {
       "criterion": 1,
       "proof": "Four actual BFF POST routes delegate to AgoraEvidenceWriteService and one durable inbox transaction; authenticated tenant/user, persona, subject and actor references are retained",
-      "tests": ["test_each_surface_owner_roundtrip_idempotency_and_new_observe", "test_postgres_restart_automatic_lifespan_and_real_l6_scheduler"]
+      "tests": [
+        "test_each_surface_owner_roundtrip_idempotency_and_new_observe",
+        "test_postgres_restart_automatic_lifespan_and_real_l6_scheduler"
+      ]
     },
     {
       "criterion": 2,
       "proof": "Production lifespan extracts pending/expired-lease work without a manual dataset endpoint. The real policy-learning scheduler consumes and acknowledges the resulting PostgreSQL DatasetVersion handoffs",
-      "tests": ["test_postgres_restart_automatic_lifespan_and_real_l6_scheduler"]
+      "tests": [
+        "test_postgres_restart_automatic_lifespan_and_real_l6_scheduler"
+      ]
     },
     {
       "criterion": 3,
       "proof": "Persona Observe read returns newly admitted feedback, including pending/failed evidence, within authenticated private scope and an admission-time since filter",
-      "tests": ["test_each_surface_owner_roundtrip_idempotency_and_new_observe", "test_no_cross_user_or_tenant_reads"]
+      "tests": [
+        "test_each_surface_owner_roundtrip_idempotency_and_new_observe",
+        "test_no_cross_user_or_tenant_reads"
+      ]
     },
     {
       "criterion": 4,
       "proof": "Empty/missing/unconfigured/unreachable evidence has explicit unavailable reasons. Unconsented raw content and forged provenance fail closed. Expired/revoked evidence is hidden. Text-only L6 inputs record actual degradation without seed fallback",
-      "tests": ["test_fail_closed_missing_owner_consent_roles_payload_and_storage", "test_redaction_retention_and_failed_extraction_reason", "test_missing_owner_is_explicit_in_lifespan_and_route", "test_postgres_restart_automatic_lifespan_and_real_l6_scheduler"]
+      "tests": [
+        "test_fail_closed_missing_owner_consent_roles_payload_and_storage",
+        "test_redaction_retention_and_failed_extraction_reason",
+        "test_missing_owner_is_explicit_in_lifespan_and_route",
+        "test_postgres_restart_automatic_lifespan_and_real_l6_scheduler"
+      ]
     },
     {
       "criterion": 5,
       "proof": "Each production BFF route writes through the real owner to PostgreSQL; a fresh owner reads all four types after restart. Expired claims recover automatically",
-      "tests": ["test_postgres_restart_automatic_lifespan_and_real_l6_scheduler"]
+      "tests": [
+        "test_postgres_restart_automatic_lifespan_and_real_l6_scheduler"
+      ]
     }
   ],
   "validation": [
@@ -65,6 +82,18 @@
     {
       "command": "git diff --check; .venv-pantheon/bin/python3 -m compileall -q services/agora services/control-plane/bff/agora/evidence services/control-plane/bff/agora/dataset_extraction/router.py services/control-plane/bff/core/app_factory.py",
       "result": "exit 0"
+    },
+    {
+      "command": "AGORA_EVIDENCE_TEST_DSN=<disposable local PostgreSQL 16 DSN> TEST_DATABASE_URL=<same disposable DSN> .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_human_evidence.py services/control-plane/bff/agora/dataset_extraction services/control-plane/bff/tests/test_agora_write_authority.py services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/tests/test_bff_lifespan_background_work.py services/control-plane/bff/test_normalized_route_uniqueness.py",
+      "result": "188 passed, 3 warnings in 140.20s; no skips; exit 0",
+      "base_commit": "0c1e435c691d6ea8c73cf48fa5026dbad94b9275",
+      "output": "refreshed-regression-tests.txt",
+      "scope": "Complete combined final regression on the refreshed dev base, including all PostgreSQL tests, provenance-spoofing prevention and missing-owner handling; subprocess timeout 180 seconds"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check && .venv-pantheon/bin/python3 -m compileall -q services/agora services/control-plane/bff/agora/evidence services/control-plane/bff/agora/dataset_extraction/router.py services/control-plane/bff/core/app_factory.py && git diff --check",
+      "result": "Routes match snapshot; compileall and diff checks passed; exit 0",
+      "base_commit": "0c1e435c691d6ea8c73cf48fa5026dbad94b9275"
     }
   ],
   "proof_limits": {
@@ -83,5 +112,7 @@
     "new_privileged_service_routes": false,
     "synthetic_production_evidence": false,
     "memory_or_persona_mutation": false
-  }
+  },
+  "original_base_commit": "bbf50f025dfdecaf4c602675942c3b34fd4173b8",
+  "original_anchor_commit": "cdeb3b920"
 }

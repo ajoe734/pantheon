@@ -34,3 +34,5 @@ AGORA_EVIDENCE_TEST_DSN='<disposable local PostgreSQL DSN>' \
 ```
 
 Without `AGORA_EVIDENCE_TEST_DSN`, only the durable integration case skips; the other six cases still run. Exact validation commands and terminal outputs are recorded in `evidence.json` and the adjacent logs.
+
+Final refreshed-base regression (`0c1e435c691d6ea8c73cf48fa5026dbad94b9275`): 188 passed, no skips, exit 0. Both PostgreSQL test settings were enabled in one combined batch, covering provenance rejection, owner availability, durable extraction/handoff and BFF composition/lifespan/route uniqueness. Route manifest, compileall and diff checks also passed. Earlier individual logs remain as historical validation; `refreshed-regression-tests.txt` is the final combined result.
