@@ -323,17 +323,23 @@ def _lessons(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
                 seen.add(it["item_id"])
                 g.items.append(it)
 
-    plans = [("institutional", "institutional", caller.actor_roles, False)]
-    if own:
-        plans.append(("persona", "persona_private", caller.actor_roles, True))
-    plans.append(("persona", "committee_shared", ("consultation_session",), False))
-    for scope, layer, roles, private_ok in plans:
+    # Always send the caller's own verified roles (never invent one: the route
+    # rejects roles beyond the verified token).  Committee visibility is
+    # enforced here: non-persona callers only keep persona_and_committee items.
+    plans = [("institutional", caller.actor_roles), ("persona", caller.actor_roles)]
+    for scope, roles in plans:
         try:
             resp = _memory_hits(owners, subject, caller, scope=scope, query=query, tags=tags,
                                 limit=limit, roles=roles)
-            add(resp.get("hits", []), layer, resp, allow_private=private_ok)
+            if scope == "institutional":
+                add(resp.get("hits", []), "institutional", resp, allow_private=False)
+            else:
+                for hit in resp.get("hits", []):
+                    shared = (hit.get("entry") or {}).get("relevance_scope") == _COMMITTEE_SCOPE
+                    add([hit], "committee_shared" if shared else "persona_private", resp,
+                        allow_private=own)
         except OwnerUnavailable as exc:
-            g.missing(f"memory:{layer}", exc.reason)
+            g.missing(f"memory:{'persona' if scope == 'persona' else scope}", exc.reason)
     if not own:
         g.unavailable.append({"owner": "memory:persona_private", "reason": "caller_is_not_the_persona",
                               "expected": True})
@@ -365,13 +371,31 @@ def _history(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
             g.items.append(_item("similar_history", "pool_refusal", "persona",
                                  (ref or {}).get("refusal_id") or f"{subject.persona_id}#refusal{i}", ref,
                                  score=None, mode="owner_read", budgets=budgets))
+        removed = 0
+        for ver in versions.get("versions") or []:
+            for m in (ver or {}).get("members") or []:
+                if str((m or {}).get("stage")) != "removed" or removed >= budgets.max_items_per_group:
+                    continue
+                removed += 1
+                ref = m.get("artifact_ref") or m.get("artifact_id") or m.get("member_id") or f"removed{removed}"
+                g.items.append(_item("similar_history", "removed_member", "persona",
+                                     f"{subject.persona_id}@v{(ver or {}).get('pool_version', '?')}:{ref}", {
+                                         "artifact_ref": ref, "removal_reason": m.get("removal_reason"),
+                                         "pool_version": (ver or {}).get("pool_version"),
+                                         "risk_weight": m.get("risk_weight")},
+                                     score=None, mode="owner_read", budgets=budgets))
     except OwnerUnavailable as exc:
         g.missing("persona_pool_versions", exc.reason)
     query, tags = lesson_query(subject)
     try:  # negative memory: institutional entries tagged negative_memory
         resp = _memory_hits(owners, subject, caller, scope="institutional", query=query,
                             tags=[*tags, "negative_memory"], limit=budgets.max_items_per_group)
+        subject_tags = {t.lower() for t in tags if t.startswith(("family:", "underlying:"))}
         for hit in resp.get("hits", []):
+            etags = {str(t).strip().lower() for t in ((hit.get("entry") or {}).get("content") or {}).get("tags") or []}
+            # require an actual negative marker AND subject relevance (not just the OR-matched marker)
+            if "negative_memory" not in etags or not (etags & subject_tags):
+                continue
             g.items.append(_memory_item("similar_history", hit, budgets, "negative_memory", resp))
     except OwnerUnavailable as exc:
         g.missing("memory:negative_memory", exc.reason)

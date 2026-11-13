@@ -8,8 +8,8 @@
     "services/knowledge/test_case_file_integration.py"
   ],
   "verification": {
-    "command": "python -m pytest services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py -q",
-    "result": "10 passed",
+    "command": "/tmp/cfvenv/bin/python -m pytest services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py -q",
+    "result": "12 passed",
     "environment": "python 3.12 venv with fastapi, uvicorn, httpx, pytest, jsonschema",
     "integration_scope": "production memory FastAPI app served over real HTTP (uvicorn) with the real local governance authz evaluator, entries written through the real memory write routes; registry/research/pool/telemetry/search are HTTP fixtures"
   },
@@ -22,8 +22,13 @@
   },
   "known_limits": [
     "The memory retrieve route does not yet report retrieval mode per hit; items record retrieval_mode=unreported until MEMORY-INDEX-PROJECTION lands, rather than guessing.",
-    "Negative memory is matched by the institutional tag negative_memory; the tag convention is owned by the memory writers.",
     "Owner base URLs and tokens come from fixed environment configuration (Owners.from_env); callers do not choose URLs.",
-    "Not hosted-verified; hosted acceptance is MEMORY-KNOWLEDGE-HOSTED-ACCEPTANCE-20261113."
-  ]
+    "Not hosted-verified; hosted acceptance is MEMORY-KNOWLEDGE-HOSTED-ACCEPTANCE-20261113.",
+    "Negative memory requires the institutional tag negative_memory plus a family:/underlying: subject tag; tag convention is owned by memory writers."
+  ],
+  "review_fixes": {
+    "1_roles": "Caller verified roles are always sent; committee visibility filtered client-side by relevance_scope; test_strict_auth_operator_token_gets_committee_memory (verified operator token, no http_403).",
+    "2_removed_history": "versions[].members with stage=removed become bounded cited removed_member items; test_removed_member_history_and_no_invented_role.",
+    "3_negative_memory": "Hits kept only if entry tags contain negative_memory AND a family:/underlying: subject tag; integration asserts only mem-2222 is labelled negative."
+  }
 }

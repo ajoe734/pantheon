@@ -188,6 +188,8 @@ class CaseFileIntegration(unittest.TestCase):
         hist = {i["kind"]: i for i in g["similar_history"]["items"]}
         self.assertIn("retired_strategy", hist); self.assertIn("pool_refusal", hist)
         self.assertIn("memory_negative_memory", hist)
+        neg = [i for i in g["similar_history"]["items"] if i["kind"] == "memory_negative_memory"]
+        self.assertEqual([i["source_id"] for i in neg], ["mem-22222222-2222-2222-2222-222222222222"])
         lessons = {i["source_id"]: i for i in g["lessons"]["items"]}
         self.assertIn("pmem-aaaaaaaa-1111-1111-1111-111111111111", lessons)   # own private
         self.assertIn("pmem-aaaaaaaa-2222-2222-2222-222222222222", lessons)   # committee-shared
@@ -209,6 +211,35 @@ class CaseFileIntegration(unittest.TestCase):
                       [u["reason"] for u in out["groups"]["lessons"]["unavailable"]])
         self.assertTrue(any(i["kind"] == "member_virtual_book" and i["source_id"] == "reg-m1"
                             for i in out["groups"]["facts"]["items"]))
+
+    def test_removed_member_history_and_no_invented_role(self):
+        op = cf.Caller("op-1", ("operator",), "sess-2")
+        owners = self.owners(["reg-m1"])
+        self.fixtures["pool"].routes["/api/personas/persona-a/strategy-pool/versions"]["versions"] = [
+            {"pool_version": 1, "members": [{"artifact_ref": "reg-removed", "stage": "removed",
+                                             "removal_reason": "drawdown", "risk_weight": 0.0},
+                                            {"artifact_ref": "reg-live", "stage": "trial"}]}]
+        out = cf.compose_case_file(self._subject("member_removal", ["reg-m1"]), op, owners)
+        jsonschema.validate(out, SCHEMA)
+        rem = [i for i in out["groups"]["similar_history"]["items"] if i["kind"] == "removed_member"]
+        self.assertEqual(len(rem), 1)
+        self.assertIn("drawdown", rem[0]["excerpt"])
+        self.assertIn("reg-removed", rem[0]["source_id"])
+
+    def test_strict_auth_operator_token_gets_committee_memory(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        memory = importlib.import_module("services.memory.main")
+        ctx = SimpleNamespace(actor_id="op-1", roles={"operator"}, claims={"tenant_id": TENANT})
+        op = cf.Caller("op-1", ("operator",), "sess-2")
+        with mock.patch.object(memory, "_authenticate_memory_request", return_value=ctx):
+            out = self._compose("member_removal", ["reg-m1"], op)
+        lessons = out["groups"]["lessons"]
+        ids = {i["source_id"] for i in lessons["items"]}
+        self.assertIn("pmem-aaaaaaaa-2222-2222-2222-222222222222", ids)
+        self.assertNotIn("pmem-aaaaaaaa-1111-1111-1111-111111111111", ids)
+        self.assertFalse([u for u in lessons["unavailable"] if str(u["reason"]).startswith("http_")],
+                         lessons["unavailable"])
 
     def test_facts_come_from_owners_not_search(self):
         op = cf.Caller("op-1", ("operator",), "sess-2")
