@@ -722,3 +722,37 @@ class PostgresRetrievalBackend:
             )
 
         return hits
+
+
+def rebuild_index(dsn: str | None = None, evidence_path: Path | None = None, pipeline_path: Path | None = None) -> dict[str, Any]:
+    """Rebuild the retrieval index from the canonical evidence store (python -m services.search.pg_retrieval rebuild).
+
+    Applies the idempotent schema, then force-fully re-indexes every knowledge object. The index
+    is disposable derived data; the query log and labels are untouched. Fails closed if the model
+    or database is unavailable.
+    """
+    from .index_pipeline import IncrementalIndexPipeline, JsonlIndexPipelineStore
+    from .pg_store import build_search_evidence_repository
+
+    backend = PostgresRetrievalBackend(dsn=dsn)
+    health = backend.check_health()
+    if health.get("status") != "ok":
+        raise RuntimeError(f"retrieval backend unavailable: {health.get('reason')}")
+    backend.setup_schema()
+    repository = build_search_evidence_repository(
+        evidence_path or Path(os.getenv("SEARCH_EVIDENCE_STORE_PATH", "/data/source-ingest/source_evidence.jsonl")))
+    store = JsonlIndexPipelineStore(
+        pipeline_path or Path(os.getenv("SEARCH_PIPELINE_STORE_PATH", "/data/search/search-pipeline.jsonl")))
+    return IncrementalIndexPipeline(repository, store, retrieval_backend=backend).run(
+        triggered_by="rebuild_index", force_full=True).to_dict()
+
+
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] != ["rebuild"]:
+        raise SystemExit("usage: python -m services.search.pg_retrieval rebuild")
+    try:
+        print(rebuild_index())
+    except Exception as exc:
+        print(f"rebuild failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)

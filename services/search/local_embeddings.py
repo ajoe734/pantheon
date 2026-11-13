@@ -13,6 +13,8 @@ import hashlib
 import json
 import os
 import re
+import sys
+import urllib.request
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -226,3 +228,27 @@ class LocalEmbeddingEngine:
     def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
         """VectorEmbeddingBackend interface compatibility."""
         return self.embed_documents(texts)
+
+
+def package_model(dest: Path) -> None:
+    """Build-time only: fetch manifest-pinned files into a flat dir and verify sha256.
+
+    python -m services.search.local_embeddings package /opt/search/models
+    """
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    dest.mkdir(parents=True, exist_ok=True)
+    for name, spec in manifest["files"].items():
+        url = manifest["source_url_template"].format(revision=manifest["revision"], source_path=spec["source_path"])
+        digest = hashlib.sha256()
+        target = dest / name
+        with urllib.request.urlopen(url, timeout=600) as resp, target.open("wb") as out:
+            while chunk := resp.read(1 << 20):
+                digest.update(chunk)
+                out.write(chunk)
+        if digest.hexdigest() != spec["sha256"]:
+            target.unlink()
+            raise SystemExit(f"checksum mismatch for {name}")
+
+
+if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "package":
+    package_model(Path(sys.argv[2]))

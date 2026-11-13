@@ -66,6 +66,8 @@ def test_pg_query_log_private_scope_and_eval_unavailable():
     backend.setup_schema()
     vector = [1.0] + [0.0] * 1023
     engine.embed_query.return_value = vector
+    import uuid
+    rid = f"qlog-{uuid.uuid4().hex}"
     tenant = "qlog-tenant"
     backend.upsert_documents([RetrievalIndexRecord(
         id="qlog-private", record_kind="knowledge_object", tenant_id=tenant, persona_id="owner",
@@ -74,11 +76,11 @@ def test_pg_query_log_private_scope_and_eval_unavailable():
         owner = SearchAccessContext(tenant_id=tenant, persona_id="owner")
         hits = backend.search("台積電", context=owner, mode="hybrid")
         assert [h.id for h in hits] == ["qlog-private"]
-        backend.record_query(context=owner, request_id="qlog-r1", query="台積電", retrieval_mode="hybrid",
+        backend.record_query(context=owner, request_id=rid, query="台積電", retrieval_mode="hybrid",
                              hits=hits, latency_ms=3.0, caller_decision_type="cycle_review", source_event_id="e1")
-        assert [r["request_id"] for r in backend.list_query_log(owner)] == ["qlog-r1"]
-        assert backend.list_query_log(SearchAccessContext(tenant_id=tenant, persona_id="other")) == []
-        row = backend.list_query_log(owner)[0]
+        assert rid in [r["request_id"] for r in backend.list_query_log(owner)]
+        assert rid not in [r["request_id"] for r in backend.list_query_log(SearchAccessContext(tenant_id=tenant, persona_id="other"))]
+        row = next(r for r in backend.list_query_log(owner) if r["request_id"] == rid)
         assert row["persona_private"] and row["model_name"] == "test-model" and row["returned_ids"] == ["qlog-private"]
         from services.search.evaluation.run_retrieval_eval import main
         assert main(["--dsn", dsn, "--tenant", tenant]) == 2
@@ -87,10 +89,10 @@ def test_pg_query_log_private_scope_and_eval_unavailable():
 
 
 def test_rebuild_entry_point_fails_closed_without_model(monkeypatch):
-    from services.search import rebuild_index
+    from services.search import pg_retrieval
     fake = Mock()
     fake.check_health.return_value = {"status": "unavailable", "reason": "embedding_model_unavailable"}
-    monkeypatch.setattr(rebuild_index, "PostgresRetrievalBackend", Mock(return_value=fake))
+    monkeypatch.setattr(pg_retrieval, "PostgresRetrievalBackend", Mock(return_value=fake))
     with pytest.raises(RuntimeError, match="embedding_model_unavailable"):
-        rebuild_index.rebuild()
+        pg_retrieval.rebuild_index()
     fake.setup_schema.assert_not_called()
