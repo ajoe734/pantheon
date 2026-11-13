@@ -2,7 +2,8 @@
   "task_id": "TRADE-LESSON-CANDIDATE-REGISTER-20261112",
   "verified": "local pytest, in-process apps (no hosted proof)",
   "commands": [
-    "PYTHONPATH=$PWD /tmp/memory-writeback-wiring-venv/bin/python -m pytest -q -c pytest.ini services/persona services/memory /tmp/test_trade_lesson_candidate_register_review.py -> all pass except 6 environmental failures in untouched areas (asyncpg missing, py3.11 f-string SyntaxError in services/capital/pg_store.py, compose-render KeyError 'persona')"
+    "PYTHONPATH=$PWD /tmp/memory-writeback-wiring-venv/bin/python -m pytest -q -c pytest.ini services/persona services/memory /tmp/test_trade_lesson_candidate_register_review.py -> all pass except 6 environmental failures in untouched areas (asyncpg missing, py3.11 f-string SyntaxError in services/capital/pg_store.py, compose-render KeyError 'persona')",
+    "COMPOSE_PROFILES=core /tmp/claude-1802994780/venv/bin/python -m pytest -q services/memory services/persona -> 368 passed, 2 skipped"
   ],
   "acceptance": {
     "1_register_once": "MemoryLessonRegistrar + write_owner register_lessons; duplicate -> already_registered (test_reflection_to_registered_candidate_...)",
@@ -23,6 +24,7 @@
     "unconfigured_registration": "write_owner.register_lessons now raises retryable 503 when PANTHEON_MEMORY_API_URL unset; persona docker-compose service sets PANTHEON_MEMORY_API_URL=http://memory:8086; test_unconfigured_memory_registration_fails_closed_and_persists_nothing",
     "risk_review": "POST /trade-lessons/{id}/risk-review mints a durable review from verified risk-role identity (distinct from candidate persona); paper-endorse resolves review by id, bound to tenant/candidate/reflection_version; tests test_risk_review_is_bound_to_candidate_and_tenant",
     "supporting_evidence": "check_evaluation_gates counts regimes only from episodes whose id is a candidate episode id with exact tenant/persona, deduped; test_pattern_gate_ignores_unrelated_episodes",
-    "scope_normalization": "lesson_governance.canonical_scope (strip+lower) is used by both is_paper_only_eligible and check_evaluation_gates; test_padded_pattern_scope_cannot_bypass_sample_and_regime_gates[strategy|regime|pattern] via real reflection->register->risk review->paper-endorse returns 422, never merged"
+    "scope_normalization": "lesson_governance.canonical_scope (strip+lower) is used by both is_paper_only_eligible and check_evaluation_gates; test_padded_pattern_scope_cannot_bypass_sample_and_regime_gates[strategy|regime|pattern] via real reflection->register->risk review->paper-endorse returns 422, never merged",
+    "scheduled_service_path": "lesson_governance.MemoryLessonRegistrar mints a 120s tenant-bound memory-writer HS256 JWT (PERSONA_JWT_SECRET/iss/aud from persona env) when the inbound credential is not a JWT (opaque PANTHEON_PERSONA_SERVICE_TOKEN); fails closed without secret or with !=1 tenant; memory JWT/tenant checks unchanged; tests test_scheduled_pattern_service_credential_registers_via_real_entry_points, test_registrar_service_path_fails_closed_without_secret"
   }
 }
