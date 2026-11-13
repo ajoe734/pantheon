@@ -1,0 +1,129 @@
+{
+  "task_id": "COLLECTOR-HOSTED-INTAKE-THROUGHPUT-20261113",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "stage": "diagnosed_before_product_edits",
+  "hosted_acceptance_task": "COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113",
+  "hosted_observations": {
+    "provenance": "Task brief; operator read-only observations 2026-11-13 16:00-16:30Z, not independently re-probed by worker",
+    "candidate": "3ed0ea555",
+    "restored": "bee62bc29",
+    "candidate_window": "15:01-15:43Z",
+    "newest_rows": {
+      "TWSE": 260,
+      "TPEx": 308
+    },
+    "stalled_cursor": "run-20261111T061744Z|items=1000"
+  },
+  "baseline": {
+    "source_commit": "3ed0ea555",
+    "method": "Load exact candidate adapter from git show, existing _day_bundle fixture at 1375/6000/1349 rows, one real-size day per source. Local wall includes parse/hash/raw cache; read_budget uses deterministic serial 50ms raw-read cost (not measured hosted latency).",
+    "command": "PYTHONPATH=. /tmp/codex2-collector-steady-review-venv/bin/python /tmp/collector-intake-baseline.py",
+    "measurements": [
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows_in_bundle": 1375,
+        "profile": "local",
+        "raw_cost_seconds": 0,
+        "rows": 1000,
+        "raw_reads": 1000,
+        "wall_seconds": 0.725511,
+        "model_seconds": 0.0,
+        "next_cursor": null,
+        "complete": false,
+        "continuation_pending": true,
+        "priority_done": false,
+        "cap": 1000,
+        "cadence_seconds": 600
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows_in_bundle": 1375,
+        "profile": "read_budget",
+        "raw_cost_seconds": 0.05,
+        "rows": 300,
+        "raw_reads": 300,
+        "wall_seconds": 0.245265,
+        "model_seconds": 15.0,
+        "next_cursor": null,
+        "complete": false,
+        "continuation_pending": true,
+        "priority_done": false,
+        "cap": 1000,
+        "cadence_seconds": 600
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows_in_bundle": 6000,
+        "profile": "local",
+        "raw_cost_seconds": 0,
+        "rows": 1000,
+        "raw_reads": 1000,
+        "wall_seconds": 0.744876,
+        "model_seconds": 0.0,
+        "next_cursor": null,
+        "complete": false,
+        "continuation_pending": true,
+        "priority_done": false,
+        "cap": 1000,
+        "cadence_seconds": 600
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows_in_bundle": 6000,
+        "profile": "read_budget",
+        "raw_cost_seconds": 0.05,
+        "rows": 300,
+        "raw_reads": 300,
+        "wall_seconds": 0.299755,
+        "model_seconds": 15.0,
+        "next_cursor": null,
+        "complete": false,
+        "continuation_pending": true,
+        "priority_done": false,
+        "cap": 1000,
+        "cadence_seconds": 600
+      },
+      {
+        "source": "collector-tw-twse-t86",
+        "rows_in_bundle": 1349,
+        "profile": "local",
+        "raw_cost_seconds": 0,
+        "rows": 500,
+        "raw_reads": 500,
+        "wall_seconds": 0.644156,
+        "model_seconds": 0.0,
+        "next_cursor": "2026-11-10T02:01:00Z#run1|items=500",
+        "complete": false,
+        "continuation_pending": false,
+        "priority_done": false,
+        "cap": 500,
+        "cadence_seconds": 86400
+      },
+      {
+        "source": "collector-tw-twse-t86",
+        "rows_in_bundle": 1349,
+        "profile": "read_budget",
+        "raw_cost_seconds": 0.05,
+        "rows": 300,
+        "raw_reads": 300,
+        "wall_seconds": 0.1849,
+        "model_seconds": 15.0,
+        "next_cursor": "2026-11-10T02:01:00Z#run1|items=300",
+        "complete": false,
+        "continuation_pending": false,
+        "priority_done": false,
+        "cap": 500,
+        "cadence_seconds": 86400
+      }
+    ],
+    "diagnosis": [
+      "Local transport: max_records binds first pull at 1000/1000/500 rows; verification wall below 1 second.",
+      "50ms serial raw read model: 15 second whole-operation budget binds at 300 rows; metadata cost excluded in model. Hosted counts 260/308 are consistent with read budget, but host latency cannot be proven without acceptance SSH.",
+      "T86 and ordered history never set continuation_pending, so full 86400/600 second cadence binds aggregate throughput even when a pull succeeds.",
+      "At 500 rows/day T86 alone needs ceil(488*1349/500)=1317 daily pulls, versus required 48 hours.",
+      "Serial 50ms verification of all 488*(1375+6000+1349) rows takes 59.13h before cadence and persistence; sweep needs bounded overlap plus continuation.",
+      "Controller request timeout is retained; no timeout increase or collector-to-exchange request-rate change is proposed."
+    ]
+  }
+}
