@@ -311,7 +311,10 @@ class PersistentHarnessOwner:
                 raise HarnessError("stale_base_or_invalid_rollback_target", 409)
             from services.persona.harness_adoption import relevant_experiences
             row = {"proposal": patch.model_dump(mode="json"), "status": "draft", "checks": [],
-                   "experience_refs": relevant_experiences(state, patch)}
+                   "experience_refs": relevant_experiences(state, patch) + [
+                       copy.deepcopy(r["operator_feedback"]) for r in state["patches"].values()
+                       if r.get("operator_feedback") and set(patch.proposed_change).intersection(
+                           r["proposal"]["proposed_change"])]}
             if persona.lifecycle_state != "paper_owner" or persona.status != "active":
                 row["status"] = "governance_required"
                 self.adoption.queue_governance(persona, state, row, "outside_paper")
