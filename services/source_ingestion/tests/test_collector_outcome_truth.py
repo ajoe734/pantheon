@@ -793,3 +793,57 @@ def test_verified_bundle_prefix_survives_next_bundle_deadline(tmp_path, monkeypa
     third = run_scheduler(tmp_path, store)
     assert third.run.raw_count == 0 and third.watermark.value == "2026-11-10T02:06:00Z#run2"
     assert third.run.status.value == "completed"
+
+
+from types import SimpleNamespace
+
+from services.source_ingestion.connectors import collector_bundle as _cb
+from services.source_ingestion.tests.test_collector_bundle_connector import _day_bundle, _trickle_response
+
+
+def test_priority_verified_prefix_survives_ordered_deadline(tmp_path, monkeypatch):
+    source_id = "collector-tw-twse-price-history"
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv(_cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
+    clock = [0.0]
+    monkeypatch.setattr(_cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    files, entries, opened = {}, [], []
+    for num in (1, 2):
+        f, entry = _day_bundle(source_id, num, 1)
+        files.update(f)
+        entries.append(entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": {source_id: {
+        "status": "ok", "last_run_at": entries[-1]["finished_at"], "last_run_id": "run2"
+    }}}).encode()
+    real_observed = _cb.observed_from_collector_status
+    monkeypatch.setattr(_cb, "observed_from_collector_status", lambda *a, **kw: real_observed(
+        *a, **{**kw, "now": datetime(2026, 11, 10, 3, tzinfo=timezone.utc)}))
+    monkeypatch.setattr(_cb.CollectorBundleAdapter, "_transport", lambda self: _cb.HttpBundleTransport(host=HOST))
+
+    def fake_open(request, **kwargs):
+        rel = request.full_url.split(HOST + "/", 1)[1]
+        opened.append(rel)
+        response, _ = _trickle_response(files[rel], clock, 8.0 if "/raw/" in rel else 0.0, chunk=65536)
+        return response
+
+    monkeypatch.setattr(_cb, "open_external_url", fake_open)
+    adapter = _cb.CollectorBundleAdapter(connector_id="conn-truth", source_id=source_id,
+        source_type="market", dataset="tw_price_daily", host=HOST, cadence_seconds=1800)
+    store = JsonlConfiguredConnectorStore(tmp_path / "configured.jsonl")
+    store.upsert_config(adapter.connector(), {
+        "mode": "provider_owned_adapter", "adapter": _cb.COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+        "adapter_config": {"source_id": source_id, "source_type": "market", "host": HOST,
+                           "dataset": "tw_price_daily", "cadence_seconds": 1800},
+        "max_records": 500,
+    })
+    results = []
+    for _ in range(3):
+        result = run_scheduler(tmp_path, store)
+        results.append((result.run.status.value, result.run.raw_count,
+                        result.watermark.value if result.watermark else None))
+    # constant-latency priority progress must be persisted, never discarded by the ordered sweep timeout
+    assert [r[0] for r in results] == ["completed"] * 3, results
+    assert results[0][1] == 1, results  # priority row persisted on first attempt
+    assert [r[1] for r in results] == [1, 1, 1], results  # bounded progress per attempt; priority replay is idempotent
+    assert results[-1][2] == "2026-11-10T02:02:00Z#run2", results

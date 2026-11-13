@@ -729,15 +729,22 @@ class CollectorBundleAdapter:
         records, key, paused, delivered, done = priority
         remaining = total_cap - len(records)
         op_deadline = _OP_DEADLINE.get()
-        if remaining <= 0 or (op_deadline is not None and time.monotonic() >= op_deadline):
+        base = None
+        if remaining > 0 and not (op_deadline is not None and time.monotonic() >= op_deadline):
+            try:
+                base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining)
+            except TimeoutError:
+                # The shared deadline cut the ordered sweep before any of its rows verified:
+                # keep the already verified priority prefix; ordered work stays pending.
+                if op_deadline is None or time.monotonic() < op_deadline:
+                    raise
+        if base is None:
             base = CollectorPullResult(
                 records=(), next_cursor=cursor, bundle_count=0, complete=False,
                 observed=observed_from_collector_status(
                     self.read_status(), source_id=self.source_id, cursor=cursor, cadence_seconds=self._health_cadence_seconds()
                 ),
             )
-        else:
-            base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining)
         seen = {r.source_id for r in records}
         merged = (*records, *(r for r in base.records if r.source_id not in seen))
         result = CollectorPullResult(
