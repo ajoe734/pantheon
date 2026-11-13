@@ -3150,11 +3150,13 @@ def test_source_refresh_restore_env_mode_key_presence_and_wrong_env(tmp_path):
     (tmp_path / "c").mkdir()
     added, _c, _s = _run_refresh_runtime(tmp_path / "c", tag_id=baseline, running=baseline, action="restore",
                                          post_extra="SOURCE_INGEST_CONTROLLER_MODE=reconcile_only")
-    assert added.returncode != 0 and "added=['SOURCE_INGEST_CONTROLLER_MODE=reconcile_only']" in added.stderr
+    assert added.returncode != 0 and "added=['SOURCE_INGEST_CONTROLLER_MODE']" in added.stderr
+    assert "reconcile_only" not in added.stdout + added.stderr
     # Unrelated env drift is still rejected.
     (tmp_path / "d").mkdir()
     drift, _c, _s = _run_refresh_runtime(tmp_path / "d", tag_id=baseline, running=baseline, action="restore", post_extra="EVIL=1")
-    assert drift.returncode != 0 and "EVIL=1" in drift.stderr
+    assert drift.returncode != 0 and "added=['EVIL']" in drift.stderr
+    assert "EVIL=1" not in drift.stdout + drift.stderr
 
 
 def test_bff_adoption_gate_requires_root_deploy_for_paper_capital_reader_services() -> None:
