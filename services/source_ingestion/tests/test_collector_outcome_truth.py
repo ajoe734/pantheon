@@ -281,7 +281,7 @@ def test_real_http_reader_denial_never_reuses_prior_no_new_data(tmp_path, monkey
     assert state["collector_outcome"]["observed"]["health_state"] == "degraded"
 
 
-def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_route=False):
+def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_route=False, producer=False):
     from services.source_ingestion.runtime import create_runtime
 
     source = "collector-tw-macro-ndc" if kind == "macro" else SOURCE
@@ -300,6 +300,26 @@ def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_ro
     files["status.json"] = json.dumps({"sources": {source: {
         "status": "ok", "last_run_at": "2026-11-10T02:05:00Z",
     }}}).encode()
+    if producer:
+        from deploy.collector.collector_stack.bundle import BundleWriter, CollectedItem
+        from deploy.collector.collector_stack.config import DEFAULT_POLICY_PATH, load_collector_config
+
+        policy = load_collector_config(DEFAULT_POLICY_PATH, env={}).get_source(source)
+        items = [CollectedItem(
+            item_id=row["id"], url=row["url"], fetched_at=row["fetched_at"],
+            published_at=row["published_at"], text=row["text"], lang=row["lang"],
+            hashed_author=row["hashed_author"], metrics=row["metrics"],
+            extra_fields=row, raw_bytes=files[f"{base}/" + manifest_item["raw_path"]],
+            raw_extension="html",
+        ) for row, manifest_item in zip(rows, json.loads(files[f"{base}/manifest.json"])["items"])]
+        root = tmp_path / "producer"
+        BundleWriter(root).write_bundle(policy=policy, run_id="run1", items=items,
+            started_at="2026-11-10T02:00:00Z", finished_at="2026-11-10T02:05:00Z")
+        files = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        import services.source_ingestion.connectors.collector_bundle as module
+        real_observed = module.observed_from_collector_status
+        monkeypatch.setattr(module, "observed_from_collector_status", lambda *a, **kw: real_observed(
+            *a, **{**kw, "now": datetime(2026, 11, 10, 3, tzinfo=timezone.utc)}))
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SEARCH_INGEST_NOTIFY_URL", "")
     monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
@@ -323,6 +343,30 @@ def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_ro
         "max_records": cap,
     })
     return runtime, connector, files
+
+
+@pytest.mark.parametrize("kind", ["macro", "social"])
+def test_producer_complete_is_healthy_only_after_verified_delivery_and_committed_replay(tmp_path, monkeypatch, kind):
+    from services.source_ingestion.api_models import RunScheduledRequest
+    from services.source_ingestion.runtime import create_runtime
+
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind, producer=True)
+    runtime.schedule_config_store.upsert_schedule(connector.connector_id, interval_seconds=60, enabled=True)
+    request = RunScheduledRequest(exclusive_connector_ids=[connector.connector_id])
+    first = runtime.pipeline.run_scheduled_connectors(request)
+    assert not first["failed"], first
+    assert first["ran"][0]["receipt"]["normalized_count"] == (8 if kind == "macro" else 3)
+    state = runtime.connector_store.get_fetch_state(connector.connector_id)["collector_outcome"]
+    assert state["observed"]["health_state"] == "healthy"
+    assert state["no_new_data"] is False
+    runtime = create_runtime(data_dir=tmp_path)
+    second = runtime.pipeline.run_scheduled_connectors(request)
+    assert not second["failed"], second
+    assert second["ran"][0]["receipt"]["raw_count"] == 0
+    assert second["ran"][0]["receipt"]["normalized_count"] == 0
+    state = runtime.connector_store.get_fetch_state(connector.connector_id)["collector_outcome"]
+    assert state["no_new_data"] is True
+    assert state["observed"]["health_state"] == "healthy"
 
 
 @pytest.mark.parametrize("kind", ["macro", "social"])

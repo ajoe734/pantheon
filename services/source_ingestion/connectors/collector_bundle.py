@@ -421,6 +421,8 @@ def observed_from_collector_status(
     cursor: str | None,
     cadence_seconds: int | None = None,
     now: datetime | None = None,
+    verified_bundle: VerifiedBundle | None = None,
+    delivery_complete: bool = False,
 ) -> dict[str, Any]:
     """Project the host ``status.json`` + our cursor into health fields.
 
@@ -446,7 +448,7 @@ def observed_from_collector_status(
     host_status = str(entry.get("status") or "")
     if host_status in {"paused", "failed", "failing", "unavailable"}:
         reasons.append(f"collector_source_{host_status}" + (f":{entry.get('paused_reason')}" if entry.get("paused_reason") else ""))
-    elif host_status not in {"ok", "healthy"}:
+    elif host_status not in {"ok", "healthy", "complete"}:
         reasons.append(f"collector_source_status_unverified:{host_status or 'missing'}")
 
     last_run_at = None
@@ -457,6 +459,23 @@ def observed_from_collector_status(
     cadence = int(cadence_seconds or entry.get("cadence_seconds") or 0)
     if last_run_at and cadence and now - last_run_at > timedelta(seconds=2 * cadence):
         reasons.append("newest_bundle_older_than_twice_cadence")
+
+    if host_status == "complete":
+        # BundleWriter publishes completion of one exact run, not a blanket
+        # health assertion. A status-only observation has no verified delivery.
+        if (verified_bundle is None or verified_bundle.source_id != source_id
+                or verified_bundle.status != "complete" or not delivery_complete
+                or cursor != verified_bundle.cursor):
+            reasons.append("collector_complete_boundary_unverified")
+        if verified_bundle is not None:
+            if last_run_at != verified_bundle.finished_at:
+                reasons.append("collector_complete_time_mismatch")
+            if entry.get("last_run_id") != verified_bundle.run_id:
+                reasons.append("collector_complete_run_mismatch")
+        if cadence <= 0:
+            reasons.append("collector_complete_cadence_missing")
+        if last_run_at and last_run_at > now:
+            reasons.append("collector_last_run_in_future")
 
     lag_days: float | None = None
     cursor_at = None
@@ -822,20 +841,26 @@ class CollectorBundleAdapter:
         # Cache the verified window even for a feature-only capped delivery.
         # Its provenance must already resolve; this cache is not a cursor ack.
         self._write_raw([(b, {}) for b in verified if b.status != "paused"], records)
-        observed = observed_from_collector_status(
-            self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self._health_cadence_seconds()
-        )
         pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
         complete = not unverified_pending and (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
+        latest_key, latest_entry = max(source_entries, key=lambda pair: pair[0]) if source_entries else (None, None)
+        boundary = verified[-1] if verified and verified[-1].cursor == latest_key else None
+        if not records and not feature_records and not verified and cursor == latest_key and cursor and not partial_cursor:
+            # The cache alone cannot acknowledge a configured delivery; the
+            # persistence owner must also have committed this exact boundary.
+            boundary = verify_bundle(transport, expected_source_id=self.source_id,
+                                     entry=latest_entry, item_window=(0, 0))
+        observed = observed_from_collector_status(
+            self.read_status(), source_id=self.source_id, cursor=next_cursor,
+            cadence_seconds=self._health_cadence_seconds(), verified_bundle=boundary,
+            delivery_complete=complete and not feature_rejected,
+        )
         no_new_data = False
         if not records and not feature_records and not verified and source_entries and cursor and not partial_cursor:
             # Revalidate the exact consumed boundary over the guarded transport. No raw
             # rows are fetched here: the acknowledged cursor represents their previous
             # consumption; manifest hashes and item coverage are verified again.
-            latest_key, latest_entry = max(source_entries, key=lambda pair: pair[0])
             if cursor == latest_key:
-                boundary = verify_bundle(transport, expected_source_id=self.source_id,
-                                         entry=latest_entry, item_window=(0, 0))
                 if boundary.status == "paused":
                     paused.append(f"{boundary.run_id}:{boundary.manifest.get('paused_reason') or 'paused'}")
                 no_new_data = (
@@ -843,8 +868,11 @@ class CollectorBundleAdapter:
                     and observed["health_state"] == "healthy"
                     and observed["freshness"]["collector_last_run_at"] == _iso(boundary.finished_at)
                     and not feature_rejected
-                    and self._has_verified_boundary(boundary)
+                    and self._has_verified_boundary(boundary, persisted_only=_DEFER_ACK.get())
                 )
+                if not no_new_data:
+                    observed = {**observed, "health_state": "degraded",
+                                "reasons": (*observed["reasons"], "collector_consumed_boundary_unverified")}
         if paused:
             observed = {**observed, "health_state": "degraded",
                         "reasons": (*observed["reasons"], *(f"collector_bundle_paused:{r}" for r in paused))}
@@ -862,6 +890,8 @@ class CollectorBundleAdapter:
             def acknowledge() -> None:
                 self._commit_governed_features(replace(plan, rows=selected), limit=None,
                                                trace_id=trace_id, persisted=True)
+                if complete and boundary is not None and next_cursor == boundary.cursor and not feature_rejected:
+                    self._acknowledge_boundary(boundary)
                 self.save_resume_cursor(result)
             result = replace(result, delivery=CollectorDelivery(result.records, acknowledge))
         return result
@@ -1273,7 +1303,20 @@ class CollectorBundleAdapter:
         return (self._raw_root() / "raw" / _slug(self.connector_id) / _slug(self.dataset)
                 / f"date={bundle.date}" / f"bundle-{bundle.run_id}")
 
-    def _has_verified_boundary(self, bundle: VerifiedBundle) -> bool:
+    def _boundary_ack(self, bundle: VerifiedBundle) -> dict[str, str]:
+        return {"source_id": self.source_id, "connector_id": self.connector_id, "cursor": bundle.cursor,
+                "manifest_sha256": _sha256(json.dumps(dict(bundle.manifest), sort_keys=True).encode())}
+
+    def _acknowledge_boundary(self, bundle: VerifiedBundle) -> None:
+        # Called only by the native delivery acknowledgement, after the
+        # scheduler/pipeline's existing persistence checks. Raw caching and
+        # legacy eager pulls never create this receipt.
+        path = self._raw_bundle_path(bundle) / "persisted_boundary.json"
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(self._boundary_ack(bundle), sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+
+    def _has_verified_boundary(self, bundle: VerifiedBundle, *, persisted_only: bool = False) -> bool:
         """A supplied cursor alone cannot prove that this exact bundle was consumed.
 
         Reuse the raw evidence written only after verification. The manifest must
@@ -1282,6 +1325,8 @@ class CollectorBundleAdapter:
         """
         root = self._raw_bundle_path(bundle)
         try:
+            if persisted_only and json.loads((root / "persisted_boundary.json").read_text()) != self._boundary_ack(bundle):
+                return False
             if json.loads((root / "manifest.json").read_text(encoding="utf-8")) != bundle.manifest:
                 return False
             return all((root / PurePosixPath(_safe_raw_path(str(item["raw_path"]))).name).is_file()
