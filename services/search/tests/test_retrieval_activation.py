@@ -311,3 +311,26 @@ def test_concurrent_refresh_callers_never_run_the_pipeline_concurrently(app_fact
         [t.join() for t in threads]
     assert statuses == [200, 200, 200]
     assert state["runs"] == 3 and state["max_active"] == 1
+
+
+def test_pg_indexed_document_states_honor_inactive_and_tenant():
+    """Real SQL predicate: tombstoned rows report False, other tenants stay invisible."""
+    from services.search.pg_retrieval import PostgresRetrievalBackend, RetrievalIndexRecord
+
+    dsn = os.getenv("PANTHEON_RETRIEVAL_INTEGRATION_DSN")
+    if not dsn:
+        pytest.skip("Set PANTHEON_RETRIEVAL_INTEGRATION_DSN for isolated pgvector integration")
+    engine = Mock(dimension=1024)
+    engine.is_ready.return_value = True
+    backend = PostgresRetrievalBackend(dsn, embedding_engine=engine)
+    backend.setup_schema()
+    vector = [1.0] + [0.0] * 1023
+    mk = lambda i, t, active: RetrievalIndexRecord(
+        id=i, record_kind="knowledge_object", tenant_id=t, title=i, search_text=i, embedding=vector, is_active=active)
+    try:
+        backend.upsert_documents([mk("st-act", "st-a", True), mk("st-off", "st-a", False), mk("st-act", "st-b", True)])
+        assert backend.indexed_document_states("st-a", ["st-act", "st-off", "st-none"]) == {"st-act": True, "st-off": False}
+        assert backend.indexed_document_states("st-c", ["st-act", "st-off"]) == {}
+    finally:
+        for t, i in (("st-a", "st-act"), ("st-a", "st-off"), ("st-b", "st-act")):
+            backend.delete_document(i, tenant_id=t, hard=True)

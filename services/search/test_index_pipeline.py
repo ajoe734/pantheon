@@ -712,18 +712,20 @@ def test_unchanged_refresh_stays_incremental_when_readback_reloads_after_writer_
 class _FakeBackend:
     def __init__(self) -> None:
         self.docs: set[str] = set()
+        self.active: dict[str, bool] = {}
         self.indexed_batches: list[list[str]] = []
 
     def index_documents(self, records):
         self.indexed_batches.append([r.id for r in records])
         self.docs.update(r.id for r in records)
+        self.active.update({r.id: r.is_active for r in records})
         return len(records)
 
     def delete_document(self, document_id, *a, **k):
         self.docs.discard(document_id)
 
-    def active_document_ids(self, tenant_id, ids):
-        return {i for i in ids if i in self.docs}
+    def indexed_document_states(self, tenant_id, ids):
+        return {i: self.active.get(i, True) for i in ids if i in self.docs}
 
 
 def test_retained_checkpoint_with_empty_backend_reindexes_existing_objects(tmp_path):
@@ -751,3 +753,19 @@ def test_underfilled_backend_only_receives_missing_objects(tmp_path):
     run = pipeline.run(triggered_by="scheduled_refresh")
     assert backend.indexed_batches[-1] == ["b"]
     assert run.incremental_count == 1 and backend.docs == {"a", "b", "c"}
+
+
+def test_inactive_canonical_object_is_not_treated_as_missing(tmp_path):
+    repo = _make_repo_with_objects(["a", "b"])
+    repo.get_knowledge_object("b").metadata["is_active"] = False
+    store = _make_pipeline_store(tmp_path)
+    IncrementalIndexPipeline(repo, store).run(triggered_by="legacy")
+    backend = _FakeBackend()
+    pipeline = IncrementalIndexPipeline(repo, store, retrieval_backend=backend)
+    first = pipeline.run(triggered_by="scheduled_refresh")
+    assert first.incremental_count == 2
+    assert backend.active == {"a": True, "b": False}
+    for _ in range(2):
+        again = pipeline.run(triggered_by="scheduled_refresh")
+        assert again.incremental_count == 0
+    assert len(backend.indexed_batches) == 1

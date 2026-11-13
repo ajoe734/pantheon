@@ -51,7 +51,7 @@
   "startup_warmup_role": "Moves the model load from the first readyz/request into app startup. Hardening only, not a demonstrated fix for the hosted restart.",
   "head_333e4572f_official_order": "same setup: healthy at t=33s, scheduler exit 0 in 10.6s, rows=3 embeddings=3; hybrid POST /api/search/query (query 台積電 晶圓代工, source_types news) -> 200, X-Retrieval-Backend postgres_pgvector, top result ko-src-fx-0.",
   "embedding_unavailable_independent_check": "HEAD with SEARCH_EMBEDDING_CACHE_DIR=/nonexistent: startup log retrieval_embedding_warmup ready=false reason=model_integrity_verification_failed; scheduler INTERVAL=3 MAX_TICKS=2: both ticks status=failed 'HTTP 503 ... embedding_model_unavailable ... index not written'; alive file absent; loop continued to tick 2 without crashing; search_retrieval_index rows=0; no pipeline checkpoint file written.",
-  "not_rerun": "Failure-then-recovery across a live service restart was not rerun this round (unit test test_refresh_surfaces_embedding_unavailable_as_503_then_recovers and the earlier recorded run cover it). Full pytest not rerun beyond the prior 24 passed / 1 skipped.",
+  "not_rerun": "see above",
   "open": "The hosted restart defect is unreproduced. Newly demonstrated defects: (a) scheduler exits on any tick exception (now an observable failed tick, loop continues); (b) null embeddings upserted and checkpoint recorded when the model is unavailable (now 503, no checkpoint). Original Ops retains hosted acceptance.",
   "raw_log_prefix_0.5cpu": [
    "[prefix-0.5cpu] health attempt 1 failed t=11.034716543s",
@@ -112,7 +112,7 @@
    "regression_test": "test_unchanged_refresh_stays_incremental_when_readback_reloads_after_writer_reload: reproduces the reviewer interleaving (slow readback reload starts after writer reload returns, before get_latest) and asserts the observable result (is_full_rebuild False, incremental_count 0). Verified to FAIL on the previous index_pipeline.py (full rebuild) and pass now."
   },
   "retained_checkpoint_empty_or_underfilled_backend": {
-   "change": "IncrementalIndexPipeline.run: on a non-full run with a retrieval backend, objects the checkpoint claims but backend.active_document_ids(tenant, ids) does not report are added to the objects to index (no force-full, only the missing ones). PostgresRetrievalBackend.active_document_ids is RLS/tenant-scoped, requires is_active and non-null embedding. Backends that cannot report presence keep checkpoint-only behaviour. Failure still raises (503) with no checkpoint recorded.",
+   "change": "IncrementalIndexPipeline.run: on a non-full run with a retrieval backend, objects the checkpoint claims but backend.indexed_document_states(tenant, ids) does not report in sync with the canonical desired is_active flag are added to the objects to index (no force-full, only the missing ones). PostgresRetrievalBackend.indexed_document_states is RLS/tenant-scoped and returns {id: is_active} for embedded or tombstoned rows, so deliberately inactive canonical records are not re-embedded every tick (review P2 fix). Backends that cannot report presence keep checkpoint-only behaviour. Failure still raises (503) with no checkpoint recorded.",
    "tests": [
     "test_retained_checkpoint_with_empty_backend_reindexes_existing_objects",
     "test_underfilled_backend_only_receives_missing_objects"

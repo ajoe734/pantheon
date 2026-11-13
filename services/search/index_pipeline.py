@@ -202,6 +202,10 @@ def _knowledge_object_to_retrieval_record(ko: Any, repository: InMemoryEvidenceR
     )
 
 
+def _desired_active(obj: Any) -> bool:
+    return bool(dict(obj.metadata).get("is_active", True)) if obj.metadata else True
+
+
 class IncrementalIndexPipeline:
     """Drives incremental or full index refresh against the evidence repository."""
 
@@ -242,7 +246,7 @@ class IncrementalIndexPipeline:
         underfilled backend (new backend, wiped volume) otherwise never receives pre-existing
         objects because incremental runs only select changed ones.
         """
-        probe = getattr(self.retrieval_backend, "active_document_ids", None)
+        probe = getattr(self.retrieval_backend, "indexed_document_states", None)
         if probe is None:
             return []
         selected_ids = {obj.knowledge_object_id for obj in selected}
@@ -254,10 +258,15 @@ class IncrementalIndexPipeline:
             by_tenant.setdefault(tenant, []).append(obj)
         missing: list[Any] = []
         for tenant, objects in by_tenant.items():
-            present = probe(tenant, [o.knowledge_object_id for o in objects])
-            if not isinstance(present, (set, frozenset)):
+            states = probe(tenant, [o.knowledge_object_id for o in objects])
+            if not isinstance(states, dict):
                 return []  # backend cannot report presence; keep checkpoint-only behaviour
-            missing.extend(o for o in objects if o.knowledge_object_id not in present)
+            # In sync = row exists with the canonical desired active flag (inactive stays inactive).
+            missing.extend(
+                o
+                for o in objects
+                if states.get(o.knowledge_object_id) is not _desired_active(o)
+            )
         return missing
 
     def run(
