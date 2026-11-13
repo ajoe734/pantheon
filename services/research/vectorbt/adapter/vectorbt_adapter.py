@@ -84,6 +84,19 @@ class VectorbtWorkflowError(ValueError):
     """Raised when a governed vectorbt workflow cannot be built safely."""
 
 
+class IntradayExecutionError(VectorbtWorkflowError):
+    """A mandatory flatten failed; retain the real account state for diagnosis."""
+
+    def __init__(self, *, instrument: str, bar_start: str, cash: float, position: float) -> None:
+        self.reason = "mandatory_flatten_unfilled"
+        self.instrument, self.bar_start = instrument, bar_start
+        self.cash, self.position = cash, position
+        super().__init__(
+            f"intraday_execution_failed:{self.reason}: {instrument} {bar_start} "
+            f"cash={cash!r} position={position!r} target=0"
+        )
+
+
 class IntradayDataUnavailable(VectorbtWorkflowError):
     """Governed minute data is missing/quarantined/unavailable: reported, never substituted."""
 
@@ -965,7 +978,11 @@ class VectorbtBackend:
                     for fi in flatten_idx:
                         sizes.iloc[fi] = 0.0
                 size_types = pd.Series(0, index=sizes.index, dtype="int64")  # SizeType.Amount
-                for fi in flatten_idx:
+                # A factor-rule FLAT decision also closes the actual inventory. It is
+                # not a signed quantity: a partial/rejected entry must never turn
+                # its later close into an undeclared short (or reverse a short cover).
+                close_idx = [i for i, size in enumerate(sizes) if size == 0.0] if _is_intraday(dataset) else []
+                for fi in close_idx:
                     size_types.iloc[fi] = 3  # SizeType.TargetAmount
 
                 def _fees_for(flatten_sells: dict[int, bool]) -> Any:
@@ -997,24 +1014,32 @@ class VectorbtBackend:
                     return vbt.Portfolio.from_orders(
                         closes,
                         size=sizes,
-                        size_type=size_types if flatten_idx else "amount",
+                        size_type=size_types if close_idx else "amount",
                         direction="both",
                         init_cash=config.init_cash,
                         fees=fees_arg,
                         **order_kwargs,
                     )
 
-                flatten_sells = {fi: True for fi in flatten_idx}
+                flatten_sells = {fi: True for fi in close_idx}
                 pf = _simulate(_fees_for(flatten_sells))
-                for _ in range(len(flatten_idx) + 1):  # tax applies only to flatten SELLs (closing a long)
-                    if not flatten_idx or not config.apply_taiwan_fill_costs:
+                for _ in range(len(close_idx) + 1):  # tax applies only to actual close SELLs
+                    if not close_idx or not config.apply_taiwan_fill_costs:
                         break
                     flows = pf.asset_flow().to_numpy()
-                    actual = {fi: bool(flows[fi] < 0.0) for fi in flatten_idx}
+                    actual = {fi: bool(flows[fi] < 0.0) for fi in close_idx}
                     if actual == flatten_sells:
                         break
                     flatten_sells = actual
                     pf = _simulate(_fees_for(flatten_sells))
+                if flatten_idx:
+                    assets, cash = pf.assets(), pf.cash()
+                    for fi in flatten_idx:
+                        if not math.isclose(float(assets.iloc[fi]), 0.0, abs_tol=1e-8):
+                            raise IntradayExecutionError(
+                                instrument=inst, bar_start=dataset.dates_by_instrument[inst][fi],
+                                cash=float(cash.iloc[fi]), position=float(assets.iloc[fi]),
+                            )
                 cost_summary = _extract_fill_cost_summary(
                     pf,
                     commission_rate=comm_rate,
@@ -1357,7 +1382,8 @@ def _screened_artifact_view_sequence(
 
 
 def _artifact_action_sequence(
-    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
+    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any],
+    *, close_actions: dict[str, set[int]] | None = None,
 ) -> dict[str, list[str | None]]:
     """Per-bar evaluated actions (BUY/SELL/HOLD or None on warmup bars) from the Registry interpreter."""
     _require_artifact_frequency(dataset, artifact)
@@ -1366,7 +1392,9 @@ def _artifact_action_sequence(
                 for inst, views in _screened_artifact_view_sequence(dataset, artifact).items()}
 
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
-    from services.registry.factor_rule import required_history_bars
+    from services.registry.factor_rule import (
+        FactorRuleValidationError, evaluate_factor_rule_view, required_history_bars,
+    )
     from services.registry.strategy_artifact import (
         StrategyArtifactValidationError,
         evaluate_strategy_action,
@@ -1417,6 +1445,8 @@ def _artifact_action_sequence(
         closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
         actions: list[str | None] = [None] * len(closes)
         evaluated_count = 0
+        if close_actions is not None:
+            close_actions[instrument] = set()
         session_starts = (
             _session_start_indexes(dataset.dates_by_instrument[instrument]) if _is_intraday(dataset) else None
         )
@@ -1425,14 +1455,26 @@ def _artifact_action_sequence(
                 continue  # lookback window resets at the session open: not enough in-session history yet
             bar_features, decision_time = _bar_features_for_index(dataset, instrument, index)
             try:
-                action = evaluate_strategy_action(
-                    artifact,
-                    _closes_window(dataset, instrument, index, cross_session),
-                    features=bar_features,
-                    decision_time=decision_time,
-                    symbol=instrument,
-                )
-            except StrategyArtifactValidationError as exc:
+                if close_actions is not None and _is_intraday(dataset) and kind == "factor_rule_v1":
+                    # The existing Registry view exposes post-decision state. Its
+                    # BUY/SELL direction alone cannot distinguish entry from close.
+                    view = evaluate_factor_rule_view(
+                        artifact, _closes_window(dataset, instrument, index, cross_session),
+                        features=bar_features, decision_time=decision_time,
+                        symbol=instrument, include_position_state=True,
+                    )
+                    action = view["action"]
+                    if action in {"BUY", "SELL"} and view["target_direction"] == "FLAT":
+                        close_actions[instrument].add(index)
+                else:
+                    action = evaluate_strategy_action(
+                        artifact,
+                        _closes_window(dataset, instrument, index, cross_session),
+                        features=bar_features,
+                        decision_time=decision_time,
+                        symbol=instrument,
+                    )
+            except (StrategyArtifactValidationError, FactorRuleValidationError) as exc:
                 msg = str(exc)
                 if kind == "factor_rule_v1" and (
                     "requires sufficient" in msg or "no visible observations" in msg
@@ -1454,16 +1496,23 @@ def _artifact_action_sequence(
 def _artifact_order_sizes(
     dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
 ) -> dict[str, list[float]]:
-    """Signed per-bar order sizes from the Registry interpreter, artifact symbols only."""
-    actions_by_inst = _artifact_action_sequence(dataset, artifact)
+    """Amount orders; intraday zero denotes a target-zero close, never a zero-size fill."""
+    close_actions: dict[str, set[int]] = {}
+    actions_by_inst = _artifact_action_sequence(dataset, artifact, close_actions=close_actions)
     quantity = float(artifact["parameters"]["order_quantity"])
     sizes: dict[str, list[float]] = {}
     if _is_intraday(dataset):
         holding = _artifact_holding(artifact)
-        return {
+        sizes = {
             inst: plan_intraday_orders(dataset.dates_by_instrument[inst], actions, quantity, holding=holding)
             for inst, actions in actions_by_inst.items()
         }
+        for inst, indexes in close_actions.items():
+            for index in indexes:
+                fill_index = index + 1
+                if fill_index < len(sizes[inst]) and not math.isnan(sizes[inst][fill_index]):
+                    sizes[inst][fill_index] = 0.0
+        return sizes
     for instrument, actions in actions_by_inst.items():
         orders = [float("nan")] * len(actions)
         for index, action in enumerate(actions):
