@@ -59,7 +59,8 @@ async def persona_lifespan(app):
     worker = None
     if os.getenv("PERSONA_DAILY_CYCLE_ENABLED", "false").lower() == "true":
         from services.persona.persona_cycle_controller import CycleOwners, PersonaCycleController, run_controller
-        from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle, governed_dataset_loader
+        from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle
+        from services.persona.pool_dataset_authority import governed_dataset_loader
         from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
         controller = PersonaCycleController(
             PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()),
