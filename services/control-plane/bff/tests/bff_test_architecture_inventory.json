@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 398,
+  "total_test_files": 399,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -102,7 +102,7 @@
     "application": 191,
     "composition": 19,
     "hosted": 12,
-    "router": 121
+    "router": 122
   },
   "main_by_layer": {
     "composition": 14,
@@ -2543,6 +2543,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_persona_pool_views.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Real persona router with owner-generated pool, virtual-book, health and demand payloads; no BFF composition globals"
     },
     {
       "file": "tests/test_persona_provisioning_read_surface_mutation.py",
