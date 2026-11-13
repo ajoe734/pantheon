@@ -34,7 +34,7 @@ import tempfile
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
@@ -403,6 +403,10 @@ def verify_bundle(
     ``deadline`` (monotonic seconds) is a whole-operation read budget: once it passes, no
     further raw file is fetched (at least one is always read so every pull progresses) and
     ``verified_through`` records how far verification got. Nothing is skipped or assumed.
+
+    ``raw_read_concurrency`` overlaps at most four reads per bounded batch for
+    newest closes. Every reader shares the operation context/deadline and joins
+    before return; a timeout can retain only an ordered verified prefix.
     """
 
     if deadline is None:
@@ -501,17 +505,18 @@ def verify_bundle(
     # A separate context per worker preserves the *same* operation deadline and
     # egress policy. Never acknowledge out of order or discard a genuine failure
     # from a later parallel read merely because an earlier read timed out.
-    with ThreadPoolExecutor(max_workers=width) as readers:
+    with (ThreadPoolExecutor(max_workers=width) if width > 1 else nullcontext()) as readers:
         for offset in range(0, len(wanted_ids), width):
             if deadline is not None and offset > 0 and time.monotonic() >= deadline:
                 verified_through = window_start + offset
                 break
             group = wanted_ids[offset:offset + width]
-            futures = [readers.submit(copy_context().run, read_verified, item_id) for item_id in group]
+            futures = ([readers.submit(copy_context().run, read_verified, item_id) for item_id in group]
+                       if readers is not None else [None])
             outcomes: list[tuple[str, bytes] | TimeoutError] = []
             for future in futures:
                 try:
-                    outcomes.append(future.result())
+                    outcomes.append(future.result() if future is not None else read_verified(group[0]))
                 except TimeoutError as exc:
                     outcomes.append(exc)
             for index, outcome in enumerate(outcomes):

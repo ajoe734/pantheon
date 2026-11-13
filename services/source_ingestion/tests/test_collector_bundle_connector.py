@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1352,6 +1353,91 @@ def _held_session(tmp_path, *, n_rows=600, held_pos=(531, 538), tamper=None):
 
 def _symbols(result):
     return [r.metadata["normalized_row"]["symbol"] for r in result.records]
+
+
+def test_close_reads_overlap_under_one_deadline_and_drain_before_return(tmp_path):
+    import threading
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    adapter = replace(_held_session(tmp_path, n_rows=8)(), max_records=8)
+    barrier = threading.Barrier(4, timeout=2)
+    lock = threading.Lock()
+    active, peak, deadlines = [0], [0], []
+
+    class OverlappingTransport(FakeTransport):
+        def read(self, relative_path, *, max_bytes):
+            if "/raw/" not in relative_path:
+                return super().read(relative_path, max_bytes=max_bytes)
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+                deadlines.append(cb._OP_DEADLINE.get())
+            try:
+                assert max_bytes == cb.MAX_RAW_BYTES
+                assert cb._DEFER_ACK.get() is True
+                barrier.wait()
+                return super().read(relative_path, max_bytes=max_bytes)
+            finally:
+                with lock:
+                    active[0] -= 1
+
+    adapter = replace(adapter, transport=OverlappingTransport(adapter.transport.files))
+    with cb.deferred_collector_acknowledgement():
+        result = adapter.pull()
+    assert result.priority_done and len(result.records) == 8
+    assert peak[0] == 4 and active[0] == 0
+    assert len(set(deadlines)) == 1 and deadlines[0] is not None
+    assert not adapter._priority_key_path().exists()
+    result.delivery.validate(result.records)
+    result.delivery.acknowledge()
+    assert adapter._load_priority_state()[1:3] == (8, True)
+
+
+@pytest.mark.parametrize("bad_hash", [False, True])
+def test_parallel_close_deadline_preserves_prefix_but_never_hides_bad_hash(tmp_path, monkeypatch, bad_hash):
+    import threading
+    import types
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    adapter = replace(_held_session(tmp_path, n_rows=8)(), max_records=8, read_budget_seconds=1)
+    paths = [p for p in adapter.transport.files if "/raw/" in p]
+    barrier = threading.Barrier(4, timeout=2)
+    clock = [0.0]
+    monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+
+    class CutTransport(FakeTransport):
+        def read(self, relative_path, *, max_bytes):
+            if "/raw/" in relative_path:
+                barrier.wait()
+                clock[0] = 2.0
+                if relative_path == paths[1]:
+                    raise TimeoutError("shared operation deadline")
+                if bad_hash and relative_path == paths[3]:
+                    return b"bad hash after the timeout gap"
+            return super().read(relative_path, max_bytes=max_bytes)
+
+    cut = replace(adapter, transport=CutTransport(adapter.transport.files))
+    with cb.deferred_collector_acknowledgement():
+        if bad_hash:
+            with pytest.raises(SourceEvidenceError, match="hash mismatch"):
+                cut.pull()
+            assert not cut._priority_key_path().exists()
+            return
+        result = cut.pull()
+    assert len(result.records) == 1 and result.priority_delivered == 1 and not result.priority_done
+    assert not cut._priority_key_path().exists()
+    result.delivery.validate(result.records)
+    result.delivery.acknowledge()
+    assert cut._load_priority_state()[1:3] == (1, False)
+    # Restart from durable prefix, re-reading both the hole and any later prefetch.
+    clock[0] = 0
+    with cb.deferred_collector_acknowledgement():
+        retry = adapter.pull(max_records=7)
+    assert len(retry.records) == 7 and retry.priority_done
+    assert {r.source_id for r in result.records}.isdisjoint(r.source_id for r in retry.records)
+    retry.delivery.validate(retry.records)
+    retry.delivery.acknowledge()
+    assert adapter._load_priority_state()[1:3] == (8, True)
 
 
 def test_held_symbols_beyond_first_prefix_are_delivered_in_the_first_bounded_pull(tmp_path):

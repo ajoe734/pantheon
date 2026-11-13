@@ -2277,16 +2277,18 @@ def _close_files(*, tamper_code: str | None = None, wrong_date_code: str | None 
 
     run_id, finished = f"close-{_CLOSE_DATE}", "2026-11-13T07:30:00Z"
     base = f"bundles/{source}/{_CLOSE_DATE}/{run_id}"
+    endpoint = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if exchange == "TWSE"
+                else "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes")
     items, rows, files = [], [], {}
     for n in range(n_rows):
         code = _CLOSE_HELD.get(n, f"{(1000 if n_rows == _CLOSE_ROWS else 10000) + n}")
-        item_id = f"twse-price-history-{_CLOSE_DATE}-{code}"
+        item_id = f"{exchange.lower()}-price-history-{_CLOSE_DATE}-{code}"
         body = f"<r>{_CLOSE_DATE}-{code}</r>".encode()
         sha = hashlib.sha256(body).hexdigest()
-        items.append({"item_id": item_id, "url": "https://www.twse.com.tw/exchangeReport/MI_INDEX", "http_status": 200,
+        items.append({"item_id": item_id, "url": endpoint, "http_status": 200,
                       "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
         rows.append({
-            "id": item_id, "url": "https://www.twse.com.tw/exchangeReport/MI_INDEX", "fetched_at": "2026-11-13T07:00:00Z",
+            "id": item_id, "url": endpoint, "fetched_at": "2026-11-13T07:00:00Z",
             "symbol": code, "security_name": f"name {code}", "exchange": exchange, "dataset": "tw_price_daily",
             "trade_date": "2026-11-12" if code == wrong_date_code else _CLOSE_DATE,
             "open": 940.0, "high": 955.0, "low": 938.0, "close": 950.0 + n, "volume_shares": 1000, "transactions": 10,
@@ -2537,14 +2539,23 @@ def test_full_size_close_through_controller_main_with_persistence(
     assert all(log.get("status") == "ok" for log in logs if "tick" in log), logs[-2:]
     assert progress[-1] == n_rows and all(a < b for a, b in zip(progress, progress[1:]))
     assert len(progress) > 1 and not cb._DEFER_ACK.get()
+    assert 1 < peak[0] <= cb.LATEST_CLOSE_RAW_READ_CONCURRENCY
     records = list(module.runtime.evidence_repository.list_source_records())
     assert len(records) == n_rows and len({r.source_id for r in records}) == n_rows
+    for record in records:
+        assert record.tenant_id == "tenant-a"
+        expected_url = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if exchange == "TWSE"
+                        else "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes")
+        assert record.content_ref == expected_url
+        assert record.metadata["collector_close"]["official"] is False
+        assert record.metadata["collector_close"]["trade_date"] == _CLOSE_DATE
+        assert record.metadata["source_dedupe_key"] == f"collector-close:{record.source_id}"
     for code in ("2317", "2330", "10000", str(10000 + n_rows - 1)):
-        assert _snapshot_date(module, f"{code}.TW") == _CLOSE_DATE
+        assert _snapshot_date(module, f"{code}.{exchange}") == _CLOSE_DATE
     # Freshly reloaded store verifies disk persistence rather than only an in-memory view.
     from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
     snapshots = LatestMarketSnapshotStore(module.runtime.latest_market_snapshot_store.path)
-    assert snapshots.get("2330.TW").points[-1].event_time[:10] == _CLOSE_DATE
+    assert snapshots.get(f"2330.{exchange}").points[-1].event_time[:10] == _CLOSE_DATE
     actual = cw.read_actual_state_with_fetch_bindings(api_url=config.api_url)
     assert cw.select_collector_pull_connectors(actual, _steady_reconcile([cid])) == []
     assert active[0] == 0
