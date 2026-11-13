@@ -1,0 +1,16 @@
+{
+  "task_id": "SEARCH-INDEX-STARTUP-20261113",
+  "scope": "source + local validation only; no hosted acceptance claimed",
+  "diagnosis": {
+    "entry_point": "python -m services.search.scheduler_worker (main)",
+    "defect": "main() called run_tick() with no exception handling; any urllib timeout (30s per request), HTTPError (401/5xx) or connection error during cold first index terminated the process, so docker restart: unless-stopped produced the restart_count 3->5 seen in step20 line 4533.",
+    "hosted_exception": "UNKNOWN - scheduler container logs were not captured (failure dump logged search-svc). Reproduced class of failure locally with TimeoutError and HTTPError 503; not claimed as the proven hosted exception.",
+    "ops_request": "Smallest non-secret retained startup evidence (search-index-scheduler container stderr traceback for Root43460083439) to be requested from original Ops via existing path."
+  },
+  "change": "scheduler_worker.main catches per-tick Exception, prints a JSON line with status=failed, error_type and error (HTTP code/reason/body prefix), does not touch the alive file for failed ticks, and continues at the unchanged interval. Timeout (30s), cadence (300s) and deployment gate unchanged.",
+  "validation": {
+    "services/search/test_index_scheduler_worker.py": "5 passed",
+    "services/search/tests/test_retrieval_activation.py": "14 passed, 1 skipped"
+  },
+  "not_done": "Real-container cold hybrid index against Postgres was not run locally (no DB/VM authority)."
+}

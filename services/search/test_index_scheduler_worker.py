@@ -79,3 +79,52 @@ def test_search_index_scheduler_main_touches_alive_path(tmp_path) -> None:
         res = main()
         assert res == 0
         assert alive_file.exists()
+
+
+def test_search_index_scheduler_survives_failed_tick_and_recovers(tmp_path, capsys) -> None:
+    import urllib.error
+
+    alive_file = tmp_path / "alive"
+    recorder = _PostRecorder()
+    calls = {"n": 0}
+
+    def flaky(request, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("timed out")
+        if calls["n"] == 2:
+            raise urllib.error.HTTPError(request.full_url, 503, "Service Unavailable", {}, None)
+        return recorder(request, timeout=timeout)
+
+    env = {
+        "SEARCH_INDEX_SCHEDULER_ALIVE_PATH": str(alive_file),
+        "SEARCH_INDEX_SCHEDULER_MAX_TICKS": "3",
+        "SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS": "1",
+        "SEARCH_INDEX_SCHEDULER_MATERIALIZE": "false",
+    }
+    with mock.patch("services.search.scheduler_worker.urllib.request.urlopen", flaky), \
+         mock.patch("services.search.scheduler_worker.time.sleep"), \
+         mock.patch.dict("os.environ", env):
+        from services.search.scheduler_worker import main
+
+        assert main() == 0
+    lines = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    assert lines[0]["status"] == "failed" and lines[0]["error_type"] == "TimeoutError"
+    assert lines[1]["status"] == "failed" and "HTTP 503" in lines[1]["error"]
+    assert "result" in lines[2]
+    assert alive_file.exists()  # only touched by the successful tick
+
+
+def test_search_index_scheduler_failed_tick_never_marks_alive(tmp_path) -> None:
+    alive_file = tmp_path / "alive"
+    env = {
+        "SEARCH_INDEX_SCHEDULER_ALIVE_PATH": str(alive_file),
+        "SEARCH_INDEX_SCHEDULER_MAX_TICKS": "2",
+    }
+    with mock.patch("services.search.scheduler_worker.urllib.request.urlopen", side_effect=TimeoutError("x")), \
+         mock.patch("services.search.scheduler_worker.time.sleep"), \
+         mock.patch.dict("os.environ", env):
+        from services.search.scheduler_worker import main
+
+        assert main() == 0
+    assert not alive_file.exists()
