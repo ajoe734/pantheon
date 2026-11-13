@@ -1857,6 +1857,26 @@ def _admit_evolution_child(params, child_id):
         owner.admit_child(ctx, child_id, params["decision_id"])
 
 
+def _evolution_member_case_context(run_id, parent, params):
+    """Persist the owner-composed case file even when a child is refused."""
+    if not params.get("pool_member"):
+        return None, {}
+    from services.research.alpha_replication import evolution_executor as executor
+
+    try:
+        case_file = executor.compose_member_case_file(
+            parent, params=params, tenant_id=params["tenant_id"],
+            decision_id=params["decision_id"], parent_registry_ref=params["target_artifact_id"],
+        )
+        _retrain_record(run_id, evolution_case_file=case_file)
+        context = executor.child_lesson_context(case_file, params.get("addresses_lessons"))
+    except executor.ExecutorRefusal as exc:
+        _retrain_record(run_id, evolution_case_file_refusal={"reason": exc.reason})
+        raise _RetrainFinished(exc.outcome, exc.reason) from None
+    _retrain_record(run_id, evolution_child_context=context)
+    return case_file, context
+
+
 @app.get("/api/research/evolution/families/{family_id}")
 def evolution_family_state(family_id: str, bar_frequency: Optional[str] = None,
                            tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
@@ -2069,9 +2089,12 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     state = _retrain_prior_state(run_id, params, tenant_id)
     if state.get("candidate_artifact_id") or state.get("outcome") in _RETRAIN_OUTCOMES:
         # The decision already reached its outcome: adopt it, change nothing.
+        if params.get("pool_member") and state.get("candidate_artifact_id") and not state.get("evolution_child_context"):
+            raise _RetrainFinished("no_candidate", "recorded_child_case_file_missing")
         carried = {k: v for k, v in state.items() if k in {
             "session_id", "baseline_job_id", "baseline_eval_id", "candidate_job_id", "candidate_eval_id",
-            "baseline_metrics", "candidate_metrics", "candidate_artifact_id", "candidate_proof_ref", "persona_id"}}
+            "baseline_metrics", "candidate_metrics", "candidate_artifact_id", "candidate_proof_ref", "persona_id",
+            "evolution_case_file", "evolution_child_context"}}
         _retrain_record(run_id, **carried)
         if state.get("candidate_artifact_id"):
             _admit_evolution_child(params, state["candidate_artifact_id"])
@@ -2100,6 +2123,8 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     persona_id = str(metadata.get("persona_id") or "").strip()
     if not persona_id:
         raise _RetrainFinished("evaluation_rejected", "target_has_no_persona")
+
+    _case_file, child_context = _evolution_member_case_context(run_id, parent_artifact, params)
 
     # 2. One Teaching session for this decision (resumed, never duplicated).
     session_id = str(state.get("session_id") or "")
@@ -2246,6 +2271,8 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
                 )
             except search.EvolutionSearchError as exc:
                 raise _RetrainFinished("no_candidate", f"retrain_child_invalid: {exc}") from None
+            if child_context:
+                _retrain_record(run_id, evolution_children={child["artifact_id"]: child_context})
             prev_backend = os.environ.get("PANTHEON_VECTORBT_BACKEND")
             os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
             try:
@@ -2495,6 +2522,12 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     ]
     if prior:  # an earlier attempt of this decision already reached its terminal outcome: adopt it
         done = max(prior, key=lambda r: str(r.get("updated_at") or ""))
+        if params.get("pool_member"):
+            if done["outcome"] == "candidate_created" and not done.get("evolution_child_context"):
+                raise _RetrainFinished("no_candidate", "recorded_child_case_file_missing")
+            _retrain_record(run_id, **{k: done[k] for k in (
+                "evolution_case_file", "evolution_child_context", "evolution_result", "evolution_case_file_refusal"
+            ) if k in done})
         raise _RetrainFinished(str(done["outcome"]), str(done.get("outcome_reason") or "resumed_from_recorded_outcome"))
 
     def read(step: str, path: str) -> Any:
@@ -2536,6 +2569,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
         _retrain_record(run_id, evolution_result=result["verdict"])
         raise _RetrainFinished(result["outcome"], result["reason"])
 
+    case_file, child_context = _evolution_member_case_context(run_id, parent, params) if action == "mutate" else (None, {})
     gate, factory = _evolution_oos_context(
         parent=parent, entry_meta=entry_meta, params=params, tenant_id=tenant_id, decision_id=decision_id,
         family_id=family_id, read=read,
@@ -2566,7 +2600,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                             data_dir=Path(ALPHA_REPLICATION_DATA_DIR), child=child, verdict=verdict,
                             decision_id=decision_id, run_id=run_id, gate=gate,
                         ),
-                        "metadata": {k: v for k, v in entry_meta.items() if k == "persona_id"},
+                        "metadata": {**{k: v for k, v in entry_meta.items() if k == "persona_id"}, **child_context},
                     },
                 )
             except _OwnerRejection as exc:
@@ -2601,6 +2635,8 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                 family_versions=lambda: _registry_family_versions(registry_url, tenant_id, parent),
                 children=50 if params.get("pool_member") else 1,
                 parent_registry_ref=target_artifact_id,
+                case_file=case_file,
+                declare_lessons=lambda _child, _case: params.get("addresses_lessons"),
             )
         else:
             result = executor.execute_revalidate(parent, family_id=family_id, gate=gate, request_factory=factory)
