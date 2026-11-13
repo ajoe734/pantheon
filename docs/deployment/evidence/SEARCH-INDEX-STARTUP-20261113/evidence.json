@@ -22,5 +22,21 @@
     "pytest services/search (docker, with PANTHEON_RETRIEVAL_INTEGRATION_DSN to isolated pgvector)": "164 passed, 19 skipped (qdrant/test_pg_retrieval localhost containers, ranx missing), includes real pgvector integration test and 2 new warm-up tests",
     "pytest scheduler + retrieval_activation (no DSN)": "21 passed, 1 skipped"
   },
-  "limits": "Hosted exception still unobserved; original Ops retains hosted release/acceptance and may still supply the retained scheduler stderr to confirm. Reproduction uses CPU throttling to emulate a slow cold start."
+  "limits": "Hosted exception still unobserved; original Ops retains hosted release/acceptance and may still supply the retained scheduler stderr to confirm. Reproduction uses CPU throttling to emulate a slow cold start.",
+  "review_round_2": {
+    "rejected_head": "d6182d1f185c2dd3a46c2d6ca94fed24e59489ef",
+    "p1_acceptance_4_fix": {
+      "pg_retrieval.index_documents": "raises SearchCapabilityUnavailableError('embedding_model_unavailable: ...') before any DB write when the embedding engine is not ready; null embeddings are never upserted.",
+      "main.refresh_index": "maps SearchCapabilityUnavailableError to HTTP 503 with the reason; pipeline.run records its checkpoint only after index_documents succeeds, so no checkpoint is written on failure.",
+      "scheduler_worker": "HTTP 503 raises in run_tick -> status=failed with reason in JSON log, alive file not touched, loop continues (unchanged); next tick after the engine is ready indexes and touches alive.",
+      "warmup_reason": "startup warmup log now carries 'reason' (exception type/message, model_integrity_verification_failed, or embedding_model_unavailable) instead of only ready=false."
+    },
+    "regression_tests": [
+      "test_pg_index_documents_fails_instead_of_writing_null_embeddings",
+      "test_refresh_surfaces_embedding_unavailable_as_503_then_recovers",
+      "test_warmup_failure_reason_is_preserved_in_log"
+    ],
+    "validation": "pytest services/search/test_index_scheduler_worker.py services/search/tests/test_retrieval_activation.py: 24 passed, 1 skipped (no integration DSN). Docker cold hybrid scheduler->refresh->materialize->query reproduction was not rerun in this session (no docker run here); the earlier recorded run stands for the pre-change path only.",
+    "p1_acceptance_1_open": "Reviewer's question (how a scheduler gated on a successful readyz still met a cold model) is NOT answered by evidence: compose gating order and the captured Root43460083439 restart stderr/component evidence require original Ops (no VM/SSH here). The cold-timeout hypothesis stays uncorroborated; the retained scheduler stderr must be requested from Ops."
+  }
 }

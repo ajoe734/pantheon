@@ -662,12 +662,27 @@ def create_app(
         # service accepts traffic; failure stays visible through readyz (never swallowed
         # into a healthy state) and is retried lazily by is_ready().
         engine = getattr(retrieval_backend, "embedding_engine", None)
-        if engine is not None:
+        if engine is None:
+            return
+        reason: str | None = None
+        try:
+            ready = bool(engine.is_ready())
+        except Exception as exc:  # noqa: BLE001
+            ready, reason = False, f"{type(exc).__name__}: {exc}"
+        if not ready and reason is None:
+            # is_ready() swallows the cause; re-probe to preserve the specific reason.
             try:
-                ready = engine.is_ready()
-            except Exception:
-                ready = False
-            print(json.dumps({"event": "retrieval_embedding_warmup", "ready": bool(ready)}), flush=True)
+                if hasattr(engine, "verify_integrity") and not engine.verify_integrity():
+                    reason = "model_integrity_verification_failed"
+                else:
+                    engine._ensure_loaded()
+                    reason = "embedding_model_unavailable"
+            except Exception as exc:  # noqa: BLE001
+                reason = f"{type(exc).__name__}: {exc}"
+        print(
+            json.dumps({"event": "retrieval_embedding_warmup", "ready": ready, "reason": reason}),
+            flush=True,
+        )
 
     if retrieval_backend is not None:
         app.router.on_startup.append(_warm_retrieval_embedding)
@@ -902,6 +917,9 @@ def create_app(
             return {"pipeline_snapshot": snapshot.to_dict()}
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except SearchCapabilityUnavailableError as exc:
+            # Observable failed tick: no checkpoint was recorded; the scheduler sees HTTP 503 + reason.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/api/search/index/freshness")
     def index_freshness() -> dict[str, Any]:

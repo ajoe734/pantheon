@@ -208,10 +208,13 @@ class PostgresRetrievalBackend:
         texts_to_embed = [r.search_text for r in records if r.embedding is None]
         embeddings = []
         if texts_to_embed:
-            if self.embedding_engine.is_ready():
-                embeddings = self.embedding_engine.embed_documents(texts_to_embed)
-            else:
-                embeddings = [None] * len(texts_to_embed)
+            if not self.embedding_engine.is_ready():
+                # Never upsert null embeddings into the hybrid index: that would let the
+                # pipeline checkpoint and scheduler report a healthy tick over an unsearchable index.
+                raise SearchCapabilityUnavailableError(
+                    "embedding_model_unavailable: local embedding engine is not ready; index not written"
+                )
+            embeddings = self.embedding_engine.embed_documents(texts_to_embed)
 
         emb_idx = 0
         final_records = []

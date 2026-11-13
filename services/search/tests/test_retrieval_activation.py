@@ -227,3 +227,56 @@ def test_absent_backend_selection_and_dsn_is_unavailable_not_jsonl(app_factory):
             assert response.headers.get("X-Retrieval-Reason") != "explicit_jsonl_fallback"
         ready = client.get("/readyz")
         assert ready.status_code != 200
+
+
+def test_pg_index_documents_fails_instead_of_writing_null_embeddings():
+    from services.search.filters import SearchCapabilityUnavailableError
+    from services.search.pg_retrieval import PostgresRetrievalBackend, RetrievalIndexRecord
+
+    engine = Mock()
+    engine.dimension = 1024
+    engine.is_ready.return_value = False
+    backend = PostgresRetrievalBackend(dsn="postgresql://unused/unused", embedding_engine=engine)
+    backend._get_connection = Mock(side_effect=AssertionError("must not write when embeddings unavailable"))
+    record = RetrievalIndexRecord(
+        id="r1", record_kind="knowledge_object", tenant_id="default", persona_id=None,
+        title="t", search_text="momentum", embedding=None,
+    )
+    with pytest.raises(SearchCapabilityUnavailableError, match="embedding_model_unavailable"):
+        backend.index_documents([record])
+    engine.embed_documents.assert_not_called()
+
+
+def test_refresh_surfaces_embedding_unavailable_as_503_then_recovers(app_factory, monkeypatch):
+    from services.search import main as search_main
+    from services.search.filters import SearchCapabilityUnavailableError
+
+    backend = Mock()
+    backend.check_health.return_value = {"status": "ok", "backend": "postgres_pgvector"}
+    real_run = search_main.IncrementalIndexPipeline.run
+    state = {"fail": True}
+
+    def run(self, **kwargs):
+        if state["fail"]:
+            raise SearchCapabilityUnavailableError("embedding_model_unavailable: not ready")
+        return real_run(self, **kwargs)
+
+    monkeypatch.setattr(search_main.IncrementalIndexPipeline, "run", run)
+    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)) as client:
+        failed = client.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"})
+        assert failed.status_code == 503
+        assert "embedding_model_unavailable" in failed.json()["detail"]
+        state["fail"] = False
+        assert client.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"}).status_code == 200
+
+
+def test_warmup_failure_reason_is_preserved_in_log(app_factory, capsys):
+    backend = Mock()
+    backend.embedding_engine.is_ready.return_value = False
+    backend.embedding_engine.verify_integrity.return_value = False
+    backend.check_health.return_value = {"status": "unavailable", "reason": "embedding_model_unavailable"}
+    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)):
+        pass
+    events = [json.loads(l) for l in capsys.readouterr().out.splitlines() if "retrieval_embedding_warmup" in l]
+    assert events[0]["ready"] is False
+    assert events[0]["reason"] == "model_integrity_verification_failed"
