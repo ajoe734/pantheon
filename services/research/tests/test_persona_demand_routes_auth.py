@@ -86,6 +86,7 @@ def test_other_principals_cannot_mutate_or_impersonate_cycle(research, route, id
     headers = (_headers(actor=PRINCIPAL, tenant="other-tenant") if identity == "cross-tenant"
                else _headers(role=identity if identity in {"operator", "admin"} else "viewer"))
     if identity == "spoofed":
+        headers = _headers(service=PRINCIPAL, actor_id=PRINCIPAL)
         headers.update({"X-Actor-Id": PRINCIPAL, "X-Pantheon-Service": PRINCIPAL})
         body.update({"actor_id": PRINCIPAL, "service": PRINCIPAL})
     paths = [module.research_demand_store.path, module.query_plan_store.path]
@@ -130,6 +131,8 @@ def test_listing_retains_existing_read_roles(research, role):
 
 def test_get_tenant_boundary_and_foreign_demand_actions(research):
     module, client, demand = research
+    cycle_read = client.get(BASE, headers=_cycle_headers())
+    assert cycle_read.status_code == 200 and cycle_read.json()["count"] == 1
     assert client.get(BASE, headers=_headers(tenant="other-tenant")).status_code == 403
     assert client.get(BASE).status_code == 401
     own_headers = _headers(actor=PRINCIPAL, tenant="other-tenant")
