@@ -1,0 +1,334 @@
+{
+  "task_id": "INTRADAY-ACTUAL-FILL-FLAT-CONTRACT-20261113",
+  "classification": "SYNTHETIC controlled software mechanism validation only; source and isolated local tests",
+  "financial_or_hosted_acceptance": false,
+  "status": "source implementation and local validation ready for assigned independent review; not merged or done",
+  "scope": [
+    "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "services/research/tests/test_vectorbt_intraday.py",
+    "docs/deployment/evidence/INTRADAY-ACTUAL-FILL-FLAT-CONTRACT-20261113/evidence.json"
+  ],
+  "original_k6": {
+    "source_head": "e3144f9ce03578a03809a1d4560db79567289bfa",
+    "single_exit_code": 0,
+    "elapsed_seconds": 8263,
+    "reported_windows": [
+      {
+        "window": "in_sample",
+        "total_return": -105.219575,
+        "gross_total_return": -0.147107,
+        "final_portfolio_value": -10421957.4611,
+        "net_position": -17324.029724667766,
+        "trade_count": 5981,
+        "buy_fill_count": 2991,
+        "sell_fill_count": 2990,
+        "round_trips": 3020,
+        "total_fees_paid": 10476219.759183
+      },
+      {
+        "window": "out_of_sample",
+        "total_return": -45.539822,
+        "gross_total_return": -0.072343,
+        "final_portfolio_value": -4453982.1772,
+        "net_position": -7436.823804474285,
+        "trade_count": 2601,
+        "buy_fill_count": 1301,
+        "sell_fill_count": 1300,
+        "round_trips": 1329,
+        "total_fees_paid": 4553447.780335
+      },
+      {
+        "window": "walk_forward_1",
+        "total_return": -34.592638,
+        "gross_total_return": -0.101213,
+        "final_portfolio_value": -3359263.7784,
+        "net_position": -5550.191914735597,
+        "trade_count": 1951,
+        "buy_fill_count": 976,
+        "sell_fill_count": 975,
+        "round_trips": 1005,
+        "total_fees_paid": 3418533.425329
+      },
+      {
+        "window": "walk_forward_2",
+        "total_return": -33.99023,
+        "gross_total_return": -0.004945,
+        "final_portfolio_value": -3299023.0007,
+        "net_position": -5523.044884297281,
+        "trade_count": 1951,
+        "buy_fill_count": 976,
+        "sell_fill_count": 975,
+        "round_trips": 1004,
+        "total_fees_paid": 3412650.222499
+      },
+      {
+        "window": "walk_forward_3",
+        "total_return": -36.600716,
+        "gross_total_return": -0.043971,
+        "final_portfolio_value": -3560071.5947,
+        "net_position": -5917.773734722057,
+        "trade_count": 2081,
+        "buy_fill_count": 1041,
+        "sell_fill_count": 1040,
+        "round_trips": 1069,
+        "total_fees_paid": 3645320.705807
+      }
+    ],
+    "proofs": [
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/goal-K6-single-negative-equity-fill-accounting-contract-readonly-20261113.json",
+        "sha256": "8dd114f0fc16eba7b43cce169bde570a8299c743812ab2711a875190909c2acf"
+      },
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/goal-K6-1m-single-supervised-validation-20261112.json",
+        "sha256": "1498a1fcae487b78e8c0a639f4184b7c45ce601f80a4566599806301b04af4e1"
+      },
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/K6-SYNTHETIC-controlled-1m-20261112/SYNTHETIC-provenance.json",
+        "sha256": "30afc19267b642a9b9c289d40d8ba19efd0e770e41fcfc7415909aeedb37c618"
+      },
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/K6-SYNTHETIC-controlled-1m-20261112/single-protocol-result.json",
+        "sha256": "c6c53b1323f47e6edef50f867a336daa66bac17293a2fa835de99f5b2979fd69"
+      }
+    ],
+    "causal_limit": "The old five window summaries contain no order/cash/rejection records. They prove non-flat negative terminal inventory, not its precise first divergence. The controlled trace establishes the local mechanism; it is not an original K6 replay or an exact reconstruction of its first failing order.",
+    "frozen_original_modified": false,
+    "dual": "No dual inputs/results/process were accessed or stopped; its original finite deadline is preserved."
+  },
+  "bounded_before": {
+    "command": "timeout --foreground --kill-after=5s 180s .venv-pantheon/bin/python3 -B /tmp/intraday-actual-fill-diagnostic.py",
+    "exit_code": 0,
+    "raw_trace_sha256": "dbee5c175cbb623b37b7c566a12f40b96277da118c445b8a31896bbd4e800514",
+    "source_head": "04947d53b",
+    "fixture": "Two full 270-bar one-minute sessions, two instruments, constant OPEN/CLOSE=600; canonical governed-minute test artifact with z_window=4, hold_bars=3, short_when=null, default intraday holding, requested 1000 SHARES, init_cash=100000 and unchanged Taiwan fee/tax schedule. Synthetic snapshot flags are fixture metadata, never owner admission.",
+    "raw_trace_path": "/tmp/intraday-actual-fill-before.json",
+    "full_record": {
+      "commit": "6fbbb4de52a89568d6fa649bb0d4d9254be72ab8",
+      "path": "docs/deployment/evidence/INTRADAY-ACTUAL-FILL-FLAT-CONTRACT-20261113/evidence.json",
+      "sha256": "3eec78f9be18e4edf3438775d61ae6adb66585ffba21d41edb368271d9f07069"
+    },
+    "version": "1.1.1",
+    "fixture_definition": "services/research/tests/test_vectorbt_intraday.py::_actual_fill_case(full_sessions=True); complete old artifact and trace retained in full_record",
+    "metrics_per_instrument": {
+      "total_return": -4.55793,
+      "sharpe_ratio": -53.970647,
+      "max_drawdown": 1.009374,
+      "final_portfolio_value": -355792.995,
+      "trade_count": 261,
+      "num_bars": 540,
+      "net_position": -592.9883249702561,
+      "commission_rate": 0.001425,
+      "transaction_tax_rate": 0.003,
+      "buy_fill_count": 131,
+      "sell_fill_count": 130,
+      "round_trips": 159,
+      "total_commission_paid": 221792.994982,
+      "total_transaction_tax_paid": 234000.0,
+      "total_fees_paid": 455792.994982,
+      "gross_total_return": 0.0,
+      "gross_final_portfolio_value": 100000.0,
+      "bars_per_year": 68040,
+      "fill_rule": "next_bar_open"
+    },
+    "same_metrics_instruments": [
+      "2330",
+      "2317"
+    ],
+    "trace_summary": [
+      {
+        "fill_bar": "2026-11-09T09:04:00+08:00",
+        "decision_time": "2026-11-09T09:04:00+08:00",
+        "intent": "BUY",
+        "target_direction": "LONG",
+        "next_bar_open": 600.0,
+        "requested_size": 1000.0,
+        "requested_size_type": 0,
+        "actual_fill_size": 166.4295046225795,
+        "actual_fill_fees": 142.29722645231232,
+        "status": 0,
+        "status_info": -1,
+        "cash_before": 100000.0,
+        "cash_after": 0.0,
+        "position_before": 0.0,
+        "position_after": 166.4295046225795
+      },
+      {
+        "fill_bar": "2026-11-09T09:05:00+08:00",
+        "decision_time": "2026-11-09T09:05:00+08:00",
+        "intent": "BUY",
+        "target_direction": "LONG",
+        "next_bar_open": 600.0,
+        "requested_size": 1000.0,
+        "requested_size_type": 0,
+        "actual_fill_size": null,
+        "actual_fill_fees": null,
+        "status": 2,
+        "status_info": 7,
+        "cash_before": 0.0,
+        "cash_after": 0.0,
+        "position_before": 166.4295046225795,
+        "position_after": 166.4295046225795
+      },
+      {
+        "fill_bar": "2026-11-09T09:07:00+08:00",
+        "decision_time": "2026-11-09T09:07:00+08:00",
+        "intent": "SELL",
+        "target_direction": "FLAT",
+        "next_bar_open": 600.0,
+        "requested_size": -1000.0,
+        "requested_size_type": 0,
+        "actual_fill_size": 1000.0,
+        "actual_fill_fees": 2655.0,
+        "status": 0,
+        "status_info": -1,
+        "cash_before": 0.0,
+        "cash_after": 597345.0,
+        "position_before": 166.4295046225795,
+        "position_after": -833.5704953774205
+      },
+      {
+        "fill_bar": "2026-11-09T13:25:00+08:00",
+        "decision_time": null,
+        "intent": "mandatory deadline flatten",
+        "target_direction": "FLAT",
+        "next_bar_open": 600.0,
+        "requested_size": 0.0,
+        "requested_size_type": 3,
+        "actual_fill_size": null,
+        "actual_fill_fees": null,
+        "status": 2,
+        "status_info": 7,
+        "cash_before": 0.0,
+        "cash_after": 0.0,
+        "position_before": -213.27941017384137,
+        "position_after": -213.27941017384137
+      },
+      {
+        "fill_bar": "2026-11-09T13:29:00+08:00",
+        "decision_time": null,
+        "intent": "no order (session hold/boundary)",
+        "target_direction": null,
+        "next_bar_open": 600.0,
+        "requested_size": null,
+        "requested_size_type": 0,
+        "actual_fill_size": null,
+        "actual_fill_fees": null,
+        "status": 1,
+        "status_info": 0,
+        "cash_before": 0.0,
+        "cash_after": 0.0,
+        "position_before": -213.27941017384137,
+        "position_after": -213.27941017384137
+      },
+      {
+        "fill_bar": "2026-11-10T09:00:00+08:00",
+        "decision_time": null,
+        "intent": "no order (session hold/boundary)",
+        "target_direction": null,
+        "next_bar_open": 600.0,
+        "requested_size": null,
+        "requested_size_type": 0,
+        "actual_fill_size": null,
+        "actual_fill_fees": null,
+        "status": 1,
+        "status_info": 0,
+        "cash_before": 0.0,
+        "cash_after": 0.0,
+        "position_before": -213.27941017384137,
+        "position_after": -213.27941017384137
+      },
+      {
+        "fill_bar": "2026-11-10T13:25:00+08:00",
+        "decision_time": null,
+        "intent": "mandatory deadline flatten",
+        "target_direction": "FLAT",
+        "next_bar_open": 600.0,
+        "requested_size": 0.0,
+        "requested_size_type": 3,
+        "actual_fill_size": null,
+        "actual_fill_fees": null,
+        "status": 2,
+        "status_info": 7,
+        "cash_before": 0.0,
+        "cash_after": 0.0,
+        "position_before": -592.9883249702623,
+        "position_after": -592.9883249702623
+      },
+      {
+        "fill_bar": "2026-11-10T13:29:00+08:00",
+        "decision_time": null,
+        "intent": "no order (session hold/boundary)",
+        "target_direction": null,
+        "next_bar_open": 600.0,
+        "requested_size": null,
+        "requested_size_type": 0,
+        "actual_fill_size": null,
+        "actual_fill_fees": null,
+        "status": 1,
+        "status_info": 0,
+        "cash_before": 0.0,
+        "cash_after": 0.0,
+        "position_before": -592.9883249702623,
+        "position_after": -592.9883249702623
+      }
+    ],
+    "trace_notes": "SizeType 0=Amount, 3=TargetAmount; status 0=Filled, 1=Ignored, 2=Rejected; status_info 7=NoCashLong. Decision time is prior bar END, equal to the next fill bar START; mandatory deadline overrides the signal. Idle/session-boundary rows have no actionable decision. All values are existing real Vectorbt records, not reconstructed fills."
+  },
+  "proven_controlled_cause": [
+    "09:04 amount BUY 1000 partially fills 166.4295046225795 shares at OPEN=600; 09:05/09:06 further BUY requests reject NoCashLong (status=2, info=7).",
+    "09:06 decision at 09:07 has target_direction=FLAT. Old mapping sends amount SELL 1000 at 09:07 rather than closing actual 166.4295046225795, creating -833.5704953774205 shares without short_when.",
+    "Repeated turnover exhausts equity; at 13:25 target-zero cover is rejected NoCashLong and real negative inventory remains across the session boundary. Old real backend nonetheless returns a complete result.",
+    "Net value, orders, fees and inventory all belong to the same net portfolio. Gross is a distinct zero-fee simulation with different cash-limited fills. Negative net returns themselves are valid."
+  ],
+  "repair": [
+    "Retain existing Registry factor-rule post-decision target_direction inside the intraday adapter; map FLAT actions to TargetAmount=0 on the existing next-bar OPEN. Entry amount/share sizes and explicit shorts remain unchanged.",
+    "Extend the existing actual-side close tax calculation to strategy closes as well as deadline closes.",
+    "Reject an unfilled mandatory flatten with IntradayExecutionError(reason=mandatory_flatten_unfilled), preserving instrument, deadline, actual cash and actual residual position. No fabricated fills, no position-output zeroing, no new capital policy."
+  ],
+  "remaining_acceptance": [
+    "Assigned independent Claude exact-head review, required CI and native supervisor integration.",
+    "Original full K6 protocol acceptance remains with original K6 after its genuine terminal; this bounded witness does not replace it."
+  ],
+  "validation": [
+    {
+      "command": "timeout --foreground --kill-after=5s 240s .venv-pantheon/bin/python3 -B -m pytest -q services/research/tests/test_vectorbt_intraday.py -k \"real_multisession or real_fully_rejected or real_declared_short or real_failed_mandatory\"",
+      "exit_code": 1,
+      "result": "5 passed, 1 failed, 34 deselected in 32.10s; failure was test fixture schema (exit must specify max_holding_bars or flat_when), corrected before full suite; not counted as passed"
+    },
+    {
+      "command": "timeout --foreground --kill-after=5s 300s .venv-pantheon/bin/python3 -B -m pytest -q services/research/tests/test_vectorbt_intraday.py services/research/vectorbt/test_adapter.py",
+      "exit_code": 0,
+      "result": "97 passed, 413 warnings, 5 subtests passed in 131.21s; no skips",
+      "log_sha256": "b536d32a0d5002e61b4ba671394686ed0ca7f90b508d58c88a0fb05af07fbbd2",
+      "warnings": "Upstream Vectorbt/Pandas deprecation warnings; assertions passed."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "timeout --foreground --kill-after=5s 180s .venv-pantheon/bin/python3 -B -m pytest -q services/research/tests/test_vectorbt_intraday.py -k 'real_multisession or real_fully_rejected or real_declared_short or real_failed_mandatory'",
+      "exit_code": 0,
+      "result": "6 passed, 34 deselected, 63 warnings in 29.66s; no skips; evidence-only review revision",
+      "log_sha256": "b9c607b3f5281b9fecc6df3288860f75e7c2f385bafbac0ea64da88156b90adb"
+    }
+  ],
+  "after_verified": {
+    "test_real_multisession_partial_and_rejected_entry_closes_without_undeclared_short": "Same two full 270-bar 1m sessions and OPEN/CLOSE=600, init_cash=100000, requested 1000 SHARES, original fee/tax constants. First BUY actually fills 166.4295046225795, later BUY rejects NoCashLong; strategy close at 09:07 requests TargetAmount=0 and sells only actual filled quantity. No negative inventory throughout; both 13:25..13:29 windows are flat. Net return stays negative (-1 < return < 0), independent gross return=0 with different cash-limited fill quantity. Costs verified against each real fill side/quantity/price.",
+    "test_real_fully_rejected_entry_never_turns_close_into_short": "Separate zero-cash boundary fixture: no fills, no short inventory, no fees; rejected entries do not turn later FLAT actions into sells.",
+    "test_real_declared_short_and_overnight_semantics_remain": "Three real-engine controls: explicit short / intraday, long / overnight, short / overnight. Explicit short entry remains amount=-1000 shares; BUY-to-close targets zero without sell tax; declared overnight positions remain open beyond 13:25 and at terminal. Full costs reconcile to real fill quantities.",
+    "test_real_failed_mandatory_short_liquidation_preserves_account_and_fails": "Separate declared-short control at OPEN=1000000 on 13:25 cannot fully cover the actual short. IntradayExecutionError identifies the exact deadline, actual cash=0 and actual residual short from the same portfolio. Negative equity remains visible in actual engine records; no successful artifact is built."
+  },
+  "limitations": [
+    "Correction uses the existing factor_rule_v1 post-decision FLAT intent and actual-position TargetAmount close. It does not redesign the strategy evaluator or change its historical intent/holding calculation.",
+    "The five original K6 windows are preserved, not rerun. Their exact first causal order remains unknown because those retained results have no per-order trace.",
+    "No claim about full original single/dual K6 acceptance, licensed market data, owner/provider admission, positive performance, deployment or hosted acceptance.",
+    "No Registry or portfolio-envelope contract was modified; the controlled causal proof and close mapping cover the observed single factor-rule artifact. Any separate envelope ambiguity needs its own native trace/contract evidence, not inferred execution semantics."
+  ],
+  "review_revision": {
+    "request": "Claude: shrink 942-line evidence to a summary below the 400-line CI cap and retain bulky trace by digest.",
+    "change": "Omit duplicated artifact and repeated trace rows; retain all five original K6 windows, key execution/cash/position trace, metrics, immutable full-record reference and original raw trace digest. Adapter and tests unchanged.",
+    "verification": "Compared all five K6 windows, original metrics and eight summarized fill/cash/position records against the immutable full_record; digest and numerical values match. git diff --check passed."
+  }
+}
