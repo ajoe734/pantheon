@@ -176,16 +176,26 @@ STUB_DOCKER = """#!/usr/bin/env bash
 echo "$*" >> "${DOCKER_LOG}"
 case "$*" in
   *"ps -q source-ingest"*) echo steady-api ;;
-  *"images -q"*) echo "${IMAGE_ID#sha256:}" ;;
+  *"images -q"*) echo "${COMPOSE_IMAGE_ID#sha256:}" ;;
   *"inspect --format {{.Image}}"*) echo "${IMAGE_ID}" ;;
-  *"ps -a -q source-ingest-scheduler"*) echo steady-scheduler ;;
-  *"ps -a -q source-ingest-agora-projector"*) echo steady-projector ;;
-  *"inspect --format {{json .Config.Env}} steady-scheduler"*)
-    if [ -n "${NO_DEPLOY_VALUES:-}" ]; then echo '["A=1"]'; else echo '["PANTHEON_TENANT_ID=tenant-dev","PANTHEON_ENV=dev","GIT_SHA=abc123"]'; fi ;;
-  *"inspect --format {{json .Config.Env}}"*) echo '["A=1"]' ;;
-  "ps -a -q"*) echo "bounded-id" ;;
+  *"ps --status running -q source-ingest-scheduler") echo "${STEADY_SCHEDULER_ID}" ;;
+  *"ps --status running -q source-ingest-agora-projector") echo "${STEADY_PROJECTOR_ID}" ;;
+  *"inspect --format {{json .Config.Env}} ${STEADY_SCHEDULER_ID}")
+    if [ -n "${NO_DEPLOY_VALUES:-}" ]; then echo '["A=1"]'; else echo "${STEADY_SCHEDULER_ENV}"; fi ;;
+  *"inspect --format {{json .Config.Env}} ${STEADY_PROJECTOR_ID}") echo "${STEADY_PROJECTOR_ENV}" ;;
+  *"inspect --format {{json .Config.Env}} steady-api") echo '["PANTHEON_EXTERNAL_EGRESS=deny"]' ;;
+  *"inspect --format {{.Id}} pantheon-source-ingest-agora-projector:latest") echo "${PROJECTOR_IMAGE_ID}" ;;
+  *"inspect --format {{index .Config.Labels \\"org.opencontainers.image.revision\\"}} ${PROJECTOR_IMAGE_ID}") echo "${PROJECTOR_REVISION}" ;;
+  "ps -a -q --filter name=^pantheon-bounded-refresh-source-ingest-scheduler"*) echo bounded-scheduler ;;
+  "ps -a -q --filter name=^pantheon-bounded-refresh-source-ingest-agora-projector"*) echo bounded-projector ;;
   *"inspect --format {{.State.Status}}"*) echo exited ;;
-  *"inspect --format {{.State.ExitCode}}"*) echo "${BOUNDED_EXIT_CODE:-0}" ;;
+  *"inspect --format {{.State.ExitCode}} bounded-scheduler") echo 0 ;;
+  *"inspect --format {{.State.ExitCode}} bounded-projector") echo "${BOUNDED_EXIT_CODE:-0}" ;;
+  *" run -d "*)
+    echo "run-env tenant=${PANTHEON_TENANT_ID} env=${PANTHEON_ENV} sha=${GIT_SHA}" >> "${DOCKER_LOG}" ;;
+  "logs --tail 200 "*) echo 'bounded fixture log' ;;
+  "stop "*|"start "*|"rm -f "*|*" build source-ingest-agora-projector") ;;
+  *) echo "unexpected Docker fixture command: $*" >&2; exit 1 ;;
 esac
 """
 
@@ -193,12 +203,17 @@ esac
 def _run_refresh_entrypoint(tmp_path: Path, symbols: str, exit_code: str, extra_env: dict[str, str] | None = None) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     names = (
+        "redact_bounded_refresh_log",
+        "dump_bounded_refresh_container_logs",
         "wait_for_bounded_source_refresh_service",
+        "prepare_bounded_source_refresh_dataset",
         "execute_bounded_source_refresh_entrypoint",
     )
     functions = []
     for name in names:
-        match = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", script, re.S | re.M)
+        # A Python heredoc can contain an unindented closing brace, so delimit
+        # shell helpers by the next shell function rather than the first brace.
+        match = re.search(rf"^{name}\(\) \{{\n.*?(?=^\w+\(\) \{{|\Z)", script, re.S | re.M)
         assert match, name
         functions.append(match.group(0))
     bin_dir = tmp_path / "bin"
@@ -218,6 +233,8 @@ def _run_refresh_entrypoint(tmp_path: Path, symbols: str, exit_code: str, extra_
             "validate_source_refresh_profile() { :; }",
             f"resolve_bounded_source_refresh_active_symbols() {{ export SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS='{symbols}'; }}",
             "verify_bounded_source_refresh_readback() { :; }",
+            # These cases exercise container lifecycle, not HTTP/DLQ recovery.
+            "recover_bounded_source_refresh_dlq() { :; }",
             "manage_source_ingest_refresh_runtime() { echo \"manage $2\" >> \"${DOCKER_LOG}\"; }",
             *functions,
             f"execute_bounded_source_refresh_entrypoint true {out}",
@@ -227,10 +244,25 @@ def _run_refresh_entrypoint(tmp_path: Path, symbols: str, exit_code: str, extra_
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "DOCKER_LOG": str(log),
         "IMAGE_ID": "sha256:" + "a" * 64,
+        "COMPOSE_IMAGE_ID": "sha256:" + "a" * 64,
+        "PROJECTOR_IMAGE_ID": "sha256:" + "b" * 64,
+        "PROJECTOR_REVISION": "abc123",
+        "STEADY_SCHEDULER_ID": "steady-scheduler",
+        "STEADY_PROJECTOR_ID": "steady-projector",
+        "STEADY_SCHEDULER_ENV": json.dumps([
+            "PANTHEON_TENANT_ID=tenant-dev", "PANTHEON_ENV=dev", "GIT_SHA=abc123",
+            "SOURCE_INGEST_CONTROLLER_STATE_PATH=/data/source-ingest/controller_state.json",
+        ]),
+        "STEADY_PROJECTOR_ENV": json.dumps([
+            "PANTHEON_TENANT_ID=tenant-dev", "PANTHEON_ENV=dev", "GIT_SHA=abc123",
+            "SOURCE_INGEST_AGORA_PROJECTOR_STATE_PATH=/data/source-ingest/agora_projector_state.json",
+        ]),
         "BOUNDED_EXIT_CODE": exit_code,
         **(extra_env or {}),
     }
-    result = subprocess.run(["bash", "-c", harness], env=env, cwd=tmp_path, text=True, capture_output=True, check=False)
+    result = subprocess.run(["bash", "-c", harness], env=env, cwd=tmp_path, text=True, capture_output=True, check=False, timeout=20)
+    assert "command not found" not in result.stderr, result.stderr
+    assert "unexpected Docker fixture command" not in result.stderr, result.stderr
     calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return result, calls, out
 
@@ -248,37 +280,75 @@ def _steady_service_mutations(calls: list[str]) -> list[str]:
 def test_refresh_skips_without_touching_containers_when_no_taiwan_symbols(tmp_path: Path) -> None:
     result, calls, out = _run_refresh_entrypoint(tmp_path, "", "0")
     assert result.returncode == 0, result.stderr
-    assert json.loads(out.read_text(encoding="utf-8")) == {"status": "skipped", "reason": "no_active_taiwan_symbols"}
+    assert json.loads(out.read_text(encoding="utf-8")) == {
+        "status": "skipped", "reason": "no_active_taiwan_symbols",
+        "connector_id": "tw-twse-tpex-official-market", "log": "",
+    }
     assert calls == []
 
 
 @pytest.mark.parametrize("exit_code,expected_rc", [("0", 0), ("1", 1)])
 def test_refresh_never_replaces_steady_scheduler_or_projector(tmp_path: Path, exit_code: str, expected_rc: int) -> None:
-    result, calls, _ = _run_refresh_entrypoint(tmp_path, "0050.TW", exit_code)
+    result, calls, out = _run_refresh_entrypoint(tmp_path, "0050.TW", exit_code)
     assert result.returncode == expected_rc, result.stderr
     assert _steady_service_mutations(calls) == []
     runs = [call for call in calls if " run -d " in call]
     assert len(runs) == 2
     assert all("--name pantheon-bounded-refresh-" in call for call in runs)
+    assert calls.count("run-env tenant=tenant-dev env=dev sha=abc123") == 2
+    assert not any("ps -a -q source-ingest-" in call for call in calls)
     assert "manage restore" in calls
     assert any(call.startswith("rm -f pantheon-bounded-refresh-") for call in calls)
+    outcome = json.loads(out.read_text())
+    assert outcome["status"] == ("completed" if expected_rc == 0 else "failed")
+    assert outcome["log"] == ("" if expected_rc == 0 else "bounded fixture log")
 
 
 @pytest.mark.parametrize("exit_code", ["0", "1"])
 def test_refresh_pauses_and_restarts_same_steady_containers_with_own_state(tmp_path: Path, exit_code: str) -> None:
-    _, calls, _ = _run_refresh_entrypoint(tmp_path, "0050.TW", exit_code)
+    result, calls, _ = _run_refresh_entrypoint(tmp_path, "0050.TW", exit_code)
+    assert result.returncode == int(exit_code), result.stderr
     stop = calls.index("stop steady-scheduler steady-projector")
     assert calls.index("start steady-scheduler steady-projector") > max(
         i for i, call in enumerate(calls) if " run -d " in call
     ) > stop
     assert not any("rm" in call.split() and "steady-" in call for call in calls)
     runs = [call for call in calls if " run -d " in call]
-    assert all("SOURCE_INGEST_CONTROLLER_STATE_PATH=/data/source-ingest/bounded-refresh/" in c for c in runs)
-    assert not any("/data/source-ingest/controller_state.json" in c for c in calls)
+    assert len(runs) == 2
+    assert all("SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive" in c for c in runs)
+    # Since DEV-TW-REFRESH-AUTHORITATIVE-STATE-20261008 the bounded writer must
+    # share the API/steady journal; only liveness is isolated. An override to a
+    # separate state file leaves authoritative readback stale.
+    assert not any("SOURCE_INGEST_CONTROLLER_STATE_PATH=" in c for c in runs)
+    services = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]
+    for service in ("source-ingest", "source-ingest-scheduler"):
+        assert services[service]["environment"]["SOURCE_INGEST_CONTROLLER_STATE_PATH"] == "/data/source-ingest/controller_state.json"
+        assert "source-ingest-data:/data/source-ingest" in services[service]["volumes"]
 
 
 def test_refresh_fails_closed_without_steady_deploy_values(tmp_path: Path) -> None:
-    result, calls, _ = _run_refresh_entrypoint(tmp_path, "0050.TW", "0", {"NO_DEPLOY_VALUES": "1"})
+    baseline = tmp_path / "valid"
+    baseline.mkdir()
+    sibling_env = {
+        "STEADY_SCHEDULER_ENV": json.dumps([
+            "PANTHEON_TENANT_ID=tenant-sibling", "PANTHEON_ENV=dev", "GIT_SHA=sibling123",
+        ]),
+        "PROJECTOR_REVISION": "sibling123",
+    }
+    valid, valid_calls, _ = _run_refresh_entrypoint(baseline, "0050.TW", "0", sibling_env)
+    assert valid.returncode == 0, valid.stderr
+    assert valid_calls.count("run-env tenant=tenant-sibling env=dev sha=sibling123") == 2
+    assert "start steady-scheduler steady-projector" in valid_calls
+
+    missing = tmp_path / "missing"
+    missing.mkdir()
+    result, calls, out = _run_refresh_entrypoint(missing, "0050.TW", "0", {**sibling_env, "NO_DEPLOY_VALUES": "1"})
     assert result.returncode != 0
+    assert "missing deploy-time value PANTHEON_TENANT_ID" in result.stderr
     assert "steady_scheduler_deploy_values_missing" in result.stderr
-    assert not any(" run -d " in call or call.startswith("stop ") for call in calls)
+    assert "inspect --format {{json .Config.Env}} steady-scheduler" in calls
+    assert json.loads(out.read_text())["status"] == "failed"
+    assert not any(
+        " run -d " in call or " build " in call or call.startswith(("stop ", "start ", "rm ", "manage "))
+        for call in calls
+    )
