@@ -2471,7 +2471,8 @@ def test_full_size_close_through_controller_main_with_persistence(
     charge the maximum finish time. A short real wait allows actual reader threads
     to overlap; sequential implementations still pay the full 270ms per item.
     All real API/controller/normalization/disk time is added conservatively, as is
-    50ms per local API round trip and an initial 60s polling delay. No hosted claim.
+    50ms per local API round trip and a worst-phase 600s source-cadence delay.
+    The real registered definitions are provisioned by reconciliation. No hosted claim.
     """
     import json
     import threading
@@ -2489,14 +2490,11 @@ def test_full_size_close_through_controller_main_with_persistence(
     files, entries, statuses, requirements, paths = {}, [], {}, [], {}
     for n_rows, exchange in sessions:
         source = f"collector-tw-{exchange.lower()}-price-history"
-        cid = f"conn-close-{exchange.lower()}"
+        cid = source
         bundle_files = _close_files(n_rows=n_rows, source=source, exchange=exchange)
         entries.extend(json.loads(bundle_files["bundles/index.json"])["bundles"])
         statuses.update(json.loads(bundle_files["status.json"])["sources"])
         files.update(bundle_files)
-        assert http.post("/api/source-ingest/connectors", json=_close_config(cid, source)).status_code == 201
-        assert http.put(f"/api/source-ingest/connectors/{cid}/schedule",
-                        json={"interval_seconds": 600, "enabled": True}).status_code == 200
         requirements.append({
             "dataset": "tw_price_daily", "market": "TW", "cadence": "daily",
             "source_class": "live_pull", "connector_candidates": [cid], "policy_gates": [],
@@ -2504,7 +2502,7 @@ def test_full_size_close_through_controller_main_with_persistence(
         paths[cid] = Path(os.environ["SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"]) / "state" / cid / "latest_priority.json"
     files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
     files["status.json"] = json.dumps({"sources": statuses}).encode()
-    clock, reads, peak, active = [60.0], [], [0], [0]
+    clock, reads, peak, active = [600.0], [], [0], [0]
     lock = threading.Lock()
     real_start = time.monotonic()
 
@@ -2583,7 +2581,7 @@ def test_full_size_close_through_controller_main_with_persistence(
     logs = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
     assert all(log.get("status") == "ok" for log in logs if "tick" in log), logs[-2:]
     for n_rows, exchange in sessions:
-        counts = progress[f"conn-close-{exchange.lower()}"]
+        counts = progress[f"collector-tw-{exchange.lower()}-price-history"]
         assert counts[-1] == n_rows and all(a < b for a, b in zip(counts, counts[1:]))
         assert len(counts) > 1
     assert not cb._DEFER_ACK.get()
@@ -2594,7 +2592,7 @@ def test_full_size_close_through_controller_main_with_persistence(
     records = list(module.runtime.evidence_repository.list_source_records())
     assert len(records) == 7467 and len({r.source_id for r in records}) == 7467
     for record in records:
-        assert record.tenant_id == "tenant-a"
+        assert record.tenant_id is None  # native public-source definition; no tenant rewrite
         expected_url = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if "twse" in record.connector_id
                         else "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes")
         assert record.content_ref == expected_url
@@ -2610,6 +2608,11 @@ def test_full_size_close_through_controller_main_with_persistence(
     for _, exchange in sessions:
         assert snapshots.get(f"2330.{exchange}").points[-1].event_time[:10] == _CLOSE_DATE
     actual = cw.read_actual_state_with_fetch_bindings(api_url=config.api_url)
+    for item in actual["connectors"]:
+        if item["connector_id"] in paths:
+            assert item["schedule"]["interval_seconds"] == 600
+            fetch = module.runtime.connector_store.get_config(item["connector_id"]).fetch
+            assert fetch["max_records"] == 1000
     assert cw.select_collector_pull_connectors(actual, _steady_reconcile(list(paths))) == []
     assert active[0] == 0
     elapsed = clock[0] + time.monotonic() - real_start
