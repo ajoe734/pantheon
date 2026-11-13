@@ -703,14 +703,25 @@ def _collector_cover_session_close(trade_date: str) -> datetime:
 def _iso_date_after(run_date: str, session_date: Any) -> bool:
     from datetime import date as _date
 
+    if session_date is None:
+        return False
     try:
         return _date.fromisoformat(run_date) > session_date
     except ValueError:
         return False
 
 
+_TAIWAN_SESSION_CONNECTOR_IDS = frozenset(
+    {"tw-finmind-broker-daily-report", "tw-taifex-futures-options-chip", "tw-twse-tpex-official-market"}
+)
+
+
 def _latest_eligible_session(connector_id: str, now: datetime | None) -> Any:
-    """Latest closed (TWSE/TAIFEX 13:30) or published (FinMind 18:00) Taipei session."""
+    """Latest closed (TWSE/TAIFEX 13:30) or published (FinMind 18:00) Taipei session.
+
+    None for connectors without governed Taiwan session eligibility: nothing is deferred."""
+    if connector_id not in _TAIWAN_SESSION_CONNECTOR_IDS:
+        return None
     from datetime import time as _time, timedelta
 
     from .connectors.finmind_taiwan import latest_published_broker_session

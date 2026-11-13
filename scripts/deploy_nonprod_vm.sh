@@ -2759,6 +2759,7 @@ prepare_bounded_source_refresh_dataset() {
   desired_state_json="$(
     SOURCE_INGEST_API_URL="${api_url}" \
     SOURCE_INGEST_CONTROLLER_TOKEN="${controller_token}" \
+    SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT="${SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT:-${refresh_started_at:-}}" \
     PYTHONPATH="${PANTHEON_REMOTE_DIR:-$(pwd)}:${PYTHONPATH:-}" \
       python3 - "${connector_id}" "${dataset}" "${active_symbols_csv}" <<'PREPARE_DATASET_PY'
 import json
@@ -2804,9 +2805,21 @@ def _twse_session_day(day):
 
 # Real aware current time only; no runtime clock override (tests inject clocks in isolation).
 _now = datetime.now(timezone.utc)
+# The requested session is selected once, at refresh start, and the terminal verifier
+# binds proof to that same instant; observation clocks stay real. Never a future time.
+_session_now = _now
+_selected_at = os.environ.get("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT", "").strip()
+if _selected_at:
+    try:
+        _parsed = datetime.fromisoformat(_selected_at.replace("Z", "+00:00"))
+    except ValueError:
+        raise SystemExit(f"Invalid bounded session selection time: {_selected_at!r}")
+    if _parsed.tzinfo is None or _parsed > _now:
+        raise SystemExit(f"Bounded session selection time must be aware and not in the future: {_selected_at!r}")
+    _session_now = _parsed
 if is_finmind:
     # Broker reports publish 18:00 Taipei: default to the latest genuinely published session.
-    run_date = latest_published_broker_session(_now, is_session_day=_twse_session_day).isoformat()
+    run_date = latest_published_broker_session(_session_now, is_session_day=_twse_session_day).isoformat()
     _explicit = os.environ.get("SOURCE_INGEST_BOUNDED_TRADE_DATE", "").strip()
     if _explicit:
         # Explicit historical intent is preserved; unpublished (future) sessions are rejected.
@@ -2816,7 +2829,7 @@ if is_finmind:
 else:
     # Same rule as preflight: the latest CLOSED session (13:30 Taipei), never an open/future day.
     from datetime import time as _time
-    _taipei = _now.astimezone(timezone(timedelta(hours=8)))
+    _taipei = _session_now.astimezone(timezone(timedelta(hours=8)))
     _cursor = _taipei.date() if _taipei.time() >= _time(13, 30) else _taipei.date() - timedelta(days=1)
     for _ in range(20):
         if _cursor.weekday() < 5 and _twse_session_day(_cursor):

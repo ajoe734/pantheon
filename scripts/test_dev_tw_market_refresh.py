@@ -3265,6 +3265,17 @@ def test_bounded_refresh_terminating_signal_restores_and_exits_nonzero(tmp_path:
     ],
 )
 def test_taifex_bounded_prepare_targets_latest_closed_session(now: str, expected: str) -> None:
+    _run_taifex_prepare(now, None, expected)
+
+
+def test_taifex_bounded_prepare_keeps_session_selected_at_refresh_start_across_cutoff() -> None:
+    # Started 13:29:59 Taipei (open Nov13 -> Nov12); preparation runs after 13:30.
+    _run_taifex_prepare("2026-11-13T05:31:00Z", "2026-11-13T05:29:59Z", "2026-11-12")
+    # Without the carried selection the later wall clock selects Nov13.
+    _run_taifex_prepare("2026-11-13T05:31:00Z", None, "2026-11-13")
+
+
+def _run_taifex_prepare(now: str, selected_at: str | None, expected: str) -> None:
     import http.server
     import threading
 
@@ -3302,7 +3313,8 @@ def test_taifex_bounded_prepare_targets_latest_closed_session(now: str, expected
              "tw-taifex-futures-options-chip", "taifex_ssf_contracts", "2330.TW,0050.TW,2317.TW"],
             cwd=ROOT,
             env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
-                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t"},
+                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t",
+                 **({"SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT": selected_at} if selected_at else {})},
             capture_output=True, text=True, check=False,
         )
     finally:
@@ -3323,10 +3335,11 @@ def _run_embedded_readback_verifier(tmp_path: Path, *, started: str, record_meta
     start = script.index("<<'PY'\nimport json\nimport math\n", script.index("verify_bounded_source_refresh_readback() {"))
     body = script[start + len("<<'PY'\n"):].split("\nPY\n", 1)[0]
     run = "run-ssf-1"
+    receipt_at = (datetime.fromisoformat(started.replace("Z", "+00:00")) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
     receipts = {"receipts": [{
         "connector_id": "tw-taifex-futures-options-chip", "status": "completed", "typed_failure": None,
         "source_timestamp": "2026-11-12T07:15:00Z", "source_timestamp_status": "valid",
-        "created_at": "2026-11-13T02:50:00Z", "finished_at": "2026-11-13T02:50:00Z", "ingest_run_id": run,
+        "created_at": receipt_at, "finished_at": receipt_at, "ingest_run_id": run,
     }]}
     readback = {"connectors": [{
         "connector_id": "tw-taifex-futures-options-chip",
@@ -3355,11 +3368,14 @@ def _run_embedded_readback_verifier(tmp_path: Path, *, started: str, record_meta
         ("2026-11-13T02:48:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, "requested session"),
         ("2026-11-13T02:48:00Z", {"date": "2026-11-12", "underlying_code": "9999", "contract": "ZZF"}, "outside active scope"),
         ("2026-11-13T05:30:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, None),
+        # Started before the 13:30 close, receipt finished after it: still the Nov12 session.
+        ("2026-11-13T05:29:59Z", {"date": "2026-11-12", "underlying_code": "2330"}, None),
+        ("2026-11-13T05:29:59Z", {"date": "2026-11-13", "underlying_code": "2330"}, "requested session"),
     ],
 )
 def test_taifex_terminal_verifier_binds_requested_session_and_scope(tmp_path: Path, started: str, meta: dict, message: str | None) -> None:
     proc = _run_embedded_readback_verifier(tmp_path, started=started, record_meta=meta)
     if message is None:
-        assert "requested session" not in proc.stderr and "active scope" not in proc.stderr, proc.stderr
+        assert proc.returncode == 0, proc.stderr
     else:
         assert proc.returncode != 0 and message in proc.stderr, proc.stderr

@@ -33,6 +33,16 @@ from services.source_ingestion.runtime import create_runtime
 
 
 CONNECTOR_ID = "tw-official-market-datasets"
+
+
+@pytest.fixture(autouse=True)
+def _fixture_connector_has_taiwan_session_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The generic fixture connector stands in for a governed Taiwan session connector.
+    monkeypatch.setattr(
+        controller_worker,
+        "_TAIWAN_SESSION_CONNECTOR_IDS",
+        controller_worker._TAIWAN_SESSION_CONNECTOR_IDS | {CONNECTOR_ID},
+    )
 DATASET = "tw_price_daily"
 FINAL_TRUTH_LEVEL = "reconciled_live_proof"
 SIMULATION_CONNECTOR_ID = "dev-paper-us-equity-simulation"
@@ -3397,3 +3407,12 @@ def test_terminal_readback_reconciles_frontier_items_exactly(items, count, match
         return
     with pytest.raises(ControllerTickError, match=match):
         _deferred_scope_validate(_queued_actual("x", now, count), now, items)
+
+
+def test_terminal_readback_does_not_defer_queued_work_for_non_taiwan_connector(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Real validator fixture: us_price_daily-style connector, queued run_date today, attempts 0, no error.
+    monkeypatch.setattr(controller_worker, "_TAIWAN_SESSION_CONNECTOR_IDS", frozenset({"tw-taifex-futures-options-chip"}))
+    now = datetime.fromisoformat("2026-11-13T02:48:00+00:00")
+    assert controller_worker._latest_eligible_session(CONNECTOR_ID, now) is None
+    with pytest.raises(Exception, match="unresolved frontier"):
+        _deferred_scope_validate(_queued_actual("2026-11-13", now), now, [_queued_item("2026-11-13")])
