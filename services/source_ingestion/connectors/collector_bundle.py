@@ -256,7 +256,9 @@ class HttpBundleTransport(BundleTransport):
             # the body stream is held to the same floored deadline, chunk by chunk.
             timeout = min(timeout, max(op_deadline - time.monotonic(), 1.0))
             op_deadline = max(op_deadline, time.monotonic() + 1.0)
-        with open_external_url(request, caller="source_ingest.collector_bundle", timeout=timeout) as response:
+        with open_external_url(
+            request, caller="source_ingest.collector_bundle", timeout=timeout, deadline=op_deadline
+        ) as response:
             if op_deadline is not None:
                 response = _DeadlineBody(response, op_deadline)
             return read_bounded_response(response, max_bytes=max_bytes)

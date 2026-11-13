@@ -24,5 +24,10 @@
     },
     "limitations": "The Python-level run_scheduled endpoint/controller HTTP disconnect and in-flight receipt/lock path is NOT exercised end to end (no real server/controller socket); the structural steady-limit test only asserts STEADY_PULLS_PER_REQUEST wiring. One blocking socket recv can still overshoot by up to the socket timeout (min(20s, remaining budget, 1s floor)). Non-steady modes unchanged. Source/local only; real latency distribution unknown.",
     "integration": "New configured-fetcher + IngestionScheduler test uses the real HttpBundleTransport over real http.client responses: body cut by the budget fails truthfully (no records, no watermark/cursor/ack, elapsed <=16 fake s), retry ingests both items once, cursor advances only then, next run is no-new-data."
+  },
+  "egress_whole_operation_deadline_20261113": {
+    "change": "services/external_egress.open_external_url(deadline=) starts a _DeadlineWatchdog on the existing pinned guarded transport (no second network path): connect timeout is capped by remaining time, every opened socket is tracked and closed when the monotonic deadline passes, so stalled TLS/open, dribbled headers and chunk framing fail as TimeoutError. The returned _WatchedResponse converts a deadline close (even a clean EOF) into TimeoutError, never partial data. HttpBundleTransport passes the shared operation deadline.",
+    "tests": "services/test_external_egress.py: stalled TLS open bounded (real 0.4s deadline vs 30s per-recv timeout); watchdog cuts dribbled headers and stalled chunk body. Fakes of open_external_url in collector tests accept deadline. 405 passed, 1 skipped across egress + 3 collector suites; 1 failure test_only_source_ingest_may_use_collector_host_steady_egress is environmental (ModuleNotFoundError: yaml in /tmp/bffvenv), untouched by this change.",
+    "limitations": "Watchdog uses a real threading.Timer (short real-time tests, no multi-minute sleeps). Real endpoint/controller disconnect/in-flight receipt integration still not exercised end to end. No approval or PASS claimed; source/local only."
   }
 }

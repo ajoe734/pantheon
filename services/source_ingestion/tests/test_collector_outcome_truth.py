@@ -705,7 +705,7 @@ def test_real_http_body_trickle_times_out_truthfully_then_retry_persists_without
     monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: HttpBundleTransport(host=HOST))
     opened: list[str] = []
 
-    def fake_open(request, *, caller, timeout):
+    def fake_open(request, *, caller, timeout, **_kw):
         rel = request.full_url.split(HOST + "/", 1)[1]
         opened.append(rel)
         body = files[rel]

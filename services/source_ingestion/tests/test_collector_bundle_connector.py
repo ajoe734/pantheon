@@ -1193,7 +1193,7 @@ def test_http_read_timeout_is_capped_by_remaining_operation_budget(monkeypatch):
         def __exit__(self, *a):
             return False
 
-    def fake_open(request, *, caller, timeout):
+    def fake_open(request, *, caller, timeout, **_kw):
         timeouts.append(timeout)
         return _Resp()
 
@@ -1297,7 +1297,7 @@ def test_real_http_body_deadline_enforced_between_socket_receives(monkeypatch):
     clock = [0.0]
     response, raw = _trickle_response(b"x" * (40 * 1024), clock, 1.0)
     monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
-    monkeypatch.setattr(cb, "open_external_url", lambda request, *, caller, timeout: response)
+    monkeypatch.setattr(cb, "open_external_url", lambda request, *, caller, timeout, **_kw: response)
     monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
     with pytest.raises(TimeoutError):
         with cb.operation_deadline(15.0):
@@ -1314,7 +1314,7 @@ def test_real_http_body_within_budget_returns_exact_bytes(monkeypatch):
     payload = bytes(range(256)) * 16
     response, _raw = _trickle_response(payload, clock, 1.0)
     monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
-    monkeypatch.setattr(cb, "open_external_url", lambda request, *, caller, timeout: response)
+    monkeypatch.setattr(cb, "open_external_url", lambda request, *, caller, timeout, **_kw: response)
     monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
     with cb.operation_deadline(15.0):
         assert cb.HttpBundleTransport(host=HOST).read("raw/body", max_bytes=100000) == payload
