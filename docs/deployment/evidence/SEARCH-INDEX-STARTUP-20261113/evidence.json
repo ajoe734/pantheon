@@ -78,5 +78,21 @@
     "query": "POST /api/search/query hybrid -> 200, X-Retrieval-Backend postgres_pgvector, results ko-p8184, ko-p8201, ko-p8190.",
     "regression_test": "test_concurrent_refresh_callers_never_run_the_pipeline_concurrently fails without the lock (max_active 3) and passes with it; pytest scheduler + retrieval_activation: 22 passed, 1 skipped.",
     "not_proven": "A checkpoint of 8158 does not prove 8158 vectors exist in the new hybrid backend: with a non-empty retained checkpoint and an empty backend, pre-existing objects are never indexed by incremental runs (force_full needed). That lives in index_pipeline.py, outside the six scoped artifacts; evidence/scope request returned rather than edited. Long single-request embedding (>30s) still fails the caller's tick by design (boundary unchanged); it now completes server-side once and the next tick records success."
+  },
+  "review_round_4": {
+    "rejected_head": "6fd0809c1811b6d781f28141e9c88b3b652f3fc7",
+    "p2_ac4_fix": "main.record_source_completion now maps SearchCapabilityUnavailableError to HTTP 503 with the reason (same as /index/refresh); pipeline records no checkpoint on failure.",
+    "regression_test": "test_source_completion_surfaces_embedding_unavailable_as_503_then_recovers: fails without the except clause (500), passes with it; asserts 503 + embedding_model_unavailable detail, then 200 after recovery.",
+    "validation": "pytest services/search/test_index_scheduler_worker.py services/search/tests/test_retrieval_activation.py: 23 passed, 1 skipped (no integration DSN).",
+    "p1_ac1_external_evidence_dependency": {
+      "status": "OPEN - genuine external evidence dependency; repair NOT claimed as accepted for the hosted fault",
+      "needed_from_original_Ops": [
+        "retained stderr/traceback and exit code of the Root43460083439 search-index-scheduler container restarts",
+        "effective container env/settings (SEARCH_INDEX_URL, interval, max ticks, materialize, request timeout)",
+        "retained search-svc logs and workload (object count, checkpoint, hybrid-backend row count) around the restarts"
+      ],
+      "why_not_available_here": "This task has no VM/SSH/production/secret access (AC5); the synthetic retained-state corpus supports a timeout mechanism but does not establish the actual historical fault.",
+      "follow_up": "Once Ops supplies the retained evidence, rerun the reproduction against it; the source hardening here (observable failed ticks, no null-embedding upserts, single-flight, 503 with reason) is independent of which cause is confirmed."
+    }
   }
 }

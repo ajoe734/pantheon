@@ -967,6 +967,9 @@ def create_app(
             }
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except SearchCapabilityUnavailableError as exc:
+            # Reason-preserving failure; pipeline records no checkpoint when indexing fails.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/api/search/index/source-completions/{ingest_run_id}")
     def get_source_completion_truth(ingest_run_id: str) -> dict[str, Any]:

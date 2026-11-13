@@ -252,6 +252,30 @@ def test_refresh_surfaces_embedding_unavailable_as_503_then_recovers(app_factory
         assert client.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"}).status_code == 200
 
 
+def test_source_completion_surfaces_embedding_unavailable_as_503_then_recovers(app_factory, monkeypatch):
+    from services.search import main as search_main
+    from services.search.filters import SearchCapabilityUnavailableError
+
+    backend = Mock()
+    backend.check_health.return_value = {"status": "ok", "backend": "postgres_pgvector"}
+    real_run = search_main.IncrementalIndexPipeline.run
+    state = {"fail": True}
+
+    def run(self, **kwargs):
+        if state["fail"]:
+            raise SearchCapabilityUnavailableError("embedding_model_unavailable: not ready")
+        return real_run(self, **kwargs)
+
+    monkeypatch.setattr(search_main.IncrementalIndexPipeline, "run", run)
+    body = {"ingest_run_id": "ingest-503-1", "materialize": False}
+    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)) as client:
+        failed = client.post("/api/search/index/source-completions", json=body)
+        assert failed.status_code == 503
+        assert "embedding_model_unavailable" in failed.json()["detail"]
+        state["fail"] = False
+        assert client.post("/api/search/index/source-completions", json=body).status_code == 200
+
+
 def test_concurrent_refresh_callers_never_run_the_pipeline_concurrently(app_factory, monkeypatch):
     # Retried callers (timed-out scheduler restarts, ingest completion) must not start duplicate
     # embedding runs over the same unrecorded objects while an earlier run is still in flight.
