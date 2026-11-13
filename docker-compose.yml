@@ -803,10 +803,6 @@ services:
       RESEARCH_BFF_SERVICE_TOKEN_FILE: ${RESEARCH_BFF_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_BFF_SERVICE_TOKEN}
       RESEARCH_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_PERSONA_SERVICE_TOKEN}
       RESEARCH_CAPITAL_SERVICE_TOKEN_FILE: ${RESEARCH_CAPITAL_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CAPITAL_SERVICE_TOKEN}
-      # Must equal the tenant of the issued BFF principal (tenant-dev in dev).
-      # Daily paper-only allocator (cap 5); opt in with DISCOVERY_ALLOCATOR_ENABLED=true.
-      DISCOVERY_ALLOCATOR_ENABLED: ${DISCOVERY_ALLOCATOR_ENABLED:-false}
-      DISCOVERY_ALLOCATOR_TENANT_ID: ${DISCOVERY_ALLOCATOR_TENANT_ID:-tenant-dev}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
       - dev-paper-research-tokens:/run/pantheon-principals:ro

@@ -1,0 +1,31 @@
+{
+  "task_id": "PERSONA-AUTONOMY-CYCLE-20261112",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "scope": "Each persona with a strategy pool runs one daily Observe-Orient-Decide-Act-Learn pool cycle inside the existing persona daily-cycle consumer; persona-written research_demand.v1 records are stored by the research owner; the discovery allocator and its schedule are removed.",
+  "changes": {
+    "pool_cycle": "services/persona/pool_autonomy_cycle.py: deterministic decide() (open_demand | admit_trial | reweight | remove | propose_mutate | propose_widen | no_action with reason) and PoolAutonomyCycle.run(), which never raises (skip/failure recorded per persona). HttpPoolCyclePorts calls only existing owner routes (persona strategy-pool decisions, research demands, evolution proposals, memory learn-feedback pool_outcome).",
+    "schedule_entry": "services/persona/persona_cycle_controller.py consume_run runs the pool cycle after Observe/risk on an ok cron run and writes the result into the same daily OODA packet (pool_autonomy plus observe/orient/decide/act/learn refs); services/control-plane/persona/main.py wires it behind the existing PERSONA_DAILY_CYCLE_ENABLED lifespan. These two files are outside the declared artifact list but are the real schedule entry (cron_ooda_closure refuses daily-cycle runs).",
+    "demand_record": "docs/contracts/research_demand.v1.schema.json and services/research/research_demand.py with routes POST/GET /api/research/persona-demands and POST .../reconcile in services/research/main.py: one open demand per persona and short measure, satisfied by a member that joined after creation, expires 30 days after creation.",
+    "allocator_removed": "services/research/discovery_allocator.py, its two test files, the startup schedule and port wiring in services/research/main.py, and DISCOVERY_ALLOCATOR_* in docker-compose.yml are deleted; nothing else creates discovery capital bindings."
+  },
+  "verification": [
+    {"command": "pytest services/persona/test_pool_autonomy_cycle.py services/research/tests/test_research_demand.py services/research/tests/test_persona_cycle_demand_integration.py", "result": "all passed (11 + 5 + 1)"},
+    {"command": "pytest services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py services/control-plane/persona/test_persona_strategy_pool.py services/research/tests/test_research_orchestrator_http_service.py", "result": "103 passed, 4 failed; the 4 failures are environmental (asyncpg and QuantLib not installed in the review venv); the two persona-lifespan failures reproduce on the unchanged baseline."}
+  ],
+  "acceptance_evidence": {
+    "1_2_daily_cycle_and_decisions": "test_persona_cycle_demand_integration drives PersonaCycleController.consume_run twice; each packet carries pool_autonomy with observe, orient, decide, act receipts and learn. Policy cases in test_pool_autonomy_cycle.",
+    "3_demand": "test_research_demand covers dedupe, tenant scope, satisfaction by a later member, 30-day expiry, schema refusal; the integration test shows mandate, missing datasets, tried families and short measure on the stored record.",
+    "4_memory_and_tried": "Refused admissions and removals are written as pool_outcome memory with tried_family tags; recalled families are excluded from candidates and listed in the next demand (test_demand_carries_..., test_refused_admission_...).",
+    "5_allocator_removed": "Files deleted; test_http_routes_... asserts no discovery_allocator_ports or discovery routes.",
+    "6_skip_and_isolation": "test_persona_without_pool_is_skipped_with_reason_and_failure_is_isolated.",
+    "7_integration": "Two consecutive cycles: open_demand then admit_trial against the real pool store and recorded TWSE admission replay; only owner HTTP transport and the model turn are faked."
+  },
+  "known_limits": {
+    "dataset_loader": "No governed daily-bar loader exists outside tests, and synthetic data is forbidden. HttpPoolCyclePorts is constructed without one in production, so an admission attempt records not_attempted:governed_dataset_unavailable until an owner supplies it.",
+    "widen": "propose_widen is staged only; there is no permitted-universe owner, so no widening authority is inferred.",
+    "candidate_source": "Candidates come from the research alpha-replication entries route (status admitted with checksum); field mapping should be confirmed on hosted.",
+    "hosted": "No hosted verification performed."
+  },
+  "review": {"status": "pending_independent_review"}
+}

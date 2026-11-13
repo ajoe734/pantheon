@@ -59,9 +59,11 @@ async def persona_lifespan(app):
     worker = None
     if os.getenv("PERSONA_DAILY_CYCLE_ENABLED", "false").lower() == "true":
         from services.persona.persona_cycle_controller import CycleOwners, PersonaCycleController, run_controller
+        from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle
         from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
         controller = PersonaCycleController(
-            PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()))
+            PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()),
+            pool_cycle=PoolAutonomyCycle(HttpPoolCyclePorts()))
         worker = asyncio.create_task(run_controller(controller, stop))
     try:
         yield
