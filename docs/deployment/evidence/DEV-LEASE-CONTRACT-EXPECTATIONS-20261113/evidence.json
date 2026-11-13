@@ -142,6 +142,13 @@
       "scripts/retire_dev_paper_release_cases.py",
       "scripts/test_nonprod_dev_artifact_workflow.py",
       "scripts/test_retire_dev_paper_release_cases.py"
+    ],
+    "review_base_dev": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
+    "latest_rebase": "Current dev 652d8d3c0 merged unrelated PR7283 BFF persona-lab/app-factory work. All six declared validation source files retain identical git blobs to the 503-pass batch on b01bb8656; reran the two existing _build_runtime composition tests because the BFF app_factory import changed, and both passed.",
+    "rebased_task_commits": [
+      "d031b37bd775069c7ee8f5f1fcd1b919b43488a7",
+      "ad3a030cf82b08d970a6081c41a5510b76e4ce81",
+      "67bd5e3ac681515d167946159c3a60b094c79271"
     ]
   },
   "baseline": {
@@ -515,6 +522,23 @@
           "assertion": "Failed for case: isolated requested paper failure (expected True, got False)"
         }
       ]
+    },
+    {
+      "command": [
+        ".venv-pantheon/bin/python3",
+        "-m",
+        "pytest",
+        "-q",
+        "scripts/test_retire_dev_paper_release_cases.py",
+        "-k",
+        "build_runtime",
+        "--tb=short"
+      ],
+      "source_head": "67bd5e3ac681515d167946159c3a60b094c79271",
+      "base_dev": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
+      "exit_code": 0,
+      "elapsed_seconds": 15.08,
+      "stdout": "..                                                                       [100%]\n=============================== warnings summary ===============================\nscripts/test_retire_dev_paper_release_cases.py::test_build_runtime_composes_persona_service_via_app_factory\nscripts/test_retire_dev_paper_release_cases.py::test_build_runtime_composes_persona_service_via_app_factory\n  /tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.\n    from jsonschema import Draft7Validator, RefResolver\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n2 passed, 46 deselected, 2 warnings in 13.04s\n"
     }
   ],
   "limitations": [
@@ -527,7 +551,8 @@
     "All pytest batches used the checkout-scoped provisioned .venv-pantheon interpreter. Batches used outer deadlines of 45, 90 or 300 seconds; every recorded pytest process has a terminal exit status.",
     "An initial auxiliary semantic-experiment import via system python3 exited 1 with ModuleNotFoundError: pytest before tests ran. It was rerun successfully with the provisioned interpreter; no dependencies were installed into the system interpreter.",
     "The 274-test full file and 229-test focused suite originally passed separately on 802df28ee; final checkout pin coverage was tightened to include job-level uses and no implicit Docker exclusion, passed targeted checks, and all 503 tests then passed together on b01bb8656.",
-    "The two RefResolver deprecation warnings are from an existing BFF dependency import, not test failures."
+    "The two RefResolver deprecation warnings are from an existing BFF dependency import, not test failures.",
+    "Latest-base check: all six tested source files are blob-identical after rebase to 652d8d3c0 (test file equals validated modified blob); two BFF composition regressions passed on that base. No unrelated source changes were introduced by this task."
   ],
   "semantic_experiment_source": "import copy\nimport json\nimport pathlib\nimport re\nimport sys\nimport time\n\nsys.path.insert(0, str(pathlib.Path('scripts').resolve()))\nimport test_dev_environment_lease_deploy_contract as tests\nimport yaml\n\nout = pathlib.Path('/tmp/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113')\nbegan = time.monotonic()\nsource = tests._workflow()\nworkflow = yaml.safe_load(source)\nrecords = []\n\ndef pins(label, text, expected_error=None):\n    tests._workflow = lambda: text\n    try:\n        tests.test_all_third_party_actions_are_full_sha_pinned()\n    except AssertionError as exc:\n        assert expected_error is not None and str(exc) == expected_error, (label, str(exc))\n        records.append(dict(case=label, result='rejected for intended action pin', assertion=str(exc)))\n    else:\n        assert expected_error is None, label\n        records.append(dict(case=label, result='passed'))\n\npins('maintained workflow baseline', source)\nextra = copy.deepcopy(workflow)\njob = next(job for job in extra['jobs'].values() if any(step.get('uses', '').startswith('actions/checkout@') for step in job.get('steps', [])))\ncheckout = next(step for step in job['steps'] if step.get('uses', '').startswith('actions/checkout@'))\njob['steps'].append(copy.deepcopy(checkout))\npins('additional full-SHA checkout is not a pin defect', yaml.safe_dump(extra))\nrefs = copy.deepcopy(workflow)\nfor job in refs['jobs'].values():\n    for step in job.get('steps', []):\n        if step.get('uses', '').startswith('actions/checkout@'):\n            step.setdefault('with', {})['ref'] = 'moving-repository-ref'\npins('repository with.ref remains a separate property', yaml.safe_dump(refs))\nassert re.search(r'actions/upload-artifact@[a-f0-9]{40}', source)\nmutant = re.sub(r'actions/upload-artifact@[a-f0-9]{40}', 'actions/upload-artifact@v4', source)\npins('unpinned third-party action mutation', mutant, 'actions/upload-artifact@v4')\ntests._workflow = lambda: source\nargs = ('root', 'success', tests.SAMPLE_BACKEND_SHA, 'success', 'failure', 'success', True, 'isolated requested paper failure')\ntests.test_dev_deploy_compensation_condition_truth_table(*args)\nold = \"(env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success')\"\nassert old in source\ntests._workflow = lambda: source.replace(old, \"(env.PAPER_BOOTSTRAP_REQUESTED == 'never' && steps.paper_bootstrap.outcome != 'success')\")\ntry:\n    tests.test_dev_deploy_compensation_condition_truth_table(*args)\nexcept AssertionError as exc:\n    assert 'expected True, got False' in str(exc), str(exc)\n    records.append(dict(case='requested-paper compensation guard removal', result='rejected by isolated existing truth-table row', assertion=str(exc)))\nelse:\n    raise AssertionError('paper guard mutation was masked')\ntests._workflow = lambda: source\nrecord = dict(command='.venv-pantheon/bin/python3 /tmp/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113/semantic-experiments.py', exit_code=0, elapsed_seconds=round(time.monotonic()-began, 2), cases=records)\n(out/'semantic-experiments.json').write_text(json.dumps(record, indent=2)+'\\n')\nprint(json.dumps(record, indent=2))\n",
   "semantic_experiment_sha256": "8bfd00203d3b78d41d192bbfd184b41e6edffa0947b71778406df6c4eadfc025",
