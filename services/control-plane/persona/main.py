@@ -53,6 +53,9 @@ from services.persona.write_owner import (
     resolve_persona_tenant_scope,
 )
 
+_OWNER_READ_SURFACE = None
+
+
 @asynccontextmanager
 async def persona_lifespan(app):
     stop = asyncio.Event()
@@ -83,11 +86,45 @@ async def persona_lifespan(app):
                 selected_tenant.reset(tenant_mark)
                 authorization.reset(auth_mark)
 
+        def _owner_surface_reads(persona, read):
+            # Same owners the operator discovery route uses (bff/personas/service.py), bound to the
+            # persona's tenant for this background read only.
+            from services.control_plane.bff.core.owner_reads import selected_tenant
+            global _OWNER_READ_SURFACE
+            if _OWNER_READ_SURFACE is None:
+                from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+                _OWNER_READ_SURFACE = ReadSurfacePorts()
+            tenant_mark = selected_tenant.set(persona["tenant_id"])
+            try:
+                return read(_OWNER_READ_SURFACE, str(persona.get("persona_id") or persona.get("id") or ""))
+            finally:
+                selected_tenant.reset(tenant_mark)
+
+        def _route_policy(persona):
+            inline = persona.get("route_policy")
+            if isinstance(inline, dict) and inline:
+                return inline
+            policy_id = str(persona.get("route_policy_id") or "").strip()
+            if not policy_id:
+                return {}
+            policy = _owner_surface_reads(persona, lambda surface, pid: surface.get_route_policy_for_persona(pid))
+            if not policy:  # referenced policy unreadable: never score without its constraints
+                raise RuntimeError(f"route_policy_unavailable:{policy_id}")
+            return policy
+
+        def _capability_snapshot(persona):
+            inline = persona.get("capability_snapshot")
+            if isinstance(inline, dict) and inline:
+                return inline
+            snapshot = _owner_surface_reads(persona, lambda surface, pid: surface.get_capability_snapshot_for_persona(pid))
+            snapshot_id = str(persona.get("capability_snapshot_id") or "").strip()
+            if not snapshot and snapshot_id:
+                raise RuntimeError(f"capability_snapshot_unavailable:{snapshot_id}")
+            return snapshot or {}
+
         # StrategySpec candidates come from the registry owner through the cycle ports (specs=None).
         discovery_loader = governed_discovery_loader(
-            seeds=_seed_store_reads,
-            route_policy=lambda persona: persona.get("route_policy"),
-            capability_snapshot=lambda persona: persona.get("capability_snapshot"))
+            seeds=_seed_store_reads, route_policy=_route_policy, capability_snapshot=_capability_snapshot)
         controller = PersonaCycleController(
             PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()),
             pool_cycle=PoolAutonomyCycle(HttpPoolCyclePorts(

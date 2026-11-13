@@ -8,7 +8,8 @@
     "cycle": "services/persona/pool_autonomy_cycle.py: PoolAutonomyCycle._discover after Act; HttpPoolCyclePorts.discover_for_demand / execute_match_action / record_discovery; governed_discovery_loader.",
     "demand_store": "services/research/research_demand.py record_discovery + POST /api/research/persona-demands/{id}/actions; schema gains optional discovery object.",
     "wiring": "services/control-plane/persona/main.py: background-safe seed reader binds persona tenant + PERSONA_SOURCE_INGEST_SERVICE_TOKEN (configured_service_token) for the read; specs come from HttpPoolCyclePorts.read_strategy_specs (registry owner).",
-    "actions": "HttpPoolCyclePorts.execute_match_action admits every supported action as a research-owner ticket (created/review_requested/eval_requested/backfill_requested) or records refused; ResearchDemandStore.record_discovery keeps attempt history, replaces a failed action by a later success, never rewrites a succeeded one; cycle skips already-succeeded actions."
+    "actions": "HttpPoolCyclePorts.execute_match_action admits every supported action as a research-owner ticket (created/review_requested/eval_requested/backfill_requested) or records refused; ResearchDemandStore.record_discovery keeps attempt history, replaces a failed action by a later success, never rewrites a succeeded one; cycle skips already-succeeded actions.",
+    "review_p1_policy_resolution": "services/control-plane/persona/main.py: daily loader resolves route policy (via persona route_policy_id) and capability snapshot through the BFF ReadSurfacePorts owner reads bound to the persona tenant; a referenced policy/snapshot that is unreadable raises (fail closed) instead of substituting {}."
   },
   "acceptance": {
     "1": "test_cycle_demand_to_discovery_match_to_research_ticket, test_tried_families_and_negative_memory_are_excluded, test_lifespan_seed_reader_binds_persona_tenant_and_service_credential (actual lifespan wiring, no injected loader)",

@@ -303,3 +303,81 @@ def test_transient_ticket_read_failure_never_overwrites_an_existing_ticket(tmp_p
     world.ports.transport = real
     assert world.tickets.get_research_ticket(first["ticket_id"]) == before
     assert world.ports.execute_match_action(PERSONA, demand, match)["status"] == "already_exists"
+
+
+def _boot_lifespan(monkeypatch, tmp_path, surface):
+    """Boot the real persona lifespan; the owner read surface is the only double (the BFF read owner)."""
+    import asyncio
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from services.control_plane.bff import source_management_client as smc
+    monkeypatch.setattr(smc.SourceManagementClient, "list_all", lambda self: [seed("s-qlib")])
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.invalid")
+    monkeypatch.setenv("PERSONA_SOURCE_INGEST_SERVICE_TOKEN", "svc-token")
+    monkeypatch.setenv("PERSONA_DAILY_CYCLE_ENABLED", "true")
+    captured = {}
+    import services.persona.pool_autonomy_cycle as pac
+    monkeypatch.setattr(pac, "HttpPoolCyclePorts", lambda *a, **k: captured.setdefault("ports", HttpPoolCyclePorts(*a, **k)))
+    monkeypatch.setattr("services.persona.persona_cycle_controller.run_controller", lambda *a, **k: asyncio.sleep(0))
+    path = Path(__file__).resolve().parents[1] / "control-plane/persona/main.py"
+    spec = importlib.util.spec_from_file_location("persona_demand_owner_reads_test", path)
+    main = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, main)
+    monkeypatch.syspath_prepend(str(path.parent))
+    spec.loader.exec_module(main)
+    main._OWNER_READ_SURFACE = surface
+
+    async def boot():
+        async with main.persona_lifespan(main.app):
+            pass
+    asyncio.run(boot())
+    return captured["ports"]
+
+
+class _Surface:
+    def __init__(self, policy=None, snapshot=None, fail=False):
+        self.policy, self.snapshot, self.fail, self.tenants = policy, snapshot, fail, []
+
+    def get_route_policy_for_persona(self, persona_id):
+        from services.control_plane.bff.core.owner_reads import selected_tenant
+        self.tenants.append(selected_tenant.get())
+        if self.fail:
+            raise ConnectionError("route policy owner down")
+        return self.policy
+
+    def get_capability_snapshot_for_persona(self, persona_id):
+        return self.snapshot
+
+
+def test_lifespan_daily_loader_resolves_reference_shaped_persona_policy_and_blocks_backend(monkeypatch, tmp_path):
+    referenced = {**PERSONA, "route_policy_id": "rp-block-qlib"}
+    surface = _Surface(policy={"policy_id": "rp-block-qlib", "persona_id": "p-mom", "blocked_backends": ["qlib"]})
+    ports = _boot_lifespan(monkeypatch, tmp_path, surface)
+    sources = ports.discovery_loader(referenced)
+    assert sources["route_policy"]["blocked_backends"] == ["qlib"]
+    assert surface.tenants == [TENANT]
+    demand = {"demand_id": "d1", "persona_id": "p-mom", "tenant_id": TENANT, "status": "open", "missing_families": [],
+              "missing_datasets": [], "tried_families": [], "reasons": ["too_few_independent_bets"]}
+    ports.read_strategy_specs = lambda persona: []
+    result = ports.discover_for_demand(referenced, demand)
+    assert not result.get("matches")
+
+
+def test_lifespan_daily_loader_fails_closed_when_referenced_policy_owner_is_unavailable(monkeypatch, tmp_path):
+    referenced = {**PERSONA, "route_policy_id": "rp-block-qlib"}
+    ports = _boot_lifespan(monkeypatch, tmp_path, _Surface(fail=True))
+    with pytest.raises(ConnectionError):
+        ports.discovery_loader(referenced)
+    ports = _boot_lifespan(monkeypatch, tmp_path, _Surface(policy=None))
+    with pytest.raises(RuntimeError, match="route_policy_unavailable:rp-block-qlib"):
+        ports.discovery_loader(referenced)
+
+
+def test_lifespan_daily_loader_without_the_policy_would_have_recommended_the_blocked_seed(monkeypatch, tmp_path):
+    referenced = {**PERSONA, "route_policy_id": "rp-open"}
+    ports = _boot_lifespan(monkeypatch, tmp_path, _Surface(policy={"policy_id": "rp-open", "persona_id": "p-mom"}))
+    ports.read_strategy_specs = lambda persona: []
+    demand = {"demand_id": "d1", "persona_id": "p-mom", "tenant_id": TENANT, "status": "open", "missing_families": [],
+              "missing_datasets": [], "tried_families": [], "reasons": ["too_few_independent_bets"]}
+    assert ports.discover_for_demand(referenced, demand).get("matches")
