@@ -1,0 +1,28 @@
+{
+  "task_id": "PERSONA-DISCOVERY-DEMAND-LINK-20261112",
+  "owner": "Claude2",
+  "reviewer": "Codex2",
+  "scope": "Open research demands drive the existing persona strategy discovery scorer inside the daily pool cycle; matches' actions are executed through existing owners and recorded on the demand.",
+  "changes": {
+    "scorer_entry": "services/control-plane/persona/persona_strategy_discovery.py: discover_for_demand filters candidates (tried family, negative memory warning/blocking, missing datasets) then calls the unchanged PersonaStrategyDiscoveryService.match_candidates.",
+    "cycle": "services/persona/pool_autonomy_cycle.py: PoolAutonomyCycle._discover after Act; HttpPoolCyclePorts.discover_for_demand / execute_match_action / record_discovery; governed_discovery_loader.",
+    "demand_store": "services/research/research_demand.py record_discovery + POST /api/research/persona-demands/{id}/actions; schema gains optional discovery object.",
+    "wiring": "services/control-plane/persona/main.py passes the seed-store reader as discovery loader."
+  },
+  "acceptance": {
+    "1": "test_cycle_demand_to_discovery_match_to_research_ticket, test_tried_families_and_negative_memory_are_excluded",
+    "2": "create_research_ticket executed through the research ticket owner with receipt (test_research_ticket_created_through_the_research_owner_and_recorded_with_receipt); promote_seed_candidate recorded requires_operator_review; run_rapid_eval recorded not_executed; request_data_backfill recorded on the demand",
+    "3": "test_no_match_records_reason_and_requests_backfill_when_data_is_missing, test_unavailable_sources_fail_closed_with_recorded_reason",
+    "4": "operator route untouched; test_persona_strategy_discovery.py and test_datastrat_persona_strategy_discovery_bff.py pass",
+    "5": "no new scorer or demand store; existing guard test_http_routes_require_tenant_auth_and_serve_records still passes",
+    "6": "services/persona/test_persona_demand_discovery.py drives PoolAutonomyCycle.run -> demand -> discovery -> research ticket"
+  },
+  "limitations": [
+    "Seed promotion needs a reviewer; the cycle only records requires_operator_review.",
+    "run_rapid_eval has no cycle-level entry; recorded not_executed.",
+    "StrategySpec candidates are not read by the cycle (no spec-detail reader on the persona owner); seeds only.",
+    "request_data_backfill is recorded on the demand; consumption by the L1 collector plan is a later task.",
+    "hosted_behavior_claimed: false"
+  ],
+  "verification": "/tmp/gfd-venv python -m pytest persona demand discovery, pool cycle, research demand, persona-cycle demand integration, discovery scorer and BFF discovery/seed review tests: all pass"
+}

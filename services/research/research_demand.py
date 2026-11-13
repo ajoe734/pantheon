@@ -142,3 +142,42 @@ class ResearchDemandStore:
             return [r for r in rows if r["tenant_id"] == tenant_id and r["persona_id"] == persona_id]
         finally:
             lock.close()
+
+    def record_discovery(self, tenant_id: str, demand_id: str, record: Mapping[str, Any]) -> dict[str, Any]:
+        """Record one discovery run on an open demand.
+
+        ``record`` carries ``run_at``, ``matched``/``excluded`` counts, an optional ``reason`` and
+        ``actions`` (receipts). An action already recorded for the same ``(match_id, action)`` is
+        kept as first recorded, so a later run never repeats or overwrites an executed receipt.
+        """
+        lock = self._locked()
+        try:
+            rows = self._load()
+            changed = self._expire(rows)
+            for row in rows:
+                if row["tenant_id"] != tenant_id or row["demand_id"] != demand_id:
+                    continue
+                if row["status"] != "open":
+                    if changed:
+                        self._save(rows)
+                    raise DemandError(f"demand {demand_id} is {row['status']}, not open")
+                known = dict(row.get("discovery") or {})
+                actions = list(known.get("actions") or [])
+                seen = {(a.get("match_id"), a.get("action")) for a in actions}
+                for action in record.get("actions") or []:
+                    if (action.get("match_id"), action.get("action")) not in seen:
+                        actions.append(dict(action))
+                        seen.add((action.get("match_id"), action.get("action")))
+                row["discovery"] = {
+                    "actions": actions,
+                    "last_run": {k: v for k, v in record.items() if k != "actions"},
+                    "run_count": int(known.get("run_count") or 0) + 1,
+                }
+                validate_demand(row)
+                self._save(rows)
+                return dict(row)
+            if changed:
+                self._save(rows)
+            raise DemandError(f"demand {demand_id} not found")
+        finally:
+            lock.close()

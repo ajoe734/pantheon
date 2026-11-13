@@ -2703,6 +2703,18 @@ def reconcile_persona_research_demands(
     return {"demands": rows, "count": len(rows)}
 
 
+@app.post("/api/research/persona-demands/{demand_id}/actions")
+def record_persona_research_demand_discovery(
+    demand_id: str,
+    body: Dict[str, Any] = Body(...),
+    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
+) -> Dict[str, Any]:
+    try:
+        return research_demand_store.record_discovery(tenant_id, demand_id, body)
+    except DemandError as exc:
+        raise HTTPException(status_code=404 if "not found" in str(exc) else 409, detail=str(exc)) from exc
+
+
 @app.on_event("startup")
 def resume_retrain_runs() -> None:
     """Resume in place every retrain run a restart left queued or running.

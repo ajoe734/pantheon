@@ -61,9 +61,26 @@ async def persona_lifespan(app):
         from services.persona.persona_cycle_controller import CycleOwners, PersonaCycleController, run_controller
         from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle, governed_dataset_loader
         from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
+        from services.persona.pool_autonomy_cycle import governed_discovery_loader
+
+        def _seed_store_reads() -> list:
+            # Seeds come from the source-ingest owner with its own negative-memory verdicts; unconfigured fails closed.
+            from services.control_plane.bff.source_management_client import SourceManagementClient
+            client = SourceManagementClient()
+            if not client.configured:
+                raise RuntimeError("seed_store_unconfigured")
+            return client.list_all()
+
+        # StrategySpec candidates are not read here: no spec-detail reader exists on the persona owner yet,
+        # so spec matches (rapid eval) stay with the operator route until one does.
+        discovery_loader = governed_discovery_loader(
+            seeds=_seed_store_reads, specs=lambda persona: [],
+            route_policy=lambda persona: persona.get("route_policy"),
+            capability_snapshot=lambda persona: persona.get("capability_snapshot"))
         controller = PersonaCycleController(
             PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()),
-            pool_cycle=PoolAutonomyCycle(HttpPoolCyclePorts(pool_store=_pool_store(), dataset_loader=governed_dataset_loader())))
+            pool_cycle=PoolAutonomyCycle(HttpPoolCyclePorts(
+                pool_store=_pool_store(), dataset_loader=governed_dataset_loader(), discovery_loader=discovery_loader)))
         worker = asyncio.create_task(run_controller(controller, stop))
     try:
         yield

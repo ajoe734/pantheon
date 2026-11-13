@@ -22,6 +22,7 @@
     "created_at": {"type": "string", "format": "date-time"},
     "expires_at": {"type": "string", "format": "date-time"},
     "satisfied_at": {"type": ["string", "null"]},
-    "satisfied_by": {"type": ["string", "null"], "description": "artifact_ref of the later candidate that joined the pool"}
+    "satisfied_by": {"type": ["string", "null"], "description": "artifact_ref of the later candidate that joined the pool"},
+    "discovery": {"type": ["object", "null"], "description": "Persona strategy discovery runs for this demand: executed action receipts, and the last run's counts and reason. Written only through the research owner's discovery route."}
   }
 }

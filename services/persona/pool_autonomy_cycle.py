@@ -19,6 +19,7 @@ Outcomes are written to the persona's own memory (``pool_outcome``) with
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -128,6 +129,8 @@ class PoolAutonomyCycle:
                           tried=tried, now_day=self.now())
         # Act
         receipts, learned = self._act(persona, pool, observe, health, decision, tried, packet_id)
+        # Discovery: each open demand drives the existing persona strategy discovery (design 6.6)
+        discovery = self._discover(persona, pool)
         # Learn
         self._learn(persona, learned, packet_id, memory_errors)
         learned = pre_learned + learned
@@ -135,8 +138,59 @@ class PoolAutonomyCycle:
                 "health": health}, "orient": orient,
                 "decide": {k: v for k, v in decision.items() if k not in ("candidate", "member")}
                          | ({"candidate_ref": decision["candidate"]["artifact_ref"]} if "candidate" in decision else {}),
-                "act": {"receipts": receipts, "paper_only": True}, "learn": {"memory_entries": [e["outcome"] for e in learned], "memory_write_errors": memory_errors,
+                "act": {"receipts": receipts, "paper_only": True, "discovery": discovery}, "learn": {"memory_entries": [e["outcome"] for e in learned], "memory_write_errors": memory_errors,
                 "tried_families": sorted({e["family"] for e in learned if e.get("family")})}}
+
+    def _discover(self, persona, pool) -> list[dict[str, Any]]:
+        """Run discovery for every open demand; one demand's failure never stops the others.
+
+        Ports without a discovery owner (older wiring) skip the step. Missing sources fail
+        closed: the reason is recorded on the demand, nothing is guessed.
+        """
+        ports = self.ports
+        if not hasattr(ports, "discover_for_demand"):
+            return []
+        out: list[dict[str, Any]] = []
+        for demand in ports.reconcile_demands(persona, pool["members"]):
+            if demand.get("status") != "open":
+                continue
+            entry: dict[str, Any] = {"demand_id": demand["demand_id"]}
+            try:
+                found = ports.discover_for_demand(persona, demand)
+                actions = [self._execute_match(persona, demand, m) for m in found["matches"]]
+                backfill = list(found.get("backfill_datasets") or [])
+                if backfill and not found["matches"]:
+                    actions.append({"action": "request_data_backfill", "match_id": None, "owner": "l1-desired-state",
+                                    "status": "requested", "datasets": backfill,
+                                    "reason": found.get("reason") or "required_data_unavailable"})
+                record = {"run_at": self.now(), "matched": len(found["matches"]), "excluded": found["excluded"],
+                          "candidates_considered": found["candidates_considered"], "reason": found.get("reason"),
+                          "actions": actions}
+            except Exception as exc:  # noqa: BLE001 - fail closed, record why
+                record = {"run_at": self.now(), "matched": 0, "excluded": [], "candidates_considered": 0,
+                          "reason": f"discovery_unavailable:{type(exc).__name__}: {str(exc)[:160]}", "actions": []}
+            try:
+                ports.record_discovery(persona, demand["demand_id"], record)
+                entry["recorded"] = True
+            except Exception as exc:  # noqa: BLE001
+                entry["recorded"] = False
+                entry["record_error"] = type(exc).__name__
+            entry.update(matched=record["matched"], reason=record["reason"],
+                         actions=[{k: a.get(k) for k in ("action", "match_id", "status")} for a in record["actions"]])
+            out.append(entry)
+        return out
+
+    def _execute_match(self, persona, demand, match) -> dict[str, Any]:
+        action = match["recommended_action"]["type"]
+        base = {"action": action, "match_id": match["match_id"], "matched_object_id": match["matched_object_id"],
+                "score": match["score"]}
+        if action == "request_data_backfill":
+            return {**base, "owner": "l1-desired-state", "status": "requested",
+                    "datasets": sorted(d["dataset"] for d in match.get("missing_data", []))}
+        try:
+            return {**base, **self.ports.execute_match_action(persona, demand, match)}
+        except Exception as exc:  # noqa: BLE001 - the owner refused or was down: record, do not retry blindly
+            return {**base, "status": "failed", "reason": f"{type(exc).__name__}: {str(exc)[:160]}"}
 
     def _learn(self, persona, entries, packet_id, errors):
         for entry in entries:
@@ -285,6 +339,19 @@ def governed_dataset_loader(env: Mapping[str, str] | None = None) -> Callable[[M
     return load
 
 
+def governed_discovery_loader(*, seeds: Callable[[], list], specs: Callable[[Mapping], list],
+                              route_policy: Callable[[Mapping], Mapping | None],
+                              capability_snapshot: Callable[[Mapping], Mapping | None]) -> Callable[[Mapping], dict]:
+    """Discovery inputs from the existing owners (seed store, registry specs, persona route policy / capability).
+
+    Each source is an owner read; one that raises makes the demand's discovery fail closed with that reason.
+    """
+    def load(persona: Mapping) -> dict:
+        return {"seeds": seeds(), "specs": specs(persona), "route_policy": route_policy(persona) or {},
+                "capability_snapshot": capability_snapshot(persona) or {}}
+    return load
+
+
 class HttpPoolCyclePorts:
     """Owner HTTP ports. ``transport(method, service, path, tenant, body)`` is the only I/O."""
 
@@ -300,11 +367,13 @@ class HttpPoolCyclePorts:
                       "evolution": "EVOLUTION_AUTH_TOKEN", "registry": "PERSONA_REGISTRY_SERVICE_TOKEN"}
 
     def __init__(self, transport: Callable[..., Any] | None = None, *, pool_store: Any = None,
-                 dataset_loader: Callable[[Mapping, Mapping], dict] | None = None, env: Mapping[str, str] | None = None):
+                 dataset_loader: Callable[[Mapping, Mapping], dict] | None = None, env: Mapping[str, str] | None = None,
+                 discovery_loader: Callable[[Mapping], dict] | None = None):
         self.env = os.environ if env is None else env
         self.transport = transport or self._urllib
         self.pool_store = pool_store
         self.dataset_loader = dataset_loader
+        self.discovery_loader = discovery_loader
         self._entries: dict[tuple[str, str], Mapping] = {}
 
     def _urllib(self, method, service, path, tenant, body=None):
@@ -333,6 +402,54 @@ class HttpPoolCyclePorts:
 
     def open_demand(self, persona, body):
         return self._call("POST", "research", "/api/research/persona-demands", persona, body)
+
+    def record_discovery(self, persona, demand_id, record):
+        return self._call("POST", "research", f"/api/research/persona-demands/{quote(demand_id, safe='')}/actions",
+                          persona, record)
+
+    def discover_for_demand(self, persona, demand):
+        """The existing discovery scorer, filtered by the demand. Unconfigured sources fail closed."""
+        if self.discovery_loader is None:
+            raise RuntimeError("discovery_sources_unconfigured")
+        import importlib
+        module = importlib.import_module("services.control_plane.persona.persona_strategy_discovery")
+        sources = self.discovery_loader(persona)
+        # Negative memory is the seed store's own verdict (carried on each seed); the persona's
+        # own failed families arrive through the demand's tried_families.
+        return module.discover_for_demand(
+            persona, demand, route_policy=sources.get("route_policy"), capability_snapshot=sources.get("capability_snapshot"),
+            strategy_seeds=sources.get("seeds") or [], strategy_specs=sources.get("specs") or [],
+            created_at=self.now_iso(), discovery_session_id="psd-demand-" + demand["demand_id"])
+
+    @staticmethod
+    def now_iso():
+        return _now()
+
+    def execute_match_action(self, persona, demand, match):
+        """Execute a recommended action through its existing owner (paper/research only)."""
+        action = match["recommended_action"]["type"]
+        if action == "create_research_ticket":
+            ticket_id = "rt-demand-" + hashlib.sha256(f"{demand['demand_id']}:{match['match_id']}".encode()).hexdigest()[:16]
+            try:  # the owner overwrites on a repeated id: never post an existing ticket again
+                existing = self._call("GET", "research", "/api/research/tickets/" + ticket_id, persona)
+            except Exception:  # noqa: BLE001 - absent ticket (404) or unreadable owner; the POST below decides
+                existing = None
+            if existing:
+                return {"owner": "research:tickets", "status": "already_exists", "ticket_id": ticket_id}
+            ticket = self._call("POST", "research", "/api/research/tickets", persona, {
+                "ticket_id": ticket_id, "owner": persona["persona_id"], "actor_id": "persona-pool-cycle", "priority": "medium",
+                "title": f"Research demand {demand['demand_id']}: {match['matched_object_type']} {match['matched_object_id']}",
+                "description": (f"Persona {persona['persona_id']} is short on {demand['short_measure']}. Discovery score "
+                                f"{match['score']} ({match['recommended_action']['reason']}) Demand evidence: {demand.get('evidence_ref')}.")})
+            return {"owner": "research:tickets", "status": "created", "ticket_id": (ticket or {}).get("ticket_id", ticket_id)}
+        if action == "promote_seed_candidate":
+            # The seed store only moves a seed after a reviewer's decision; the cycle is not a reviewer.
+            return {"owner": "seed-store", "status": "requires_operator_review",
+                    "reason": "seed review decisions are made by a reviewer, never by the persona cycle"}
+        if action == "run_rapid_eval":
+            return {"owner": "training-session", "status": "not_executed",
+                    "reason": "rapid eval needs a training session and governed dataset; no cycle-level entry exists"}
+        return {"owner": "none", "status": "not_executed", "reason": "unsupported_action:" + action}
 
     def candidates(self, persona, pool):
         """Gate-passed StrategyArtifact candidates resolved through owner evidence.
