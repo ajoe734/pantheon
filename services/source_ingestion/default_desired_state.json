@@ -2,7 +2,9 @@
   "authority": "deployment://source-ingest/default-public-market-requirement",
   "collector_admission_notes": {
     "community_sources": "collector_social_posts sources are admitted at test volume (per-pull cap COLLECTOR_COMMUNITY_TEST_VOLUME) until the O-6 counsel review is recorded",
-    "reference": "SD_STRATEGY_DISCOVERY_SOURCES_2026-11-10 sections 7, 13, 14; DEV_PLAN O-decision table"
+    "reference": "SD_STRATEGY_DISCOVERY_SOURCES_2026-11-10 sections 7, 13, 14; DEV_PLAN O-decision table",
+    "host_offering": "Admission is retained while host status.json offered=false suspends scheduling; a later offered=true resumes automatically. Legacy status lacks this additive flag and retains previous behaviour.",
+    "paper_sources": "Individual arxiv/openalex/nber bundles have their own definitions. strategy-seed-paper-corpus reads only collector-papers composite bundles, never those individual bundle directories."
   },
   "held_collector_sources": [
     {
@@ -235,6 +237,81 @@
             "strategy-seed-paper-corpus"
           ],
           "dataset": "strategy_seed_metadata",
+          "market": "GLOBAL",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-macro-dbnomics"
+          ],
+          "dataset": "collector_macro_series",
+          "market": "GLOBAL",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-paper-arxiv"
+          ],
+          "dataset": "strategy_seed_metadata",
+          "market": "GLOBAL",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-paper-openalex"
+          ],
+          "dataset": "strategy_seed_metadata",
+          "market": "GLOBAL",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-paper-nber-rss"
+          ],
+          "dataset": "strategy_seed_metadata",
+          "market": "GLOBAL",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-youtube-gemini-notes"
+          ],
+          "dataset": "collector_social_posts",
           "market": "GLOBAL",
           "policy_gates": [
             "require_connector_approved",

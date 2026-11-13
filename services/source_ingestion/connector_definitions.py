@@ -328,6 +328,17 @@ def calculate_source_allowed_actions(
 COLLECTOR_COMMUNITY_TEST_VOLUME = 50
 
 COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
+    {"id": "collector-macro-dbnomics", "provider": "DBnomics (collector host)", "type": "macro", "class": "macro",
+     "dataset": "collector_macro_series", "cadence": 86400},
+    {"id": "collector-paper-arxiv", "provider": "arXiv (collector host)", "type": "paper", "class": ("news", "paper"),
+     "dataset": "strategy_seed_metadata", "cadence": 86400},
+    {"id": "collector-paper-openalex", "provider": "OpenAlex (collector host)", "type": "paper", "class": ("news", "paper"),
+     "dataset": "strategy_seed_metadata", "cadence": 86400},
+    {"id": "collector-paper-nber-rss", "provider": "NBER RSS (collector host)", "type": "paper", "class": ("news", "paper"),
+     "dataset": "strategy_seed_metadata", "cadence": 86400},
+    {"id": "collector-youtube-gemini-notes", "provider": "Gemini video notes (collector host)", "type": "social", "class": "social",
+     "dataset": "collector_social_posts", "platform": "youtube", "trust": 0.3, "cadence": 86400,
+     "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-tw-threads", "provider": "Threads (web, collector host)", "type": "social", "class": "social",
      "dataset": "collector_social_posts", "platform": "threads", "trust": 0.25, "cadence": 21600, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-tw-instagram-popular", "provider": "Instagram popular tags (web, collector host)", "type": "social",

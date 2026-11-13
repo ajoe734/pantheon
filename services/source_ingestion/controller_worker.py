@@ -1526,6 +1526,8 @@ def select_collector_pull_connectors(
             continue
         if not _fetch_binds_collector_adapter(item):
             continue
+        if (item.get("collector_offering") or {}).get("offered") is False:
+            continue
         if str(connector.get("status") or "") != "enabled":
             continue
         schedule = item.get("schedule") if isinstance(item.get("schedule"), Mapping) else {}

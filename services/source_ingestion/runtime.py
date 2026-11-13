@@ -1255,8 +1255,33 @@ class SourceIngestionRuntime:
 
         return {cid: item[1] for cid, item in latest.items()}
 
+    def _collector_offerings(self, configs: Any) -> dict[str, dict[str, Any]]:
+        from .connectors.collector_bundle import (
+            COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter, HttpBundleTransport,
+            operation_deadline, source_offering,
+        )
+        documents: dict[str, Any] = {}
+        offerings = {}
+        for config in configs:
+            fetch = config.fetch
+            if fetch.get("mode") != "provider_owned_adapter" or fetch.get("adapter") != COLLECTOR_BUNDLE_ADAPTER_TOKEN:
+                continue
+            spec = fetch.get("adapter_config") or {}
+            from .connectors.collector_bundle import collector_host
+            host = str(spec.get("host") or collector_host())
+            if host not in documents:
+                # One bounded status read per host for this snapshot, never per source.
+                with operation_deadline(2.0):
+                    documents[host] = CollectorBundleAdapter(
+                        connector_id=config.connector.connector_id, source_id=str(spec.get("source_id") or ""),
+                        transport=HttpBundleTransport(host=host, timeout_seconds=2.0),
+                    ).read_status()
+            offerings[config.connector.connector_id] = source_offering(documents[host], str(spec.get("source_id") or ""))
+        return offerings
+
     def _controller_connector_readbacks(self) -> list[dict[str, Any]]:
         configs, fetch_states = self.connector_store.read_snapshot()
+        offerings = self._collector_offerings(configs)
         schedules = {
             schedule.connector_id: schedule
             for schedule in self.schedule_config_store.list_schedules()
@@ -1309,6 +1334,7 @@ class SourceIngestionRuntime:
                         latest_by_connector.get(connector_id), receipts_by_connector.get(connector_id, ())
                     ),
                     "source_health": health_payload,
+                    **({"collector_offering": offerings[connector_id]} if connector_id in offerings else {}),
                 }
             )
         return readbacks

@@ -78,7 +78,7 @@ _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
 # Whole-operation monotonic deadline for one pull(): priority, ordered sweep, metadata and
 # every transport read share it, so one request can never run past the controller boundary.
 COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
-# Only newest-session raw reads overlap. Metadata and the historical sweep remain
+# Market raw reads overlap. Metadata and bundle/cursor traversal remain
 # ordered; at most four guarded Collector requests are in flight, with no queue
 # beyond that batch and no reader surviving the pull.
 LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
@@ -637,6 +637,18 @@ def observed_from_collector_status(
     }
 
 
+def source_offering(status_doc: Mapping[str, Any] | None, source_id: str) -> dict[str, Any]:
+    """Additive host admission. Legacy status without offered retains its old behaviour."""
+    sources = (status_doc or {}).get("sources", {})
+    if isinstance(sources, list):
+        entry = next((s for s in sources if isinstance(s, Mapping) and s.get("source_id") == source_id), {})
+    else:
+        entry = sources.get(source_id, {}) if isinstance(sources, Mapping) else {}
+    if not isinstance(entry, Mapping) or not isinstance(entry.get("offered"), bool):
+        return {"offered": None, "reason": "collector_offering_unverified"}
+    return {"offered": entry["offered"], "reason": entry.get("offered_reason")}
+
+
 @dataclass(frozen=True)
 class CollectorBundleAdapter:
     """Pull, verify and map collector bundles for one collector source."""
@@ -810,7 +822,9 @@ class CollectorBundleAdapter:
             paused_reasons=(*paused, *base.paused_reasons),
             # Newest-session rows still undelivered: the controller may re-pull before the
             # finished-source cadence. Only this pull's own acknowledged outcome carries it.
-            observed=({**base.observed, "continuation_pending": True} if not done and not paused else base.observed),
+            observed=({**base.observed, "continuation_pending": True}
+                      if merged and (not done or not base.complete) and not paused and not base.paused_reasons
+                      else base.observed),
             feature_rejected=base.feature_rejected,
             complete=base.complete,
             no_new_data=not merged and not paused and base.no_new_data,
@@ -969,6 +983,7 @@ class CollectorBundleAdapter:
                 bundle = verify_bundle(
                     transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
                     deadline=deadline,
+                    raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY if self.source_type == "market" else 1,
                 )
             except TimeoutError:
                 # A later bundle cut by the shared deadline before any of its rows verified
@@ -1079,6 +1094,11 @@ class CollectorBundleAdapter:
         if paused:
             observed = {**observed, "health_state": "degraded",
                         "reasons": (*observed["reasons"], *(f"collector_bundle_paused:{r}" for r in paused))}
+        if (self.source_type == "market" and records and not complete and not paused
+                and all(b.status == "complete" for b in verified)):
+            # A verified prefix cut by the output/deadline budget is ready to continue.
+            # Producer partial/paused bundles wait for cadence rather than retrying hot.
+            observed = {**observed, "continuation_pending": True}
         result = CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,

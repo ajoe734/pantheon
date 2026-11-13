@@ -1303,6 +1303,8 @@ class IngestPipelineService:
                 detail=f"max_concurrency exceeds SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY={self.runtime.SCHEDULER_MAX_CONCURRENCY}",
             )
         schedules = self.schedule_config_store.list_schedules()
+        offerings = self.runtime._collector_offerings(self.connector_store.list_configs())
+        not_offered = {cid for cid, offering in offerings.items() if offering.get("offered") is False}
         enqueued: list[dict[str, Any]] = []
         ran: list[dict[str, Any]] = []
         skipped: list[str] = []
@@ -1327,6 +1329,9 @@ class IngestPipelineService:
         for sched in schedules:
             if exclusive_connector_ids and sched.connector_id not in exclusive_connector_ids:
                 excluded.append(sched.connector_id)
+                continue
+            if sched.connector_id in not_offered:
+                skipped.append(sched.connector_id)
                 continue
             if not sched.enabled or sched.interval_seconds <= 0:
                 if sched.connector_id in exclusive_connector_ids:
@@ -1401,7 +1406,8 @@ class IngestPipelineService:
         claimed = self.store.claim_due_frontier(
             limit=max_concurrency,
             now=now_iso,
-            connector_ids=exclusive_connector_ids or None,
+            connector_ids=((exclusive_connector_ids or {c.connector.connector_id for c in self.connector_store.list_configs()})
+                           - not_offered) if not_offered else exclusive_connector_ids or None,
         )
         for frontier in claimed:
             try:
@@ -1439,7 +1445,7 @@ class IngestPipelineService:
                 if isinstance(item, Mapping)
             }
             claimed_connector_ids = {item.connector_id for item in claimed}
-            for connector_id in sorted(exclusive_connector_ids - accounted_connector_ids - claimed_connector_ids):
+            for connector_id in sorted(exclusive_connector_ids - accounted_connector_ids - claimed_connector_ids - not_offered):
                 failed.append({
                     "connector_id": connector_id,
                     "error": "exclusively selected connector was not runnable",
