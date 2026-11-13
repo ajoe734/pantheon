@@ -1479,16 +1479,17 @@ curl_with_retry() {
   local url="$1"
   local attempts="${2:-12}"
   local delay="${3:-5}"
+  local curl_options=("${@:4}")
   local i
 
   for ((i = 1; i <= attempts; i++)); do
-    if curl -fsS "$url" >/dev/null; then
+    if curl -fsS "${curl_options[@]}" "$url" >/dev/null; then
       return 0
     fi
     sleep "$delay"
   done
 
-  curl -fsS "$url" >/dev/null
+  curl -fsS "${curl_options[@]}" "$url" >/dev/null
 }
 
 wait_for_exact_bff_lifecycle_readiness() {
@@ -1820,6 +1821,36 @@ if connector_id == "tw-taifex-futures-options-chip":
         raise SystemExit(
             f"controller source record schema_hash mismatch for {req_ds}: {schema_hash!r}"
         )
+    if req_ds == "taifex_ssf_contracts":
+        # Bind the proof to the session preparation targeted (latest closed Taipei
+        # session at deploy start, same rule/calendar) and to the active underlyings.
+        from datetime import date as _date, time as _time, timedelta
+        from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+        _taipei = started.astimezone(timezone(timedelta(hours=8)))
+        _cursor = _taipei.date() if _taipei.time() >= _time(13, 30) else _taipei.date() - timedelta(days=1)
+        for _ in range(20):
+            _ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=_cursor.isoformat())
+            if _cursor.weekday() < 5 and not (_ev and _cursor.isoformat() in (_ev.get("holidays") or {})):
+                break
+            _cursor -= timedelta(days=1)
+        _row = record_metadata.get("normalized_row") if isinstance(record_metadata.get("normalized_row"), dict) else {}
+        _record_date = str(record_metadata.get("date") or _row.get("date") or provenance.get("trade_date") or "")[:10]
+        if _record_date != _cursor.isoformat():
+            raise SystemExit(
+                f"controller source record session {_record_date!r} != requested session {_cursor.isoformat()!r}"
+            )
+        _active = {
+            item.strip().upper().split(".")[0]
+            for item in priority_csv.split(",")
+            if item.strip()
+        }
+        _underlying = str(record_metadata.get("underlying_code") or _row.get("underlying_code") or "").strip().upper()
+        _underlying = _underlying[3:].strip() if _underlying.startswith("EQ:") else _underlying.split(".")[0]
+        if _active and _underlying not in _active:
+            raise SystemExit(
+                f"controller source record underlying {_underlying!r} is outside active scope {sorted(_active)}"
+            )
 
 projection = load(projection_path)
 rows = projection.values() if isinstance(projection, dict) else []
@@ -2439,6 +2470,11 @@ elif action == "restore":
         "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
         "SOURCE_INGEST_CONTROLLER_MODE": steady_mode,
     })
+    # Replace the Compose environment, rather than merge today's defaults into
+    # yesterday's runtime. Keep host/process helper variables out of the container.
+    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
+    restored_env = dict(x.split("=", 1) for x in pre_list if "=" in x)
+    restored_env.update({k: env[k] for k in controlled if k != "SOURCE_INGEST_CONTROLLER_MODE" or k in restored_env})
 # "compose up --no-build" starts whatever image the Compose name resolves to, and
 # a stale plain tag left by an earlier failed deploy once pointed at a rejected
 # candidate. Pin source-ingest to the recorded running image ID with a Compose
@@ -2450,8 +2486,18 @@ if expected_img:
     atexit.register(shutil.rmtree, pin_dir, ignore_errors=True)
     pin_file = os.path.join(pin_dir, "source-ingest-pin.json")
     with open(pin_file, "w", encoding="utf-8") as f:
+        os.chmod(pin_file, 0o600)
         json.dump({"services": {"source-ingest": {"image": expected_img, "pull_policy": "never"}}}, f)
     cmd += ["-f", pin_file]
+    if action == "restore":
+        env_file = os.path.join(pin_dir, "source-ingest-env.yml")
+        with open(env_file, "w", encoding="utf-8") as f:
+            os.chmod(env_file, 0o600)
+            # !override is already used by repository Compose files. $$ protects
+            # captured literal dollars (including secrets) from interpolation.
+            literal_env = {k: v.replace("$", "$$") for k, v in restored_env.items()}
+            f.write("services:\n  source-ingest:\n    environment: !override " + json.dumps(literal_env) + "\n")
+        cmd += ["-f", env_file]
     try:
         model = json.loads(subprocess.check_output(cmd + ["config", "--format", "json", "source-ingest"], env=env, text=True))
         ref = (model["services"]["source-ingest"].get("image") or "pantheon-source-ingest")
@@ -2472,7 +2518,6 @@ if action == "restore":
     post_list = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .Config.Env}}", cid], text=True).strip())
     # Compare against the intended restored environment: pre env with only the
     # restore-controlled keys replaced; image/other env invariants stay strict.
-    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
     intended = {x for x in pre_list if x.split("=", 1)[0] not in controlled}
     # SOURCE_INGEST_CONTROLLER_MODE is only passed to the scheduler service in
     # docker-compose.yml, never the source-ingest container, so it is expected
@@ -2480,8 +2525,18 @@ if action == "restore":
     pre_keys = {x.split("=", 1)[0] for x in pre_list}
     intended |= {f"{k}={env[k]}" for k in controlled if k != "SOURCE_INGEST_CONTROLLER_MODE" or k in pre_keys}
     if set(intended) != set(post_list):
-        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - intended)}, removed={sorted(intended - set(post_list))}")
+        # Report only key names, including keys whose value changed; never values.
+        added = sorted({x.split("=", 1)[0] for x in set(post_list) - intended})
+        removed = sorted({x.split("=", 1)[0] for x in intended - set(post_list)})
+        raise SystemExit(f"restored container env mismatch: added={added}, removed={removed}")
 PY
+  local runtime_rc=$?
+  (( runtime_rc == 0 )) || return "${runtime_rc}"
+  if [[ "${action}" == "restore" ]]; then
+    # A recreated process is not ready for the next connector's preflight yet.
+    # Use the existing retry budget and the Source healthcheck's /readyz + 5s limit.
+    curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 12 5 --max-time 5 --connect-timeout 5
+  fi
 }
 
 recover_bounded_source_refresh_dlq() {
@@ -2704,6 +2759,7 @@ prepare_bounded_source_refresh_dataset() {
   desired_state_json="$(
     SOURCE_INGEST_API_URL="${api_url}" \
     SOURCE_INGEST_CONTROLLER_TOKEN="${controller_token}" \
+    SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT="${SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT:-${refresh_started_at:-}}" \
     PYTHONPATH="${PANTHEON_REMOTE_DIR:-$(pwd)}:${PYTHONPATH:-}" \
       python3 - "${connector_id}" "${dataset}" "${active_symbols_csv}" <<'PREPARE_DATASET_PY'
 import json
@@ -2749,9 +2805,21 @@ def _twse_session_day(day):
 
 # Real aware current time only; no runtime clock override (tests inject clocks in isolation).
 _now = datetime.now(timezone.utc)
+# The requested session is selected once, at refresh start, and the terminal verifier
+# binds proof to that same instant; observation clocks stay real. Never a future time.
+_session_now = _now
+_selected_at = os.environ.get("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT", "").strip()
+if _selected_at:
+    try:
+        _parsed = datetime.fromisoformat(_selected_at.replace("Z", "+00:00"))
+    except ValueError:
+        raise SystemExit(f"Invalid bounded session selection time: {_selected_at!r}")
+    if _parsed.tzinfo is None or _parsed > _now:
+        raise SystemExit(f"Bounded session selection time must be aware and not in the future: {_selected_at!r}")
+    _session_now = _parsed
 if is_finmind:
     # Broker reports publish 18:00 Taipei: default to the latest genuinely published session.
-    run_date = latest_published_broker_session(_now, is_session_day=_twse_session_day).isoformat()
+    run_date = latest_published_broker_session(_session_now, is_session_day=_twse_session_day).isoformat()
     _explicit = os.environ.get("SOURCE_INGEST_BOUNDED_TRADE_DATE", "").strip()
     if _explicit:
         # Explicit historical intent is preserved; unpublished (future) sessions are rejected.
@@ -2759,7 +2827,15 @@ if is_finmind:
             raise SystemExit(f"Requested broker trade date {_explicit} is not yet published (latest published: {run_date})")
         run_date = _explicit
 else:
-    run_date = _now.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    # Same rule as preflight: the latest CLOSED session (13:30 Taipei), never an open/future day.
+    from datetime import time as _time
+    _taipei = _session_now.astimezone(timezone(timedelta(hours=8)))
+    _cursor = _taipei.date() if _taipei.time() >= _time(13, 30) else _taipei.date() - timedelta(days=1)
+    for _ in range(20):
+        if _cursor.weekday() < 5 and _twse_session_day(_cursor):
+            break
+        _cursor -= timedelta(days=1)
+    run_date = _cursor.isoformat()
 members = [
     {
         "symbol": sym,
@@ -3275,10 +3351,8 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
-      PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST:-}" \
-      SOURCE_INGEST_CONTROLLER_MODE="${steady_controller_mode:-reconcile_only}" SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
-      SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
-        docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
+      info "captured source-ingest environment is missing; refusing unverified restore" >&2
+      restore_rc=1
     fi
     # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
     (( ${#bounded_containers[@]} )) && docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
@@ -3387,6 +3461,7 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
         -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
         -e SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
+        -e SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT="${refresh_started_at}" \
         "${extra_bounded_env_args[@]}" \
         --name "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}" "${bounded_service}"
     wait_for_bounded_source_refresh_service "${bounded_service}"

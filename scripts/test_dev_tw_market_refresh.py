@@ -4,6 +4,7 @@ import json
 import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -131,7 +132,17 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         state_file = getattr(self.server, "state_file", None)
         state = json.loads(state_file.read_text(encoding="utf-8")) if (state_file and state_file.exists()) else {}
-        if self.path.startswith("/api/source-ingest/snapshots/latest"):
+        if self.path == "/readyz":
+            failures = state.get("readiness_failures_remaining", 0)
+            status = 503 if failures or state.get("readiness_always_fails") else 200
+            state["readiness_failures_remaining"] = max(0, failures - 1)
+            state_file.write_text(json.dumps(state), encoding="utf-8")
+            with self.server.events_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"event": "readyz", "status": status}) + "\n")
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(b'{"ready": true}' if status == 200 else b'{"ready": false}')
+        elif self.path.startswith("/api/source-ingest/snapshots/latest"):
             import urllib.parse
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             sym = (qs.get("symbol") or [""])[0]
@@ -165,6 +176,8 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
                 }]
             self.wfile.write(json.dumps({"receipts": receipts}).encode("utf-8"))
         elif self.path.startswith("/api/source-ingest/controller/readback"):
+            with self.server.events_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"event": "connector_readback"}) + "\n")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -364,9 +377,19 @@ def _setup_refresh_stub_docker(tmp_path: Path, initial_state: dict[str, Any]) ->
     state_file = tmp_path / "docker_state.json"
     server.state_file = state_file
     events_file = tmp_path / "docker_events.jsonl"
+    server.events_file = events_file
     output_file = tmp_path / "refresh_output.json"
 
     state_file.write_text(json.dumps(initial_state))
+    # Optional real Compose config interpolation/merge, without a Docker daemon.
+    # This catches a new default that a no-op mock of compose would silently miss.
+    compose_fixture = tmp_path / "compose.json"
+    compose_fixture.write_text(json.dumps({"services": {"source-ingest": {
+        "image": "pantheon-source-ingest",
+        "environment": initial_state.get("compose_environment_defaults", {}),
+        "volumes": ["source-ingest-data:/data/source-ingest"],
+    }}, "volumes": {"source-ingest-data": {}}}))
+    real_docker = shutil.which("docker")
 
     docker_script = f"""#!/usr/bin/env python3
 import json, os, sys, subprocess, time
@@ -387,9 +410,11 @@ state = json.loads(state_file.read_text(encoding="utf-8"))
 
 if args[0] == "compose":
     sub = args[5:] if len(args) > 5 else []
+    overrides = []
     # The deploy script may add further compose files (-f <override>), e.g. the
     # source-ingest image pin override; skip them to reach the compose subcommand.
     while len(sub) > 1 and sub[0] == "-f":
+        overrides.extend(sub[:2])
         sub = sub[2:]
     if not sub:
         sys.exit(0)
@@ -457,6 +482,10 @@ if args[0] == "compose":
         print(state["compose_image_id"])
         sys.exit(0)
     elif sub[0] == "config":
+        if "compose_environment_defaults" in state:
+            model = subprocess.check_output([{real_docker!r}, "compose", "-f", {str(compose_fixture)!r}, *overrides, "config", "--format", "json"], env=os.environ, text=True)
+            print(model)
+            sys.exit(0)
         print(json.dumps({{"services": {{"source-ingest": {{"image": "pantheon-source-ingest"}}}}}}))
         sys.exit(0)
     elif sub[0] == "up":
@@ -483,6 +512,14 @@ if args[0] == "compose":
                 state["source_ingest_cid"] = state.get("recreated_source_ingest_cid", "cid-source-ingest-recreated")
             elif is_restore:
                 state["source_ingest_cid"] = state.get("restored_source_ingest_cid", "cid-source-ingest-restored")
+                if "compose_environment_defaults" in state:
+                    model = json.loads(subprocess.check_output([{real_docker!r}, "compose", "-f", {str(compose_fixture)!r}, *overrides, "config", "--format", "json"], env=os.environ, text=True))
+                    service = model["services"]["source-ingest"]
+                    # `config` serializes dollar signs escaped for reloading;
+                    # container creation consumes the resolved literal values.
+                    state["container_env"] = [f"{{k}}={{v.replace('$$', '$')}}" for k, v in service["environment"].items()]
+                    state["restored_image_reference"] = service["image"]
+                    state["restored_volumes"] = service["volumes"]
                 if "mutate_env_on_restore" in state:
                     state["container_env"] = state["mutate_env_on_restore"]
             state_file.write_text(json.dumps(state))
@@ -825,6 +862,135 @@ def test_refresh_entrypoint_env_equality_fails_closed_on_mismatch(tmp_path: Path
     )
     assert proc.returncode != 0
     assert "restored container env mismatch" in proc.stderr
+
+
+def _run_exact_restore_helper(tmp_path: Path, *, root_value=None, compose_defaults_match_capture=False, **state_changes):
+    """Execute maintained shell + Python + retry helper against real Compose config.
+
+    Only Docker runtime operations and sleep are stubbed. The next readback uses
+    the same HTTP fixture as connector preflight, after a successful restore.
+    """
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose config is required for environment merge regression")
+    captured = [
+        "PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=",
+        "PORT=8097", "CUSTOM_SECRET=old$token${UNSET_SECRET}\nquoted=\"value\"",
+        "FINMIND_API_TOKEN=prior$secret", "SOURCE_INGEST_DATA_DIR=/data/source-ingest",
+        "SOURCE_INGEST_CONTROLLER_TOKEN_FILE=/data/source-ingest/controller_token",
+    ]
+    if root_value is not None:
+        captured.append(f"INTRADAY_STORE_ROOT={root_value}")
+    defaults = dict(item.split("=", 1) for item in captured) if compose_defaults_match_capture else {
+        "INTRADAY_STORE_ROOT": "/data/source-ingest", "NEW_DEFAULT": "must-not-appear",
+        "FINMIND_API_TOKEN": "wrong-default", "PORT": "8097",
+    }
+    initial = {
+        "image_id": "sha256:" + "a" * 64, "container_env": captured,
+        "compose_environment_defaults": {k: v.replace("$", "$$") for k, v in defaults.items()},
+        **state_changes,
+    }
+    bin_dir, state_file, events_file, _, port = _setup_refresh_stub_docker(tmp_path, initial)
+    # Keep the production retry count but shorten sleep for a bounded local test.
+    (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
+    (bin_dir / "sleep").chmod(0o755)
+    captured_file = tmp_path / "captured.json"
+    captured_file.write_text(json.dumps(captured))
+    text = DEPLOY_SCRIPT.read_text()
+    def function(name):
+        return text.split(name + "() {", 1)[1].split("\n}\n", 1)[0]
+    script = tmp_path / "restore.sh"
+    script.write_text(
+        "set -euo pipefail\n"
+        + "curl_with_retry() {" + function("curl_with_retry") + "\n}\n"
+        + "manage_source_ingest_refresh_runtime() {" + function("manage_source_ingest_refresh_runtime") + "\n}\n"
+        + 'manage_source_ingest_refresh_runtime "$1" restore "$2" || exit $?\n'
+        + 'curl -fsS "$SOURCE_INGEST_API_URL/api/source-ingest/controller/readback" >/dev/null\n'
+    )
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+               SOURCE_INGEST_API_URL=f"http://127.0.0.1:{port}",
+               FINMIND_API_TOKEN="bounded-secret-must-not-survive", PANTHEON_COLLECTOR_HOST="",
+               SOURCE_INGEST_RESTORE_CONTROLLER_MODE="reconcile_only")
+    proc = subprocess.run(["bash", str(script), str(captured_file), initial["image_id"]],
+                          env=env, cwd=ROOT, capture_output=True, text=True, timeout=15)
+    events = [json.loads(line) for line in events_file.read_text().splitlines()] if events_file.exists() else []
+    return proc, json.loads(state_file.read_text()), events, captured
+
+
+@pytest.mark.parametrize("root_value", [None, "", "/captured/custom-root"])
+def test_exact_restore_replaces_new_compose_defaults_and_preserves_secrets(tmp_path, root_value):
+    proc, state, events, captured = _run_exact_restore_helper(tmp_path, root_value=root_value)
+    assert proc.returncode == 0, proc.stderr
+    assert set(state["container_env"]) == set(captured)
+    assert state["restored_image_reference"] == state["image_id"]
+    assert state["restored_volumes"][0]["source"] == "source-ingest-data"
+    assert state["restored_volumes"][0]["target"] == "/data/source-ingest"
+    assert [e["status"] for e in events if e["event"] == "readyz"] == [200]
+
+
+def test_exact_restore_waits_for_api_before_next_connector_readback(tmp_path):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_failures_remaining=2)
+    assert proc.returncode == 0, proc.stderr
+    http = [e for e in events if e["event"] in {"readyz", "connector_readback"}]
+    assert http == [{"event": "readyz", "status": 503}, {"event": "readyz", "status": 503},
+                    {"event": "readyz", "status": 200}, {"event": "connector_readback"}]
+
+
+def test_exact_restore_readiness_timeout_prevents_success_and_next_connector(tmp_path):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_always_fails=True)
+    assert proc.returncode != 0
+    assert len([e for e in events if e["event"] == "readyz"]) == 13  # unchanged retry budget
+    assert not any(e["event"] == "connector_readback" for e in events)
+
+
+@pytest.mark.parametrize("mutation,expected_keys", [
+    (["PORT=wrong-sensitive-value"], ["PORT", "CUSTOM_SECRET", "FINMIND_API_TOKEN"]),
+    (["LEAKED_VAR=secret-added-value"], ["LEAKED_VAR", "CUSTOM_SECRET"]),
+])
+def test_exact_restore_environment_drift_fails_without_disclosing_values(tmp_path, mutation, expected_keys):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, mutate_env_on_restore=mutation)
+    assert proc.returncode != 0
+    assert "restored container env mismatch" in proc.stderr
+    assert all(key in proc.stderr for key in expected_keys)
+    assert not any(secret in proc.stderr + proc.stdout for secret in
+                   ["wrong-sensitive-value", "secret-added-value", "old$token", "prior$secret"])
+    assert not any(e["event"] in {"readyz", "connector_readback"} for e in events)
+
+
+@pytest.mark.parametrize("changes", [
+    {"resolved_compose_image_id": "sha256:" + "b" * 64},
+    {"mutate_image_on_up": "sha256:" + "c" * 64},
+])
+def test_exact_restore_wrong_image_stays_failed_before_readiness(tmp_path, changes):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, **changes)
+    assert proc.returncode != 0
+    assert "image" in proc.stderr
+    assert not any(e["event"] in {"readyz", "connector_readback"} for e in events)
+
+
+def test_exact_restore_readiness_failure_is_not_nonblocking_connector_success(tmp_path):
+    initial = {
+        "image_id": "sha256:" + "a" * 64, "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="],
+        "readiness_always_fails": True,
+    }
+    bin_dir, _, events_file, output, port = _setup_refresh_stub_docker(tmp_path, initial)
+    (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
+    (bin_dir / "sleep").chmod(0o755)
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+               SOURCE_INGEST_API_URL=f"http://127.0.0.1:{port}",
+               SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="30", PANTHEON_REMOTE_DIR=str(ROOT))
+    # Default force=false, through the normal caller and its non-blocking cleanup.
+    proc = subprocess.run([
+        "bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--non-blocking",
+        "--connector-id", "tw-taifex-futures-options-chip", "--allowed-hosts",
+        "openapi.taifex.com.tw,www.taifex.com.tw", "--dataset", "taifex_ssf_contracts",
+        "--output", str(output),
+    ], env=env, cwd=ROOT, capture_output=True, text=True, timeout=30)
+    assert proc.returncode != 0
+    assert json.loads(output.read_text())["status"] == "failed"
+    events = [json.loads(line) for line in events_file.read_text().splitlines()]
+    assert len([e for e in events if e["event"] == "readyz"]) == 13
+    assert any(e["event"] == "docker_start" for e in events)  # steady scheduler restored
 
 
 CHIP_PROFILES = [
@@ -2564,7 +2730,9 @@ def test_refresh_entrypoint_taifex_non_force_proceeds_when_twse_fresh_and_enforc
                 "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc123",
                 "status": "normalized",
                 "metadata": {
-                    "date": "2026-11-06",
+                    # Verifier binds to the latest closed session at deploy start (real clock).
+                    "date": _latest_closed_taipei_session(datetime.now(timezone.utc)),
+                    "underlying_code": "2330",
                     "dataset": "taifex_ssf_contracts",
                     "schema_hash": "tw_taifex_ssf_contracts.v1",
                 },
@@ -3085,3 +3253,129 @@ def test_bounded_refresh_terminating_signal_restores_and_exits_nonzero(tmp_path:
     sent = next(i for i, e in enumerate(events) if e.get("event") == "QA_signal_sent")
     assert not any("projector" in json.dumps(e) and e.get("event") in {"docker_run", "run"} for e in events[sent + 1:])
     assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+
+@pytest.mark.parametrize(
+    "now,expected",
+    [
+        ("2026-11-13T02:48:00Z", "2026-11-12"),  # actual 10:48 Taipei Nov13: Nov13 not yet closed
+        ("2026-11-13T05:29:00Z", "2026-11-12"),  # 13:29 Taipei, still open
+        ("2026-11-13T05:30:00Z", "2026-11-13"),  # 13:30 close
+        ("2026-11-16T02:00:00Z", "2026-11-13"),  # Monday morning -> Friday
+    ],
+)
+def test_taifex_bounded_prepare_targets_latest_closed_session(now: str, expected: str) -> None:
+    _run_taifex_prepare(now, None, expected)
+
+
+def test_taifex_bounded_prepare_keeps_session_selected_at_refresh_start_across_cutoff() -> None:
+    # Started 13:29:59 Taipei (open Nov13 -> Nov12); preparation runs after 13:30.
+    _run_taifex_prepare("2026-11-13T05:31:00Z", "2026-11-13T05:29:59Z", "2026-11-12")
+    # Without the carried selection the later wall clock selects Nov13.
+    _run_taifex_prepare("2026-11-13T05:31:00Z", None, "2026-11-13")
+
+
+def _run_taifex_prepare(now: str, selected_at: str | None, expected: str) -> None:
+    import http.server
+    import threading
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'PREPARE_DATASET_PY'\n", 1)[1].split("\nPREPARE_DATASET_PY", 1)[0]
+    posted: list[dict] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            posted.append({"path": self.path, **json.loads(self.rfile.read(int(self.headers["Content-Length"])))})
+            raw = b"{}"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        do_PUT = do_POST
+
+        def log_message(self, *args) -> None:
+            pass
+
+    # Isolated test clock inside the child process only; production has no override.
+    clock = (
+        "import datetime as _dt\n_REAL = _dt.datetime\n"
+        f"_FIX = _dt.datetime.fromisoformat({now!r}.replace('Z', '+00:00'))\n"
+        "class _D(_dt.datetime):\n    @classmethod\n    def now(cls, tz=None):\n"
+        "        return _FIX.astimezone(tz) if tz else _FIX.replace(tzinfo=None)\n"
+        "_dt.datetime = _D\n"
+    )
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", f"import sys\n{clock}exec(compile({body!r}, 'prepare', 'exec'))\n",
+             "tw-taifex-futures-options-chip", "taifex_ssf_contracts", "2330.TW,0050.TW,2317.TW"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
+                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t",
+                 **({"SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT": selected_at} if selected_at else {})},
+            capture_output=True, text=True, check=False,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    schedule = next(item for item in posted if item["path"].endswith("/active-universe/schedule"))
+    assert schedule["run_date"] == expected
+
+
+def _latest_closed_taipei_session(now: datetime) -> str:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    return _latest_eligible_session("tw-taifex-futures-options-chip", now).isoformat()
+
+
+def _run_embedded_readback_verifier(tmp_path: Path, *, started: str, record_meta: dict, symbols: str = "2330.TW") -> subprocess.CompletedProcess:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("<<'PY'\nimport json\nimport math\n", script.index("verify_bounded_source_refresh_readback() {"))
+    body = script[start + len("<<'PY'\n"):].split("\nPY\n", 1)[0]
+    run = "run-ssf-1"
+    receipt_at = (datetime.fromisoformat(started.replace("Z", "+00:00")) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    receipts = {"receipts": [{
+        "connector_id": "tw-taifex-futures-options-chip", "status": "completed", "typed_failure": None,
+        "source_timestamp": "2026-11-12T07:15:00Z", "source_timestamp_status": "valid",
+        "created_at": receipt_at, "finished_at": receipt_at, "ingest_run_id": run,
+    }]}
+    readback = {"connectors": [{
+        "connector_id": "tw-taifex-futures-options-chip",
+        "freshness": {"latest_receipt": {"ingest_run_id": run}, "source_timestamp_status": "valid"},
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_ssf_contracts:CDF:202611:abc", "status": "normalized",
+            "metadata": {"dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1", **record_meta},
+            "provenance": {"source_ingest_run_id": run, "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+        },
+    }]}
+    for name, payload in (("receipts", receipts), ("readback", readback), ("projection", {})):
+        (tmp_path / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+    return subprocess.run(
+        ["python3", "-I", "-c", f"import sys\nsys.path.insert(0, {str(ROOT)!r})\nexec(compile({body!r}, 'verify', 'exec'))",
+         "tw-taifex-futures-options-chip", started, str(tmp_path / "receipts.json"), str(tmp_path / "readback.json"),
+         str(tmp_path / "projection.json"), symbols, "taifex_ssf_contracts"],
+        capture_output=True, text=True, check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "started,meta,message",
+    [
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-12", "underlying_code": "2330"}, None),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-11", "underlying_code": "2330"}, "requested session"),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, "requested session"),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-12", "underlying_code": "9999", "contract": "ZZF"}, "outside active scope"),
+        ("2026-11-13T05:30:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, None),
+        # Started before the 13:30 close, receipt finished after it: still the Nov12 session.
+        ("2026-11-13T05:29:59Z", {"date": "2026-11-12", "underlying_code": "2330"}, None),
+        ("2026-11-13T05:29:59Z", {"date": "2026-11-13", "underlying_code": "2330"}, "requested session"),
+    ],
+)
+def test_taifex_terminal_verifier_binds_requested_session_and_scope(tmp_path: Path, started: str, meta: dict, message: str | None) -> None:
+    proc = _run_embedded_readback_verifier(tmp_path, started=started, record_meta=meta)
+    if message is None:
+        assert proc.returncode == 0, proc.stderr
+    else:
+        assert proc.returncode != 0 and message in proc.stderr, proc.stderr

@@ -274,34 +274,40 @@ def test_provider_live_acceptance_is_not_a_dev_deployment_gate() -> None:
     assert "openclaw-assistant-openclaw-live-smoke.sh" not in dev
     assert "steps.openclaw" not in dev
     assert "OPENCLAW_OUTCOME" not in dev
-    assert "success:success:success:success:success:success" in dev
-    assert "success:success:skipped:success:success:success" in dev
+    cleanup = next(step for step in _dev_steps() if step.get("id") == "lease_cleanup")
+    assert cleanup["env"]["PAPER_BOOTSTRAP_REQUESTED"] == "${{ env.PAPER_BOOTSTRAP_REQUESTED }}"
+    assert "success:success:${expected_paper}:success:success:success" in cleanup["run"]
 
 
-@pytest.mark.parametrize("component", ["root", "auto", "bff"])
+@pytest.mark.parametrize(("component", "paper_requested"), [
+    ("root", True), ("root", False), ("auto", True), ("auto", False), ("bff", False),
+])
 @pytest.mark.parametrize("failed_step", [None, "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME",
                                       "PAPER_BOOTSTRAP_OUTCOME", "PUBLIC_SMOKE_OUTCOME",
                                       "DEPLOY_POSTURE_EVIDENCE_OUTCOME", "AGORA_OUTCOME"])
 def test_deployment_completion_retains_real_checks_without_provider_gate(
-    component: str, failed_step: str | None,
+    component: str, failed_step: str | None, paper_requested: bool,
 ) -> None:
-    dev = _job(_workflow(), "deploy-dev", "coordinate-dev-release")
-    start = dev.index("          complete_success=false")
-    end = dev.index('          if [[ ! -s "${LEASE_PID_FILE}" ]]', start)
+    cleanup = next(step for step in _dev_steps() if step.get("id") == "lease_cleanup")
+    body = cleanup["run"]
+    start = body.index("complete_success=false")
+    end = body.index('if [[ ! -s "${LEASE_PID_FILE}" ]]', start)
     outcomes = {name: "success" for name in (
         "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME", "PAPER_BOOTSTRAP_OUTCOME",
         "PUBLIC_SMOKE_OUTCOME", "DEPLOY_POSTURE_EVIDENCE_OUTCOME", "AGORA_OUTCOME",
     )}
-    if component == "bff":
+    if not paper_requested:
         outcomes["PAPER_BOOTSTRAP_OUTCOME"] = "skipped"
     if failed_step:
         outcomes[failed_step] = "failure"
     result = subprocess.run(
-        ["bash", "-c", dev[start:end] + '\nprintf "%s" "$complete_success"'],
-        env={**os.environ, **outcomes, "TARGET_COMPONENT": component, "ARTIFACTS_VERIFIED": "true"},
-        capture_output=True, text=True, check=True,
+        ["bash", "-euo", "pipefail", "-c", body[start:end] + '\nprintf "%s" "$complete_success"'],
+        env={**os.environ, **outcomes, "TARGET_COMPONENT": component,
+             "PAPER_BOOTSTRAP_REQUESTED": str(paper_requested).lower(), "ARTIFACTS_VERIFIED": "true"},
+        capture_output=True, text=True, check=True, timeout=10,
     )
-    assert result.stdout == ("false" if failed_step else "true")
+    expected = "false" if failed_step else "true"
+    assert result.stdout == expected, f"completion must be {expected}; got {result.stdout} ({failed_step})"
 
 
 def test_dev_release_admission_requires_complete_backend_and_lease_success() -> None:
@@ -381,16 +387,18 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
 
 
 def test_all_third_party_actions_are_full_sha_pinned() -> None:
-    workflow = _workflow()
+    import yaml
 
-    assert workflow.count(f"actions/checkout@{CHECKOUT_SHA}") == 6
-    assert workflow.count(f"google-github-actions/auth@{AUTH_SHA}") == 1
-    assert workflow.count(f"google-github-actions/setup-gcloud@{GCLOUD_SHA}") == 1
-    for line in workflow.splitlines():
-        if "uses:" in line:
-            ref = line.rsplit("@", 1)[-1]
-            assert len(ref) == 40
-            assert all(char in "0123456789abcdef" for char in ref)
+    # Action implementation pins are independent of checkout's repository with.ref.
+    actions = [entry["uses"] for job in yaml.safe_load(_workflow())["jobs"].values()
+               for entry in (job, *job.get("steps", [])) if "uses" in entry
+               and not entry["uses"].startswith("./")]
+    assert actions
+    assert f"actions/checkout@{CHECKOUT_SHA}" in actions
+    assert f"google-github-actions/auth@{AUTH_SHA}" in actions
+    assert f"google-github-actions/setup-gcloud@{GCLOUD_SHA}" in actions
+    for action in actions:
+        assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action), action
 
 
 def _lease_state(path: Path, *, lease_id: str, expected_sha: str) -> None:
@@ -1354,35 +1362,39 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
     assert "Compensate dev deployment failure to exact hosted baseline" in dev_job
     assert "PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}" in dev_job
     assert "PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}" in dev_job
-    assert "((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')" in dev_job
+    condition = _extract_deploy_compensation_condition()
+    assert "(env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success')" in condition
+    for component in ("root", "auto"):
+        for requested in (True, False):
+            context = {
+                "env": {"TARGET_COMPONENT": component, "PAPER_BOOTSTRAP_REQUESTED": str(requested).lower()},
+                "steps": {name: {"outcome": "success"} for name in (
+                    "lease", "artifact_baseline", "heartbeat", "deploy", "artifact_baseline_upload",
+                    "artifact_candidate_seal", "artifact_candidate_upload", "public_smoke",
+                    "deploy-posture-evidence", "agora",
+                )},
+            }
+            context["steps"]["paper_bootstrap"] = {"outcome": "success" if requested else "skipped"}
+            assert not _evaluate_github_actions_condition(condition, context)
+            context["steps"]["paper_bootstrap"]["outcome"] = "failure"
+            assert _evaluate_github_actions_condition(condition, context) is requested
+            context["steps"]["public_smoke"]["outcome"] = "failure"
+            assert _evaluate_github_actions_condition(condition, context)
 
-    # 3. Simulate post-up failure rollback execution
-    baseline_backend_sha = SAMPLE_BACKEND_SHA
-    baseline_frontend_sha = SAMPLE_FRONTEND_SHA
-    candidate_backend_sha = "b" * 40
-
-    sim_state = {
-        "current_bff_sha": candidate_backend_sha,
-        "current_frontend_sha": baseline_frontend_sha,
-        "rollback_executed": False,
-    }
-
-    # Simulate injected post-up verification failure followed by rollback
-    def simulate_post_up_failure_and_rollback(failed_stage: str) -> int:
-        # Candidate was rolled out to candidate_backend_sha
-        assert sim_state["current_bff_sha"] == candidate_backend_sha
-        # Injected failure occurs at post-up stage
-        # Rollback handler executes:
-        sim_state["current_bff_sha"] = baseline_backend_sha
-        sim_state["rollback_executed"] = True
-        return 1
-
-    rc = simulate_post_up_failure_and_rollback("bff_auth_gate")
-    assert rc != 0
-    assert sim_state["rollback_executed"] is True
-    # Verify both hosted identities returned to / remain at the captured baseline pair
-    assert sim_state["current_bff_sha"] == baseline_backend_sha
-    assert sim_state["current_frontend_sha"] == baseline_frontend_sha
+    # Execute the maintained compensation step with existing offline transport/lease fixtures.
+    env, invocations, summary = _setup_mock_compensation_environment(
+        tmp_path, "b" * 40, SAMPLE_FRONTEND_SHA, SAMPLE_BACKEND_SHA, SAMPLE_FRONTEND_SHA,
+    )
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", _extract_deploy_compensation_run_script()],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--artifact-restore" in invocations.read_text()
+    assert f"--sha {SAMPLE_BACKEND_SHA}" in invocations.read_text()
+    assert (tmp_path / "mock_bff_sha.txt").read_text().strip() == SAMPLE_BACKEND_SHA
+    assert (tmp_path / "mock_fe_sha.txt").read_text().strip() == SAMPLE_FRONTEND_SHA
+    assert "Artifact restore proved exact prior images and FE bytes" in summary.read_text()
 
 
 def test_validate_required_loop_workers_logic() -> None:
@@ -1523,7 +1535,7 @@ def _extract_deploy_compensation_condition() -> str:
             SAMPLE_BACKEND_SHA,
             "success",
             "failure",
-            "skipped",
+            "success",
             True,
             "Root paper bootstrap failure must trigger rollback compensation",
         ),
@@ -1584,7 +1596,7 @@ def _extract_deploy_compensation_condition() -> str:
             SAMPLE_BACKEND_SHA,
             "success",
             "failure",
-            "skipped",
+            "success",
             True,
             "Auto paper bootstrap failure must trigger rollback compensation",
         ),
@@ -1627,6 +1639,7 @@ def test_dev_deploy_compensation_condition_truth_table(
     context = {
         "env": {
             "TARGET_COMPONENT": target_component,
+            "PAPER_BOOTSTRAP_REQUESTED": "true" if target_component in ("root", "auto") else "false",
         },
         "steps": {
             **{name: {"outcome": "success"} for name in (
@@ -3059,13 +3072,17 @@ def test_candidate_protection_removal_is_detected(tmp_path, monkeypatch, mutatio
         oracle(tmp_path)
 
 
-def test_restart_admission_removal_is_detected(monkeypatch):
-    test_deployment_completion_retains_real_checks_without_provider_gate("root", "AGORA_OUTCOME")
+@pytest.mark.parametrize(("component", "paper_requested"), [
+    ("root", True), ("root", False), ("auto", True), ("auto", False), ("bff", False),
+])
+def test_restart_admission_removal_is_detected(monkeypatch, component, paper_requested):
+    test_deployment_completion_retains_real_checks_without_provider_gate(component, None, paper_requested)
+    test_deployment_completion_retains_real_checks_without_provider_gate(component, "AGORA_OUTCOME", paper_requested)
     source = _workflow()
-    assert "${AGORA_OUTCOME}" in source
+    assert source.count("${AGORA_OUTCOME}") == 1
     monkeypatch.setitem(globals(), "_workflow", lambda: source.replace("${AGORA_OUTCOME}", "success"))
-    with pytest.raises(AssertionError):
-        test_deployment_completion_retains_real_checks_without_provider_gate("root", "AGORA_OUTCOME")
+    with pytest.raises(AssertionError, match=r"completion must be false; got true \(AGORA_OUTCOME\)"):
+        test_deployment_completion_retains_real_checks_without_provider_gate(component, "AGORA_OUTCOME", paper_requested)
 
 
 _VISIBILITY_FLAGS = (
@@ -3167,40 +3184,71 @@ def _step_text(name: str, next_name: str) -> str:
     return text[start:end]
 
 
-def test_release_case_retirement_runs_after_both_compensation_paths() -> None:
-    text = WORKFLOW.read_text(encoding="utf-8")
-    admit = _step_text(
-        "Retire non-served dev paper release cases",
-        "Upload accepted or compensated release evidence",
-    )
-    assert "steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'" in admit
-    assert "'accepted' || 'compensated'" in admit
-    assert text.index("name: Compensate rejected release to exact hosted baseline") < text.index(
-        "name: Retire non-served dev paper release cases"
-    )
-    deploy = _step_text(
-        "Retire this run's dev paper release case after deploy compensation",
-        "Upload dev paper release case retirement evidence",
-    )
-    assert "steps.deploy_compensation.outcome == 'success'" in deploy
-    assert "RELEASE_OUTCOME: compensated" in deploy
-    assert text.index("id: deploy_compensation") < text.index(
-        "name: Retire this run's dev paper release case after deploy compensation"
-    )
-    for step in (admit, deploy):
-        assert "continue-on-error: true" in step
-        assert "--new-case-key" in step and "dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" in step
-        assert "dev-paper-release-case-retire.json" in step
-        assert "timeout --kill-after" in step
+def test_release_case_retirement_precedes_restore_and_accepted_cleanup_follows_verification() -> None:
+    import yaml
+
+    deploy = _dev_steps()
+    coordinate = yaml.safe_load(_workflow())["jobs"]["coordinate-dev-release"]["steps"]
+    retirements = []
+    for steps, retire_id, restore_id in (
+        (deploy, "retire_release_cases", "deploy_compensation"),
+        (coordinate, "roundtrip_retire_release_case", "roundtrip_baseline_restore"),
+        (coordinate, "rollback_retire_release_case", "compensation"),
+    ):
+        ids = [step.get("id") for step in steps]
+        assert ids.index(retire_id) < ids.index(restore_id)
+        retire = steps[ids.index(retire_id)]
+        assert retire["env"]["RELEASE_OUTCOME"] == "pre_restore"
+        assert "paper_bootstrap_requested == 'true'" in retire["if"].lower()
+        assert f"steps.{restore_id}.outcome" not in retire["if"]
+        assert '"preparation_only":true' in retire["run"]
+        retirements.append(retire)
+
+    ids = [step.get("id") for step in coordinate]
+    accepted = coordinate[ids.index("retire_release_cases")]
+    assert ids.index("final_artifact_verify") < ids.index("retire_release_cases")
+    assert accepted["env"]["RELEASE_OUTCOME"] == "accepted"
+    assert "steps.frontend_release.outcome == 'success'" in accepted["if"]
+    assert "steps.final_artifact_verify.outcome == 'success'" in accepted["if"]
+    assert "paper_bootstrap_requested == 'true'" in accepted["if"]
+    assert "!inputs.run_exact_artifact_roundtrip" in accepted["if"]
+    assert "steps.compensation.outcome" not in accepted["if"]
+    for step in (*retirements, accepted):
+        assert step["continue-on-error"] is True
+        assert "--new-case-key" in step["run"]
+        assert "dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" in step["run"]
+        assert "dev-paper-release-case-retire.json" in step["run"]
+        assert "timeout --kill-after" in step["run"]
 
 
-def test_release_case_retirement_uses_only_the_retire_action() -> None:
+@pytest.mark.parametrize("outcome", ["accepted", "pre_restore", "compensated"])
+def test_release_case_retirement_uses_only_the_provisioning_coordinator(outcome: str) -> None:
+    from scripts.test_retire_dev_paper_release_cases import Coordinator, KEYS, Rec, _run, _store
+
     script = (SCRIPTS / "retire_dev_paper_release_cases.py").read_text(encoding="utf-8")
     code = script.split('"""', 2)[2]
-    assert '/retire"' in code
+    assert 'getattr(service, "retire_persona_provisioning_case", None)' in code
+    assert "retire_case(" in code
+    assert "/api/deployment-sagas" not in code
     assert "/failure" not in code and "/transition" not in code
     assert "/api/runtime-bindings" not in code
     assert "psycopg" not in code and "DELETE" not in code.upper().replace("DELETION", "")
+
+    store = _store()
+    store.records.append(Rec("operator-case", "2026-10-05", tenant_id="operator-tenant", persona_id="operator"))
+    coordinator = Coordinator()
+    calls = []
+
+    def retire_case(tenant_id, persona_id, *, reason):
+        calls.append((tenant_id, persona_id))
+        return coordinator(tenant_id, persona_id, reason=reason)
+
+    result = _run(store, retire_case, outcome=outcome, new_case_key=KEYS[3])
+    expected = store.records[:3] if outcome == "accepted" else [store.records[3]]
+    assert calls == [(case.tenant_id, case.persona_id) for case in expected]
+    assert result["retire"] == [case.idempotency_key for case in expected]
+    assert result["status"] == "retired"
+    assert result["preparation_only"] is (outcome == "pre_restore")
 
 
 def test_workflow_has_no_hard_coded_ssh_host_fallback() -> None:

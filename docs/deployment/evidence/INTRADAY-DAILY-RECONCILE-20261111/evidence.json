@@ -4,7 +4,7 @@
   "reviewer": "Codex",
   "tracks": {
     "source": {
-      "status": "implemented_pending_independent_review",
+      "status": "bug_correction_implemented_pending_independent_review",
       "artifacts": [
         "services/source_ingestion/intraday_reconcile.py",
         "config/intraday_reconciliation.json",
@@ -14,7 +14,7 @@
     },
     "tests": {
       "command": "python -m pytest services/source_ingestion/tests/test_intraday_reconcile.py services/source_ingestion/tests/test_intraday_store.py services/source_ingestion/tests/test_intraday_backfill.py -q",
-      "result": "65 passed (incl. empty-store explicit-symbols minute_missing read-only regression)",
+      "result": "88 passed (incl. null/blank/invalid component identity and direct-dataset-dir root regressions; empty-store explicit-symbols minute_missing read-only regression)",
       "covers": [
         "pass",
         "fail per field (open/high/low/close/volume)",
@@ -39,7 +39,8 @@
         "P2 pass->pending withdraws pass on write, write=False stays read-only",
         "P2 recovered clean day reconciles as pass with preserved timestamps; official change revalidated",
         "P2 readmitted pass->pending (absent partition / future official) withholds sidecar, loader closed, official restored re-passes; failing official requarantines then later refetch readmits",
-        "P2 read-only report enumerates intended universe (stored symbols or --symbols) x (stored dates + official dates from first stored day): absent symbol entries and wholly absent day manifests report minute_missing; unrelated official symbols ignored; store unchanged"
+        "P1 only-malformed component evidence (no parseable component) keeps unattributable markers: volume_basis_unavailable, quarantine, empty loader, read-only verdict without writes",
+    "P2 read-only report enumerates intended universe (stored symbols or --symbols) x (stored dates + official dates from first stored day): absent symbol entries and wholly absent day manifests report minute_missing; unrelated official symbols ignored; store unchanged"
       ]
     },
     "merged": {
@@ -77,5 +78,13 @@
     "Readmission/waiver use a reconciliation sidecar because intraday_store.py is outside this task's artifacts; a store-level status for readmitted days would need a later K2 change.",
     "Pruner (K2) does not remove the sidecar for pruned days; the sidecar is invisible without its shard hash match."
   ],
-  "boundaries": "source-only; no provider/token/VM/SSH/hosted/config/trading access; tw_price_daily never written"
+  "boundaries": "source-only; no provider/token/VM/SSH/hosted/config/trading access; tw_price_daily never written",
+  "regular_volume_basis_correction": {
+    "scope": "EXISTING FUNCTIONAL BUG CORRECTION ONLY (generation 2); original 2%/95%/price/gap/PIT thresholds and config values unchanged; hosted track remains EXTERNAL_WAIT",
+    "bug": "aggregate regular 09:00-13:30 minute volume was compared against the full official daily total (incl. odd-lot/after-hours fixed/block); 2330 2026-11-12 diff 5,368,285 shares equals those official categories exactly (read-only crosscheck, not an engine PASS)",
+    "input_contract": "optional normalized/tw_price_daily_volume_components/**/*.jsonl lines {symbol,date,market,category,volume,unit(shares|lots),available_time}; official row now carries market. Config volume_component_categories = intraday_odd, afterhours_odd, afterhours_fixed, block",
+    "behaviour": "no component evidence -> legacy full-total comparison (unchanged). Any component evidence -> every configured category exactly once, same stock/date/market, supported unit, non-negative, known availability, total<=official total; else volume_basis_unavailable -> fail/quarantine (missing category never inferred as zero). Component not yet available -> pending_official. Raw official total and all minute rows preserved; source_refs.volume_basis records each component's path/line/line_sha256/market/unit/available_at; reconciled_at >= component availability. No hardcoded symbol/day.",
+    "tests": "python -m pytest test_intraday_reconcile.py test_intraday_store.py test_intraday_backfill.py -> 88 passed (82 before fixes + 5 invalid-identity + 1 canonical-root); null/blank/invalid component symbol|date fail closed as unattributable markers, direct tw_price_daily dir resolves components at canonical snapshot root, no evidence bypass; named-day write=False 2330-shaped positive, 5% real volume error still fails, missing/negative/market/unit/duplicate/unknown-availability/exceeds-total/unparseable negatives, pending, report script read-only, write-path pass + loader",
+    "not_proven": "No real hosted/provider run, clean-day, 20-session/two-week pass rate, licence/PIT or hosted acceptance; whole K3 NOT done from this source change"
+  }
 }

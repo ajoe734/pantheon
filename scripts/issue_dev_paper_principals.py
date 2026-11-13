@@ -41,6 +41,8 @@ READERS = {
     "EVOLUTION_PERSONA_SERVICE_TOKEN": ("pantheon-dev-evolution-persona-reader", "viewer"),
     # Discovery allocator read-only owner reads (persona list, capital bindings).
     "RESEARCH_PERSONA_SERVICE_TOKEN": ("research-orchestrator", "viewer"),
+    # Persona daily pool cycle -> research owner (persona demands, candidate supply).
+    "PERSONA_RESEARCH_SERVICE_TOKEN": ("persona-pool-cycle", "viewer"),
     "RESEARCH_CAPITAL_SERVICE_TOKEN": ("research-orchestrator", "capital-reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
     "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", ("viewer", "registry-reader")),
@@ -108,7 +110,7 @@ CONSUMER_FILES = {
     "registry": ("REGISTRY_GOVERNANCE_SERVICE_TOKEN",),
     "governance": ("GOVERNANCE_REGISTRY_SERVICE_TOKEN",),
     "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN"),
-    "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN",),
+    "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN", "PERSONA_RESEARCH_SERVICE_TOKEN"),
     "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
     "evolution": (
         "EVOLUTION_GOVERNANCE_SERVICE_TOKEN",
