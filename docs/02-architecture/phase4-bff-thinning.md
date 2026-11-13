@@ -318,3 +318,7 @@ cache 或編造資料，不啟動模型、交易、binding 或資金寫入。
 SHA-256，舊版 bundle bytes 不變。整合測試沿用 production mounting hook 與 security
 stack，實際執行 Consultation／Memory client、owner HTTP app 與 Governance policy，
 僅替換 HTTP transport；證據見本 task 的 `docs/deployment/evidence/` 目錄。
+
+## 決策卷宗讀取（BFF-DECISION-CASE-FILE-VIEWS-20261113）
+
+OODA 封包詳情 `GET /bff/ooda/packets/{id}` 與 Agora 委員會 `sessions/{id}`、`sessions/{id}/memos` 在回應中加入 `case_file_view`，不新增路由。內容是 owner 已持久化的卷宗（封包紀錄的 `persona_cycle.case_files`、Consultation transcript 的 `panel_case_file_attached` 事件）：每個條目的種類、摘錄、source id、檢索模式，以及每個 claim／決策引用的條目 id；被拒絕的貢獻附 owner 記錄的拒絕原因。BFF 只轉發與投影：沒有卷宗時回 `status=unavailable` 與原因，不補假資料；其他 persona 的私有記憶一律不回傳（封包 persona 與卷宗主體不符、或面板這種共享情境，一律剔除 `persona_private` 條目）。封包詳情不再回傳原始 `persona_cycle.case_files`。

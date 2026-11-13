@@ -34,6 +34,7 @@ from services.control_plane.bff.models import (
     safe_redact_evidence_refs,
 )
 
+from services.control_plane.bff.case_file_view import project_packet
 from .service import ControlLoopsService, default_bff_error
 
 
@@ -268,6 +269,11 @@ def create_control_loops_router(
             identity, response["data"], redact_fn=_redact, capabilities_fn=_capabilities
         )
         response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
+        data = response["data"]
+        if isinstance(data, dict) and isinstance(data.get("persona_cycle"), dict):
+            # Owner-persisted case files are projected (private memory filtered), never dumped raw.
+            data["case_file_view"] = project_packet(data)
+            data["persona_cycle"] = {k: v for k, v in data["persona_cycle"].items() if k != "case_files"}
         return response
 
     # Guarded-command two-man evidence signing (the only surviving /interventions route).

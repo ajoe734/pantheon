@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
+from fastapi import HTTPException
+
 from services.consultation.client import ConsultationClientError, ConsultationServiceClient
 
 from .owner import unavailable
@@ -40,6 +42,16 @@ class CommitteeOwnerClient:
         if any(r.get("tenant_id") != self.tenant_id for r in items):
             raise unavailable("consultation", "panel_tenant_mismatch")
         return [r for r in items if r.get("consultation_type") == "persona_panel"]
+
+    def case_file_view(self, session_id: str) -> dict:
+        """Owner-persisted case file of a panel; failure is a recorded reason, never a guess."""
+        from ...case_file_view import project_panel, unavailable as no_case
+        try:
+            transcript = self.call("GET", f"/api/consult/requests/{quote(session_id, safe='')}/transcript")
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            return no_case(str(detail.get("reason") or "consultation_owner_unavailable"))
+        return project_panel(transcript, request_id=session_id, tenant_id=self.tenant_id)
 
     def memos(self, session_id: str) -> list:
         self.panel(session_id)

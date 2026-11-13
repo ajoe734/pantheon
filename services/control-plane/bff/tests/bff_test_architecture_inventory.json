@@ -2188,6 +2188,13 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
+      "file": "tests/test_case_file_views.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
       "file": "tests/test_control_loops_router.py",
       "layer": "router",
       "imports_main": false,
