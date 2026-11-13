@@ -61,7 +61,8 @@ async def persona_lifespan(app):
     stop = asyncio.Event()
     worker = None
     if os.getenv("PERSONA_DAILY_CYCLE_ENABLED", "false").lower() == "true":
-        from services.persona.persona_cycle_controller import CycleOwners, PersonaCycleController, run_controller
+        from services.persona.persona_cycle_controller import CycleOwners, run_controller
+        from services.persona.case_file_outcomes import OutcomeTrackingController
         from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle
         from services.persona.pool_dataset_authority import governed_dataset_loader
         from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
@@ -131,7 +132,7 @@ async def persona_lifespan(app):
         # StrategySpec candidates come from the registry owner through the cycle ports (specs=None).
         discovery_loader = governed_discovery_loader(
             seeds=_seed_store_reads, route_policy=_route_policy, capability_snapshot=_capability_snapshot)
-        controller = PersonaCycleController(
+        controller = OutcomeTrackingController(
             PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()),
             pool_cycle=PoolAutonomyCycle(HttpPoolCyclePorts(
                 pool_store=_pool_store(), dataset_loader=governed_dataset_loader(), discovery_loader=discovery_loader)))

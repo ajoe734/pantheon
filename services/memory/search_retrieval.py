@@ -20,6 +20,8 @@ from typing import Any, Iterable, List, Optional
 from services.search.filters import SearchAccessContext, SearchFilters
 from services.search.pg_retrieval import PostgresRetrievalBackend, RetrievalIndexRecord
 
+from .usefulness import usefulness_score
+
 from .institutional_memory_store import (
     InstitutionalMemoryEntry,
     InstitutionalMemoryStore,
@@ -169,7 +171,7 @@ def project_institutional_entry(entry: InstitutionalMemoryEntry) -> RetrievalInd
         evidence_item_id=f"item-mem-{entry.entry_id}",
         event_time=entry.written_at,
         available_time=entry.written_at,
-        relevance_score=float(entry.reuse_count),
+        relevance_score=usefulness_score(entry),
         metadata={
             "entry_id": entry.entry_id,
             "tenant_id": entry.tenant_id,
@@ -216,7 +218,7 @@ def project_persona_entry(entry: PersonaMemoryEntry) -> RetrievalIndexRecord:
         evidence_item_id=f"item-persona-{entry.memory_id}",
         event_time=entry.written_at,
         available_time=entry.written_at,
-        relevance_score=float(entry.reuse_count),
+        relevance_score=usefulness_score(entry),
         metadata={
             "memory_id": entry.memory_id,
             "tenant_id": entry.tenant_id,
@@ -249,6 +251,7 @@ def retrieve_institutional_with_backend(
     tags: Optional[Iterable[str]] = None,
     limit: int = 10,
     diagnostics: Optional[dict] = None,
+    review_required: bool = False,
 ) -> List[RetrievalHit]:
     if limit <= 0:
         return []
@@ -274,7 +277,7 @@ def retrieve_institutional_with_backend(
     else:
         _fallback(diagnostics, "empty_query" if not query.strip() else "search_service_unconfigured")
     if candidate_hits is None:
-        candidate_hits = [SimpleNamespace(id=hit.entry.entry_id, score=(hit.relevance_score - hit.entry.reuse_count) / 100)
+        candidate_hits = [SimpleNamespace(id=hit.entry.entry_id, score=(hit.relevance_score - usefulness_score(hit.entry)) / 100)
                           for hit in store.retrieve(query=query, knowledge_type=knowledge_type, scope=scope,
                                                     scope_filter=scope_filter, tags=tags, limit=len(store.list()))]
 
@@ -289,6 +292,8 @@ def retrieve_institutional_with_backend(
 
         entry = store.get(cand.id)
         if entry is None or not entry.is_active or entry.is_expired():
+            continue
+        if review_required and not entry.memory_review:
             continue
         if tenant_id is not None and (entry.tenant_id or "default") != tenant_id:
             continue
@@ -305,16 +310,14 @@ def retrieve_institutional_with_backend(
             if normalized_tags.isdisjoint(entry_tags):
                 continue
 
-        # Combine backend score with canonical reuse count
-        final_score = round(cand.score * 100.0 + float(entry.reuse_count), 4)
+        # Combine backend relevance with bounded canonical usefulness
+        final_score = round(cand.score * 100.0 + usefulness_score(entry), 4)
         hits.append(RetrievalHit(entry=entry, relevance_score=final_score))
-        if len(hits) >= limit:
-            break
 
     hits.sort(
         key=lambda hit: (
             hit.relevance_score,
-            hit.entry.reuse_count,
+            usefulness_score(hit.entry),
             _parse_utc_timestamp(hit.entry.written_at),
         ),
         reverse=True,
@@ -335,6 +338,7 @@ def retrieve_persona_with_backend(
     tags: Optional[Iterable[str]] = None,
     limit: int = 10,
     diagnostics: Optional[dict] = None,
+    review_required: bool = False,
 ) -> List[PersonaRetrievalHit]:
     if limit <= 0:
         return []
@@ -362,7 +366,7 @@ def retrieve_persona_with_backend(
     else:
         _fallback(diagnostics, "empty_query" if not query.strip() else "search_service_unconfigured")
     if candidate_hits is None:
-        candidate_hits = [SimpleNamespace(id=hit.entry.memory_id, score=(hit.relevance_score - hit.entry.reuse_count) / 100)
+        candidate_hits = [SimpleNamespace(id=hit.entry.memory_id, score=(hit.relevance_score - usefulness_score(hit.entry)) / 100)
                           for hit in store.retrieve(persona_id=persona_id, query=query, memory_type=memory_type,
                                                     relevance_scope=relevance_scope, tags=tags, limit=len(store.list()))]
 
@@ -377,6 +381,8 @@ def retrieve_persona_with_backend(
 
         entry = store.get(cand.id)
         if entry is None or not entry.is_active or (callable(getattr(entry, "is_expired", None)) and entry.is_expired()):
+            continue
+        if review_required and not entry.memory_review:
             continue
         if tenant_id is not None and (entry.tenant_id or "default") != tenant_id:
             continue
@@ -393,15 +399,13 @@ def retrieve_persona_with_backend(
             if normalized_tags.isdisjoint(entry_tags):
                 continue
 
-        final_score = round(cand.score * 100.0 + float(entry.reuse_count), 4)
+        final_score = round(cand.score * 100.0 + usefulness_score(entry), 4)
         hits.append(PersonaRetrievalHit(entry=entry, relevance_score=final_score))
-        if len(hits) >= limit:
-            break
 
     hits.sort(
         key=lambda hit: (
             hit.relevance_score,
-            hit.entry.reuse_count,
+            usefulness_score(hit.entry),
             _parse_utc_timestamp(hit.entry.written_at),
         ),
         reverse=True,
