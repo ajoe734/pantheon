@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 from urllib.parse import quote
@@ -196,6 +197,8 @@ class CaseFileOutcomes:
                         return sum(m["risk_weight"] * series[m["artifact_ref"]][day] for m in pool
                                    if m["stage"] != "removed" and m["risk_weight"] > 0 for day in days)
                     delta = utility(after) - utility(before)
+                    if not math.isfinite(delta):
+                        raise ValueError("paired_utility_not_finite")
                 except (ValueError, KeyError, TypeError):
                     reasons.append("paired_virtual_book_missing_or_invalid")
         outcome = "confounded" if reasons else "helped" if delta > 0 else "hurt" if delta < 0 else "no_effect"

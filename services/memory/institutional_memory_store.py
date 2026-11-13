@@ -41,7 +41,7 @@ def _format_utc_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _entry_sort_key(entry: "InstitutionalMemoryEntry") -> tuple[int, datetime]:
+def _entry_sort_key(entry: "InstitutionalMemoryEntry") -> tuple[float, datetime]:
     return (usefulness_score(entry), _parse_utc_timestamp(entry.written_at))
 
 

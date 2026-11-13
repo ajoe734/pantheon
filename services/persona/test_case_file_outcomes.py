@@ -17,7 +17,6 @@ from services.control_plane.persona.test_persona_strategy_pool import (
     CHECKSUM, _auth, _decision, _member, _post, env,  # noqa: F401
 )
 from services.knowledge import case_file as cf
-from services.memory import main as memory_main
 from services.memory.test_memory_index_projection import persona
 from services.memory.test_usefulness import auth, memory  # noqa: F401
 from services.memory.usefulness import usefulness_score

@@ -65,6 +65,16 @@
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_case_file_outcomes.py services/memory/test_persona_memory_store.py services/memory/test_institutional_memory_store.py --tb=short",
       "result": "55 passed; after PostgreSQL counter CAS, packet-independent persisted binding, and repeated-proposal safeguards",
       "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/memory services/persona/test_case_file_outcomes.py services/persona/test_persona_cycle_controller.py --tb=short",
+      "result": "172 passed, 4 skipped, 2 subtests passed after rebase to current dev; optional real PostgreSQL tests are separately proven in the DSN-enabled run",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_case_file_outcomes.py --tb=short",
+      "result": "14 passed after final finite-utility guard and type annotation cleanup",
+      "exit_code": 0
     }
   ],
   "boundaries_and_limits": [

@@ -34,7 +34,7 @@ def _parse_utc_timestamp(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _entry_sort_key(entry: "PersonaMemoryEntry") -> tuple[int, datetime]:
+def _entry_sort_key(entry: "PersonaMemoryEntry") -> tuple[float, datetime]:
     return (usefulness_score(entry), _parse_utc_timestamp(entry.written_at))
 
 
