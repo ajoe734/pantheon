@@ -66,7 +66,22 @@
     {
       "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py",
       "exit_status": 124,
-      "result": "Timed out with progress output only; NOT a passed run. Retried in a larger bounded batch; final result must be collected before handoff."
+      "result": "Timed out with progress output only; NOT a passed run. Replaced by a completed 420-second bounded run, recorded below."
+    },
+    {
+      "command": "timeout 420 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py",
+      "exit_status": 1,
+      "result": "129 passed, 14 failed in 314.54s. All 106 tests in the modified test_dev_tw_market_refresh.py passed. Nine failures were missing local pyarrow; five were unchanged workflow-test fixture/output mismatches. These failures are not counted as passed."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pip install --timeout 30 --retries 1 'pyarrow>=15,<30'",
+      "exit_status": 0,
+      "result": "Installed pyarrow 26.0.1 into checkout-scoped .venv-pantheon, matching existing services/source_ingestion/requirements.txt. No tracked dependency/config files changed."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 /tmp/tw-refresh-workflow-baseline.py",
+      "exit_status": 1,
+      "result": "Same five failed, nine passed on the exact official unmodified script; these tests stub out check_taiwan_refresh_preflight. Both wait_for_bounded_source_refresh_service and execute_bounded_source_refresh_entrypoint were also confirmed byte-identical old/new."
     }
   ],
   "reproduction": {
@@ -250,12 +265,28 @@
   },
   "reproduction_programs": {
     "/tmp/tw-refresh-reproduce.py": "import hashlib\nimport importlib.util\nimport json\nimport subprocess\nimport zipfile\nfrom datetime import datetime\nfrom pathlib import Path\n\nroot = Path.cwd()\nfacts_path = Path('/tmp/pantheon-root01a15322-resume-20261111/TW-REFRESH-LATEST-CLOSED-SESSION-20261113-sanitized-source-facts.json')\nfacts = json.loads(facts_path.read_text())\narchive = Path(facts['official_artifact'])\nwith zipfile.ZipFile(archive) as z:\n    outcomes = {n: json.loads(z.read(n)) for n in z.namelist()}\nassert outcomes == facts['outcomes']\nold = subprocess.check_output(['git', 'show', facts['workflow_head'] + ':scripts/deploy_nonprod_vm.sh'], text=True)\nblob = subprocess.check_output(['git', 'rev-parse', facts['workflow_head'] + ':scripts/deploy_nonprod_vm.sh'], text=True).strip()\nassert blob == facts['script_blob_verified_via_GitHub']\nspec = importlib.util.spec_from_file_location('refresh_tests', root / 'scripts/test_dev_tw_market_refresh.py')\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nrows = []\nfor filename, outcome in outcomes.items():\n    profile = (outcome['connector_id'], outcome['dataset'])\n    now = datetime.fromisoformat(outcome['checked_at'])\n    states = ('fresh',) if profile not in module.CHIP_PROFILES else ('missing', 'stale', 'fresh')\n    for state in states:\n        kwargs = {'profile': profile}\n        if profile in module.CHIP_PROFILES:\n            kwargs['readback'] = None if state == 'missing' else module._preflight_readback(profile, '2026-11-11' if state == 'stale' else '2026-11-12')\n            kwargs['source_records'] = module._preflight_broker_coverage()\n        old_result = module._run_preflight_script(False, now, module._preflight_snapshot(), script_text=old, **kwargs)\n        assert old_result['status'] == outcome['status'] and old_result['reason'] == outcome['reason']\n        new_result = module._run_preflight_script(False, now, module._preflight_snapshot(), **kwargs)\n        expected = ('skipped' if profile not in module.CHIP_PROFILES else 'noop' if state == 'fresh' else 'proceed')\n        assert new_result['status'] == expected\n        rows.append({'official_outcome_file': filename, 'fixture_state': state, 'old': old_result, 'new': new_result})\nreport = {\n    'workflow_run': facts['workflow_run'], 'workflow_head': facts['workflow_head'], 'verified_script_blob': blob,\n    'official_zip_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),\n    'sanitized_facts_sha256': hashlib.sha256(facts_path.read_bytes()).hexdigest(),\n    'historical_state_limit': 'ZIP establishes outcomes only; injected readback/snapshot fixtures are controlled alternatives, not historical database claims.',\n    'official_outcomes': outcomes, 'controlled_old_new_decisions': rows,\n}\nPath('/tmp/tw-refresh-reproduction.json').write_text(json.dumps(report, indent=2) + '\\n')\nprint(json.dumps(report, indent=2))\n",
-    "/tmp/tw-refresh-baseline.py": "import subprocess\nfrom pathlib import Path\nimport pytest\n\nold_path = Path('/tmp/tw-refresh-official-baseline.sh')\nold_path.write_bytes(subprocess.check_output(['git', 'show', '04947d53bcf3014389b530803c1551fa841d55e9:scripts/deploy_nonprod_vm.sh']))\nclass OfficialBaseline:\n    def pytest_collection_modifyitems(self, items):\n        for item in items:\n            item.module.DEPLOY_SCRIPT = old_path\nraise SystemExit(pytest.main(['-q', 'scripts/test_dev_tw_market_refresh.py', '-k', 'preflight'], plugins=[OfficialBaseline()]))\n"
+    "/tmp/tw-refresh-baseline.py": "import subprocess\nfrom pathlib import Path\nimport pytest\n\nold_path = Path('/tmp/tw-refresh-official-baseline.sh')\nold_path.write_bytes(subprocess.check_output(['git', 'show', '04947d53bcf3014389b530803c1551fa841d55e9:scripts/deploy_nonprod_vm.sh']))\nclass OfficialBaseline:\n    def pytest_collection_modifyitems(self, items):\n        for item in items:\n            item.module.DEPLOY_SCRIPT = old_path\nraise SystemExit(pytest.main(['-q', 'scripts/test_dev_tw_market_refresh.py', '-k', 'preflight'], plugins=[OfficialBaseline()]))\n",
+    "/tmp/tw-refresh-workflow-baseline.py": "import subprocess\nfrom pathlib import Path\nimport pytest\nold_path = Path('/tmp/tw-refresh-official-baseline.sh')\nold_path.write_bytes(subprocess.check_output(['git', 'show', '04947d53bcf3014389b530803c1551fa841d55e9:scripts/deploy_nonprod_vm.sh']))\nclass OfficialBaseline:\n    def pytest_collection_modifyitems(self, items):\n        for item in items:\n            item.module.DEPLOY_SCRIPT = old_path\nraise SystemExit(pytest.main(['-q', 'scripts/test_dev_tw_market_refresh_workflow.py'], plugins=[OfficialBaseline()]))\n"
   },
   "explicit_limits": [
     "No VM, SSH, credentials, live provider/model/data/service operations, deployment or workflow dispatch performed by author. Existing sole hosted acceptance owner retains actual data refresh and later exact-pair publication.",
     "Source/local PASS is not hosted activation, fresh quotes, normal post-deployment fill, full financial acceptance or W1 acceptance.",
     "Provider inability to supply a required session remains subject to existing terminal readback failure/unavailable behavior; preflight proceed is not completed ingestion.",
     "Existing governed calendar coverage and provider publication policy are reused without adding a calendar framework or claiming broader evidence coverage."
-  ]
+  ],
+  "known_baseline_failures": {
+    "file": "scripts/test_dev_tw_market_refresh_workflow.py",
+    "failed_tests": [
+      "test_refresh_skips_without_touching_containers_when_no_taiwan_symbols",
+      "test_refresh_never_replaces_steady_scheduler_or_projector[0-0]",
+      "test_refresh_never_replaces_steady_scheduler_or_projector[1-1]",
+      "test_refresh_pauses_and_restarts_same_steady_containers_with_own_state[0]",
+      "test_refresh_pauses_and_restarts_same_steady_containers_with_own_state[1]"
+    ],
+    "causes": [
+      "Expected no-symbol output omits existing connector_id/log fields.",
+      "Fake Docker does not provide deploy-time scheduler values for the current existing inspect command, preventing the mocked bounded run."
+    ],
+    "scope_decision": "No edit to this undeclared test file or unchanged runtime/restoration layers; baseline failures are disclosed for independent review rather than hiding failures or weakening checks."
+  }
 }
