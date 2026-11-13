@@ -36,7 +36,9 @@
     },
     "content": {
       "type": "object",
-      "required": ["summary"],
+      "required": [
+        "summary"
+      ],
       "properties": {
         "summary": {
           "type": "string",
@@ -50,7 +52,9 @@
         },
         "tags": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Free-form retrieval tags (e.g. regime, asset_class, source_strategy)."
         }
       },
@@ -97,16 +101,25 @@
       "description": "Service that wrote this entry. Only whitelisted services may write."
     },
     "embedding_ref": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Reference to the vector embedding stored in the retrieval index. Set by persona-memory-svc after indexing."
     },
     "superseded_by": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "memory_id of the entry that supersedes this one, if any. Superseded entries are retained for lineage but excluded from active retrieval."
     },
     "relevance_scope": {
       "type": "string",
-      "enum": ["persona_private", "persona_and_committee"],
+      "enum": [
+        "persona_private",
+        "persona_and_committee"
+      ],
       "default": "persona_private",
       "description": "Controls read visibility. persona_private: only the owning persona's sessions. persona_and_committee: also readable by authorised committee/consult sessions involving this persona."
     },
@@ -117,8 +130,117 @@
       "description": "Incremented by the retrieval facade when this memory is reused in an authorized context."
     },
     "tenant_id": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Optional tenant identifier for multi-tenant memory isolation."
+    },
+    "expires_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "archived_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "archived_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "usefulness_marks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "decision_id",
+          "case_file_id",
+          "cited_item_ids",
+          "outcome",
+          "reason",
+          "evidence_refs",
+          "window_end"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "case_file_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cited_item_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "outcome": {
+            "enum": [
+              "helped",
+              "hurt",
+              "no_effect",
+              "confounded"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "window_end": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "memory_review": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "pending"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "three_hurt_marks"
+          ]
+        },
+        "decision_ids": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "reason",
+        "decision_ids"
+      ],
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

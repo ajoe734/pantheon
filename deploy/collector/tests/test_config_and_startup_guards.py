@@ -189,3 +189,36 @@ def test_dropped_tpex_flows_and_disabled_by_build_sources_are_refused() -> None:
     raw["sources"]["collector-yahoo-news"]["source_id"] = "collector-yahoo-news"
     with pytest.raises(CollectorConfigError, match="DISABLED_BY_BUILD"):
         validate_collector_config(raw, env={})
+
+
+@pytest.mark.parametrize("sid", ["collector-paper-arxiv", "collector-paper-openalex", "collector-gdelt"])
+@pytest.mark.parametrize("terms", [None, [], "momentum", ["not-in-fixed-vocabulary"], ["momentum", "momentum"], ['momentum OR site:evil']])
+def test_query_terms_fail_closed_at_startup(sid, terms):
+    raw = _raw_policy()
+    raw["sources"][sid]["query_terms"] = terms
+    with pytest.raises(CollectorConfigError, match="fixed vocabulary"):
+        validate_collector_config(raw, env={})
+
+
+def test_missing_vocabulary_and_social_steering_fail_closed(tmp_path, monkeypatch):
+    from collector_stack import config as module
+    raw = _raw_policy()
+    raw["sources"]["collector-tw-threads"]["query_terms"] = ["momentum"]
+    with pytest.raises(CollectorConfigError, match="cannot be steered"):
+        validate_collector_config(raw, env={})
+    monkeypatch.setattr(module, "QUERY_VOCABULARY_PATH", tmp_path / "missing.json")
+    with pytest.raises(CollectorConfigError, match="missing or invalid fixed query vocabulary"):
+        validate_collector_config(_raw_policy(), env={})
+
+
+@pytest.mark.parametrize("override", [
+    {"base_urls": ["https://api.gdeltproject.org/api/v2/doc/doc"]},
+    {"index_url": "https://other.invalid/lastupdate.txt"},
+    {"feed_type": "gkg"}, {"cadence_seconds": 900}, {"max_records_per_call": 250},
+    {"fetcher": "api"}, {"max_requests_per_run": 5}, {"min_interval_seconds": 0},
+])
+def test_gdelt_requires_single_official_hourly_raw_feed(override):
+    data = _raw_policy()
+    data["sources"]["collector-gdelt"].update(override)
+    with pytest.raises(CollectorConfigError, match="official hourly export feed"):
+        validate_collector_config(data, env={})

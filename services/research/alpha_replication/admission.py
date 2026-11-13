@@ -204,4 +204,41 @@ class ReplicationAdmissionStore:
                 temp_path.unlink()
 
 
-__all__ = ["ReplicationAdmissionStore"]
+def evaluate_template_candidate(*, gate, artifact, dataset, demand, family_id, source_ref, timestamp):
+    """Submit a compiled template to the existing §10 content-admission gate.
+
+    This grants no StrategySpec review, queue approval, baseline or pool membership.
+    The gate runs and records its own backtest of the exact compiled artifact.
+    """
+    from services.registry.strategy_artifact import strategy_artifact_checksum, validate_strategy_artifact
+    from services.research.replication.gate_schema import ReplicationRequest
+
+    validate_strategy_artifact(artifact)
+    dataset = {**dataset, "strategy_id": artifact["strategy_id"]}
+    request = ReplicationRequest(
+        candidate_id=artifact["artifact_id"], source_task_id=demand["demand_id"],
+        research_handoff={
+            "source_metadata": {"api_endpoint": source_ref, "retrieved_at": timestamp,
+                                "governance_context": "Persona-written research demand; paper research only"},
+            "family_id": family_id, "strategy_artifact": artifact, "backtest_dataset": dataset,
+            "normalized_findings": {
+                "strategy_spec": {"strategy_id": artifact["strategy_id"]},
+                "replication_notes": "Registered template compiled without changing its signal; tested after Taiwan costs.",
+                "evaluation_hypotheses": "Positive deflated out-of-sample Sharpe with consistent walk-forward sign.",
+            },
+        },
+        proposed_strategy_spec={
+            "name": artifact["strategy_id"], "description": "Demand-driven registered alpha template",
+            "signals": artifact["strategy_logic"], "parameters": artifact["parameters"],
+            "strategy_artifact": artifact,
+            "governance": {"policy_id": "template-demand-paper-research", "approval_required": True},
+        },
+        metadata={"tenant_id": demand["tenant_id"], "persona_id": demand["persona_id"],
+                  "demand_ref": demand["demand_id"], "dataset_version_id": dataset["dataset_id"],
+                  "strategy_artifact_checksum": strategy_artifact_checksum(artifact)},
+        timestamp=timestamp,
+    )
+    return gate.evaluate_candidate(request)
+
+
+__all__ = ["ReplicationAdmissionStore", "evaluate_template_candidate"]

@@ -427,6 +427,7 @@ def test_live_connector_smoke_rejects_forbidden_execution_routes() -> None:
 
 def test_source_search_end_to_end_durable_readback(
     _source_ingest_client,
+    monkeypatch,
 ) -> None:
     """Prove the full source→search durable path: bounded live connector → SourceRecord/EvidenceBundle
     → durable evidence store → search index refresh → SearchGateway query with citation refs.
@@ -435,6 +436,7 @@ def test_source_search_end_to_end_durable_readback(
     """
     from pathlib import Path
 
+    monkeypatch.setenv("PANTHEON_SEARCH_BACKEND", "jsonl")  # explicit non-production fallback
     from services.search.main import create_app as create_search_app
 
     client, tmp_path = _source_ingest_client

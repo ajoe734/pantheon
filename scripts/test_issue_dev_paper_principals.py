@@ -181,6 +181,22 @@ def test_deploy_and_compose_connect_authorized_environment_without_embedded_toke
     assert "CAPITAL_ALLOWED_READER_SERVICES" in compose["capital"]["environment"]
 
 
+def test_distillation_research_reader_is_dedicated_and_mounted():
+    import yaml
+    variable = "DISTILLATION_RESEARCH_SERVICE_TOKEN"
+    claims = verify(issue_environment(configured(), now=NOW)[variable])
+    assert claims["sub"] == "strategy-distillation-worker"
+    assert claims["roles"] == ["viewer"] and claims["scope"] == "pantheon:dev-owner-read"
+    assert variable in CONSUMER_FILES["strategy-distillation-worker"]
+    assert all(variable not in variables for consumer, variables in CONSUMER_FILES.items()
+               if consumer != "strategy-distillation-worker")
+    compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text())
+    env = compose["services"]["strategy-distillation-worker"]["environment"]
+    assert env["DISTILLATION_RESEARCH_URL"] == "http://research-orchestrator-svc:8101"
+    assert "/run/pantheon-principals/" + variable in env[variable + "_FILE"]
+    assert env["PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP"] == "${PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP:-400}"
+
+
 def test_training_session_source_reader_principal_is_dedicated_and_mounted():
     import yaml
     root = Path(__file__).resolve().parents[1]

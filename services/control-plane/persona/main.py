@@ -53,15 +53,89 @@ from services.persona.write_owner import (
     resolve_persona_tenant_scope,
 )
 
+_OWNER_READ_SURFACE = None
+
+
 @asynccontextmanager
 async def persona_lifespan(app):
     stop = asyncio.Event()
     worker = None
     if os.getenv("PERSONA_DAILY_CYCLE_ENABLED", "false").lower() == "true":
-        from services.persona.persona_cycle_controller import CycleOwners, PersonaCycleController, run_controller
+        from services.persona.persona_cycle_controller import CycleOwners, run_controller
+        from services.persona.case_file_outcomes import OutcomeTrackingController
+        from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle
+        from services.persona.pool_dataset_authority import governed_dataset_loader
         from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
-        controller = PersonaCycleController(
-            PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()))
+        from services.persona.pool_autonomy_cycle import governed_discovery_loader
+
+        def _seed_store_reads(persona) -> list:
+            # Background-safe owner read: no request is in flight, so the persona's tenant and the
+            # persona service's own admitted source-ingest credential are bound for this read only.
+            from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+            from services.control_plane.bff.source_management_client import SourceManagementClient
+            from services.service_token_file import configured_service_token
+            client = SourceManagementClient()
+            if not client.configured:
+                raise RuntimeError("seed_store_unconfigured")
+            token = configured_service_token("PERSONA_SOURCE_INGEST_SERVICE_TOKEN")
+            if not token:
+                raise RuntimeError("seed_store_credential_unconfigured")
+            auth_mark = authorization.set("Bearer " + token)
+            tenant_mark = selected_tenant.set(persona["tenant_id"])
+            try:
+                return client.list_all()
+            finally:
+                selected_tenant.reset(tenant_mark)
+                authorization.reset(auth_mark)
+
+        def _owner_surface_reads(persona, read):
+            # Same owners the operator discovery route uses (bff/personas/service.py), bound to the
+            # persona's tenant for this background read only.
+            from services.control_plane.bff.core.owner_reads import selected_tenant
+            global _OWNER_READ_SURFACE
+            if _OWNER_READ_SURFACE is None:
+                from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+                _OWNER_READ_SURFACE = ReadSurfacePorts()
+            tenant_mark = selected_tenant.set(persona["tenant_id"])
+            try:
+                return read(_OWNER_READ_SURFACE, str(persona.get("persona_id") or persona.get("id") or ""))
+            finally:
+                selected_tenant.reset(tenant_mark)
+
+        def _route_policy(persona):
+            inline = persona.get("route_policy")
+            if isinstance(inline, dict) and inline:
+                return inline
+            policy_id = str(persona.get("route_policy_id") or "").strip()
+            if not policy_id:
+                return {}
+            # Resolve the exact referenced policy from the owner catalog by its own identity; the
+            # persona-scoped lookup selects by persona_id and may return a stale, different policy.
+            policies = _owner_surface_reads(persona, lambda surface, pid: surface.list_route_policies())
+            for policy in policies or []:
+                if isinstance(policy, dict) and policy and policy_id in {
+                        str(policy.get("policy_id") or "").strip(), str(policy.get("id") or "").strip()} - {""}:
+                    return policy
+            # referenced policy unreadable/mismatched: never score without (or with other) constraints
+            raise RuntimeError(f"route_policy_unavailable:{policy_id}")
+
+        def _capability_snapshot(persona):
+            inline = persona.get("capability_snapshot")
+            if isinstance(inline, dict) and inline:
+                return inline
+            snapshot = _owner_surface_reads(persona, lambda surface, pid: surface.get_capability_snapshot_for_persona(pid))
+            snapshot_id = str(persona.get("capability_snapshot_id") or "").strip()
+            if not snapshot and snapshot_id:
+                raise RuntimeError(f"capability_snapshot_unavailable:{snapshot_id}")
+            return snapshot or {}
+
+        # StrategySpec candidates come from the registry owner through the cycle ports (specs=None).
+        discovery_loader = governed_discovery_loader(
+            seeds=_seed_store_reads, route_policy=_route_policy, capability_snapshot=_capability_snapshot)
+        controller = OutcomeTrackingController(
+            PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()),
+            pool_cycle=PoolAutonomyCycle(HttpPoolCyclePorts(
+                pool_store=_pool_store(), dataset_loader=governed_dataset_loader(), discovery_loader=discovery_loader)))
         worker = asyncio.create_task(run_controller(controller, stop))
     try:
         yield

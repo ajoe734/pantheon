@@ -283,3 +283,42 @@ freeze／retire 仍使用 `persona_lifecycle_transition`。
 候選核准只留決議，不改 Persona lifecycle、不建立 binding／allocation／rebalance、
 不動 runtime；沒有 consumer 執行新 target。真實資金 canary allocation 必須等正式
 環境開放後另案處理，本任務不授予 L1 canary deployment 權限。
+
+### Agora 委員會與記憶審核恢復（AGORA-COMMITTEE-MEMORY-RESTORE-20261112）
+
+依 persona cycle reconnect 設計 §6.7／D11，恢復已刪除的讀取與 owner 指令入口。
+BFF 不保存 committee、memo、memory 或 quarantine 清單。前端仍由 `execute-plans`
+另行交付；本節記錄 backend source，不代表 hosted 或前端驗收。
+
+| BFF 路由 | 唯一業務 owner 與行為 |
+| --- | --- |
+| `GET /bff/agora/committee/sessions` | Consultation `/api/consult/requests`，只投影同 tenant 的 `persona_panel` |
+| `GET /bff/agora/committee/sessions/{session_id}` | 同 owner request 明細，核對 tenant、request id 與 panel 類型 |
+| `GET /bff/agora/committee/sessions/{session_id}/memos` | Consultation `/api/consult/memos?request_id=...`，先確認 panel 歸屬 |
+| `POST /bff/agora/committee/sessions/{session_id}/memos/{memo_id}/publish` | 先讀回並核對 memo 所屬 panel，再轉既有 Consultation publish；資格檢查、持久化與重試語意由 owner 負責 |
+| `GET /bff/agora/memory` | Memory `/api/memory/retrieve` 加同 persona 的 `/api/memory/trade-lessons`；`scope` 為 persona／institutional／both，persona/both 必填 `persona_id` |
+| `POST /bff/agora/memory/{memory_id}/actions/quarantine` | paper lesson candidate 轉 Memory `/api/memory/trade-lessons/{id}/decide` 的 quarantine，保留 caller、reason、audit receipt 與 Idempotency-Key |
+
+所有入口先做既有 BFF role／tenant admission。Consultation 只使用已配置的 service
+credential 並傳送選定 tenant；缺 credential 不呼叫 owner。Memory 保留已驗證 caller
+bearer（或 browser-session credential），不改用更高權限身分；owner 從 token 取 roles
+並呼叫 Governance。BFF 不以查詢參數宣稱 session persona。回應中的 persona 與所有
+entry tenant 必須吻合；未帶 tenant 的舊 entry 不當成可讀取的私人或機構記憶。
+institutional-only 不讀 lesson candidates。viewer 的 Memory 權限仍由 Memory／
+Governance 決定，不因 BFF 可以讀其他畫面而升權。
+
+Memory owner 目前只有 lesson candidate 的 quarantine 指令，沒有一般 persona／
+institutional entry 的隔離 API。這兩種 kind 回 `unavailable` 與
+`entry_quarantine_not_supported_by_memory_owner`；不新增 owner 端點或本地旗標。
+空 owner 清單以 `status=unavailable` 與 reason 表示，連線、授權、缺資料或契約不符
+以明確 unavailable error 回應並記錄原因，皆為 `fallback_used=false`。不回 seed、
+cache 或編造資料，不啟動模型、交易、binding 或資金寫入。
+
+六個路由已列入 backend route manifest；additive Agora v1.14 bundle 保存新契約與
+SHA-256，舊版 bundle bytes 不變。整合測試沿用 production mounting hook 與 security
+stack，實際執行 Consultation／Memory client、owner HTTP app 與 Governance policy，
+僅替換 HTTP transport；證據見本 task 的 `docs/deployment/evidence/` 目錄。
+
+## 決策卷宗讀取（BFF-DECISION-CASE-FILE-VIEWS-20261113）
+
+OODA 封包詳情 `GET /bff/ooda/packets/{id}` 與 Agora 委員會 `sessions/{id}`、`sessions/{id}/memos` 在回應中加入 `case_file_view`，不新增路由。內容是 owner 已持久化的卷宗（封包紀錄的 `persona_cycle.case_files`、Consultation transcript 的 `panel_case_file_attached` 事件）：每個條目的種類、摘錄、source id、檢索模式，以及每個 claim／決策引用的條目 id；被拒絕的貢獻附 owner 記錄的拒絕原因。BFF 只轉發與投影：沒有卷宗時回 `status=unavailable` 與原因，不補假資料；其他 persona 的私有記憶一律不回傳（封包 persona 與卷宗主體不符、或面板這種共享情境，一律剔除 `persona_private` 條目）。封包詳情不再回傳原始 `persona_cycle.case_files`。

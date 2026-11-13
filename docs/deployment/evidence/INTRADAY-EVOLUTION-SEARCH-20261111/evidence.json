@@ -1,0 +1,38 @@
+{
+  "task": "INTRADAY-EVOLUTION-SEARCH-20261111",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "plan_ref": "DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10 §4 K8; SD_INTRADAY_MINUTE_BARS_2026-11-11 §8-§9 K8",
+  "tracks": {
+    "source": {
+      "status": "implemented_pending_independent_review",
+      "summary": [
+        "ProgramService.execute_action rejects any create_mutation_rule payload (nested keys or expression text) naming bar_frequency/data_frequency/frequency/data_source/source_dataset; program stays unchanged (models.reject_bar_frequency_mutation).",
+        "FamilyTrialCounterStore trial key now family_trial_key(family_id, bar_frequency): daily/undeclared keeps the legacy bare family_id, other frequencies use family_id@frequency. ReplicationGate counts under the declared/evaluated frequency; get_family_trial_count gains optional bar_frequency. Shared store unchanged (key is a plain string).",
+        "seed_data.INTRADAY_SEARCH_DECLARATIONS declares tw_price_1m source with 1m/5m frequencies.",
+        "No new dispatcher/service, no retired route or FinMind daily bypass, no provider/capital action. Replication thresholds and paper admission untouched.",
+        "D1 search path (evolution_search.search_in_sample / judge_child_out_of_sample / run_mutation_decision, main.py pool_member exhaustion read) uses the existing canonical family_trial_key via artifact_trial_key(parameters.bar_frequency) for IS/OOS counting, fallback record_family_trial, verdict before/after and 500-trial exhaustion; daily keeps legacy key. No new store/service; shared_stores unchanged.",
+        "Scheduler/client path: GET /api/research/evolution/families/{family}?bar_frequency= (main.evolution_family_state) reads family_trial_key(family, bar_frequency); PoolOwner.family_state and PoolEvolutionScheduler pass the member's declared parameters.bar_frequency (daily/undeclared keeps the one-arg legacy call). Per-frequency `trials` stay isolated but status/admission use the aggregate family total, so combined cross-frequency exhaustion blocks all frequencies (test_family_state_is_frequency_scoped; test_family_state_frequency.py).",
+        "Caps interpretation unchanged and explicit: 50 variants per decision (pool_member budget) and 500 lifetime trials per family key (FAMILY_LIMIT / >=500 checks). Per-frequency keys isolate accounting only; the O-17 family lifetime cap of 500 is enforced on the aggregate across the bare/daily key and every family@frequency key (FamilyTrialCounterStore.family_total; ReplicationGate.get_family_total_trial_count; evolution_family_state family_total_trials; scheduler and execution admission use it). Family is not redefined as family@frequency; no new counter/store/service. main._ProofCapturingGate delegates get_family_total_trial_count to the real gate (bare-key fallback only for minimal test doubles). Authoritative family definition remains for coordinator/reviewer clarification.",
+        "Reopen repair (P1): ReplicationGate admission deflation now uses the AGGREGATE family trial total (FamilyTrialCounterStore.family_total) after all candidate/screen/control increments, so a first 1m evaluation against 400 prior bare/daily trials gets threshold 1.365589 (not 0.5) and a marginal OOS Sharpe 0.9 is rejected. Frequency-scoped increment is retained as isolated accounting. details now carry trial_count (=aggregate), family_total_trial_count, frequency_trial_count, trial_frequency."
+      ]
+    },
+    "tests": {
+      "status": "passed",
+      "command": "services/research/tests/test_family_state_frequency.py replication/tests/test_gate_intraday.py replication/test_gate.py evolution/tests/test_intraday_frequency_immutable.py alpha_replication/test_evolution_search.py evolution/test_pool_evolution_scheduler.py (+ test_evolution_gate_executor, test_retrain_search_update) via .venv-pantheon",
+      "terminal": {
+        "exit_code": 0,
+        "result": "132 passed + 13 passed; new real-gate regressions: cross-frequency aggregate/marginal rejection, fresh-family threshold 0.5 unchanged"
+      },
+      "gaps": "3 skipped are pre-existing Postgres-backed cases; full research gate/intraday suite not re-run in this task."
+    },
+    "merged": {
+      "status": "not_yet_merged",
+      "required": "Codex canonical review, required CI, supervisor integration"
+    },
+    "hosted": {
+      "status": "not_applicable_source_only",
+      "note": "No provider/VM/deployment action."
+    }
+  }
+}

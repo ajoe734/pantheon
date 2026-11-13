@@ -1,6 +1,12 @@
 -- Governed search and memory retrieval index schema with native FTS and pgvector
 CREATE EXTENSION IF NOT EXISTS vector;
 
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pantheon_retrieval') THEN
+        CREATE ROLE pantheon_retrieval NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS search_retrieval_index (
     id VARCHAR(128) NOT NULL,
     record_kind VARCHAR(64) NOT NULL,
@@ -26,7 +32,8 @@ CREATE TABLE IF NOT EXISTS search_retrieval_index (
     available_time TIMESTAMPTZ,
     relevance_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     embedding vector(1024),
-    tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', regexp_replace(coalesce(title, '') || ' ' || coalesce(search_text, ''), '([\u4e00-\u9fff])', ' \1 ', 'g'))) STORED,
+    lexical_text TEXT NOT NULL DEFAULT '',
+    tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', lexical_text)) STORED,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     version INT NOT NULL DEFAULT 1,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -34,6 +41,22 @@ CREATE TABLE IF NOT EXISTS search_retrieval_index (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (tenant_id, id)
 );
+
+-- This is a disposable projection. Old unigram indexes must be rebuilt from
+-- owner stores, never retokenized in SQL with different segmentation rules.
+ALTER TABLE search_retrieval_index ADD COLUMN IF NOT EXISTS lexical_text TEXT NOT NULL DEFAULT '';
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'search_retrieval_index' AND column_name = 'tsv'
+          AND generation_expression LIKE '%regexp_replace%'
+    ) THEN
+        ALTER TABLE search_retrieval_index DROP COLUMN tsv;
+        ALTER TABLE search_retrieval_index ADD COLUMN tsv tsvector
+            GENERATED ALWAYS AS (to_tsvector('simple', lexical_text)) STORED;
+    END IF;
+END $$;
 
 -- Lexical Full-Text Search Index (GIN)
 CREATE INDEX IF NOT EXISTS idx_search_retrieval_tsv
@@ -71,3 +94,65 @@ USING (
     AND current_setting('pantheon.current_tenant', true) IS NOT NULL
     AND current_setting('pantheon.current_tenant', true) != ''
 );
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON search_retrieval_index TO pantheon_retrieval;
+
+-- Retrieval query log: one row per query served on the hybrid backend.
+-- Written only by the search service request path; there is no seed or
+-- synthetic writer. every query by a persona is persona_private (independent of hits) and keeps
+-- its persona scope under RLS; labels inherit the parent row's visibility.
+CREATE TABLE IF NOT EXISTS retrieval_query_log (
+    query_log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    persona_id VARCHAR(64),
+    workspace_id VARCHAR(64),
+    persona_private BOOLEAN NOT NULL DEFAULT FALSE,
+    request_id TEXT NOT NULL,
+    query_text TEXT NOT NULL,
+    caller_decision_type TEXT,
+    source_event_id TEXT,
+    attribution_missing_reason TEXT,
+    retrieval_mode VARCHAR(32) NOT NULL,
+    model_name TEXT NOT NULL,
+    returned_ids TEXT[] NOT NULL DEFAULT '{}',
+    returned_source_event_ids TEXT[] NOT NULL DEFAULT '{}',
+    latency_ms DOUBLE PRECISION NOT NULL,
+    origin VARCHAR(32) NOT NULL DEFAULT 'live_request' CHECK (origin = 'live_request'),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_retrieval_query_log_recorded
+    ON retrieval_query_log (tenant_id, recorded_at);
+
+CREATE TABLE IF NOT EXISTS retrieval_query_labels (
+    query_log_id UUID NOT NULL REFERENCES retrieval_query_log(query_log_id),
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    source_event_id TEXT NOT NULL,
+    labelled_by TEXT NOT NULL,
+    labelled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (query_log_id, source_event_id)
+);
+
+ALTER TABLE retrieval_query_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE retrieval_query_log FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS query_log_scope_policy ON retrieval_query_log;
+CREATE POLICY query_log_scope_policy ON retrieval_query_log
+FOR ALL
+USING (
+    tenant_id = current_setting('pantheon.current_tenant', true)
+    AND current_setting('pantheon.current_tenant', true) <> ''
+    AND (persona_private = FALSE
+         OR persona_id = NULLIF(current_setting('pantheon.current_persona', true), ''))
+);
+ALTER TABLE retrieval_query_labels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE retrieval_query_labels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS query_label_scope_policy ON retrieval_query_labels;
+CREATE POLICY query_label_scope_policy ON retrieval_query_labels
+FOR ALL
+USING (tenant_id = current_setting('pantheon.current_tenant', true)
+       AND current_setting('pantheon.current_tenant', true) <> ''
+       -- A label is visible only if its parent log row is (log RLS applies here).
+       AND EXISTS (SELECT 1 FROM retrieval_query_log l
+                   WHERE l.query_log_id = retrieval_query_labels.query_log_id));
+
+GRANT SELECT, INSERT ON retrieval_query_log TO pantheon_retrieval;
+GRANT SELECT, INSERT ON retrieval_query_labels TO pantheon_retrieval;

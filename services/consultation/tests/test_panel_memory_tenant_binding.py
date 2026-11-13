@@ -2,6 +2,7 @@ import json
 import urllib.request
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from services.consultation.tests.test_persona_panel_integration import _serve
 from services.consultation.tests.test_persona_own_agent_routing import (
@@ -14,7 +15,7 @@ from consultation_provider import (
 )
 
 
-def _turn(tmp_path, monkeypatch, *, source_tenant, scope, sentinel):
+def _turn(tmp_path, monkeypatch, *, source_tenant, scope, sentinel, reader_override=None):
     for key, value in {
         'PANTHEON_MEMORY_AUTH_MODE': 'strict',
         'PANTHEON_MEMORY_JWT_SECRET': JWT_SECRET,
@@ -39,6 +40,8 @@ def _turn(tmp_path, monkeypatch, *, source_tenant, scope, sentinel):
             relevance_scope=scope, content={'summary': sentinel}),
     )
     assert seed.status_code == 201, seed.text
+    for key, value in (reader_override or {}).items():
+        monkeypatch.setenv(key, value)
     fake = _Fake(answer_as=persona_id)
     with _serve(memory_main.app) as memory_url:
         monkeypatch.setenv('PANTHEON_MEMORY_API_URL', memory_url)
@@ -55,11 +58,13 @@ def _turn(tmp_path, monkeypatch, *, source_tenant, scope, sentinel):
                   'request': {'tenant_id': TENANT, 'request_id': 'req-own',
                               'participant': {'persona_id': persona_id,
                                               'role': 'risk_reviewer',
-                                              'agent': 'persona_own_agent'}}})
+                                              'agent': 'persona_own_agent'},
+                              'case_file': {'lesson_query': {
+                                  'query': 'momentum 2330 equity trial admission'}}}})
     return resp, fake
 
 
-SENTINEL = 'COMMITTEE-SENTINEL recent lessons preferences risks institutional context persona'
+SENTINEL = 'COMMITTEE-SENTINEL momentum 2330 equity trial admission'
 
 
 def test_default_reader_never_injects_another_tenants_memory(tmp_path, monkeypatch):
@@ -78,6 +83,20 @@ def test_default_reader_injects_same_tenant_committee_memory(tmp_path, monkeypat
 def test_default_reader_excludes_same_tenant_private_memory(tmp_path, monkeypatch):
     resp, fake = _turn(tmp_path, monkeypatch, source_tenant=TENANT,
                        scope='persona_private', sentinel=SENTINEL)
+    assert not any(SENTINEL in p for p in fake.prompts)
+
+
+@pytest.mark.parametrize("override", [
+    {"PANTHEON_MEMORY_AUTH_TOKEN": ""},
+    {"PANTHEON_MEMORY_AUTH_TOKEN": _make_jwt(tenant_id=TENANT, roles=["researcher"])},
+    {"PANTHEON_MEMORY_ACTOR_ID": "unverified-actor"},
+], ids=["missing-credential", "role-exceeds-token", "actor-differs-from-token"])
+def test_environment_context_cannot_grant_memory_authority(tmp_path, monkeypatch, override):
+    resp, fake = _turn(tmp_path, monkeypatch, source_tenant=TENANT,
+                       scope="persona_and_committee", sentinel=SENTINEL,
+                       reader_override=override)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["contribution"]["event_content"]["committee_memory_status"] == "unavailable"
     assert not any(SENTINEL in p for p in fake.prompts)
 
 

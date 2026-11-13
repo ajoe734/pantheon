@@ -510,7 +510,8 @@ def test_required_loop_workers_includes_agora_interaction_worker() -> None:
     array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
     required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
 
-    assert len(required) == 28
+    assert len(required) == 29
+    assert "retrieval-postgres" in required
     assert "agora-interaction-worker" in required
     assert "policy-learning-svc" in required
     assert "operator-bff" in required
@@ -3150,11 +3151,13 @@ def test_source_refresh_restore_env_mode_key_presence_and_wrong_env(tmp_path):
     (tmp_path / "c").mkdir()
     added, _c, _s = _run_refresh_runtime(tmp_path / "c", tag_id=baseline, running=baseline, action="restore",
                                          post_extra="SOURCE_INGEST_CONTROLLER_MODE=reconcile_only")
-    assert added.returncode != 0 and "added=['SOURCE_INGEST_CONTROLLER_MODE=reconcile_only']" in added.stderr
+    assert added.returncode != 0 and "added=['SOURCE_INGEST_CONTROLLER_MODE']" in added.stderr
+    assert "reconcile_only" not in added.stdout + added.stderr
     # Unrelated env drift is still rejected.
     (tmp_path / "d").mkdir()
     drift, _c, _s = _run_refresh_runtime(tmp_path / "d", tag_id=baseline, running=baseline, action="restore", post_extra="EVIL=1")
-    assert drift.returncode != 0 and "EVIL=1" in drift.stderr
+    assert drift.returncode != 0 and "added=['EVIL']" in drift.stderr
+    assert "EVIL=1" not in drift.stdout + drift.stderr
 
 
 def test_bff_adoption_gate_requires_root_deploy_for_paper_capital_reader_services() -> None:
@@ -3218,7 +3221,10 @@ def test_collector_host_gate_steady_restore_and_refresh_guard() -> None:
     assert 'sys.argv[2].startswith("collector-")' in text
     assert "if hosts != {collector}" in text
     assert '"allowlist" if steady_host else "deny"' in text
-    assert 'PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}"' in text
+    assert (
+        'info "captured source-ingest environment is missing; refusing unverified restore" >&2\n'
+        '      restore_rc=1'
+    ) in text
     # Official bounded refresh host sets are unchanged.
     assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in text
     assert 'required = {"openapi.taifex.com.tw", "www.taifex.com.tw"}' in text

@@ -569,6 +569,52 @@ return a bare `[]`. The unavailable condition is explicit in
 | `/bff/strategies`, `/bff/strategies/{strategy_id}` | Strategy registry specs (`research_knowledge_source`) + latest ranking snapshot (`ports/rankings.py`, `rankings.rankings`) | Strategy DTOs expose owner-backed `pnl` (absolute currency value, never converted to percentage), `drawdown` (dimensionless peak-to-trough ratio in `[0.0, 1.0]`), `totalTrades`, `metricsAsOf` (`latest_telemetry_at`), `metricsResolution` (`"fresh"`, `"missing"`, `"ambiguous"`, or `"unavailable"`), and `metricsPersonaId` matched once per request through `strategy_ids` gated by `telemetry_resolution != "missing"` (never by `stage`). `pnl30d` and `sharpe` are always `null` (`None`) because no owner computes a 30-day window or Sharpe ratio on this path; `POST /bff/strategies` and `PATCH /bff/strategies/{strategy_id}` cannot default or set `pnl30d`, `sharpe`, or `drawdown`. `capitalPoolId` falls back to registry `metadata.capital_pool_id` when `execution_profile`, `governance`, and `summary` lookups are empty, and is `""` only when the owner has none | `viewer` (read) / `operator` (write) |
 | `/bff/artifacts`, `/bff/artifacts/{artifact_id}` | Registry strategy-artifacts catalog (`GET /api/registry/strategy-artifacts`, `GET /api/registry/strategy-artifacts/{artifact_id}`) + Research run outputs (`research/client.py` `list_research_artifacts`, `get_research_artifact`) | `/bff/artifacts` merges tenant-scoped Registry `execution_bundle` rows (`source_kind: "registry"`, `kind: "execution_bundle"`) with Research run outputs (`source_kind: "research_run_output"`) sorted newest first (`updatedAt` descending); every row carries owner-backed `id`, `name`, `kind`, `version`, `state`, `risk`, `hash`, `owner`, `updatedAt`, and `source_kind` (with `version`, `state`, and `risk` kept `null` on Research run outputs). `strategy_spec` rows are excluded. When one owner read fails, the surviving source is returned with `meta.surfaces.artifact_list.status: "degraded"` naming the failed source (`failed_source` / `failed_sources`) and `page_info.total: null` (`total_complete: false`); when both fail, `meta.surfaces.artifact_list.status: "unavailable"`. `/bff/artifacts/{artifact_id}` resolves either a Registry `registry_id` (respecting tenant scope) or a Research `artifact_id` and returns 404 for unknown or cross-tenant IDs. `/api/v1/research/artifacts` remains Research-only | `viewer` |
 
+#### Persona strategy pool detail (BFF-PERSONA-POOL-VIEWS-20261112)
+
+`GET /bff/personas/{persona_id}` and
+`GET /api/v1/operator/persona-management/{persona_id}` add `data.strategyPool`.
+Both resolve the authenticated tenant and refuse a foreign persona with 404
+before reading its pool, cycles or demands. Existing read-role checks apply.
+Both handlers call `PersonaService.read_strategy_pool`; the existing application
+service binds `PersonaPoolViewsPort` to its cycle read owner and forwards the
+caller authorization, tenant and snapshot time. Routes do not access stores.
+
+| Field | Owner and semantics | `meta.surfaces` key |
+|---|---|---|
+| `current` | Persona `GET /api/personas/{id}/strategy-pool`; complete immutable version, digest and members (`artifact_ref`, `checksum`, `stage`, `risk_weight`, `baseline_ref`, lineage and removal fields) | `strategy_pool` |
+| `versions` | Persona `GET /api/personas/{id}/strategy-pool/versions` → `versions`; every version remains tenant/persona scoped | `strategy_pool_versions` |
+| `memberVirtualBooks` | Latest paper daily cycle's `persona_cycle.observe_bundle.books`, joined by exact artifact and checksum; each row includes member stage, weight, baseline reference, `status`, `reason`, and the unchanged owner `book`, including `net_of_costs` and baseline comparison when present | `member_virtual_books` |
+| `health` | Latest cycle's owner-computed `observe_bundle.pool_health`: `gross_utilisation`, `drawdown_utilisation`, `effective_bets`, `idle_day_share`, observation window and demand reasons; owner `unknown` values and reasons remain unknown | `pool_health` |
+| `cycles` | Existing OODA owner port; latest 20 paper persona-cycle records, newest first, with packet ID, timestamps, status, phase, failure reason, decisions and `pool_autonomy`; private prompts, case files and staged memory are excluded | `autonomy_cycles` |
+| `openDemands` | Research `GET /api/research/persona-demands?persona_id={id}&status=open`; original demand records | `open_demands` |
+
+Pool and Research HTTP reads forward caller authorization and the authenticated
+tenant, with a maximum two-second timeout per read (or remaining request budget).
+They use `PANTHEON_PERSONA_API_URL` / `PANTHEON_RESEARCH_API_URL`, falling back to
+the respective `*_SERVICE_URL`. Cycles prefer an injected OODA owner port. When
+the production default port is unconfigured, this adapter binds the existing
+Persona owner's shared record path (`PANTHEON_BFF_OODA_PACKET_STORE`, otherwise
+`PANTHEON_OODA_DATA_DIR` / `PANTHEON_CONTROL_PLANE_DATA_DIR` + `ooda_packets.jsonl`)
+through the Persona owner's read-only decoder. Missing files remain unavailable;
+no default repository path or new record store is created.
+BFF performs no portfolio calculations, owner writes, seed creation or
+paper/live transitions.
+
+Book metrics and health are **observations from the latest daily cycle**, not a
+new live telemetry evaluation. Their surfaces carry `packet_id` and `observed_at`;
+the observation must name the same tenant, persona, pool version and digest as
+`current`. A mismatched or missing latest observation is unavailable; an older
+observation is never silently substituted. Book metrics require matching member
+identity/checksum, provenance, complete marks and owner net-cost metrics.
+
+Each section has `status`, `source`, `reason`, and `snapshot_at` in its surface.
+An unconfigured, failed, malformed or misscoped owner yields a `null` section and
+`status: unavailable`, with a sanitized reason; independent sections still return.
+An individual missing/incomplete/mismatched book remains an identified member
+row with `book: null` and `status: unavailable`; the book surface is unavailable.
+Successful empty cycle/demand lists are `[]`, distinguished from an unavailable
+owner. Missing members, baselines, health inputs or returns are never fabricated.
+
 ### 10.1.2 BFF Management Endpoints (BFFGAP-CONSOLE Series)
 
 Endpoints in the `/bff/management/` namespace are BFF-only composite read views served
@@ -879,6 +925,7 @@ Research orchestrator tasks (`research.research_tasks`) and their execution runs
 
 - **Verified caller auth and tenant isolation**: Uses the same caller auth and `bound_tenant` helper as `ports/job_read.py` (`verified_caller_tenant`). A task's tenant is read from top-level `tenant_id` or `constraints.tenant_id`. Tasks with neither tenant field are returned to no caller and counted in `meta.excluded_unscoped_count`. Missing tasks, unscoped tasks, and tasks belonging to another tenant return the same non-disclosing `404 RESOURCE_NOT_FOUND` on `GET /bff/research-tasks/{task_id}`.
 - **Item projection**: Each item carries `id`, `task_id`, `name` (falling back from `title` to `objective` to `task_id`), `objective`, `status` (exact owner status, never cast to the experiment state machine), `created_by`, `created_at`, `updated_at`, `run_count`, and `latest_run` (`run_id`, `adapter`, `dispatch_mode`, `status`). Stub runs report their real `adapter` and `dispatch_mode` and are never labelled as real executions.
+- **Collector query plan proposals (`COLLECTOR-DEMAND-QUERY-PLAN-R2-20261112`)**: Tasks with owner `task_type = "collector_query_plan"` additionally carry a read-only `query_plan` object (revision, matched fixed-vocabulary terms, and the exact `fetch-policy.json` diff it would apply). It is derived deterministically from open persona demands only (no model output, no fetched text), never touches social sources, and is applied only via a reviewed PR to `fetch-policy.json`. Other tasks omit `query_plan`.
 - **Degradation contract**: Unconfigured `PANTHEON_RESEARCH_ORCHESTRATOR_API_URL` or owner HTTP failure on `GET /bff/research-tasks` returns `meta.surfaces.research_tasks.status = "unavailable"` (never an empty `"ok"` success); a healthy owner with zero tasks returns `status = "ok"`.
 
 ---

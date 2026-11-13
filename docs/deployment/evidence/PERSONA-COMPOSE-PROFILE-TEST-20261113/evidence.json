@@ -1,0 +1,7 @@
+{
+  "task": "PERSONA-COMPOSE-PROFILE-TEST-20261113",
+  "change": "Added `--profile core` to the docker compose config render call in test_rendered_compose_gives_persona_the_bff_jwt_verifier_config; assertions unchanged.",
+  "persona_profiles": ["core", "root"],
+  "positive": {"command": "pytest services/persona/test_lifecycle_approval_verifier.py -q", "result": "16 passed"},
+  "negative": {"method": "temporarily deleted PERSONA_JWT_SECRET/ISSUER/AUDIENCE lines (1828-1830) from docker-compose.yml, then restored", "result": "test failed with KeyError: 'PERSONA_JWT_SECRET'", "compose_restored": true}
+}

@@ -81,6 +81,7 @@ def test_search_dockerfile_exposes_service_port_and_uses_service_requirements() 
 
     assert "COPY services/search/requirements.lock /tmp/requirements.lock" in dockerfile
     assert "RUN pip install --no-cache-dir -r /tmp/requirements.lock" in dockerfile
+    assert any(line.startswith("ranx==") for line in requirements)
     assert "ENV PORT=8098" in dockerfile
     assert "EXPOSE 8098" in dockerfile
     assert "uvicorn services.search.main:app" in dockerfile
@@ -109,6 +110,14 @@ def test_unaccepted_candidate_cannot_activate_product_search(
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(dsn_variable, "postgresql://candidate.invalid/retrieval")
     monkeypatch.setenv("PANTHEON_SEARCH_BACKEND", "postgres_pgvector")
+    original_read = Path.read_text
+
+    def read_contract(path, *args, **kwargs):
+        if path.name == "backend-contract.json":
+            return '{"accepted": false, "activation_allowed": false}'
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_contract)
     for name, filename in (
         ("SEARCH_INDEX_STORE_PATH", "index.jsonl"),
         ("SEARCH_EVIDENCE_STORE_PATH", "evidence.jsonl"),
@@ -145,15 +154,16 @@ def test_unaccepted_candidate_cannot_activate_product_search(
     with TestClient(product_module.create_app(durable_index_only=True)) as client:
         health = client.get("/health")
         assert health.status_code == 200
-        assert health.json()["capabilities"]["keyword"]["ranker_version"] == "keyword-v1"
+        assert health.json()["retrieval"]["reason"] == "retrieval_contract_unaccepted"
+        assert client.get("/readyz").status_code == 503
         refresh = client.post("/api/search/index/refresh", json={"force_full": True})
         assert refresh.status_code == 200
         query = client.post("/api/search/query", json={
             "query": "momentum",
             "access_context": {"persona_id": "persona-test", "workspace_id": "workspace-test"},
         })
-        assert query.status_code == 200
-        assert query.json()["results"] == []
+        assert query.status_code == 501
+        assert query.headers["X-Retrieval-Reason"] == "retrieval_contract_unaccepted"
 
     assert attempted_candidate_imports == []
     candidate.assert_not_called()

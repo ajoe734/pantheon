@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from .usefulness import marked_payload, usefulness_score
 
 
 def utc_now() -> str:
@@ -40,8 +41,8 @@ def _format_utc_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _entry_sort_key(entry: "InstitutionalMemoryEntry") -> tuple[int, datetime]:
-    return (entry.reuse_count, _parse_utc_timestamp(entry.written_at))
+def _entry_sort_key(entry: "InstitutionalMemoryEntry") -> tuple[float, datetime]:
+    return (usefulness_score(entry), _parse_utc_timestamp(entry.written_at))
 
 
 class InstitutionalMemoryError(ValueError):
@@ -106,6 +107,8 @@ class InstitutionalMemoryEntry:
     expires_at: Optional[str] = None
     archived_at: Optional[str] = None
     archived_reason: Optional[str] = None
+    usefulness_marks: Dict[str, Any] = field(default_factory=dict)
+    memory_review: Optional[Dict[str, Any]] = None
     reuse_count: int = 0
     tenant_id: Optional[str] = None
 
@@ -274,6 +277,7 @@ class InstitutionalMemoryStore:
                 raise InstitutionalMemoryError(f"Entry already exists: {entry.entry_id}")
             self._entries[entry.entry_id] = entry
             self._save()
+            self._project(entry)
             return entry
 
     def get(self, entry_id: str) -> Optional[InstitutionalMemoryEntry]:
@@ -338,6 +342,15 @@ class InstitutionalMemoryStore:
         ]
         return sorted(matches, key=lambda entry: entry.entry_id)
 
+    def mark_usefulness(self, entry_id: str, mark: dict) -> InstitutionalMemoryEntry:
+        with self._lock:
+            entry = self._require_unlocked(entry_id)
+            updated = InstitutionalMemoryEntry(**marked_payload(entry, mark))
+            self._entries[entry_id] = updated
+            self._save()
+            self._project(updated)
+            return updated
+
     def mark_reused(self, entry_id: str, count: int = 1) -> InstitutionalMemoryEntry:
         if count <= 0:
             raise InstitutionalMemoryError("count must be >= 1")
@@ -358,6 +371,7 @@ class InstitutionalMemoryStore:
             )
             self._entries[entry_id] = updated
             self._save()
+            self._project(updated)
             return updated
 
     def archive_expired(
@@ -384,7 +398,27 @@ class InstitutionalMemoryStore:
                 archived.append(updated)
             if archived:
                 self._save()
+                for entry in archived:
+                    self._project(entry)
         return archived
+
+    @staticmethod
+    def _project(entry) -> None:
+        from .search_retrieval import sync_memory_projection
+        sync_memory_projection(entry)
+
+    def archive(self, entry_id: str, *, reason: str) -> InstitutionalMemoryEntry:
+        if not reason.strip():
+            raise ValueError("archive reason is required")
+        with self._lock:
+            entry = self._require_unlocked(entry_id)
+            updated = InstitutionalMemoryEntry(**{**entry.to_dict(),
+                "archived_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "archived_reason": reason})
+            self._entries[entry_id] = updated
+            self._save()
+            self._project(updated)
+            return updated
 
     def retrieve(
         self,
@@ -421,13 +455,13 @@ class InstitutionalMemoryStore:
             if query_terms or normalized_tags:
                 if matched_terms == 0 and matched_tags == 0:
                     continue
-            score = float(matched_terms * 10 + matched_tags * 5 + entry.reuse_count)
+            score = float(matched_terms * 10 + matched_tags * 5 + usefulness_score(entry))
             hits.append(RetrievalHit(entry=entry, relevance_score=score))
 
         hits.sort(
             key=lambda hit: (
                 hit.relevance_score,
-                hit.entry.reuse_count,
+                usefulness_score(hit.entry),
                 _parse_utc_timestamp(hit.entry.written_at),
             ),
             reverse=True,
@@ -507,13 +541,45 @@ class PostgresInstitutionalMemoryStore(InstitutionalMemoryStore):
             active_only=active_only,
         )
 
+    def mark_usefulness(self, entry_id: str, mark: dict) -> InstitutionalMemoryEntry:
+        for _ in range(8):
+            raw = self._records.get(entry_id)
+            if raw is None:
+                raise ValueError("usefulness_entry_unavailable")
+            entry = InstitutionalMemoryEntry.from_dict(raw)
+            updated = InstitutionalMemoryEntry(**marked_payload(entry, mark))
+            committed, _ = self._records.compare_and_set(entry_id, raw, updated.to_dict())
+            if committed:
+                self._project(updated)
+                return updated
+        raise ValueError("concurrent_usefulness_update")
+
     def mark_reused(self, entry_id: str, count: int = 1) -> InstitutionalMemoryEntry:
-        self._refresh_from_postgres()
-        return super().mark_reused(entry_id, count=count)
+        # A retrieval counter must not overwrite a concurrent usefulness mark.
+        if count <= 0:
+            raise InstitutionalMemoryError("count must be >= 1")
+        for _ in range(8):
+            raw = self._records.get(entry_id)
+            if raw is None:
+                raise InstitutionalMemoryError("Entry not found")
+            entry = InstitutionalMemoryEntry.from_dict(raw)
+            updated = InstitutionalMemoryEntry(**{**entry.to_dict(), "reuse_count": entry.reuse_count + count})
+            committed, _ = self._records.compare_and_set(entry_id, raw, updated.to_dict())
+            if committed:
+                return updated
+        raise InstitutionalMemoryError("concurrent_reuse_update")
 
     def supersede(self, entry_id: str, replacement_entry_id: str) -> InstitutionalMemoryEntry:
         self._refresh_from_postgres()
         return super().supersede(entry_id, replacement_entry_id)
+
+    def archive(self, entry_id: str, *, reason: str) -> InstitutionalMemoryEntry:
+        self._refresh_from_postgres()
+        return super().archive(entry_id, reason=reason)
+
+    def archive_expired(self, *, now=None, reason=None):
+        self._refresh_from_postgres()
+        return super().archive_expired(now=now, reason=reason)
 
     def _save(self) -> None:
         for entry in self._entries.values():

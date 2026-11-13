@@ -931,7 +931,7 @@ def test_taifex_contract_roll_and_calendar_policy(tmp_path) -> None:
     assert store.get_watermark(TAIFEX_DERIVATIVES_CONNECTOR_ID).value == "2026-06-17"
 
 
-def test_tdcc_and_taifex_evidence_and_search_canary_readback(tmp_path) -> None:
+def test_tdcc_and_taifex_evidence_and_search_canary_readback(tmp_path, monkeypatch) -> None:
     """Validate durable source->evidence->search canary readback for TDCC and TAIFEX."""
     from pathlib import Path
     from services.knowledge.evidence import (
@@ -940,6 +940,7 @@ def test_tdcc_and_taifex_evidence_and_search_canary_readback(tmp_path) -> None:
         InMemoryEvidenceRepository,
         JsonlEvidenceRepository,
     )
+    monkeypatch.setenv("PANTHEON_SEARCH_BACKEND", "jsonl")  # explicit non-production fallback
     from services.search.main import create_app as create_search_app
     from services.source_ingestion.connectors import (
         TaifexDerivativesChipAdapter,

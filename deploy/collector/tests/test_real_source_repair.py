@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from collector_stack.config import DEFAULT_POLICY_PATH, CollectorConfigError, load_collector_config
+from collector_stack.config import DEFAULT_POLICY_PATH, CollectorConfigError, load_collector_config, validate_collector_config
 from collector_stack.fetchers import FixtureTransport
 from collector_stack.pollers import (
     DEFAULT_GEMINI_MODEL,
     CbcMacroPoller,
-    GdeltDocPoller,
+    GdeltRawFeedPoller,
     gemini_endpoint_url,
 )
 from collector_stack.runner import CollectorRunner
@@ -73,43 +73,21 @@ def test_instagram_skips_incomplete_node_and_percent_encodes_tag(fixtures_dir: P
     assert all(ord(ch) < 128 for call in transport.calls for ch in call["url"])
 
 
-def test_gdelt_waits_five_seconds_between_requests_and_query_is_encoded() -> None:
-    policy = _config().get_source("collector-gdelt")
-    assert policy.min_interval_seconds >= 5.0
-    transport = FixtureTransport()
-    transport.register("https://api.gdeltproject.org/api/v2/doc/doc", b'{"articles": []}')
-    slept: list[float] = []
-    poller = GdeltDocPoller(policy, transport=transport)
-    poller.fetcher.sleep_fn = slept.append
-    poller.collect(query='"Taiwan stock" 台股', fetched_at="2026-11-10T00:00:00Z")
-    poller.collect(query="Taiwan", fetched_at="2026-11-10T00:00:00Z")
-    assert slept == [policy.min_interval_seconds]
-    assert all(ord(ch) < 128 for call in transport.calls for ch in call["url"])
-
-
-def test_gdelt_plain_text_rate_limit_body_does_not_crash() -> None:
-    policy = _config().get_source("collector-gdelt")
-    transport = FixtureTransport()
-    transport.register(
-        "https://api.gdeltproject.org/api/v2/doc/doc", b"Please limit requests to one every 5 seconds"
-    )
-    poller = GdeltDocPoller(policy, transport=transport)
-    assert poller.collect(fetched_at="2026-11-10T00:00:00Z") == []
-    assert poller.skipped_count == 1
-
-
-def test_default_fetcher_sleep_really_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gdelt_index_and_download_keep_five_second_interval(tmp_path, fixtures_dir, monkeypatch):
     import time
-
-    calls: list[float] = []
-    monkeypatch.setattr(time, "sleep", calls.append)
+    slept = []
+    monkeypatch.setattr(time, "sleep", slept.append)
     policy = _config().get_source("collector-gdelt")
     transport = FixtureTransport()
-    transport.register("https://api.gdeltproject.org/api/v2/doc/doc", b'{"articles": []}')
-    poller = GdeltDocPoller(policy, transport=transport)
-    poller.collect(fetched_at="2026-11-10T00:00:00Z")
-    poller.collect(fetched_at="2026-11-10T00:00:00Z")
-    assert calls == [5.0]
+    feed = fixtures_dir / "gdelt_feed_recorded"
+    transport.register("https://data.gdeltproject.org/gdeltv2/lastupdate.txt",
+                       (feed / "masterfilelist-excerpt.txt").read_bytes())
+    transport.register("https://data.gdeltproject.org/gdeltv2/20261113110000.export.CSV.zip",
+                       (feed / "20261113110000.export.CSV.zip").read_bytes())
+    poller = GdeltRawFeedPoller(policy, transport=transport, cache_dir=tmp_path)
+    assert len(poller.collect()) == 3
+    assert slept == [5.0]
+    assert all(call["fetcher_kind"] == "http" for call in transport.calls)
 
 
 def test_dgbas_is_disabled_with_recorded_reason() -> None:

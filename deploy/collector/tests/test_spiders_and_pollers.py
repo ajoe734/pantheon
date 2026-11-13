@@ -17,7 +17,7 @@ from collector_stack.config import (
 )
 from collector_stack.fetchers import FixtureTransport
 from collector_stack.pollers import (
-    GdeltDocPoller,
+    GdeltRawFeedPoller,
     RssHubNewsPoller,
     YouTubeDataApiPoller,
 )
@@ -80,10 +80,11 @@ def _build_fixture_transport(fixtures_dir: Path) -> FixtureTransport:
         "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes",
         (fixtures_dir / "tpex_daily_quotes_20261110.json").read_bytes(),
     )
-    transport.register(
-        "https://api.gdeltproject.org/api/v2/doc/doc",
-        (fixtures_dir / "gdelt_doc.json").read_bytes(),
-    )
+    feed_dir = fixtures_dir / "gdelt_feed_recorded"
+    transport.register("https://data.gdeltproject.org/gdeltv2/lastupdate.txt",
+                       (feed_dir / "masterfilelist-excerpt.txt").read_bytes())
+    transport.register("https://data.gdeltproject.org/gdeltv2/20261113110000.export.CSV.zip",
+                       (feed_dir / "20261113110000.export.CSV.zip").read_bytes())
     transport.register(
         "https://api.db.nomics.world/v22/series/",
         (fixtures_dir / "dbnomics_series.json").read_bytes(),
@@ -258,11 +259,6 @@ def test_source_specific_guardrails_gdelt_youtube_rsshub_and_books(
 ) -> None:
     config = load_collector_config(DEFAULT_POLICY_PATH, env={})
     transport = _build_fixture_transport(fixtures_dir)
-
-    # GDELT refuses > 250 records per call
-    gdelt = GdeltDocPoller(config.get_source("collector-gdelt"), transport=transport)
-    with pytest.raises(CollectorConfigError, match="250"):
-        gdelt.collect(max_records=500)
 
     # YouTube refuses captions.download
     yt = YouTubeDataApiPoller(
@@ -452,3 +448,251 @@ def test_timer_covers_window_in_taipei_time() -> None:
     assert "Asia/Taipei" in timer and "14:40" in timer and "17:00:00" in timer and "Mon..Fri" in timer
     service = (SYSTEMD / "pantheon-collector-close.service").read_text(encoding="utf-8")
     assert "capture-close" in service and "SuccessExitStatus=2" in service
+
+
+def test_rsshub_news_pubdate_is_emitted_as_canonical_utc_iso_and_raw_bytes_keep_the_literal(
+    tmp_path: Path,
+) -> None:
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    base = config.get_source("collector-news-rss").base_urls[0].rstrip("/")
+
+    def item(guid: str, pub: str) -> str:
+        return f"<item><guid>{guid}</guid><title>t</title><link>https://x.test/{guid}</link><pubDate>{pub}</pubDate></item>"
+
+    xml = (
+        "<rss><channel>"
+        + item("a", "Wed, 11 Nov 2026 04:37:00 GMT")
+        + item("b", "Wed, 11 Nov 2026 12:37:00 +0800")
+        + item("c", "2026-11-11T04:37:00Z")
+        + item("d", "Wed, 11 Nov 2026 04:37:00")
+        + "</channel></rss>"
+    )
+    transport = FixtureTransport()
+    transport.register(f"{base}/cna/aall", xml.encode())
+    news = RssHubNewsPoller(config.get_source("collector-news-rss"), transport=transport)
+    got = {i.item_id: i for i in news.collect(fetched_at="2026-11-12T00:00:00Z")}
+    assert got["news-cna-a"].published_at == "2026-11-11T04:37:00Z"
+    assert got["news-cna-b"].published_at == "2026-11-11T04:37:00Z"
+    assert got["news-cna-c"].published_at == "2026-11-11T04:37:00Z"
+    # no provable zone: left as-is so the verified reader keeps failing truthfully
+    assert got["news-cna-d"].published_at == "Wed, 11 Nov 2026 04:37:00"
+    assert b"Wed, 11 Nov 2026 04:37:00 GMT" in got["news-cna-a"].raw_bytes
+
+
+def test_rss_pub_iso_rejects_malformed_offsets_and_trailing_text_unchanged() -> None:
+    from collector_stack.pollers import _rss_pub_iso
+
+    for bad in ("Tue, 10 Nov 2026 01:00:00 +080", "Tue, 10 Nov 2026 01:00:00 +1260",
+                "Tue, 10 Nov 2026 01:00:00 GMT trailing", "Wed, 10 Nov 2026 01:00:00 GMT",
+                "Tue, 10 Nov 2026 01:00:00 -0000"):
+        assert _rss_pub_iso(bad) == bad
+    assert _rss_pub_iso("Tue, 10 Nov 2026 09:00:00 +0800") == "2026-11-10T01:00:00Z"
+    assert _rss_pub_iso("Tue, 10 Nov 2026 01:00:00 GMT") == "2026-11-10T01:00:00Z"
+
+
+@pytest.mark.parametrize(("sid", "fixture", "parameter"), [
+    ("collector-paper-arxiv", "arxiv_query_recorded.xml", "search_query"),
+    ("collector-paper-openalex", "openalex_search_recorded.json", "search"),
+])
+def test_recorded_query_shapes_through_real_runner(tmp_path, fixtures_dir, test_hasher, sid, fixture, parameter):
+    from urllib.parse import parse_qs, urlparse
+    from collector_stack.pollers import _policy_query
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    transport = FixtureTransport()
+    policy = config.get_source(sid)
+    metadata_path = Path(__file__).resolve().parents[3] / "docs/deployment/evidence/COLLECTOR-DEMAND-QUERY-PLAN-R2-20261112/recorded-responses.json"
+    metadata = next(r for r in json.loads(metadata_path.read_text()) if r["file"] == fixture)
+    recorded = (fixtures_dir / fixture).read_bytes()
+    import hashlib
+    assert hashlib.sha256(recorded).hexdigest() == metadata["sha256"]
+    transport.register(metadata["url"], recorded)
+    runner = CollectorRunner(config, root_dir=tmp_path, hasher=test_hasher, transport=transport)
+    outcome = runner.run_source(sid, run_id="query-shape-" + sid, started_at="2026-11-13T09:00:00Z", allow_disabled=True)
+    assert outcome.status == "complete"
+    query = parse_qs(urlparse(transport.calls[0]["url"]).query)[parameter][0]
+    assert query == _policy_query(policy, arxiv=(sid == "collector-paper-arxiv"))
+    assert outcome.bundle.items_path.read_text().strip()
+
+
+@pytest.mark.parametrize("sid", ["collector-paper-arxiv", "collector-paper-openalex"])
+def test_api_query_override_cannot_bypass_committed_policy(sid):
+    from collector_stack.pollers import ArxivPaperPoller, OpenAlexPaperPoller
+    cls = {"collector-paper-arxiv": ArxivPaperPoller, "collector-paper-openalex": OpenAlexPaperPoller}[sid]
+    transport = FixtureTransport()
+    poller = cls(load_collector_config(DEFAULT_POLICY_PATH, env={}).get_source(sid), transport=transport)
+    with pytest.raises(CollectorConfigError, match="query URL must match"):
+        poller.collect(url=poller.policy.base_urls[0] + "?query=unreviewed")
+    assert transport.calls == []
+
+
+def _gdelt_runner(tmp_path, fixtures_dir, test_hasher, *, index="masterfilelist-excerpt.txt"):
+    transport = _build_fixture_transport(fixtures_dir)
+    feed = fixtures_dir / "gdelt_feed_recorded"
+    transport.register("https://data.gdeltproject.org/gdeltv2/lastupdate.txt", (feed / index).read_bytes())
+    transport.register("https://data.gdeltproject.org/gdeltv2/20261113114500.export.CSV.zip",
+                       (feed / "20261113114500.export.CSV.zip").read_bytes())
+    runner = CollectorRunner(load_collector_config(DEFAULT_POLICY_PATH, env={}),
+                             root_dir=tmp_path, hasher=test_hasher, transport=transport)
+    return runner, transport
+
+
+def test_gdelt_real_export_features_and_provenance(tmp_path, fixtures_dir, test_hasher):
+    import hashlib
+    feed = fixtures_dir / "gdelt_feed_recorded"
+    provenance = json.loads((feed / "provenance.json").read_text())
+    for recorded in provenance["files"]:
+        body = (feed / recorded["path"]).read_bytes()
+        assert len(body) == recorded["size"]
+        assert hashlib.sha256(body).hexdigest() == recorded["sha256"]
+        if recorded["path"].endswith(".zip"):
+            assert hashlib.md5(body).hexdigest() == recorded["md5"]
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    outcome = runner.run_source("collector-gdelt", run_id="real-export")
+    assert outcome.status == "complete"
+    items = [json.loads(line) for line in outcome.bundle.items_path.read_text().splitlines()]
+    assert len(items) == 3  # 1197 real rows, three match the committed Taiwan/semiconductor terms
+    first = items[0]
+    assert first["gdelt_record_id"] == "1332959441"
+    assert first["id"] == "gdelt-1332959441"
+    assert first["event_time"] == "2026-11-13T00:00:00Z"
+    assert first["event_time_precision"] == "day"
+    assert first["published_at"] == first["gdelt_date_added"] == "2026-11-13T11:00:00Z"
+    assert first["published_at_basis"] == "gdelt_date_added"
+    assert first["matched_query_terms"] == ["Taiwan"]
+    assert first["metrics"]["event_code"] == "080"
+    assert first["metrics"]["goldstein_scale"] == 5.0
+    assert first["metrics"]["action_country_code"] == "TW"
+    assert first["url"].startswith("https://timesofindia.indiatimes.com/")
+    assert first["feed_url"].endswith("20261113110000.export.CSV.zip")
+    assert first["attribution"] == runner.config.get_source("collector-gdelt").attribution
+    assert len(transport.calls) == 2
+    verify_bundle_directory(outcome.bundle.bundle_dir)
+
+
+def test_gdelt_cache_survives_restart_and_new_snapshot_downloads_once(tmp_path, fixtures_dir, test_hasher):
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    assert runner.run_source("collector-gdelt", run_id="first").status == "complete"
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    again = runner.run_source("collector-gdelt", run_id="repeat")
+    assert again.bundle.items_path.read_text() == ""
+    assert [call["url"] for call in transport.calls] == ["https://data.gdeltproject.org/gdeltv2/lastupdate.txt"]
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher, index="lastupdate.txt")
+    empty = runner.run_source("collector-gdelt", run_id="new-snapshot")
+    assert empty.bundle.items_path.read_text() == ""  # real 11:45 snapshot has no matching rows
+    assert empty.bundle.manifest["reason"] == "no_matching_records"
+    assert len(transport.calls) == 2
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher, index="lastupdate.txt")
+    runner.run_source("collector-gdelt", run_id="repeat-empty")
+    assert len(transport.calls) == 1
+
+
+def test_gdelt_bundle_write_failure_replays_verified_cache(tmp_path, fixtures_dir, test_hasher, monkeypatch):
+    runner, _ = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    def fail(**kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(runner.bundle_writer, "write_bundle", fail)
+    with pytest.raises(OSError, match="disk full"):
+        runner.run_source("collector-gdelt", run_id="disk-failed")
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    outcome = runner.run_source("collector-gdelt", run_id="recovered")
+    assert outcome.status == "complete"
+    assert len(outcome.bundle.items_path.read_text().splitlines()) == 3
+    assert len(transport.calls) == 1  # cached download reused, unbundled records replayed
+
+
+@pytest.mark.parametrize("failure", ["size", "md5", "http", "network", "bad_zip", "bad_columns", "bad_date", "bad_index", "foreign_url", "access"])
+def test_gdelt_failures_record_reason_and_auto_pause(tmp_path, fixtures_dir, test_hasher, failure):
+    import hashlib
+    from collector_stack.runner import SourcePausedError
+    feed = fixtures_dir / "gdelt_feed_recorded"
+    raw_index = (feed / "masterfilelist-excerpt.txt").read_text()
+    size, md5, url = raw_index.splitlines()[0].split()
+    body = (feed / "20261113110000.export.CSV.zip").read_bytes()
+    for attempt in range(2):
+        runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+        index = raw_index
+        payload = body
+        status = 200
+        if failure == "size":
+            payload = body[:-1]
+        elif failure == "md5":
+            index = raw_index.replace(md5, "0" * 32)
+        elif failure in ("http", "access"):
+            status = 500 if failure == "http" else 429
+        elif failure == "bad_index":
+            index = "unparseable manifest"
+        elif failure == "foreign_url":
+            index = raw_index.replace("http://data.gdeltproject.org/", "https://other.invalid/")
+        elif failure in ("bad_zip", "bad_columns", "bad_date"):
+            if failure == "bad_zip":
+                payload = b"not a zip"
+            else:
+                with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                    csv_body = archive.read(archive.namelist()[0])
+                if failure == "bad_columns":
+                    csv_body = csv_body.replace(b"\t", b" ", 1)
+                else:
+                    csv_body = csv_body.replace(b"20261113", b"20260230", 1)
+                output = io.BytesIO()
+                with zipfile.ZipFile(output, "w") as archive:
+                    archive.writestr("20261113110000.export.CSV", csv_body)
+                payload = output.getvalue()
+            index = raw_index.replace(size, str(len(payload)), 1).replace(md5, hashlib.md5(payload).hexdigest(), 1)
+        transport.register("https://data.gdeltproject.org/gdeltv2/lastupdate.txt", index)
+        target = "https://data.gdeltproject.org/gdeltv2/20261113110000.export.CSV.zip"
+        if failure == "network":
+            def fail(_url):
+                raise TimeoutError("download timed out")
+            transport.register(target, fail)
+        else:
+            transport.register(target, payload, http_status=status)
+        outcome = runner.run_source("collector-gdelt", run_id=f"{failure}-{attempt}")
+        assert outcome.status == ("partial" if attempt == 0 else "paused")
+        assert outcome.bundle.manifest["paused_reason"]
+        assert not list((tmp_path / "state" / "gdelt-feed").glob("*.bundled"))
+    with pytest.raises(SourcePausedError):
+        runner.run_source("collector-gdelt", run_id="must-not-fetch")
+
+
+def test_gdelt_filter_uses_policy_and_never_accepts_query_override(tmp_path, fixtures_dir, test_hasher):
+    from dataclasses import replace
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    policy = runner.config.get_source("collector-gdelt")
+    raw = dict(policy.raw_config, query_terms=["semiconductor"])
+    poller = GdeltRawFeedPoller(replace(policy, raw_config=raw), transport=transport, cache_dir=tmp_path / "cache")
+    with pytest.raises(TypeError):
+        poller.collect(query="unreviewed")
+    assert not transport.calls
+    items = poller.collect()
+    assert items == []  # the three Taiwan rows don't match a semiconductor-only policy
+    assert poller.empty_reason == "no_matching_records"
+
+
+def test_gdelt_reviewed_vocabulary_change_reuses_cache(tmp_path, fixtures_dir, test_hasher):
+    from collector_stack.config import validate_collector_config
+    runner, _ = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    runner.run_source("collector-gdelt", run_id="original-policy")
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    raw = json.loads(DEFAULT_POLICY_PATH.read_text())
+    raw["sources"]["collector-gdelt"]["query_terms"] = ["Taiwan"]
+    runner.config = validate_collector_config(raw, env={})
+    changed = runner.run_source("collector-gdelt", run_id="reviewed-policy")
+    assert len(changed.bundle.items_path.read_text().splitlines()) == 3
+    assert len(transport.calls) == 1
+
+
+def test_gdelt_rejects_corrupt_existing_cache(tmp_path, fixtures_dir, test_hasher):
+    runner, _ = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    runner.run_source("collector-gdelt", run_id="good-cache")
+    cached = tmp_path / "state" / "gdelt-feed" / "20261113110000.export.CSV.zip"
+    cached.write_bytes(b"truncated cache")
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    corrupt = runner.run_source("collector-gdelt", run_id="corrupt-cache")
+    assert corrupt.status == "partial"
+    assert "gdelt_integrity_mismatch" in corrupt.bundle.manifest["paused_reason"]
+    assert len(transport.calls) == 1
+    assert not cached.exists()
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    runner.run_source("collector-gdelt", run_id="redownload-cache")
+    assert len(transport.calls) == 2
+    assert cached.is_file()

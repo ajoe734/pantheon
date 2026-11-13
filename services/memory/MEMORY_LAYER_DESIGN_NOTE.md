@@ -254,7 +254,52 @@ Persona implementation note (2026-06-09, MPOS-P1-MEM-001):
 - Consultation sessions are filtered to `relevance_scope=persona_and_committee`, so private persona memory does not leak into committee contexts.
 - `scope=both` merges ranked persona and institutional hits and only writes `reuse_count` for returned hits.
 
-### 5.2 Retrieval Trigger Contexts
+### 5.2 Shared search projection (2026-11-13, M2)
+
+Canonical memory writes remain owned by memory-svc. Both store implementations
+project create, supersede, explicit archive and expiry mutations after canonical
+persistence, including non-HTTP Learn-feedback writers. Inactive or expired
+entries project as `is_active=false` tombstones. Tenant, persona, relevance scope,
+institutional scope/filter and source event identity travel with the projection.
+Persona entries now support optional `expires_at`, `archived_at` and
+`archived_reason`; no default persona TTL is imposed.
+
+Memory calls the existing search `POST /api/search/index/refresh` with typed
+`memory_entries`, and `POST /api/search/query` with `memory_record_kind` for
+candidates. These branches require a verified `memory-svc` JWT with `system`
+role and enforce its tenant grants even if ordinary search is permissive.
+They do not add an endpoint or a role. The search service owns projection
+validation, jieba segmentation, embedding and index writes. The normal knowledge
+query restricts its backend to `knowledge_object` records so memory projections
+cannot displace knowledge candidates. Memory never opens the retrieval DSN or
+constructs an embedding engine in its production path.
+
+Candidate responses contain IDs and scores. Memory hydrates its own records,
+then rechecks tenant, persona, active/superseded/expired state, knowledge/memory
+type, scope/filter and tags before ranking/limiting the returned entries.
+Consultation sessions require `persona_and_committee`; `persona_private` cannot
+cross personas or enter committee results. The same checks apply to keyword
+fallback. A verified wildcard tenant is narrowed to `default`, never expanded
+into a cross-tenant query.
+
+Every successful retrieval response includes `retrieval_mode`, `fallback_reason`
+and per-store `retrieval_details`. Modes are `hybrid`, `lexical_only` (jieba/FTS
+when the search embedding model is unavailable), and `keyword_fallback` (empty
+query, unconfigured search or failed search request). A mixed response reports
+its least capable mode and retains each store's reason. Keyword fallback emits
+a warning. Search records candidate queries under the requesting persona/session
+context; an unavailable query log fails the search request. The real session ID
+is sent as caller attribution. Search query logs record candidates; memory's
+canonical hydration determines which entries are actually returned and reused.
+
+Projection failures emit `memory_projection_failed` with the entry and source
+event IDs and a bounded reason, without discarding the durable canonical write.
+They require replay using the backfill entry point below. A failed tombstone
+cannot authorize a stale hit: canonical hydration still rejects it. An index
+outage can reduce recall until replay; there is no automatic retry daemon or
+claim that a failed projection succeeded.
+
+### 5.3 Retrieval Trigger Contexts
 
 | Context | Who calls retrieval | Typical query |
 |---|---|---|
@@ -383,6 +428,13 @@ Implementation storage slice (2026-06-09):
 - Institutional entries use `PANTHEON_MEMORY_STORE` or `PANTHEON_MEMORY_DATA_DIR/institutional_memory_entries.json` in JSON mode, or `memory.institutional_memory_entries` in Postgres mode.
 - Persona entries use `PANTHEON_PERSONA_MEMORY_STORE` or `PANTHEON_MEMORY_DATA_DIR/persona_memory_entries.json` in JSON mode, or `memory.persona_memory_entries` in Postgres mode.
 - `PANTHEON_PERSONA_MEMORY_STORE_BACKEND` defaults to `PANTHEON_MEMORY_STORE_BACKEND`; persona Postgres DSN defaults through `PANTHEON_PERSONA_MEMORY_STORE_DSN`, `PANTHEON_MEMORY_STORE_DSN`, then `DATABASE_URL`.
+
+Search configuration and rebuild:
+- Configure `PANTHEON_SEARCH_API_URL` in memory (root Compose points to `http://search-svc:8098`). The retrieval database remains private to search.
+- Provision the existing authenticated service credential as `PANTHEON_SEARCH_SERVICE_TOKEN` in memory (`PANTHEON_MEMORY_SEARCH_SERVICE_TOKEN` in root Compose), with subject `memory-svc`, `system` role, appropriate tenant and persona/workspace grants, valid expiry and the configured search issuer/audience. Search and the issuer must share the configured verification key. No token is minted by memory.
+- A deployment may mount a rotating credential and set `PANTHEON_SEARCH_SERVICE_TOKEN_FILE`; the existing credential-file reader reloads it per request and fails closed for an unsafe or missing file.
+- Run `python -m services.memory.search_retrieval` inside the memory service environment to backfill both canonical stores, including inactive entries. It prints `processed`, `projected`, `tombstones` and per-entry `failures`; any failure returns exit status 1. Repeating the command upserts the same index identities without duplicating entries. Run it after index loss/rebuild, after upgrading existing stores and after reported projection failures. It creates no new privileged HTTP route.
+- The local route integration test uses a real pgvector database and the pinned jieba dictionary. Its disabled fixture embedding engine proves `lexical_only` wiring and Traditional Chinese recall over the old keyword path, not semantic quality or hosted deployment. Model evaluation remains a separate task.
 
 Retention:
 - Institutional memory entries receive `expires_at` from `PANTHEON_MEMORY_RETENTION_DAYS` on create when the writer did not provide an explicit expiration. The default is 365 days.
