@@ -72,8 +72,10 @@ def cycle_health(packet: dict[str, Any] | None) -> dict[str, Any]:
 
 class PersonaCycleController:
     def __init__(self, registrar: PersonaCronRegistrar, owners: Any, *,
-                 store_path: Path | str | None = None, turn_runner: Callable = run_persona_ooda_turn):
+                 store_path: Path | str | None = None, turn_runner: Callable = run_persona_ooda_turn,
+                 pool_cycle: Any = None):
         self.registrar, self.owners, self.turn_runner = registrar, owners, turn_runner
+        self.pool_cycle = pool_cycle  # PoolAutonomyCycle: the persona's own daily pool OODA
         self.path = Path(store_path) if store_path else resolve_ooda_packet_store_path()
 
     def consume_run(self, persona: dict[str, Any], job_id: str, run: dict[str, Any]) -> dict[str, Any]:
@@ -176,6 +178,15 @@ class PersonaCycleController:
                     # Never expose transport exception strings (which may
                     # include credentials or private response bodies).
                     failure = "agent_turn_or_schema_unavailable:" + type(exc).__name__
+            if self.pool_cycle is not None and run["status"] == "ok" and persona["lifecycle_state"] != "consultable":
+                # Deterministic pool policy: independent of model, harness and memory-read availability.
+                from services.persona.pool_autonomy_cycle import apply_to_packet
+                pool_result = self.pool_cycle.run(persona, observe, packet_id)
+                apply_to_packet(packet, pool_result)
+                if pool_result["status"] == "failed" and not failure:
+                    failure = "pool_cycle_failed:" + str(pool_result.get("reason", ""))[:120]
+                elif pool_result["status"] == "completed" and not failure:
+                    packet["status"], packet["closed_at"] = "closed", _utc_now()
             cycle.update(phase="terminal", failure_reason=failure)
             if failure:
                 packet["status"] = "observing"

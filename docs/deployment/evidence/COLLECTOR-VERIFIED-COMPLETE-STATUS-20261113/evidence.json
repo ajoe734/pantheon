@@ -1,0 +1,110 @@
+{
+  "schema_version": "collector_verified_complete_status_evidence.v1",
+  "task_id": "COLLECTOR-VERIFIED-COMPLETE-STATUS-20261113",
+  "owner": "Codex2",
+  "assigned_reviewer": "Claude",
+  "implementation_base": "10ba98752d48bd00eb137e46b9d60a08a88fd3e6",
+  "status": "source_ready_for_assigned_independent_review",
+  "scope": "Source/local only; existing producer and configured/scheduler/pipeline persistence owners retained.",
+  "dependency": {
+    "task_id": "COLLECTOR-NEWS-PUBLISHED-AT-20261113",
+    "status": "done",
+    "pr": 7296,
+    "merge_commit": "10ba98752d48bd00eb137e46b9d60a08a88fd3e6",
+    "predecessor": "COLLECTOR-GOVERNED-FEATURE-HANDOFF-20261113, already composed in base"
+  },
+  "retained_readonly_proof": {
+    "path": "/tmp/pantheon-root01a15322-resume-20261111/actual-W1-governed-receipt-calendar-readonly-20261113T043111.json",
+    "sha256": "fb3d35c700cdf0e015b422fd7f265f803c1be1c162d01f17435708f85744edb9",
+    "threads": {
+      "status": "complete",
+      "last_run_at": "2026-11-13T00:19:22Z",
+      "last_run_id": "run-20261113T001922Z",
+      "index_latest_finished_at": "2026-11-13T00:19:22Z",
+      "failed_ingest": "ingest-f34bda21aaa6",
+      "failed_at": "2026-11-13T04:25:14Z",
+      "failure": "collector empty outcome is not verified no-new-data: collector_source_status_unverified:complete"
+    },
+    "same_producer_vocabulary": [
+      "collector-news-rss",
+      "collector-tw-macro-ndc"
+    ],
+    "limitation": "Readonly metadata does not prove the old failed Threads batch was committed or no-new-data; actual native Threads payloads were not replayed."
+  },
+  "producer_contract": {
+    "path": "deploy/collector/collector_stack/bundle.py",
+    "facts": "BundleWriter writes complete/partial/paused to manifest, index and status; host last_run_at and last_run_id are exactly the written bundle finished_at and run_id.",
+    "unchanged": true
+  },
+  "implementation": [
+    "Reuse observed_from_collector_status and VerifiedBundle: complete requires verified latest complete bundle, full delivery coverage, exact cursor, matching host run id/time, positive cadence and fresh nonfuture time. A standalone status-only complete remains degraded. Legacy ok/healthy handling stays intact.",
+    "Keep typed CollectorPullResult.no_new_data separate from health and record count. Reverify consumed manifest/items over the existing transport; require latest exact full cursor, no rejected/pending features, matching fresh host status and local raw evidence.",
+    "Expand existing _has_verified_boundary to require native persisted_boundary.json for configured ingestion. The existing CollectorDelivery acknowledgement writes this exact source/connector/cursor/manifest-digest marker only after the current scheduler/pipeline persistence owner succeeds; eager/raw-cache/legacy cursor paths never create it.",
+    "Verify cached local raw byte sizes and SHA-256 again before admitting consumed-boundary no-new-data. Missing/mutated raw, manifest or acknowledgement fails closed."
+  ],
+  "baseline_reproduction": [
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py -k producer_complete",
+      "exit_code": 1,
+      "result": "Before repair: 2 failed, 70 deselected in 2.35s; actual local BundleWriter macro/social metadata yields degraded health."
+    },
+    {
+      "method": "Extract only observed_from_collector_status AST from implementation_base using git show; substitute that function in current local configured/scheduler fixture, preserving current persistence machinery and freezing health clock.",
+      "exit_code": 0,
+      "result": "First ingest raw_count=2; next consumed-cursor run failed with collector_source_status_unverified:complete. This isolates vocabulary mismatch and is not a full old-runtime or hosted replay.",
+      "terminal_log": "/tmp/collector-complete-vocabulary-before.log"
+    }
+  ],
+  "validation": [
+    {
+      "command": "timeout 60 python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped imports verified from foreign cwd; dependency interpreter supplied by worker runtime."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_outcome_truth.py deploy/collector/tests/test_bundle_and_manifest.py deploy/collector/tests/test_spiders_and_pollers.py",
+      "exit_code": 0,
+      "result": "205 passed, 1 skipped in 30.95s",
+      "terminal_log": "/tmp/collector-complete-focused.log",
+      "skip": "Private native RSS pack not supplied; predecessor RSS parser and its generated tests remain unchanged."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_scheduler.py services/source_ingestion/tests/test_pipeline_snapshot_dataset_isolation.py services/source_ingestion/tests/test_market_data_foundation.py services/source_ingestion/tests/test_taiwan_market_connectors.py services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py",
+      "exit_code": 0,
+      "result": "78 passed, 3 dependency deprecation warnings in 60.41s",
+      "terminal_log": "/tmp/collector-complete-regression.log"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors."
+    }
+  ],
+  "coverage": [
+    "Exact retained Threads status/run/time literals tested with generated contract bundle bytes; status alone remains degraded and verified fresh delivery becomes healthy.",
+    "Actual BundleWriter output for news/macro/social traverses real configured/pipeline/scheduled entry and isolated stores: fresh records persist, restart returns zero records only at genuinely acknowledged boundary.",
+    "Caps 1/2 leave health degraded until all raw/features are delivered; restart preserves revision identity, raw provenance, ACL/tenant restrictions and complete-boundary empty behavior.",
+    "All existing PR #7282 negatives retained, expanded for complete: missing/stale/contradictory metadata, paused/failed/failing/partial/pending/unavailable/unknown, no bundle/source/time, missing or wrong run/cursor/cadence, future time, malformed status, hash/auth and manifest/index failures.",
+    "Storage/evidence/final-receipt failures at caps 2/100 leave no cursor, feature ack or persisted boundary marker. Forced full cursor over cached raw is rejected; retry persists actual raw/features.",
+    "Missing/mutated acknowledgement and same-length mutated cached raw bytes reject healthy empty reuse. Existing connector/type/hash/PIT/schema/ACL/tenant/host and forged-delivery negatives remain active."
+  ],
+  "compatibility_and_limits": [
+    "Historical consumed boundaries without the new native acknowledgement fail closed under configured ingestion. Recovery/replay belongs to the existing hosted owner; this task does not migrate or manufacture acknowledgements from raw cache, count=0 or an old failed receipt.",
+    "Producer-shaped payloads are generated local contract fixtures written by the real producer code, not native recorded provider bytes. The retained readonly proof provides actual metadata only.",
+    "Host health projection and delivery completeness are distinct from successful product persistence; no_new_data additionally requires the native committed boundary.",
+    "No network/provider/shared-store writes, VM/SSH/model/Collector-host/secrets/business-service/deployment operations or workflow dispatch were performed. All test stores are isolated temporary directories.",
+    "No hosted W1 three-governed-day, financial/Persona/Loops, FE/BFF acceptance or deployment claim. Existing sole publisher/hosted owner retains later proof via original release/data entries. Pattern/original9aeb/all49 CLOSED and separate StageProd unchanged.",
+    "Independent exact-head review by Claude and required CI/native integration remain pending. Owner evidence is not approval or DONE."
+  ],
+  "reviewed_source_sha256": {
+    "services/source_ingestion/connectors/collector_bundle.py": "b90e10e79d6c2af9f5c33dcb5d90e01e1985353f4d8e9080aa372b3288d5b81f",
+    "services/source_ingestion/tests/test_collector_bundle_connector.py": "798d6a273b466491d1db8754eca193dbbe31e273b671be8b16363365202dcafe",
+    "services/source_ingestion/tests/test_collector_outcome_truth.py": "52875a3baa8051389fcdd615b0268fc2dfcdb77dc29f37502ff8b536cb971bfa"
+  },
+  "terminal_log_sha256": {
+    "/tmp/collector-complete-before.log": "b38f00116515c0a298a53f73152849bfa0e22dd5827f26bf1f653f9a394cc588",
+    "/tmp/collector-complete-vocabulary-before.log": "9be9bce5995df8c4f8c71fe3a8640ea2d2bdb6bb6d316cee171895e846927f5a",
+    "/tmp/collector-complete-focused.log": "c51f64c7bd061cdab99b7ef6b07b79a3cae0cd6d753a85bdd6f1b64258d5d974",
+    "/tmp/collector-complete-regression.log": "93ac8a8c5cca6f8b0222fe25ca19f4b970aa5d211912b6af8f7fc954a004a52a"
+  }
+}

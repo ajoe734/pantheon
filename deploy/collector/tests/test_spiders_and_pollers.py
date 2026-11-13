@@ -452,3 +452,43 @@ def test_timer_covers_window_in_taipei_time() -> None:
     assert "Asia/Taipei" in timer and "14:40" in timer and "17:00:00" in timer and "Mon..Fri" in timer
     service = (SYSTEMD / "pantheon-collector-close.service").read_text(encoding="utf-8")
     assert "capture-close" in service and "SuccessExitStatus=2" in service
+
+
+def test_rsshub_news_pubdate_is_emitted_as_canonical_utc_iso_and_raw_bytes_keep_the_literal(
+    tmp_path: Path,
+) -> None:
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    base = config.get_source("collector-news-rss").base_urls[0].rstrip("/")
+
+    def item(guid: str, pub: str) -> str:
+        return f"<item><guid>{guid}</guid><title>t</title><link>https://x.test/{guid}</link><pubDate>{pub}</pubDate></item>"
+
+    xml = (
+        "<rss><channel>"
+        + item("a", "Wed, 11 Nov 2026 04:37:00 GMT")
+        + item("b", "Wed, 11 Nov 2026 12:37:00 +0800")
+        + item("c", "2026-11-11T04:37:00Z")
+        + item("d", "Wed, 11 Nov 2026 04:37:00")
+        + "</channel></rss>"
+    )
+    transport = FixtureTransport()
+    transport.register(f"{base}/cna/aall", xml.encode())
+    news = RssHubNewsPoller(config.get_source("collector-news-rss"), transport=transport)
+    got = {i.item_id: i for i in news.collect(fetched_at="2026-11-12T00:00:00Z")}
+    assert got["news-cna-a"].published_at == "2026-11-11T04:37:00Z"
+    assert got["news-cna-b"].published_at == "2026-11-11T04:37:00Z"
+    assert got["news-cna-c"].published_at == "2026-11-11T04:37:00Z"
+    # no provable zone: left as-is so the verified reader keeps failing truthfully
+    assert got["news-cna-d"].published_at == "Wed, 11 Nov 2026 04:37:00"
+    assert b"Wed, 11 Nov 2026 04:37:00 GMT" in got["news-cna-a"].raw_bytes
+
+
+def test_rss_pub_iso_rejects_malformed_offsets_and_trailing_text_unchanged() -> None:
+    from collector_stack.pollers import _rss_pub_iso
+
+    for bad in ("Tue, 10 Nov 2026 01:00:00 +080", "Tue, 10 Nov 2026 01:00:00 +1260",
+                "Tue, 10 Nov 2026 01:00:00 GMT trailing", "Wed, 10 Nov 2026 01:00:00 GMT",
+                "Tue, 10 Nov 2026 01:00:00 -0000"):
+        assert _rss_pub_iso(bad) == bad
+    assert _rss_pub_iso("Tue, 10 Nov 2026 09:00:00 +0800") == "2026-11-10T01:00:00Z"
+    assert _rss_pub_iso("Tue, 10 Nov 2026 01:00:00 GMT") == "2026-11-10T01:00:00Z"

@@ -532,6 +532,7 @@ def run_controller_tick(
                 "created": run_result.created,
                 "refreshed": run_result.refreshed,
                 "skipped": run_result.skipped,
+                "deferred": run_result.deferred,
                 "failed": run_result.failed,
                 "enqueued": run_result.enqueued,
                 "registry_synced": run_result.registry_synced,
@@ -568,7 +569,7 @@ def run_controller_tick(
 
         if (
             run_result.failed
-            or queue_metrics["retry_wait"]
+            or queue_metrics["retry_wait"] - queue_metrics["deferred"]
             or queue_metrics["dead_letter"]
             or queue_metrics["failed"]
         ):

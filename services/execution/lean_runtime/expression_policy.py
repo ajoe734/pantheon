@@ -54,6 +54,8 @@ DEFAULT_PARAMETERS: Mapping[str, Any] = {
 _CHOSEN_KEYS = frozenset(
     {
         "decision_id",
+        "policy_kind",
+        "rebalance_band",
         "instrument_id",
         "side",
         "units",
@@ -452,3 +454,142 @@ def decide_validated(
     return enforce(
         decider(view, candidates, book, budget, parameters), candidates, view, book
     )
+
+
+TARGET_POLICY_KIND = "target_position_v1"
+
+
+def allocate_targets(views, budget, parameters):
+    """Allocate one bar from the absolute gross limit, before any order is sized.
+
+    The snapshot is replay input. Decimal summation in canonical key order makes
+    it independent of both market enumeration and the order fills later arrive.
+    """
+    limit = _dec(budget.get("gross_limit") or 0)
+    fraction = _dec(parameters.get("notional_fraction_at_full_strength", 1))
+    if not limit.is_finite() or limit <= 0 or not fraction.is_finite() or not 0 < fraction <= 1:
+        raise ValueError("allocation_budget_unavailable")
+    raw = {}
+    for symbol, view in sorted(views.items()):
+        strength = _dec(1 if view.get("strength") is None else view["strength"])
+        if not strength.is_finite() or not 0 <= strength <= 1:
+            raise ValueError("allocation_strength_invalid")
+        raw[symbol] = (strength * fraction * limit
+                       if view["direction"] in {"LONG", "SHORT"} else Decimal(0))
+    total = sum(raw.values(), Decimal(0))
+    scale = min(Decimal(1), limit / total) if total else Decimal(1)
+    return {"policy_kind": TARGET_POLICY_KIND, "gross_budget": float(limit),
+            "raw_targets": {s: float(n) for s, n in raw.items()},
+            "scale": float(scale), "targets": {s: float(n * scale) for s, n in raw.items()},
+            "views": _json_safe(views)}
+
+
+def decide_target_position(view, candidates, book, budget, parameters):
+    """Reconcile a bar-allocated target with trusted holdings; close before reverse.
+
+    A multi-instrument reduction is split proportionally over held legs. The
+    producer supplies reconcile_instrument_id for each leg, with the same full
+    book and allocation snapshot, so replay uses exactly the production inputs.
+    """
+    params = {**_resolved_parameters(parameters)}
+    params.setdefault("rebalance_band_fraction", 0.2)
+    target = _dec(view.get("target_notional", -1))
+    fraction = _dec(params["rebalance_band_fraction"])
+    underlying = str(view.get("underlying") or "")
+    positions = _open_positions(book, underlying)
+    by_id = {str(c.get("instrument_id")): c for c in candidates}
+    band = Decimal(0)
+
+    def finish(record):
+        return {**record, "policy_kind": TARGET_POLICY_KIND,
+                "target_notional": float(target) if target.is_finite() and target >= 0 else None,
+                "rebalance_band": float(band),
+                "policy_version": POLICY_VERSION,
+                "policy_parameters_digest": policy_parameters_digest(params)}
+
+    def no(reason, detail):
+        return finish(_no_trade(view, candidates, reason, detail))
+
+    if not target.is_finite() or target < 0 or not fraction.is_finite() or not 0 <= fraction <= 1:
+        return no("candidates_unavailable", "bar_allocation_unavailable")
+    for field in ("gross_limit", "gross_used", "available_cash"):
+        value = budget.get(field)
+        if value is None or not _dec(value).is_finite() or _dec(value) < 0:
+            return no("candidates_unavailable", "budget_unavailable: " + field)
+    if _dec(budget["gross_limit"]) <= 0:
+        return no("candidates_unavailable", "budget_unavailable: gross_limit")
+    exposure = Decimal(0)
+    for p in positions:
+        candidate = by_id.get(str(p["instrument_id"]))
+        if candidate is None or not _unit_notional(candidate).is_finite() or _unit_notional(candidate) <= 0:
+            return no("candidates_unavailable", "held_instrument_mark_unavailable")
+        exposure += _unit_notional(candidate) * int(p["units"])
+        band = max(band, _unit_notional(candidate))
+    band = max(band, target * fraction)
+    direction = str(view.get("direction", "FLAT")).upper()
+    opposite = any(p["direction"] != direction for p in positions)
+    liquidate = direction == "FLAT" or target == 0 or opposite
+    if positions and (liquidate or exposure - target > band):
+        selector = view.get("reconcile_instrument_id")
+        selected = [p for p in positions if not selector or p["instrument_id"] == selector]
+        if not selected:
+            return no("already_at_target", "held leg no longer present")
+        p = sorted(selected, key=lambda p: p["instrument_id"])[0]
+        candidate = by_id[str(p["instrument_id"])]
+        held = int(p["units"])
+        # Floor proportional reductions; never cross zero or close more than held.
+        units = held if liquidate else int(Decimal(held) * (exposure - target) / exposure)
+        if units < 1:
+            return no("already_at_target", "reduction below one held unit")
+        return finish(_chosen(view, candidates, params,
+            instrument_id=str(p["instrument_id"]),
+            side="sell" if p["direction"] == "LONG" else "buy",
+            units=min(held, units), reason_code="close_leg",
+            reason_text="target position liquidation" if liquidate else "target position reduction",
+            target_notional=target))
+    if direction == "FLAT" or target == 0:
+        return no("flat_view", "zero target with no holdings")
+    delta = target - exposure
+    if positions and delta <= band:
+        return no("already_at_target", "target within rebalance band")
+    if delta <= 0:
+        return no("already_at_target", "no additional exposure required")
+    feasible = feasible_candidates(direction, candidates)
+    scored = []
+    for c in feasible:
+        unit = _unit_notional(c)
+        units = min(clamped_units(c, delta), int(delta / unit))
+        if units < 1:
+            continue
+        score = abs(units * unit - delta) + units * round_trip_cost_per_unit(c)
+        scored.append((score, unit, str(c["instrument_id"]), c, units))
+    if not scored:
+        return no("no_feasible_instrument", _binding_constraint(direction, candidates, budget))
+    _, _, instrument_id, winner, units = min(scored, key=lambda row: row[:3])
+    reason = "long_cash" if instrument_id.startswith("eq:") else (
+        "long_lever" if direction == "LONG" else "short_via_future")
+    return finish(_chosen(view, candidates, params, instrument_id=instrument_id,
+        side="buy" if direction == "LONG" else "sell", units=units,
+        reason_code=reason, reason_text="add allocated target position delta",
+        target_notional=target))
+
+
+def decide_for_policy(kind, view, candidates, book, budget, parameters):
+    if kind == TARGET_POLICY_KIND:
+        result = decide_target_position(view, candidates, book, budget, parameters)
+        return enforce(result, candidates, view, book)
+    if kind != POLICY_KIND:
+        return budget_unavailable_no_trade(view, "policy_kind", str(kind))
+    return decide_validated(view, candidates, book, budget, parameters)
+
+
+def target_inputs_unavailable_no_trade(view, missing, detail, parameters):
+    """A target decision still records its policy when inputs cannot be read."""
+    params = {**_resolved_parameters(parameters)}
+    params.setdefault("rebalance_band_fraction", 0.2)
+    target = view.get("target_notional")
+    return {**budget_unavailable_no_trade(view, missing, detail),
+            "policy_kind": TARGET_POLICY_KIND, "policy_version": POLICY_VERSION,
+            "policy_parameters_digest": policy_parameters_digest(params),
+            "target_notional": target if target is not None and target >= 0 else None,
+            "rebalance_band": None}  # no held mark/budget from which to compute it

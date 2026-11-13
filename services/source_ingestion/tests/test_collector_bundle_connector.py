@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -289,6 +290,78 @@ def test_status_healthy_paused_and_lagging():
     edge = observed_from_collector_status(_status("2026-11-10T08:00:00Z"), source_id="collector-tw-ptt-stock",
                                           cursor="2026-11-04T09:00:00Z#r", now=NOW)
     assert edge["health_state"] == "healthy"
+
+
+def test_readonly_threads_complete_metadata_requires_verified_boundary(tmp_path, monkeypatch):
+    # Exact status metadata from the retained 20261113T043111 readonly proof.
+    # Payload bytes are generated contract fixtures, not native Threads rows.
+    source = "collector-tw-threads"
+    run = "run-20261113T001922Z"
+    finished = "2026-11-13T00:19:22Z"
+    status = {"sources": {source: {"status": "complete", "paused_reason": None,
+                                  "last_run_at": finished, "last_run_id": run}}}
+    now = datetime(2026, 11, 13, 4, 25, 14, tzinfo=timezone.utc)
+    cursor = finished + "#" + run
+    observed = observed_from_collector_status(status, source_id=source, cursor=cursor,
+                                             cadence_seconds=86400, now=now)
+    assert observed["health_state"] == "degraded"
+    assert "collector_complete_boundary_unverified" in observed["reasons"]
+    files, entry, _ = make_bundle(source_id=source, run_id=run, date="2026-11-13", finished=finished)
+    files["status.json"] = json.dumps(status).encode()
+    import services.source_ingestion.connectors.collector_bundle as module
+    real_observed = module.observed_from_collector_status
+    monkeypatch.setattr(module, "observed_from_collector_status",
+                        lambda *a, **kw: real_observed(*a, **{**kw, "now": now}))
+    adapter = adapter_for(files, [entry], tmp_path, source_id=source)
+    first = adapter.pull()
+    assert len(first.records) == 2 and first.observed["health_state"] == "healthy"
+    assert first.no_new_data is False
+
+
+@pytest.mark.parametrize("change", ["no_proof", "partial_bundle", "incomplete_delivery", "partial_cursor",
+                                   "wrong_cursor", "wrong_source", "missing_run", "wrong_run", "older_time",
+                                   "newer_time", "missing_time", "stale", "future", "missing_cadence", "paused_reason"])
+def test_complete_status_never_overrides_unverified_or_contradictory_evidence(tmp_path, change):
+    from dataclasses import replace
+    from services.source_ingestion.connectors.collector_bundle import verify_bundle
+
+    files, entry, _ = make_bundle()
+    bundle = verify_bundle(FakeTransport(files), expected_source_id=entry["source_id"], entry=entry)
+    status = _status(entry["finished_at"], "complete")
+    source = status["sources"][entry["source_id"]]
+    source["last_run_id"] = entry["run_id"]
+    kwargs = dict(verified_bundle=bundle, delivery_complete=True, cursor=bundle.cursor,
+                  cadence_seconds=86400, now=datetime(2026, 11, 10, 3, tzinfo=timezone.utc))
+    if change == "no_proof":
+        kwargs["verified_bundle"] = None
+    elif change == "partial_bundle":
+        kwargs["verified_bundle"] = replace(bundle, manifest={**bundle.manifest, "status": "partial"})
+    elif change == "incomplete_delivery":
+        kwargs["delivery_complete"] = False
+    elif change == "partial_cursor":
+        kwargs["cursor"] += "|items=1"
+    elif change == "wrong_cursor":
+        kwargs["cursor"] = "2026-11-10T02:05:00Z#other"
+    elif change == "wrong_source":
+        kwargs["verified_bundle"] = replace(bundle, source_id="other")
+    elif change == "missing_run":
+        source.pop("last_run_id")
+    elif change == "wrong_run":
+        source["last_run_id"] = "other"
+    elif change in {"older_time", "newer_time"}:
+        source["last_run_at"] = "2026-11-10T02:04:59Z" if change == "older_time" else "2026-11-10T02:05:01Z"
+    elif change == "missing_time":
+        source.pop("last_run_at")
+    elif change == "stale":
+        kwargs["now"] += timedelta(days=3)
+    elif change == "future":
+        kwargs["now"] -= timedelta(hours=2)
+    elif change == "missing_cadence":
+        kwargs["cadence_seconds"] = None
+    elif change == "paused_reason":
+        source["paused_reason"] = "login_required"
+    observed = observed_from_collector_status(status, source_id=entry["source_id"], **kwargs)
+    assert observed["health_state"] == "degraded" and observed["reasons"]
 
 
 def test_status_reflected_in_observed_state(tmp_path):
@@ -832,3 +905,416 @@ def test_public_path_never_exceeds_fetch_max_records_and_acks_accurately(tmp_pat
         connector=CollectorBundleAdapter(connector_id="conn-pub1", **config).connector(), fetch=fetch, trace_id="t"
     )
     assert len(one) == 1
+
+
+# COLLECTOR-NEWS-PUBLISHED-AT-20261113 ---------------------------------------------
+def _news_with_published(tmp_path, literal):
+    files, entry, _ = make_bundle(source_id="collector-x")
+    key = next(k for k in files if k.endswith("items.jsonl"))
+    rows = [json.loads(line) for line in files[key].decode().splitlines()]
+    for r in rows:
+        r["published_at"] = literal
+    files[key] = "\n".join(json.dumps(r) for r in rows).encode()
+    return adapter_for(files, [entry], tmp_path, source_id="collector-x", source_type="news",
+                       platform=None, publisher="cna")
+
+
+@pytest.mark.parametrize("literal", ["Tue, 10 Nov 2026 01:00:00 GMT", "2026-11-10T01:00:00Z",
+                                     "Tue, 10 Nov 2026 09:00:00 +0800"])
+def test_rss_rfc2822_and_iso_published_at_keep_the_same_instant(tmp_path, literal):
+    records = _news_with_published(tmp_path, literal).pull().records
+    assert {r.metadata["published_at"] for r in records} == {"2026-11-10T01:00:00Z"}
+
+
+@pytest.mark.parametrize("literal", ["Tue, 10 Nov 2026 01:00:00", "Tue, 10 Nov 2026 01:00:00 -0000",
+                                     "yesterday"])
+def test_rss_published_at_without_provable_timezone_or_malformed_still_fails(tmp_path, literal):
+    adapter = _news_with_published(tmp_path, literal)
+    with pytest.raises(SourceEvidenceError, match="ISO-8601"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+def test_rss_rfc2822_replay_is_stable_and_hash_mismatch_still_rejected(tmp_path):
+    literal = "Tue, 10 Nov 2026 01:00:00 GMT"
+    first = _news_with_published(tmp_path / "a", literal).pull().records
+    again = _news_with_published(tmp_path / "b", literal).pull().records
+    assert [r.metadata["content_hash"] for r in first] == [r.metadata["content_hash"] for r in again]
+    files, entry, _ = make_bundle(source_id="collector-x")
+    files[next(k for k in files if "/raw/" in k)] = b"tampered"
+    with pytest.raises(SourceEvidenceError):
+        adapter_for(files, [entry], tmp_path / "c", source_id="collector-x", source_type="news",
+                    platform=None, publisher="cna").pull()
+
+
+def test_rss_published_after_fetch_time_keeps_pit_failure(tmp_path):
+    # the exact retained literal is later than this bundle's fetched_at: no time substitution
+    adapter = _news_with_published(tmp_path, "Wed, 11 Nov 2026 04:37:00 GMT")
+    with pytest.raises(SourceEvidenceError, match="available_time must be >= event_time"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+_BAD_RFC2822 = ["Tue, 10 Nov 2026 01:00:00 +080", "Tue, 10 Nov 2026 01:00:00 +1260",
+                "Tue, 10 Nov 2026 01:00:00 GMT trailing", "Tue, 10 Nov 2026 01:00:00 EST",
+                "Wed, 10 Nov 2026 01:00:00 GMT", "Tue, 31 Nov 2026 01:00:00 GMT"]
+
+
+@pytest.mark.parametrize("literal", _BAD_RFC2822)
+def test_rss_malformed_or_contradictory_rfc2822_is_rejected_by_verified_reader(tmp_path, literal):
+    adapter = _news_with_published(tmp_path, literal)
+    with pytest.raises(SourceEvidenceError, match="ISO-8601"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+def _recorded_rss_bundle(literal, fetched="2026-11-11T05:00:00Z", raw_tamper=False):
+    item_id = "news-cna-202611110105-aspx"
+    body = (f"<item><guid>{item_id}</guid><title>t</title><link>https://x.test/{item_id}</link>"
+            f"<pubDate>{literal}</pubDate></item>").encode()
+    sha = hashlib.sha256(body).hexdigest()
+    src, run, date = "collector-news-rss", "run1", "2026-11-11"
+    manifest = {
+        "schema_version": "collector_bundle.v1", "source_id": src, "run_id": run, "collector_version": "1.0.0",
+        "started_at": "2026-11-11T04:59:00Z", "finished_at": fetched, "fetch_policy_hash": "fph",
+        "robots_decision": "allowed", "terms_ref": "https://example.test/terms", "status": "complete",
+        "items": [{"item_id": item_id, "url": f"https://x.test/{item_id}", "http_status": 200,
+                   "content_sha256": sha, "raw_path": f"raw/{sha}.xml", "bytes": len(body)}],
+        "bundle_sha256": compute_bundle_sha256([sha]),
+    }
+    row = {"id": item_id, "url": f"https://x.test/{item_id}", "fetched_at": fetched, "published_at": literal,
+           "text": "t", "lang": "zh-TW", "hashed_author": "hmac-abc", "metrics": {}, "title": "t"}
+    base = f"bundles/{src}/{date}/{run}"
+    files = {f"{base}/manifest.json": json.dumps(manifest).encode(), f"{base}/items.jsonl": json.dumps(row).encode(),
+             f"{base}/raw/{sha}.xml": b"tampered" if raw_tamper else body}
+    return files, {"source_id": src, "date": date, "run_id": run, "finished_at": fetched}
+
+
+def _pull_rss(tmp_path, literal, **kw):
+    files, entry = _recorded_rss_bundle(literal, **kw)
+    return adapter_for(files, [entry], tmp_path, source_id="collector-news-rss", source_type="news",
+                       platform=None, publisher="cna").pull()
+
+
+def test_recorded_rss_bundle_exact_literal_and_equivalent_iso_yield_same_instant_and_hash(tmp_path):
+    exact = _pull_rss(tmp_path / "a", "Wed, 11 Nov 2026 04:37:00 GMT").records
+    iso = _pull_rss(tmp_path / "b", "2026-11-11T04:37:00Z").records
+    assert {r.metadata["published_at"] for r in exact} == {"2026-11-11T04:37:00Z"}
+    assert {r.metadata["published_at"] for r in iso} == {"2026-11-11T04:37:00Z"}
+    assert exact[0].metadata["content_hash"] == "sha256:" + hashlib.sha256(
+        b"<item><guid>news-cna-202611110105-aspx</guid><title>t</title>"
+        b"<link>https://x.test/news-cna-202611110105-aspx</link>"
+        b"<pubDate>Wed, 11 Nov 2026 04:37:00 GMT</pubDate></item>").hexdigest()
+    replay = _pull_rss(tmp_path / "c", "Wed, 11 Nov 2026 04:37:00 GMT").records
+    assert replay[0].metadata["content_hash"] == exact[0].metadata["content_hash"]
+
+
+def test_recorded_rss_bundle_negatives_future_time_order_and_hash(tmp_path):
+    with pytest.raises(SourceEvidenceError, match="available_time must be >= event_time"):
+        _pull_rss(tmp_path / "f", "Wed, 11 Nov 2026 04:37:00 GMT", fetched="2026-11-11T04:00:00Z")
+    with pytest.raises(SourceEvidenceError, match="ISO-8601"):
+        _pull_rss(tmp_path / "n", "Wed, 11 Nov 2026 04:37:00")
+    with pytest.raises(SourceEvidenceError):
+        _pull_rss(tmp_path / "h", "Wed, 11 Nov 2026 04:37:00 GMT", raw_tamper=True)
+
+
+# Exact NATIVE bytes (not generated): private evidence pack extracted by the operator; set
+# PANTHEON_NATIVE_RSS_PACK_DIR to the extraction dir. Skipped when absent (pack is not in the repo).
+_NATIVE_PACK = os.environ.get("PANTHEON_NATIVE_RSS_PACK_DIR")
+_NATIVE_RUN = "bundles/collector-news-rss/2026-11-11/run-20261111T044920Z"
+
+
+@pytest.mark.skipif(not _NATIVE_PACK, reason="private native RSS pack not provided")
+def test_native_recorded_rss_bundle_exact_bytes_replay_through_verified_reader(tmp_path):
+    root = Path(_NATIVE_PACK)
+    files = {str(p.relative_to(root)): p.read_bytes() for p in (root / _NATIVE_RUN).rglob("*") if p.is_file()}
+    entry = {"source_id": "collector-news-rss", "date": "2026-11-11", "run_id": "run-20261111T044920Z",
+             "finished_at": "2026-11-11T04:49:20Z"}
+    native_row = next(json.loads(l) for l in files[f"{_NATIVE_RUN}/items.jsonl"].decode().splitlines()
+                      if json.loads(l)["id"] == "news-cna-202611110105-aspx")
+    assert native_row["published_at"] == "Wed, 11 Nov 2026 04:37:00 GMT"  # exact retained literal
+    res = adapter_for(files, [entry], tmp_path, source_id="collector-news-rss", source_type="news",
+                      platform=None, publisher="cna").pull()
+    manifest = json.loads(files[f"{_NATIVE_RUN}/manifest.json"])
+    native_sha = next(i["content_sha256"] for i in manifest["items"] if i["item_id"] == "news-cna-202611110105-aspx")
+    rec = next(r for r in res.records if r.metadata["content_hash"] == "sha256:" + native_sha)
+    assert rec.metadata["collector"]["bundle_sha256"] == "d31fa3480140d40c59d6f54481dce8f17f15e128a173985abfd3179022800c2e"
+    assert rec.metadata["available_time"] == "2026-11-11T04:49:20Z"
+    assert rec.metadata["published_at"] == "2026-11-11T04:37:00Z"
+    assert len(res.records) == 20
+
+
+# Steady request bound: whole-pull raw read budget ---------------------------------
+class _SlowTransport(_CountingTransport):
+    """Every raw read costs `cost` fake seconds on a deterministic clock (no sleeping)."""
+
+    def __init__(self, files, clock, cost):
+        super().__init__(files)
+        self.clock, self.cost = clock, cost
+
+    def read(self, relative_path, *, max_bytes):
+        if "/raw/" in relative_path:
+            self.clock[0] += self.cost
+        return super().read(relative_path, max_bytes=max_bytes)
+
+
+def _slow_setup(tmp_path, monkeypatch, *, n_rows=12, cost=5.0, budget=15.0, tamper_index=None):
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as cb
+
+    clock = [0.0]
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    source_id = "collector-tw-twse-price-history"
+    files, entry = _day_bundle(source_id, 1, n_rows)
+    if tamper_index is not None:
+        key = sorted(k for k in files if "/raw/" in k)[tamper_index]
+        files[key] = b"tampered"
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    transport = _SlowTransport(files, clock, cost)
+
+    def make():
+        return CollectorBundleAdapter(
+            connector_id="conn-x", raw_root=str(tmp_path / "store"), transport=transport, host=HOST,
+            source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+            max_records=500, read_budget_seconds=budget,
+        )
+
+    return make, transport, clock
+
+
+def test_slow_reads_stop_at_budget_and_resume_without_loss_or_duplicates(tmp_path, monkeypatch):
+    make, transport, clock = _slow_setup(tmp_path, monkeypatch)
+    cursor, delivered, per_pull_elapsed, completes = None, [], [], []
+    for _ in range(10):
+        start, transport.reads = clock[0], []
+        result = make().pull(cursor=cursor)
+        per_pull_elapsed.append(clock[0] - start)
+        delivered.extend(r.source_id for r in result.records)
+        completes.append(result.complete)
+        cursor = result.next_cursor
+        if result.complete:
+            break
+        # a budget-cut pull never claims completion and keeps a partial cursor
+        assert "|items=" in cursor
+    # 12 rows at 5s each under a 15s budget: bounded slices (<= budget + one read), then complete.
+    assert max(per_pull_elapsed) <= 15.0 + 5.0
+    assert completes[:-1] == [False] * (len(completes) - 1) and completes[-1] is True
+    assert len(delivered) == 12 and len(set(delivered)) == 12
+
+
+def test_budget_never_starves_a_pull_even_when_one_read_exceeds_it(tmp_path, monkeypatch):
+    make, _, _ = _slow_setup(tmp_path, monkeypatch, cost=30.0, budget=1.0, n_rows=3)
+    cursor, total = None, 0
+    for _ in range(5):
+        result = make().pull(cursor=cursor)
+        assert len(result.records) >= 1
+        total += len(result.records)
+        cursor = result.next_cursor
+        if result.complete:
+            break
+    assert total == 3 and result.complete
+
+
+def test_budget_cut_slice_still_fails_on_tampered_raw_in_later_slice(tmp_path, monkeypatch):
+    make, _, _ = _slow_setup(tmp_path, monkeypatch, tamper_index=7)
+    cursor = None
+    with pytest.raises(SourceEvidenceError, match="hash mismatch"):
+        for _ in range(10):
+            cursor = make().pull(cursor=cursor).next_cursor
+
+
+def test_no_budget_keeps_single_full_window(tmp_path, monkeypatch):
+    make, transport, _ = _slow_setup(tmp_path, monkeypatch)
+    adapter = make()
+    object.__setattr__(adapter, "read_budget_seconds", None)
+    result = adapter.pull()
+    assert len(result.records) == 12 and result.complete
+
+
+# Reviewer counterexamples: one operation budget across bundles, priority path, read timeout ----
+def _singleton_bundles(tmp_path, monkeypatch, *, count=12, cost=5.0, cadence=0):
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as cb
+
+    clock = [0.0]
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    source_id = "collector-tw-twse-price-history"
+    files, entries = {}, []
+    for n in range(1, count + 1):
+        f, e = _day_bundle(source_id, n, 1)
+        files.update(f)
+        entries.append(e)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    transport = _SlowTransport(files, clock, cost)
+
+    def make():
+        return CollectorBundleAdapter(
+            connector_id="conn-y", raw_root=str(tmp_path / "store"), transport=transport, host=HOST,
+            source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+            max_records=500, cadence_seconds=cadence,
+        )
+
+    return make, clock
+
+
+@pytest.mark.parametrize("cadence", [0, 1800])
+def test_many_singleton_bundles_stay_within_budget_and_drain_without_loss(tmp_path, monkeypatch, cadence):
+    make, clock = _singleton_bundles(tmp_path, monkeypatch, cadence=cadence)
+    cursor, seen, elapsed = None, [], []
+    for _ in range(20):
+        start = clock[0]
+        result = make().pull(cursor=cursor)
+        elapsed.append(clock[0] - start)
+        seen.extend(r.source_id for r in result.records)
+        cursor = result.next_cursor
+        if result.complete:
+            break
+        assert not result.complete
+    assert max(elapsed) <= 15.0 + 5.0 and len(elapsed) > 1
+    # priority-latest replays (idempotent, state saved by the persistence owner) may repeat ids
+    assert result.complete and len(set(seen)) == 12 and (cadence or len(seen) == 12)
+
+
+def test_http_read_timeout_is_capped_by_remaining_operation_budget(monkeypatch):
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as cb
+
+    clock, timeouts = [100.0], []
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "tok")
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_open(request, *, caller, timeout, **_kw):
+        timeouts.append(timeout)
+        return _Resp()
+
+    monkeypatch.setattr(cb, "open_external_url", fake_open)
+    monkeypatch.setattr(cb, "read_bounded_response", lambda r, max_bytes: b"{}")
+    transport = cb.HttpBundleTransport(host=HOST)
+    with cb.operation_deadline(15.0):
+        transport.read("a", max_bytes=10)
+        clock[0] += 14.0
+        transport.read("b", max_bytes=10)  # 1s left: must not get the full 20s
+        clock[0] += 5.0
+        transport.read("c", max_bytes=10)  # budget spent: 1s floor
+    transport.read("d", max_bytes=10)  # outside an operation: unchanged
+    assert timeouts == [15.0, 1.0, 1.0, 20.0]
+
+
+def test_body_stream_stops_at_operation_deadline_not_returned_as_data(monkeypatch):
+    """Slow-drip body: four 10s chunks under a 15s budget must fail, never return data."""
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.connectors.bounded_reader import read_bounded_response
+
+    now = [0.0]
+    monkeypatch.setattr(cb.time, "monotonic", lambda: now[0])
+
+    class _Slow:
+        headers: dict = {}
+
+        def read(self, _n):
+            now[0] += 10.0
+            return b"x"
+
+    with pytest.raises(TimeoutError):
+        read_bounded_response(cb._DeadlineBody(_Slow(), 15.0), max_bytes=100)
+    assert now[0] <= 20.0
+
+
+def test_request_scope_deadline_is_shared_across_serial_pulls(monkeypatch):
+    """A request-level deadline is not reset by each pull's own read budget."""
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    now = [100.0]
+    monkeypatch.setattr(cb.time, "monotonic", lambda: now[0])
+    seen = []
+    adapter = cb.CollectorBundleAdapter.__new__(cb.CollectorBundleAdapter)
+    object.__setattr__(adapter, "read_budget_seconds", 15.0)
+    monkeypatch.setattr(
+        cb.CollectorBundleAdapter, "_pull_bounded",
+        lambda self, **kw: (seen.append(cb._OP_DEADLINE.get()), now.__setitem__(0, now[0] + 10.0)),
+    )
+    with cb.operation_deadline(15.0):
+        adapter.pull()
+        adapter.pull()
+    assert seen == [115.0, 115.0]
+
+
+def _trickle_response(payload: bytes, clock: list, step: float, chunk: int = 1024):
+    """Real http.client.HTTPResponse over a buffered raw stream; each receive costs `step` fake seconds."""
+    import http.client
+    import io
+
+    head = f"HTTP/1.1 200 OK\r\nContent-Length: {len(payload)}\r\n\r\n".encode()
+
+    class _Raw(io.RawIOBase):
+        def __init__(self):
+            self.header, self.pos, self.receives = head, 0, 0
+
+        def readable(self):
+            return True
+
+        def readinto(self, buf):
+            if self.header:
+                n = min(len(buf), len(self.header))
+                buf[:n] = self.header[:n]
+                self.header = self.header[n:]
+                return n
+            n = min(len(buf), chunk, len(payload) - self.pos)
+            if n <= 0:
+                return 0
+            buf[:n] = payload[self.pos:self.pos + n]
+            self.pos += n
+            self.receives += 1
+            clock[0] += step
+            return n
+
+    raw = _Raw()
+
+    class _Sock:
+        def makefile(self, mode):
+            return io.BufferedReader(raw)
+
+    response = http.client.HTTPResponse(_Sock())
+    response.begin()
+    return response, raw
+
+
+def test_real_http_body_deadline_enforced_between_socket_receives(monkeypatch):
+    """40 receives of 1 fake second each (every one inside the idle timeout) must stop at the 15s budget."""
+    from types import SimpleNamespace
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    clock = [0.0]
+    response, raw = _trickle_response(b"x" * (40 * 1024), clock, 1.0)
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(cb, "open_external_url", lambda request, *, caller, timeout, **_kw: response)
+    monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
+    with pytest.raises(TimeoutError):
+        with cb.operation_deadline(15.0):
+            cb.HttpBundleTransport(host=HOST).read("raw/body", max_bytes=100000)
+    assert clock[0] <= 16.0
+    assert raw.receives < 40
+
+
+def test_real_http_body_within_budget_returns_exact_bytes(monkeypatch):
+    from types import SimpleNamespace
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    clock = [0.0]
+    payload = bytes(range(256)) * 16
+    response, _raw = _trickle_response(payload, clock, 1.0)
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(cb, "open_external_url", lambda request, *, caller, timeout, **_kw: response)
+    monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
+    with cb.operation_deadline(15.0):
+        assert cb.HttpBundleTransport(host=HOST).read("raw/body", max_bytes=100000) == payload

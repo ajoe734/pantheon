@@ -51,6 +51,20 @@ class EvolutionSearchError(ValueError):
     """Raised when a bounded search cannot run (fail closed, never a fallback toggle)."""
 
 
+def artifact_trial_key(family_id: str, artifact: Mapping[str, Any]) -> str:
+    """Canonical frequency-scoped trial key for ``artifact`` (SD §9 K8).
+
+    Uses the gate's own ``family_trial_key`` with the artifact's declared
+    ``parameters.bar_frequency`` (immutable under mutation); daily/undeclared
+    artifacts keep the legacy bare ``family_id`` so existing daily counts hold.
+    """
+    from services.research.replication.gate import family_trial_key
+
+    parameters = artifact.get("parameters") if isinstance(artifact, Mapping) else None
+    frequency = parameters.get("bar_frequency") if isinstance(parameters, Mapping) else None
+    return family_trial_key(family_id, frequency if isinstance(frequency, str) else None)
+
+
 def stable_seed(*parts: str) -> int:
     digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
     return int(digest[:16], 16)
@@ -195,12 +209,13 @@ def search_in_sample(
 ) -> SearchOutcome:
     """Fixed-budget random search; ``score_fn`` must only see the in-sample window.
 
-    Every variant evaluated increments the family trial counter (multiple-testing
+    Every variant evaluated increments the frequency-scoped family trial counter (multiple-testing
     accounting) whether it scores well or not. The winner is the best strictly
     positive improvement over the parent's own in-sample score, else ``best`` is
     None (no candidate).
     """
     seed = stable_seed(decision_id, family_id) if seed is None else seed
+    trial_key = artifact_trial_key(family_id, parent)
     outcome = SearchOutcome(window="in_sample", budget=budget, seed=seed, baseline_score=_finite(score_fn(parent)))
     for index, update in enumerate(sample_variants(parent, budget=budget, seed=seed)):
         trial = SearchTrial(index=index, parameter_updates=update, score=None)
@@ -213,7 +228,7 @@ def search_in_sample(
             trial.error = f"{type(exc).__name__}: {exc}"
         outcome.trials.append(trial)
         if trial_counter is not None:
-            outcome.family_trial_count = trial_counter.increment(family_id)
+            outcome.family_trial_count = trial_counter.increment(trial_key)
             outcome.trials_counted += 1
     scored = [t for t in outcome.trials if t.score is not None]
     if scored:
@@ -378,12 +393,13 @@ def judge_child_out_of_sample(
     evaluation bound to the child's checksum, ``family_id`` in its handoff). The
     gate increments the family trial count; the verdict records it.
     """
-    before = gate.get_family_trial_count(family_id)
+    trial_key = artifact_trial_key(family_id, child)
+    before = gate.get_family_trial_count(trial_key)
     response = gate.evaluate_candidate(request_factory(child))
-    after = gate.get_family_trial_count(family_id)
+    after = gate.get_family_trial_count(trial_key)
     record_trial = getattr(gate, "record_family_trial", None)
     if after == before and callable(record_trial):
-        after = record_trial(family_id)
+        after = record_trial(trial_key)
     detail: Mapping[str, Any] = {}
     for result in getattr(response, "results", []) or []:
         if getattr(result, "criterion_id", "") == "real_backtest_validation":
@@ -428,7 +444,7 @@ def run_mutation_decision(
     results: list[dict[str, Any]] = []
     taken: list[str] = []  # versions this decision already built: siblings never share a revision
     for index in range(max(1, children)):
-        if gate.get_family_trial_count(family_id) >= 500:
+        if gate.get_family_total_trial_count(family_id) >= 500:
             results.append({"index": index, "built": False, "error": "family_tried"})
             break
         result: dict[str, Any] | None = None

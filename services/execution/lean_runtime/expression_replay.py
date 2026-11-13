@@ -100,12 +100,14 @@ def _apply_to_book(
     if chosen.get("reason_code") == "close_leg":
         realized: Decimal | None = None
         remaining: list[dict[str, Any]] = []
+        units_left = units
         for position in positions:
             if str(position.get("instrument_id")) != instrument_id:
                 remaining.append(position)
                 continue
             held = int(position["units"])
-            closed = min(units, held)
+            closed = min(units_left, held)
+            units_left -= closed
             entry = position.get("entry_price")
             if entry is not None:
                 sign = Decimal(1) if str(position.get("direction")).upper() == "LONG" else Decimal(-1)
@@ -117,7 +119,9 @@ def _apply_to_book(
                 )
                 realized = (realized or Decimal(0)) + gain
             if held > closed:
-                remaining.append({**position, "units": held - closed})
+                remaining.append({**position, "units": held - closed,
+                                  **({"notional": position["notional"] * (held - closed) / held}
+                                     if "notional" in position else {})})
         return remaining, realized
     opened = {
         "underlying": underlying,
@@ -128,6 +132,14 @@ def _apply_to_book(
         "multiplier": _f(_dec(candidate.get("multiplier") or 1)),
         "initial_margin_per_unit": _f(_dec(candidate.get("initial_margin_per_unit") or 0)),
     }
+    if chosen.get("policy_kind") == policy.TARGET_POLICY_KIND:
+        for index, position in enumerate(positions):
+            if position["instrument_id"] == instrument_id and position["direction"] == opened["direction"]:
+                held = int(position["units"])
+                combined = {**opened, "units": held + units}
+                if position.get("entry_price") is not None:
+                    combined["entry_price"] = (held * float(position["entry_price"]) + units * opened["entry_price"]) / (held + units)
+                return [*positions[:index], combined, *positions[index + 1:]], None
     return [*positions, opened], None
 
 
@@ -156,6 +168,20 @@ def counterfactuals(
         if feasible
         else None
     )
+    if record.get("policy_kind") == policy.TARGET_POLICY_KIND:
+        for candidate in candidates:
+            instrument_id = str(candidate.get("instrument_id"))
+            if instrument_id == chosen_instrument_id:
+                continue
+            outcome = policy.decide_for_policy(policy.TARGET_POLICY_KIND, view, [candidate],
+                record.get("book_before") or {}, record.get("budget") or {}, params)
+            if policy.is_no_trade(outcome) or outcome.get("reason_code") == "close_leg":
+                out[instrument_id] = {"units": 0, "pnl_cf": 0.0, "costs": 0.0, "entry": None, "mark": None}
+            else:
+                leg = leg_pnl_path(candidate, outcome["side"], outcome["units"], _marks_for(record, instrument_id))
+                out[instrument_id] = {"units": outcome["units"], "pnl_cf": leg["pnl"],
+                                     **{k: leg[k] for k in ("costs", "entry", "mark", "pnl_path")}}
+        return out
     feasible_ids = {str(c["instrument_id"]) for c in feasible}
     side = "buy" if direction == "LONG" else "sell"
     for candidate in candidates:
@@ -204,7 +230,24 @@ def replay(
             book = {"positions": [dict(p) for p in carried]}
         else:
             book = dict(record.get("book_before") or {})
-        outcome = policy.decide(view, candidates, book, budget, params)
+        kind = record.get("policy_kind", policy.POLICY_KIND)
+        row_params = ({**policy.resolved_parameters(record.get("parameters")), **dict(parameters or {})}
+                      if kind == policy.TARGET_POLICY_KIND else params)
+        if kind == policy.TARGET_POLICY_KIND:
+            allocation = record.get("bar_allocation") or {}
+            try:
+                # A counterfactual fraction must rescale the whole bar, not
+                # only one symbol's already scaled target.
+                allocation = policy.allocate_targets(allocation["views"], budget, row_params)
+                symbol = next(s for s in allocation["targets"]
+                              if s.split(".")[0] == str(view.get("underlying")))
+                view["target_notional"] = allocation["targets"][symbol]
+            except (KeyError, ValueError, StopIteration):
+                view["target_notional"] = -1
+        error = record.get("inputs_unavailable") if kind == policy.TARGET_POLICY_KIND else None
+        outcome = (policy.target_inputs_unavailable_no_trade(
+                       view, error["missing"], error.get("detail", ""), row_params)
+                   if error else policy.decide_for_policy(kind, view, candidates, book, budget, row_params))
         by_id = {str(c.get("instrument_id")): c for c in candidates}
         positions = [dict(p) for p in (book.get("positions") or [])]
         entry: dict[str, Any] = {
@@ -241,7 +284,7 @@ def replay(
                     mark=leg["mark"],
                 )
         if entry["outcome"] == "NoTrade" or outcome.get("reason_code") != "close_leg":
-            cf = counterfactuals(record, params, chosen_id)
+            cf = counterfactuals({**record, "view": view}, row_params, chosen_id)
             entry["counterfactual_pnl"] = {k: v["pnl_cf"] for k, v in cf.items()}
             entry["counterfactual_detail"] = cf
         entry["positions_after"] = positions
