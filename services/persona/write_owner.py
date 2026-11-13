@@ -1796,6 +1796,7 @@ def create_app(
     pattern_episode_lister: EpisodeLister | None = None,
     harness_owner: PersistentHarnessOwner | None = None,
     lesson_registrar: MemoryLessonRegistrar | None = None,
+    lesson_rule_converter: Any | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
     governance_decision_verifier = (
@@ -1825,7 +1826,10 @@ def create_app(
         description="Persistent Persona registry write-owner service",
     )
     app.state.persona_owner = persistent_owner
-    register_harness_routes(app, persistent_owner, harness_owner or PersistentHarnessOwner(persistent_owner))
+    active_harness = harness_owner or PersistentHarnessOwner(persistent_owner)
+    register_harness_routes(app, persistent_owner, active_harness)
+    from services.persona.lesson_rule_proposals import build_lesson_rule_converter, register_lesson_rule_routes
+    register_lesson_rule_routes(app, persistent_owner, lesson_rule_converter or build_lesson_rule_converter(active_harness))
 
     @app.post(
         "/api/personas",

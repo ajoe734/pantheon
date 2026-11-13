@@ -62,6 +62,8 @@ def _split_csv_values(values: Optional[List[str]]) -> List[str]:
 
 
 _MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session")
+# Persona owner reads a single tenant-bound lesson to convert it into a rule proposal.
+_MEMORY_LESSON_GET_ROLES = _MEMORY_READ_ROLES + ("persona.admin",)
 _MEMORY_WRITE_ROLES = (
     "operator",
     "admin",
@@ -768,8 +770,10 @@ async def retrieve_memory(
     }
 
 
-def _lesson_identity(authorization: Optional[str], *, write: bool = False) -> tuple[AuthContext, str]:
-    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES if write else _MEMORY_READ_ROLES, require_jwt=True)
+def _lesson_identity(
+    authorization: Optional[str], *, write: bool = False, read_roles: tuple = _MEMORY_READ_ROLES
+) -> tuple[AuthContext, str]:
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES if write else read_roles, require_jwt=True)
     assert ctx is not None
     tenants = {str(ctx.claims.get(key) or "").strip() for key in _TENANT_CLAIM_NAMES if str(ctx.claims.get(key) or "").strip()}
     if len(tenants) != 1:
@@ -817,7 +821,7 @@ async def list_trade_lessons(
 
 @app.get("/api/memory/trade-lessons/{candidate_id}")
 async def get_trade_lesson(candidate_id: str, authorization: Optional[str] = Header(None, alias="Authorization")):
-    _ctx, tenant_id = _lesson_identity(authorization)
+    _ctx, tenant_id = _lesson_identity(authorization, read_roles=_MEMORY_LESSON_GET_ROLES)
     return _owned_lesson(candidate_id, tenant_id)
 
 
