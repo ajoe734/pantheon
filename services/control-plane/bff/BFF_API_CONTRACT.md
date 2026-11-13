@@ -588,8 +588,13 @@ before reading its pool, cycles or demands. Existing read-role checks apply.
 Pool and Research HTTP reads forward caller authorization and the authenticated
 tenant, with a maximum two-second timeout per read (or remaining request budget).
 They use `PANTHEON_PERSONA_API_URL` / `PANTHEON_RESEARCH_API_URL`, falling back to
-the respective `*_SERVICE_URL`. Cycles use the existing configured OODA owner
-port. BFF performs no portfolio calculations, owner writes, seed creation or
+the respective `*_SERVICE_URL`. Cycles prefer an injected OODA owner port. When
+the production default port is unconfigured, this adapter binds the existing
+Persona owner's shared record path (`PANTHEON_BFF_OODA_PACKET_STORE`, otherwise
+`PANTHEON_OODA_DATA_DIR` / `PANTHEON_CONTROL_PLANE_DATA_DIR` + `ooda_packets.jsonl`)
+through the Persona owner's read-only decoder. Missing files remain unavailable;
+no default repository path or new record store is created.
+BFF performs no portfolio calculations, owner writes, seed creation or
 paper/live transitions.
 
 Book metrics and health are **observations from the latest daily cycle**, not a

@@ -8,6 +8,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import io
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
@@ -41,6 +42,8 @@ PATHS = [f"/bff/personas/{PERSONA}", f"/api/v1/operator/persona-management/{PERS
 
 @pytest.fixture
 def world(monkeypatch, tmp_path):
+    for env in ("PANTHEON_BFF_OODA_PACKET_STORE", "PANTHEON_OODA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"):
+        monkeypatch.delenv(env, raising=False)
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "persona"))
     pools = PersonaStrategyPoolStore(
         AtomicJsonRecordStore(tmp_path / "pools.json"),
@@ -292,7 +295,6 @@ def test_real_http_transport_forwards_authenticated_tenant(world, monkeypatch):
 
     def urlopen(request, timeout):
         requests.append(request)
-        import json
         return Response(json.dumps(world.payloads[request.full_url]).encode())
 
     monkeypatch.setattr("urllib.request.urlopen", urlopen)
@@ -304,3 +306,33 @@ def test_real_http_transport_forwards_authenticated_tenant(world, monkeypatch):
     assert len(requests) == 3
     assert all(r.get_method() == "GET" and r.get_header("X-tenant-id") == TENANT
                and r.get_header("Authorization") == "Bearer " + token for r in requests)
+
+
+@pytest.mark.parametrize("suffix", [".json", ".jsonl"])
+def test_production_default_reads_real_persona_cycle_owner_records(world, monkeypatch, tmp_path, suffix):
+    from services.persona.cron_ooda_closure import append_ooda_packet
+    path = tmp_path / ("daily-cycles" + suffix)
+    append_ooda_packet(path, world.packet)
+    before = path.read_bytes()
+    world.store.ooda_management.ooda = OodaPacketsPort()  # production default
+    monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(path))
+    result = world.client().get(PATHS[0]).json()
+    view = result["data"]["strategyPool"]
+    assert view["cycles"][0]["packet_id"] == "cycle-current"
+    assert view["memberVirtualBooks"][0]["book"] == world.book
+    assert view["health"] == world.health
+    assert path.read_bytes() == before  # read-only, owner record never rewritten
+
+
+@pytest.mark.parametrize("contents", [None, "broken json"])
+def test_production_missing_or_corrupt_cycle_store_fails_closed(world, monkeypatch, tmp_path, contents):
+    path = tmp_path / "daily-cycles.json"
+    if contents is not None:
+        path.write_text(contents)
+    world.store.ooda_management.ooda = OodaPacketsPort()
+    monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(path))
+    result = world.client().get(PATHS[0]).json()
+    view = result["data"]["strategyPool"]
+    assert view["cycles"] is view["health"] is view["memberVirtualBooks"] is None
+    assert result["meta"]["surfaces"]["autonomy_cycles"]["status"] == "unavailable"
+    assert path.exists() == (contents is not None)

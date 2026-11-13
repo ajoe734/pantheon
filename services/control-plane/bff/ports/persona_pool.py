@@ -6,6 +6,8 @@ the current pool digest. No BFF portfolio calculations or historical fallback.
 from __future__ import annotations
 
 from copy import deepcopy
+import os
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
@@ -74,9 +76,24 @@ class PersonaPoolViewsPort:
         versions = section("strategy_pool_versions", "persona_owner", history)
 
         def cycles():
-            # Use the already-configured owner port, never open a second file store.
+            # Prefer an injected owner. The production default has no OODA
+            # provider, so bind the existing persona-owned shared record path.
             port = self.read_store.ooda_management.ooda
             state = port.get_surface_status()
+            if state.get("source") == "missing" and any(os.getenv(key, "").strip() for key in (
+                "PANTHEON_BFF_OODA_PACKET_STORE", "PANTHEON_OODA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            )):
+                from services.persona.cron_ooda_closure import resolve_ooda_packet_store_path
+                from services.persona.persona_cycle_controller import read_packets
+                from .ooda_management import OodaPacketsPort
+
+                path = Path(resolve_ooda_packet_store_path())
+                if not path.is_file():
+                    raise PoolReadUnavailable("cycle_owner_store_missing")
+                # Existing owner decoder, read once; no BFF persistence or writes.
+                owner_records = list(read_packets(path).values())
+                port = OodaPacketsPort(records_provider=lambda: owner_records)
+                state = port.get_surface_status()
             if state.get("status") == "unavailable":
                 raise PoolReadUnavailable("cycle_owner_unavailable")
             token = selected_tenant.set(tenant_id)
