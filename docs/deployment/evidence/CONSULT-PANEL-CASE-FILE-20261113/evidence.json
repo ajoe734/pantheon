@@ -1,0 +1,55 @@
+{
+  "task_id": "CONSULT-PANEL-CASE-FILE-20261113",
+  "owner": "Codex2",
+  "assigned_reviewer": "Claude2",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_KNOWLEDGE_INTEGRATION_2026-11-13.md (M5)",
+  "prerequisite": "DECISION-CASE-FILE-20261113",
+  "delivered": [
+    "services/consultation/workflow_executor.py",
+    "services/openclaw-gateway-adapter/consultation_provider.py",
+    "services/consultation/tests/test_panel_case_file.py",
+    "services/consultation/tests/test_persona_panel_integration.py",
+    "services/consultation/tests/test_panel_memory_tenant_binding.py",
+    "docker-compose.yml"
+  ],
+  "additional_wiring_scope": "The consultation-svc environment needs the existing registry, persona, research, telemetry and search owner endpoints for the production entry point to compose case files. Only that service's environment stanza is changed; no owner API or write authority changes.",
+  "verification": {
+    "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/consultation services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py --tb=short",
+    "result": "137 passed, 1 deprecation warning in 83.14s",
+    "exit_status": 0,
+    "environment": "Python 3.12; checkout-scoped editable installation provisioned by scripts/dev/provision_python_distribution.py using the supervisor's dependency interpreter",
+    "other_checks": [
+      "git diff --check",
+      ".venv-pantheon/bin/python3 -m py_compile services/consultation/workflow_executor.py services/openclaw-gateway-adapter/consultation_provider.py",
+      "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD"
+    ]
+  },
+  "acceptance": {
+    "1_composition_and_durable_identity": "test_panel_composes_case_and_rejects_uncited_answer runs trial admission and canary candidacy through ConsultationServiceClient.open_persona_panel and run_tick. The workflow resolves registry facts and canary pool members without new caller fields, validates the shared JSON schema, and stores the full snapshot plus id/digest and decision binding in the request transcript. The synthesis memo summary records the same id/digest.",
+    "2_participant_case_and_own_memory": "test_real_adapter_receives_case_and_queries_each_personas_own_memory exercises the real HTTP adapter and deny-all admission for trial and canary panels; captures each participant's decision query; verifies full case content and its own shared-memory sentinel, with private and other-persona sentinels excluded. test_panel_memory_tenant_binding uses the real strict-auth memory retrieval route and the adapter's default reader for same-tenant, other-tenant and private scopes. Existing deny-all routing tests remain part of the suite.",
+    "3_reject_uncited_claims": "The real panel tests record panel_contribution_rejected with claim_uncited and exclude that persona from accepted transcript contributions and synthesis. Unit cases also reject missing claims, unknown case-item ids, uncited summaries/findings, malformed or mismatched asserted subjects and unvalidated narrative fields. Citation ids must exist in the case file and be attached as contribution evidence. Missing required answers route the unchanged gate to operator_decision.",
+    "4_real_entry_trial_and_canary": "Both test_panel_composes_case_and_rejects_uncited_answer and test_real_adapter_receives_case_and_queries_each_personas_own_memory cover trial admission and paper canary candidacy. The latter serves the actual adapter HTTP endpoint; only OpenClaw model/gateway responses and retrieval hits are boundary doubles.",
+    "fail_closed_and_recovery": "test_missing_owner_records_reason_and_calls_no_agent records panel_case_file_unavailable; test_cross_tenant_registry_subject_is_rejected refuses cross-tenant facts; the unavailable-memory adapter case invokes no model. test_memory_outage_after_risk_veto_still_holds_adoption_then_retry_adopts asserts actual retry completion, two total provider calls, no recomposition, and one acknowledged handoff with an intact risk hold.",
+    "deployment_wiring": "test_deployed_consultation_supplies_case_file_owners checks the real Compose service environment supplies all six library owner endpoints and explicit memory actor context."
+  },
+  "replay_behavior": [
+    "Case files are saved under the existing fenced workflow lease before participant calls; slow composition renews that lease and its worker thread is joined.",
+    "Unavailable-source reasons have deterministic ordering across SQLite JSON serialization, keeping replayed synthesis event and memo payloads identical.",
+    "A persisted acknowledged handoff is adopted during a memory-only retry; its changed status/sent_at are not resent as a conflicting downstream idempotent payload."
+  ],
+  "authority": {
+    "execution_may_read": false,
+    "participants_deny_all": true,
+    "consultation_advisory_only": true,
+    "new_privileged_routes": false,
+    "production_synthetic_data": false,
+    "independent_review": "pending; no reviewer approval is asserted by this owner manifest"
+  },
+  "known_limits": [
+    "Source/integration verification only. No hosted deployment or real OpenClaw model invocation is claimed; hosted acceptance belongs to MEMORY-KNOWLEDGE-HOSTED-ACCEPTANCE-20261113.",
+    "Citation validation checks attribution, attached item ids and any asserted subject fields; it does not prove natural-language semantic entailment.",
+    "Owner URLs and read credentials are environment-provided. Missing owner data, absent telemetry binding or unavailable retrieval sources are recorded and prevent automatic adoption; missing subject artifacts prevent participant calls.",
+    "The existing composer budget of eight items per group is also the bounded member-subject limit. Larger subjects fail closed with a recorded reason. These numeric starting values remain coordinator proposals.",
+    "Memory retrieval stays behind the existing governed facade; this change implements no custom search engine, index or RAG pipeline."
+  ]
+}
