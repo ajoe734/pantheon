@@ -50,6 +50,8 @@ Transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-
 | 2694 | 23:19:59.916Z | 73bdb705-aff5-43a3-bae6-2752b6877449 | 其實評估根本不需要跑過資料，你只要依據結構完整跟技術性哪個比較好做比較判斷即可，你這沒有資料的評比根本沒用 |
 | 2707 | 23:28:51.039Z | f58ae734-5c65-46cc-9e6e-3b93f9610247 | 1 好 / 2好 — answering the coordinator's structural evaluation at line 2704 (23:21:24.438Z, uuid 0bbbcf64-b372-408b-824e-8cfb8b5bede6): (1) proceed with Hindsight as the memory index and write this design and its tasks; (2) withdraw the two data-comparison tasks |
 
+Verified against the transcript on delivery: every uuid and timestamp matches its line; texts match character for character except that line breaks inside a message are shown as single spaces in the table (line 2707 is `1 好` and `2好` on two lines; line 2423 is the operator sentence that follows a pasted block in the same message).
+
 The two comparison tasks (`MEMORY-HINDSIGHT-COMPARISON-HARNESS-20261113`, `MEMORY-HINDSIGHT-COMPARISON-RUN-20261113`) were superseded on 2026-11-13 with no surviving obligation.
 
 ---
