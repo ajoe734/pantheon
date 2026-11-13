@@ -143,3 +143,49 @@ def test_rebuild_entry_point_fails_closed_without_model(monkeypatch):
     with pytest.raises(RuntimeError, match="embedding_model_unavailable"):
         pg_retrieval.rebuild_index()
     fake.setup_schema.assert_not_called()
+
+
+def test_eval_scores_above_threshold_fixture_not_quality_evidence(monkeypatch, tmp_path):
+    """Wiring regression only: fabricated rows prove ranx runs; the numbers are not retrieval-quality evidence."""
+    monkeypatch.setenv("IR_DATASETS_HOME", str(tmp_path))
+    pytest.importorskip("ranx")
+    from services.search.evaluation.run_retrieval_eval import score
+
+    rows, labels = [], {}
+    for i in range(150):
+        qid = f"00000000-0000-0000-0000-{i:012d}"
+        rows.append({"query_log_id": qid, "query_text": "查詢" * (i + 1) + f" {i}",
+                     "model_name": "fixture", "retrieval_mode": "hybrid",
+                     "returned_source_event_ids": [f"e{i}", "other"], "latency_ms": 5.0})
+        labels[qid] = {f"e{i}"}
+    out = score(rows, labels)
+    assert out["labelled_queries"] == 150
+    assert out["metrics"][0]["recall@10"] == 1.0
+
+
+def test_pg_eval_reads_private_rows_only_in_authorized_persona_scope():
+    """Real PostgreSQL: --persona scope exposes the owner's private labelled rows; nonowner scope sees none."""
+    import os, uuid
+    from services.search.evaluation.run_retrieval_eval import load_recorded
+    from services.search.filters import SearchAccessContext
+    from services.search.pg_retrieval import PostgresRetrievalBackend
+
+    dsn = os.getenv("PANTHEON_RETRIEVAL_INTEGRATION_DSN")
+    if not dsn:
+        pytest.skip("Set PANTHEON_RETRIEVAL_INTEGRATION_DSN for isolated pgvector integration")
+    engine = Mock(dimension=1024, model_name="test-model")
+    engine.is_ready.return_value = True
+    backend = PostgresRetrievalBackend(dsn, embedding_engine=engine)
+    backend.setup_schema()
+    tenant = f"eval-tenant-{uuid.uuid4().hex[:8]}"
+    owner = SearchAccessContext(tenant_id=tenant, persona_id="owner")
+    rid = f"eval-{uuid.uuid4().hex}"
+    backend.record_query(context=owner, request_id=rid, query="私人查詢", retrieval_mode="hybrid", hits=[],
+                         latency_ms=1.0, caller_decision_type="cycle_review", source_event_id="evt-1")
+    row = next(r for r in backend.list_query_log(owner) if r["request_id"] == rid)
+    backend.record_label(tenant_id=tenant, query_log_id=str(row["query_log_id"]),
+                         source_event_id="evt-x", labelled_by="reviewer", persona_id="owner")
+    for personas, expected in (([], 0), (["other"], 0), (["owner"], 1), (["other", "owner"], 1)):
+        rows, labels = load_recorded(dsn, tenant, personas)
+        assert len(rows) == expected, personas
+        assert len(labels) == expected, personas

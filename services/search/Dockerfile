@@ -5,8 +5,8 @@ WORKDIR /workspace
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-COPY services/search/requirements.lock /tmp/requirements.lock
-RUN pip install --no-cache-dir -r /tmp/requirements.lock
+COPY services/search/requirements.lock services/search/requirements-eval.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements-eval.txt
 
 COPY . /workspace
 

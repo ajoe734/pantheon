@@ -3,7 +3,12 @@
 
 Reads only retrieval_query_log (rows written by the live search request path)
 and retrieval_query_labels (human source_event_id labels) from retrieval-postgres.
-Persona-private rows are invisible to this tool (RLS, no persona context).
+Persona-private rows are read only through an explicit, repeatable --persona
+scope: each scope runs in its own RLS context (pantheon.current_persona set to
+that persona), so the owner's rows are visible and every other persona's are
+not. No RLS bypass exists. Without --persona only non-private rows are read.
+Run: python -m services.search.evaluation.run_retrieval_eval --persona <id> ...
+(needs ranx; install services/search/requirements-eval.txt).
 Reports status=unavailable with a reason while fewer than MIN_QUERIES real
 labelled queries exist or when the set looks templated. Exit code 2 = unavailable.
 Scoring is evidence only, never authority to switch a model.
@@ -45,22 +50,28 @@ def refuse_templated(queries: list[str]) -> None:
         raise ValueError("Recorded queries look templated or synthetic (too few distinct queries/shapes)")
 
 
-def load_recorded(dsn: str, tenant_id: str) -> tuple[list[dict[str, Any]], dict[str, set[str]]]:
+def load_recorded(dsn: str, tenant_id: str,
+                  personas: list[str] | None = None) -> tuple[list[dict[str, Any]], dict[str, set[str]]]:
     import psycopg
     from psycopg.rows import dict_row
 
+    rows: dict[str, dict[str, Any]] = {}
+    labels: dict[str, set[str]] = defaultdict(set)
+    # "" = no persona context (non-private rows only); each named persona is its own RLS scope.
+    scopes = [""] + [p for p in dict.fromkeys(personas or []) if p]
     with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SET ROLE pantheon_retrieval")
-            cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant_id,))
-            cur.execute("SELECT set_config('pantheon.current_persona', '', true)")
-            cur.execute("SELECT * FROM retrieval_query_log WHERE origin = 'live_request'")
-            rows = list(cur.fetchall())
-            cur.execute("SELECT query_log_id, source_event_id FROM retrieval_query_labels")
-            labels: dict[str, set[str]] = defaultdict(set)
-            for lab in cur.fetchall():
-                labels[str(lab["query_log_id"])].add(lab["source_event_id"])
-    return rows, labels
+        for persona in scopes:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute("SET LOCAL ROLE pantheon_retrieval")
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant_id,))
+                cur.execute("SELECT set_config('pantheon.current_persona', %s, true)", (persona,))
+                cur.execute("SELECT * FROM retrieval_query_log WHERE origin = 'live_request'")
+                for r in cur.fetchall():
+                    rows[str(r["query_log_id"])] = r
+                cur.execute("SELECT query_log_id, source_event_id FROM retrieval_query_labels")
+                for lab in cur.fetchall():
+                    labels[str(lab["query_log_id"])].add(lab["source_event_id"])
+    return list(rows.values()), labels
 
 
 def score(rows: list[dict[str, Any]], labels: dict[str, set[str]]) -> dict[str, Any]:
@@ -95,13 +106,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dsn", default=os.getenv("PANTHEON_SEARCH_POSTGRES_DSN"))
     parser.add_argument("--tenant", default="default")
+    parser.add_argument("--persona", action="append", default=[],
+                        help="authorized persona scope whose private queries to include (repeatable)")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args(argv)
     report: dict[str, Any] = {"task_id": "RETRIEVAL-BACKEND-ACTIVATION-R2-20261113", "accepted": False}
     try:
         if not args.dsn:
             raise ValueError("No retrieval database DSN configured")
-        rows, labels = load_recorded(args.dsn, args.tenant)
+        rows, labels = load_recorded(args.dsn, args.tenant, args.persona)
         report.update(score(rows, labels), status="measured_pending_independent_review")
         code = 0
     except Exception as exc:  # unavailable is a recorded reason, never a silent pass
