@@ -274,6 +274,7 @@ class InstitutionalMemoryStore:
                 raise InstitutionalMemoryError(f"Entry already exists: {entry.entry_id}")
             self._entries[entry.entry_id] = entry
             self._save()
+            self._project(entry)
             return entry
 
     def get(self, entry_id: str) -> Optional[InstitutionalMemoryEntry]:
@@ -358,6 +359,7 @@ class InstitutionalMemoryStore:
             )
             self._entries[entry_id] = updated
             self._save()
+            self._project(updated)
             return updated
 
     def archive_expired(
@@ -384,7 +386,27 @@ class InstitutionalMemoryStore:
                 archived.append(updated)
             if archived:
                 self._save()
+                for entry in archived:
+                    self._project(entry)
         return archived
+
+    @staticmethod
+    def _project(entry) -> None:
+        from .search_retrieval import sync_memory_projection
+        sync_memory_projection(entry)
+
+    def archive(self, entry_id: str, *, reason: str) -> InstitutionalMemoryEntry:
+        if not reason.strip():
+            raise ValueError("archive reason is required")
+        with self._lock:
+            entry = self._require_unlocked(entry_id)
+            updated = InstitutionalMemoryEntry(**{**entry.to_dict(),
+                "archived_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "archived_reason": reason})
+            self._entries[entry_id] = updated
+            self._save()
+            self._project(updated)
+            return updated
 
     def retrieve(
         self,
@@ -514,6 +536,14 @@ class PostgresInstitutionalMemoryStore(InstitutionalMemoryStore):
     def supersede(self, entry_id: str, replacement_entry_id: str) -> InstitutionalMemoryEntry:
         self._refresh_from_postgres()
         return super().supersede(entry_id, replacement_entry_id)
+
+    def archive(self, entry_id: str, *, reason: str) -> InstitutionalMemoryEntry:
+        self._refresh_from_postgres()
+        return super().archive(entry_id, reason=reason)
+
+    def archive_expired(self, *, now=None, reason=None):
+        self._refresh_from_postgres()
+        return super().archive_expired(now=now, reason=reason)
 
     def _save(self) -> None:
         for entry in self._entries.values():

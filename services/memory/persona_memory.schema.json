@@ -36,7 +36,9 @@
     },
     "content": {
       "type": "object",
-      "required": ["summary"],
+      "required": [
+        "summary"
+      ],
       "properties": {
         "summary": {
           "type": "string",
@@ -50,7 +52,9 @@
         },
         "tags": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Free-form retrieval tags (e.g. regime, asset_class, source_strategy)."
         }
       },
@@ -97,16 +101,25 @@
       "description": "Service that wrote this entry. Only whitelisted services may write."
     },
     "embedding_ref": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Reference to the vector embedding stored in the retrieval index. Set by persona-memory-svc after indexing."
     },
     "superseded_by": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "memory_id of the entry that supersedes this one, if any. Superseded entries are retained for lineage but excluded from active retrieval."
     },
     "relevance_scope": {
       "type": "string",
-      "enum": ["persona_private", "persona_and_committee"],
+      "enum": [
+        "persona_private",
+        "persona_and_committee"
+      ],
       "default": "persona_private",
       "description": "Controls read visibility. persona_private: only the owning persona's sessions. persona_and_committee: also readable by authorised committee/consult sessions involving this persona."
     },
@@ -117,8 +130,29 @@
       "description": "Incremented by the retrieval facade when this memory is reused in an authorized context."
     },
     "tenant_id": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Optional tenant identifier for multi-tenant memory isolation."
+    },
+    "expires_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "archived_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "archived_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "additionalProperties": false
