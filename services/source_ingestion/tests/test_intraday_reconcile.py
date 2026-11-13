@@ -602,3 +602,34 @@ def test_only_malformed_component_evidence_fails_closed_and_loader_empty(tmp_pat
     assert any(v["reason"] == "volume_basis_unavailable" for v in res.violations)
     assert store.symbol_day_status("2330", DAY) == "quarantined"
     assert read_reconciled_rows(store, "2330", DAY) == []
+
+
+@pytest.mark.parametrize("ident", [{"symbol": None}, {"date": None}, {"date": "garbage"}, {"symbol": "  "}, {"date": "2026-13-45"}])
+def test_invalid_component_identity_fails_closed_not_legacy_fallback(tmp_path, ident):
+    """P1: null/blank/invalid symbol or date must stay an unattributable marker, never legacy total."""
+    root = _write_snapshot(tmp_path / "off", total=REGULAR, comps=[_comp("block", **ident)])
+    off = OfficialDaily.from_snapshot(root)
+    assert off.components_for("2330", DAY)
+    store = _store(tmp_path / "store"); store.put_symbol_day("2330", DAY, _bars())
+    before = sorted(str(p) for p in (tmp_path / "store").rglob("*"))
+    ro = _run(store, off, write=False)
+    assert ro.outcome == "fail" and sorted(str(p) for p in (tmp_path / "store").rglob("*")) == before
+    res = _run(store, off)
+    assert res.outcome == "fail" and store.symbol_day_status("2330", DAY) == "quarantined"
+    assert read_reconciled_rows(store, "2330", DAY) == []
+
+
+def test_direct_dataset_dir_root_uses_canonical_component_root(tmp_path):
+    bad = [_comp(k, volume=-1) if k == "block" else _comp(k) for k in CATS]
+    root = _write_snapshot(tmp_path / "off", comps=bad)
+    store = _store(tmp_path / "store"); store.put_symbol_day("2330", DAY, _bars())
+    for form in (root, root / "normalized" / "tw_price_daily"):
+        off = OfficialDaily.from_snapshot(form)
+        assert _run(store, off, write=False).outcome == "fail"
+    res = _run(store, OfficialDaily.from_snapshot(root / "normalized" / "tw_price_daily"))
+    assert res.outcome == "fail" and read_reconciled_rows(store, "2330", DAY) == []
+    out = subprocess.run([sys.executable, str(ROOT / "scripts/report_intraday_reconciliation.py"),
+                          "--store-root", str(tmp_path / "store"),
+                          "--official-root", str(root / "normalized" / "tw_price_daily")],
+                         capture_output=True, text=True, check=True, cwd=tmp_path)
+    assert json.loads(out.stdout)["summary"]["outcome_counts"] == {"already_quarantined": 1}

@@ -25,7 +25,7 @@ import gzip
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -202,8 +202,15 @@ def _component_from_body(body: Mapping[str, Any], ref: Mapping[str, Any], defaul
     raw = _dec(body.get("volume"))
     shares = raw if unit == "shares" else raw * SHARES_PER_LOT if unit == "lots" and raw is not None else None
     market = body.get("market")
+    symbol, day = body.get("symbol"), body.get("date")
+    if not isinstance(symbol, str) or not symbol.strip() or not isinstance(day, str):
+        raise ValueError("component identity (symbol/date) missing or untyped")
+    try:
+        date.fromisoformat(day.strip()[:10])
+    except ValueError:
+        raise ValueError("component date is not a valid session date") from None
     return VolumeComponent(
-        str(body["symbol"]).upper(), str(body["date"])[:10], None if market is None else str(market).upper(),
+        symbol.strip().upper(), day.strip()[:10], None if market is None else str(market).upper(),
         str(body.get("category") or ""), shares, unit, _parse_ts(body.get("available_time") or default_avail), ref)
 
 
@@ -245,8 +252,11 @@ class OfficialDaily:
     @classmethod
     def from_snapshot(cls, root: str | Path) -> "OfficialDaily":
         base = Path(root)
+        snapshot_root = base
         if (base / "normalized" / "tw_price_daily").is_dir():
             base = base / "normalized" / "tw_price_daily"
+        elif base.name == "tw_price_daily" and base.parent.name == "normalized":
+            snapshot_root = base.parent.parent  # direct dataset dir: components live at the canonical root
         if not base.is_dir():
             raise ReconcileError(f"official tw_price_daily snapshot missing: {base}")
         rows: list[OfficialRow] = []
@@ -276,7 +286,7 @@ class OfficialDaily:
                      "line_sha256": _sha256(line), "source_id": rec.get("source_id")},
                     None if mkt is None else str(mkt).upper(),
                 ))
-        return cls(rows, dates, cls._load_components(Path(root)))
+        return cls(rows, dates, cls._load_components(snapshot_root))
 
     @staticmethod
     def _load_components(root: Path) -> list[VolumeComponent]:
