@@ -159,16 +159,21 @@ def test_changed_prefix_rebuilds_all_projections(tmp_path, captured, monkeypatch
 def test_partial_unicode_receipt_is_deferred_until_newline(tmp_path, captured, startup):
     path = tmp_path / "schedule.jsonl"
     store = JsonlIngestScheduleStore(path)
+    prior = _receipt(captured, 99)
+    store.upsert_receipt(prior)
+    prefix = path.read_bytes()
     receipt = _receipt(captured, large=True)
     refs = {**receipt.evidence_refs, "operator_note": "臺灣市場"}
     receipt = replace(receipt, evidence_refs=refs)
     raw = _row("ingest_receipt", receipt.ingest_run_id, receipt.to_dict(), unicode=True)
     cut = raw.index("臺".encode()) + 1
-    path.write_bytes(raw[:cut])
+    with path.open("ab") as handle:
+        handle.write(raw[:cut])
     if startup:
         store = JsonlIngestScheduleStore(path)
     assert store.get_receipt(receipt.ingest_run_id) is None
-    assert store._read_offset == 0
+    assert store.get_receipt(prior.ingest_run_id).to_dict() == prior.to_dict()
+    assert store._read_offset == len(prefix)
     before = path.read_bytes()
     with pytest.raises(SourceEvidenceError, match="Incomplete ingest schedule JSONL tail"):
         store.upsert_receipt(receipt)
@@ -179,7 +184,7 @@ def test_partial_unicode_receipt_is_deferred_until_newline(tmp_path, captured, s
     with path.open("ab") as handle:
         handle.write(b"\n")
     assert store.get_receipt(receipt.ingest_run_id).to_dict() == receipt.to_dict()
-    assert store._read_offset == len(raw)
+    assert store._read_offset == len(prefix) + len(raw)
 
 
 def test_invalid_complete_row_is_rejected_at_same_line_on_retry(tmp_path, captured):
