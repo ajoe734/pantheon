@@ -33,6 +33,12 @@
     {
       "command": "git diff --check origin/dev",
       "exit_status": 0
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_template_demand_search.py services/research/tests/test_query_plan.py --basetemp=/tmp/template-demand-r2-evidence-revision",
+      "exit_status": 0,
+      "result": "24 passed, 105 warnings in 72.91s (0:01:12)",
+      "log": "validation-evidence-revision.log"
     }
   ],
   "source_sha256": {
@@ -98,5 +104,12 @@
     "summary_sha256": "a8d25cc0abb13c1dd7df1471487822328f02db65a36562b2e4f3fe2e8316021a",
     "run_count": 2,
     "receipt_reused": true
+  },
+  "evidence_revision": {
+    "reason": "PR7318 reviewer reopen: replace repeated full Research run output with focused summary below 400-line cap.",
+    "anchor_commit": "ec9b9498b",
+    "production_and_test_source_changed": false,
+    "integrity_verification": "Original SHA-256/bytes/lines, both run lifecycles, candidate/gate identities, summary digest and seven source hashes verified.",
+    "ci_failure_diagnosis": "Old Service suites legs were skipped because the required Runtime mirror guard failed Diff budget; no service assertion failure was reported."
   }
 }
