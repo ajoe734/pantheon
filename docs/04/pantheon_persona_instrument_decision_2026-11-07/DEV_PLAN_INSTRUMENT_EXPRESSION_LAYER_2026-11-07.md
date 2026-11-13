@@ -220,6 +220,47 @@ Worked outcomes with `Date=20261106` data, equity 100,000, budget 2.0× (max gro
 
 The replay table of the design document §8 (E1–E3) remains the loss reference per instrument.
 
+#### Portfolio target positions (operator approval 2026-11-13)
+
+The operator approved the three portfolio corrections on 2026-11-13
+(`PERSONA-POOL-TARGET-POSITIONS-20261113`). Strategy weights belong to immutable
+member strategies, not symbols. Daily screened picks are recomputed and recorded
+with each member's candidate-pool digest; changing picks does not publish a new
+pool version. Fixed-member symbols, current screened picks and held underlyings
+form the decision universe.
+
+New envelopes use `target_position_v1`, except a single execution-weighted,
+unscreened member at weight 1, which retains the exact `notional_target_v1`
+passthrough (including zero-weight virtual trials). Standalone artifacts and
+the three existing paper personas retain their existing policy and decisions.
+
+For a decision bar, freeze the published persona book and governed risk budget,
+evaluate all member targets, then compute all net views before sizing:
+`raw[s] = abs(net[s]) × notional_fraction_at_full_strength × gross_limit`.
+Scale every raw target by `min(1, gross_limit / sum(raw))`. The gross limit
+is the absolute persona budget, never the residual budget of the preceding
+symbol. Allocation and its inputs are recorded for deterministic replay.
+
+Reconcile the target with the marked gross exposure on that underlying. A
+zero/FLAT target closes every held leg. An opposite target closes first and can
+open the other direction only on a later bar. Same-direction differences
+outside `max(one held instrument unit notional, rebalance_band_fraction × target)`
+reduce held legs or add the delta through the existing candidate scoring and
+`max_units_by_risk`. Multiple reductions split proportionally across held legs;
+integer reductions round down and never exceed held units. Additions are
+bounded by the allocated delta so rounding cannot spend another symbol's budget.
+The starting `rebalance_band_fraction=0.2` is a coordinator proposal, **not an
+operator-selected number**. The band and parameter digest ride on each decision.
+
+Each factor member reconstructs its own state from its view history; screened
+members replay their own membership and position history through the standalone
+screen evaluator. Aggregate holdings never determine a member's rule exits.
+An exit contributes a FLAT member target rather than a fresh opposite order.
+Missing market inputs, held marks or budget fail closed with a recorded reason.
+The order risk gate, risk limits, paper-only boundary and absence of model calls
+on the trade path are unchanged. Research, pool admission and expression replay
+use the same allocation and target-position functions as paper.
+
 ### 4.5 Risk gate (layer D)
 
 `max_units_by_risk(c)` = largest integer `n` with all of: `n × c.initial_margin_per_unit ≤ equity − margin_reserved` (for a cash share this is the full purchase price, so cash shares are never bought with borrowed cash; the 2.0× multiple applies to futures notional only through the margin test and the gross/leverage tests); `gross_after(n) ≤ max_leverage × equity`; `gross_after(n) ≤ gross_limit × equity`; `|net_after(n)| ≤ net_limit × equity` where set; `c.kind`'s asset class ∈ `allowed_asset_classes` and ∉ `forbidden_asset_classes`. Asset classes: `cash_share → "equity"`, `stock_future → "future"`.

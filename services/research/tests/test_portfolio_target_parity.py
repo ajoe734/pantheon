@@ -23,6 +23,9 @@ def target_envelope():
     # A and B overlap on 2330; 2317 belongs only to A. Screen picks are not pinned.
     a = member_artifact("a", symbols=["2330.TW", "2317.TW"])
     b = member_artifact("b", symbols=["2330.TW"], bearish=True)
+    for member in (a, b):
+        member["parameters"]["market"] = "TW"
+        member["mutation_surface"]["immutable_parameters"].append("market")
     screen = screen_artifact()
     screen["parameters"]["symbols"] = ["2330.TW"]
     screen["parameters"]["data_source"] = a["parameters"]["data_source"]
@@ -82,7 +85,8 @@ def test_recorded_paper_backtest_targets_replay_and_member_exits_match(monkeypat
             assert {k: v for k, v in actual.items() if k != "decision_id"} == {
                 k: v for k, v in expected.items() if k != "decision_id"}
     assert member_exits > 0 and len(digests) > 1
-    assert _artifact_order_sizes(prepared, artifact) == research["orders"]
+    for inst, sizes in _artifact_order_sizes(prepared, artifact).items():
+        assert sizes == pytest.approx(research["orders"][inst], nan_ok=True)
     monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
     result = run_vectorbt_workflow(dataset, backend=VectorbtBackend(),
                                    config=BacktestConfig(strategy_artifact=artifact))

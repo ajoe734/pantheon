@@ -123,9 +123,15 @@ def evaluate_admission(*, dataset, current, proposed, candidate, entries, trial_
         reasons.append("combined_oos_sharpe_did_not_improve")
     if candidate_sharpe <= threshold:
         reasons.append("candidate_oos_sharpe_below_persona_trial_threshold")
+    from services.registry.portfolio_envelope import uses_target_positions
+    target_basis = "portfolio_target_position_cash_net_taiwan_costs"
+    before_basis = target_basis if uses_target_positions(_envelope(current, entries)) else NET_BASIS
+    after_basis = target_basis if uses_target_positions(_envelope(proposed, entries)) else NET_BASIS
     return {"admitted": not reasons, "reasons": reasons, "correlations": correlations,
             "pool_oos_sharpe": before, "combined_oos_sharpe": after, "candidate_oos_sharpe": candidate_sharpe,
             "persona_trial_count": trial_count, "sharpe_haircut": haircut, "required_candidate_sharpe": threshold,
-            "return_basis": NET_BASIS, "periods_per_year": policy.periods_per_year,
+            "return_basis": after_basis, "pool_oos_return_basis": before_basis,
+            "combined_oos_return_basis": after_basis, "candidate_oos_return_basis": NET_BASIS,
+            "periods_per_year": policy.periods_per_year,
             "oos_start": dates[0], "oos_end": dates[-1], "return_observations": len(dates) - 1,
             "dataset_id": prepared.dataset_id, "source_dataset_refs": list(prepared.source_dataset_refs)}

@@ -512,12 +512,16 @@ def decide_target_position(view, candidates, book, budget, parameters):
 
     if not target.is_finite() or target < 0 or not fraction.is_finite() or not 0 <= fraction <= 1:
         return no("candidates_unavailable", "bar_allocation_unavailable")
-    if not budget.get("gross_limit") or _dec(budget["gross_limit"]) <= 0:
+    for field in ("gross_limit", "gross_used", "available_cash"):
+        value = budget.get(field)
+        if value is None or not _dec(value).is_finite() or _dec(value) < 0:
+            return no("candidates_unavailable", "budget_unavailable: " + field)
+    if _dec(budget["gross_limit"]) <= 0:
         return no("candidates_unavailable", "budget_unavailable: gross_limit")
     exposure = Decimal(0)
     for p in positions:
         candidate = by_id.get(str(p["instrument_id"]))
-        if candidate is None or _unit_notional(candidate) <= 0:
+        if candidate is None or not _unit_notional(candidate).is_finite() or _unit_notional(candidate) <= 0:
             return no("candidates_unavailable", "held_instrument_mark_unavailable")
         exposure += _unit_notional(candidate) * int(p["units"])
         band = max(band, _unit_notional(candidate))

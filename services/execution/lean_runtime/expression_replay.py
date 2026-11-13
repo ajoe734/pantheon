@@ -244,7 +244,9 @@ def replay(
                 view["target_notional"] = allocation["targets"][symbol]
             except (KeyError, ValueError, StopIteration):
                 view["target_notional"] = -1
-        outcome = policy.decide_for_policy(kind, view, candidates, book, budget, row_params)
+        error = record.get("inputs_unavailable") if kind == policy.TARGET_POLICY_KIND else None
+        outcome = (policy.budget_unavailable_no_trade(view, error["missing"], error.get("detail", ""))
+                   if error else policy.decide_for_policy(kind, view, candidates, book, budget, row_params))
         by_id = {str(c.get("instrument_id")): c for c in candidates}
         positions = [dict(p) for p in (book.get("positions") or [])]
         entry: dict[str, Any] = {

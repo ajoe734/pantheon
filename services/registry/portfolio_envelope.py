@@ -61,7 +61,7 @@ def validate_portfolio_envelope(artifact: Mapping[str, Any]) -> None:
     if set(artifact["mutation_surface"]["immutable_parameters"]) != set(params):
         raise Error("all envelope parameters must be immutable")
     symbols = params.get("symbols")
-    if not isinstance(symbols, list) or (not symbols and not any(is_screened(m["artifact"]) for m in members)):
+    if not isinstance(symbols, list) or (members and not symbols and not any(is_screened(m["artifact"]) for m in members)):
         raise Error("portfolio envelope requires symbols")
     if len({_symbol_key(s) for s in symbols}) != len(symbols):
         raise Error("portfolio envelope contains duplicate underlying aliases")
@@ -195,7 +195,11 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
 
     if not members and (not empty_template or not pool_snapshot or not parent_envelope_id):
         raise ValueError("empty portfolio requires a prior envelope and pinned pool snapshot")
-    template = copy.deepcopy(members[0]["artifact"] if members else empty_template)
+    execution = [m for m in members if not m.get("virtual_only", False)]
+    passthrough = (len(execution) == 1 and execution[0]["risk_weight"] == 1
+                   and not is_screened(execution[0]["artifact"]) and max_net_strength == 1)
+    source = execution[0]["artifact"] if passthrough else members[0]["artifact"] if members else empty_template
+    template = copy.deepcopy(source)
     template.update(artifact_id=artifact_id, strategy_id=strategy_id, version=version)
     template.pop("binding_intent", None)
     pinned = []
@@ -287,7 +291,8 @@ def screened_member_history(artifact, market, decision_time):
 def evaluate_portfolio_bar(artifact, snapshots, *, market=None, held_symbols=()):
     """Evaluate all member views before allocation; daily screen picks stay unpinned."""
     from .candidate_pool import canonical_symbol, _market
-    from .factor_rule import evaluate_factor_rule_view
+    from .factor_rule import (evaluate_factor_rule_view, resolve_point_in_time_inputs,
+                              evaluate_factor_expression, _eval_node_series)
     from .strategy_artifact import evaluate_strategy_view, validate_strategy_artifact
 
     validate_strategy_artifact(artifact)
@@ -330,6 +335,17 @@ def evaluate_portfolio_bar(artifact, snapshots, *, market=None, held_symbols=())
                         include_position_state=True)
                     # The interpreter reconstructs this member's own position
                     # state across its history, never the persona's holdings.
+                    if view["action"] == "HOLD" and view.get("target_direction") in {"LONG", "SHORT"}:
+                        # HOLD means retain this member's state, not flatten it.
+                        # Read its declared strength expression at the same PIT cutoff.
+                        logic, params = child["strategy_logic"], child["parameters"]
+                        env = resolve_point_in_time_inputs(logic, row["closes"],
+                            features=row.get("features"), decision_time=at,
+                            bar_frequency=params.get("bar_frequency"))
+                        signal, _ = _eval_node_series(logic["signal"], env, params)
+                        strength = evaluate_factor_expression(logic["strength"],
+                            {**env, "signal": signal}, params)
+                        view["strength"] = max(0.0, min(1.0, strength))
                     view = _target_view(view)
                 else:
                     view = evaluate_strategy_view(child, row["closes"],

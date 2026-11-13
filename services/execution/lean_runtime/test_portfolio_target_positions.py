@@ -164,8 +164,10 @@ def test_producer_flat_closes_every_held_leg():
 
 
 def test_runtime_fills_net_zero_close_and_weak_target_reduction(tmp_path):
-    """PaperSignalProducer -> persisted expression -> paper order gate -> ledger."""
+    """Production inputs -> producer -> persisted expression -> risk gate -> ledger."""
     artifact = multi_envelope(weight=.8)
+    # Leave room for cash payment and costs at the unchanged two-times gross limit.
+    artifact["expression_policy"]["parameters"]["notional_fraction_at_full_strength"] = .2
     binding = portfolio_binding(artifact)
     summary = _summary()
     provider = production_inputs(summary)
@@ -175,10 +177,165 @@ def test_runtime_fills_net_zero_close_and_weak_target_reduction(tmp_path):
     producer = PaperSignalProducer(lambda _: store, strategy)
     service = PaperRuntimeService(store=store, identity=_identity(binding),
         runtime_manager_client=_RuntimeManager(_runtime_binding(binding)),
-        telemetry_emitter=telemetry, lifecycle_outbox_path=tmp_path / "lifecycle.json")
+        telemetry_emitter=telemetry, lifecycle_outbox_path=tmp_path / "lifecycle.json",
+        capital_pool_reader=lambda _: _pool())
     service._algo._in_process_broker = True
-    assert producer.produce(binding, NOW) == 3, producer.degraded_bindings
-    for _ in range(4):
-        snapshot = service.drain_once()
+
+    def bar(day, closes):
+        for row in binding["market_inputs"].values():
+            row.update(closes=closes, event_time=day + "T05:30:00Z", observed_at=day + "T06:00:00Z")
+        positions = service._algo.positions()
+        if positions or summary.get("ledger_fill_count"):
+            summary.update(ledger_fill_count=1, ledger_cash=service._algo._cash,
+                positions=[{**p, "mark_price": closes[-1]} for p in positions])
+        from datetime import datetime
+        service._algo.Time = datetime.fromisoformat(day + "T06:00:00+00:00")
+        assert producer.produce(binding, day + "T06:00:00Z") == 3, producer.degraded_bindings
+        for _ in range(4):
+            snapshot = service.drain_once()
+        assert snapshot["status"] == "ok", snapshot
+        return {p["symbol"]: p["quantity"] for p in service._algo.positions()}
+
+    original = bar("2026-11-13", [100, 102])
+    assert len(original) == 3
+    reduced = bar("2026-11-16", [100, 100.1])
+    assert all(0 < reduced[s] < original[s] for s in original), (original, reduced)
+    closed = bar("2026-11-17", [100, 100])
+    assert closed == {}
+    # A new long is opened, then a short target closes it; no short-capable
+    # instrument exists in this recorded candidate set.
+    reopened = bar("2026-11-18", [100, 102])
+    assert len(reopened) == 3
+    assert bar("2026-11-19", [102, 100]) == {}
+    assert bar("2026-11-20", [102, 100]) == {}
     fills = [e for e in telemetry.events if e["event_type"] == "paper_fill_simulated"]
-    assert fills, snapshot
+    assert len(fills) >= 15
+    assert all(p["quantity"] >= 0 for p in service._algo.positions())
+
+
+def test_member_rule_exit_reduces_combined_target_through_runtime(tmp_path):
+    from datetime import datetime
+    from services.registry.test_candidate_pool import screen_artifact
+    from services.registry.portfolio_envelope import build_portfolio_envelope
+    factor = screen_artifact()
+    factor["strategy_logic"].pop("screen")
+    factor["strategy_logic"]["inputs"] = [factor["strategy_logic"]["inputs"][0]]
+    factor["parameters"]["symbols"] = ["2330.TW"]
+    factor["parameters"]["hold_bars"] = 2
+    for control in factor["mutation_surface"]["controls"]:
+        control["current_value"] = factor["parameters"][control["parameter_key"]]
+    constant = _artifact_with_expression_policy()
+    constant["parameters"].update(symbols=["2330.TW", "2317.TW", "2454.TW"], market="TW",
+                                  data_source=factor["parameters"]["data_source"])
+    constant["mutation_surface"]["immutable_parameters"].append("market")
+    artifact = build_portfolio_envelope(artifact_id="member-exit", strategy_id="member-exit",
+        version="1.0.0", members=[
+            {"member_id": "factor", "artifact": factor, "risk_weight": .5},
+            {"member_id": "constant", "artifact": constant, "risk_weight": .5}])
+    artifact["expression_policy"]["parameters"]["notional_fraction_at_full_strength"] = .2
+    binding = portfolio_binding(artifact)
+    summary = _summary()
+    strategy = CurrentArtifactStrategy(expression_layer=True, expression_inputs=production_inputs(summary),
+                                       candidates_builder=cash_candidates)
+    store, telemetry = InMemoryPendingSignalStore(), _Telemetry()
+    producer = PaperSignalProducer(lambda _: store, strategy)
+    service = PaperRuntimeService(store=store, identity=_identity(binding),
+        runtime_manager_client=_RuntimeManager(_runtime_binding(binding)), telemetry_emitter=telemetry,
+        lifecycle_outbox_path=tmp_path / "exit.json", capital_pool_reader=lambda _: _pool())
+    service._algo._in_process_broker = True
+
+    def run(day, closes):
+        for row in binding["market_inputs"].values():
+            row.update(closes=closes, features={"close": closes},
+                       event_time=day+"T05:30:00Z", observed_at=day+"T06:00:00Z",
+                       # Deliberately wrong persona-level state must be ignored.
+                       current_direction="SHORT", holding_bars=999)
+        service._algo.Time = datetime.fromisoformat(day+"T06:00:00+00:00")
+        positions = service._algo.positions()
+        if positions:
+            summary.update(ledger_fill_count=1, ledger_cash=service._algo._cash,
+                positions=[{**p, "mark_price": closes[-1]} for p in positions])
+        outputs = strategy(binding, day+"T06:00:00Z")["portfolio_decisions"]
+        assert producer.produce(binding, day+"T06:00:00Z") == 3
+        for _ in range(4):
+            service.drain_once()
+        return outputs, {p["symbol"]: p["quantity"] for p in service._algo.positions()}
+
+    initial, before = run("2026-11-13", [100, 102])
+    exited, after = run("2026-11-16", [100, 102, 104])
+    view = next(o for o in exited if o["symbol"] == "2330.TW")
+    assert view["metadata"]["portfolio_member_views"]["factor"]["view"]["direction"] == "FLAT"
+    assert view["metadata"]["portfolio_net_view"]["strength"] == .5
+    assert 0 < after["2330.TW"] < before["2330.TW"]
+
+
+def test_member_hold_keeps_own_target():
+    from services.registry.test_candidate_pool import screen_artifact
+    from services.registry.portfolio_envelope import build_portfolio_envelope, evaluate_portfolio_bar
+    factor = screen_artifact()
+    factor["strategy_logic"].pop("screen")
+    factor["strategy_logic"]["inputs"] = [factor["strategy_logic"]["inputs"][0]]
+    factor["parameters"].update(symbols=["2330.TW"], hold_bars=100, entry_z=101)
+    for control in factor["mutation_surface"]["controls"]:
+        if control["parameter_key"] in {"entry_z", "hold_bars"}:
+            control["allowed_range"]["max"] = 200
+    for control in factor["mutation_surface"]["controls"]:
+        control["current_value"] = factor["parameters"][control["parameter_key"]]
+    artifact = build_portfolio_envelope(artifact_id="hold-target", strategy_id="hold-target",
+        version="1.0.0", members=[{"member_id": "a", "artifact": factor, "risk_weight": .5},
+                                {"member_id": "b", "artifact": factor, "risk_weight": .5}])
+    snapshots = {"2330.TW": {"closes": [102, 100], "features": {"close": [102, 100]},
+                           "event_time": NOW, "source_ref": "test-only:hold-bars"}}
+    result = evaluate_portfolio_bar(artifact, snapshots)["2330.TW"]
+    assert result["view"]["direction"] == "LONG"
+    assert result["view"]["strength"] == 1
+
+
+def test_evolution_replay_gate_supports_target_positions_and_rejects_unknown_policy():
+    from services.evolution.program_qualification import expression_replay_gate
+    view = {"decision_id": "gate", "underlying": "2330", "direction": "LONG", "strength": .5}
+    allocation = ep.allocate_targets({"2330.TW": view}, BUDGET, PARAMS)
+    record = {"decision_id": "gate", "policy_kind": ep.TARGET_POLICY_KIND,
+        "view": {**view, "target_notional": allocation["targets"]["2330.TW"]},
+        "bar_allocation": allocation, "budget": BUDGET, "book_before": {},
+        "candidates": [candidate()], "parameters": PARAMS, "marks": {"eq:2330": [101]}}
+    assert expression_replay_gate(PARAMS, PARAMS, [record])["passed"]
+    assert expression_replay_gate(PARAMS, PARAMS, [{**record, "policy_kind": "unknown"}])["reason"] == "unsupported_expression_policy"
+
+
+def test_frozen_bar_reads_inputs_once_and_restart_reuses_expression_record():
+    artifact = multi_envelope()
+    binding = portfolio_binding(artifact)
+    reads = []
+    def inputs(_):
+        reads.append(True)
+        return {"persona_book": held(), "risk_budget": BUDGET}
+    strategy = CurrentArtifactStrategy(expression_layer=True, expression_inputs=inputs,
+                                       candidates_builder=cash_candidates)
+    outputs = strategy(binding, NOW)["portfolio_decisions"]
+    assert len(reads) == 1
+    for output in outputs:
+        first = output["expression"]["evaluate"]()
+        assert first["replay_input"]["book_before"] == held()
+    assert len(reads) == 1
+    store = InMemoryPendingSignalStore()
+    producer = PaperSignalProducer(lambda _: store, strategy)
+    assert producer.produce(binding, NOW) == 3
+    def broken(*args, **kwargs):
+        raise AssertionError("completed expression must not be recomputed")
+    replacement = PaperSignalProducer(lambda _: store,
+        CurrentArtifactStrategy(expression_layer=True, expression_inputs=inputs, candidates_builder=broken))
+    # Admitted decisions reuse their stored expression even before consumer drain.
+    replacement.produce(binding, NOW)
+
+
+def test_unreadable_budget_replays_the_recorded_no_trade():
+    from services.execution.lean_runtime.expression_inputs import ExpressionInputsUnavailable
+    def unavailable(_):
+        raise ExpressionInputsUnavailable("ledger", "owner read unavailable")
+    strategy = CurrentArtifactStrategy(expression_layer=True, expression_inputs=unavailable,
+                                       candidates_builder=cash_candidates)
+    output = strategy(portfolio_binding(multi_envelope()), NOW)["portfolio_decisions"][0]
+    recorded = output["expression"]["evaluate"]()
+    assert "budget_unavailable: ledger" in recorded["decision"]["detail"]
+    assert replay([recorded["replay_input"]], None)["decisions"][0]["record"] == recorded["decision"]

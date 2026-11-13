@@ -15,6 +15,7 @@ runtime activation guard.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -591,7 +592,9 @@ class CurrentArtifactStrategy:
                 "book_before": book,
                 "budget": budget,
                 "parameters": params,
-                **({"policy_kind": policy_kind, "bar_allocation": allocation}
+                **({"policy_kind": policy_kind, "bar_allocation": allocation,
+                    **({"inputs_unavailable": {"missing": unavailable.missing, "detail": unavailable.detail}}
+                       if unavailable is not None else {})}
                    if policy_kind == expression_policy.TARGET_POLICY_KIND else {}),
             },
         }
@@ -615,6 +618,7 @@ class CurrentArtifactStrategy:
                 inputs = dict(metadata.get("expression_inputs") or {})
         except ExpressionInputsUnavailable as exc:
             inputs = {"unavailable": {"missing": exc.missing, "detail": exc.detail}}
+        inputs = copy.deepcopy(inputs)
         features = {**(metadata.get("features") or {}), **(binding.get("features") or {})}
         keyed = {}
         try:

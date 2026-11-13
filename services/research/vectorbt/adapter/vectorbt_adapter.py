@@ -1472,6 +1472,10 @@ def _portfolio_target_sequence(dataset, artifact, gross_budget=100_000.0):
         raise VectorbtWorkflowError("portfolio target bars must be aligned")
     dates = next(iter(calendars))
     keys = {canonical_symbol(s): s for s in dataset.instruments}
+    if len(keys) != len(dataset.instruments) or len(set(dates)) != len(dates):
+        raise VectorbtWorkflowError("portfolio target bars contain duplicate aliases or dates")
+    if any(not math.isfinite(b[3]) or b[3] <= 0 for bars in dataset.ohlcv_by_instrument.values() for b in bars):
+        raise VectorbtWorkflowError("portfolio target marks must be positive and finite")
     orders = {inst: [float("nan")] * len(dates) for inst in dataset.instruments}
     bars, positions, cash, returns, previous_equity = [], {}, float(gross_budget), [], float(gross_budget)
     params = artifact["expression_policy"]["parameters"]
