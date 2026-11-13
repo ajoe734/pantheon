@@ -4,12 +4,14 @@
   "diagnosis": {
     "entry_point": "python -m services.search.scheduler_worker against uvicorn services.search.main:app, PANTHEON_SEARCH_BACKEND=postgres_pgvector, SEARCH_EVIDENCE_BACKEND=postgres (compose env)",
     "hosted_exception": "Root43460083439 scheduler traceback was never captured (no VM/log authority). Not claimed as proven hosted exception; the local reproduction below is the same real entry point and matches the captured symptom (scheduler exits, docker restart_count 3->5).",
-    "reproduced_cause": "On a cold search-svc the embedding model integrity hashing + ONNX load (LocalEmbeddingEngine.is_ready) was paid lazily by the first request (readyz probe or the scheduler's first /api/search/index/refresh). On a CPU-limited cold start this exceeds the scheduler's 30s per-request boundary, so urlopen raised TimeoutError, main() had no handler, the process exited and docker restart:unless-stopped looped it. Also the compose readyz healthcheck has a 5s timeout and hit the same cold cost.",
+    "reproduced_cause": "WITHDRAWN / UNKNOWN. The earlier cold-model-vs-30s-boundary hypothesis is disproven for the official readyz-before-scheduler order (see review_round_3_official_order): unmodified abfb72c8c succeeds there (exit 0, 9.9s) because check_health() loads the embedding engine before readyz returns 200. The actual Root43460083439 exception and exit cause are NOT established. The startup warmup and failed-tick observability are hardening only, not a reproduced repair. Needs Ops-retained scheduler stderr/traceback, exit code/restart evidence and runtime settings.",
     "reproduction": {
       "setup": "pgvector/pgvector:0.8.0-pg16 (repo sql schema) + postgres:16 with source_ingest.source_evidence loaded with 3 canonical fixtures (12 records, metadata.tenant_id=default), search image pantheon-search-r2-test:local with worktree mounted, search-svc docker --cpus 0.5, cold (empty data volume, empty index table)",
       "pre_fix": "unmodified base scheduler_worker (abfb72c8c) with MAX_TICKS=1: TimeoutError: timed out after 30.97s, exit nonzero (a 1-CPU run passed: cause is cold cost vs 30s boundary)",
-      "readyz_cold_timing": "first GET /readyz on cold service took 23.4s (default cpus)"
-    }
+      "readyz_cold_timing": "first GET /readyz on cold service took 23.4s (default cpus)",
+      "note": "Pre-fix result applies only to starting the scheduler against a not-yet-ready service, which is not the official order."
+    },
+    "superseded_hypothesis": "On a cold search-svc the embedding model integrity hashing + ONNX load (LocalEmbeddingEngine.is_ready) was paid lazily by the first request (readyz probe or the scheduler's first /api/search/index/refresh). On a CPU-limited cold start this exceeds the scheduler's 30s per-request boundary, so urlopen raised TimeoutError, main() had no handler, the process exited and docker restart:unless-stopped looped it. Also the compose readyz healthcheck has a 5s timeout and hit the same cold cost."
   },
   "change": {
     "services/search/main.py": "create_app registers a startup hook that calls retrieval_backend.embedding_engine.is_ready() so integrity+load happen before traffic is accepted; failure is logged and non-fatal, readyz keeps reporting unavailable (no false health). Timeout (30s), cadence (300s), model pin, dictionaries, tenant/persona isolation, deployment gate unchanged.",
