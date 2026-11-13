@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pantheon/knowledge/decision_case_file.v1",
+  "title": "Decision case file",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_file_id", "digest", "schema_version", "composed_at", "subject", "caller",
+               "lesson_query", "budgets", "groups", "execution_may_read"],
+  "properties": {
+    "case_file_id": {"type": "string", "pattern": "^casefile-[0-9a-f]{24}$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "schema_version": {"const": "decision_case_file.v1"},
+    "composed_at": {"type": "string", "minLength": 1},
+    "execution_may_read": {"const": false},
+    "subject": {
+      "type": "object", "additionalProperties": false,
+      "required": ["decision_type", "persona_id", "tenant_id", "strategy_family", "underlyings",
+                   "instrument_class", "member_artifact_refs", "backtest_run_refs", "regime_tag"],
+      "properties": {
+        "decision_type": {"enum": ["trial_admission", "member_removal", "weight_change",
+                                    "evolution_proposal", "research_demand", "consult"]},
+        "persona_id": {"type": "string", "minLength": 1},
+        "tenant_id": {"type": "string", "minLength": 1},
+        "strategy_family": {"type": "string", "minLength": 1},
+        "underlyings": {"type": "array", "items": {"type": "string"}},
+        "instrument_class": {"type": "string"},
+        "member_artifact_refs": {"type": "array", "items": {"type": "string"}},
+        "backtest_run_refs": {"type": "array", "items": {"type": "string"}},
+        "regime_tag": {"type": "string"}
+      }
+    },
+    "caller": {
+      "type": "object", "additionalProperties": false,
+      "required": ["actor_id", "is_subject_persona"],
+      "properties": {"actor_id": {"type": "string", "minLength": 1}, "is_subject_persona": {"type": "boolean"}}
+    },
+    "lesson_query": {
+      "type": "object", "additionalProperties": false, "required": ["query", "tags"],
+      "properties": {"query": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}}
+    },
+    "budgets": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_items_per_group", "max_excerpt_chars", "max_total_chars"],
+      "properties": {"max_items_per_group": {"type": "integer", "minimum": 1},
+                     "max_excerpt_chars": {"type": "integer", "minimum": 1},
+                     "max_total_chars": {"type": "integer", "minimum": 1}}
+    },
+    "groups": {
+      "type": "object", "additionalProperties": false,
+      "required": ["facts", "similar_history", "lessons", "evidence"],
+      "properties": {
+        "facts": {"$ref": "#/$defs/group"},
+        "similar_history": {"$ref": "#/$defs/group"},
+        "lessons": {"$ref": "#/$defs/group"},
+        "evidence": {"$ref": "#/$defs/group"}
+      }
+    }
+  },
+  "$defs": {
+    "group": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "items", "truncated", "unavailable"],
+      "properties": {
+        "status": {"enum": ["ok", "partial", "empty", "unavailable"]},
+        "reason": {"type": "string"},
+        "truncated": {"type": "boolean"},
+        "items": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+        "unavailable": {"type": "array", "items": {
+          "type": "object", "required": ["owner", "reason"],
+          "properties": {"owner": {"type": "string"}, "reason": {"type": "string"}, "expected": {"type": "boolean"}}}}
+      },
+      "allOf": [{"if": {"properties": {"status": {"const": "unavailable"}}},
+                 "then": {"required": ["reason"]}}]
+    },
+    "item": {
+      "type": "object",
+      "required": ["item_id", "group", "kind", "source_owner", "source_id", "excerpt",
+                   "retrieval_score", "retrieval_mode", "subject_fields"],
+      "properties": {
+        "item_id": {"type": "string", "minLength": 1},
+        "group": {"enum": ["facts", "similar_history", "lessons", "evidence"]},
+        "kind": {"type": "string", "minLength": 1},
+        "source_owner": {"type": "string", "minLength": 1},
+        "source_id": {"type": "string", "minLength": 1},
+        "excerpt": {"type": "string"},
+        "retrieval_score": {"type": ["number", "null"]},
+        "retrieval_mode": {"type": "string", "minLength": 1},
+        "subject_fields": {"type": "object"}
+      }
+    }
+  }
+}
