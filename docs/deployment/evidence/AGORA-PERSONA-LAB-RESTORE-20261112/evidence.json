@@ -41,5 +41,11 @@
   ],
   "owner_changes": [
     "services/persona/harness.py: POST .../patches/{id}/shadow (runs run_shadow_comparison, persists the record), POST .../patches/{id}/negative-experience (owner-written never_again stored as row.operator_feedback, separate from the measured row.experience; both consumed via relevant_experiences/experience_refs), POST .../harness/deliver (outbox replay)"
-  ]
+  ],
+  "conflict_resolution": {
+    "merged": "origin/dev",
+    "conflict_file": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "resolution": "regenerated from live app via scripts/bff_route_manifest_backend.py (640 routes); committee-memory (PR7286) and persona lab routes both present; --check passed",
+    "validation": "BFF committee-memory + persona lab suites 31 passed; persona harness suites 82 passed"
+  }
 }
