@@ -7,6 +7,7 @@ The genuine baseline/gate proof validators have separate recorded-output tests.
 import copy
 import importlib
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -17,11 +18,24 @@ from fastapi.testclient import TestClient
 from services.evolution.test_auto_consumer_dispatch import world as dispatch_world, client as evolution_client
 from services.research.tests.test_evolution_gate_executor import research, world as research_world
 from services.research.tests.test_pool_admission import recorded_dataset
+from services.research.alpha_replication.test_evolution_executor_case_file import case_owner_server, LESSON, OWNER_URLOPEN
+
+
+@pytest.fixture()
+def case_owners(monkeypatch, research_world, dispatch_world):
+    with case_owner_server(monkeypatch, research_world.parent, persona_id='p1') as server:
+        dispatch_urlopen = urllib.request.urlopen
+        def urlopen(request, *args, **kwargs):
+            if request.full_url.startswith(server.endpoint.base_url):
+                return OWNER_URLOPEN(request, *args, **kwargs)
+            return dispatch_urlopen(request, *args, **kwargs)
+        monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
+        yield server
 
 
 @pytest.mark.parametrize("child_fresh_passed", [True, False])
 def test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal(
-    dispatch_world, research, research_world, monkeypatch, tmp_path, child_fresh_passed,
+    dispatch_world, research, research_world, monkeypatch, tmp_path, child_fresh_passed, case_owners,
 ):
     import services.evolution.auto_consumer_runtime as runtime
     import services.evolution.pool_evolution_scheduler as scheduler
@@ -152,6 +166,10 @@ def test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal(
 
     research_client = TestClient(research.app)
     def http_json(method, url, *, payload, timeout):
+        if (payload or {}).get('parameters', {}).get('pool_member'):
+            # Controlled proposer declaration: the scheduler itself must not
+            # invent a claim that a structural mutation addresses a lesson.
+            payload['parameters']['pool_member']['addresses_lessons'] = {'lesson_ids': [LESSON]}
         response = research_client.request(method, url.split('http://research', 1)[1], json=payload)
         return response.status_code, response.json()
     evolution_main.receipt_registry['research'] = ResearchPlaneAdapter(api_url='http://research', http_json=http_json)
