@@ -25,7 +25,7 @@
 2. 記憶庫對應：每個租戶一個「事實庫」（共用層）；每個 persona 一個「解讀庫」（私人記憶，可在會議分享的另加標籤）。
 3. 錨點（策略、父代、類型、標的、商品、資料集、盤勢、決定類型）由我們提供，同時當實體與標籤，名稱不讓 AI 改。
 4. 讀取：先依錨點標籤嚴格篩（關聯先篩）→ Hindsight 四路搜尋（語意、關鍵字、關聯圖、時間）＋重新評分＋新舊/時間加成 → 最後用我們的「有沒有用」調整。
-5. 讓 AI 控制讀取：記憶服務提供 recall 與 reflect（AI 讀記憶後回答並附出處）；persona 每日循環多兩個唯讀工具；會議前每個參加者用 reflect 整理自己的解讀，全文帶進會議。
+5. 讓 AI 控制讀取：記憶服務提供 recall 與 reflect（AI 讀記憶後回答並附出處）；每日循環的 persona 先說要查什麼（最多 3 個查詢）＋一次 reflect，由控制器經記憶服務執行後交回，再提案；會議前每個參加者用 reflect 整理自己的解讀，全文帶進會議。
 6. 淘汰：我們取代/封存/到期時，同步在 Hindsight 標成失效；有害 3 次送審照舊；不靠刪除提升效果。
 7. 拿掉自製的記憶排序與「記憶寫進搜尋索引」那段，只留一套記憶索引；知識庫的文件與證據檢索不變。
 
@@ -126,7 +126,7 @@ Numeric values are coordinator starting values, not operator decisions.
 | H6 | **Read facade.** The memory service remains the only retrieval entry point. `/api/memory/retrieve` calls Hindsight recall on each bank the caller may read (own interpretation bank with private items only for the persona itself; facts bank; other personas' banks never), with `tag_groups` requiring at least one subject anchor (`any_strict`) when the request carries subject anchors, then maps results to canonical ids (documents directly, observations through `source_fact_ids`), hydrates and authorises from the canonical stores, applies `usefulness_score` as the final re-rank, and states `retrieval_mode` (`hindsight`, or `keyword_fallback` with its reason). Starting request values: `budget=mid`, `max_tokens` sized to the caller's budget, types per caller. |
 | H7 | **One memory index.** The memory-to-search projection is removed: store `_project` hooks, `sync_memory_projection`, `backfill_memory_index`, `project_*_entry`, `retrieve_*_with_backend`, and the search service's memory record kinds. The keyword ranking in the stores remains only as the explicit fallback. |
 | H8 | **Case file.** `lesson_query` callers pass anchors as subject anchors so lessons and negative memory use H6 association-first filtering; `regime` is included when the subject carries it. Budgets, groups and citation rules are unchanged. |
-| H9 | **LLM-controlled reads.** The memory service adds read-only `POST /api/memory/reflect` scoped exactly like H6 (one bank per call; the facts bank and the caller's own bank are separate calls), with low temperature, returning text plus citations mapped to canonical ids. Persona daily-cycle agents get two read-only tools, `persona_memory_recall` and `persona_memory_reflect`, brokered by the gateway with the agent's verified persona identity to these routes; no direct Hindsight access, no write tool. Proposals may cite canonical ids returned by these tools as well as case-file items, and the citation check verifies them against the tool-call record of that cycle. |
+| H9 | **LLM-controlled reads.** The memory service adds read-only `POST /api/memory/reflect` scoped exactly like H6 (one bank per call; the facts bank and the caller's own bank are separate calls), with low temperature, returning text plus citations mapped to canonical ids. In the daily cycle the persona agent controls what it reads through the controller, not through new agent tools (persona agents today have only `read` and the proposal tool, and the proposal is structured output validated by the controller): a first structured step returns up to 3 memory queries with subject anchors and one reflect question; the controller runs them through memory-svc recall and reflect for that persona's own bank and the facts bank, persists the results with canonical ids beside the case file, and the proposal step may cite those ids as well as case-file items. The citation check verifies every cited id against the persisted case file and read record of that cycle. No agent receives Hindsight access or a write path. |
 | H10 | **Meeting interpretations.** Before a panel call, each participant's interpretation is produced by `reflect` on that participant's own bank restricted to `scope:committee`, with the decision query, and is passed to the panel in full with its cited canonical ids. Length is controlled by count (one interpretation per participant, at most 12 cited items), never by truncating text. Participants stay deny-all; interpretations are produced by the memory service, not by giving participants tools. The meeting record stores each interpretation and its citations; the existing `consultation_outcome` writer records what each participant took away. While reflect is off (H5), the participant's committee-visible entries are passed in full instead. |
 | H11 | **Invalidation and review.** H3 mirrors every canonical state change. The three-hurt review is unchanged; an archive decision from that review invalidates the document. No eviction for performance. Persona memory retention stays as today until the operator decides. |
 | H12 | **Boundaries.** Execution never reads memory, case files or Hindsight; agents only propose; private interpretations never cross personas; meetings receive only `scope:committee` interpretations; any authorisation or availability failure fails closed with a recorded reason. |
@@ -142,7 +142,7 @@ owner event ends ──► canonical memory (owner-written; facts = institutiona
                     memory-svc ──retain/invalidate──► Hindsight (internal)
                                                       facts bank per tenant · interpretation bank per persona
 decision point ──► case file (owner facts + evidence search + memory via memory-svc recall)
-daily cycle agent ──tools──► gateway ──► memory-svc recall / reflect (own bank + facts bank)
+daily cycle agent ──query plan──► controller ──► memory-svc recall / reflect (own bank + facts bank) ──► results back to the agent
 panel ──► memory-svc reflect per participant (own bank, scope:committee) ──► full interpretations to panel
 outcome window ──► usefulness marks ──► final re-rank in memory-svc
 ```
@@ -160,7 +160,7 @@ Every task keeps the standing rules: production entry point exercised by an inte
 | 2 | `MEMORY-HINDSIGHT-INDEX` | H3–H7, H9 route, H11 |
 | 3 | `SEARCH-MEMORY-PROJECTION-REMOVAL` | H7 search-service side |
 | 3 | `CASE-FILE-HINDSIGHT-ANCHORS` | H8 |
-| 3 | `PERSONA-MEMORY-TOOLS` | H9 tools and citation check |
+| 3 | `PERSONA-CYCLE-LLM-RECALL` | H9 daily-cycle query plan, read record and citation check |
 | 3 | `PANEL-FULL-INTERPRETATIONS` | H10 |
 | 4 | `MEMORY-HINDSIGHT-HOSTED-ACCEPTANCE` | operator-side hosted acceptance after an accepted Dev release |
 
