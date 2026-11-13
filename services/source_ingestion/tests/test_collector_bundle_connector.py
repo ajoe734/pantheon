@@ -1417,6 +1417,7 @@ def test_tampered_held_raw_fails_truthfully_and_acknowledges_nothing(tmp_path):
 def test_provider_handler_uses_active_paper_symbol_environment(tmp_path, monkeypatch):
     from services.source_ingestion.provider_adapters import _collector_bundle
 
+    # Same configured-ingestion handler path; the adapter itself reads the existing env identity.
     monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TWSE,2317.TWSE")
     result = _collector_bundle(_held_session(tmp_path)(), {"_effective_max_records": 55}, "trace")
     assert {"2330", "2317"} <= set(_symbols(result))

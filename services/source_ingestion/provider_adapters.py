@@ -1121,14 +1121,10 @@ def _collector_bundle(
     # Tuple consumers still rely on adapter-owned partial resume. Configured scheduling
     # also retains the typed outcome and acknowledges its cursor through IngestBatch.
     cursor = explicit or adapter.load_resume_cursor()
-    # Same active paper symbol identities the Taiwan official adapter prioritizes.
-    held = _string_list(os.getenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").split(","))
-    held += _string_list(request.get("priority_symbols"))
     result = adapter.pull(
         cursor=str(cursor) if cursor else None,
         trace_id=trace_id,
         max_records=request[EFFECTIVE_MAX_RECORDS_KEY],
-        priority_symbols=tuple(held),
     )
     if not explicit:
         adapter.save_resume_cursor(result)
