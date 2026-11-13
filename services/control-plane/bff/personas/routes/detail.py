@@ -32,6 +32,7 @@ from ..service import (
     deterministic_provisioning_ids,
 )
 from .common import PersonaRouteContext, make_context_dependency
+from ..cycle_views import read_cycle_views
 
 log = logging.getLogger(__name__)
 
@@ -548,6 +549,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 persona_id, caller_tenant, authorization=authorization, snapshot_at=snapshot_at,
             )
             surfaces.update(pool_surfaces)
+            data["personaCycle"], cycle_surfaces = read_cycle_views(
+                _service.get_read_store(), persona_id, caller_tenant, identity, authorization, snapshot_at,
+            )
+            surfaces.update(cycle_surfaces)
 
             return {
                 "data": data,
@@ -607,6 +612,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 persona_id, caller_tenant, authorization=authorization, snapshot_at=snapshot_at,
             )
             meta.setdefault("surfaces", {}).update(pool_surfaces)
+            dto["personaCycle"], cycle_surfaces = read_cycle_views(
+                _service.get_read_store(), persona_id, caller_tenant, identity, authorization, snapshot_at,
+            )
+            meta["surfaces"].update(cycle_surfaces)
             return {
                 "data": dto,
                 "meta": meta,

@@ -42,6 +42,7 @@ from ..service import (
     deterministic_provisioning_ids,
 )
 from .common import PersonaRouteContext, make_context_dependency
+from ..cycle_views import read_fleet_cycle_health
 
 log = logging.getLogger(__name__)
 
@@ -436,7 +437,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         tenant_payload = _bff_me_tenant_payload(identity, requested_tenant=None)
         tenant_id = str(tenant_payload.get("id") or "tenant-default")
         try:
-            return _persona_fleet_slim_list_payload(
+            result = _persona_fleet_slim_list_payload(
                 tenant_id=tenant_id,
                 snapshot_at=utc_now(),
                 state=state,
@@ -451,6 +452,12 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 archived=archived,
                 viewer_user_id=_fleet_viewer_user_id(identity, tenant_id, utc_now),
             )
+            items = result["data"]["items"]
+            ids = [str(row.get("persona_id") or row.get("id")) for row in items]
+            health_by_persona = read_fleet_cycle_health(_service.get_read_store(), tenant_id, ids)
+            for row, pid in zip(items, ids):
+                row["persona_cycle_health"] = health_by_persona[pid]
+            return result
         except ValueError as exc:
             raise _bff_error(
                 422,
