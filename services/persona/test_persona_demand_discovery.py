@@ -252,3 +252,54 @@ def test_lifespan_seed_reader_binds_persona_tenant_and_service_credential(tmp_pa
     monkeypatch.delenv("PERSONA_SOURCE_INGEST_SERVICE_TOKEN")
     with pytest.raises(RuntimeError, match="seed_store_credential_unconfigured"):
         loader(PERSONA)
+
+
+def _registry_view(strategy_id, registry_id, family, deps=("ohlcv", "return labels")):
+    spec = {"strategy_id": strategy_id, "title": f"TWSE {family} rotation", "hypothesis": f"{family} persists on TWSE equities.",
+            "market_scope": {"symbols": ["2330"], "venues": ["TWSE"], "asset_classes": ["equity"], "frequency": "daily"},
+            "data_dependencies": [{"ref": d, "kind": "dataset"} for d in deps],
+            "execution_profile": {"signal_schema_version": "research-signal-v1", "quantity_type": "PERCENT_PORTFOLIO",
+                                  "execution_mode_hint": "paper", "rebalance_cadence": "swing"},
+            "governance": {"approval_required": True, "risk_profile": "medium"},
+            "provenance": {"source_kind": "workflow", "source_refs": ["n"], "created_at": "2026-06-09T00:00:00Z"},
+            "citation_bundle": {"evidence_refs": [{"ref_id": "evref-1"}]}}
+    return {"entry": {"registry_id": registry_id, "strategy_id": strategy_id, "artifact_state": "approved", "artifact_type": "strategy_spec",
+                      "metadata": {"strategy_family": family, "strategy_spec": spec, "mechanism_status": "tested", "mechanism_support": 1.0},
+                      "lineage": {}}, "deployment_stage": None}
+
+
+def test_registry_shaped_specs_flow_through_cycle_with_dataset_and_tried_family_filters(tmp_path):
+    world = World(tmp_path, [])
+    world.registry_specs = [_registry_view("spec-mom", "reg-mom", "momentum"),
+                            _registry_view("spec-carry", "reg-carry", "carry"),
+                            _registry_view("spec-book", "reg-book", "value", deps=("order book",))]
+    world.memory.append({"tags": ["tried_family:momentum"]})
+    world.run()
+    demand = only_demand(world)
+    assert demand["discovery"]["last_run"]["matched"] >= 1
+    excluded = {e["matched_object_id"]: e["reason"] for e in demand["discovery"]["last_run"]["excluded"]}
+    assert excluded.get("spec-mom") == "tried_family" and excluded.get("spec-book") == "missing_datasets_not_required"
+    rapid = [a for a in demand["discovery"]["actions"] if a["action"] == "run_rapid_eval"]
+    assert rapid and rapid[0]["status"] == "eval_requested"
+    assert world.tickets.get_research_ticket(rapid[0]["ticket_id"])["title"].startswith("Rapid evaluation request")
+
+
+def test_transient_ticket_read_failure_never_overwrites_an_existing_ticket(tmp_path):
+    world = World(tmp_path, [])
+    demand = {"demand_id": "d1", "short_measure": "m"}
+    match = {"match_id": "m1", "matched_object_id": "s", "matched_object_type": "strategy_spec", "score": 0.9,
+             "recommended_action": {"type": "run_rapid_eval", "reason": "fits"}}
+    first = world.ports.execute_match_action(PERSONA, demand, match)
+    before = world.tickets.get_research_ticket(first["ticket_id"])
+    real = world.transport
+
+    def flaky(method, service, path, tenant, body=None):
+        if method == "GET" and path.startswith("/api/research/tickets/"):
+            raise ConnectionError("transient")
+        return real(method, service, path, tenant, body)
+    world.ports.transport = flaky
+    with pytest.raises(ConnectionError):
+        world.ports.execute_match_action(PERSONA, demand, match)  # fail closed: no POST
+    world.ports.transport = real
+    assert world.tickets.get_research_ticket(first["ticket_id"]) == before
+    assert world.ports.execute_match_action(PERSONA, demand, match)["status"] == "already_exists"

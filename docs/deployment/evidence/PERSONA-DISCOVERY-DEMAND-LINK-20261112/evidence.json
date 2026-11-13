@@ -21,8 +21,8 @@
   "limitations": [
     "PERSONA_SOURCE_INGEST_SERVICE_TOKEN(_FILE) must be provisioned for the persona service by deployment config (docker-compose.yml is outside this task's artifact contract); unprovisioned fails closed as discovery_unavailable.",
     "Seed promotion, rapid eval and data backfill are requested through research tickets; the seed reviewer, training session and data owners still gate execution.",
-    "Registry spec candidates are built from registry entry metadata (no spec body read).",
+    "Registry spec candidates are materialized from the canonical StrategySpec the registry stores at entry.metadata.strategy_spec, with lifecycle/mechanism/negative-memory metadata preserved; ticket-lookup errors other than 404 fail closed so an existing deterministic ticket is never overwritten.",
     "hosted_behavior_claimed: false"
   ],
-  "verification": ".venv-pantheon python -m pytest: persona demand discovery, pool cycle, research demand + cycle integration, discovery scorer, cycle controller, persona main: 72 passed"
+  "verification": ".venv-pantheon python -m pytest: persona demand discovery, pool cycle, research demand + cycle integration, discovery scorer, cycle controller, persona main; plus registry-shaped cycle test (dataset + tried-family filters, rapid-eval ticket) and transient-read/lost-receipt regression: persona demand discovery 12 passed"
 }

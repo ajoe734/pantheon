@@ -436,9 +436,19 @@ class HttpPoolCyclePorts:
             entry = view.get("entry") if isinstance(view, Mapping) else None
             if not isinstance(entry, Mapping) or str(entry.get("artifact_state") or "").lower() in {"retired", "rejected"}:
                 continue
-            specs.append({"strategy_id": entry.get("strategy_id"), "strategy_spec_registry_id": entry.get("registry_id"),
-                          "lifecycle_state": entry.get("artifact_state"), "metadata": dict(entry.get("metadata") or {}),
-                          "lineage": entry.get("lineage") if isinstance(entry.get("lineage"), Mapping) else {}})
+            metadata = dict(entry.get("metadata") or {})
+            stored = metadata.get("strategy_spec")  # the registry stores the canonical StrategySpec here
+            spec = dict(stored) if isinstance(stored, Mapping) else {}
+            for key in ("mechanism", "mechanism_status", "mechanism_support", "negative_memory_match"):
+                if key in metadata:
+                    spec.setdefault(key, metadata[key])
+            spec.update({"strategy_id": spec.get("strategy_id") or entry.get("strategy_id"),
+                         "strategy_spec_registry_id": entry.get("registry_id"),
+                         "lifecycle_state": entry.get("artifact_state"),
+                         "metadata": {**(spec.get("metadata") if isinstance(spec.get("metadata"), Mapping) else {}),
+                                      **{k: v for k, v in metadata.items() if k != "strategy_spec"}},
+                         "lineage": entry.get("lineage") if isinstance(entry.get("lineage"), Mapping) else {}})
+            specs.append(spec)
         return specs
 
     # Each supported action is admitted by the research owner as a durable ticket (its request queue).
@@ -451,6 +461,11 @@ class HttpPoolCyclePorts:
         "request_data_backfill": ("backfill_requested", "Data backfill request"),
     }
 
+    @staticmethod
+    def _is_not_found(exc):
+        code = getattr(exc, "code", None) or getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+        return code == 404 or isinstance(exc, LookupError)
+
     def execute_match_action(self, persona, demand, match):
         """Execute a recommended action through its existing owner (paper/research only)."""
         action = match["recommended_action"]["type"]
@@ -461,7 +476,9 @@ class HttpPoolCyclePorts:
         ticket_id = "rt-demand-" + hashlib.sha256(key.encode()).hexdigest()[:16]
         try:  # the owner overwrites on a repeated id: never post an existing ticket again
             existing = self._call("GET", "research", "/api/research/tickets/" + ticket_id, persona)
-        except Exception:  # noqa: BLE001 - absent ticket (404) or unreadable owner; the POST below decides
+        except Exception as exc:  # noqa: BLE001 - only a confirmed absence (404) may create; the owner overwrites a repeated id
+            if not self._is_not_found(exc):
+                raise
             existing = None
         if existing:
             return {"owner": "research:tickets", "status": "already_exists", "ticket_id": ticket_id}
