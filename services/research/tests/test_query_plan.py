@@ -102,14 +102,14 @@ def test_persona_cycle_real_research_http_entry_produces_read_only_weekly_task(t
     # research HTTP handlers. Pool/registry/memory owner reads are fixtures only.
     from services.persona.pool_autonomy_cycle import PoolAutonomyCycle
     from services.persona.test_pool_autonomy_cycle import Ports, pool, LOW
-    from services.research.tests.test_backtest_owner_readback import _bearer, SECRET
+    from services.research.tests.test_persona_demand_routes_auth import _cycle_headers, SECRET, TENANT
     monkeypatch.setenv("PANTHEON_RESEARCH_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", SECRET)
     module = _load_service_module(data_dir=str(tmp_path))
     module.research_demand_store = ResearchDemandStore(tmp_path / "demands.json", now=lambda: NOW)
     module.query_plan_store = QueryPlanStore(tmp_path / "plans.json", now=lambda: NOW)
     client = TestClient(module.app)
-    headers = _bearer("t1", ["operator"])
+    headers = _cycle_headers()
     calls = []
     class OwnerPorts(Ports):
         def reconcile_demands(self, persona, members):
@@ -123,7 +123,7 @@ def test_persona_cycle_real_research_http_entry_produces_read_only_weekly_task(t
             response = client.post("/api/research/persona-demands", headers=headers, json=body)
             assert response.status_code == 201, response.text
             return response.json()
-    persona = {"persona_id": "p1", "tenant_id": "t1", "mandate": "Taiwan momentum", "required_data_sources": ["tw-margin-balance"]}
+    persona = {"persona_id": "p1", "tenant_id": TENANT, "mandate": "Taiwan momentum", "required_data_sources": ["tw-margin-balance"]}
     cycle = PoolAutonomyCycle(OwnerPorts(), now=lambda: NOW.isoformat())
     result = cycle.run(persona, {"pool": pool(), "pool_health": LOW, "unavailable": []}, "cycle-1")
     assert result["status"] == "completed", repr(result)
@@ -168,7 +168,7 @@ def test_final_demand_satisfied_or_expired_withdraws_proposal_and_keeps_history(
 @pytest.mark.parametrize("how", ["satisfied", "expired"])
 def test_http_final_demand_closure_withdraws_task_readback(tmp_path, monkeypatch, how):
     from services.research.tests.test_research_demand import BODY
-    from services.research.tests.test_backtest_owner_readback import _bearer, SECRET
+    from services.research.tests.test_persona_demand_routes_auth import _cycle_headers, SECRET
     monkeypatch.setenv("PANTHEON_RESEARCH_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", SECRET)
     module = _load_service_module(data_dir=str(tmp_path))
@@ -176,7 +176,7 @@ def test_http_final_demand_closure_withdraws_task_readback(tmp_path, monkeypatch
     module.research_demand_store = ResearchDemandStore(tmp_path / "demands.json", now=lambda: clock[0])
     module.query_plan_store = QueryPlanStore(tmp_path / "plans.json", now=lambda: clock[0])
     client = TestClient(module.app)
-    headers = _bearer("t1", ["operator"])
+    headers = _cycle_headers()
     body = dict(BODY, mandate="Taiwan momentum", missing_datasets=["tw-margin-balance"])
     created = client.post("/api/research/persona-demands", headers=headers, json=body)
     assert created.status_code == 201, created.text

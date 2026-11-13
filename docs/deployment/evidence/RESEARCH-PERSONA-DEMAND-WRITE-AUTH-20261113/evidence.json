@@ -1,0 +1,58 @@
+{
+  "task_id": "RESEARCH-PERSONA-DEMAND-WRITE-AUTH-20261113",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "evidence_kind": "local_source_validation",
+  "source_base_sha": "5a419c47f0827caa5ab9acee83a6743c3280cbaf",
+  "implementation_anchor": "04afb6930",
+  "scope": {
+    "principal": "persona-pool-cycle",
+    "identity_source": "authenticate_tenant verified actor_id",
+    "write_routes": [
+      "POST /api/research/persona-demands",
+      "POST /api/research/persona-demands/reconcile",
+      "POST /api/research/persona-demands/{demand_id}/actions"
+    ],
+    "read_route": "GET /api/research/persona-demands retains existing read roles",
+    "tenant_boundary": "Existing explicit tenant and verified claim checks, including structured-token tenant checks",
+    "issuer_compatibility": "Existing issue_environment PERSONA_RESEARCH_SERVICE_TOKEN, sub=persona-pool-cycle, roles=[viewer], using local fixture verifier material",
+    "other_changes": "Existing query-plan HTTP tests use the cycle principal for writes",
+    "unchanged": ["credential issuance", "roles and grants", "persona policy", "paper/live authority", "storage contracts"]
+  },
+  "validation": [
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_persona_demand_routes_auth.py services/research/tests/test_query_plan.py services/research/tests/test_research_demand.py",
+      "exit_code": 0,
+      "result": "60 passed, 511 warnings in 23.73s",
+      "coverage": ["all three writer positives via unchanged issuer", "unrelated viewer/operator/admin denied", "cross-tenant denied", "signed alternate identity claims and untrusted header/body spoofing denied", "invalid or expired signature and missing identity/tenant denied", "all 13 existing read roles retained", "cycle principal can list", "foreign demand actions not found", "permissive structured-token boundaries", "denied writes preserve persisted stores", "query-plan creation and withdrawal"]
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/alpha_replication/test_replication_entries_read.py",
+      "exit_code": 0,
+      "result": "3 passed, 31 warnings in 3.27s"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/persona/test_persona_demand_discovery.py services/persona/test_pool_autonomy_cycle.py",
+      "exit_code": 0,
+      "result": "44 passed, 37 warnings in 9.78s"
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -v --disable-warnings services/research/tests/test_backtest_owner_readback.py services/research/tests/test_persona_cycle_demand_integration.py services/persona/test_persona_demand_discovery.py services/persona/test_pool_autonomy_cycle.py",
+      "exit_code": 0,
+      "result": "56 passed, 370 warnings in 176.18s (0:02:56)",
+      "note": "Bounded retry of relevant readback/persona regressions, including recorded-TWSE integration; all terminal output collected"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_research_single_owner_routes.py services/research/tests/test_backtest_owner_readback.py services/research/tests/test_persona_cycle_demand_integration.py services/persona/test_persona_demand_discovery.py services/persona/test_pool_autonomy_cycle.py",
+      "exit_code": 124,
+      "result": "Timed out at the batch limit; partial progress is not counted as passed"
+    }
+  ],
+  "review": "pending independent exact-head review through canonical handoff",
+  "deployment": "Not performed or claimed; no hosted activation or exploitation evidence"
+}

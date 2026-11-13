@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import math
+import tempfile
 import io
 import json
 import os
 import re
 import xml.etree.ElementTree as ET
 import zipfile
+import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode, urlparse
 from typing import Any, Mapping, Sequence
 
 from .bundle import CollectedItem, utc_iso
-from .config import DISABLED_BY_BUILD_TOKENS, CollectorConfigError, SourceFetchPolicy, validate_query_terms
+from .config import (DISABLED_BY_BUILD_TOKENS, GDELT_BASE_URL, GDELT_INDEX_URL,
+                     CollectorConfigError, SourceFetchPolicy, validate_query_terms)
 from .fetchers import (
     DoclingBookAdapter,
+    FetchAccessBlockedError,
+    FetchResponse,
     FetchTransport,
     PolicyEnforcedFetcher,
     ScraplingHttpFetcher,
@@ -393,98 +400,164 @@ class TwseOpenApiPoller:
         return items
 
 
-class GdeltDocPoller:
-    """GDELT DOC 2.0 API poller (SD §5.1: max 250 records/call, 3-month default window)."""
+class GdeltRawFeedPoller:
+    """Hourly latest-export snapshot; verified ZIP cache and post-bundle receipts.
+
+    Export has structured events, not article titles/text. Vocabulary matching uses
+    actor/geographic names and decoded source URLs only. No DOC API fallback.
+    """
 
     source_id = "collector-gdelt"
-    skipped_count = 0
-    MAX_RECORDS_PER_CALL = 250
+    MAX_ZIP_BYTES = 64 * 1024 * 1024
+    MAX_CSV_BYTES = 128 * 1024 * 1024
 
-    def __init__(
-        self,
-        policy: SourceFetchPolicy,
-        *,
-        transport: FetchTransport,
-        contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
-    ) -> None:
+    def __init__(self, policy: SourceFetchPolicy, *, transport: FetchTransport,
+                 cache_dir: Path | str,
+                 contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)") -> None:
         self.policy = policy
-        self.fetcher = PolicyEnforcedFetcher(
-            policy, transport=transport, contact_user_agent=contact_user_agent
-        )
+        self.cache_dir = Path(cache_dir)
+        self.fetcher = PolicyEnforcedFetcher(policy, transport=transport, contact_user_agent=contact_user_agent)
+        self.terms = validate_query_terms(policy.source_id, policy.raw_config.get("query_terms"))
+        self.skipped_count = 0
+        self.empty_reason = "no_matching_records"
+        self._pending_receipt: Path | None = None
 
-    def collect(
-        self,
-        *,
-        query: str | None = None,
-        max_records: int = 250,
-        timespan: str = "3months",
-        url: str | None = None,
-        fetched_at: datetime | str | None = None,
-    ) -> list[CollectedItem]:
-        if max_records <= 0 or max_records > self.MAX_RECORDS_PER_CALL:
-            raise CollectorConfigError(
-                f"GDELT DOC 2.0 max_records must be between 1 and {self.MAX_RECORDS_PER_CALL}, got {max_records}"
-            )
-        configured_query = _policy_query(self.policy)
-        if query is not None and query != configured_query:
-            raise CollectorConfigError("query must match committed fetch-policy query_terms")
-        target_url = _configured_url(url,
-            "https://api.gdeltproject.org/api/v2/doc/doc?"
-            + urlencode(
-                {
-                    "query": configured_query,
-                    "mode": "ArtList",
-                    "maxrecords": max_records,
-                    "timespan": timespan,
-                    "format": "json",
-                }
-            )
-        )
-        fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
-        response = self.fetcher.fetch(target_url)
-        if response.http_status == 429:
-            raise CollectorConfigError(
-                "GDELT answered 429; requests must be spaced at least 5 seconds apart"
-            )
+    def _fetch(self, url: str) -> FetchResponse:
         try:
-            payload = json.loads(response.text)
-        except ValueError:
-            # GDELT answers plain text (not JSON) for bad queries and rate limits.
-            self.skipped_count += 1
+            response = self.fetcher.fetch(url)
+        except FetchAccessBlockedError:
+            raise
+        except Exception as exc:
+            raise FetchAccessBlockedError(
+                f"gdelt_download_failed:{url}:{type(exc).__name__}",
+                FetchResponse(url, url, 0, b""),
+            ) from exc
+        if response.http_status != 200:
+            raise FetchAccessBlockedError(f"gdelt_http_{response.http_status}:{url}", response)
+        # Live HTTP transports follow redirects; reject payloads redirected off-site.
+        final = urlparse(response.final_url)
+        if final.scheme != "https" or final.hostname != "data.gdeltproject.org" or final.port not in (None, 443):
+            raise FetchAccessBlockedError(f"gdelt_unexpected_redirect:{response.final_url}", response)
+        return response
+
+    @staticmethod
+    def _atomic_bytes(path: Path, data: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".gdelt-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def acknowledge_bundle(self) -> None:
+        """Called only after BundleWriter has published the output successfully."""
+        if self._pending_receipt is not None:
+            self._atomic_bytes(self._pending_receipt, b"bundled\n")
+
+    def collect(self, *, fetched_at: datetime | str | None = None) -> list[CollectedItem]:
+        response = self._fetch(GDELT_INDEX_URL)
+        try:
+            entries = []
+            for line in response.text.splitlines():
+                parts = line.split()
+                if len(parts) != 3:
+                    raise ValueError("invalid index row")
+                size, md5, listed_url = parts
+                if not listed_url.endswith(".export.CSV.zip"):
+                    continue
+                if not re.fullmatch(r"https?://data\.gdeltproject\.org/gdeltv2/\d{14}\.export\.CSV\.zip", listed_url):
+                    raise ValueError("invalid export URL")
+                if not re.fullmatch(r"[a-fA-F0-9]{32}", md5) or not 0 < int(size) <= self.MAX_ZIP_BYTES:
+                    raise ValueError("invalid export size/md5")
+                entries.append((int(size), md5.lower(), listed_url))
+            if len(entries) != 1:
+                raise ValueError("index must list exactly one export")
+            size, expected_md5, listed_url = entries[0]
+        except ValueError as exc:
+            raise FetchAccessBlockedError(f"gdelt_invalid_index:{exc}", response) from exc
+
+        name = listed_url.rsplit("/", 1)[1]
+        cached = self.cache_dir / name
+        receipt = self.cache_dir / f"{name}.{self.policy.policy_hash}.bundled"
+        download_url = GDELT_BASE_URL + name  # HTTPS for the official HTTP listing
+        if cached.is_file():
+            body = cached.read_bytes()
+        else:
+            response = self._fetch(download_url)
+            body = response.body
+        if len(body) != size or hashlib.md5(body).hexdigest() != expected_md5:
+            # Never keep a corrupt cache entry; the next scheduled run can retry.
+            cached.unlink(missing_ok=True)
+            raise FetchAccessBlockedError(f"gdelt_integrity_mismatch:{listed_url}", response)
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                members = archive.infolist()
+                if (len(members) != 1 or members[0].filename != name[:-4]
+                        or members[0].file_size > self.MAX_CSV_BYTES):
+                    raise ValueError("unexpected ZIP member/size")
+                raw_csv = archive.read(members[0])
+            items = self._parse_export(raw_csv, listed_url, fetched_at)
+        except (ValueError, zipfile.BadZipFile, RuntimeError, csv.Error, EOFError, zlib.error) as exc:
+            cached.unlink(missing_ok=True)
+            raise FetchAccessBlockedError(f"gdelt_invalid_export:{name}:{exc}", response) from exc
+        if not cached.is_file():
+            self._atomic_bytes(cached, body)
+        if receipt.is_file():
+            self.empty_reason = "no_new_feed"
             return []
-        articles = (payload.get("articles") or [])[: self.MAX_RECORDS_PER_CALL]
+        self._pending_receipt = receipt
+        return items
 
-        items: list[CollectedItem] = []
-        for idx, art in enumerate(articles, start=1):
-            art_url = str(art.get("url") or target_url)
-            title = str(art.get("title") or f"GDELT article {idx}")
-            seendate = str(art.get("seendate") or fetched_iso)
-            domain = str(art.get("domain") or "gdelt")
-            tone = float(art.get("tone") or 0.0)
-            lang = str(art.get("language") or "en")
-            art_id = str(art.get("id") or f"gdelt-{idx}")
+    def _parse_export(self, raw: bytes, feed_url: str,
+                      fetched_at: datetime | str | None) -> list[CollectedItem]:
+        fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        items = []
+        # Normalize URL word separators, keeping phrase matching within the fixed terms.
+        def normalize(text: str) -> str:
+            return re.sub(r"[\W_]+", " ", unquote(text).casefold()).strip()
 
-            raw_art = json.dumps(art, sort_keys=True, ensure_ascii=False).encode("utf-8")
-            items.append(
-                CollectedItem(
-                    item_id=art_id,
-                    url=art_url,
-                    fetched_at=fetched_iso,
-                    published_at=seendate,
-                    text=title,
-                    lang=lang,
-                    hashed_author=None,
-                    metrics={"tone": tone, "domain": domain},
-                    raw_bytes=raw_art,
-                    raw_extension="json",
-                    http_status=response.http_status,
-                    extra_fields={
-                        "title": title,
-                        "publisher": domain,
-                        "symbols": _detect_tw_symbols(title),
-                    },
-                )
-            )
+        for row in csv.reader(io.StringIO(raw.decode("utf-8")), delimiter="\t", quoting=csv.QUOTE_NONE):
+            if len(row) != 61:
+                raise ValueError(f"expected 61 event columns, got {len(row)}")
+            if not row[0].isdigit():
+                raise ValueError("invalid GlobalEventID")
+            event_day = datetime.strptime(row[1], "%Y%m%d").date().isoformat()
+            added_at = datetime.strptime(row[59], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            source = urlparse(row[60])
+            if source.scheme not in ("http", "https") or not source.netloc:
+                raise ValueError("invalid SOURCEURL")
+            context = " " + normalize(" ".join(row[i] for i in (6, 16, 36, 44, 52, 60))) + " "
+            matched = [term for term in self.terms if " " + normalize(term) + " " in context]
+            if not matched:
+                continue
+            metrics = {
+                "event_code": row[26], "event_base_code": row[27], "event_root_code": row[28],
+                "quad_class": int(row[29]), "goldstein_scale": float(row[30]),
+                "num_mentions": int(row[31]), "num_sources": int(row[32]),
+                "num_articles": int(row[33]), "avg_tone": float(row[34]),
+                "actor1_name": row[6], "actor1_country_code": row[7],
+                "actor2_name": row[16], "actor2_country_code": row[17],
+                "action_geo_name": row[52], "action_country_code": row[53],
+            }
+            if not all(math.isfinite(metrics[k]) for k in ("goldstein_scale", "avg_tone")):
+                raise ValueError("non-finite event feature")
+            title = f"GDELT event {row[0]} ({event_day}): CAMEO {row[26]}"
+            text = (f"{title}; actor1={row[6]}; actor2={row[16]}; location={row[52]}; "
+                    f"Goldstein={row[30]}; tone={row[34]}; source={row[60]}")
+            items.append(CollectedItem(
+                item_id=f"gdelt-{row[0]}", url=row[60], fetched_at=fetched_iso,
+                published_at=utc_iso(added_at), text=text, lang="und", hashed_author=None,
+                metrics=metrics, raw_bytes=("\t".join(row) + "\n").encode("utf-8"), raw_extension="tsv",
+                extra_fields={"title": title, "gdelt_record_id": row[0], "feed_url": feed_url,
+                              "event_time": event_day + "T00:00:00Z", "event_time_precision": "day",
+                              "gdelt_date_added": utc_iso(added_at), "published_at_basis": "gdelt_date_added",
+                              "matched_query_terms": matched, "publisher": source.netloc,
+                              "attribution": self.policy.attribution},
+            ))
         return items
 
 

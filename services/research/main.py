@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger("research-orchestrator")
 
-from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthError, TenantBoundaryError, authenticate_tenant
+from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthenticatedTenant, AuthError, TenantBoundaryError, authenticate_tenant
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.registry.alpha_template import (
@@ -1040,10 +1040,10 @@ def _structured_token_tenants(authorization: Optional[str]) -> set[str]:
     return {t.strip() for t in raw_tenants.split(",") if t.strip()}
 
 
-def _authenticated_alpha_replication_tenant(
-    authorization: Optional[str] = Header(default=None),
-    x_tenant_id: Optional[str] = Header(default=None),
-) -> str:
+def _authenticated_alpha_replication_actor(
+    authorization: Optional[str],
+    x_tenant_id: Optional[str],
+) -> AuthenticatedTenant:
     """Verified bearer identity bound to an explicit tenant; anonymous or cross-tenant is denied."""
     try:
         verified = authenticate_tenant(
@@ -1051,18 +1051,35 @@ def _authenticated_alpha_replication_tenant(
             tenant_id=x_tenant_id,
             service_prefix="RESEARCH",
             required_roles=_ALPHA_REPLICATION_READ_ROLES,
-        ).tenant_id
+        )
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     except TenantBoundaryError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     structured_tenants = _structured_token_tenants(authorization)
-    if structured_tenants and "*" not in structured_tenants and verified not in structured_tenants:
+    if structured_tenants and "*" not in structured_tenants and verified.tenant_id not in structured_tenants:
         raise HTTPException(
             status_code=403,
-            detail=f"Authenticated actor is not authorized for tenant {verified!r}.",
+            detail=f"Authenticated actor is not authorized for tenant {verified.tenant_id!r}.",
         )
     return verified
+
+
+def _authenticated_alpha_replication_tenant(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> str:
+    return _authenticated_alpha_replication_actor(authorization, x_tenant_id).tenant_id
+
+
+def _authenticated_persona_demand_writer_tenant(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> str:
+    actor = _authenticated_alpha_replication_actor(authorization, x_tenant_id)
+    if actor.actor_id != "persona-pool-cycle":
+        raise HTTPException(status_code=403, detail="Persona demand writes require the persona-pool-cycle principal.")
+    return actor.tenant_id
 
 
 def _build_alpha_replication_entry(
@@ -2799,7 +2816,7 @@ def _expire_collector_query_plans() -> None:
 @app.post("/api/research/persona-demands", status_code=201)
 def open_persona_research_demand(
     body: Dict[str, Any] = Body(...),
-    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
 ) -> Dict[str, Any]:
     try:
         result = research_demand_store.open(tenant_id, body)
@@ -2822,7 +2839,7 @@ def list_persona_research_demands(
 @app.post("/api/research/persona-demands/reconcile")
 def reconcile_persona_research_demands(
     body: Dict[str, Any] = Body(...),
-    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
 ) -> Dict[str, Any]:
     persona_id = str(body.get("persona_id") or "")
     if not persona_id:
@@ -2837,7 +2854,7 @@ def reconcile_persona_research_demands(
 def record_persona_research_demand_discovery(
     demand_id: str,
     body: Dict[str, Any] = Body(...),
-    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
 ) -> Dict[str, Any]:
     try:
         return research_demand_store.record_discovery(tenant_id, demand_id, body)
