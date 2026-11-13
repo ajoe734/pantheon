@@ -78,7 +78,7 @@
   },
   "log_format": "Terminal output with trailing whitespace removed; no result text altered.",
   "validated_source_commit": "0c0962e7864e230a6b56a0969aab2ecdd8fe5440",
-  "delivery_base_sha": "f6f8d1be6374feb8415f0b03b0299d0520fed811",
+  "delivery_base_sha": "696e4579a25adfdd02f792b699cbad5cc1bd3a54",
   "pr": 7318,
   "caller_boundary": {
     "authorization_predecessor": "f6f8d1be6374feb8415f0b03b0299d0520fed811",
@@ -111,5 +111,15 @@
     "production_and_test_source_changed": false,
     "integrity_verification": "Original SHA-256/bytes/lines, both run lifecycles, candidate/gate identities, summary digest and seven source hashes verified.",
     "ci_failure_diagnosis": "Old Service suites legs were skipped because the required Runtime mirror guard failed Diff budget; no service assertion failure was reported."
+  },
+  "base_refresh": {
+    "previous_base": "f6f8d1be6374feb8415f0b03b0299d0520fed811",
+    "current_base": "696e4579a25adfdd02f792b699cbad5cc1bd3a54",
+    "reason": "Dev advanced while CI was running; handoff admission requires current base ancestry.",
+    "task_source_hashes_unchanged": true,
+    "previous_validated_head": "be080ec8610224fe702bbe3dc7efbdacce463074",
+    "previous_ci_run": "https://github.com/ajoe734/pantheon/actions/runs/43427911864",
+    "previous_ci_conclusion": "success",
+    "refreshed_head_ci": "Must rerun on pushed head; previous success is not represented as refreshed-head CI."
   }
 }
