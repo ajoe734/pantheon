@@ -48,9 +48,11 @@ Transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-
 | 2572 | 22:57:58.911Z | 45329ccf-d197-4f17-a728-583bf3712125 | 另外我感覺Hindsight 加上用LLM來控制操作可能會比較理想耶 |
 | 2662 | 23:16:17.677Z | ef676e94-9562-403c-99fd-03e8a1db5db2 | 原本的做法沒問題啊，因為每個persona在會議交流才會知道大家對於同一個記憶解讀有哪些不同怎樣關聯啊，不是只分享事實，你這兩個又搞混了 |
 | 2694 | 23:19:59.916Z | 73bdb705-aff5-43a3-bae6-2752b6877449 | 其實評估根本不需要跑過資料，你只要依據結構完整跟技術性哪個比較好做比較判斷即可，你這沒有資料的評比根本沒用 |
-| 2707 | 23:28:51.039Z | f58ae734-5c65-46cc-9e6e-3b93f9610247 | 1 好 / 2好 — answering the coordinator's structural evaluation at line 2704 (23:21:24.438Z, uuid 0bbbcf64-b372-408b-824e-8cfb8b5bede6): (1) proceed with Hindsight as the memory index and write this design and its tasks; (2) withdraw the two data-comparison tasks |
+| 2707 | 23:28:51.039Z | f58ae734-5c65-46cc-9e6e-3b93f9610247 | 1 好 2好 |
 
-Verified against the transcript on delivery: every uuid and timestamp matches its line; texts match character for character except that line breaks inside a message are shown as single spaces in the table (line 2707 is `1 好` and `2好` on two lines; line 2423 is the operator sentence that follows a pasted block in the same message).
+Coordinator interpretation (not operator text): line 2707 answers the coordinator's structural evaluation at line 2704 (23:21:24.438Z, uuid 0bbbcf64-b372-408b-824e-8cfb8b5bede6). "1 好" = proceed with Hindsight as the memory index and write this design and its tasks; "2好" = withdraw the two data-comparison tasks.
+
+Verified against the transcript on delivery: every uuid and timestamp matches its line; texts match character for character except that line breaks inside a message are shown as single spaces in the table (line 2707 is `1 好` and `2好` on two separate lines; line 2423 is the operator sentence that follows a pasted block in the same message).
 
 The two comparison tasks (`MEMORY-HINDSIGHT-COMPARISON-HARNESS-20261113`, `MEMORY-HINDSIGHT-COMPARISON-RUN-20261113`) were superseded on 2026-11-13 with no surviving obligation.
 
@@ -93,7 +95,25 @@ Hosted dev (read only, 2026-11-13 23:00Z): memory 0 entries; 0 persona pools; 2 
 
 ## 4. Why Hindsight (structural evaluation summary)
 
-Sources read on 2026-11-13 (docs version 1.2; release v1.2.1): retain, recall, reflect, mental models, memory banks, documents, memories, configuration, models, storage, multilingual, installation, MCP server, extensions, and the GitHub repository (MIT `LICENSE`).
+Sources read on 2026-11-13 (docs version 1.2; release v1.2.1). Base URL `https://hindsight.vectorize.io/developer/`; the owner re-fetched these pages on 2026-11-13 (HTTP 200) and text-searched them for the facts below.
+
+- Retain: https://hindsight.vectorize.io/developer/api/retain
+- Recall: https://hindsight.vectorize.io/developer/api/recall
+- Reflect: https://hindsight.vectorize.io/developer/api/reflect
+- Mental models: https://hindsight.vectorize.io/developer/api/mental-models
+- Memory banks: https://hindsight.vectorize.io/developer/api/memory-banks
+- Configuration: https://hindsight.vectorize.io/developer/configuration
+- Models: https://hindsight.vectorize.io/developer/models
+- Storage: https://hindsight.vectorize.io/developer/storage
+- Multilingual: https://hindsight.vectorize.io/developer/multilingual
+- Installation: https://hindsight.vectorize.io/developer/installation
+- MCP server: https://hindsight.vectorize.io/developer/mcp-server
+- Extensions: https://hindsight.vectorize.io/developer/extensions
+- Repository: https://github.com/vectorize-io/hindsight (MIT `LICENSE`)
+
+Found on the pages by the owner: `tags_match` and `tag_groups` (recall, reflect, configuration); RRF fusion and cross-encoder reranking (recall, configuration); `resolve_entities` and verbatim extraction (retain, configuration); 365 (recency window), 0.97 and proof-count boosts (configuration); `based_on` citations (reflect); pgvector (storage, configuration); pgroonga (multilingual, configuration).
+
+**Not confirmed** (coordinator reading only; the owner did not find them in page text and they must be confirmed by the HINDSIGHT-SERVICE-DEPLOY integration test): RRF constant k = 60; reranking exactly the top 300; "no TTL by design"; soft invalidation per memory and document delete/reprocess semantics; PostgreSQL 15+ minimum version; every row of the table below not named in the found list.
 
 | Mechanism | Current in-house | Hindsight |
 | --- | --- | --- |

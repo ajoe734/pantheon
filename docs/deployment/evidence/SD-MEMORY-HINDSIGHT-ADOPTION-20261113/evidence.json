@@ -1,26 +1,68 @@
 {
   "task_id": "SD-MEMORY-HINDSIGHT-ADOPTION-20261113",
   "verified_on": "2026-11-13",
-  "base": {"ref": "origin/dev", "sha": "6cb713b01"},
+  "base": {
+    "ref": "origin/dev",
+    "sha": "6cb713b01"
+  },
   "document": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_HINDSIGHT_ADOPTION_2026-11-13.md",
   "operator_statements": {
     "transcript": "/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/cb4f6795-9064-4bb2-ab77-c0740122bce1.jsonl",
-    "lines_checked": [2236, 2258, 2423, 2535, 2572, 2662, 2694, 2707],
+    "lines_checked": [
+      2236,
+      2258,
+      2423,
+      2535,
+      2572,
+      2662,
+      2694,
+      2707
+    ],
     "uuid_and_timestamp_match": true,
-    "text_match": "exact except line breaks shown as single spaces",
-    "coordinator_evaluation_line": {"line": 2704, "uuid": "0bbbcf64-b372-408b-824e-8cfb8b5bede6", "timestamp": "2026-11-13T23:21:24.438Z"}
+    "text_match": "exact; line 2707 is two lines '1 好' and '2好' (shown as '1 好 2好' in the table); coordinator interpretation is a separate paragraph",
+    "coordinator_evaluation_line": {
+      "line": 2704,
+      "uuid": "0bbbcf64-b372-408b-824e-8cfb8b5bede6",
+      "timestamp": "2026-11-13T23:21:24.438Z"
+    }
   },
   "reference_check": {
     "method": "each cited file:line opened on the base and compared with the claimed symbol",
     "all_resolved": true,
     "moved_references": [],
     "regime_tag_callers_outside_tests": 0,
-    "case_file_budgets": {"max_items_per_group": 8, "max_excerpt_chars": 400, "max_total_chars": 12000}
+    "case_file_budgets": {
+      "max_items_per_group": 8,
+      "max_excerpt_chars": 400,
+      "max_total_chars": 12000
+    }
   },
   "hindsight_facts": {
-    "source": "documentation pages read by the coordinator on 2026-11-13 (docs 1.2, release v1.2.1); recorded in section 4 of the document",
-    "reverified_by_owner_in_this_task": false,
-    "note": "the owner re-checked repository and transcript references only; Hindsight claims are not independently re-confirmed and must be confirmed by the HINDSIGHT-SERVICE-DEPLOY integration test"
+    "source": "documentation pages under https://hindsight.vectorize.io/developer/ (api/retain, api/recall, api/reflect, api/mental-models, api/memory-banks, configuration, models, storage, multilingual, installation, mcp-server, extensions) and https://github.com/vectorize-io/hindsight; links listed in section 4",
+    "pages_fetched_http_200_by_owner": true,
+    "found_in_page_text": [
+      "tags_match",
+      "tag_groups",
+      "RRF",
+      "cross-encoder",
+      "resolve_entities",
+      "verbatim",
+      "365",
+      "0.97",
+      "proof boost",
+      "based_on",
+      "pgvector",
+      "pgroonga"
+    ],
+    "not_confirmed": [
+      "RRF k=60",
+      "rerank top 300",
+      "no TTL by design",
+      "soft invalidation / document delete-reprocess semantics",
+      "PostgreSQL 15+ minimum",
+      "remaining table rows"
+    ],
+    "note": "unconfirmed claims must be confirmed by the HINDSIGHT-SERVICE-DEPLOY integration test"
   },
   "numeric_values": "coordinator proposals, not operator decisions",
   "hosted_behavior_claimed": false
