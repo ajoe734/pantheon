@@ -710,3 +710,68 @@ def test_case_file_with_every_group_unavailable_fails_closed_before_the_turn(sys
     packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
     assert packet["persona_cycle"]["failure_reason"] == "case_file_unavailable:all_case_file_groups_unavailable"
     assert state["turns"] == 0
+
+
+def _seed_decision_lessons(controller, owner, memory_service, base=90):
+    from services.knowledge import case_file as cf
+    persona = owner.list_json()[0]
+    cycle_type, _ = controller._cycle_decision(controller.owners.observe(persona))
+    for mid, summary, decision in ((base, "CYCLE-ONLY " + cycle_type.replace("_", " "), cycle_type),
+                                   (base + 1, "REMOVAL-ONLY member removal", "member_removal")):
+        entry = _private(mid, persona["persona_id"], summary, ["decision:" + decision])
+        cf.http_json(cf.OwnerEndpoint(memory_service), "/api/memory/persona-entries", tenant_id=TENANT_A,
+                     method="POST", body=entry)
+    return persona
+
+
+def _remove_citing(marker, seen_prompts):
+    def answer(pid, prompt):
+        seen_prompts.append(prompt)
+        revision = "ProposalCaseFiles: " in prompt
+        text = prompt.split("ProposalCaseFiles: ", 1)[1] if revision else prompt.rsplit("\n", 1)[1]
+        items = []
+        stack = [json.loads(text)]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                if "item_id" in node and "excerpt" in node and marker in node["excerpt"]:
+                    items.append(node["item_id"])
+                stack.extend(node.values())
+            elif isinstance(node, list):
+                stack.extend(node)
+        assert items, "marker item not shown to the turn"
+        return {"orient": "Remove.", "memory_candidates": [], "proposals": [
+            {"kind": "remove", "reason": "Review.", "evidence_refs": [],
+             "parameters": {"artifact_ref": "artifact-cycle"}, "case_file_item_ids": items[:1]}]}
+    return answer
+
+
+def test_proposal_case_content_is_shown_before_finalising_and_citations_bind_to_it(system, memory_service):
+    controller, state, owner, _ = system
+    persona = _seed_decision_lessons(controller, owner, memory_service)
+    prompts = []
+
+    def answer(pid, prompt):
+        # first turn only sees the cycle case (CYCLE-ONLY); revision shows the removal case.
+        return _remove_citing("REMOVAL-ONLY" if "ProposalCaseFiles: " in prompt else "CYCLE-ONLY", prompts)(pid, prompt)
+    state["answer_fn"] = answer
+    packet = controller.consume_run(persona, "job-1", run(90))
+    cycle = packet["persona_cycle"]
+    assert cycle["failure_reason"] is None and packet["status"] == "closed"
+    assert len(prompts) == 2 and "REMOVAL-ONLY" in prompts[1]
+    decision = cycle["decisions"][0]
+    attached = cycle["case_files"][decision["case_file_id"]]
+    assert attached["subject"]["decision_type"] == "member_removal"
+    attached_ids = {i["item_id"] for g in attached["groups"].values() for i in g["items"]}
+    assert decision["cited_case_file_item_ids"] and set(decision["cited_case_file_item_ids"]) <= attached_ids
+
+
+def test_citation_outside_the_proposal_case_file_is_rejected_after_revision(system, memory_service):
+    controller, state, owner, _ = system
+    persona = _seed_decision_lessons(controller, owner, memory_service, base=95)
+    prompts = []
+    state["answer_fn"] = lambda pid, prompt: _remove_citing("CYCLE-ONLY", prompts)(
+        pid, prompt.split("\nRevision:")[0] if "ProposalCaseFiles: " in prompt else prompt)
+    packet = controller.consume_run(persona, "job-1", run(90))
+    assert packet["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
+    assert packet["status"] == "observing"

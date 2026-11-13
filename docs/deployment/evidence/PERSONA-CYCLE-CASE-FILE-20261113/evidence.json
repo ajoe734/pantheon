@@ -4,7 +4,7 @@
   "delivered": [
     "integrations/openclaw/persona_memory_bridge.py (build_cycle_memory_query; tags; retrieval recorded in context and receipt)",
     "services/openclaw-gateway-adapter/main.py (materialise route accepts the cycle's query and tags; a supplied blank query is refused)",
-    "services/persona/persona_cycle_controller.py (cycle query from shortfall+families+underlyings; cycle and per-proposal case files; CaseFileProposal/CaseFileTurnOutput citation schema and CaseFile prompt section; citation check; fail-closed reasons)",
+    "services/persona/persona_cycle_controller.py (cycle query from shortfall+families+underlyings; cycle and per-proposal case files; CaseFileProposal/CaseFileTurnOutput citation schema and CaseFile prompt section; citation check; fail-closed reasons) ; repair: proposal decision case is composed before finalisation, shown to the agent in a revision turn when it has content the cycle case lacked, and every citation is validated against that exact persisted case id/digest",
     "services/persona/test_pool_autonomy_cycle.py (stub owner gains a case_file port; now declared in the task artifact contract by Human/Ops maintenance)"
   ],
   "verification": {
@@ -13,7 +13,8 @@
       ".venv-pantheon/bin/python3 -m pytest -q services/persona services/research/tests/test_persona_cycle_demand_integration.py  -> 1 failure fixed in test_pool_autonomy_cycle.py stub, rerun 17 passed; rest 314 passed",
       ".venv-pantheon/bin/python3 -m pytest -q services/knowledge integrations/openclaw --ignore=integrations/openclaw/test_dev_gates.py -> 177 passed (before the final scope reduction; the touched tests were rerun: 45 passed)",
       ".venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py -> 5 passed",
-      ".venv-pantheon/bin/python3 -m pytest -q services/knowledge/test_case_file_integration.py services/persona/test_persona_cycle_controller.py -> 33 passed"
+      ".venv-pantheon/bin/python3 -m pytest -q services/knowledge/test_case_file_integration.py services/persona/test_persona_cycle_controller.py -> 33 passed",
+      ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_persona_cycle_controller.py services/persona/test_pool_autonomy_cycle.py integrations/openclaw/test_persona_memory_bridge.py services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py -> 56 passed (repair 2026-11-13)"
     ],
     "not_run": "integrations/openclaw/test_dev_gates.py (needs a Postgres DSN; unrelated to this change)",
     "integration_scope": "real PersonaCycleController.consume_run, real persona/pool/telemetry owner stores, real memory service FastAPI app over HTTP, real memory bridge materialiser; only OpenClaw cron/agent-turn HTTP is a fixture. Local fixtures are not hosted, model or trading evidence."
@@ -21,7 +22,7 @@
   "acceptance": {
     "1_query_from_shortfall_families_underlyings": "test_two_personas_with_different_shortfalls...; adapter route test_persona_memory_materialize_query.py (supplied query reaches the memory plane; blank -> 422, no memory call); the cycle always sends its own query",
     "2_case_file_id_and_digest_in_ooda_packet": "persona_cycle.case_file and per-decision case_file_id/case_file_digest; test_each_proposal_gets_its_own_case_file_composed_for_its_decision",
-    "3_turn_receives_case_file_and_proposal_cites_or_none_applicable": "prompt contains CaseFile; test_proposal_must_cite_case_file_items_or_state_none_applicable (missing / unknown / both -> case_file_citation_invalid)",
+    "3_turn_receives_case_file_and_proposal_cites_or_none_applicable": "prompt contains CaseFile; test_proposal_must_cite_case_file_items_or_state_none_applicable (missing / unknown / both -> case_file_citation_invalid); test_proposal_case_content_is_shown_before_finalising_and_citations_bind_to_it and test_citation_outside_the_proposal_case_file_is_rejected_after_revision (disjoint decision-specific retrieval)",
     "4_two_personas_different_lessons_no_private_crossing": "test_two_personas_with_different_shortfalls_get_different_lessons_and_never_each_others_private_memory (cross-matching private entries seeded for each persona; absent from both workspace cache and case file and prompt)"
   },
   "fail_closed": [
