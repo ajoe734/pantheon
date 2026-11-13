@@ -515,7 +515,9 @@ if args[0] == "compose":
                 if "compose_environment_defaults" in state:
                     model = json.loads(subprocess.check_output([{real_docker!r}, "compose", "-f", {str(compose_fixture)!r}, *overrides, "config", "--format", "json"], env=os.environ, text=True))
                     service = model["services"]["source-ingest"]
-                    state["container_env"] = [f"{{k}}={{v}}" for k, v in service["environment"].items()]
+                    # `config` serializes dollar signs escaped for reloading;
+                    # container creation consumes the resolved literal values.
+                    state["container_env"] = [f"{{k}}={{v.replace('$$', '$')}}" for k, v in service["environment"].items()]
                     state["restored_image_reference"] = service["image"]
                     state["restored_volumes"] = service["volumes"]
                 if "mutate_env_on_restore" in state:
@@ -862,7 +864,7 @@ def test_refresh_entrypoint_env_equality_fails_closed_on_mismatch(tmp_path: Path
     assert "restored container env mismatch" in proc.stderr
 
 
-def _run_exact_restore_helper(tmp_path: Path, *, root_value=None, **state_changes):
+def _run_exact_restore_helper(tmp_path: Path, *, root_value=None, compose_defaults_match_capture=False, **state_changes):
     """Execute maintained shell + Python + retry helper against real Compose config.
 
     Only Docker runtime operations and sleep are stubbed. The next readback uses
@@ -878,12 +880,13 @@ def _run_exact_restore_helper(tmp_path: Path, *, root_value=None, **state_change
     ]
     if root_value is not None:
         captured.append(f"INTRADAY_STORE_ROOT={root_value}")
+    defaults = dict(item.split("=", 1) for item in captured) if compose_defaults_match_capture else {
+        "INTRADAY_STORE_ROOT": "/data/source-ingest", "NEW_DEFAULT": "must-not-appear",
+        "FINMIND_API_TOKEN": "wrong-default", "PORT": "8097",
+    }
     initial = {
         "image_id": "sha256:" + "a" * 64, "container_env": captured,
-        "compose_environment_defaults": {
-            "INTRADAY_STORE_ROOT": "/data/source-ingest", "NEW_DEFAULT": "must-not-appear",
-            "FINMIND_API_TOKEN": "wrong-default", "PORT": "8097",
-        },
+        "compose_environment_defaults": {k: v.replace("$", "$$") for k, v in defaults.items()},
         **state_changes,
     }
     bin_dir, state_file, events_file, _, port = _setup_refresh_stub_docker(tmp_path, initial)
@@ -925,7 +928,7 @@ def test_exact_restore_replaces_new_compose_defaults_and_preserves_secrets(tmp_p
 
 
 def test_exact_restore_waits_for_api_before_next_connector_readback(tmp_path):
-    proc, _, events, _ = _run_exact_restore_helper(tmp_path, readiness_failures_remaining=2)
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_failures_remaining=2)
     assert proc.returncode == 0, proc.stderr
     http = [e for e in events if e["event"] in {"readyz", "connector_readback"}]
     assert http == [{"event": "readyz", "status": 503}, {"event": "readyz", "status": 503},
@@ -933,7 +936,7 @@ def test_exact_restore_waits_for_api_before_next_connector_readback(tmp_path):
 
 
 def test_exact_restore_readiness_timeout_prevents_success_and_next_connector(tmp_path):
-    proc, _, events, _ = _run_exact_restore_helper(tmp_path, readiness_always_fails=True)
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_always_fails=True)
     assert proc.returncode != 0
     assert len([e for e in events if e["event"] == "readyz"]) == 13  # unchanged retry budget
     assert not any(e["event"] == "connector_readback" for e in events)
@@ -962,6 +965,32 @@ def test_exact_restore_wrong_image_stays_failed_before_readiness(tmp_path, chang
     assert proc.returncode != 0
     assert "image" in proc.stderr
     assert not any(e["event"] in {"readyz", "connector_readback"} for e in events)
+
+
+def test_exact_restore_readiness_failure_is_not_nonblocking_connector_success(tmp_path):
+    initial = {
+        "image_id": "sha256:" + "a" * 64, "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="],
+        "readiness_always_fails": True,
+    }
+    bin_dir, _, events_file, output, port = _setup_refresh_stub_docker(tmp_path, initial)
+    (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
+    (bin_dir / "sleep").chmod(0o755)
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+               SOURCE_INGEST_API_URL=f"http://127.0.0.1:{port}",
+               SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="30", PANTHEON_REMOTE_DIR=str(ROOT))
+    # Default force=false, through the normal caller and its non-blocking cleanup.
+    proc = subprocess.run([
+        "bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--non-blocking",
+        "--connector-id", "tw-taifex-futures-options-chip", "--allowed-hosts",
+        "openapi.taifex.com.tw,www.taifex.com.tw", "--dataset", "taifex_ssf_contracts",
+        "--output", str(output),
+    ], env=env, cwd=ROOT, capture_output=True, text=True, timeout=30)
+    assert proc.returncode != 0
+    assert json.loads(output.read_text())["status"] == "failed"
+    events = [json.loads(line) for line in events_file.read_text().splitlines()]
+    assert len([e for e in events if e["event"] == "readyz"]) == 13
+    assert any(e["event"] == "docker_start" for e in events)  # steady scheduler restored
 
 
 CHIP_PROFILES = [

@@ -3300,10 +3300,8 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
-      PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST:-}" \
-      SOURCE_INGEST_CONTROLLER_MODE="${steady_controller_mode:-reconcile_only}" SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
-      SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
-        docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
+      info "captured source-ingest environment is missing; refusing unverified restore" >&2
+      restore_rc=1
     fi
     # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
     (( ${#bounded_containers[@]} )) && docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
