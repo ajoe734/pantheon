@@ -6,8 +6,8 @@
   "source_status": "implemented_pending_independent_review",
   "review_decision": "pending_assigned_reviewer",
   "hosted_status": "not_claimed",
-  "integration_base": "b5530c692bdd72ec32a9a7c5240c9490a47d4a0c",
-  "runtime_verified_commit": "4990d2ef10ebd45f8638b531780e08d4b0c975b7",
+  "integration_base": "7c968cbedc35b1c88689def3fcca3f2a139b4f34",
+  "runtime_verified_commit": "c6d7594a0302e81a950e6e2828ac0f712a22af91",
   "scope": "Canonical memory lifecycle projections through existing search HTTP routes; paper only; no execution-path memory access or model call.",
   "acceptance": [
     {
@@ -32,6 +32,13 @@
     }
   ],
   "validation": [
+    {
+      "command": "PANTHEON_SEARCH_BACKEND=jsonl SEARCH_JIEBA_DICTIONARY=/tmp/dict.txt.big PANTHEON_RETRIEVAL_INTEGRATION_DSN=<isolated-local-test-dsn> .venv-pantheon/bin/python3 -m pytest services/memory services/search -q --tb=short",
+      "exit_status": 0,
+      "result": "281 passed, 19 skipped, 3 warnings, 6 subtests passed in 133.24 seconds; includes real PostgreSQL Traditional Chinese memory/search HTTP integration",
+      "verified_commit": "c6d7594a0302e81a950e6e2828ac0f712a22af91",
+      "log": "/tmp/MEMORY-INDEX-PROJECTION-20261113-resume-validation.log"
+    },
     {
       "command": "PANTHEON_SEARCH_BACKEND=jsonl SEARCH_JIEBA_DICTIONARY=/tmp/dict.txt.big PANTHEON_RETRIEVAL_INTEGRATION_DSN=<isolated-local-test-dsn> /tmp/retrieval-activation-venv/bin/python -m pytest services/memory services/search -q --tb=short",
       "exit_status": 0,
@@ -64,12 +71,21 @@
     "Expiry tombstones are emitted on active reads or explicit archive_expired/backfill, not by a new wall-clock daemon; canonical expiry is checked independently during every retrieval.",
     "The broad regression includes 19 skipped optional tests; the new real-Postgres memory HTTP integration test ran and passed."
   ],
-  "artifact_contract_additions_needed": [
-    "services/search/main.py",
-    "services/search/gateway.py",
-    "services/memory/persona_memory.schema.json",
-    "docker-compose.yml"
-  ],
+  "artifact_contract_additions_needed": [],
+  "review_admission_refresh": {
+    "task_generation": 3,
+    "pr": 7319,
+    "contract_status": "Human/Ops declared all four existing paths before resuming this task; canonical show verified on 2026-11-13.",
+    "declared_paths": [
+      "services/search/main.py",
+      "services/search/gateway.py",
+      "services/memory/persona_memory.schema.json",
+      "docker-compose.yml"
+    ],
+    "scope": "Original five acceptance criteria, owner Codex2, reviewer Claude and three dependencies retained. Source review admission only; no hosted or deployment claim.",
+    "base_composition": "Merged accepted PR #7318 from current dev without conflicts; research changes are inherited without edits. Memory/search product implementation is unchanged from 0ad36dfd83e88efe28c0ef15688f40fbe2d3111e.",
+    "composed_commit": "c6d7594a0302e81a950e6e2828ac0f712a22af91"
+  },
   "delivery": "Exact final PR/head/evidence binding and independent review remain governed by task handoff. No approval or merge is claimed by this owner manifest.",
   "composed_validation": {
     "base_refresh": "Merged current dev BFF pool read delivery without conflicts; no memory/search runtime changes.",
