@@ -950,7 +950,7 @@ class VectorbtBackend:
         run_id = f"vbt-real-{uuid.uuid4().hex[:12]}"
         per_instrument: dict[str, dict[str, Any]] = {}
         artifact_orders = (
-            _artifact_order_sizes(dataset, config.strategy_artifact)
+            _artifact_order_sizes(dataset, config.strategy_artifact, gross_budget=config.init_cash)
             if config.strategy_artifact is not None
             else None
         )
@@ -1453,12 +1453,96 @@ def _screened_artifact_view_sequence(
         raise VectorbtWorkflowError(f"screen evaluation failed: {exc}") from exc
 
 
+def _portfolio_target_sequence(dataset, artifact, gross_budget=100_000.0):
+    """Paper's bar netting, allocation and expression functions on observed bars.
+
+    This daily cash-share replay has no invented derivatives. Futures remain
+    unavailable unless the recorded candidate input provides them.
+    """
+    from services.registry.candidate_pool import canonical_symbol
+    from services.registry.portfolio_envelope import evaluate_portfolio_bar, required_portfolio_history
+    from services.execution.lean_runtime.expression_policy import allocate_targets, decide_for_policy, is_no_trade
+    from services.execution.lean_runtime.instrument_candidates import build_candidates
+
+    _require_artifact_frequency(dataset, artifact)
+    if _is_intraday(dataset):
+        raise VectorbtWorkflowError("target_position_v1 requires daily bar replay")
+    calendars = {tuple(dataset.dates_by_instrument[s]) for s in dataset.instruments}
+    if len(calendars) != 1:
+        raise VectorbtWorkflowError("portfolio target bars must be aligned")
+    dates = next(iter(calendars))
+    keys = {canonical_symbol(s): s for s in dataset.instruments}
+    orders = {inst: [float("nan")] * len(dates) for inst in dataset.instruments}
+    bars, positions, cash, returns, previous_equity = [], {}, float(gross_budget), [], float(gross_budget)
+    params = artifact["expression_policy"]["parameters"]
+    for index, day in enumerate(dates):
+        snapshots, prices = {}, {}
+        for symbol, inst in keys.items():
+            features, at = _bar_features_for_index(dataset, inst, index)
+            prices[symbol] = float(dataset.ohlcv_by_instrument[inst][index][3])
+            snapshots[symbol] = {"closes": [b[3] for b in dataset.ohlcv_by_instrument[inst][:index + 1]],
+                "features": features, "event_time": at, "source_ref": dataset.source_dataset_refs[0]}
+        if index + 1 < required_portfolio_history(artifact):
+            bars.append(None)
+            returns.append(0.0)
+            continue
+        held = []
+        for symbol, units in positions.items():
+            if units:
+                held.append({"underlying": symbol.split(".")[0], "instrument_id": "eq:" + symbol.split(".")[0],
+                             "direction": "LONG", "units": units, "notional": units * prices[symbol]})
+        gross_used = sum(p["notional"] for p in held)
+        budget = {"gross_limit": gross_budget, "gross_used": gross_used, "available_cash": cash}
+        book = {"positions": held, "gross_notional": gross_used}
+        results = evaluate_portfolio_bar(artifact, snapshots, market=dataset.candidate_pool_market,
+                                        held_symbols=[s for s, q in positions.items() if q])
+        allocation = allocate_targets({s: r["view"] for s, r in results.items()}, budget, params)
+        decisions = {}
+        for symbol, result in results.items():
+            code = symbol.split(".")[0]
+            # Same cash candidate builder and max_units_by_risk as production.
+            candidates = build_candidates(code, day[:10], book, budget,
+                cash_price=prices[symbol], cash_price_date=day[:10],
+                rows_reader=lambda: [])
+            view = {**result["view"], "decision_id": f"backtest-{day}-{code}", "underlying": code,
+                    "target_notional": allocation["targets"][symbol]}
+            outcome = decide_for_policy("target_position_v1", view, candidates, book, budget, params)
+            decisions[symbol] = outcome
+            if is_no_trade(outcome):
+                continue
+            if outcome["instrument_id"] != "eq:" + code:
+                raise VectorbtWorkflowError("backtest instrument requires recorded derivative inputs")
+            delta = outcome["units"] * (1 if outcome["side"] == "buy" else -1)
+            if positions.get(symbol, 0) + delta < 0:
+                raise VectorbtWorkflowError("target replay would sell without holdings")
+            positions[symbol] = positions.get(symbol, 0) + delta
+            # Taiwan statutory costs on observed marks, same as the cash fill path.
+            from services.execution.lean_runtime.member_virtual_book import _COMMISSION_RATE, _EQUITY_TAX_RATE, _ETF_TAX_RATE
+            tax = _ETF_TAX_RATE if code.startswith("00") else _EQUITY_TAX_RATE
+            costs = abs(delta) * prices[symbol] * (_COMMISSION_RATE + (tax if delta < 0 else 0))
+            cash -= delta * prices[symbol] + costs
+            orders[keys[symbol]][index] = float(delta)
+        equity = cash + sum(q * prices[s] for s, q in positions.items())
+        returns.append(equity / previous_equity - 1)
+        previous_equity = equity
+        bars.append({"allocation": allocation, "results": results, "decisions": decisions,
+                     "equity": equity, "book_before": book, "budget": budget})
+    return {"bars": bars, "orders": orders, "returns": returns}
+
+
 def _artifact_action_sequence(
     dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any],
     *, close_actions: dict[str, set[int]] | None = None,
 ) -> dict[str, list[str | None]]:
     """Per-bar evaluated actions (BUY/SELL/HOLD or None on warmup bars) from the Registry interpreter."""
     _require_artifact_frequency(dataset, artifact)
+    from services.registry.portfolio_envelope import uses_target_positions
+    if uses_target_positions(artifact):
+        replay = _portfolio_target_sequence(dataset, artifact)
+        return {inst: [None if bar is None else bar["results"].get(
+                    inst.split(".")[0] + (".TWO" if inst.endswith((".TWO", ".TPEX")) else ".TW"),
+                    {"view": {"action": "HOLD"}})["view"]["action"] for bar in replay["bars"]]
+                for inst in dataset.instruments}
     if "screen" in artifact.get("strategy_logic", {}):
         return {inst: [v["action"] for v in views]
                 for inst, views in _screened_artifact_view_sequence(dataset, artifact).items()}
@@ -1572,9 +1656,12 @@ def _artifact_action_sequence(
 
 
 def _artifact_order_sizes(
-    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
+    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any], *, gross_budget=100_000.0
 ) -> dict[str, list[float]]:
     """Amount orders; intraday zero denotes a target-zero close, never a zero-size fill."""
+    from services.registry.portfolio_envelope import uses_target_positions
+    if uses_target_positions(artifact):
+        return _portfolio_target_sequence(dataset, artifact, gross_budget)["orders"]
     close_actions: dict[str, set[int]] = {}
     actions_by_inst = _artifact_action_sequence(dataset, artifact, close_actions=close_actions)
     quantity = float(artifact["parameters"]["order_quantity"])
@@ -1698,6 +1785,14 @@ def _artifact_view_strength(
 
     if artifact is None:
         return None, None
+    from services.registry.portfolio_envelope import uses_target_positions
+    if uses_target_positions(artifact):
+        from services.registry.candidate_pool import canonical_symbol
+        replay = _portfolio_target_sequence(dataset, artifact)
+        by_instrument = {inst: [None if bar is None else bar["results"].get(
+            canonical_symbol(inst), {"view": {"strength": 0.0}})["view"]["strength"]
+            for bar in replay["bars"]] for inst in dataset.instruments}
+        return {inst: seq[-1] for inst, seq in by_instrument.items()}, by_instrument
     if "screen" in artifact.get("strategy_logic", {}):
         views = _screened_artifact_view_sequence(dataset, artifact)
         by_instrument = {inst: [v["strength"] for v in seq] for inst, seq in views.items()}

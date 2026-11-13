@@ -484,6 +484,9 @@ class CurrentArtifactStrategy:
         b_dict: Mapping[str, Any],
         metadata: Mapping[str, Any],
         now_iso: str,
+        allocation: Mapping[str, Any] | None = None,
+        frozen_inputs: Mapping[str, Any] | None = None,
+        reconcile_instrument_id: str | None = None,
     ) -> dict[str, Any]:
         from services.execution.lean_runtime import expression_policy
         from services.execution.lean_runtime.instrument_candidates import (
@@ -493,7 +496,12 @@ class CurrentArtifactStrategy:
 
         underlying = normalize_underlying_code(symbol)
         unavailable: ExpressionInputsUnavailable | None = None
-        if self._expression_inputs is not None:
+        if frozen_inputs is not None:
+            inputs = dict(frozen_inputs)
+            error = inputs.get("unavailable")
+            if error:
+                unavailable = ExpressionInputsUnavailable(error["missing"], error.get("detail", ""))
+        elif self._expression_inputs is not None:
             try:
                 inputs = dict(self._expression_inputs(b_dict) or {})
             except ExpressionInputsUnavailable as exc:
@@ -533,12 +541,20 @@ class CurrentArtifactStrategy:
             "strength": view.get("strength"),
         }
         params = dict(strategy_artifact["expression_policy"].get("parameters") or {})
+        policy_kind = strategy_artifact["expression_policy"]["kind"]
+        if policy_kind == expression_policy.TARGET_POLICY_KIND:
+            decision_view["target_notional"] = (allocation or {}).get("targets", {}).get(symbol, -1)
+            if reconcile_instrument_id:
+                decision_view["reconcile_instrument_id"] = reconcile_instrument_id
         if unavailable is not None:
             # The limits or the book could not be read: a real NoTrade naming
             # the missing input, never a misleading gross_limit binding.
             record = expression_policy.budget_unavailable_no_trade(
                 decision_view, unavailable.missing, unavailable.detail
             )
+        elif policy_kind == expression_policy.TARGET_POLICY_KIND:
+            record = expression_policy.decide_for_policy(
+                policy_kind, decision_view, candidates, book, budget, params)
         else:
             record = expression_policy.decide_validated(
                 decision_view,
@@ -575,8 +591,75 @@ class CurrentArtifactStrategy:
                 "book_before": book,
                 "budget": budget,
                 "parameters": params,
+                **({"policy_kind": policy_kind, "bar_allocation": allocation}
+                   if policy_kind == expression_policy.TARGET_POLICY_KIND else {}),
             },
         }
+
+    def _target_portfolio(self, artifact, binding, metadata, now_iso):
+        """Freeze a bar's book/budget, net every underlying, then size deltas."""
+        from services.registry.candidate_pool import MARKET_FEATURE_KEY, canonical_symbol
+        from services.registry.portfolio_envelope import evaluate_portfolio_bar
+        from services.execution.lean_runtime.expression_policy import allocate_targets
+        from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
+
+        snapshots = binding.get("market_inputs") or metadata.get("market_inputs")
+        if not isinstance(snapshots, Mapping) or not snapshots:
+            # A one-underlying target envelope still requires an explicit bar.
+            one = binding.get("market_input")
+            snapshots = {one["symbol"]: one} if isinstance(one, Mapping) and one.get("symbol") else {}
+        try:
+            if self._expression_inputs is not None:
+                inputs = dict(self._expression_inputs(binding) or {})
+            else:
+                inputs = dict(metadata.get("expression_inputs") or {})
+        except ExpressionInputsUnavailable as exc:
+            inputs = {"unavailable": {"missing": exc.missing, "detail": exc.detail}}
+        features = {**(metadata.get("features") or {}), **(binding.get("features") or {})}
+        keyed = {}
+        try:
+            for symbol, snapshot in snapshots.items():
+                canonical = canonical_symbol(symbol)
+                if canonical in keyed:
+                    raise ValueError("duplicate portfolio underlying aliases")
+                row_binding = {**binding, "symbol": canonical,
+                               "market_input": {**snapshot, "symbol": canonical},
+                               "features": features}
+                keyed[canonical] = _market_input_for_binding(
+                    row_binding, metadata, strategy_artifact=artifact, now_iso=now_iso)
+            positions = inputs.get("persona_book", {}).get("positions", [])
+            by_code = {normalize_underlying_code(symbol): symbol for symbol in keyed}
+            held = [by_code.get(str(p["underlying"]), str(p["underlying"]) + ".TW")
+                    for p in positions if int(p.get("units") or 0) > 0]
+            results = evaluate_portfolio_bar(
+                artifact, keyed, market=features.get(MARKET_FEATURE_KEY), held_symbols=held)
+            views = {symbol: result["view"] for symbol, result in results.items()}
+            try:
+                allocation = allocate_targets(views, inputs.get("risk_budget", {}),
+                                              artifact["expression_policy"]["parameters"])
+            except (ValueError, ArithmeticError) as exc:
+                allocation = {"targets": {}, "unavailable_reason": str(exc), "views": views}
+            decisions = []
+            for symbol, result in results.items():
+                held_legs = [p for p in positions if str(p["underlying"]) == normalize_underlying_code(symbol)
+                             and int(p.get("units") or 0) > 0]
+                target = allocation["targets"].get(symbol, -1)
+                held_notional = sum(float(p.get("notional") or 0) for p in held_legs)
+                closing = (result["view"]["direction"] == "FLAT"
+                           or any(p["direction"] != result["view"]["direction"] for p in held_legs)
+                           or (target >= 0 and held_notional > target))
+                selectors = sorted({p["instrument_id"] for p in held_legs}) if closing and len(held_legs) > 1 else [None]
+                for selector in selectors:
+                    row_binding = {**binding, "symbol": symbol, "features": features,
+                                   "market_input": {**keyed[symbol], "symbol": symbol}}
+                    out = self(row_binding, now_iso, _portfolio_symbol=symbol,
+                               _portfolio_result=result, _allocation=allocation,
+                               _frozen_inputs=inputs, _reconcile_instrument_id=selector)
+                    decisions.append(out)
+            return {"portfolio_decisions": decisions}
+        except (ValueError, TypeError, KeyError) as exc:
+            code = "market_input_missing" if "snapshot missing" in str(exc) else "market_input_invalid"
+            raise SignalDecisionUnavailable(code, str(exc)) from exc
 
     @staticmethod
     def _expression_base_view(view: Mapping[str, Any], decision_id: str, symbol: str) -> dict[str, Any]:
@@ -591,7 +674,11 @@ class CurrentArtifactStrategy:
         }
 
     def __call__(self, binding: Any, now_iso: str, *, _portfolio_symbol: str | None = None,
-                 _screen_view: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                 _screen_view: Mapping[str, Any] | None = None,
+                 _portfolio_result: Mapping[str, Any] | None = None,
+                 _allocation: Mapping[str, Any] | None = None,
+                 _frozen_inputs: Mapping[str, Any] | None = None,
+                 _reconcile_instrument_id: str | None = None) -> dict[str, Any]:
         b_dict = _binding_dict_from_obj(binding)
         binding_id = _required_binding_text(b_dict, "binding_id")
         metadata = (
@@ -714,6 +801,9 @@ class CurrentArtifactStrategy:
                 validate_strategy_artifact(strategy_artifact)
             except (StrategyArtifactValidationError, ValueError, TypeError) as exc:
                 raise SignalDecisionUnavailable("artifact_payload_invalid", str(exc)) from exc
+            from services.registry.portfolio_envelope import uses_target_positions
+            if uses_target_positions(strategy_artifact) and _portfolio_symbol is None:
+                return self._target_portfolio(strategy_artifact, b_dict, metadata, now_iso)
             symbols = strategy_artifact["parameters"]["symbols"]
             if len(symbols) > 1 and _portfolio_symbol is None:
                 decisions = []
@@ -788,7 +878,7 @@ class CurrentArtifactStrategy:
             if logic_kind == "persona_portfolio_v1":
                 from services.registry.portfolio_envelope import evaluate_portfolio_envelope
 
-                portfolio_result = evaluate_portfolio_envelope(
+                portfolio_result = _portfolio_result or evaluate_portfolio_envelope(
                     strategy_artifact, closes, features=features, decision_time=decision_time,
                     symbol=market_input["symbol"],
                     holding_bars=holding_bars, current_direction=current_direction,
@@ -873,6 +963,10 @@ class CurrentArtifactStrategy:
             "symbol": symbol,
             "bar": bar_key,
         }
+        if _reconcile_instrument_id:
+            decision_key["reconcile_instrument_id"] = _reconcile_instrument_id
+        if _portfolio_result is not None:
+            decision_key["member_candidate_pool_digests"] = _portfolio_result["member_candidate_pool_digests"]
         if screened:
             decision_key["candidate_pool_digest"] = view["candidate_pool_digest"]
         decision_digest = hashlib.sha256(
@@ -960,6 +1054,11 @@ class CurrentArtifactStrategy:
                 for member in strategy_logic["members"]
                 if member["member_id"] in portfolio_result["member_views"]
             }
+            if _allocation is not None:
+                out["metadata"]["bar_allocation"] = _allocation
+                out["metadata"]["target_expression_required"] = True
+                out["metadata"]["member_candidate_pool_digests"] = portfolio_result["member_candidate_pool_digests"]
+                out["metadata"]["member_candidate_pool_snapshots"] = portfolio_result["member_candidate_pool_snapshots"]
             out["metadata"]["portfolio_net_view"] = dict(portfolio_result["view"])
             out["metadata"]["portfolio_bar_frequency"] = parameters["bar_frequency"]
         if screened:
@@ -991,6 +1090,9 @@ class CurrentArtifactStrategy:
                     b_dict=b_dict,
                     metadata=metadata,
                     now_iso=now_iso,
+                    allocation=_allocation,
+                    frozen_inputs=_frozen_inputs,
+                    reconcile_instrument_id=_reconcile_instrument_id,
                 ),
             }
         return out
@@ -1594,7 +1696,8 @@ def _strategy_symbol(
 
     # 2. Raw symbol membership check against approved artifact parameters.symbols
     screened = "screen" in (strategy_artifact.get("strategy_logic") or {})
-    if not screened and isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+    from services.registry.portfolio_envelope import uses_target_positions
+    if not screened and not uses_target_positions(strategy_artifact) and isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
         if symbol not in symbols:
             raise SignalDecisionUnavailable(
                 "market_input_invalid",
@@ -2249,6 +2352,16 @@ class PaperSignalProducer:
             )
             dsp = DecisionSignalProducer(store)
 
+            if (out.get("metadata") or {}).get("target_expression_required") and not out.get("expression"):
+                out["action"] = "HOLD"
+                out["metadata"]["reason_code"] = "candidates_unavailable"
+                out["metadata"]["detail"] = "target_position_v1 requires expression layer"
+            for mid, snapshot in (out.get("metadata") or {}).get("member_candidate_pool_snapshots", {}).items():
+                putter = getattr(store, "put_decision_record", None)
+                if not callable(putter):
+                    self._degraded_by_binding[binding_id] = "candidate_pool_store_unsupported"
+                    return 0
+                putter(f"candidate-pool-{binding_id}-{mid}-{snapshot['digest']}", snapshot)
             pool_snapshot = (out.get("metadata") or {}).get("candidate_pool_snapshot")
             if pool_snapshot is not None:
                 putter = getattr(store, "put_decision_record", None)

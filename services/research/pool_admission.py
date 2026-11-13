@@ -23,6 +23,15 @@ def _replay(prepared, artifact, dates):
     """Same dated inputs/interpreter/netting as paper, previous-bar exposure only."""
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
+    from services.registry.portfolio_envelope import uses_target_positions
+    if uses_target_positions(artifact):
+        from services.research.vectorbt.adapter.vectorbt_adapter import _portfolio_target_sequence
+        replay = _portfolio_target_sequence(prepared, artifact)
+        calendar = list(prepared.dates_by_instrument[prepared.instruments[0]])
+        indexes = [calendar.index(day) for day in dates]
+        if any(replay["bars"][i] is None for i in indexes):
+            raise ValueError("backtest_warmup_missing")
+        return [replay["returns"][i] for i in indexes[1:]]
     wanted = {normalize_taiwan_symbol(s) for s in artifact["parameters"]["symbols"]}
     instruments = [s for s in prepared.instruments if normalize_taiwan_symbol(s) in wanted]
     if {normalize_taiwan_symbol(s) for s in instruments} != wanted:

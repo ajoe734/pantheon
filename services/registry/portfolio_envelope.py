@@ -258,8 +258,8 @@ def screened_member_history(artifact, market, decision_time):
 
     _, symbols = _market(market)
     cutoff = _parse_timestamp_utc(decision_time, is_decision_time=True)
-    days = sorted({str(row["date"])[:10] for payload in symbols.values()
-                   for row in payload["bars"] if str(row["date"])[:10] <= cutoff.date().isoformat()})
+    days = sorted({str(row["event_time"])[:10] for payload in symbols.values()
+                   for row in payload["bars"] if str(row["event_time"])[:10] <= cutoff.date().isoformat()})
     final_day = cutoff.date().isoformat()
     days = sorted(set(days) | {final_day})
     positions = {}

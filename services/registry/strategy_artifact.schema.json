@@ -304,6 +304,9 @@
     "parameters": {
       "type": "object",
       "minProperties": 1,
+      "properties": {
+        "symbols": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      },
       "propertyNames": {
         "allOf": [
           {
@@ -721,6 +724,7 @@
       },
       "else": {
         "properties": {
+          "parameters": {"properties": {"symbols": {"minItems": 1}}},
           "mutation_surface": {
             "properties": {
               "controls": {
