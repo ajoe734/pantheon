@@ -27,7 +27,8 @@ def setup_path(tmp_path, monkeypatch, *, status="ok", bundle_status="complete", 
     files, entry, manifest = make_bundle(status=bundle_status)
     files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
     files["status.json"] = json.dumps({"sources": {SOURCE: {
-        "status": status, "last_run_at": "2026-11-10T02:05:00Z", "paused_reason": "login_required",
+        "status": status, "last_run_at": "2026-11-10T02:05:00Z", "last_run_id": "run1",
+        "paused_reason": "login_required" if status == "paused" else None,
     }}}).encode()
     monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
     # Freeze only the adapter health clock; scheduler timestamps remain real.
@@ -99,7 +100,7 @@ def test_explicit_consumed_cursor_reaches_scheduler_as_proven_empty(tmp_path, mo
     assert result.watermark.value == CURSOR
 
 
-@pytest.mark.parametrize("status", ["paused", "unavailable", "failed", "failing", "mystery", ""])
+@pytest.mark.parametrize("status", ["paused", "partial", "pending", "unavailable", "failed", "failing", "mystery", ""])
 def test_consumed_cursor_cannot_hide_unhealthy_source(tmp_path, monkeypatch, status):
     files, _, _, store, _ = setup_path(tmp_path, monkeypatch)
     first = run_scheduler(tmp_path, store)
@@ -121,16 +122,18 @@ def test_consumed_cursor_cannot_hide_unhealthy_source(tmp_path, monkeypatch, sta
         assert "http_429" in state["last_error"]
 
 
+@pytest.mark.parametrize("host_status", ["ok", "complete"])
 @pytest.mark.parametrize("change", ["no_bundle", "missing_status", "missing_source", "missing_last_run",
                                    "newer_run", "stale", "future_cursor", "partial_cursor", "unverified_cursor",
-                                   "missing_raw_evidence", "mutated_boundary"])
-def test_empty_without_matching_complete_evidence_is_failure(tmp_path, monkeypatch, change):
-    files, _, manifest, store, _ = setup_path(tmp_path, monkeypatch)
+                                   "missing_raw_evidence", "mutated_raw_evidence", "mutated_boundary",
+                                   "missing_ack", "mutated_ack"])
+def test_empty_without_matching_complete_evidence_is_failure(tmp_path, monkeypatch, change, host_status):
+    files, _, manifest, store, _ = setup_path(tmp_path, monkeypatch, status=host_status)
     consumed = change not in {"no_bundle", "unverified_cursor"}
     if consumed:
         assert run_scheduler(tmp_path, store).run.raw_count == 2
     cursor = CURSOR
-    status = {"sources": {SOURCE: {"status": "ok", "last_run_at": "2026-11-10T02:05:00Z"}}}
+    status = {"sources": {SOURCE: {"status": host_status, "last_run_at": "2026-11-10T02:05:00Z", "last_run_id": "run1"}}}
     if change == "no_bundle":
         files["bundles/index.json"] = b'{"bundles": []}'
         cursor = None
@@ -150,6 +153,13 @@ def test_empty_without_matching_complete_evidence_is_failure(tmp_path, monkeypat
         cursor += "|items=2"
     elif change == "missing_raw_evidence":
         next((tmp_path / "market_data_store" / "raw").rglob("*.html")).unlink()
+    elif change == "mutated_raw_evidence":
+        next((tmp_path / "market_data_store" / "raw").rglob("*.html")).write_bytes(b"<html>post X</html>")
+    elif change == "missing_ack":
+        next((tmp_path / "market_data_store" / "raw").rglob("persisted_boundary.json")).unlink()
+    elif change == "mutated_ack":
+        path = next((tmp_path / "market_data_store" / "raw").rglob("persisted_boundary.json"))
+        path.write_text(json.dumps({**json.loads(path.read_text()), "cursor": CURSOR + "-other"}))
     elif change == "mutated_boundary":
         manifest["collector_version"] = "changed-after-consumption"
         files[f"bundles/{SOURCE}/2026-11-10/run1/manifest.json"] = json.dumps(manifest).encode()
@@ -169,10 +179,11 @@ def test_empty_without_matching_complete_evidence_is_failure(tmp_path, monkeypat
     assert state["collector_outcome"]["observed"]["health_state"] == "degraded"
 
 
+@pytest.mark.parametrize("host_status", ["ok", "complete"])
 @pytest.mark.parametrize("tamper", ["raw", "bundle", "malformed_status", "malformed_source",
                                    "contradictory_status", "contradictory_time", "auth"])
-def test_verification_failure_keeps_last_watermark_and_clears_healthy_outcome(tmp_path, monkeypatch, tamper):
-    files, entry, manifest, store, _ = setup_path(tmp_path, monkeypatch)
+def test_verification_failure_keeps_last_watermark_and_clears_healthy_outcome(tmp_path, monkeypatch, tamper, host_status):
+    files, entry, manifest, store, _ = setup_path(tmp_path, monkeypatch, status=host_status)
     assert run_scheduler(tmp_path, store).run.raw_count == 2
     assert run_scheduler(tmp_path, store).run.raw_count == 0
     if tamper == "raw":
@@ -281,11 +292,11 @@ def test_real_http_reader_denial_never_reuses_prior_no_new_data(tmp_path, monkey
     assert state["collector_outcome"]["observed"]["health_state"] == "degraded"
 
 
-def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_route=False):
+def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_route=False, producer=False):
     from services.source_ingestion.runtime import create_runtime
 
-    source = "collector-tw-macro-ndc" if kind == "macro" else SOURCE
-    dataset = "tw_macro_series" if kind == "macro" else "tw_community_daily"
+    source = {"macro": "collector-tw-macro-ndc", "news": "collector-news-rss"}.get(kind, SOURCE)
+    dataset = {"macro": "tw_macro_series", "social": "tw_community_daily"}.get(kind, "collector_bundle_items")
     files, entry, _ = make_bundle(source_id=source)
     base = f"bundles/{source}/2026-11-10/run1"
     rows = [json.loads(line) for line in files[f"{base}/items.jsonl"].splitlines()]
@@ -300,6 +311,26 @@ def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_ro
     files["status.json"] = json.dumps({"sources": {source: {
         "status": "ok", "last_run_at": "2026-11-10T02:05:00Z",
     }}}).encode()
+    if producer:
+        from deploy.collector.collector_stack.bundle import BundleWriter, CollectedItem
+        from deploy.collector.collector_stack.config import DEFAULT_POLICY_PATH, load_collector_config
+
+        policy = load_collector_config(DEFAULT_POLICY_PATH, env={}).get_source(source)
+        items = [CollectedItem(
+            item_id=row["id"], url=row["url"], fetched_at=row["fetched_at"],
+            published_at=row["published_at"], text=row["text"], lang=row["lang"],
+            hashed_author=row["hashed_author"], metrics=row["metrics"],
+            extra_fields=row, raw_bytes=files[f"{base}/" + manifest_item["raw_path"]],
+            raw_extension="html",
+        ) for row, manifest_item in zip(rows, json.loads(files[f"{base}/manifest.json"])["items"])]
+        root = tmp_path / "producer"
+        BundleWriter(root).write_bundle(policy=policy, run_id="run1", items=items,
+            started_at="2026-11-10T02:00:00Z", finished_at="2026-11-10T02:05:00Z")
+        files = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        import services.source_ingestion.connectors.collector_bundle as module
+        real_observed = module.observed_from_collector_status
+        monkeypatch.setattr(module, "observed_from_collector_status", lambda *a, **kw: real_observed(
+            *a, **{**kw, "now": datetime(2026, 11, 10, 3, tzinfo=timezone.utc)}))
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SEARCH_INGEST_NOTIFY_URL", "")
     monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
@@ -307,7 +338,7 @@ def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_ro
                         lambda self: {"2330": ("2330.TWSE",)})
     runtime = create_runtime(data_dir=tmp_path)
     adapter = CollectorBundleAdapter(connector_id="conn-features", source_id=source,
-        source_type=kind, platform="ndc" if kind == "macro" else "ptt", host=HOST,
+        source_type=kind, platform={"macro": "ndc", "social": "ptt", "news": "rss"}[kind], host=HOST,
         raw_root=str(tmp_path / "market_data_store"),
         dataset=dataset if governed_route else "collector_bundle_items", license_scope="collector_restricted")
     connector_data = adapter.connector().to_dict()
@@ -323,6 +354,30 @@ def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_ro
         "max_records": cap,
     })
     return runtime, connector, files
+
+
+@pytest.mark.parametrize("kind", ["macro", "social", "news"])
+def test_producer_complete_is_healthy_only_after_verified_delivery_and_committed_replay(tmp_path, monkeypatch, kind):
+    from services.source_ingestion.api_models import RunScheduledRequest
+    from services.source_ingestion.runtime import create_runtime
+
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind, producer=True)
+    runtime.schedule_config_store.upsert_schedule(connector.connector_id, interval_seconds=60, enabled=True)
+    request = RunScheduledRequest(exclusive_connector_ids=[connector.connector_id])
+    first = runtime.pipeline.run_scheduled_connectors(request)
+    assert not first["failed"], first
+    assert first["ran"][0]["receipt"]["normalized_count"] == {"macro": 8, "social": 3, "news": 2}[kind]
+    state = runtime.connector_store.get_fetch_state(connector.connector_id)["collector_outcome"]
+    assert state["observed"]["health_state"] == "healthy"
+    assert state["no_new_data"] is False
+    runtime = create_runtime(data_dir=tmp_path)
+    second = runtime.pipeline.run_scheduled_connectors(request)
+    assert not second["failed"], second
+    assert second["ran"][0]["receipt"]["raw_count"] == 0
+    assert second["ran"][0]["receipt"]["normalized_count"] == 0
+    state = runtime.connector_store.get_fetch_state(connector.connector_id)["collector_outcome"]
+    assert state["no_new_data"] is True
+    assert state["observed"]["health_state"] == "healthy"
 
 
 @pytest.mark.parametrize("kind", ["macro", "social"])
@@ -362,7 +417,7 @@ def test_actual_scheduled_frontier_persists_capped_features_and_restarts(tmp_pat
     from services.source_ingestion.runtime import create_runtime
     from services.source_ingestion.api_models import RunScheduledRequest
 
-    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind, cap=cap)
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind, cap=cap, producer=True)
     runtime.schedule_config_store.upsert_schedule(connector.connector_id, interval_seconds=60, enabled=True)
     raw_ids, revisions, community_volumes = set(), set(), []
     complete = False
@@ -401,6 +456,7 @@ def test_actual_scheduled_frontier_persists_capped_features_and_restarts(tmp_pat
                         raw_bytes = (tmp_path / "market_data_store" / origin["raw_uri"]).read_bytes()
                         assert origin["content_hash"] == "sha256:" + hashlib.sha256(raw_bytes).hexdigest()
         state = runtime.connector_store.get_fetch_state(connector.connector_id)["collector_outcome"]
+        assert state["observed"]["health_state"] == ("healthy" if state["complete"] else "degraded")
         if state["complete"]:
             complete = True
             break
@@ -428,7 +484,7 @@ def test_failed_persistence_never_acknowledges_features_or_cursor(tmp_path, monk
     import services.source_ingestion.pipeline as module
     from services.source_ingestion.runtime import create_runtime
 
-    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind, cap=cap)
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind, cap=cap, producer=True)
     function = {"market_storage": "persist_market_data_storage_refs",
                 "source_evidence": "persist_source_evidence_refs",
                 "receipt_finalize": "persist_ingest_receipt"}[stage]
@@ -448,6 +504,14 @@ def test_failed_persistence_never_acknowledges_features_or_cursor(tmp_path, monk
     assert not list((tmp_path / "market_data_store" / "state").rglob("*emitted*"))
     assert not list((tmp_path / "market_data_store" / "state").rglob("*ledger*"))
     assert not list((tmp_path / "market_data_store" / "state").rglob("resume_cursor.json"))
+    assert not list((tmp_path / "market_data_store" / "raw").rglob("persisted_boundary.json"))
+    # Raw verification caches exist even after a failed persistence. A caller
+    # supplying the full cursor cannot turn those uncommitted rows into empty.
+    config = runtime.connector_store.get_config(connector.connector_id)
+    runtime.connector_store.upsert_config(connector, {**config.fetch, "request": {"cursor": CURSOR}})
+    with pytest.raises(SourceEvidenceError, match="not verified no-new-data"):
+        runtime.pipeline.configured_fetch(connector.connector_id, trace_id="trace-uncommitted")(None)
+    runtime.connector_store.upsert_config(connector, config.fetch)
     monkeypatch.setattr(module, function, original)
     runtime = create_runtime(data_dir=tmp_path)
     runtime._register_or_validate_connector(connector)
