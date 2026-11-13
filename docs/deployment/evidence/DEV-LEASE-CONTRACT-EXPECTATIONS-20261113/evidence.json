@@ -2,43 +2,17 @@
   "task_id": "DEV-LEASE-CONTRACT-EXPECTATIONS-20261113",
   "owner": "Codex2",
   "reviewer": "Claude",
-  "status": "implementation anchor; full validation pending",
+  "status": "local validation complete; frozen source evidence for assigned independent review",
   "scope": [
     "scripts/test_dev_environment_lease_deploy_contract.py",
     "docs/deployment/evidence/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113/evidence.json"
   ],
   "summary": "Repair existing lease-contract expectations to accepted conditional paper, pre_restore and provisioning coordinator contracts. No workflow/runtime change or deployment.",
   "source": {
-    "base_dev": "802df28ee7559c299d499f3a81882464272cf7fb",
+    "base_dev": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
     "frozen_base": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
     "original_review_head": "1a70ff2e586389b8a054da71334f4945fc4a2b99",
     "audit_sha256": "784c81a82f938082cb201b5936bb4b9d8901db83248ae64dc737b664a3d8e99e",
-    "current_base_files": {
-      "scripts/test_dev_environment_lease_deploy_contract.py": {
-        "git_blob": "1926f2d9e76c1c53497e2089c7eae0534c0e7fbb",
-        "sha256": "6a5123f8adfcd95111f7116d036c9ac0d46c66094b3ef12e0963664d062b1934"
-      },
-      ".github/workflows/nonprod-deploy.yml": {
-        "git_blob": "c5e51cceb68fc8a4abcbfdcd49267a6321e83e5d",
-        "sha256": "66cd2ea1a2460b96388b5362961102029662118e0323cc6987d851973eb94fcc"
-      },
-      "scripts/deploy_nonprod_vm.sh": {
-        "git_blob": "49a8e08d1040a315521d50c62f2717e519e34774",
-        "sha256": "b12d29bea0e6c9c3c461670687347f8f8a00de41b22cbba9efa961827049ab37"
-      },
-      "scripts/retire_dev_paper_release_cases.py": {
-        "git_blob": "1948a6983b3b3abebfc6c2f4074ebed5f201b3bf",
-        "sha256": "5632f60e90093e47a127825b70eb1910a8c59bc44cb40d54ea2015fc1fa30c43"
-      },
-      "scripts/test_nonprod_dev_artifact_workflow.py": {
-        "git_blob": "c77aa09b064f5857917967e13395e17966871df1",
-        "sha256": "29b2f6217ceb988dc585a61b678ddd4a353f1c85191dda1ead648b0f95622b29"
-      },
-      "scripts/test_retire_dev_paper_release_cases.py": {
-        "git_blob": "ed7aeab5b38d8dcbcf1dfda16d80afcab020b65d",
-        "sha256": "a05f2fbd16692e719da95e079bbadff3c74aa6b4466b51bc17542e2f73e22c6b"
-      }
-    },
     "frozen_base_files": {
       "scripts/test_dev_environment_lease_deploy_contract.py": {
         "git_blob": "1926f2d9e76c1c53497e2089c7eae0534c0e7fbb",
@@ -99,6 +73,75 @@
         ],
         "legacy_lease_contract_test_updated": false
       }
+    ],
+    "initial_base_dev": "802df28ee7559c299d499f3a81882464272cf7fb",
+    "initial_dev_files": {
+      "scripts/test_dev_environment_lease_deploy_contract.py": {
+        "git_blob": "1926f2d9e76c1c53497e2089c7eae0534c0e7fbb",
+        "sha256": "6a5123f8adfcd95111f7116d036c9ac0d46c66094b3ef12e0963664d062b1934"
+      },
+      ".github/workflows/nonprod-deploy.yml": {
+        "git_blob": "c5e51cceb68fc8a4abcbfdcd49267a6321e83e5d",
+        "sha256": "66cd2ea1a2460b96388b5362961102029662118e0323cc6987d851973eb94fcc"
+      },
+      "scripts/deploy_nonprod_vm.sh": {
+        "git_blob": "49a8e08d1040a315521d50c62f2717e519e34774",
+        "sha256": "b12d29bea0e6c9c3c461670687347f8f8a00de41b22cbba9efa961827049ab37"
+      },
+      "scripts/retire_dev_paper_release_cases.py": {
+        "git_blob": "1948a6983b3b3abebfc6c2f4074ebed5f201b3bf",
+        "sha256": "5632f60e90093e47a127825b70eb1910a8c59bc44cb40d54ea2015fc1fa30c43"
+      },
+      "scripts/test_nonprod_dev_artifact_workflow.py": {
+        "git_blob": "c77aa09b064f5857917967e13395e17966871df1",
+        "sha256": "29b2f6217ceb988dc585a61b678ddd4a353f1c85191dda1ead648b0f95622b29"
+      },
+      "scripts/test_retire_dev_paper_release_cases.py": {
+        "git_blob": "ed7aeab5b38d8dcbcf1dfda16d80afcab020b65d",
+        "sha256": "a05f2fbd16692e719da95e079bbadff3c74aa6b4466b51bc17542e2f73e22c6b"
+      }
+    },
+    "validated_source_head": "a5ea2adf210cb508a1394f1d256054333ec91975",
+    "base_dev_files": {
+      "scripts/test_dev_environment_lease_deploy_contract.py": {
+        "git_blob": "1926f2d9e76c1c53497e2089c7eae0534c0e7fbb",
+        "sha256": "6a5123f8adfcd95111f7116d036c9ac0d46c66094b3ef12e0963664d062b1934"
+      },
+      ".github/workflows/nonprod-deploy.yml": {
+        "git_blob": "c6e7047a4891f9173c210fc4014800b1efd5b265",
+        "sha256": "2cb43d370ecda119979976e523c47683d85f64a509b75db709f0259fe706e8fe"
+      },
+      "scripts/deploy_nonprod_vm.sh": {
+        "git_blob": "49a8e08d1040a315521d50c62f2717e519e34774",
+        "sha256": "b12d29bea0e6c9c3c461670687347f8f8a00de41b22cbba9efa961827049ab37"
+      },
+      "scripts/retire_dev_paper_release_cases.py": {
+        "git_blob": "1948a6983b3b3abebfc6c2f4074ebed5f201b3bf",
+        "sha256": "5632f60e90093e47a127825b70eb1910a8c59bc44cb40d54ea2015fc1fa30c43"
+      },
+      "scripts/test_nonprod_dev_artifact_workflow.py": {
+        "git_blob": "c77aa09b064f5857917967e13395e17966871df1",
+        "sha256": "29b2f6217ceb988dc585a61b678ddd4a353f1c85191dda1ead648b0f95622b29"
+      },
+      "scripts/test_retire_dev_paper_release_cases.py": {
+        "git_blob": "ed7aeab5b38d8dcbcf1dfda16d80afcab020b65d",
+        "sha256": "a05f2fbd16692e719da95e079bbadff3c74aa6b4466b51bc17542e2f73e22c6b"
+      }
+    },
+    "validated_test_git_blob": "c8d8d5162505ff38b8066e73156c81bbd826f929",
+    "validated_test_sha256": "964c2ceb1a69e5329225873a9bbe7f311753b2fd68b60a5a3e0920d953b57fd3",
+    "rebase": "Clean rebase onto b01bb86562c976b39b293c8a041b4816b0212271 after independent PR7290 merge; only upstream workflow change was controller with.ref pin. All three related files rerun together afterward.",
+    "anchor_commits": [
+      "9ac41f08e",
+      "a5ea2adf2"
+    ],
+    "superseded_pre_rebase_anchor": "26c1524e28101319a77499f1f336e8b2cabd2ab6",
+    "unchanged_current_dev_paths": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/retire_dev_paper_release_cases.py",
+      "scripts/test_nonprod_dev_artifact_workflow.py",
+      "scripts/test_retire_dev_paper_release_cases.py"
     ]
   },
   "baseline": {
@@ -382,12 +425,114 @@
       ],
       "exit_code": 1,
       "elapsed_seconds": 38.7,
-      "stdout": ".....................................F........................           [100%]\n=================================== FAILURES ===================================\n____ test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative ____\nscripts/test_dev_environment_lease_deploy_contract.py:1395: in test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\n    assert (tmp_path / \"mock_bff_sha.txt\").read_text() == SAMPLE_BACKEND_SHA\nE   AssertionError: assert '40de8fcb1c69...e508c9162e0\\n' == '40de8fcb1c69...d6e508c9162e0'\nE     \nE     - 40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0\nE     + 40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0\nE     ?                                         +\n=========================== short test summary info ============================\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\n1 failed, 61 passed, 212 deselected in 37.76s\n"
+      "stdout": ".....................................F........................           [100%]\n=================================== FAILURES ===================================\n____ test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative ____\nscripts/test_dev_environment_lease_deploy_contract.py:1395: in test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\n    assert (tmp_path / \"mock_bff_sha.txt\").read_text() == SAMPLE_BACKEND_SHA\nE   AssertionError: assert '40de8fcb1c69...e508c9162e0\\n' == '40de8fcb1c69...d6e508c9162e0'\nE     \nE     - 40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0\nE     + 40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0\nE     ?                                         +\n=========================== short test summary info ============================\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\n1 failed, 61 passed, 212 deselected in 37.76s\n",
+      "disposition": "Fixture SHA file included a newline; corrected comparisons with strip(), then complete lease file passed. This initial run is a real failure, not counted as passed."
+    },
+    {
+      "command": [
+        ".venv-pantheon/bin/python3",
+        "-m",
+        "pytest",
+        "-q",
+        "scripts/test_dev_environment_lease_deploy_contract.py",
+        "--tb=short"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 72.69,
+      "stdout": "........................................................................ [ 26%]\n........................................................................ [ 52%]\n........................................................................ [ 78%]\n..........................................................               [100%]\n274 passed in 71.82s (0:01:11)\n"
+    },
+    {
+      "command": [
+        ".venv-pantheon/bin/python3",
+        "-m",
+        "pytest",
+        "-q",
+        "scripts/test_retire_dev_paper_release_cases.py",
+        "scripts/test_nonprod_dev_artifact_workflow.py",
+        "--tb=short"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 50.93,
+      "stdout": "........................................................................ [ 31%]\n........................................................................ [ 62%]\n........................................................................ [ 94%]\n.............                                                            [100%]\n=============================== warnings summary ===============================\nscripts/test_retire_dev_paper_release_cases.py::test_build_runtime_composes_persona_service_via_app_factory\nscripts/test_retire_dev_paper_release_cases.py::test_build_runtime_composes_persona_service_via_app_factory\n  /tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.\n    from jsonschema import Draft7Validator, RefResolver\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n229 passed, 2 warnings in 48.78s\n"
+    },
+    {
+      "command": [
+        ".venv-pantheon/bin/python3",
+        "-m",
+        "pytest",
+        "-q",
+        "scripts/test_dev_environment_lease_deploy_contract.py",
+        "-k",
+        "all_third_party_actions_are_full_sha_pinned or controller_checkout",
+        "--tb=short"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.66,
+      "stdout": "..                                                                       [100%]\n2 passed, 272 deselected in 1.10s\n"
+    },
+    {
+      "command": [
+        ".venv-pantheon/bin/python3",
+        "-m",
+        "pytest",
+        "-q",
+        "scripts/test_dev_environment_lease_deploy_contract.py",
+        "scripts/test_retire_dev_paper_release_cases.py",
+        "scripts/test_nonprod_dev_artifact_workflow.py",
+        "--tb=short"
+      ],
+      "source_head": "a5ea2adf210cb508a1394f1d256054333ec91975",
+      "base_dev": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
+      "exit_code": 0,
+      "elapsed_seconds": 109.53,
+      "stdout": "........................................................................ [ 14%]\n........................................................................ [ 28%]\n........................................................................ [ 42%]\n........................................................................ [ 57%]\n........................................................................ [ 71%]\n........................................................................ [ 85%]\n.......................................................................  [100%]\n=============================== warnings summary ===============================\nscripts/test_retire_dev_paper_release_cases.py::test_build_runtime_composes_persona_service_via_app_factory\nscripts/test_retire_dev_paper_release_cases.py::test_build_runtime_composes_persona_service_via_app_factory\n  /tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.\n    from jsonschema import Draft7Validator, RefResolver\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n503 passed, 2 warnings in 107.47s (0:01:47)\n"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 /tmp/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113/semantic-experiments.py",
+      "exit_code": 0,
+      "elapsed_seconds": 2.41,
+      "cases": [
+        {
+          "case": "maintained workflow baseline",
+          "result": "passed"
+        },
+        {
+          "case": "additional full-SHA checkout is not a pin defect",
+          "result": "passed"
+        },
+        {
+          "case": "repository with.ref remains a separate property",
+          "result": "passed"
+        },
+        {
+          "case": "unpinned third-party action mutation",
+          "result": "rejected for intended action pin",
+          "assertion": "actions/upload-artifact@v4"
+        },
+        {
+          "case": "requested-paper compensation guard removal",
+          "result": "rejected by isolated existing truth-table row",
+          "assertion": "Failed for case: isolated requested paper failure (expected True, got False)"
+        }
+      ]
     }
   ],
   "limitations": [
-    "Anchor only: full-file and focused regression terminal results pending.",
-    "Original full related batch had 8 failed, 529 passed; frozen controls select only the 27 named cases and do not reproduce all 537 original cases.",
-    "This is source-only test maintenance, not hosted, provider, financial or universal deployment acceptance. Original all12/original49 closure and independent PR7290 publication remain unchanged."
-  ]
+    "Frozen-base reproduction exports only five imported/read source files and selects the original 27 cases (8 failed, 19 passed); it is not the full original 537-case reviewer batch. Original reviewer output/hashes are preserved verbatim above.",
+    "Final local validation covers the changed lease-contract file and existing paper-retirement/artifact workflow suites (503 passed), plus action-pin/paper-guard semantic experiments. It is not universal deployment or hosted acceptance.",
+    "Assigned independent Claude review, required GitHub CI, native supervisor integration and owner finalization remain pending at this evidence commit. No approval or merge is claimed.",
+    "No workflow/runtime/provider/data/service/secret changes, VM SSH, Docker-service action, business call or workflow dispatch. Original all12/original49 closure and independent PR7290 publication remain unchanged."
+  ],
+  "validation_notes": [
+    "All pytest batches used the checkout-scoped provisioned .venv-pantheon interpreter. Batches used outer deadlines of 45, 90 or 300 seconds; every recorded pytest process has a terminal exit status.",
+    "An initial auxiliary semantic-experiment import via system python3 exited 1 with ModuleNotFoundError: pytest before tests ran. It was rerun successfully with the provisioned interpreter; no dependencies were installed into the system interpreter.",
+    "The 274-test full file and 229-test focused suite originally passed separately on 802df28ee; final checkout pin coverage was tightened to include job-level uses and no implicit Docker exclusion, passed targeted checks, and all 503 tests then passed together on b01bb8656.",
+    "The two RefResolver deprecation warnings are from an existing BFF dependency import, not test failures."
+  ],
+  "semantic_experiment_source": "import copy\nimport json\nimport pathlib\nimport re\nimport sys\nimport time\n\nsys.path.insert(0, str(pathlib.Path('scripts').resolve()))\nimport test_dev_environment_lease_deploy_contract as tests\nimport yaml\n\nout = pathlib.Path('/tmp/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113')\nbegan = time.monotonic()\nsource = tests._workflow()\nworkflow = yaml.safe_load(source)\nrecords = []\n\ndef pins(label, text, expected_error=None):\n    tests._workflow = lambda: text\n    try:\n        tests.test_all_third_party_actions_are_full_sha_pinned()\n    except AssertionError as exc:\n        assert expected_error is not None and str(exc) == expected_error, (label, str(exc))\n        records.append(dict(case=label, result='rejected for intended action pin', assertion=str(exc)))\n    else:\n        assert expected_error is None, label\n        records.append(dict(case=label, result='passed'))\n\npins('maintained workflow baseline', source)\nextra = copy.deepcopy(workflow)\njob = next(job for job in extra['jobs'].values() if any(step.get('uses', '').startswith('actions/checkout@') for step in job.get('steps', [])))\ncheckout = next(step for step in job['steps'] if step.get('uses', '').startswith('actions/checkout@'))\njob['steps'].append(copy.deepcopy(checkout))\npins('additional full-SHA checkout is not a pin defect', yaml.safe_dump(extra))\nrefs = copy.deepcopy(workflow)\nfor job in refs['jobs'].values():\n    for step in job.get('steps', []):\n        if step.get('uses', '').startswith('actions/checkout@'):\n            step.setdefault('with', {})['ref'] = 'moving-repository-ref'\npins('repository with.ref remains a separate property', yaml.safe_dump(refs))\nassert re.search(r'actions/upload-artifact@[a-f0-9]{40}', source)\nmutant = re.sub(r'actions/upload-artifact@[a-f0-9]{40}', 'actions/upload-artifact@v4', source)\npins('unpinned third-party action mutation', mutant, 'actions/upload-artifact@v4')\ntests._workflow = lambda: source\nargs = ('root', 'success', tests.SAMPLE_BACKEND_SHA, 'success', 'failure', 'success', True, 'isolated requested paper failure')\ntests.test_dev_deploy_compensation_condition_truth_table(*args)\nold = \"(env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success')\"\nassert old in source\ntests._workflow = lambda: source.replace(old, \"(env.PAPER_BOOTSTRAP_REQUESTED == 'never' && steps.paper_bootstrap.outcome != 'success')\")\ntry:\n    tests.test_dev_deploy_compensation_condition_truth_table(*args)\nexcept AssertionError as exc:\n    assert 'expected True, got False' in str(exc), str(exc)\n    records.append(dict(case='requested-paper compensation guard removal', result='rejected by isolated existing truth-table row', assertion=str(exc)))\nelse:\n    raise AssertionError('paper guard mutation was masked')\ntests._workflow = lambda: source\nrecord = dict(command='.venv-pantheon/bin/python3 /tmp/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113/semantic-experiments.py', exit_code=0, elapsed_seconds=round(time.monotonic()-began, 2), cases=records)\n(out/'semantic-experiments.json').write_text(json.dumps(record, indent=2)+'\\n')\nprint(json.dumps(record, indent=2))\n",
+  "semantic_experiment_sha256": "8bfd00203d3b78d41d192bbfd184b41e6edffa0947b71778406df6c4eadfc025",
+  "case_renames": {
+    "test_release_case_retirement_runs_after_both_compensation_paths": "test_release_case_retirement_precedes_restore_and_accepted_cleanup_follows_verification",
+    "test_release_case_retirement_uses_only_the_retire_action": "test_release_case_retirement_uses_only_the_provisioning_coordinator"
+  }
 }
