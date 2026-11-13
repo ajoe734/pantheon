@@ -933,3 +933,15 @@ def test_collector_requirements_leave_official_price_requirement_unchanged(
     assert by_connector["tw-twse-tpex-official-market"].status == "mutated"
     assert schedule_store.get_schedule("tw-twse-tpex-official-market").interval_seconds == 86400
     assert connector_store.get_config("tw-twse-tpex-official-market").fetch["allow_empty"] is True
+
+
+def test_dbnomics_and_individual_paper_bundle_sources_are_provisioned(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHEON_COLLECTOR_HOST", "collector.example.test")
+    reconciler, connectors, schedules = _reconciler(tmp_path)
+    ids = ("collector-macro-dbnomics", "collector-paper-arxiv", "collector-paper-openalex",
+           "collector-paper-nber-rss", "collector-youtube-gemini-notes")
+    result = reconciler.reconcile_persona(_collector_persona(*ids))
+    assert result.summary["unsupported"] == 0
+    for cid in ids:
+        assert connectors.get_config(cid).fetch["adapter_config"]["source_id"] == cid
+        assert schedules.get_schedule(cid).enabled

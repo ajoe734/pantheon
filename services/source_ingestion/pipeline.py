@@ -285,18 +285,19 @@ def persist_source_evidence_refs(
     connector_license_scope = connector.license_scope if connector else None
     for record in source_records:
         candidate_source = normalize_source_record(record, connector_license_scope=connector_license_scope)
-        verified_close = (
+        verified_market = (
             isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
             and record.source_type.value == "market"
-            and isinstance(record.metadata.get("collector_close"), Mapping)
+            and isinstance(record.metadata.get("collector"), Mapping)
         )
-        if verified_close:
-            # One exchange URL describes thousands of distinct verified close
+        if verified_market:
+            # One exchange URL describes thousands of distinct verified market
             # items. URL-only dedupe retained the first prefix's run forever,
             # failing the next controller tick's real record/run readback.
             # Keep the original URL/hash/PIT/tenant, deduping by native item ID.
+            prefix = "collector-close" if isinstance(record.metadata.get("collector_close"), Mapping) else "collector-market"
             candidate_source = replace(candidate_source, metadata={
-                **candidate_source.metadata, "source_dedupe_key": f"collector-close:{record.source_id}",
+                **candidate_source.metadata, "source_dedupe_key": f"{prefix}:{record.source_id}",
             })
         source_dedupe_key = str(candidate_source.metadata["source_dedupe_key"])
         source_owner = (
@@ -305,7 +306,7 @@ def persist_source_evidence_refs(
             or candidate_source
         )
         source_owner_by_dedupe_key[source_dedupe_key] = source_owner
-        if verified_close:
+        if verified_market:
             normalized_source = candidate_source
             normalized_item = normalize_evidence_item(
                 candidate_source, evidence_item_for_record(record, result.run),

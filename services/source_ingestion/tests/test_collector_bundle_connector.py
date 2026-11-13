@@ -1521,14 +1521,174 @@ def test_provider_handler_forwards_request_priority_symbols_without_environment(
     assert {"2330", "2317"} <= set(_symbols(result))
 
 
-def test_partial_session_flags_continuation_and_finished_session_does_not(tmp_path):
+def test_partial_session_and_history_continue_until_both_are_finished(tmp_path):
     make = _held_session(tmp_path)
     first = make().pull(priority_symbols=("2330.TWSE",))
     assert not first.priority_done and first.observed.get("continuation_pending") is True
     result = first
     for _ in range(60):
-        if result.priority_done:
+        if result.complete:
             break
         make().save_resume_cursor(result)
         result = make().pull(cursor=result.next_cursor, priority_symbols=("2330.TWSE",))
-    assert result.priority_done and "continuation_pending" not in result.observed
+    assert result.complete and "continuation_pending" not in result.observed
+
+
+# Real-size host intake fixtures: per-date backfill run ids, recorded row/raw JSON shape.
+_INTAKE_SIZES = (("collector-tw-twse-price-history", 1375, "tw_price_daily", "TWSE", 1000, 600),
+                 ("collector-tw-tpex-price-history", 6000, "tw_price_daily", "TPEX", 1000, 600),
+                 ("collector-tw-twse-t86", 1349, "tw_institutional_flow", "TWSE", 500, 86400))
+
+
+def _intake_bundle(source, count, dataset, exchange, trade_date, *, newest=False):
+    fixture = ("twse_t86_20261110.json" if dataset == "tw_institutional_flow" else
+               "tpex_daily_quotes_20261110.json" if exchange == "TPEX" else "twse_mi_index_20261110.json")
+    captured = json.loads((Path(__file__).resolve().parents[3] / "deploy/collector/tests/fixtures" / fixture).read_text())
+    table = captured.get("tables", [captured])[0]
+    run = f"{'close' if newest else 'backfill'}-{trade_date}"
+    date = "2026-11-13" if newest else "2026-11-11"
+    finished = f"{date}T12:00:00Z"
+    base = f"bundles/{source}/{date}/{run}"
+    files, items, rows = {}, [], []
+    for n in range(count):
+        symbol = f"{10000+n}"
+        normalized = {**_TWSE_ROW, "dataset": dataset, "exchange": exchange, "symbol": symbol, "trade_date": trade_date}
+        if dataset == "tw_institutional_flow":
+            normalized = {k: normalized[k] for k in ("dataset", "exchange", "symbol", "security_name", "trade_date")}
+            normalized.update(foreign_net_shares=6500000, investment_trust_net_shares=900000,
+                              dealer_net_shares=450000, total_institutional_net_shares=7850000)
+        data = list(table["data"][0]); data[0] = symbol
+        body = json.dumps({"date": trade_date.replace("-", ""), "fields": table["fields"],
+                           "data": [data], "record": normalized}, ensure_ascii=False, sort_keys=True).encode()
+        sha = hashlib.sha256(body).hexdigest()
+        item_id = f"{source}-{trade_date}-{symbol}"
+        url = f"https://example.test/{source}"
+        rows.append({"id": item_id, "url": url, "fetched_at": finished, **normalized})
+        items.append({"item_id": item_id, "url": url, "http_status": 200,
+                      "content_sha256": sha, "bytes": len(body), "raw_path": f"raw/{sha}.json"})
+        files[f"{base}/raw/{sha}.json"] = body
+    manifest = {"schema_version": "collector_bundle.v1", "source_id": source, "run_id": run,
+                "collector_version": "1.0.0", "started_at": finished, "finished_at": finished,
+                "fetch_policy_hash": "fixture", "robots_decision": "allowed", "terms_ref": "https://example.test/terms",
+                "attribution": exchange, "status": "complete", "items": items,
+                "bundle_sha256": compute_bundle_sha256([m["content_sha256"] for m in items])}
+    files[f"{base}/manifest.json"] = json.dumps(manifest).encode()
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    return files, {"source_id": source, "date": date, "run_id": run, "finished_at": finished}
+
+
+@pytest.mark.parametrize("spec", _INTAKE_SIZES, ids=[s[0] for s in _INTAKE_SIZES])
+def test_real_size_two_day_sweep_continues_and_preserves_newest_priority(tmp_path, monkeypatch, spec):
+    import threading
+    import types
+    import time as real_time
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    source, count, dataset, exchange, cap, cadence = spec
+    files, entries = {}, []
+    for day, newest in (("2024-11-12", False), ("2024-11-13", False), ("2026-11-13", True)):
+        f, entry = _intake_bundle(source, count, dataset, exchange, day, newest=newest)
+        files.update(f); entries.append(entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": {source: {"status": "ok", "last_run_at": entries[-1]["finished_at"],
+                                                          "cadence_seconds": 86400}}}).encode()
+    now, active, peak, raw_reads = [0.0], [0], [0], [0]
+    lock = threading.Lock()
+
+    class Transport(FakeTransport):
+        def read(self, path, *, max_bytes):
+            with lock:
+                start = now[0]
+                active[0] += 1; peak[0] = max(peak[0], active[0])
+            try:
+                real_time.sleep(0.0005)  # real overlapping I/O; clock accounts 50ms per receive
+                return super().read(path, max_bytes=max_bytes)
+            finally:
+                with lock:
+                    now[0] = max(now[0], start + 0.05)
+                    active[0] -= 1
+                    raw_reads[0] += int("/raw/" in path)
+
+    monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: now[0]))
+    adapter = CollectorBundleAdapter(connector_id=source, source_id=source, source_type="market", dataset=dataset,
+                                     max_records=cap, cadence_seconds=cadence, attribution_required=True,
+                                     transport=Transport(files), raw_root=str(tmp_path / "store"))
+    cursor, seen, durations, batches = None, set(), [], []
+    wall_start = real_time.perf_counter()
+    for _ in range(150):
+        start = now[0]
+        result = adapter.pull(cursor=cursor)
+        durations.append(now[0] - start); batches.append(len(result.records))
+        if dataset == "tw_price_daily" and not seen:
+            assert {r.metadata["trade_date"] for r in result.records} == {"2026-11-13"}
+        seen.update((r.metadata["trade_date"], r.metadata["symbol"]) for r in result.records)
+        cursor = result.next_cursor
+        adapter.save_resume_cursor(result)
+        assert active[0] == 0
+        if result.complete:
+            assert "continuation_pending" not in result.observed
+            break
+        assert result.observed["continuation_pending"] is True
+    assert result.complete and len(seen) == count * 3
+    assert "|items=" not in cursor and cursor.endswith("#close-2026-11-13")
+    assert max(durations) < 17  # one 15-second pull, small metadata/read floor overhead
+    assert 1 < peak[0] <= 4
+    # Conservatively scale *all* reads including newest replay and metadata to 488 dates.
+    extrapolated = (sum(durations) + len(durations)) * 488 / 3
+    assert extrapolated < 48 * 3600
+    print("INTAKE_RATE " + json.dumps({"source": source, "days": 3, "unique_rows": len(seen),
+          "pulls": len(batches), "rows_per_pull": batches, "model_seconds": sum(durations),
+          "max_pull_seconds": max(durations), "wall_seconds": real_time.perf_counter() - wall_start,
+          "raw_reads": raw_reads[0], "peak_inflight": peak[0], "extrapolated_488_days_seconds": extrapolated}))
+
+
+def test_market_partial_producer_bundle_does_not_retry_hot(tmp_path):
+    source, count, dataset, exchange, cap, cadence = _INTAKE_SIZES[2]
+    files, entry = _intake_bundle(source, 3, dataset, exchange, "2024-11-12")
+    key = next(k for k in files if k.endswith("manifest.json"))
+    doc = json.loads(files[key]); doc["status"] = "partial"; files[key] = json.dumps(doc).encode()
+    result = adapter_for(files, [entry], tmp_path, source_id=source, source_type="market", dataset=dataset).pull()
+    assert not result.complete and "continuation_pending" not in result.observed
+
+
+def test_bee62bc29_reader_parses_new_cursor_status_and_additive_readback(tmp_path):
+    """Run the actual rollback reader when the repository retains the release object."""
+    import importlib.util
+    import subprocess
+    import sys
+    result = subprocess.run(["git", "show", "bee62bc29:services/source_ingestion/connectors/collector_bundle.py"],
+                            capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        pytest.skip("rollback release object unavailable in shallow clone; execute with full release history")
+    path = tmp_path / "rollback.py"; path.write_text(result.stdout)
+    name = "services.source_ingestion.connectors.rollback_reader"
+    spec = importlib.util.spec_from_file_location(name, path)
+    legacy = importlib.util.module_from_spec(spec); sys.modules[name] = legacy
+    try:
+        spec.loader.exec_module(legacy)
+        source, _, dataset, exchange, _, cadence = _INTAKE_SIZES[0]
+        files, entry = _intake_bundle(source, 5, dataset, exchange, "2024-11-12")
+        files["status.json"] = json.dumps({"sources": {source: {
+            "status": "ok", "last_run_at": entry["finished_at"], "cadence_seconds": 86400,
+            "offered": False, "offered_reason": "no_timer", "timer_enabled": False}}}).encode()
+        adapter = adapter_for(files, [entry], tmp_path, source_id=source, source_type="market", dataset=dataset,
+                              max_records=2, cadence_seconds=cadence)
+        pull = adapter.pull(); adapter.save_resume_cursor(pull)
+        # Drain priority, leaving the normal backward-compatible partial sweep cursor.
+        for _ in range(4):
+            if pull.next_cursor:
+                break
+            pull = adapter.pull(cursor=pull.next_cursor); adapter.save_resume_cursor(pull)
+        assert pull.next_cursor and "|items=" in pull.next_cursor
+        old = legacy.CollectorBundleAdapter(connector_id=adapter.connector_id, source_id=source,
+                                           source_type="market", dataset=dataset, raw_root=str(tmp_path / "store"))
+        assert old.load_resume_cursor() == pull.next_cursor
+        old_observed = legacy.observed_from_collector_status(
+            json.loads(files["status.json"]), source_id=source, cursor=pull.next_cursor, cadence_seconds=86400,
+            now=datetime(2026, 11, 11, 13, tzinfo=timezone.utc))
+        assert old_observed["health_state"] == "healthy"
+        # bee62bc29 predates latest_priority.json and ignores that sidecar. The format
+        # of its cursor and status readers is unchanged; new readback is additive.
+        assert adapter._priority_key_path().is_file()
+    finally:
+        sys.modules.pop(name, None)

@@ -1763,6 +1763,11 @@ def _steady_reconcile(connector_ids):
     return tcw._collector_reconcile(*connector_ids)
 
 
+def _bundle_reads(reads):
+    """Capability status may be polled while no bundle is due."""
+    return [path for path in reads if path != "status.json"]
+
+
 def _steady_step(reconcile):
     """The steady branch of run_controller_tick, using its real selection, scheduler and readback calls."""
     from services.source_ingestion import controller_worker as cw
@@ -1800,7 +1805,7 @@ def test_steady_controller_calls_drive_real_scheduler_and_collector_adapter(stea
     assert [item["connector_id"] for item in schedule["ran"]] == [cid]
     assert schedule["excluded"] == ["conn-direct-provider"]
     assert schedule["summary"]["total_failed"] == 0
-    pulled_after_first = len(reads)
+    pulled_after_first = len(_bundle_reads(reads))
     assert pulled_after_first > 0
     assert schedule["ran"][0]["run"]["status"] == "completed"
     assert schedule["ran"][0]["receipt"]["normalized_count"] == 2
@@ -1819,14 +1824,14 @@ def test_steady_controller_calls_drive_real_scheduler_and_collector_adapter(stea
     # Tick 2 within the cadence: nothing is selected, no scheduler call and no adapter read.
     selected, schedule = _steady_step(reconcile)
     assert selected == [] and schedule is None
-    assert len(reads) == pulled_after_first
+    assert len(_bundle_reads(reads)) == pulled_after_first
 
     # Tick 3 after the interval: due again, the real adapter is invoked again.
     time.sleep(6.2)
     selected, schedule = _steady_step(reconcile)
     assert selected == [cid]
     assert schedule["summary"]["total_failed"] == 0
-    assert len(reads) > pulled_after_first
+    assert len(_bundle_reads(reads)) > pulled_after_first
     assert schedule["ran"][0]["run"]["raw_count"] == 0
     assert schedule["ran"][0]["receipt"]["normalized_count"] == 0
     final = test_client.get("/api/source-ingest/controller/readback").json()
@@ -1900,7 +1905,7 @@ def test_steady_controller_calls_exclude_disabled_collector(steady_stack) -> Non
     assert lifecycle.status_code == 200, lifecycle.text
     selected, schedule = _steady_step(_steady_reconcile([cid]))
     assert selected == [] and schedule is None
-    assert reads == []
+    assert _bundle_reads(reads) == []
 
 
 def _full_tick_setup(steady_stack, tmp_path, monkeypatch):
@@ -1939,11 +1944,11 @@ def test_full_controller_tick_completes_real_collector_pull_and_suppresses_next_
 ) -> None:
     http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
     assert tick()["status"] == "ok"
-    pulled = len(reads)
+    pulled = len(_bundle_reads(reads))
     assert pulled > 0
     # Second tick is inside the (reconciled, daily) cadence: still accepted, no adapter read.
     assert tick()["status"] == "ok"
-    assert len(reads) == pulled
+    assert len(_bundle_reads(reads)) == pulled
 
 
 @pytest.mark.parametrize("corruption", ["tenant", "future_pit", "bundle_incomplete"])
@@ -1998,7 +2003,7 @@ def test_full_tick_excludes_definition_fetch_adapter_mismatch(steady_stack, tmp_
         print('full_tick_terminal_error_after_adapter_execution', str(exc))
     print('full_tick_direct_provider_adapter_calls', calls, 'collector_reads', reads)
     assert calls == []
-    assert reads == []
+    assert _bundle_reads(reads) == []
 
 
 # --- COLLECTOR-HOSTED-ADMISSION-20261112: desired state -> reconcile -> provision -> select -> schedule -> adapter ---
@@ -2143,7 +2148,7 @@ def test_full_collector_steady_tick_from_default_desired_state_pulls_every_admit
     # reconcile_only: provisions and verifies, but nothing is pulled.
     only = tick(cw.RECONCILE_ONLY_MODE)
     assert only["provider_egress_attempted"] is False
-    assert reads == []
+    assert _bundle_reads(reads) == []
     provisioned = {c["connector_id"] for c in http.get("/api/source-ingest/controller/readback").json()["connectors"]}
     assert set(wanted) <= provisioned
     assert _ADMISSION_HELD.isdisjoint(provisioned)
@@ -2177,7 +2182,7 @@ def test_full_collector_steady_tick_from_default_desired_state_pulls_every_admit
         assert fetch["adapter_config"]["source_id"] == collector["source_id"]
     # Five social platforms share one dataset but are five connectors.
     social = [s for s in wanted if get_connector_definition(s).metadata["collector"]["dataset"] == "collector_social_posts"]
-    assert len(social) == 5 and len({by_id[s]["connector_id"] for s in social}) == 5
+    assert len(social) == 6 and len({by_id[s]["connector_id"] for s in social}) == 6
     # Community sources run at test volume.
     for source_id in social:
         assert module.runtime.connector_store.get_config(source_id).fetch["max_records"] == 50
@@ -2386,8 +2391,8 @@ def test_held_symbols_reach_snapshot_store_on_first_tick_and_session_completes_a
     assert len(set(ack_ids)) == len(ack_ids), "no duplicate acknowledgement for one run"
     # Whole session delivered; cadence is restored afterwards (nothing selected, no new reads).
     assert _snapshot_date(module, "1599.TW") == _CLOSE_DATE
-    seen = len(reads)
-    assert _steady_step(reconcile) == ([], None) and len(reads) == seen
+    seen = len(_bundle_reads(reads))
+    assert _steady_step(reconcile) == ([], None) and len(_bundle_reads(reads)) == seen
     readback = http.get("/api/source-ingest/controller/readback").json()
     item = next(c for c in readback["connectors"] if c["connector_id"] == cid)
     assert "continuation_pending" not in item["fetch_state"]["collector_outcome"]["observed"]
@@ -2618,9 +2623,8 @@ def test_full_size_close_through_controller_main_with_persistence(
                 progress[cid].append(state["delivered"])
             if state["done"]:
                 completed_at.setdefault(cid, clock[0] + time.monotonic() - real_start)
-        if len(completed_at) == len(paths):
-            assert seconds == 60  # normal cadence resumes after newest-session persistence
-            raise SessionFinished
+        if len(completed_at) == len(paths) and seconds == 60:
+            raise SessionFinished  # normal cadence resumes after newest + ordered sweep
         assert seconds == cw.CONTINUATION_PAUSE_SECONDS, capsys.readouterr().out[-3000:]
 
     monkeypatch.setattr(cw, "time", types.SimpleNamespace(sleep=sleep))
@@ -2667,3 +2671,144 @@ def test_full_size_close_through_controller_main_with_persistence(
     print({"sessions": sessions, "ticks": len(sleeps), "reads": len(reads),
            "peak_inflight": peak[0], "completed_at": completed_at, "elapsed_seconds": round(elapsed, 2)})
     assert elapsed < 1800, "full newest session must persist within the original 30-minute deadline"
+
+
+# COLLECTOR-HOSTED-INTAKE-THROUGHPUT-20261113 ------------------------------------
+def _intake_config(source):
+    from services.source_ingestion.persona_source_reconciler import CollectorDefinitionProvider
+    provider = CollectorDefinitionProvider(source)
+    full = provider.connector().to_dict()
+    allowed = ("connector_id", "source_type", "provider", "license_scope", "auth_type", "supported_modes", "auth_policy",
+               "rate_limit_policy", "license_policy", "source_metadata", "metadata")
+    connector = {k: full[k] for k in allowed if k in full}
+    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a"}
+    return {"connector": connector, "fetch": provider.fetch_config()}
+
+
+def _intake_files(monkeypatch, spec, days, *, count=None):
+    import json
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests.test_collector_bundle_connector import _intake_bundle, FakeTransport
+    source, size, dataset, exchange, cap, cadence = spec
+    files, entries = {}, []
+    for day in days:
+        f, entry = _intake_bundle(source, size if count is None else count, dataset, exchange, day)
+        files.update(f); entries.append(entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": {source: {"status": "ok", "last_run_at": entries[-1]["finished_at"],
+                                        "cadence_seconds": 86400, "offered": True, "offered_reason": None}}}).encode()
+    transport = FakeTransport(files)
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: transport)
+    return files
+
+
+def test_real_controller_drains_1349_t86_rows_before_daily_cadence(steady_stack, monkeypatch, tmp_path):
+    import time
+    from dataclasses import replace
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.tests import test_controller_worker as tcw
+    from services.source_ingestion.tests.test_collector_bundle_connector import _INTAKE_SIZES
+
+    http, module, _ = steady_stack
+    spec = _INTAKE_SIZES[2]; source = spec[0]
+    _intake_files(monkeypatch, spec, ["2024-11-12"])
+    payload = _intake_config(source)
+    assert payload["fetch"]["max_records"] == 500
+    # Real reconciliation provisions the source and its deployed daily schedule.
+    personas = ({"persona_id": "intake-persona", "required_data_sources": [{
+        "dataset": "tw_institutional_flow", "market": "TW", "cadence": "daily", "source_class": "live_pull",
+        "connector_candidates": [source], "policy_gates": []}]},)
+    meta = {**tcw._desired_meta(), "sha256": module.runtime._desired_state_digest(list(personas))}
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kw: (personas, meta))
+    config = replace(tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
+                     state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, timeout_seconds=30)
+    state = tcw._state(); store = cw.ControllerStateStore(config.state_path)
+    counts, durations = [], []
+    for n in range(3):
+        start = time.monotonic()
+        try:
+            result = cw.run_controller_tick(config=config, state=state, store=store, writer=tcw.RecordingWriter([]))
+        except cw.ControllerTickError as exc:
+            item = exc.context["actual_readback"]["connectors"][0]
+            from collections import Counter
+            print("T86_FAILURE", n, item["freshness"]["latest_run"], item["latest_source_record"]["provenance"], item["latest_source_record_receipt"])
+            print("T86_RUNS", Counter(r.metadata.get("source_ingest_run_id") for r in module.runtime.evidence_repository.list_source_records()), [(r.ingest_run_id,r.finished_at) for r in module.runtime.store.read_freshness_snapshot()["receipts"]])
+            raise
+        durations.append(time.monotonic() - start)
+        assert result["status"] == "ok"
+        runs = module.runtime.store.list_runs()
+        counts.append(runs[-1].normalized_count)
+        assert result["continuation_pending"] is (n < 2)
+        # Real completed timestamps must advance for freshness ordering.
+        time.sleep(1)
+    assert counts == [500, 500, 349]
+    fetch_state = module.runtime.connector_store.get_fetch_state(source)
+    assert fetch_state["collector_outcome"]["complete"] is True
+    assert "|items=" not in fetch_state["collector_outcome"]["next_cursor"]
+    assert len(module.runtime.evidence_repository.list_source_records()) == 1349
+    assert max(durations) < config.timeout_seconds
+    assert cw.select_collector_pull_connectors(cw.read_actual_state_with_fetch_bindings(api_url=config.api_url),
+                                               _steady_reconcile([source])) == []
+    print({"T86_controller_rows": counts, "tick_wall_seconds": durations, "cadence_seconds": 86400})
+
+
+@pytest.mark.parametrize("spec_index", [0, 1, 2])
+def test_backfill_normalized_date_partition_is_unchanged_on_replay(steady_stack, monkeypatch, spec_index):
+    import json
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.tests.test_collector_bundle_connector import _INTAKE_SIZES
+    http, module, _ = steady_stack
+    spec = _INTAKE_SIZES[spec_index]; source, _, dataset, _, _, cadence = spec
+    _intake_files(monkeypatch, spec, ["2024-11-12", "2024-11-13"], count=10)
+    assert http.post("/api/source-ingest/connectors", json=_intake_config(source)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{source}/schedule",
+                    json={"enabled": True, "interval_seconds": cadence}).status_code == 200
+    def pull():
+        return cw.run_schedule_tick(api_url="http://source-ingest.test:8097", max_concurrency=1,
+                                    exclusive_connector_ids=[source], force_connector_ids=[],
+                                    controller_token=module.runtime.controller_token)
+    result = pull()
+    assert result["summary"]["total_failed"] == 0
+    root = module.runtime.market_data_storage_writer.root / "normalized" / dataset
+    before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*.jsonl")}
+    assert {p.parent.name for p in root.rglob("*.jsonl")} == {"date=2024-11-12", "date=2024-11-13"}
+    rows = [json.loads(line) for data in before.values() for line in data.decode().splitlines()]
+    assert len(rows) == 20 and len({r["source_id"] for r in rows}) == 20
+    assert {r["metadata"]["event_time"][:10] for r in rows} == {"2024-11-12", "2024-11-13"}
+    replay = pull()
+    assert replay["summary"]["total_failed"] == 0
+    assert replay["ran"][0]["receipt"]["normalized_count"] == 0
+    after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*.jsonl")}
+    assert after == before
+
+
+def test_host_offering_readback_skips_without_failure_or_dlq_and_recovers(steady_stack, monkeypatch):
+    import json
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.tests.test_collector_bundle_connector import _INTAKE_SIZES
+    http, module, _ = steady_stack
+    spec = _INTAKE_SIZES[2]; source = spec[0]
+    files = _intake_files(monkeypatch, spec, ["2024-11-12"], count=2)
+    doc = json.loads(files["status.json"])
+    doc["sources"][source].update(offered=False, offered_reason="disabled_by_fetch_policy:403")
+    files["status.json"] = json.dumps(doc).encode()
+    assert http.post("/api/source-ingest/connectors", json=_intake_config(source)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{source}/schedule",
+                    json={"enabled": True, "interval_seconds": 86400}).status_code == 200
+    actual = cw.read_actual_state_with_fetch_bindings(api_url="http://source-ingest.test:8097")
+    item = next(i for i in actual["connectors"] if i["connector_id"] == source)
+    assert item["collector_offering"] == {"offered": False, "reason": "disabled_by_fetch_policy:403"}
+    assert cw.select_collector_pull_connectors(actual, _steady_reconcile([source])) == []
+    # Even an explicitly selected scheduled pull cannot enqueue/claim this source.
+    result = cw.run_schedule_tick(api_url="http://source-ingest.test:8097", max_concurrency=1,
+                                 exclusive_connector_ids=[source], force_connector_ids=[],
+                                 controller_token=module.runtime.controller_token)
+    assert result["summary"]["total_ran"] == result["summary"]["total_failed"] == 0
+    assert module.runtime.store.list_runs() == []
+    assert module.runtime.dead_letter_queue.entries() == []
+    assert module.runtime.source_health_store.get(source) is None
+    doc["sources"][source].update(offered=True, offered_reason=None)
+    files["status.json"] = json.dumps(doc).encode()
+    selected, resumed = _steady_step(_steady_reconcile([source]))
+    assert selected == [source] and resumed["summary"]["total_failed"] == 0
+    assert resumed["ran"][0]["receipt"]["normalized_count"] == 2
