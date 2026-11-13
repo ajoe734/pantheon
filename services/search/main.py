@@ -656,6 +656,22 @@ def create_app(
     elif retrieval_backend is None and backend_mode != "jsonl":
         activation_error = "retrieval_backend_unknown"
 
+    def _warm_retrieval_embedding() -> None:
+        # Cold model integrity hashing + ONNX load can exceed the 30s scheduler request
+        # boundary and the readyz probe when paid by the first request. Pay it before the
+        # service accepts traffic; failure stays visible through readyz (never swallowed
+        # into a healthy state) and is retried lazily by is_ready().
+        engine = getattr(retrieval_backend, "embedding_engine", None)
+        if engine is not None:
+            try:
+                ready = engine.is_ready()
+            except Exception:
+                ready = False
+            print(json.dumps({"event": "retrieval_embedding_warmup", "ready": bool(ready)}), flush=True)
+
+    if retrieval_backend is not None:
+        app.router.on_startup.append(_warm_retrieval_embedding)
+
     def retrieval_status() -> dict[str, Any]:
         if activation_error:
             return {"status": "unavailable", "backend": backend_mode, "reason": activation_error}

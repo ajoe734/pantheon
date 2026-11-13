@@ -1,16 +1,26 @@
 {
   "task_id": "SEARCH-INDEX-STARTUP-20261113",
-  "scope": "source + local validation only; no hosted acceptance claimed",
+  "scope": "source + local validation only (local docker, isolated throwaway containers); no VM/SSH/provider/shared-store; no hosted acceptance claimed",
   "diagnosis": {
-    "entry_point": "python -m services.search.scheduler_worker (main)",
-    "defect": "main() called run_tick() with no exception handling; any urllib timeout (30s per request), HTTPError (401/5xx) or connection error during cold first index terminated the process, so docker restart: unless-stopped produced the restart_count 3->5 seen in step20 line 4533.",
-    "hosted_exception": "UNKNOWN - scheduler container logs were not captured (failure dump logged search-svc). Reproduced class of failure locally with TimeoutError and HTTPError 503; not claimed as the proven hosted exception.",
-    "ops_request": "Smallest non-secret retained startup evidence (search-index-scheduler container stderr traceback for Root43460083439) to be requested from original Ops via existing path."
+    "entry_point": "python -m services.search.scheduler_worker against uvicorn services.search.main:app, PANTHEON_SEARCH_BACKEND=postgres_pgvector, SEARCH_EVIDENCE_BACKEND=postgres (compose env)",
+    "hosted_exception": "Root43460083439 scheduler traceback was never captured (no VM/log authority). Not claimed as proven hosted exception; the local reproduction below is the same real entry point and matches the captured symptom (scheduler exits, docker restart_count 3->5).",
+    "reproduced_cause": "On a cold search-svc the embedding model integrity hashing + ONNX load (LocalEmbeddingEngine.is_ready) was paid lazily by the first request (readyz probe or the scheduler's first /api/search/index/refresh). On a CPU-limited cold start this exceeds the scheduler's 30s per-request boundary, so urlopen raised TimeoutError, main() had no handler, the process exited and docker restart:unless-stopped looped it. Also the compose readyz healthcheck has a 5s timeout and hit the same cold cost.",
+    "reproduction": {
+      "setup": "pgvector/pgvector:0.8.0-pg16 (repo sql schema) + postgres:16 with source_ingest.source_evidence loaded with 3 canonical fixtures (12 records, metadata.tenant_id=default), search image pantheon-search-r2-test:local with worktree mounted, search-svc docker --cpus 0.5, cold (empty data volume, empty index table)",
+      "pre_fix": "unmodified base scheduler_worker (abfb72c8c) with MAX_TICKS=1: TimeoutError: timed out after 30.97s, exit nonzero (a 1-CPU run passed: cause is cold cost vs 30s boundary)",
+      "readyz_cold_timing": "first GET /readyz on cold service took 23.4s (default cpus)"
+    }
   },
-  "change": "scheduler_worker.main catches per-tick Exception, prints a JSON line with status=failed, error_type and error (HTTP code/reason/body prefix), does not touch the alive file for failed ticks, and continues at the unchanged interval. Timeout (30s), cadence (300s) and deployment gate unchanged.",
+  "change": {
+    "services/search/main.py": "create_app registers a startup hook that calls retrieval_backend.embedding_engine.is_ready() so integrity+load happen before traffic is accepted; failure is logged and non-fatal, readyz keeps reporting unavailable (no false health). Timeout (30s), cadence (300s), model pin, dictionaries, tenant/persona isolation, deployment gate unchanged.",
+    "services/search/scheduler_worker.py": "(previous commit) per-tick failure is printed as JSON status=failed with error_type/reason, alive file is only touched on success, loop continues at unchanged interval. Secondary observability measure, not the repair."
+  },
   "validation": {
-    "services/search/test_index_scheduler_worker.py": "5 passed",
-    "services/search/tests/test_retrieval_activation.py": "14 passed, 1 skipped"
+    "post_fix_cold_first_tick": "same 0.5-CPU cold setup, UNMODIFIED base scheduler MAX_TICKS=1: exit 0 in ~11s; refresh indexed 3, materialize ok, search_retrieval_index rows=3 with embeddings=3",
+    "recoverable_failure_then_success": "current scheduler INTERVAL=10 MAX_TICKS=6 started while search-svc down: ticks1-4 status=failed (URLError name resolution / connection refused, reason printed), alive file absent; svc brought up cold (0.5 CPU): ticks 5-6 succeeded, alive file created only after tick 5, exit 0, no restart; index rows=3 embeddings=3",
+    "query": "POST /api/search/query retrieval_mode=hybrid -> 200, X-Retrieval-Backend postgres_pgvector, returned ko-src-fx-0/1/2. Note: fixtures without metadata.tenant_id are rejected missing_owner by tenant-scoped canonical lookup (isolation preserved, fixture issue, not changed)",
+    "pytest services/search (docker, with PANTHEON_RETRIEVAL_INTEGRATION_DSN to isolated pgvector)": "164 passed, 19 skipped (qdrant/test_pg_retrieval localhost containers, ranx missing), includes real pgvector integration test and 2 new warm-up tests",
+    "pytest scheduler + retrieval_activation (no DSN)": "21 passed, 1 skipped"
   },
-  "not_done": "Real-container cold hybrid index against Postgres was not run locally (no DB/VM authority)."
+  "limits": "Hosted exception still unobserved; original Ops retains hosted release/acceptance and may still supply the retained scheduler stderr to confirm. Reproduction uses CPU throttling to emulate a slow cold start."
 }
