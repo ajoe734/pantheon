@@ -17,7 +17,7 @@
     "4": "pending recorded as admission_pending with no tried_family tag or tried_families entry; no second consultation (test_http_ports_open_once_verify_published_memo_and_queue_operator_decision, integration oppose scenario day 5)",
     "5": "test_persona_initiated_admission_needs_verified_consultation_memo_and_links_it, test_persona_cycle_actor_cannot_skip_the_memo_and_operator_admission_keeps_its_path",
     "6": "HarnessAdoption.verify and PersonaStrategyPoolStore both call consult_triggers.verify_published_memo; test_harness_adoption.py unchanged and passing",
-    "7": "services/persona/test_pool_admission_consult_integration.py runs real PersonaCycleController.consume_run daily cycles with only owner/provider HTTP faked: approve -> admitted trial member, oppose -> operator decision and no admission"
+    "7": "services/research/tests/test_persona_cycle_demand_integration.py (moved from services/persona so it runs in the dependency-complete Research CI) runs real PersonaCycleController.consume_run daily cycles with only owner/provider HTTP faked: approve -> admitted trial member, oppose -> operator decision and no admission"
   },
   "limitations": [
     "The consultation owner boundary and provider answers are test fixtures (FakeConsultationOwner); no hosted consultation service run is claimed.",
@@ -25,5 +25,5 @@
     "Deployment must provide the consultation owner URL/token to the persona service; unconfigured fails closed with consultation_unavailable.",
     "hosted_behavior_claimed: false"
   ],
-  "verification": "/tmp/gfd-venv python -m pytest: test_consult_triggers, test_harness_adoption, test_pool_autonomy_cycle, test_persona_strategy_pool, test_pool_admission_consult_integration, test_persona_cycle_demand_integration, test_pool_dataset_authority: 110 passed"
+  "verification": "/tmp/gfd-venv python -m pytest: test_consult_triggers, test_harness_adoption, test_pool_autonomy_cycle, test_persona_strategy_pool, test_pool_dataset_authority: 105 passed (persona/control-plane); services/research/tests/test_persona_cycle_demand_integration.py: 5 passed incl. the 3 moved admission-consult cases. Note: /tmp/gfd-venv has numpy, so lean-misc absence of numpy is not reproduced locally; persona tests no longer import research/vectorbt modules"
 }
