@@ -3297,7 +3297,9 @@ def test_steady_batch_is_bounded_by_scheduler_slots_and_starts_with_least_recent
     assert controller_worker.limit_collector_pull_batch(actual, [], limit=2) == []
 
 
-def _deferred_scope_validate(actual: dict[str, Any], now: datetime, items: list[dict[str, Any]] | None = None):
+def _deferred_scope_validate(
+    actual: dict[str, Any], now: datetime, items: list[dict[str, Any]] | None = None, selected_at: datetime | None = None
+):
     schedule = _schedule()
     schedule["summary"]["exclusive_connector_count"] = 1
     return _validate_terminal_readback_impl(
@@ -3310,6 +3312,7 @@ def _deferred_scope_validate(actual: dict[str, Any], now: datetime, items: list[
         expected_exclusive_connector_ids=(CONNECTOR_ID,),
         now=now,
         frontier_items=items or [],
+        session_selected_at=selected_at,
     )
 
 
@@ -3416,3 +3419,34 @@ def test_terminal_readback_does_not_defer_queued_work_for_non_taiwan_connector(m
     assert controller_worker._latest_eligible_session(CONNECTOR_ID, now) is None
     with pytest.raises(Exception, match="unresolved frontier"):
         _deferred_scope_validate(_queued_actual("2026-11-13", now), now, [_queued_item("2026-11-13")])
+
+
+def test_terminal_readback_binds_deferral_to_session_selected_at_across_close() -> None:
+    selected = datetime(2026, 11, 13, 5, 29, 59, tzinfo=timezone.utc)  # Taipei 13:29:59, Nov12 still latest
+    later = datetime(2026, 11, 13, 5, 31, tzinfo=timezone.utc)  # observed after 13:30 close
+    items = [_nov("frontier-a0bceb2da89b", "2026-11-13")]
+    actual = _queued_actual("2026-11-13", later)
+    # Selected-session binding: later queued Nov13 work stays deferred.
+    assert _deferred_scope_validate(actual, later, items, selected_at=selected) == 0
+    # Without the binding the real clock retargets Nov13 and fails closed.
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(actual, later, items)
+    # Requested-session work (Nov12) is never deferred, and a future selection cannot hide it.
+    req = [_nov("f-req", "2026-11-12")]
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(_queued_actual("2026-11-12", later), later, req, selected_at=selected)
+    # Failed/attempted later work is never deferred.
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(actual, later, [_nov("f-x", "2026-11-13", attempts=1)], selected_at=selected)
+
+
+def test_finmind_1800_cutoff_session_binds_to_selected_at() -> None:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    finmind = "tw-finmind-broker-daily-report"
+    selected = datetime(2026, 11, 13, 9, 59, 59, tzinfo=timezone.utc)  # 17:59:59 Taipei
+    later = datetime(2026, 11, 13, 10, 1, tzinfo=timezone.utc)  # after 18:00 publication
+    # The terminal validator evaluates min(observed now, selected_at): Nov12 stays the
+    # requested session across the 18:00 cutoff, while the real clock would retarget Nov13.
+    assert _latest_eligible_session(finmind, min(later, selected)).isoformat() == "2026-11-12"
+    assert _latest_eligible_session(finmind, later).isoformat() == "2026-11-13"

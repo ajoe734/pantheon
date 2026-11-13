@@ -755,6 +755,7 @@ def _validate_terminal_readback(
     collector_connector_ids: Sequence[str] = (),
     now: datetime | None = None,
     frontier_items: Sequence[Mapping[str, Any]] = (),
+    session_selected_at: datetime | None = None,
 ) -> int:
     collector_ids = {str(item).strip() for item in collector_connector_ids if str(item).strip()}
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
@@ -1000,7 +1001,12 @@ def _validate_terminal_readback(
                 and not item.get("last_error")
                 and _iso_date_after(
                     str((item.get("job_parameters") or {}).get("run_date") or ""),
-                    _latest_eligible_session(str(item["connector_id"]), now_dt),
+                    # Bind to the session selected at refresh start (same as the
+                    # preparation step) so crossing a close does not retarget it.
+                    _latest_eligible_session(
+                        str(item["connector_id"]),
+                        min(now_dt, session_selected_at) if session_selected_at else now_dt,
+                    ),
                 )
             )
         )
@@ -1572,6 +1578,17 @@ class ControllerConfig:
     force_connector_ids: tuple[str, ...] = ()
     exclusive_connector_ids: tuple[str, ...] = ()
     frontier_recovery_connector_ids: tuple[str, ...] = ()
+    session_selected_at: datetime | None = None
+
+
+def _env_session_selected_at() -> datetime | None:
+    raw = str(os.getenv("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT") or "").strip()
+    if not raw:
+        return None
+    parsed = parse_utc(raw)
+    if parsed is None or parsed > datetime.now(timezone.utc):
+        raise ValueError("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT must be an aware, non-future timestamp")
+    return parsed
 
 
 def config_from_env() -> ControllerConfig:
@@ -1638,6 +1655,7 @@ def config_from_env() -> ControllerConfig:
         force_connector_ids=force_connector_ids,
         exclusive_connector_ids=exclusive_connector_ids,
         frontier_recovery_connector_ids=frontier_recovery_connector_ids,
+        session_selected_at=_env_session_selected_at(),
     )
 
 
@@ -2103,6 +2121,7 @@ def run_controller_tick(
                 expected_deployment=state.deployment,
                 expected_exclusive_connector_ids=exclusive_connector_ids,
                 collector_connector_ids=steady_pull_ids if steady else (),
+                session_selected_at=None if steady else config.session_selected_at,
                 frontier_items=(
                     read_frontier_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
                     if exclusive_connector_ids

@@ -3461,6 +3461,7 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
         -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
         -e SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
+        -e SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT="${refresh_started_at}" \
         "${extra_bounded_env_args[@]}" \
         --name "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}" "${bounded_service}"
     wait_for_bounded_source_refresh_service "${bounded_service}"
