@@ -1,0 +1,135 @@
+{
+  "task_id": "BFF-PERSONA-POOL-VIEWS-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "status": "ready_for_independent_review",
+  "base_commit": "f6f8d1be6374feb8415f0b03b0299d0520fed811",
+  "scope": "Read-only tenant-scoped persona strategy pool detail; owner current/history, version-pinned daily-cycle virtual books and health, latest cycles and open research demands.",
+  "production_entrypoints": [
+    "GET /bff/personas/{persona_id}",
+    "GET /api/v1/operator/persona-management/{persona_id}"
+  ],
+  "production_wiring": {
+    "route": "Both existing detail handlers resolve the authenticated tenant-scoped persona, then call PersonaService.read_strategy_pool; the existing application service binds PersonaPoolViewsPort to its actual cycle read owner. No direct route store access.",
+    "persona_owner": "GET /api/personas/{id}/strategy-pool and GET .../versions via configured Persona owner URL with caller authorization and tenant",
+    "research_owner": "GET /api/research/persona-demands?persona_id={id}&status=open via configured Research owner URL with caller authorization and tenant",
+    "cycles": "Injected OODA owner port, or existing Persona owner read_packets decoder over the configured shared daily-cycle store when the production default port is missing; no file creation or writes",
+    "metrics": "Latest paper cycle observe_bundle.books and pool_health only when tenant/persona/pool version/digest match current; no calculations, synthetic baselines or stale fallback"
+  },
+  "acceptance": {
+    "1": "test_real_route_returns_owner_values: both real detail routes return exact store-generated current/history, stage/weight/baseline reference, MemberVirtualBooks metrics, owner health, latest cycles and open demand. test_production_default_reads_real_persona_cycle_owner_records covers actual JSON and JSONL owner files through the production-default port path.",
+    "2": "Owner HTTP 403/404/503, network failure, unconfigured URLs, malformed/misscoped payloads, missing/corrupt cycle files, absent observations, version/digest mismatch and incomplete/wrong-checksum member books all have explicit unavailable surfaces. Unknown health is preserved; valid empty cycle/demand lists remain [].",
+    "3": "test_other_tenant_refused_before_pool_owner_reads exercises both routes; test_misscoped_owner_payload_is_not_exposed and test_cycle_scope_and_paper_boundary reject owner scope contamination. test_real_http_transport_forwards_authenticated_tenant checks the real helper's Authorization and X-Tenant-Id headers.",
+    "4": "Tests generate payloads with actual PersonaStrategyPoolStore, MemberVirtualBooks, ResearchDemandStore and OodaLoopPacket/append_ooda_packet and run the real create_personas_router entrypoint, without importing BFF main or replacing the new port/composition. Only external identity verification and owner HTTP are faked."
+  },
+  "limits": [
+    "No hosted acceptance or deployment was performed or claimed.",
+    "Metrics are latest daily-cycle observations, with their original timestamp and owner unknown states; not current intraday telemetry.",
+    "Prior-delivery broad router timeout, architecture timeout and CPU timing variability remain disclosed under previous_delivery_verification; current full architecture and focused detail/owner regressions passed.",
+    "Independent Claude review, canonical exact-head approval, supervisor integration and owner done closeout remain required."
+  ],
+  "previous_delivery_base_commit": "5a419c47f0827caa5ab9acee83a6743c3280cbaf",
+  "implementation_commit": "2a228523864042378ea9f42dde5fc323ba50ae0f",
+  "pr": 7317,
+  "generation": 2,
+  "scope_correction": {
+    "authority": "Human/Ops artifact_contract revision 2026-11-13T12:38:26Z",
+    "added_existing_artifact": "services/control-plane/bff/personas/service.py",
+    "change": "Both detail handlers call the existing PersonaService.read_strategy_pool application use case. It binds the existing PersonaPoolViewsPort to self.get_read_store() and forwards authenticated tenant, authorization and snapshot time.",
+    "preserved": "Existing owner payloads, tenant refusal, version/digest matching, unavailable semantics and read-only owner composition; no new service/store/facade, reverse-main import or AST exclusion."
+  },
+  "previous_delivery_verification": [
+    {
+      "command": "timeout 60s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/bff/tests/test_persona_health_single_owner.py -q --tb=short",
+      "exit_code": 0,
+      "result": "39 passed, 3 dependency deprecation warnings; 15.94 seconds"
+    },
+    {
+      "command": "timeout 60s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_pool_views.py -q --tb=short",
+      "exit_code": 0,
+      "result": "28 passed, 3 dependency deprecation warnings; 14.70 seconds"
+    },
+    {
+      "command": "timeout 45s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -k 'inventory_file_is_present or all_five_architectural_layers or every_entry_has_valid or composition_allowlist_is_strictly' -q --tb=short",
+      "exit_code": 0,
+      "result": "4 passed, 35 deselected; 0.92 seconds"
+    },
+    {
+      "command": "timeout 60s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded -q --tb=short",
+      "exit_code": 0,
+      "result": "1 passed; 27.57 seconds"
+    },
+    {
+      "command": "timeout 45s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_router.py::test_get_persona_management_api_v1 services/control-plane/bff/tests/test_persona_router.py::test_bff_get_persona services/control-plane/bff/tests/test_persona_router.py::test_get_persona_detail_api_v1 services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py -k 'test_get_persona_management_api_v1 or test_bff_get_persona or test_get_persona_detail_api_v1 or test_bff_persona_detail' -q --tb=short",
+      "exit_code": 0,
+      "result": "6 passed, 48 deselected; 2.65 seconds"
+    },
+    {
+      "command": "timeout 90s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/bff/tests/test_persona_health_single_owner.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py -q --tb=short",
+      "exit_code": 1,
+      "result": "44 passed, 1 failed (list CPU timing ratio 0.326 > 0.30); 32.57 seconds"
+    },
+    {
+      "command": "timeout 45s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py::test_list_cpu_drops_at_least_70_percent -q --tb=short",
+      "exit_code": 0,
+      "result": "Final isolated run: 1 passed; 0.70 seconds. Earlier isolated run failed ratio 0.417 > 0.30. Clean base run passed this test."
+    },
+    {
+      "command": "timeout 90s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -q --tb=short",
+      "exit_code": 124,
+      "result": "Timed out; not counted as passed. Focused inventory and live importer checks were collected separately to completion."
+    },
+    {
+      "command": "timeout 60s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py -q --tb=short",
+      "exit_code": 124,
+      "result": "Timed out with partial failures; not counted as passed. Relevant detail cases passed separately. Baseline route count mismatch (53 actual vs 49 expected) reproduces in the clean base archive."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Passed"
+    }
+  ],
+  "verification": [
+    {
+      "command": "timeout 60s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py::test_five_domain_routers_have_no_direct_store_access -q --tb=short",
+      "exit_code": 0,
+      "result": "1 passed, 2 dependency deprecation warnings in 1.62 seconds"
+    },
+    {
+      "command": "timeout 120s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_pool_views.py services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/bff/tests/test_persona_health_single_owner.py -q --tb=short",
+      "exit_code": 0,
+      "result": "67 passed, 3 dependency deprecation warnings in 31.22 seconds"
+    },
+    {
+      "command": "timeout 300s /tmp/bffvenv/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py --tb=short",
+      "exit_code": 0,
+      "result": "39 passed, 3 dependency deprecation warnings in 50.78 seconds"
+    },
+    {
+      "command": "timeout 60s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_router.py::test_get_persona_management_api_v1 services/control-plane/bff/tests/test_persona_router.py::test_bff_get_persona services/control-plane/bff/tests/test_persona_router.py::test_get_persona_detail_api_v1 services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py -k 'test_get_persona_management_api_v1 or test_bff_get_persona or test_get_persona_detail_api_v1 or test_bff_persona_detail' -q --tb=short",
+      "exit_code": 0,
+      "result": "6 passed, 48 deselected, 3 dependency deprecation warnings in 3.47 seconds"
+    },
+    {
+      "command": "timeout 90s /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_tenant_fallback_audit.py -q --tb=short",
+      "exit_code": 0,
+      "result": "140 passed, 1 skipped, 3 dependency deprecation warnings in 52.20 seconds"
+    },
+    {
+      "command": "timeout 300s env PYTHON=/tmp/bffvenv/bin/python ./scripts/run-acceptance.sh smoke",
+      "exit_code": 1,
+      "result": "stage0-validate passed; baseline subprocess python3 resolved to system interpreter and pip refused externally-managed environment (PEP 668). Corrected PATH rerun recorded separately."
+    },
+    {
+      "command": "timeout 600s env PATH=\"/tmp/bffvenv/bin:$PATH\" PYTHON=/tmp/bffvenv/bin/python ./scripts/run-acceptance.sh smoke",
+      "exit_code": 0,
+      "result": "Full existing Smoke invocation reached acceptance mode='smoke' complete. stage0 validate and baseline passed, including 26 BFF smoke tests, 132 deploy-tool tests (2 skips), 80 release/credential/strict-auth/trailer tests; 9 Agora bundle digest tests and 28 dev-paper diagnostics failure-path tests passed. No active command handles remain."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Passed"
+    }
+  ]
+}

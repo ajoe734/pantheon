@@ -1,0 +1,178 @@
+{
+  "format": "focused_research_run_summary_v1",
+  "scope": "Recorded local integration; paper only. Completed runs record a rejected candidate, not a passing strategy.",
+  "full_output": {
+    "sha256": "991bd8d50f998bafe6982ed2a39ef6709cc2a8a41c828570a1009d4370ee1a41",
+    "bytes": 36253,
+    "lines": 786,
+    "git_commit": "c122aeaa100a362c5f340ddc14c53f6d162c4ba6",
+    "git_blob": "471df7921f8cca66c8a25871218a59d5cc82a88c",
+    "path": "docs/deployment/evidence/TEMPLATE-DEMAND-SEARCH-R2-20261112/recorded-research-runs.json",
+    "url": "https://github.com/ajoe734/pantheon/blob/c122aeaa100a362c5f340ddc14c53f6d162c4ba6/docs/deployment/evidence/TEMPLATE-DEMAND-SEARCH-R2-20261112/recorded-research-runs.json",
+    "retrieval": "git show c122aeaa100a362c5f340ddc14c53f6d162c4ba6:docs/deployment/evidence/TEMPLATE-DEMAND-SEARCH-R2-20261112/recorded-research-runs.json"
+  },
+  "summary_method": "Preserve run lifecycle and attempt identity; replace repeated full gate payloads with selected metrics and the committed gate-result reference.",
+  "receipt_reused": true,
+  "runs": [
+    {
+      "id": "rrun-20261113-001",
+      "run_id": "rrun-20261113-001",
+      "task_id": "rtask-20261113-001",
+      "adapter": "template_demand_gate",
+      "requested_mode": "replication_gate",
+      "dispatch_mode": "replication_gate",
+      "production_activation": "disabled",
+      "status": "completed",
+      "tenant_id": "tenant-dev",
+      "created_by": "persona-pool-cycle",
+      "paper_only": true,
+      "attempt_number": 1,
+      "parent_run_id": null,
+      "root_run_id": "rrun-20261113-001",
+      "parameters": {
+        "action_type": "template_search",
+        "tenant_id": "tenant-dev",
+        "persona_id": "persona-template",
+        "demand_id": "rd-bc8fb163b23371765499"
+      },
+      "created_at": "2026-11-13T12:32:41Z",
+      "updated_at": "2026-11-13T12:33:09Z",
+      "events": [
+        {
+          "event_id": "revt-20261113-001",
+          "event_type": "run_queued",
+          "summary": "Template search queued for the replication gate.",
+          "actor": "persona-pool-cycle",
+          "run_id": "rrun-20261113-001",
+          "emitted_at": "2026-11-13T12:32:41Z",
+          "sequence_number": 1
+        },
+        {
+          "event_id": "revt-20261113-002",
+          "event_type": "run_completed",
+          "summary": "Template search completed: outcome=template_search_completed, outcome_reason=search_completed.",
+          "actor": "research-orchestrator",
+          "run_id": "rrun-20261113-001",
+          "emitted_at": "2026-11-13T12:33:09Z",
+          "sequence_number": 2
+        }
+      ],
+      "artifact_refs": [],
+      "proposal_refs": [],
+      "registry_writebacks": [],
+      "outcome": "template_search_completed",
+      "outcome_reason": "search_completed",
+      "completed_at": "2026-11-13T12:33:09Z",
+      "template_search": {
+        "demand_ref": "rd-bc8fb163b23371765499",
+        "run_at": "2026-11-13T12:32:41.163446+00:00",
+        "excluded": [],
+        "paper_only": true,
+        "reason": "search_completed",
+        "attempts": {
+          "template-demand-eaf087d65f2f031955c9fd42": {
+            "template_id": "qlib_alpha158:KMID",
+            "family_id": "template:qlib_alpha158:kbar",
+            "family_trial_count": 1,
+            "template_checksum": "sha256:23f8fc5d0e3a060684a31783b4a303dc5629714006dc27a4db22fdd0379d1cf8",
+            "demand_ref": "rd-bc8fb163b23371765499",
+            "persona_id": "persona-template",
+            "tenant_id": "tenant-dev",
+            "paper_only": true,
+            "status": "rejected",
+            "gate": {
+              "gate_run_id": "bd761b0b",
+              "candidate_id": "template-demand-eaf087d65f2f031955c9fd42",
+              "admission_status": "rejected",
+              "replication_status": "failed",
+              "mechanism_status": "mechanism_untested",
+              "out_of_sample_sharpe_ratio": -0.743661,
+              "out_of_sample_round_trips": 98,
+              "full_gate_result": "recorded-gate-result.json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "rrun-20261113-002",
+      "run_id": "rrun-20261113-002",
+      "task_id": "rtask-20261113-001",
+      "adapter": "template_demand_gate",
+      "requested_mode": "replication_gate",
+      "dispatch_mode": "replication_gate",
+      "production_activation": "disabled",
+      "status": "completed",
+      "tenant_id": "tenant-dev",
+      "created_by": "persona-pool-cycle",
+      "paper_only": true,
+      "attempt_number": 1,
+      "parent_run_id": null,
+      "root_run_id": "rrun-20261113-002",
+      "parameters": {
+        "action_type": "template_search",
+        "tenant_id": "tenant-dev",
+        "persona_id": "persona-template",
+        "demand_id": "rd-bc8fb163b23371765499"
+      },
+      "created_at": "2026-11-13T12:33:09Z",
+      "updated_at": "2026-11-13T12:33:09Z",
+      "events": [
+        {
+          "event_id": "revt-20261113-001",
+          "event_type": "run_queued",
+          "summary": "Template search queued for the replication gate.",
+          "actor": "persona-pool-cycle",
+          "run_id": "rrun-20261113-002",
+          "emitted_at": "2026-11-13T12:33:09Z",
+          "sequence_number": 1
+        },
+        {
+          "event_id": "revt-20261113-002",
+          "event_type": "run_completed",
+          "summary": "Template search completed: outcome=template_search_completed, outcome_reason=search_completed.",
+          "actor": "research-orchestrator",
+          "run_id": "rrun-20261113-002",
+          "emitted_at": "2026-11-13T12:33:09Z",
+          "sequence_number": 2
+        }
+      ],
+      "artifact_refs": [],
+      "proposal_refs": [],
+      "registry_writebacks": [],
+      "outcome": "template_search_completed",
+      "outcome_reason": "search_completed",
+      "completed_at": "2026-11-13T12:33:09Z",
+      "template_search": {
+        "demand_ref": "rd-bc8fb163b23371765499",
+        "run_at": "2026-11-13T12:33:09.615754+00:00",
+        "excluded": [],
+        "paper_only": true,
+        "reason": "search_completed",
+        "attempts": {
+          "template-demand-eaf087d65f2f031955c9fd42": {
+            "template_id": "qlib_alpha158:KMID",
+            "family_id": "template:qlib_alpha158:kbar",
+            "family_trial_count": 1,
+            "template_checksum": "sha256:23f8fc5d0e3a060684a31783b4a303dc5629714006dc27a4db22fdd0379d1cf8",
+            "demand_ref": "rd-bc8fb163b23371765499",
+            "persona_id": "persona-template",
+            "tenant_id": "tenant-dev",
+            "paper_only": true,
+            "status": "rejected",
+            "gate": {
+              "gate_run_id": "bd761b0b",
+              "candidate_id": "template-demand-eaf087d65f2f031955c9fd42",
+              "admission_status": "rejected",
+              "replication_status": "failed",
+              "mechanism_status": "mechanism_untested",
+              "out_of_sample_sharpe_ratio": -0.743661,
+              "out_of_sample_round_trips": 98,
+              "full_gate_result": "recorded-gate-result.json"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
