@@ -3070,7 +3070,7 @@ def _sync_trading_persona_agent(req: OpenClawTradingPersonaEnsureRequest) -> Dic
 
 
 def _refresh_trading_persona_memory(
-    persona_id: str, workspace_ref: str, query: str, tags: List[str]
+    persona_id: str, workspace_ref: str, query: Optional[str], tags: List[str]
 ) -> Dict[str, Any]:
     persona = {"persona_id": persona_id, "id": persona_id}
     result = _gateway_state_memory_materializer(
@@ -3498,8 +3498,9 @@ class OpenClawPersonaMemoryRefreshRequest(BaseModel):
 
     persona_id: str
     workspace_ref: str
-    # The cycle states what it needs; there is no server-side default query.
-    query: str = Field(min_length=1, max_length=1000, pattern=r"\S")
+    # The daily cycle always states its own query. Omitted, the bridge's bootstrap
+    # query applies (as for agent sync); a present query must be non-blank.
+    query: Optional[str] = Field(default=None, min_length=1, max_length=1000, pattern=r"\S")
     tags: List[str] = Field(default_factory=list, max_length=40)
 
 

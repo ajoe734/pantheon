@@ -1,4 +1,4 @@
-"""The materialise route takes the cycle's own query; it has no default query."""
+"""The materialise route honours the cycle's own query and tags; a blank query is refused."""
 from __future__ import annotations
 
 import json
@@ -65,11 +65,28 @@ def test_query_and_tags_reach_the_memory_plane_and_the_workspace_cache(env):
     assert context["retrieval"]["tags"] == ["family:momentum", "shortfall:gross_utilisation"]
 
 
-@pytest.mark.parametrize("body", [{}, {"query": ""}, {"query": "   "}, {"query": "x", "extra": 1}])
-def test_missing_blank_or_unknown_fields_are_rejected_without_a_memory_call(env, body):
+@pytest.mark.parametrize("body", [{"query": ""}, {"query": "   "}, {"query": "x", "extra": 1}])
+def test_blank_or_unknown_fields_are_rejected_without_a_memory_call(env, body):
     root, client = env
     with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen") as urlopen:
         response = client.post(ROUTE, headers=HEADERS, json={
             "persona_id": "persona-a", "workspace_ref": str(root / "persona-a"), **body})
     assert response.status_code == 422
     urlopen.assert_not_called()
+
+
+def test_a_supplied_query_replaces_the_bootstrap_default(env):
+    from integrations.openclaw.persona_memory_bridge import DEFAULT_MEMORY_QUERY
+    root, client = env
+    seen = []
+
+    def fake_urlopen(request, timeout):
+        seen.append(request.full_url)
+        return _Memory({"hits": []})
+
+    with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen", fake_urlopen):
+        body = {"persona_id": "persona-a", "workspace_ref": str(root / "persona-a")}
+        client.post(ROUTE, headers=HEADERS, json={**body, "query": "carry 2882"})
+        client.post(ROUTE, headers=HEADERS, json=body)
+    assert "query=carry+2882" in seen[0] and DEFAULT_MEMORY_QUERY.split()[0] not in seen[0]
+    assert "query=recent+lessons" in seen[1]

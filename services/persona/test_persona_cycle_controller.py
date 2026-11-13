@@ -647,6 +647,7 @@ def test_two_personas_with_different_shortfalls_get_different_lessons_and_never_
     assert "TWO-" not in state["prompts"]["persona-cycle-test"]
     assert "ONE-" not in state["prompts"]["persona-cycle-two"]
     assert "CaseFile" in state["prompts"]["persona-cycle-test"]
+    assert '"none_applicable_reason"' in state["prompts"]["persona-cycle-test"]  # the schema the turn must follow
 
     # The OODA packet records the case file id and digest, for the cycle and for each proposal.
     for packet in (one_packet, two_packet):

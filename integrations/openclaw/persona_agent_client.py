@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from services.control_plane.bff.openclaw_ops_client import (
     OPENCLAW_ADAPTER_AGENT_PREFIX,
@@ -53,14 +53,12 @@ class TradingPersonaAgentClient(OpenClawOpsClient):
             )
         return agent
 
-    def materialize_trading_persona_memory(
-        self, persona_id: str, workspace_ref: str, query: str, tags: Optional[list] = None
-    ) -> Dict[str, Any]:
+    def materialize_trading_persona_memory(self, persona_id: str, workspace_ref: str) -> Dict[str, Any]:
         """Refresh one persona's workspace memory cache before a cycle turn."""
         response = self._request(
             "POST",
             f"{OPENCLAW_ADAPTER_AGENT_PREFIX}/persona/memory/materialize",
-            body={"persona_id": persona_id, "workspace_ref": workspace_ref, "query": query, "tags": list(tags or [])},
+            body={"persona_id": persona_id, "workspace_ref": workspace_ref},
             expected_status={200},
             timeout_seconds=max(self._timeout, 30.0),
         )
