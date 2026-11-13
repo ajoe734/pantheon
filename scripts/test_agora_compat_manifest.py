@@ -787,13 +787,38 @@ def test_handoff_blocking_reasons_rejects_malformed_source_file_entry(tmp_path: 
     assert "backend-source-files-invalid" in reasons
 
 
-def _gate_controller_checkout_ref(workflow_text: str) -> str:
+def _gate_controller_checkout_ref(workflow_text: str, contexts: dict | None = None) -> str:
+    """Resolve the maintained gate-controller checkout `ref` for given contexts.
+
+    Reads the real job env + step input and evaluates only `env.X` references and
+    `a || b` fallbacks over dotted context names; anything else fails loudly.
+    """
     yaml = pytest.importorskip("yaml")
+    contexts = contexts or {}
     doc = yaml.safe_load(workflow_text)
     for job in doc["jobs"].values():
         for step in job.get("steps", []):
-            if step.get("name") == "Checkout accepted Agora gate controller":
-                return step["with"]["ref"]
+            if step.get("name") != "Checkout accepted Agora gate controller":
+                continue
+            env = job.get("env", {})
+
+            def evaluate(raw: str) -> str:
+                raw = str(raw).strip()
+                if not (raw.startswith("${{") and raw.endswith("}}")):
+                    return raw
+                for part in raw[3:-2].split("||"):
+                    part = part.strip()
+                    if part.startswith("env."):
+                        value = evaluate(env[part[4:]])
+                    elif part in ("inputs.ref", "github.sha"):
+                        value = contexts.get(part, "")
+                    else:
+                        raise AssertionError(f"unsupported expression: {part}")
+                    if value:
+                        return value
+                return ""
+
+            return evaluate(step["with"]["ref"])
     raise AssertionError("gate controller checkout step not found")
 
 
@@ -813,24 +838,38 @@ def _commit(repo: Path, name: str) -> str:
     return _git(repo, "rev-parse", "HEAD").strip()
 
 
-def _simulate_dev_race(tmp_path: Path, ref_template: str, explicit_input: bool = False):
-    """Mimic: payload checkout, dev advances A->B, then controller checkout."""
+def _simulate_dev_race(
+    tmp_path: Path, resolve_ref, explicit_input: bool = False, controller_resolve_ref=None
+):
+    """Mimic: payload checkout, dev advances A->B, then controller checkout.
+
+    `resolve_ref(contexts)` returns the controller ref the workflow would use.
+    Explicit: inputs.ref=A while github.sha=B (so only inputs.ref yields A).
+    Default: inputs.ref empty and github.sha=A.
+    """
     tmp_path.mkdir(parents=True, exist_ok=True)
     origin = tmp_path / "origin"
     origin.mkdir()
     _git(origin, "init", "-b", "dev")
     sha_a = _commit(origin, "A")
-    # explicit: inputs.ref is a SHA; default: github.sha. Both are exact SHAs.
-    target_ref = sha_a
+    sha_b = _commit(origin, "B")
+    _git(origin, "update-ref", "refs/heads/dev", sha_a)  # dev is at A for the payload checkout
+    contexts = (
+        {"inputs.ref": sha_a, "github.sha": sha_b}
+        if explicit_input
+        else {"inputs.ref": "", "github.sha": sha_a}
+    )
     payload = tmp_path / "target"
     _git(tmp_path, "clone", str(origin), str(payload))
+    target_ref = resolve_ref(contexts)
+    assert target_ref == sha_a, "payload and controller must request A"
     _git(payload, "checkout", "--detach", target_ref)
     target_sha = _git(payload, "rev-parse", "HEAD").strip()
-    _commit(origin, "B")  # dev advances between the two checkouts
-    ref = ref_template.replace("${{ env.TARGET_REF }}", target_ref)
+    _git(origin, "update-ref", "refs/heads/dev", sha_b)  # dev advances between checkouts
     controller = tmp_path / "controller"
     _git(tmp_path, "clone", str(origin), str(controller))
-    _git(controller, "checkout", "--detach", ref if ref != "dev" else "origin/dev")
+    ref = (controller_resolve_ref or resolve_ref)(contexts)
+    _git(controller, "checkout", "--detach", "origin/dev" if ref == "dev" else ref)
     return controller, target_sha, sha_a
 
 
@@ -853,29 +892,50 @@ def test_gate_controller_checkout_stays_on_requested_payload_when_dev_advances(
     tmp_path: Path, explicit_sha: bool
 ) -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    ref_template = _gate_controller_checkout_ref(workflow)
-    assert ref_template == "${{ env.TARGET_REF }}"
-    assert "TARGET_REF: ${{ inputs.ref || github.sha }}" in workflow
-
-    controller, target_sha, sha_a = _simulate_dev_race(tmp_path, ref_template, explicit_sha)
+    controller, target_sha, sha_a = _simulate_dev_race(
+        tmp_path, lambda c: _gate_controller_checkout_ref(workflow, c), explicit_sha
+    )
     assert _git(controller, "rev-parse", "HEAD").strip() == sha_a == target_sha
     result = _run_guard(workflow, controller, target_sha)
     assert result.returncode == 0, result.stderr
+
+
+def test_gate_controller_checkout_broken_default_fallback_fails(tmp_path: Path) -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "TARGET_REF: ${{ inputs.ref || github.sha }}" in workflow
+    mutated = workflow.replace(
+        "TARGET_REF: ${{ inputs.ref || github.sha }}",
+        "TARGET_REF: ${{ inputs.ref }}",
+    )
+    assert mutated != workflow
+    # Default selection (empty inputs.ref) must now fail to resolve A.
+    with pytest.raises(AssertionError):
+        _simulate_dev_race(
+            tmp_path, lambda c: _gate_controller_checkout_ref(mutated, c), False
+        )
 
 
 def test_gate_controller_checkout_old_floating_dev_fails_and_wrong_controller_rejected(
     tmp_path: Path,
 ) -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    old = workflow.replace(
+        "          ref: ${{ env.TARGET_REF }}\n          path: .agora-gate-controller",
+        "          ref: dev\n          path: .agora-gate-controller",
+    )
+    assert old != workflow
     # Witness: the old literal `ref: dev` lands on B and the guard rejects it.
-    controller, target_sha, sha_a = _simulate_dev_race(tmp_path / "old", "dev")
+    controller, target_sha, sha_a = _simulate_dev_race(
+        tmp_path / "old",
+        lambda c: _gate_controller_checkout_ref(workflow, c),
+        controller_resolve_ref=lambda c: _gate_controller_checkout_ref(old, c),
+    )
     assert _git(controller, "rev-parse", "HEAD").strip() != sha_a
     result = _run_guard(workflow, controller, target_sha)
     assert result.returncode == 1
     assert "exact backend release commit" in result.stderr
     # The exact guard is not bypassed: a stale payload SHA is still rejected.
-    stale = "0" * 40
     controller2, _, _ = _simulate_dev_race(
-        tmp_path / "new", "${{ env.TARGET_REF }}"
+        tmp_path / "new", lambda c: _gate_controller_checkout_ref(workflow, c)
     )
-    assert _run_guard(workflow, controller2, stale).returncode == 1
+    assert _run_guard(workflow, controller2, "0" * 40).returncode == 1
