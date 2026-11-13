@@ -42,5 +42,12 @@
     "test": "test_collector_outcome_truth.py::test_verified_bundle_prefix_survives_next_bundle_deadline (configured fetcher + IngestionScheduler + HttpBundleTransport + real HTTPResponse, two singleton bundles, 8 fake seconds per raw read under 15s budget): attempt1 completes run1 only, attempt2 resumes run2 without duplicates, attempt3 no-new-data. Old code: three failed attempts, raw_count=0, watermark None.",
     "result": "410 passed, 1 skipped (outcome_truth, bundle_connector, controller_worker, test_external_egress); git diff --check clean",
     "limitations": "Source/local only; hosted health and real governed days remain with W1/publisher. Fixture uses identical item content across both bundles, so duplicate check is by per-attempt record count and watermark."
+  },
+  "review_fix_priority_ordered_deadline_20261113": {
+    "defect": "_pull_bounded discarded the verified priority prefix when _pull_ordered hit the shared deadline before verifying any row",
+    "fix": "TimeoutError from the ordered sweep after the shared deadline keeps the priority records, complete=False, cursor unchanged; first-read/no-progress timeouts still raise",
+    "regression": "test_collector_outcome_truth.py::test_priority_verified_prefix_survives_ordered_deadline (configured fetcher + IngestionScheduler + HttpBundleTransport, 8s fake latency per raw read, 15s budget): 3 attempts all completed, raw_count 1 each, watermark None -> run1 -> run2",
+    "results": "outcome_truth 104 passed; outcome_truth+bundle_connector+controller_worker 381 passed, 1 skipped (before final test edit 380+1 failing test now fixed)",
+    "limitations": "yaml missing in /tmp/bffvenv fails one egress test environmentally; priority row is replayed idempotently on later attempts (same source_id); source/local only, no hosted health claim"
   }
 }
