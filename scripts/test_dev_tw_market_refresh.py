@@ -4,6 +4,7 @@ import json
 import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -131,7 +132,17 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         state_file = getattr(self.server, "state_file", None)
         state = json.loads(state_file.read_text(encoding="utf-8")) if (state_file and state_file.exists()) else {}
-        if self.path.startswith("/api/source-ingest/snapshots/latest"):
+        if self.path == "/readyz":
+            failures = state.get("readiness_failures_remaining", 0)
+            status = 503 if failures or state.get("readiness_always_fails") else 200
+            state["readiness_failures_remaining"] = max(0, failures - 1)
+            state_file.write_text(json.dumps(state), encoding="utf-8")
+            with self.server.events_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"event": "readyz", "status": status}) + "\n")
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(b'{"ready": true}' if status == 200 else b'{"ready": false}')
+        elif self.path.startswith("/api/source-ingest/snapshots/latest"):
             import urllib.parse
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             sym = (qs.get("symbol") or [""])[0]
@@ -165,6 +176,8 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
                 }]
             self.wfile.write(json.dumps({"receipts": receipts}).encode("utf-8"))
         elif self.path.startswith("/api/source-ingest/controller/readback"):
+            with self.server.events_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"event": "connector_readback"}) + "\n")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -364,9 +377,19 @@ def _setup_refresh_stub_docker(tmp_path: Path, initial_state: dict[str, Any]) ->
     state_file = tmp_path / "docker_state.json"
     server.state_file = state_file
     events_file = tmp_path / "docker_events.jsonl"
+    server.events_file = events_file
     output_file = tmp_path / "refresh_output.json"
 
     state_file.write_text(json.dumps(initial_state))
+    # Optional real Compose config interpolation/merge, without a Docker daemon.
+    # This catches a new default that a no-op mock of compose would silently miss.
+    compose_fixture = tmp_path / "compose.json"
+    compose_fixture.write_text(json.dumps({"services": {"source-ingest": {
+        "image": "pantheon-source-ingest",
+        "environment": initial_state.get("compose_environment_defaults", {}),
+        "volumes": ["source-ingest-data:/data/source-ingest"],
+    }}, "volumes": {"source-ingest-data": {}}}))
+    real_docker = shutil.which("docker")
 
     docker_script = f"""#!/usr/bin/env python3
 import json, os, sys, subprocess, time
@@ -387,9 +410,11 @@ state = json.loads(state_file.read_text(encoding="utf-8"))
 
 if args[0] == "compose":
     sub = args[5:] if len(args) > 5 else []
+    overrides = []
     # The deploy script may add further compose files (-f <override>), e.g. the
     # source-ingest image pin override; skip them to reach the compose subcommand.
     while len(sub) > 1 and sub[0] == "-f":
+        overrides.extend(sub[:2])
         sub = sub[2:]
     if not sub:
         sys.exit(0)
@@ -457,6 +482,10 @@ if args[0] == "compose":
         print(state["compose_image_id"])
         sys.exit(0)
     elif sub[0] == "config":
+        if "compose_environment_defaults" in state:
+            model = subprocess.check_output([{real_docker!r}, "compose", "-f", {str(compose_fixture)!r}, *overrides, "config", "--format", "json"], env=os.environ, text=True)
+            print(model)
+            sys.exit(0)
         print(json.dumps({{"services": {{"source-ingest": {{"image": "pantheon-source-ingest"}}}}}}))
         sys.exit(0)
     elif sub[0] == "up":
@@ -483,6 +512,14 @@ if args[0] == "compose":
                 state["source_ingest_cid"] = state.get("recreated_source_ingest_cid", "cid-source-ingest-recreated")
             elif is_restore:
                 state["source_ingest_cid"] = state.get("restored_source_ingest_cid", "cid-source-ingest-restored")
+                if "compose_environment_defaults" in state:
+                    model = json.loads(subprocess.check_output([{real_docker!r}, "compose", "-f", {str(compose_fixture)!r}, *overrides, "config", "--format", "json"], env=os.environ, text=True))
+                    service = model["services"]["source-ingest"]
+                    # `config` serializes dollar signs escaped for reloading;
+                    # container creation consumes the resolved literal values.
+                    state["container_env"] = [f"{{k}}={{v.replace('$$', '$')}}" for k, v in service["environment"].items()]
+                    state["restored_image_reference"] = service["image"]
+                    state["restored_volumes"] = service["volumes"]
                 if "mutate_env_on_restore" in state:
                     state["container_env"] = state["mutate_env_on_restore"]
             state_file.write_text(json.dumps(state))
@@ -825,6 +862,135 @@ def test_refresh_entrypoint_env_equality_fails_closed_on_mismatch(tmp_path: Path
     )
     assert proc.returncode != 0
     assert "restored container env mismatch" in proc.stderr
+
+
+def _run_exact_restore_helper(tmp_path: Path, *, root_value=None, compose_defaults_match_capture=False, **state_changes):
+    """Execute maintained shell + Python + retry helper against real Compose config.
+
+    Only Docker runtime operations and sleep are stubbed. The next readback uses
+    the same HTTP fixture as connector preflight, after a successful restore.
+    """
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose config is required for environment merge regression")
+    captured = [
+        "PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=",
+        "PORT=8097", "CUSTOM_SECRET=old$token${UNSET_SECRET}\nquoted=\"value\"",
+        "FINMIND_API_TOKEN=prior$secret", "SOURCE_INGEST_DATA_DIR=/data/source-ingest",
+        "SOURCE_INGEST_CONTROLLER_TOKEN_FILE=/data/source-ingest/controller_token",
+    ]
+    if root_value is not None:
+        captured.append(f"INTRADAY_STORE_ROOT={root_value}")
+    defaults = dict(item.split("=", 1) for item in captured) if compose_defaults_match_capture else {
+        "INTRADAY_STORE_ROOT": "/data/source-ingest", "NEW_DEFAULT": "must-not-appear",
+        "FINMIND_API_TOKEN": "wrong-default", "PORT": "8097",
+    }
+    initial = {
+        "image_id": "sha256:" + "a" * 64, "container_env": captured,
+        "compose_environment_defaults": {k: v.replace("$", "$$") for k, v in defaults.items()},
+        **state_changes,
+    }
+    bin_dir, state_file, events_file, _, port = _setup_refresh_stub_docker(tmp_path, initial)
+    # Keep the production retry count but shorten sleep for a bounded local test.
+    (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
+    (bin_dir / "sleep").chmod(0o755)
+    captured_file = tmp_path / "captured.json"
+    captured_file.write_text(json.dumps(captured))
+    text = DEPLOY_SCRIPT.read_text()
+    def function(name):
+        return text.split(name + "() {", 1)[1].split("\n}\n", 1)[0]
+    script = tmp_path / "restore.sh"
+    script.write_text(
+        "set -euo pipefail\n"
+        + "curl_with_retry() {" + function("curl_with_retry") + "\n}\n"
+        + "manage_source_ingest_refresh_runtime() {" + function("manage_source_ingest_refresh_runtime") + "\n}\n"
+        + 'manage_source_ingest_refresh_runtime "$1" restore "$2" || exit $?\n'
+        + 'curl -fsS "$SOURCE_INGEST_API_URL/api/source-ingest/controller/readback" >/dev/null\n'
+    )
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+               SOURCE_INGEST_API_URL=f"http://127.0.0.1:{port}",
+               FINMIND_API_TOKEN="bounded-secret-must-not-survive", PANTHEON_COLLECTOR_HOST="",
+               SOURCE_INGEST_RESTORE_CONTROLLER_MODE="reconcile_only")
+    proc = subprocess.run(["bash", str(script), str(captured_file), initial["image_id"]],
+                          env=env, cwd=ROOT, capture_output=True, text=True, timeout=15)
+    events = [json.loads(line) for line in events_file.read_text().splitlines()] if events_file.exists() else []
+    return proc, json.loads(state_file.read_text()), events, captured
+
+
+@pytest.mark.parametrize("root_value", [None, "", "/captured/custom-root"])
+def test_exact_restore_replaces_new_compose_defaults_and_preserves_secrets(tmp_path, root_value):
+    proc, state, events, captured = _run_exact_restore_helper(tmp_path, root_value=root_value)
+    assert proc.returncode == 0, proc.stderr
+    assert set(state["container_env"]) == set(captured)
+    assert state["restored_image_reference"] == state["image_id"]
+    assert state["restored_volumes"][0]["source"] == "source-ingest-data"
+    assert state["restored_volumes"][0]["target"] == "/data/source-ingest"
+    assert [e["status"] for e in events if e["event"] == "readyz"] == [200]
+
+
+def test_exact_restore_waits_for_api_before_next_connector_readback(tmp_path):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_failures_remaining=2)
+    assert proc.returncode == 0, proc.stderr
+    http = [e for e in events if e["event"] in {"readyz", "connector_readback"}]
+    assert http == [{"event": "readyz", "status": 503}, {"event": "readyz", "status": 503},
+                    {"event": "readyz", "status": 200}, {"event": "connector_readback"}]
+
+
+def test_exact_restore_readiness_timeout_prevents_success_and_next_connector(tmp_path):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_always_fails=True)
+    assert proc.returncode != 0
+    assert len([e for e in events if e["event"] == "readyz"]) == 13  # unchanged retry budget
+    assert not any(e["event"] == "connector_readback" for e in events)
+
+
+@pytest.mark.parametrize("mutation,expected_keys", [
+    (["PORT=wrong-sensitive-value"], ["PORT", "CUSTOM_SECRET", "FINMIND_API_TOKEN"]),
+    (["LEAKED_VAR=secret-added-value"], ["LEAKED_VAR", "CUSTOM_SECRET"]),
+])
+def test_exact_restore_environment_drift_fails_without_disclosing_values(tmp_path, mutation, expected_keys):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, mutate_env_on_restore=mutation)
+    assert proc.returncode != 0
+    assert "restored container env mismatch" in proc.stderr
+    assert all(key in proc.stderr for key in expected_keys)
+    assert not any(secret in proc.stderr + proc.stdout for secret in
+                   ["wrong-sensitive-value", "secret-added-value", "old$token", "prior$secret"])
+    assert not any(e["event"] in {"readyz", "connector_readback"} for e in events)
+
+
+@pytest.mark.parametrize("changes", [
+    {"resolved_compose_image_id": "sha256:" + "b" * 64},
+    {"mutate_image_on_up": "sha256:" + "c" * 64},
+])
+def test_exact_restore_wrong_image_stays_failed_before_readiness(tmp_path, changes):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, **changes)
+    assert proc.returncode != 0
+    assert "image" in proc.stderr
+    assert not any(e["event"] in {"readyz", "connector_readback"} for e in events)
+
+
+def test_exact_restore_readiness_failure_is_not_nonblocking_connector_success(tmp_path):
+    initial = {
+        "image_id": "sha256:" + "a" * 64, "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="],
+        "readiness_always_fails": True,
+    }
+    bin_dir, _, events_file, output, port = _setup_refresh_stub_docker(tmp_path, initial)
+    (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
+    (bin_dir / "sleep").chmod(0o755)
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+               SOURCE_INGEST_API_URL=f"http://127.0.0.1:{port}",
+               SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="30", PANTHEON_REMOTE_DIR=str(ROOT))
+    # Default force=false, through the normal caller and its non-blocking cleanup.
+    proc = subprocess.run([
+        "bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--non-blocking",
+        "--connector-id", "tw-taifex-futures-options-chip", "--allowed-hosts",
+        "openapi.taifex.com.tw,www.taifex.com.tw", "--dataset", "taifex_ssf_contracts",
+        "--output", str(output),
+    ], env=env, cwd=ROOT, capture_output=True, text=True, timeout=30)
+    assert proc.returncode != 0
+    assert json.loads(output.read_text())["status"] == "failed"
+    events = [json.loads(line) for line in events_file.read_text().splitlines()]
+    assert len([e for e in events if e["event"] == "readyz"]) == 13
+    assert any(e["event"] == "docker_start" for e in events)  # steady scheduler restored
 
 
 CHIP_PROFILES = [
