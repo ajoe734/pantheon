@@ -6,31 +6,32 @@
   "paper_only": true,
   "acceptance": {
     "1": "Registered time-series templates, owner tenant and checksum checked; observed inputs required on all mandate symbols; compiler validates factor_rule_v1; >100 registered signals compared on recorded observations.",
-    "2": "Production persona HTTP port -> authenticated research reconcile -> admission.evaluate_template_candidate -> existing SharedReplicationGate and authoritative real backtest store; unchanged gate thresholds and evaluator.",
+    "2": "Normal persona HTTP caller with strict dev-issued cycle JWT -> existing authenticated reconcile -> durable Research run -> existing worker/startup/retry/terminal lifecycle -> admission.evaluate_template_candidate -> SharedReplicationGate and authoritative real-backtest store. Reconcile does no owner reads or backtests and retains its original 15-second HTTP timeout.",
     "3": "Passing gate responses persist artifact, mechanism_untested/null support and demand/persona/tenant references. Receipt handling exercised with an explicit gate double, not a numerical admission claim.",
     "4": "Library/family lifetime counters share replication store, all frequencies aggregated; exhausted families durably marked tried; missing inputs spend no trial; repeat receipts reuse identity.",
-    "5": "Real production-entry integration uses 1361 exact recorded official Taiwan OHLCV bars, poisoned synthetic/fallback builders, real vectorbt protocol/default gate and durable proof stores. KMID is genuinely rejected; no passing strategy on these bars is claimed."
+    "5": "Authenticated normal caller integration holds the owner read until reconcile has returned, verifies duplicate-cycle reuse of one active run, releases and joins the actual worker, then checks recorded official Taiwan OHLCV compilation, real vectorbt/default gate and durable run/task/backtest/counter stores. All 1361 bars reconstructed from recordings, synthetic/fallback builders poisoned. KMID is genuinely rejected; no passing strategy is claimed."
   },
   "validation": [
     {
-      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q -s services/research/tests/test_template_demand_search.py services/research/tests/test_persona_demand_routes_auth.py services/research/tests/test_query_plan.py services/research/tests/test_research_demand.py services/research/alpha_replication/test_admission.py services/persona/test_pool_autonomy_cycle.py services/research/tests/test_persona_cycle_demand_integration.py --basetemp=/tmp/template-demand-r2-final",
       "exit_status": 0,
-      "result": "checkout-scoped editable distribution provisioned"
-    },
-    {
-      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q -s services/research/tests/test_template_demand_search.py services/research/tests/test_research_demand.py services/research/alpha_replication/test_admission.py services/persona/test_pool_autonomy_cycle.py services/research/tests/test_persona_cycle_demand_integration.py --basetemp=/tmp/template-demand-final-verification",
-      "exit_status": 0,
-      "result": "49 passed, 309 warnings in 171.74s",
+      "result": "110 passed, 859 warnings in 204.78s (0:03:24)",
       "log": "validation-regression.log"
     },
     {
-      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_template_demand_search.py services/research/tests/test_query_plan.py --basetemp=/tmp/template-demand-exact-verification",
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_retrain_search_update.py services/research/tests/test_retrain_oos_gate.py --basetemp=/tmp/template-demand-r2-final-worker",
       "exit_status": 0,
-      "result": "19 passed, 55 warnings in 46.61s",
+      "result": "47 passed, 492 warnings in 82.00s (0:01:22)",
+      "log": "validation-worker.log"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_template_demand_search.py services/research/tests/test_query_plan.py --basetemp=/tmp/template-demand-r2-correction",
+      "exit_status": 0,
+      "result": "24 passed, 105 warnings in 44.80s",
       "log": "validation-final.log"
     },
     {
-      "command": "git diff --check",
+      "command": "git diff --check origin/dev",
       "exit_status": 0
     }
   ],
@@ -38,9 +39,9 @@
     "services/research/template_demand_search.py": "1e590f0c1f4c84017db60fc835f66eb5d57913e6d41709570560507e52090896",
     "services/research/research_demand.py": "afe28354786bff5f823fdbf1f657028e99012b8aba7f9b26916a109a79ecc7b4",
     "services/research/alpha_replication/admission.py": "d3ca6892cec77216f274e084477aeea7c44b4f3216e0f686ecb826d47714ce75",
-    "services/research/main.py": "9c238935dbd59bd4b2ad294b3d9a4d6b9c9e751441b84d4335f2bd2883ffa583",
-    "services/persona/pool_autonomy_cycle.py": "2f1e2af7bb08c24e79894d2a8fdcbb9cb54fbea1c59553b93ad3d51d163f9c60",
-    "services/research/tests/test_template_demand_search.py": "9a2dd3431ebc1766ae3aae0081726b27a32f04d8667732a97052924b53705758",
+    "services/research/main.py": "eca68a2ef263e0c38a8a5c002506695c61f2c2644f5561be27ce98f839de345f",
+    "services/persona/pool_autonomy_cycle.py": "b5e0df879a67f3fa37e9e2afb16c8bfc82c47c95912dec020842b04344e11e03",
+    "services/research/tests/test_template_demand_search.py": "8f834f52fe1f3bcf4ddfaa45c10177e1ed4788ac335b1ac0fd0a0f56d20fe41e",
     "services/research/tests/fixtures/template_demand_tw_bars.json": "5e06f3b9ebacea8e0a7852bee281401b7b56d987bf7ea89625a00c6bbc05d9a9"
   },
   "fixture_sha256": "5e06f3b9ebacea8e0a7852bee281401b7b56d987bf7ea89625a00c6bbc05d9a9",
@@ -54,14 +55,31 @@
     "oos_round_trips": 98
   },
   "integration_scope_additions": {
-    "services/research/main.py": "Required production reconcile wiring and owner reads.",
-    "services/persona/pool_autonomy_cycle.py": "Bounded reconcile transport timeout for the actual backtest."
+    "services/research/main.py": "Original production owner wiring via existing Research execution lifecycle, composed with merged PR7315 authorization."
   },
   "limits": [
     "No hosted deployment or pool/capital changes.",
     "No StrategySpec review, queue approval or baseline synthesized.",
     "Real KMID run is a rejection; passing-candidate persistence uses a clearly named gate double.",
-    "Exploratory multi-template probe timed out at 180 seconds and is not counted as validation.",
-    "Independent reviewer approval and canonical supervisor merge remain pending."
-  ]
+    "Independent reviewer approval, required CI and canonical supervisor merge remain pending."
+  ],
+  "corrected_validation_failure": {
+    "exit_status": 1,
+    "result": "1 failed, 108 passed, 849 warnings in 206.91s (0:03:26)",
+    "log": "validation-initial.log",
+    "cause": "Unconfigured owner search created a Research task during the collector-only persona cycle.",
+    "correction": "Record unavailable demand outcome before creating a run when owner credentials have no configured value or file. Final query-plan and cross-service regressions pass."
+  },
+  "log_format": "Terminal output with trailing whitespace removed; no result text altered.",
+  "validated_source_commit": "0c0962e7864e230a6b56a0969aab2ecdd8fe5440",
+  "delivery_base_sha": "f6f8d1be6374feb8415f0b03b0299d0520fed811",
+  "pr": 7318,
+  "caller_boundary": {
+    "authorization_predecessor": "f6f8d1be6374feb8415f0b03b0299d0520fed811",
+    "normal_caller": "services.persona.pool_autonomy_cycle.HttpPoolCyclePorts",
+    "timeout_seconds": 15,
+    "caller_source_diff_against_base": false,
+    "authentication_dependency_overrides": false,
+    "no_hosted_or_deployment_authority_claimed": true
+  }
 }

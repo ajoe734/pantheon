@@ -3,14 +3,14 @@
   "family_id": "template:qlib_alpha158:kbar",
   "family_trial_count": 1,
   "template_checksum": "sha256:23f8fc5d0e3a060684a31783b4a303dc5629714006dc27a4db22fdd0379d1cf8",
-  "demand_ref": "rd-9d541a6fbd82e9649581",
+  "demand_ref": "rd-bc8fb163b23371765499",
   "persona_id": "persona-template",
-  "tenant_id": "tenant-a",
+  "tenant_id": "tenant-dev",
   "paper_only": true,
   "status": "rejected",
   "gate": {
-    "gate_run_id": "73504115",
-    "candidate_id": "template-demand-c47e99bd182112464334a2b7",
+    "gate_run_id": "bd761b0b",
+    "candidate_id": "template-demand-eaf087d65f2f031955c9fd42",
     "admission_status": "rejected",
     "replication_status": "failed",
     "results": [
@@ -30,7 +30,7 @@
           "alpha": 0.05,
           "predictions": []
         },
-        "timestamp": "2026-11-13T12:04:41.368314Z"
+        "timestamp": "2026-11-13T12:32:41.204908Z"
       },
       {
         "criterion_id": "schema_validity",
@@ -44,7 +44,7 @@
             "parameters"
           ]
         },
-        "timestamp": "2026-11-13T12:04:41.368358Z"
+        "timestamp": "2026-11-13T12:32:41.204944Z"
       },
       {
         "criterion_id": "lineage_complete",
@@ -57,7 +57,7 @@
             "governance_context"
           ]
         },
-        "timestamp": "2026-11-13T12:04:41.368372Z"
+        "timestamp": "2026-11-13T12:32:41.204957Z"
       },
       {
         "criterion_id": "governance_context",
@@ -68,14 +68,14 @@
           "approval_required": true,
           "governance_context": "Persona-written research demand; paper research only"
         },
-        "timestamp": "2026-11-13T12:04:41.368384Z"
+        "timestamp": "2026-11-13T12:32:41.204969Z"
       },
       {
         "criterion_id": "no_live_bypass",
         "passed": true,
         "evidence": "No live bypass attempts detected",
         "details": null,
-        "timestamp": "2026-11-13T12:04:41.368394Z"
+        "timestamp": "2026-11-13T12:32:41.204979Z"
       },
       {
         "criterion_id": "real_backtest_validation",
@@ -83,8 +83,8 @@
         "evidence": "Real backtest failed admission conditions (oos_sharpe_positive_after_costs, oos_sharpe_exceeds_deflated_threshold, oos_sharpe_beats_buy_and_hold, oos_max_drawdown_within_mandate, walk_forward_consistent_across_folds): IS Sharpe=-0.857, OOS Sharpe=-0.744, deflated threshold=0.500 (trial 1)",
         "details": {
           "status": "failed",
-          "backtest_run_id": "vbt-real-8a6fa4fa18bc",
-          "artifact_ref": "vectorbt://backtest-runs/vbt-real-8a6fa4fa18bc",
+          "backtest_run_id": "vbt-real-acd12926a210",
+          "artifact_ref": "vectorbt://backtest-runs/vbt-real-acd12926a210",
           "family_id": "template:qlib_alpha158:kbar",
           "trial_count": 1,
           "family_total_trial_count": 1,
@@ -173,7 +173,7 @@
             "walk_forward_consistent_across_folds"
           ]
         },
-        "timestamp": "2026-11-13T12:05:14.732056Z"
+        "timestamp": "2026-11-13T12:33:09.577062Z"
       },
       {
         "criterion_id": "confidence_score",
@@ -184,7 +184,7 @@
           "score": 0.5,
           "threshold": 0.7
         },
-        "timestamp": "2026-11-13T12:05:14.732122Z"
+        "timestamp": "2026-11-13T12:33:09.577104Z"
       },
       {
         "criterion_id": "replication_notes_present",
@@ -194,7 +194,7 @@
           "has_notes": true,
           "notes_length": 84
         },
-        "timestamp": "2026-11-13T12:05:14.732139Z"
+        "timestamp": "2026-11-13T12:33:09.577121Z"
       },
       {
         "criterion_id": "evaluation_hypotheses",
@@ -204,7 +204,7 @@
           "has_hypotheses": true,
           "hypotheses_length": 73
         },
-        "timestamp": "2026-11-13T12:05:14.732151Z"
+        "timestamp": "2026-11-13T12:33:09.577133Z"
       },
       {
         "criterion_id": "implementation_ready",
@@ -213,18 +213,18 @@
         "details": {
           "readiness_status": "ready_for_replication"
         },
-        "timestamp": "2026-11-13T12:05:14.732163Z"
+        "timestamp": "2026-11-13T12:33:09.577146Z"
       }
     ],
     "summary": "Replication gate evaluation: 4/5 required criteria, 3/4 optional criteria. Failed required criteria: real_backtest_validation",
     "metadata": {
-      "source_task_id": "rd-9d541a6fbd82e9649581",
+      "source_task_id": "rd-bc8fb163b23371765499",
       "passed_all_required": false,
       "optional_pass_rate": 0.75,
       "backtest_summary": {
         "status": "failed",
-        "backtest_run_id": "vbt-real-8a6fa4fa18bc",
-        "artifact_ref": "vectorbt://backtest-runs/vbt-real-8a6fa4fa18bc",
+        "backtest_run_id": "vbt-real-acd12926a210",
+        "artifact_ref": "vectorbt://backtest-runs/vbt-real-acd12926a210",
         "family_id": "template:qlib_alpha158:kbar",
         "trial_count": 1,
         "family_total_trial_count": 1,
@@ -328,6 +328,6 @@
         "predictions": []
       }
     },
-    "timestamp": "2026-11-13T12:05:14.732237Z"
+    "timestamp": "2026-11-13T12:33:09.577217Z"
   }
 }

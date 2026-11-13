@@ -1,10 +1,10 @@
 {
-  "vbt-real-8a6fa4fa18bc": {
-    "artifact_checksum": "sha256:aa2cc68d14735e27f9d714ceee0c511c252a6cb3e502116e24892c57a4e5b8ac",
-    "artifact_ref": "vectorbt://backtest-runs/vbt-real-8a6fa4fa18bc",
-    "backtest_run_id": "vbt-real-8a6fa4fa18bc",
+  "vbt-real-acd12926a210": {
+    "artifact_checksum": "sha256:16241763a6469cede1016c395f76249241ce9a4fb45e400baef347b71f51cd01",
+    "artifact_ref": "vectorbt://backtest-runs/vbt-real-acd12926a210",
+    "backtest_run_id": "vbt-real-acd12926a210",
     "dataset_id": "recorded:twse:template-demand:202401-202610",
-    "evaluation_digest": "sha256:0c984095fa14e6ff5eefe58a3b2961e6c52174de3e0fb634d6e02be516c6c78b",
+    "evaluation_digest": "sha256:10a824f0b0eed0aa16d07d4481ad3a87bbfa99997bcdfc0acf0b02d3b72a1ccf",
     "source_dataset_refs": [
       "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20240101&stockNo=0050",
       "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20240101&stockNo=2330",
