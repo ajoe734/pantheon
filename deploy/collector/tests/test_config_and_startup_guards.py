@@ -189,3 +189,23 @@ def test_dropped_tpex_flows_and_disabled_by_build_sources_are_refused() -> None:
     raw["sources"]["collector-yahoo-news"]["source_id"] = "collector-yahoo-news"
     with pytest.raises(CollectorConfigError, match="DISABLED_BY_BUILD"):
         validate_collector_config(raw, env={})
+
+
+@pytest.mark.parametrize("sid", ["collector-paper-arxiv", "collector-paper-openalex", "collector-gdelt"])
+@pytest.mark.parametrize("terms", [None, [], "momentum", ["not-in-fixed-vocabulary"], ["momentum", "momentum"], ['momentum OR site:evil']])
+def test_query_terms_fail_closed_at_startup(sid, terms):
+    raw = _raw_policy()
+    raw["sources"][sid]["query_terms"] = terms
+    with pytest.raises(CollectorConfigError, match="fixed vocabulary"):
+        validate_collector_config(raw, env={})
+
+
+def test_missing_vocabulary_and_social_steering_fail_closed(tmp_path, monkeypatch):
+    from collector_stack import config as module
+    raw = _raw_policy()
+    raw["sources"]["collector-tw-threads"]["query_terms"] = ["momentum"]
+    with pytest.raises(CollectorConfigError, match="cannot be steered"):
+        validate_collector_config(raw, env={})
+    monkeypatch.setattr(module, "QUERY_VOCABULARY_PATH", tmp_path / "missing.json")
+    with pytest.raises(CollectorConfigError, match="missing or invalid fixed query vocabulary"):
+        validate_collector_config(_raw_policy(), env={})

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from collector_stack.config import DEFAULT_POLICY_PATH, CollectorConfigError, load_collector_config
+from collector_stack.config import DEFAULT_POLICY_PATH, CollectorConfigError, load_collector_config, validate_collector_config
 from collector_stack.fetchers import FixtureTransport
 from collector_stack.pollers import (
     DEFAULT_GEMINI_MODEL,
@@ -74,15 +74,17 @@ def test_instagram_skips_incomplete_node_and_percent_encodes_tag(fixtures_dir: P
 
 
 def test_gdelt_waits_five_seconds_between_requests_and_query_is_encoded() -> None:
-    policy = _config().get_source("collector-gdelt")
+    raw = json.loads(DEFAULT_POLICY_PATH.read_text())
+    raw["sources"]["collector-gdelt"]["query_terms"] = ["Taiwan stock", "台股"]
+    policy = validate_collector_config(raw, env={}).get_source("collector-gdelt")
     assert policy.min_interval_seconds >= 5.0
     transport = FixtureTransport()
     transport.register("https://api.gdeltproject.org/api/v2/doc/doc", b'{"articles": []}')
     slept: list[float] = []
     poller = GdeltDocPoller(policy, transport=transport)
     poller.fetcher.sleep_fn = slept.append
-    poller.collect(query='"Taiwan stock" 台股', fetched_at="2026-11-10T00:00:00Z")
-    poller.collect(query="Taiwan", fetched_at="2026-11-10T00:00:00Z")
+    poller.collect(fetched_at="2026-11-10T00:00:00Z")
+    poller.collect(fetched_at="2026-11-10T00:00:00Z")
     assert slept == [policy.min_interval_seconds]
     assert all(ord(ch) < 128 for call in transport.calls for ch in call["url"])
 
