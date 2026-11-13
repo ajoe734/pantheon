@@ -3,10 +3,10 @@
   "status": "partial",
   "acceptance": {
     "1_2_3_4_5": "implemented; covered by deploy/collector tests and services/research/tests/test_query_plan.py",
-    "6": "arXiv and OpenAlex recorded real responses in fixtures (sha256 in recorded-responses.json). GDELT recording NOT captured: api.gdeltproject.org returned HTTP 429 to this host on every attempt (2026-11-13, ~10 attempts over ~10 minutes). No fabricated fixture was substituted."
+    "6": "arXiv and OpenAlex: recorded real responses in fixtures (sha256 in recorded-responses.json). GDELT: pre-existing authentic recording of the changed query (Taiwan OR semiconductor) with maxrecords=10/timespan=1month, HTTP 200, body '{}' (zero articles), 2026-11-13T08:56:50Z; provenance in gdelt-recording-provenance-and-limits.json. REMAINING GAP: this is NOT the production default 250/3months request (HTTP 429, no recording); it proves only that the poller issues the recorded shape and tolerates the empty object, no articles/freshness/ingestion PASS. Reviewer must decide whether this satisfies original AC6; no global collector/W1 data PASS claimed."
   },
   "tests": {
-    "deploy/collector/tests": "154 passed, 2 skipped, 1 failed (gdelt recorded-shape test: fixture missing)",
+    "deploy/collector/tests": "155 passed, 2 skipped (incl. test_gdelt_recorded_changed_query_exact_recorded_parameters); query_plan 5 and BFF 10 results retained from earlier runs",
     "services/research/tests/test_query_plan.py": "5 passed",
     "services/control-plane/bff/tests/test_research_tasks_read.py": "10 passed"
   }
