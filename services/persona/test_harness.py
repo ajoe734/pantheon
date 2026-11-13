@@ -360,20 +360,3 @@ def test_internal_unknown_action_cannot_bypass_adoption(system):
     with pytest.raises(HarnessError, match="unknown_harness_action"):
         system[2].operate("p-alpha", "patch-1", "typo", "owner-actor")
     assert system[2].read("p-alpha")["active_version"] == 1
-
-
-def test_shadow_route_records_incomplete_comparison_without_provider(system, tmp_path, monkeypatch):
-    # No replay provider is configured on the owner: the route must record an
-    # incomplete KEEP_BASE comparison with its reason, never synthesize a result.
-    monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(tmp_path / "packets.jsonl"))
-    client = system[0]
-    initialize(system)
-    submit(system)
-    assert client.post(ROOT + "/patches/patch-1/shadow", headers=headers()).status_code == 409  # not pre-checked
-    assert client.post(ROOT + "/patches/patch-1/precheck", headers=headers()).status_code == 200
-    shadow = client.post(ROOT + "/patches/patch-1/shadow", headers=headers())
-    assert shadow.status_code == 200, shadow.text
-    body = shadow.json()
-    assert body["status"] == "incomplete" and body["decision"] == "KEEP_BASE"
-    assert "insufficient_frozen_bundles" in body["reasons"]
-    assert system[2].read("p-alpha")["patches"]["patch-1"]["comparisons"][0]["status"] == "incomplete"

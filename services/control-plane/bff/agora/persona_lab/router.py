@@ -112,7 +112,13 @@ def create_persona_lab_router(
                    x_tenant_id: Optional[str] = Ten):
         scope = _scope(authorization, x_tenant_id, True)
         _owner("persona", "POST", _patch_path(persona_id, patch_id, "/precheck"), scope, authorization, {})
-        record = _owner("persona", "POST", _patch_path(persona_id, patch_id, "/shadow"), scope, authorization, {})
+        try:
+            record = _owner("persona", "POST", _patch_path(persona_id, patch_id, "/shadow"), scope, authorization, {})
+        except HTTPException as exc:
+            if exc.status_code in (404, 405):
+                raise bff_error(501, "OWNER_UNAVAILABLE", "persona owner exposes no shadow comparison route",
+                                "shadow_owner_route_unavailable")
+            raise
         return _wrap(scope, record)
 
     @router.post(base + "/patches/{patch_id}/submit", status_code=201)

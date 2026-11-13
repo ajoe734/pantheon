@@ -1645,6 +1645,15 @@ def mount_bff_routers(
     )
     app.include_router(agora_router)
 
+    from ..agora.persona_lab.router import create_persona_lab_router
+    app.include_router(create_persona_lab_router(
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_write_role=_dep("_require_operator_role"),
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+    ))
+
     # Attach shared instances onto app.state
     app.state.events_router = events_router
     app.state.deployment_router = deployment_router

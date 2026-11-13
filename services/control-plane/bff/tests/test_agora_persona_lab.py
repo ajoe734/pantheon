@@ -68,6 +68,10 @@ def test_shadow_run_prechecks_then_runs_owner_shadow(lab):
     assert client.post(P + "/patches/p1/shadow-runs", headers=H).status_code == 201
     assert [c[1] for c in calls] == ["/api/personas/persona-a/harness/patches/p1/precheck",
                                      "/api/personas/persona-a/harness/patches/p1/shadow"]
+    # an owner without the shadow route fails closed with a recorded reason
+    lab[2][("POST", "/api/personas/persona-a/harness/patches/p1/shadow")] = (404, {"detail": "Not Found"})
+    refused = client.post(P + "/patches/p1/shadow-runs", headers=H)
+    assert refused.status_code == 501 and refused.json()["detail"]["reason"] == "shadow_owner_route_unavailable"
 
 
 def test_submit_hands_off_to_management_review_or_fails_closed(lab):
@@ -138,9 +142,9 @@ def test_unconfigured_owner_and_owner_refusal_fail_closed(lab, monkeypatch):
     assert client.get(P + "/change-log", headers=H).status_code == 503
 
 
-def test_routes_are_mounted_on_agora_router_and_hold_no_store():
+def test_routes_are_mounted_in_app_factory_and_hold_no_store():
     import inspect
-    from services.control_plane.bff.agora import router as agora_router
+    from services.control_plane.bff.core import app_factory
     from services.control_plane.bff.agora.persona_lab import router as lab_router
-    assert "create_persona_lab_router(" in inspect.getsource(agora_router)
+    assert "create_persona_lab_router(" in inspect.getsource(app_factory)
     assert "Store(" not in inspect.getsource(lab_router)

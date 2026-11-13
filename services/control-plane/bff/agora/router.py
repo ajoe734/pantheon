@@ -48,7 +48,6 @@ from .interaction.store import InteractionLifecycleStore
 from .governance.router import create_governance_router
 from .governance.store import ProposalStore
 from .performance.router import create_performance_router
-from .persona_lab.router import create_persona_lab_router
 from .candidate_decisions.adapters import (
     CandidateBindingValidationAdapter,
     ReadStoreApprovalAdapter,
@@ -414,7 +413,6 @@ def create_agora_router(
         store=proposal_store,
     ))
     router.include_router(create_trading_data_router(**_kw))
-    router.include_router(create_persona_lab_router(**_kw, require_write_role=require_write_role))
     router.include_router(create_decision_projection_router(**_kw, require_write_role=require_write_role))
     router.include_router(create_operational_readiness_router(
         **_kw,
