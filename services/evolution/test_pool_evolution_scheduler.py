@@ -26,7 +26,7 @@ def lane(tmp_path):
         def publish(self, _): return {"status": "published"}
         def entry(self, _): return entry
         def books(self, _): return {ref: self.observation}
-        def family_state(self, _): return {"trials": self.trials}
+        def family_state(self, _, bar_frequency=None): return {"trials": self.trials}
 
     class Decisions:
         proposals = []
@@ -119,3 +119,33 @@ def test_pending_publication_is_retried_before_scheduling(lane):
     assert scheduler.tick().errors and not decisions.proposals
     owner.publish = lambda _: {"status": "published"}
     assert scheduler.tick().proposed
+
+
+@pytest.mark.parametrize("frequency,counts,expected", [
+    (None, {"fam": 500, "fam@5m": 0}, ["revalidate"]),          # daily exhausted
+    ("5m", {"fam": 500, "fam@5m": 0}, ["revalidate"]),          # legacy daily count consumes the family-wide O-17 cap
+    ("5m", {"fam": 0, "fam@5m": 500}, ["revalidate"]),
+    ("1m", {"fam": 0, "fam@5m": 500, "fam@1m": 0}, ["revalidate"]),  # other frequency exhausts family
+    ("1m", {"fam@1m": 400, "fam@5m": 400}, ["revalidate"]),    # combined 800 > 500
+    ("5m", {"fam": 200, "fam@5m": 100, "fam@1m": 100}, ["revalidate", "retrain"]),  # 400 + 50 <= 500
+    ("5m", {"fam": 300, "fam@5m": 100, "fam@1m": 100}, ["revalidate"]),  # 500 reached
+    ("5m", {"fam": 200, "fam@5m": 100, "fam@1m": 160}, ["revalidate"]),  # 460 + 50 > 500
+])
+def test_family_state_is_frequency_scoped(lane, monkeypatch, frequency, counts, expected):
+    from services.research.replication.gate import family_trial_key
+    scheduler, _, entry, owner, decisions, _ = lane
+    # The checksum-bound baseline proof validates the original artifact; the
+    # scheduler then reads the declared frequency from the (re-declared) entry.
+    import services.evolution.pool_evolution_scheduler as mod
+    original = copy.deepcopy(entry)
+    resolve = mod.resolve_member_baseline
+    monkeypatch.setattr(mod, "resolve_member_baseline", lambda **kw: resolve(**{**kw, "entry": original}))
+    artifact = entry["metadata"]["strategy_artifact"]
+    artifact["strategy_id"] = "fam"
+    if frequency:
+        artifact.setdefault("parameters", {})["bar_frequency"] = frequency
+    owner.family_state = lambda family, bar_frequency=None: {
+        "trials": counts.get(family_trial_key(family, bar_frequency), 0),
+        "family_total_trials": sum(v for k, v in counts.items() if k == family or k.startswith(family + "@"))}
+    report = scheduler.tick()
+    assert [p["action_type"] for p in decisions.proposals] == expected, (report.skipped, report.errors)
