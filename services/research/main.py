@@ -2711,38 +2711,46 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
 
     def run_worker():
         rstore = get_store()
+        template_run = _is_template_search_run(rstore.get_run(run_id) or {})
+        label = "Template search" if template_run else "Retrain"
         try:
-            if _is_template_search_run(rstore.get_run(run_id) or {}):
+            if template_run:
                 _execute_template_search(run_id, params)
             elif _evolution_action(params) == "retrain":
                 _execute_retrain(run_id, params)
             else:
                 _execute_evolution_gate(run_id, params)
         except _RetrainFinished as done:
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
             _retrain_record(run_id, outcome=done.outcome, outcome_reason=done.reason)
             _finish_run(
                 run_id, "completed",
-                f"Retrain completed: outcome={done.outcome}, outcome_reason={done.reason}.",
+                f"{label} completed: outcome={done.outcome}, outcome_reason={done.reason}.",
                 _RETRAIN_SOURCE_SERVICE,
             )
         except _RetrainFailure as failure:
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
             _retrain_record(
                 run_id, failed_step=failure.step,
                 rejection={"reason": "retrain_failed", "step": failure.step, "detail": failure.detail},
             )
             _finish_run(
-                run_id, "failed", f"Retrain failed at step {failure.step}: {failure.detail}",
+                run_id, "failed", f"{label} failed at step {failure.step}: {failure.detail}",
                 _RETRAIN_SOURCE_SERVICE,
             )
         except Exception as exc:  # noqa: BLE001 - every attempt must reach a terminal state.
-            logger.exception("retrain executor crashed for %s", run_id)
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
+            logger.exception("%s executor crashed for %s", label, run_id)
             detail = f"{type(exc).__name__}: {exc}"
             if rstore.get_run(run_id):
                 _retrain_record(
                     run_id, failed_step="executor",
                     rejection={"reason": "retrain_failed", "step": "executor", "detail": detail},
                 )
-                _finish_run(run_id, "failed", f"Retrain failed at step executor: {detail}", _RETRAIN_SOURCE_SERVICE)
+                _finish_run(run_id, "failed", f"{label} failed at step executor: {detail}", _RETRAIN_SOURCE_SERVICE)
         finally:
             with _retrain_active_lock:
                 _retrain_active_runs.discard(run_id)
@@ -2829,6 +2837,17 @@ def _search_demand_templates(rows: List[Dict[str, Any]]) -> None:
     for row in rows:
         if row["status"] != "open":
             continue
+        # An unconfigured owner cannot execute a search. Record the same
+        # unavailable outcome without creating Research tasks that can never
+        # start; credential-file validation and all owner I/O stay in worker.
+        missing = next((name for name in ("RESEARCH_PERSONA_SERVICE_TOKEN", "RESEARCH_REGISTRY_SERVICE_TOKEN")
+                        if not (os.getenv(name, "").strip() or os.getenv(name + "_FILE", "").strip())), None)
+        if missing:
+            research_demand_store.record_template_search(
+                row["tenant_id"], row["demand_id"],
+                {"run_at": utc_now(), "attempts": {}, "paper_only": True,
+                 "reason": "template_search_unavailable:owner_credential_unconfigured:" + missing})
+            continue
         with _plan_progress_lock:
             runs = store.list_runs()
             matching = [r for r in runs if _is_template_search_run(r)
@@ -2856,6 +2875,7 @@ def _search_demand_templates(rows: List[Dict[str, Any]]) -> None:
                        "adapter": "template_demand_gate", "requested_mode": "replication_gate",
                        "dispatch_mode": "replication_gate", "production_activation": "disabled",
                        "status": "queued", "tenant_id": row["tenant_id"], "created_by": "persona-pool-cycle",
+                       "paper_only": True, "attempt_number": 1, "parent_run_id": None, "root_run_id": run_id,
                        "parameters": {"action_type": "template_search", "tenant_id": row["tenant_id"],
                                       "persona_id": row["persona_id"], "demand_id": row["demand_id"]},
                        "created_at": timestamp, "updated_at": timestamp, "events": [event],

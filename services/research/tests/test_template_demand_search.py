@@ -4,6 +4,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import io
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +26,14 @@ from services.research.tests.test_research_orchestrator_http_service import _loa
 FIXTURE = Path(__file__).with_name('fixtures') / 'template_demand_tw_bars.json'
 BODY = dict(persona_id='persona-template', mandate='TW equity', missing_datasets=[], tried_families=[],
             short_measure='effective_bets', pool_version=0)
+
+
+@pytest.fixture
+def configured_owners(monkeypatch):
+    # Local transport fixtures only; never sent to hosted services.
+    for name in ('RESEARCH_PERSONA_SERVICE_TOKEN', 'RESEARCH_REGISTRY_SERVICE_TOKEN'):
+        monkeypatch.delenv(name + '_FILE', raising=False)
+        monkeypatch.setenv(name, 'local-owner-recording-token')
 
 
 def recorded():
@@ -196,24 +207,35 @@ def test_passing_candidates_are_durable_linked_untested_and_each_family_is_count
     assert ResearchDemandStore(store.path).list('tenant-a')[0]['discovery']['template_search']['attempts'] == receipts
 
 
-def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(tmp_path, monkeypatch):
+def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(tmp_path, monkeypatch, configured_owners):
     """Real cycle HTTP port, research route, stores, compiler, interpreter and default gate.
 
     Only the owner reads and HTTP transport are replaced by recorded responses.
     No gate decisions, metrics, approvals, members or market bars are fabricated.
     """
     from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+    from services.persona import pool_autonomy_cycle as cycle
+    from services.research.tests.test_persona_demand_routes_auth import (
+        SECRET, ISSUER, AUDIENCE, TENANT, _cycle_headers,
+    )
     from services.research.vectorbt.adapter import vectorbt_adapter as adapter
+    for key, value in {'AUTH_MODE': 'strict', 'JWT_SECRET': SECRET,
+                       'JWT_ISSUER': ISSUER, 'JWT_AUDIENCE': AUDIENCE,
+                       'MFA_REQUIRED': 'false'}.items():
+        monkeypatch.setenv('PANTHEON_RESEARCH_' + key, value)
     module = _load_service_module(data_dir=str(tmp_path / 'research'))
     monkeypatch.setattr(module, 'ALPHA_REPLICATION_DATA_DIR', tmp_path / 'alpha')
     monkeypatch.setenv('RESEARCH_REPLICATION_TRIAL_COUNTER_PATH', str(tmp_path / 'trials.json'))
-    module.app.dependency_overrides[module._authenticated_alpha_replication_tenant] = lambda: 'tenant-a'
     owner_calls = []
+    entered, release = threading.Event(), threading.Event()
 
     def owners(**kw):
         owner_calls.append(kw)
+        assert kw['tenant_id'] == TENANT
         if kw['service'] == 'persona':
-            return {'tenant_id': 'tenant-a', 'persona_id': BODY['persona_id'],
+            entered.set()
+            assert release.wait(90), 'test did not release the slow owner'
+            return {'tenant_id': TENANT, 'persona_id': BODY['persona_id'],
                     'metadata': {'market_scope': {'symbols': ['2330']}}}
         return entries('qlib_alpha158:KMID')
 
@@ -224,17 +246,43 @@ def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(
     monkeypatch.setattr(adapter, 'build_governed_tw_replication_dataset', forbidden)
     monkeypatch.setattr(adapter, 'build_canonical_tw_strategy_artifact', forbidden)
     client = TestClient(module.app)
-    persona = {'tenant_id': 'tenant-a', 'persona_id': BODY['persona_id']}
+    persona = {'tenant_id': TENANT, 'persona_id': BODY['persona_id']}
+    token = _cycle_headers()['Authorization'].removeprefix('Bearer ')
+    timeouts = []
 
-    def transport(method, service, path, tenant, body):
-        assert tenant == 'tenant-a' and service == 'research'
-        response = client.request(method, path, json=body)
+    def transport(request, timeout):
+        timeouts.append(timeout)
+        response = client.request(request.method, request.full_url, headers=dict(request.header_items()),
+                                  content=request.data)
         assert response.status_code in (200, 201), response.text
-        return response.json()
+        return io.BytesIO(response.content)
 
-    ports = HttpPoolCyclePorts(transport)
+    monkeypatch.setattr(cycle, 'urlopen', transport)
+    ports = HttpPoolCyclePorts(env={'PERSONA_RESEARCH_SERVICE_TOKEN': token,
+                                    'RESEARCH_API_URL': 'http://testserver'})
     demand = ports.open_demand(persona, BODY)
-    row = ports.reconcile_demands(persona, [])[0]
+    started = time.monotonic()
+    try:
+        response_row = ports.reconcile_demands(persona, [])[0]
+        assert time.monotonic() - started < 15
+        assert entered.wait(5), 'existing Research worker did not start'
+        assert 'template_search' not in (response_row.get('discovery') or {})
+        assert not (tmp_path / 'alpha' / 'backtest_runs.json').exists()
+        # Even with a blocked owner, the authenticated normal caller returns
+        # and a concurrent cycle reuses the one durable active run.
+        ports.reconcile_demands(persona, [])
+        assert len(module.store.list_runs()) == 1
+        run_id = module.store.list_runs()[0]['run_id']
+        worker = next(t for t in threading.enumerate() if t.name == 'retrain-executor-' + run_id)
+    finally:
+        release.set()
+    worker.join(100)
+    assert not worker.is_alive(), 'real gate worker failed to terminate'
+    run = module.get_run(run_id)
+    assert run['status'] == 'completed', run
+    assert run['adapter'] == 'template_demand_gate'
+    assert module.store.get_task(run['task_id'])['status'] == 'completed'
+    row = module.research_demand_store.list(TENANT)[0]
     attempts = row['discovery']['template_search']['attempts']
     assert len(attempts) == 1, row
     receipt = next(iter(attempts.values()))
@@ -252,7 +300,108 @@ def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(
     assert receipt['family_trial_count'] == 1
     assert (tmp_path / 'alpha' / 'backtest_runs.json').exists()
     # A repeat cycle may record the outcome again, but cannot re-evaluate this candidate.
-    again = ports.reconcile_demands(persona, [])[0]
+    ports.reconcile_demands(persona, [])
+    for t in threading.enumerate():
+        if t.name.startswith('retrain-executor-'):
+            t.join(30)
+            assert not t.is_alive()
+    again = module.research_demand_store.list(TENANT)[0]
     assert again['discovery']['template_search']['attempts'] == attempts
     assert row['status'] == 'open'  # only a later admitted pool member satisfies a demand
     assert {c['service'] for c in owner_calls} == {'persona', 'registry'}
+    assert timeouts and set(timeouts) == {15}
+    assert len(module.store.list_runs()) == 2
+    assert all(r['status'] == 'completed' for r in module.store.list_runs())
+
+
+def test_template_runs_use_existing_resume_retry_capacity_and_cancel(tmp_path, monkeypatch, configured_owners):
+    module = _load_service_module(data_dir=str(tmp_path))
+    row = module.research_demand_store.open('tenant-a', BODY)
+    launches = []
+    monkeypatch.setattr(module, '_trigger_retrain_execution', lambda *args: launches.append(args))
+    module._search_demand_templates([row])
+    run = module.store.list_runs()[0]
+    module._search_demand_templates([row])
+    assert len(module.store.list_runs()) == 1
+    module.resume_retrain_runs()
+    assert {args[0] for args in launches} == {run['run_id']}
+    assert module.get_run(run['run_id'])['status'] == 'queued'
+    # The existing terminal and retry paths retain the demand identity.
+    module._finish_run(run['run_id'], 'failed', 'recorded owner unavailable', 'research-orchestrator')
+    retry = module.retry_run(run['run_id'])
+    assert retry['parent_run_id'] == run['run_id']
+    assert retry['parameters'] == run['parameters']
+    assert launches[-1][0] == retry['run_id']
+    module.cancel_run(retry['run_id'])
+    count = len(launches)
+    module.resume_retrain_runs()
+    module._search_demand_templates([row])
+    assert len(launches) == count
+    assert len(module.store.list_runs()) == 2
+    # A full existing Research run budget defers to the next normal cycle.
+    row2 = module.research_demand_store.open('tenant-b', BODY)
+    monkeypatch.setattr(module, 'MAX_ACTIVE_RUNS', 0)
+    module._search_demand_templates([row2])
+    assert len(module.store.list_runs()) == 2
+
+
+def test_stub_parameters_cannot_invoke_template_search(tmp_path, monkeypatch):
+    module = _load_service_module(data_dir=str(tmp_path))
+    launches = []
+    monkeypatch.setattr(module, '_trigger_retrain_execution', lambda *args: launches.append(args))
+    task = module.create_task(module.CreateTaskBody(title='untrusted', objective='untrusted'))
+    params = {'action_type': 'template_search', 'tenant_id': 'tenant-a',
+              'persona_id': BODY['persona_id'], 'demand_id': 'forged'}
+    stub = module.dispatch_run(task['task_id'], module.DispatchRunBody(parameters=params))
+    assert stub['status'] == 'queued'
+    rejected = module.dispatch_run(task['task_id'], module.DispatchRunBody(
+        adapter='template_demand_gate', parameters=params))
+    assert rejected['status'] == 'rejected'
+    module.resume_retrain_runs()
+    assert not launches
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_real_worker_records_owner_failure_and_respects_cancel(tmp_path, monkeypatch, configured_owners, cancel):
+    module = _load_service_module(data_dir=str(tmp_path))
+    monkeypatch.setattr(module, 'ALPHA_REPLICATION_DATA_DIR', tmp_path / 'alpha')
+    monkeypatch.setenv('RESEARCH_REPLICATION_TRIAL_COUNTER_PATH', str(tmp_path / 'trials.json'))
+    entered, release = threading.Event(), threading.Event()
+
+    def unavailable(demand):
+        entered.set()
+        assert release.wait(5)
+        raise ValueError('governed_market_data_missing')
+
+    monkeypatch.setattr(module, '_template_search_context', unavailable)
+    demand = module.research_demand_store.open('tenant-a', BODY)
+    try:
+        module._search_demand_templates([demand])
+        assert entered.wait(5)
+        run = module.store.list_runs()[0]
+        worker = next(t for t in threading.enumerate() if t.name == 'retrain-executor-' + run['run_id'])
+        if cancel:
+            module.cancel_run(run['run_id'])
+    finally:
+        release.set()
+    worker.join(5)
+    assert not worker.is_alive()
+    run = module.get_run(run['run_id'])
+    assert run['status'] == ('canceled' if cancel else 'failed')
+    assert module.store.get_task(run['task_id'])['status'] == run['status']
+    if not cancel:
+        assert run['failed_step'] == 'template_search'
+        assert 'governed_market_data_missing' in run['rejection']['detail']
+
+
+def test_unconfigured_search_keeps_collector_tasks_independent(tmp_path, monkeypatch):
+    module = _load_service_module(data_dir=str(tmp_path))
+    for name in ('RESEARCH_PERSONA_SERVICE_TOKEN', 'RESEARCH_REGISTRY_SERVICE_TOKEN'):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name + '_FILE', raising=False)
+    row = module.research_demand_store.open('tenant-a', BODY)
+    module._search_demand_templates([row])
+    assert module.store.list_tasks() == module.store.list_runs() == []
+    result = module.research_demand_store.list('tenant-a')[0]['discovery']['template_search']
+    assert result['reason'].startswith('template_search_unavailable:owner_credential_unconfigured:')
+    assert result['attempts'] == {}
