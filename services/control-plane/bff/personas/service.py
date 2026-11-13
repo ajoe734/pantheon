@@ -5927,6 +5927,7 @@ def _pm12_is_unlinked_source_ingest_row(item: Dict[str, Any]) -> bool:
 
 
 _PM12_QUARTER_EVIDENCE_PAGE_SIZE = 500  # owner list endpoint maximum page
+_PM12_QUARTER_EVIDENCE_MAX_PAGES = 3  # constant bound on owner requests per read
 
 
 # --- _pm12_public_quarter_evidence_refs ---
@@ -5942,11 +5943,29 @@ def _pm12_public_quarter_evidence_refs(
     read_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
     try:
         if callable(read_fn):
-            # One bounded owner request (newest page), never a stream of every
-            # owner evidence page: request cost must not grow with evidence count.
-            result = read_fn(page_size=_PM12_QUARTER_EVIDENCE_PAGE_SIZE)
-            raw_evidence_refs = list(result.items or [])
-            evidence_dataset_available = bool(result.available)
+            # Newest-first owner pages, never the whole stream: stop when the
+            # owner has no more rows, a page holds nothing at/after the quarter
+            # start, or the constant page cap is hit, so owner requests do not
+            # grow with total evidence. Unavailable on any page => unavailable.
+            quarter_start = _audit_datetime(quarter_window.get("start_at"))
+            page_token: Optional[str] = None
+            evidence_dataset_available = True
+            for _ in range(_PM12_QUARTER_EVIDENCE_MAX_PAGES):
+                result = read_fn(page_size=_PM12_QUARTER_EVIDENCE_PAGE_SIZE, page_token=page_token)
+                if not result.available:
+                    raw_evidence_refs = []
+                    evidence_dataset_available = False
+                    break
+                page_items = list(result.items or [])
+                raw_evidence_refs.extend(page_items)
+                page_token = result.next_page_token
+                if not page_token or not page_items:
+                    break
+                if quarter_start is not None and not any(
+                    (ts := _pm12_evidence_timestamp(it)) is not None and ts >= quarter_start
+                    for it in page_items
+                ):
+                    break
         elif store is not None:
             raw_evidence_refs = list(store.list_evidence_refs() or [])
             evidence_dataset_available = store.dataset_source("evidence_refs") not in ("missing", "unavailable")

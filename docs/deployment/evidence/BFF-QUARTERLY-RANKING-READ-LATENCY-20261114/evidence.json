@@ -2,26 +2,71 @@
   "task_id": "BFF-QUARTERLY-RANKING-READ-LATENCY-20261114",
   "method": "Local TestClient, 166 shaped personas (+fixture personas), fake source-ingest owner with newest-first pages, 3000 evidence items, 0.2 s per owner request (slow) or unavailable after 0.2 s. 5 runs per cell. Harness: services/control-plane/bff/tests/test_quarterly_ranking_read_latency.py helpers.",
   "root_cause": "_pm12_public_quarter_evidence_refs called read_evidence_refs() with no page_size, so the port streamed every owner evidence page (EVIDENCE_OWNER_PAGE_SIZE=200) before filtering to the quarter. Cost grew linearly with total owner evidence; on hosted each owner request waits ~4 s.",
-  "fix": "personas/service.py: the quarter evidence read passes page_size=_PM12_QUARTER_EVIDENCE_PAGE_SIZE (500, the owner endpoint maximum) so exactly one owner request is made. The context is composed once per request (_compose_quarterly_ranking_context), so ranking, recommendations and drilldown each pay the owner wait at most once. No cache, setting, endpoint or job added; ports/research_knowledge_source.py unchanged (its existing page_size path is used).",
+  "fix": "personas/service.py: quarter evidence read pages the owner newest-first at page_size 500, stopping when the owner is exhausted, a page has no row at/after the quarter start, or _PM12_QUARTER_EVIDENCE_MAX_PAGES=3 is reached; any unavailable page marks the surface unavailable. Context composed once per request. No cache/setting/endpoint/job; port unchanged.",
   "profile_ms_before_after": {
     "slow_owner_3000_evidence": {
-      "quarterly-ranking": {"before": {"p50_s": 3.419, "p95_s": 3.661, "owner_requests": 15}, "after": {"p50_s": 0.603, "p95_s": 0.712, "owner_requests": 1}},
-      "quarterly-ranking/recommendations": {"before": {"p50_s": 3.65, "p95_s": 3.766, "owner_requests": 15}, "after": {"p50_s": 0.851, "p95_s": 1.014, "owner_requests": 1}},
-      "persona-league/tiers": {"before": {"p50_s": 0.064, "p95_s": 0.213, "owner_requests": 0}, "after": {"p50_s": 0.062, "p95_s": 0.335, "owner_requests": 0}}
+      "quarterly-ranking": {
+        "before": {
+          "p50_s": 3.819,
+          "p95_s": 3.877,
+          "owner_requests": 15
+        },
+        "after": {
+          "p50_s": 1.313,
+          "p95_s": 1.504,
+          "owner_requests": 3
+        }
+      },
+      "quarterly-ranking/recommendations": {
+        "before": {
+          "p50_s": 4.011,
+          "p95_s": 4.123,
+          "owner_requests": 15
+        },
+        "after": {
+          "p50_s": 1.54,
+          "p95_s": 1.559,
+          "owner_requests": 3
+        }
+      }
     },
     "owner_unavailable_0.2s": {
-      "quarterly-ranking": {"before": {"p50_s": 0.57, "p95_s": 0.735, "owner_requests": 1}, "after": {"p50_s": 0.497, "p95_s": 0.809, "owner_requests": 1}},
-      "quarterly-ranking/recommendations": {"before": {"p50_s": 0.82, "p95_s": 0.985, "owner_requests": 1}, "after": {"p50_s": 0.887, "p95_s": 0.931, "owner_requests": 1}}
+      "quarterly-ranking": {
+        "before": {
+          "p50_s": 0.918,
+          "p95_s": 0.992,
+          "owner_requests": 1
+        },
+        "after": {
+          "p50_s": 0.945,
+          "p95_s": 1.022,
+          "owner_requests": 1
+        }
+      },
+      "quarterly-ranking/recommendations": {
+        "before": {
+          "p50_s": 1.158,
+          "p95_s": 1.27,
+          "owner_requests": 1
+        },
+        "after": {
+          "p50_s": 1.205,
+          "p95_s": 1.212,
+          "owner_requests": 1
+        }
+      }
     },
-    "cprofile_after_quarterly_ranking_s": "total 0.9 under profiler: owner wait 0.2, rankings/snapshots.py snapshot digest 0.28, remainder ASGI/serialisation. No remaining stream-proportional cost."
+    "reproduce": "Loop of 5 runs per cell over t._get(t._Owner(3000, unavailable, delay=0.2), route); 'before' sets personas_service._PM12_QUARTER_EVIDENCE_PAGE_SIZE=None (full stream, page 200). Local noisy machine; absolute times ~2x the earlier run.",
+    "per_step_note": "Dominant cost before: 15 sequential owner requests x 0.2 s = 3.0 s of ~3.8 s. After: 3 x 0.2 = 0.6 s owner wait plus ~0.7 s compute (earlier cProfile: snapshot digest ~0.28 s, remainder ASGI/serialisation). Unavailable owner: first page fails, 1 wait, unchanged."
   },
   "notes": [
-    "persona-league/tiers makes no evidence-owner request locally (0 owner calls, p50 ~0.06 s); its hosted 5-9 s is not reproduced by this profile and is not changed by this task. Not claimed as fixed.",
-    "Unavailable owner: first page fails, so the wait was already paid once before; unchanged by design, now also true for slow owners.",
-    "Behavior bound: only the newest 500 owner evidence items are considered for the quarter. Output is identical to the old full stream whenever the owner holds <=500 items (tested with 300); with more, quarter evidence older than the newest 500 owner items is no longer attached. Owner has no time-range filter and adding one is out of scope (no new endpoint)."
+    "Review fix: previous single newest-500 read truncated linked in-quarter evidence (501 vs 500 refs, snapshot id changed). Now parity is tested with 501 linked in-quarter refs, with and without 700 newer post-quarter refs, on all 3 routes.",
+    "Residual bounds, stated honestly: owner order is append order (not timestamp), and the owner has no time filter. Output equals the full stream whenever quarter-relevant rows lie within the first 3 pages (1500 newest) and paging was not cut by the early-stop; older late-appended rows beyond that are not attached. Fully exact bounded reads need an owner-side time filter (out of scope: no new endpoint).",
+    "Acceptance 4 partial: unavailable owner pays one wait; a slow-but-available owner pays up to 3 waits (cap), down from N=total/200. Acceptance 5 (<1.5 s p50 local) holds for ranking in this run (1.313 s) with 0.2 s owner delay but recommendations is 1.54 s.",
+    "persona-league/tiers makes no evidence-owner request locally; not changed by this task and not claimed fixed."
   ],
   "tests": {
-    "added": "services/control-plane/bff/tests/test_quarterly_ranking_read_latency.py (9 tests): owner requests == 1 for 50/5000/50000 evidence on ranking, recommendations, drilldown; unavailable owner paid once; full payload (items, order, scores, ranking_snapshot_id, evidence and surface status) equals the unbounded-stream output for 166 personas, volatile timestamps/correlation ids stripped.",
+    "added": "test_quarterly_ranking_read_latency.py (15 tests): owner requests constant (<=cap) for 5000/50000 evidence on 3 routes; unavailable paid once; 300-row parity; linked >500 evidence parity (with/without newer refs) on 3 routes.",
     "existing_run": "test_bff_pm12_persona_league, test_ranking_evidence_surfaces_default_composition, test_bff_b3_management_evidence, test_evidence_redaction_fail_closed: all pass.",
     "assertions_changed": "none; no existing test weakened or deleted."
   }

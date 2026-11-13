@@ -98,7 +98,8 @@ def test_owner_requests_do_not_grow_with_total_evidence(route: str) -> None:
         owner = _Owner(total)
         _get(owner, route)
         counts.append(len(owner.calls))
-    assert counts[0] == counts[1] == counts[2] == 1, counts
+    cap = personas_service._PM12_QUARTER_EVIDENCE_MAX_PAGES
+    assert counts[1] == counts[2] <= cap and counts[0] == 1, counts
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -158,3 +159,47 @@ def _diff(a: Any, b: Any, path: str = "") -> List[str]:
     if isinstance(a, list) and len(a) == len(b):
         return [d for i, (x, y) in enumerate(zip(a, b)) for d in _diff(x, y, f"{path}[{i}]")]
     return [] if a == b else [f"{path}: {a!r} != {b!r}"]
+
+
+def _linked_refs(prefix: str, count: int, captured_at: str) -> List[Dict[str, Any]]:
+    return [
+        {
+            "ref_id": f"{prefix}-{i:04d}",
+            "display_label": f"{prefix}-{i:04d}",
+            "evidence_type": "artifact",
+            "source_document": {"captured_at": captured_at, "source_type": "internal"},
+            "linked_object_summary": {"entity_type": "persona", "entity_ref": "p-001"},
+            "credibility": {"tier": "verified", "verified": True},
+        }
+        for i in range(count)
+    ]
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("newer_than_quarter", (0, 700))
+def test_linked_evidence_beyond_first_page_keeps_full_output(
+    route: str, newer_than_quarter: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """>500 linked in-quarter refs, some behind a full page of newer
+    post-quarter refs: bounded paging must equal the unbounded stream."""
+    refs = _linked_refs("q", 501, "2026-02-15T00:00:00Z") + _linked_refs(
+        "newer", newer_than_quarter, "2026-06-01T00:00:00Z"
+    )
+    original_init = _OwnerBackedStore.__init__
+
+    def seeded_init(self: Any, owner: _Owner, persona_count: int = PERSONA_COUNT) -> None:
+        original_init(self, owner, persona_count)
+        self._port._evidence_refs = {r["ref_id"]: r for r in refs}
+
+    monkeypatch.setattr(_OwnerBackedStore, "__init__", seeded_init)
+    bounded = _get(_Owner(0), route)
+    monkeypatch.setattr(personas_service, "_PM12_QUARTER_EVIDENCE_PAGE_SIZE", None)
+    full = _get(_Owner(0), route)
+
+    assert bounded["status"] == full["status"] == 200
+    assert _strip_volatile(copy.deepcopy(bounded["body"])) == _strip_volatile(
+        copy.deepcopy(full["body"])
+    )
+    body = bounded["body"]["data"]
+    if "evidence_refs" in body:
+        assert len(body["evidence_refs"]) == 501
