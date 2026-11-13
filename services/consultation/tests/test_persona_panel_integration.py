@@ -2,8 +2,9 @@
 
 Real: consultation-svc, its workflow executor, the Persona owner (bootstrap via
 ``POST /api/personas``), governance handoff intake, evolution health and the
-memory service (Learn-feedback writeback). Faked: only the provider HTTP that
-stands in for each persona's own agent.
+memory service (Learn-feedback writeback). Owner-shaped registry/pool HTTP
+fixtures supply case-file facts; provider HTTP stands in for each persona's
+own agent.
 """
 
 from __future__ import annotations
@@ -70,7 +71,7 @@ def _serve(app: Any) -> Iterator[str]:
 
 
 class ProviderFake(ThreadingHTTPServer):
-    """The only fake: each persona's own agent, reached over provider HTTP."""
+    """Each persona's own agent, reached over provider HTTP."""
 
     answers: dict[str, str]
     calls: list[dict[str, Any]]
@@ -677,7 +678,8 @@ def test_memory_outage_after_risk_veto_still_holds_adoption_then_retry_adopts(
 
     monkeypatch.setattr(wf, "_write_panel_memory", flaky)
     with _provider_fake({INITIATOR: "approve", triggers.RISK_PERSONA_ID: "reject"}) as fake:
-        cfg = _config(stack, f"http://127.0.0.1:{fake.server_address[1]}/contribute")
+        from dataclasses import replace
+        cfg = replace(_config(stack, f"http://127.0.0.1:{fake.server_address[1]}/contribute"), batch_size=1)
         requirement = triggers.required_consultation(
             "trial_admission", "trial-outage", initiator_persona_id=INITIATOR
         )
@@ -702,12 +704,14 @@ def test_memory_outage_after_risk_veto_still_holds_adoption_then_retry_adopts(
         )
         assert status == 409, body
         # Retry adopts the same handoff (no duplicate) and finishes memory.
+        retries = []
         for _ in range(5):
             second = run_tick(config=cfg, state=WorkflowStateStore(cfg.state_path), provider=_provider(cfg))
+            retries.append(second)
             if second["completed"]:
                 break
             time.sleep(0.5)
-        assert second["completed"] == 1, second
+        assert second["completed"] == 1, json.dumps(retries)
         assert len(fake.calls) == 2
     assert len(stack["handoffs"].list_all()) == 1
     assert stack["handoffs"].list_all()[0]["operator_decision"]["status"] == "pending"

@@ -870,6 +870,7 @@ def _compose_panel_case_file(
         group["truncated"] = True
     case["lesson_query"] = {
         "query": " ".join([str(decision["type"]).replace("_", " "), str(decision["id"]),
+                           str(decision.get("target_version") or ""),
                            *panel.get("touches", []), *[f["lesson_query"]["query"] for f in files]]),
         "tags": list(dict.fromkeys(t for f in files for t in f["lesson_query"]["tags"]))}
     case.pop("case_file_id")
@@ -1159,6 +1160,8 @@ def _execute_panel_claim(
                         case = future.result(timeout=max(0.05, config.lease_seconds / 3))
                         break
                     except FutureTimeout:
+                        if future.done():
+                            raise
                         claim = _renew(state, claim, config)
         except WorkflowBlocked as exc:
             _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
@@ -1277,8 +1280,10 @@ def _execute_panel_claim(
     gate, summary, recommendation, findings, confidence = _synthesize(
         participants, contributions
     )
-    missing = [f"{name}/{u['owner']}: {u['reason']}" for name, group in case["groups"].items()
-               for u in group["unavailable"] if not u.get("expected")]
+    # SQLite serializes the snapshot with sorted object keys. Use stable list
+    # ordering too, so replayed synthesis events/memos retain identical payloads.
+    missing = sorted(f"{name}/{u['owner']}: {u['reason']}" for name, group in case["groups"].items()
+                     for u in group["unavailable"] if not u.get("expected"))
     if missing:
         gate["outcome"] = "operator_decision"
         gate["operator_decision_required"] = True
@@ -1374,21 +1379,27 @@ def _execute_panel_claim(
         claim, phase="handoff_persisted", memo_id=memo_id, handoff_id=handoff_id
     )
     claim = _renew(state, claim, config)
-    consumer_ref = _dispatch_handoff(
-        config,
-        request=request,
-        handoff=handoff,
-        extra={
-            "gated_decision": decision,
-            "gate": gate,
-            "memo_evidence_ref": memo_ref,
-        },
-    )
-    acknowledged = _api_post(
-        config,
-        f"/api/consult/handoffs/{handoff_id}/acknowledge",
-        {"consumer_ref": consumer_ref},
-    )
+    if handoff.get("status") == "acknowledged":
+        # A memory-only retry must not resend a handoff whose mutable status
+        # and sent_at now differ from the sink's original idempotent payload.
+        consumer_ref = "persisted-acknowledgement"
+        acknowledged = handoff
+    else:
+        consumer_ref = _dispatch_handoff(
+            config,
+            request=request,
+            handoff=handoff,
+            extra={
+                "gated_decision": decision,
+                "gate": gate,
+                "memo_evidence_ref": memo_ref,
+            },
+        )
+        acknowledged = _api_post(
+            config,
+            f"/api/consult/handoffs/{handoff_id}/acknowledge",
+            {"consumer_ref": consumer_ref},
+        )
     if not isinstance(acknowledged, Mapping) or acknowledged.get("status") != "acknowledged":
         raise WorkflowBlocked("panel handoff acknowledgement was not persisted")
     state.save_progress(

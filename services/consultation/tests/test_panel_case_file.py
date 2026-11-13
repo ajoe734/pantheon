@@ -131,8 +131,8 @@ def test_missing_owner_records_reason_and_calls_no_agent(stack, monkeypatch):
     assert "owner_unconfigured" in failure["content"]["reason"]
 
 
-@pytest.mark.parametrize("canary", [False, True])
-def test_real_adapter_receives_case_and_queries_each_personas_own_memory(stack, canary):
+@pytest.mark.parametrize("canary,memory_available", [(False, True), (True, True), (True, False)])
+def test_real_adapter_receives_case_and_queries_each_personas_own_memory(stack, canary, memory_available):
     """Only OpenClaw itself and the retrieval response are boundary doubles."""
     from types import SimpleNamespace
     from services.consultation.tests.test_persona_panel_integration import _serve, PROVIDER_TOKEN
@@ -149,6 +149,8 @@ def test_real_adapter_receives_case_and_queries_each_personas_own_memory(stack, 
 
     def memory(tenant, persona, session, query):
         queries.append((tenant, persona, query))
+        if not memory_available:
+            return None
         def hit(pid, scope, text):
             return {"type": "persona", "relevance_score": 1., "entry": {
                 "memory_id": "memory-" + text, "persona_id": pid, "tenant_id": tenant,
@@ -194,6 +196,10 @@ def test_real_adapter_receives_case_and_queries_each_personas_own_memory(stack, 
         created = ConsultationServiceClient(base_url=stack["api"], token=SERVICE_TOKEN, tenant_id=TENANT).open_persona_panel(
             requirement, persona_id=INITIATOR, trace_id="trace-gateway")
         result = wf.run_tick(config=config, state=WorkflowStateStore(config.state_path), provider=_provider(config))
+    if not memory_available:
+        assert result["completed"] == 0 and not prompts
+        assert "panel committee memory retrieval unavailable" in json.dumps(result)
+        return
     assert result["completed"] == 1, result
     assert {(t, p) for t, p, q in queries} == {(TENANT, p) for p in personas}
     assert all("momentum" in q and "2330" in q and "trial admission" in q for t, p, q in queries)
