@@ -141,7 +141,9 @@ class PoolEvolutionScheduler:
         if len(days) >= 20:
             self._propose(proposal(pool, member, entry, "revalidate", f"trading-window:{len(days)//20}"), report)
         family = (entry["metadata"]["strategy_artifact"]).get("strategy_id")
-        state = self.owner.family_state(family)
+        frequency = ((entry["metadata"]["strategy_artifact"]).get("parameters") or {}).get("bar_frequency")
+        # Daily/undeclared callers keep the legacy one-argument contract.
+        state = self.owner.family_state(family, frequency) if frequency else self.owner.family_state(family)
         if state["trials"] >= FAMILY_LIMIT:
             report.skipped[key] = "family_tried"
             return

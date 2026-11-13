@@ -1858,8 +1858,10 @@ def _admit_evolution_child(params, child_id):
 
 
 @app.get("/api/research/evolution/families/{family_id}")
-def evolution_family_state(family_id: str, tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
+def evolution_family_state(family_id: str, bar_frequency: Optional[str] = None,
+                           tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
     from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
+    from services.research.replication.gate import family_trial_key
     # The same family counter used by the real gate is durable across workers.
     views = _retrain_call(step="family_state", service="registry", method="GET",
         token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
@@ -1867,8 +1869,9 @@ def evolution_family_state(family_id: str, tenant_id: str = Depends(_authenticat
             "/api/registry/strategies/" + urllib.parse.quote(family_id, safe="") + "/strategy-artifacts")
     if not any(((v or {}).get("entry") or {}).get("owner_tenant") == tenant_id for v in views or []):
         raise HTTPException(status_code=404, detail="family not found")
-    trials = SharedFamilyTrialCounterStore(_retrain_trial_counter_path()).get(family_id)
-    return {"family_id": family_id, "trials": trials, "status": "tried" if trials >= 500 else "available"}
+    # Frequency-scoped key (SD §9 K8); omitted/daily keeps the legacy bare family key.
+    trials = SharedFamilyTrialCounterStore(_retrain_trial_counter_path()).get(family_trial_key(family_id, bar_frequency))
+    return {"family_id": family_id, "bar_frequency": (bar_frequency or "").strip().lower() or None, "trials": trials, "status": "tried" if trials >= 500 else "available"}
 
 
 def _retrain_trial_counter_path() -> Path:
@@ -2463,6 +2466,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     """
     from services.registry.strategy_artifact import strategy_artifact_checksum
     from services.research.alpha_replication import evolution_executor as executor
+    from services.research.alpha_replication import evolution_search as search
 
     action = _evolution_action(params)
     decision_id = str(params["decision_id"])
@@ -2602,7 +2606,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     _retrain_record(
         run_id, evolution_result=result.get("detail") or result.get("verdict"),
         parent_artifact_checksum=strategy_artifact_checksum(parent),
-        family_trial_count=gate.get_family_trial_count(family_id),
+        family_trial_count=gate.get_family_trial_count(search.artifact_trial_key(family_id, parent)),
     )
     raise _RetrainFinished(result["outcome"], result["reason"])
 
