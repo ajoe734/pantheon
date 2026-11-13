@@ -1,0 +1,29 @@
+{
+  "task_id": "DECISION-CASE-FILE-20261113",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_KNOWLEDGE_INTEGRATION_2026-11-13.md (M3)",
+  "delivered": [
+    "services/knowledge/case_file.py",
+    "services/knowledge/case_file.schema.json",
+    "services/knowledge/test_case_file.py",
+    "services/knowledge/test_case_file_integration.py"
+  ],
+  "verification": {
+    "command": "python -m pytest services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py -q",
+    "result": "10 passed",
+    "environment": "python 3.12 venv with fastapi, uvicorn, httpx, pytest, jsonschema",
+    "integration_scope": "production memory FastAPI app served over real HTTP (uvicorn) with the real local governance authz evaluator, entries written through the real memory write routes; registry/research/pool/telemetry/search are HTTP fixtures"
+  },
+  "acceptance": {
+    "1_schema_valid_four_groups_cited_items": "test_trial_admission_for_the_persona_itself; every item has source_id, excerpt, retrieval_score, retrieval_mode",
+    "2_facts_from_owner_apis_only": "test_facts_come_from_owners_not_search; facts items are all source_owner != search",
+    "3_lesson_query_and_private_scope": "test_lesson_query_and_tags_from_subject, test_private_only_for_own_persona, test_member_removal_as_operator_excludes_private_memory (other persona never returned)",
+    "4_bounds_id_digest_unavailable_recorded": "test_bounds_id_digest, test_unavailable_owner_recorded_not_silent, test_missing_owner_is_recorded, test_missing_subject_fails_closed",
+    "5_integration_trial_admission_and_member_removal": "test_trial_admission_for_the_persona_itself, test_member_removal_as_operator_excludes_private_memory"
+  },
+  "known_limits": [
+    "The memory retrieve route does not yet report retrieval mode per hit; items record retrieval_mode=unreported until MEMORY-INDEX-PROJECTION lands, rather than guessing.",
+    "Negative memory is matched by the institutional tag negative_memory; the tag convention is owned by the memory writers.",
+    "Owner base URLs and tokens come from fixed environment configuration (Owners.from_env); callers do not choose URLs.",
+    "Not hosted-verified; hosted acceptance is MEMORY-KNOWLEDGE-HOSTED-ACCEPTANCE-20261113."
+  ]
+}

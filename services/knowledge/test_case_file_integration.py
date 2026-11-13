@@ -1,0 +1,229 @@
+"""Integration: real owner HTTP fixtures + the REAL memory service retrieval route.
+
+The memory service is the production FastAPI app served over real HTTP (uvicorn),
+with the real governance authz evaluator.  Registry / research / pool / telemetry /
+search are HTTP fixtures serving owner-shaped payloads.  Entries are written through
+the real memory write routes.
+"""
+from __future__ import annotations
+
+import importlib
+import json
+import os
+import socket
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import jsonschema
+import uvicorn
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from services.knowledge import case_file as cf  # noqa: E402
+
+SCHEMA = json.loads(Path(__file__).with_name("case_file.schema.json").read_text())
+TENANT = "t1"
+
+
+def _port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class _Fixture(ThreadingHTTPServer):
+    def __init__(self, routes):
+        self.routes, self.calls = routes, []
+
+        class H(BaseHTTPRequestHandler):
+            def _do(h):
+                n = int(h.headers.get("Content-Length") or 0)
+                body = json.loads(h.rfile.read(n)) if n else None
+                self.calls.append((h.command, h.path, h.headers.get("X-Tenant-Id"), body))
+                path = h.path.split("?")[0]
+                for prefix, payload in self.routes.items():
+                    if path.startswith(prefix):
+                        data = json.dumps(payload).encode()
+                        h.send_response(200)
+                        break
+                else:
+                    data = b'{"detail":"nope"}'
+                    h.send_response(404)
+                h.send_header("Content-Type", "application/json")
+                h.send_header("Content-Length", str(len(data)))
+                h.end_headers()
+                h.wfile.write(data)
+            do_GET = do_POST = _do
+
+            def log_message(h, *a):
+                pass
+        super().__init__(("127.0.0.1", 0), H)
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    @property
+    def endpoint(self):
+        return cf.OwnerEndpoint(f"http://127.0.0.1:{self.server_address[1]}")
+
+
+def _registry(refs):
+    routes = {f"/api/registry/entries/{r}": {"registry_id": r, "artifact_type": "strategy_spec",
+              "strategy_id": "momentum", "version": "1", "artifact_state": "candidate",
+              "evaluation_summary": {"sharpe": 1.1}} for r in refs}
+    routes["/api/registry/strategies/momentum/entries"] = [
+        {"registry_id": "reg-old", "strategy_id": "momentum", "version": "0", "artifact_state": "retired",
+         "evaluation_summary": {"reason": "decayed"}},
+        {"registry_id": "reg-cand", "strategy_id": "momentum", "version": "1", "artifact_state": "candidate"}]
+    return routes
+
+
+class CaseFileIntegration(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.saved = {k: os.environ.get(k) for k in (
+            "PANTHEON_MEMORY_STORE", "PANTHEON_PERSONA_MEMORY_STORE", "PANTHEON_MEMORY_STORE_BACKEND",
+            "PANTHEON_PERSONA_MEMORY_STORE_BACKEND", "PANTHEON_MEMORY_AUTHZ_MODE",
+            "PANTHEON_RUNTIME_AUTH_MODE", "PANTHEON_SEARCH_POSTGRES_DSN")}
+        os.environ.update({
+            "PANTHEON_MEMORY_STORE": str(Path(cls.tmp.name) / "inst.json"),
+            "PANTHEON_PERSONA_MEMORY_STORE": str(Path(cls.tmp.name) / "persona.json"),
+            "PANTHEON_MEMORY_STORE_BACKEND": "json", "PANTHEON_PERSONA_MEMORY_STORE_BACKEND": "json",
+            "PANTHEON_MEMORY_AUTHZ_MODE": "local"})
+        os.environ.pop("PANTHEON_RUNTIME_AUTH_MODE", None)
+        os.environ.pop("PANTHEON_SEARCH_POSTGRES_DSN", None)
+        memory = importlib.import_module("services.memory.main")
+        port = _port()
+        cls.server = uvicorn.Server(uvicorn.Config(memory.app, host="127.0.0.1", port=port, log_level="error"))
+        threading.Thread(target=cls.server.run, daemon=True).start()
+        for _ in range(100):
+            if cls.server.started:
+                break
+            time.sleep(0.05)
+        assert cls.server.started, "memory service did not start"
+        cls.memory = cf.OwnerEndpoint(f"http://127.0.0.1:{port}")
+        cls._seed()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.should_exit = True
+        for k, v in cls.saved.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        cls.tmp.cleanup()
+
+    @classmethod
+    def _seed(cls):
+        def post(path, body):
+            r = cf.http_json(cls.memory, path, tenant_id=TENANT, method="POST", body=body)
+            return r
+        inst = lambda eid, headline, tags: {
+            "entry_id": f"mem-{eid}", "knowledge_type": "research_finding",
+            "content": {"headline": headline, "body": headline, "tags": tags},
+            "source_event_type": "research_task_completed", "source_event_id": f"rt-{eid}",
+            "written_at": "2026-04-20T04:00:00Z", "write_authority": "research-svc",
+            "scope": "strategy_family", "scope_filter": "momentum", "contributing_persona_ids": ["persona-a"],
+            "reuse_count": 0}
+        post("/api/memory/entries", inst("11111111-1111-1111-1111-111111111111",
+             "momentum 2330 equity trial admission lesson", ["family:momentum", "underlying:2330"]))
+        post("/api/memory/entries", inst("22222222-2222-2222-2222-222222222222",
+             "momentum equity failed trial negative memory", ["family:momentum", "negative_memory"]))
+        post("/api/memory/entries", inst("33333333-3333-3333-3333-333333333333",
+             "unrelated crypto carry note", ["family:carry"]))
+        pers = lambda mid, pid, scope, summary: {
+            "memory_id": f"pmem-{mid}", "persona_id": pid, "memory_type": "strategy_lesson",
+            "content": {"summary": summary, "tags": ["family:momentum", "underlying:2330"]},
+            "source_event_type": "postmortem_published", "source_event_id": f"PM-{mid}",
+            "written_at": "2026-06-09T01:00:00Z", "write_authority": "incident-svc",
+            "relevance_scope": scope, "reuse_count": 0, "tenant_id": TENANT}
+        post("/api/memory/persona-entries", pers("aaaaaaaa-1111-1111-1111-111111111111", "persona-a",
+             "persona_private", "private momentum 2330 sizing lesson"))
+        post("/api/memory/persona-entries", pers("aaaaaaaa-2222-2222-2222-222222222222", "persona-a",
+             "persona_and_committee", "shared momentum 2330 committee lesson"))
+        post("/api/memory/persona-entries", pers("bbbbbbbb-1111-1111-1111-111111111111", "persona-b",
+             "persona_private", "persona b private momentum 2330 secret"))
+
+    def owners(self, refs, down=()):
+        pool = {"/api/personas/persona-a/strategy-pool/versions": {"versions": [], "refusals": [
+                    {"refusal_id": "ref-1", "reason": "correlation_cap"}]},
+                "/api/personas/persona-a/strategy-pool": {"pool_version": 4, "members": list(refs)}}
+        telemetry = {"/api/telemetry/runtime-summaries": {"summaries": [{
+            "persona_capital_binding_id": "bind-1", "tenant_id": TENANT,
+            "member_virtual_books": [{"member_id": r, "net_of_costs": {"pnl": 12}} for r in refs]}]}}
+        research = {"/api/research-orchestrator/backtest-runs/bt-1/owner-binding": {
+            "status": "done", "gate_verdict": {"passed": True}, "evaluation_digest": "d"}}
+        search = {"/api/search/v2/query": {"retrieval_mode": "keyword", "results": [{
+            "result_id": "r1", "evidence_bundle_id": "eb-1", "relevance_score": 0.7,
+            "citations": ["doc-9"], "answer_context": "ctx",
+            "matched_items": [{"object_id": "doc-9", "excerpt": "momentum 2330 backtest note"}]}]}}
+        self.fixtures = {n: _Fixture(r) for n, r in {
+            "registry": _registry(refs), "research": research, "pool": pool,
+            "telemetry": telemetry, "search": search}.items() if n not in down}
+        for f in self.fixtures.values():
+            self.addCleanup(f.shutdown)
+        ep = {n: f.endpoint for n, f in self.fixtures.items()}
+        return cf.Owners(registry=ep.get("registry"), research=ep.get("research"), pool=ep.get("pool"),
+                         telemetry=ep.get("telemetry"), memory=self.memory, search=ep.get("search"))
+
+    def _subject(self, decision_type, refs):
+        return cf.Subject(decision_type=decision_type, persona_id="persona-a", tenant_id=TENANT,
+                          strategy_family="momentum", underlyings=("2330",), instrument_class="equity",
+                          member_artifact_refs=tuple(refs), backtest_run_refs=("bt-1",),
+                          persona_capital_binding_id="bind-1")
+
+    def _compose(self, decision_type, refs, caller, **kw):
+        out = cf.compose_case_file(self._subject(decision_type, refs), caller, self.owners(refs, **kw))
+        jsonschema.validate(out, SCHEMA)
+        return out
+
+    def test_trial_admission_for_the_persona_itself(self):
+        me = cf.Caller("persona-a", ("persona_session",), "sess-1", persona_id="persona-a")
+        out = self._compose("trial_admission", ["reg-new"], me)
+        g = out["groups"]
+        self.assertEqual({i["kind"] for i in g["facts"]["items"]},
+                         {"registry_entry", "backtest_gate_verdict", "strategy_pool", "member_virtual_book"})
+        self.assertEqual(g["facts"]["status"], "ok", g["facts"])
+        hist = {i["kind"]: i for i in g["similar_history"]["items"]}
+        self.assertIn("retired_strategy", hist); self.assertIn("pool_refusal", hist)
+        self.assertIn("memory_negative_memory", hist)
+        lessons = {i["source_id"]: i for i in g["lessons"]["items"]}
+        self.assertIn("pmem-aaaaaaaa-1111-1111-1111-111111111111", lessons)   # own private
+        self.assertIn("pmem-aaaaaaaa-2222-2222-2222-222222222222", lessons)   # committee-shared
+        self.assertFalse([s for s in lessons if "bbbbbbbb" in s])             # other persona never
+        self.assertNotIn("mem-33333333-3333-3333-3333-333333333333", lessons)  # unrelated, filtered
+        for it in g["lessons"]["items"] + g["evidence"]["items"]:
+            self.assertTrue(it["source_id"] and it["excerpt"] and it["retrieval_mode"])
+        self.assertEqual(g["evidence"]["items"][0]["source_id"], "doc-9")
+        self.assertEqual(g["evidence"]["items"][0]["retrieval_mode"], "keyword")
+
+    def test_member_removal_as_operator_excludes_private_memory(self):
+        op = cf.Caller("op-1", ("operator",), "sess-2")
+        out = self._compose("member_removal", ["reg-m1"], op)
+        ids = {i["source_id"] for i in out["groups"]["lessons"]["items"]}
+        self.assertNotIn("pmem-aaaaaaaa-1111-1111-1111-111111111111", ids)
+        self.assertFalse([s for s in ids if "bbbbbbbb" in s])
+        self.assertIn("pmem-aaaaaaaa-2222-2222-2222-222222222222", ids)
+        self.assertIn("caller_is_not_the_persona",
+                      [u["reason"] for u in out["groups"]["lessons"]["unavailable"]])
+        self.assertTrue(any(i["kind"] == "member_virtual_book" and i["source_id"] == "reg-m1"
+                            for i in out["groups"]["facts"]["items"]))
+
+    def test_facts_come_from_owners_not_search(self):
+        op = cf.Caller("op-1", ("operator",), "sess-2")
+        out = self._compose("member_removal", ["reg-m1"], op)
+        self.assertTrue(all(i["source_owner"] != "search" for i in out["groups"]["facts"]["items"]))
+        search_calls = [c for c in self.fixtures["search"].calls]
+        self.assertTrue(all(c[1].startswith("/api/search/v2/query") for c in search_calls))
+
+    def test_missing_owner_is_recorded(self):
+        op = cf.Caller("op-1", ("operator",), "sess-2")
+        out = self._compose("member_removal", ["reg-m1"], op, down=("search", "registry"))
+        self.assertEqual(out["groups"]["evidence"]["status"], "unavailable")
+        self.assertIn("owner_unconfigured", out["groups"]["evidence"]["reason"])
+        self.assertIn("registry:reg-m1", [u["owner"] for u in out["groups"]["facts"]["unavailable"]])
+
+
+if __name__ == "__main__":
+    unittest.main()
