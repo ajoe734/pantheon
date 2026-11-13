@@ -100,7 +100,7 @@ def test_loader_pins_recorded_source_dataset_and_lineage(source_case):
         governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, {"artifact_ref": "candidate"})
 
 
-def run_cycle(tmp_path, source_case):
+def run_cycle(tmp_path, source_case, monkeypatch):
     env, _, _ = source_case
     pool_module = importlib.import_module("services.control_plane.persona.persona_strategy_pool")
     policy = importlib.import_module("services.control_plane.persona.pool_policy").load_policy()
@@ -139,7 +139,21 @@ def run_cycle(tmp_path, source_case):
     initial = pool.current(PERSONA["persona_id"], PERSONA["tenant_id"])
     book = candidate_virtual_book(dataset=recorded_dataset(), artifact=entries[current["artifact_ref"]]["metadata"]["strategy_artifact"],
                                   checksum=current["checksum"], policy=policy)
-    ports = HttpPoolCyclePorts(transport, pool_store=pool, dataset_loader=governed_dataset_loader(env, clock=lambda: NOW), env=env)
+    # Only the consultation owner's HTTP boundary is faked. The risk panel for this exact candidate and pool version
+    # was already answered and published; the cycle and the pool owner both run the real shared memo verification.
+    from services.persona.consult_triggers import trial_admission_requirement
+    from services.research.tests.test_persona_cycle_demand_integration import FakeConsultationOwner
+    import services.consultation.client as consultation_client
+    owner = FakeConsultationOwner()
+    monkeypatch.setattr(consultation_client, "ConsultationServiceClient", owner.factory)
+    requirement = trial_admission_requirement(PERSONA["tenant_id"], PERSONA["persona_id"], candidate["artifact_ref"],
+                                              candidate["checksum"], initial["pool_version"])
+    owner.factory(PERSONA["tenant_id"], f"persona:{PERSONA['persona_id']}").open_persona_panel(
+        requirement, persona_id=PERSONA["persona_id"], trace_id="ooda://fixture", tenant_id=PERSONA["tenant_id"],
+        request_id="consult-" + requirement.decision_id)
+    owner.publish({p["persona_id"]: "approve" for p in owner.requests["consult-" + requirement.decision_id]["metadata"]["panel"]["participants"]})
+    ports = HttpPoolCyclePorts(transport, pool_store=pool, dataset_loader=governed_dataset_loader(env, clock=lambda: NOW), env=env,
+                               consultation_factory=owner.factory)
     result = PoolAutonomyCycle(ports, now=lambda: NOW.isoformat()).run(PERSONA, {
         "pool": initial, "pool_health": {"demand_reasons": ["low_risk_budget_utilisation"]},
         "books": {current["artifact_ref"]: book}, "observations": [], "unavailable": [],
@@ -150,8 +164,8 @@ def run_cycle(tmp_path, source_case):
     return packet, pool.current(PERSONA["persona_id"], PERSONA["tenant_id"]), http
 
 
-def test_cycle_real_loader_and_candidate_replay_use_source_dataset_version(tmp_path, source_case):
-    packet, pool, _ = run_cycle(tmp_path, source_case)
+def test_cycle_real_loader_and_candidate_replay_use_source_dataset_version(tmp_path, source_case, monkeypatch):
+    packet, pool, _ = run_cycle(tmp_path, source_case, monkeypatch)
     result = packet["pool_autonomy"]
     assert result["decide"]["kind"] == "admit_trial", result
     assert result["act"]["receipts"][0]["status"] in {"applied", "refused"}, result
@@ -168,7 +182,7 @@ def test_cycle_real_loader_and_candidate_replay_use_source_dataset_version(tmp_p
 
 
 @pytest.mark.parametrize("failure", ["missing_config", "missing_token", "source_rejected", "stale_readback", "missing_storage", "invalid_policy"])
-def test_rejected_authority_records_ooda_reason_without_admission(tmp_path, source_case, failure):
+def test_rejected_authority_records_ooda_reason_without_admission(tmp_path, source_case, failure, monkeypatch):
     env, responses, _ = source_case
     if failure == "missing_config":
         del env["PERSONA_POOL_SOURCE_CONNECTOR_ID"]
@@ -182,7 +196,7 @@ def test_rejected_authority_records_ooda_reason_without_admission(tmp_path, sour
         (Path(env["PERSONA_POOL_SOURCE_VOLUME_ROOT"]) / "normalized/ingest-authority-001.jsonl").unlink()
     else:
         env["PERSONA_POOL_THRESHOLD_POLICY_PATH"] = str(tmp_path / "absent-policy.json")
-    packet, pool, http = run_cycle(tmp_path, source_case)
+    packet, pool, http = run_cycle(tmp_path, source_case, monkeypatch)
     receipt = packet["pool_autonomy"]["act"]["receipts"][0]
     assert receipt["status"] == "not_attempted", packet
     assert receipt["reason"].startswith("governed_dataset_unavailable:")

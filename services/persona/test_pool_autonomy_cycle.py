@@ -24,6 +24,8 @@ class Ports:
         self.cand, self.recalled, self.demands = list(candidates), set(recalled), list(demands)
         self.families, self.pool_now = families or {}, pool_now
         self.calls, self.memory, self.opened = [], [], []
+        self.consult = {"state": "verified", "memo_id": "memo-1", "decision_id": "d-1", "request_id": "r-1", "pool_version": 3}
+        self.consult_calls, self.operator_queue = [], []
 
     def current_pool(self, persona): return self.pool_now
     def reconcile_demands(self, persona, members): return self.demands
@@ -34,6 +36,12 @@ class Ports:
     def open_demand(self, persona, body):
         self.opened.append(body)
         return {"demand_id": "rd-1", "created": True}
+    def trial_admission_consultation(self, persona, pool, cand, packet_id):
+        self.consult_calls.append((cand["artifact_ref"], pool["pool_version"], packet_id))
+        return self.consult
+    def queue_operator_decision(self, persona, pool, cand, consult):
+        self.operator_queue.append((cand["artifact_ref"], consult["reason"]))
+        return {"decision_id": "op-1", "status": "queued"}
     def admission_dataset(self, persona, candidate): return {"records": []}
     def candidate_book(self, persona, candidate, dataset):
         return {"checksum": candidate["checksum"], "source_ref": "governed-replay:test", "since_inception": True}
@@ -248,3 +256,124 @@ def test_candidates_resolve_spec_admissions_to_approved_artifacts_and_unusable_e
     # an artifact without the approved gate proof is not a candidate
     good["replication_success"] = False
     assert HttpPoolCyclePorts(transport).candidates({"persona_id": "p1", "tenant_id": "t1"}, {"members": []}) == []
+
+
+CAND = [{"artifact_ref": "cand", "checksum": "ck", "family": "momo"}]
+
+
+def _run(ports, packet="pk-1"):
+    return PoolAutonomyCycle(ports, now=lambda: "2026-11-12T00:00:00Z").run(PERSONA, observe(pool(member("a"))), packet)
+
+
+def test_admission_decision_opens_consultation_and_does_not_admit_in_that_cycle():
+    ports = Ports(candidates=CAND, families={"cand": "momo"})
+    ports.consult = {"state": "opened", "decision_id": "d-1", "request_id": "r-1"}
+    out = _run(ports)
+    assert ports.calls == [] and out["decide"]["kind"] == "admit_trial"
+    assert out["act"]["receipts"][0]["status"] == "consultation_opened"
+    # pending is neither a refused admission nor a tried family
+    assert [e["outcome"] for e in ports.memory] == ["admission_pending"]
+    assert out["learn"]["tried_families"] == []
+    assert not any(t.startswith("tried_family") for e in ports.memory for t in e.get("tags", []))
+    assert "admission_refused" not in out["learn"]["memory_entries"]
+
+
+def test_pending_consultation_is_recorded_pending_every_cycle_without_admission():
+    ports = Ports(candidates=CAND)
+    ports.consult = {"state": "pending", "decision_id": "d-1", "request_id": "r-1"}
+    out = _run(ports)
+    assert ports.calls == [] and out["act"]["receipts"][0]["status"] == "consultation_pending"
+    assert out["learn"]["memory_entries"] == ["admission_pending"]
+
+
+def test_verified_memo_admits_with_memo_id_as_persona_initiated():
+    ports = Ports(candidates=CAND)
+    out = _run(ports)
+    call = ports.calls[0]
+    assert call["initiated_by"] == "persona" and call["consultation_memo_id"] == "memo-1" and call["action"] == "admit"
+    assert call["consultation_pool_version"] == 3
+    assert out["act"]["receipts"][0]["consultation_memo_id"] == "memo-1"
+
+
+@pytest.mark.parametrize("reason", ["risk_persona_requires_operator", "panel_conditions_require_operator", "consultation_canceled"])
+def test_oppose_or_ambiguous_answer_becomes_operator_decision_and_never_admits(reason):
+    ports = Ports(candidates=CAND)
+    ports.consult = {"state": "operator", "reason": reason, "decision_id": "d-1", "request_id": "r-1"}
+    out = _run(ports)
+    receipt = out["act"]["receipts"][0]
+    assert ports.calls == [] and receipt["status"] == "operator_decision_required"
+    assert receipt["operator_decision"]["status"] == "queued" and ports.operator_queue == [("cand", reason)]
+    assert out["learn"]["memory_entries"] == ["admission_operator_decision"]
+
+
+@pytest.mark.parametrize("break_it", ["missing_port", "raises"])
+def test_missing_consultation_fails_closed_with_recorded_reason(break_it):
+    ports = Ports(candidates=CAND)
+    if break_it == "missing_port":
+        del Ports.trial_admission_consultation
+    else:
+        ports.trial_admission_consultation = lambda *a: (_ for _ in ()).throw(RuntimeError("consultation down"))
+    try:
+        out = _run(ports)
+    finally:
+        if break_it == "missing_port":
+            Ports.trial_admission_consultation = lambda self, persona, pool, cand, packet_id: self.consult
+    receipt = out["act"]["receipts"][0]
+    assert ports.calls == [] and receipt["status"] == "not_attempted" and receipt["reason"].startswith("consultation_unavailable")
+    assert ports.memory == []
+
+
+def test_http_ports_open_once_verify_published_memo_and_queue_operator_decision():
+    """Port-level: one request per candidate+pool version; published memo goes through the shared verification."""
+    from types import SimpleNamespace
+    from services.persona import consult_triggers as ct
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+    opened, requests, memos, posts = [], [], [], []
+    class Client:
+        def list_requests(self, **kw): return list(requests)
+        def list_memos(self, **kw): return list(memos)
+        def open_persona_panel(self, requirement, **kw):
+            opened.append((requirement, kw))
+            requests.append({"request_id": kw["request_id"], "status": "submitted", "target_id": requirement.decision_id,
+                             "from_persona_id": kw["persona_id"], "metadata": {"panel": requirement.to_panel_metadata()}})
+            return {"request_id": kw["request_id"]}
+    seen_actor = []
+    def factory(tenant, actor=None):
+        seen_actor.append(actor)
+        return Client()
+    def transport(method, service, path, tenant, body=None):
+        posts.append((service, path, body)); return {}
+    versions = {3: pool(member("a"), version=3), 4: pool(member("a"), version=4), 5: pool(member("a"), member("z"), version=5)}
+    store = SimpleNamespace(version=lambda pid, tenant, n: versions[n])
+    ports = HttpPoolCyclePorts(transport, consultation_factory=factory, pool_store=store, env={})
+    cand = {"artifact_ref": "cand", "checksum": "ck"}
+    first = ports.trial_admission_consultation(PERSONA, pool(member("a"), version=3), cand, "pk-1")
+    again = ports.trial_admission_consultation(PERSONA, pool(member("a"), version=3), cand, "pk-2")
+    assert first["state"] == "opened" and again["state"] == "pending" and len(opened) == 1
+    requirement, kw = opened[0]
+    assert requirement.decision_type == "trial_admission" and requirement.risk_persona_id == ct.RISK_PERSONA_ID
+    assert requirement.target_version == "3" and kw["persona_id"] == "p1" and "persona:p1" in seen_actor
+    # the daily reweight appends a version: same live membership keeps the same consultation (no duplicate)...
+    later = ports.trial_admission_consultation(PERSONA, versions[4], cand, "pk-2b")
+    assert later["state"] == "pending" and later["pool_version"] == 3 and len(opened) == 1
+    # ...while a membership change makes it a different decision and a new consultation
+    changed = ports.trial_admission_consultation(PERSONA, versions[5], cand, "pk-2c")
+    assert changed["state"] == "opened" and changed["pool_version"] == 5 and len(opened) == 2
+    assert ct.trial_admission_decision_id("t1", "p1", "cand", "ck", 4) != requirement.decision_id
+    requests.pop()  # drop the version-5 request again; the rest of the scenario is on version 3
+    requests[0]["status"] = "published"
+    assert ports.trial_admission_consultation(PERSONA, pool(member("a"), version=3), cand, "pk-3")["state"] == "pending"  # no memo yet
+    memos.append({"memo_id": "memo-9"})
+    original = ct.verify_published_memo
+    try:
+        ct.verify_published_memo = lambda *a, **k: ct.MemoCheck(False, "risk_persona_requires_operator")
+        oppose = ports.trial_admission_consultation(PERSONA, pool(member("a"), version=3), cand, "pk-4")
+        ct.verify_published_memo = lambda *a, **k: ct.MemoCheck(True)
+        ok = ports.trial_admission_consultation(PERSONA, pool(member("a"), version=3), cand, "pk-5")
+    finally:
+        ct.verify_published_memo = original
+    assert oppose["state"] == "operator" and ok == {"state": "verified", "memo_id": "memo-9", "decision_id": requirement.decision_id,
+                                                       "request_id": requests[0]["request_id"], "pool_version": 3}
+    queued = ports.queue_operator_decision(PERSONA, pool(member("a"), version=3), cand, oppose)
+    assert queued["status"] == "queued" and posts[-1][1] == "/api/evolution/proposals"
+    assert posts[-1][2]["metadata"]["operator_required"] is True and posts[-1][2]["metadata"]["candidate"]["artifact_ref"] == "cand"

@@ -26,6 +26,55 @@ TENANT, PID = "tenant-a", "persona-pool-cycle"
 JOINED = "2026-10-05T00:00:00+00:00"
 
 
+class FakeConsultationOwner:
+    """The consultation owner's HTTP boundary (fixture). Opening records the request exactly as the real
+    client posts it; the *provider* answers (transcripts, memo, publication) are driven by the test."""
+
+    def __init__(self):
+        self.requests, self.memos, self.transcripts, self.opened_by = {}, {}, [], []
+
+    def factory(self, tenant_id=None, service_actor=None, **_):
+        owner = self
+        class Client:
+            def list_requests(self, *, target_type=None, target_id=None, status=None, tenant_id=None):
+                return [dict(r) for r in owner.requests.values()
+                        if (not target_type or r["target_type"] == target_type) and (not target_id or r["target_id"] == target_id)]
+            def get_request(self, request_id, *, tenant_id=None):
+                return dict(owner.requests[request_id]) if request_id in owner.requests else None
+            def list_memos(self, *, request_id=None, status=None):
+                return [dict(m) for m in owner.memos.values()
+                        if (not request_id or m["request_id"] == request_id) and (not status or m["status"] == status)]
+            def get_memo(self, memo_id):
+                return dict(owner.memos[memo_id]) if memo_id in owner.memos else None
+            def list_transcripts(self):
+                return [dict(t) for t in owner.transcripts]
+            def open_persona_panel(self, requirement, *, persona_id, trace_id, task=None, evidence_refs=None,
+                                   request_id=None, tenant_id=None):
+                assert requirement.initiator_persona_id == persona_id and service_actor == f"persona:{persona_id}"
+                assert request_id not in owner.requests, "duplicate consultation opened"
+                owner.opened_by.append(service_actor)
+                owner.requests[request_id] = {
+                    "request_id": request_id, "tenant_id": tenant_id, "status": "submitted", "from_persona_id": persona_id,
+                    "target_type": requirement.decision_type, "target_id": requirement.decision_id,
+                    "metadata": {"panel": requirement.to_panel_metadata()}, "trace_id": trace_id}
+                return {"request_id": request_id}
+        return Client()
+
+    def publish(self, recommendations):
+        """Providers answered: one contribution per panel participant, then the memo is published."""
+        (request,) = self.requests.values()
+        self.transcripts.append({"request_id": request["request_id"], "events": [
+            {"actor": {"actor_type": "persona", "actor_id": p["persona_id"]}, "event_type": "persona_contribution",
+             "content": {"recommendation": recommendations[p["persona_id"]]}, "evidence_refs": ["review:" + p["persona_id"]]}
+            for p in request["metadata"]["panel"]["participants"] if p["persona_id"] in recommendations]})
+        request["status"] = "published"
+        risk = recommendations.get("persona-risk-officer")
+        self.memos["memo-" + request["request_id"]] = {
+            "memo_id": "memo-" + request["request_id"], "request_id": request["request_id"], "status": "published",
+            "target_type": request["target_type"], "target_id": request["target_id"],
+            "recommendation": "approve" if risk == "approve" else "reject"}
+
+
 class StubOwners(CycleOwners):
     """Real risk owner; Observe reads the real pool store with owner-supplied books."""
 
@@ -43,8 +92,13 @@ class StubOwners(CycleOwners):
                 "telemetry_refs": [], "incident_refs": [], "human_feedback_refs": [], "harness_version": 1}
 
 
-def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewed-001", replay_books=False):
-    """Run two daily cycles through the real schedule entry; ``registry`` holds 'current' and 'candidate'."""
+def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewed-001", replay_books=False,
+              answers="approve", final_day=True):
+    """Daily cycles through the real schedule entry; ``registry`` holds 'current' and 'candidate'.
+
+    Day 1 opens the demand, day 2 opens the risk consultation (no admission), the providers then answer
+    (``answers``: 'approve', 'oppose' or None = unanswered) and day 3 acts on the published memo.
+    """
     from datetime import date
     monkeypatch.syspath_prepend(str(importlib.import_module("pathlib").Path(__file__).parents[2] / "control-plane" / "persona"))
     from services.control_plane.persona.persona_strategy_pool import (
@@ -76,7 +130,7 @@ def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewe
 
     clock = [datetime.now(timezone.utc) - timedelta(days=1)]
     demands = ResearchDemandStore(tmp_path / "demands.json", now=lambda: clock[0])
-    memory, supply, http = [], [], []
+    memory, supply, http, proposals = [], [], [], []
 
     def transport(method, service, path, tenant, body=None):
         http.append((method, service, path))
@@ -92,6 +146,11 @@ def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewe
                     if e["metadata"]["strategy_artifact"]["strategy_id"] == path.split("/")[4]]
         if service == "registry":
             return {"entry": registry[path.rsplit("/", 1)[1]]}
+        if service == "evolution" and method == "POST" and path == "/api/evolution/proposals":
+            if any(b["decision_id"] == body["decision_id"] for b in proposals):
+                raise type("HTTPError", (Exception,), {"code": 409})()
+            proposals.append(body)
+            return {"decision_id": body["decision_id"], "decision_state": "proposed"}
         if service == "memory" and method == "POST":
             memory.append(body)
             return {"created": True}
@@ -106,6 +165,9 @@ def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewe
     monkeypatch.setattr(authority, "load_evaluation_authority", lambda *a, **k: SimpleNamespace(vectorbt_dataset=dataset))
     env = {"PERSONA_POOL_CANONICAL_DATASET_PATH": "/governed/dataset.json",
            "PERSONA_POOL_THRESHOLD_POLICY_PATH": "/governed/policy.json"}
+    consult = FakeConsultationOwner()
+    import services.consultation.client as consultation_client
+    monkeypatch.setattr(consultation_client, "ConsultationServiceClient", consult.factory)  # owner HTTP boundary only
     ports = HttpPoolCyclePorts(transport, pool_store=pool, dataset_loader=governed_dataset_loader(env), env=env)
     controller = PersonaCycleController(None, StubOwners(pool, books, observations), store_path=tmp_path / "packets.jsonl",
         turn_runner=lambda *a: SimpleNamespace(status="error", persona_id=PID, decision="", to_dict=lambda: {}),
@@ -136,13 +198,32 @@ def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewe
     cycle2 = day(2)["pool_autonomy"]
     assert cycle2["decide"]["kind"] == "admit_trial", (cycle2["decide"], cycle2["orient"])
     assert cycle2["decide"]["candidate_ref"] == "candidate"  # resolved to the approved execution bundle, not the spec id
-    assert cycle2["act"]["receipts"][0]["route"] == "persona:strategy-pool/decisions"
+    # Day 2 only opens the risk consultation (as persona:<id>); nothing is admitted and nothing is learned as refused.
+    opened = cycle2["act"]["receipts"][0]
+    assert opened["route"] == "consultation:trial_admission" and opened["status"] == "consultation_opened", opened
+    assert consult.opened_by == ["persona:" + PID] and len(consult.requests) == 1
+    assert not any(m["artifact_ref"] == "candidate" for m in pool.current(PID, TENANT)["members"])
+    assert cycle2["learn"]["memory_entries"] == ["admission_pending"] and cycle2["learn"]["tried_families"] == []
+    assert not any(t.startswith("tried_family") for m in memory for t in m["tags"] if "admission_pending" in m["tags"])
     assert [d["status"] for d in demands.list(TENANT, PID)] == ["open"] and len(demands.list(TENANT, PID)) == 1
-    assert len(read_packets(controller.path)) == 2
+    if not final_day:
+        return SimpleNamespace(cycle2=cycle2, pool=pool, memory=memory, artifact=artifact, consult=consult, day=day,
+                               proposals=proposals, demands=demands, http=http)
+    # Day 3 while the consultation is still unanswered: pending again, no second consultation, no admission.
+    pending = day(3)["pool_autonomy"]
+    assert pending["act"]["receipts"][0]["status"] == "consultation_pending" and len(consult.requests) == 1
+    assert pending["learn"]["memory_entries"] == ["admission_pending"]
+    if answers is not None:
+        persona_ids = [p["persona_id"] for p in next(iter(consult.requests.values()))["metadata"]["panel"]["participants"]]
+        consult.publish({pid_: ("approve" if answers == "approve" or pid_ != "persona-risk-officer" else "reject")
+                         for pid_ in persona_ids})
+    cycle2 = day(4)["pool_autonomy"]
+    assert len(read_packets(controller.path)) == 4
     assert all(p["pool_autonomy"]["act"]["paper_only"] and not p["act"]["live_capital_side_effects"]
                for p in read_packets(controller.path).values())
     assert not any(service in ("capital", "provisioning") for _, service, _ in http)
-    return SimpleNamespace(cycle2=cycle2, pool=pool, memory=memory, artifact=artifact)
+    return SimpleNamespace(cycle2=cycle2, pool=pool, memory=memory, artifact=artifact, consult=consult, day=day,
+                           proposals=proposals, demands=demands, http=http)
 
 
 def _spec_linked(entry, spec_id="spec-reviewed-001"):
@@ -165,14 +246,10 @@ def twse_recorded_dataset(symbols=("2330", "2883")):
             "data_frequency": "daily", "source_dataset_refs": [d["source_url"] for d in payload["days"]], "records": records}
 
 
-def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatch):
-    """Acceptance 7 on recorded TWSE prices with the unmodified pool policy and real gate result recorded.
+def twse_admittable_registry():
+    """Registry responses (owner fixtures) for the recorded-TWSE candidate that passes the real admission policy.
 
-    Only the owner HTTP responses are fixtures (AC7). Both registry responses (the pool's current 2330+2883 member
-    and the 2883 candidate) carry an approved baseline that is the owner's fixture; the artifacts are exactly what
-    build_canonical_tw_strategy_artifact returns, with their own computed checksums and real backtests on the recorded
-    prices. The same candidate on the same data does NOT pass the real ReplicationGate (asserted below). The pool
-    store, admission replay, candidate book and pool policy are real and unmodified.
+    Returns ``(registry, dataset, new_artifact, checksum)``; asserts the candidate is not passed off as gate-approved.
     """
     from services.registry.strategy_artifact import strategy_artifact_checksum
     from services.research.replication.gate import ReplicationGate
@@ -228,7 +305,18 @@ def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatc
     gate.backtest_run_store.record(evaluation)
     gate_failed = [r.criterion_id for r in gate.evaluate_candidate(request).results if not r.passed]
     assert gate_failed, "the candidate must not be passed off as gate-approved"
+    return registry, dataset, new, checksum
 
+
+def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatch):
+    """Acceptance 7 on recorded TWSE prices with the unmodified pool policy and real gate result recorded.
+
+    Only the owner HTTP responses are fixtures (AC7). See ``twse_admittable_registry`` for the registry fixtures; the pool
+    store, admission replay, candidate book and pool policy are real and unmodified. The trial is admitted only after the
+    risk consultation opened on one cycle is published and verified on a later one.
+    """
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    registry, dataset, new, checksum = twse_admittable_registry()
     out = _two_days(tmp_path, monkeypatch, registry=registry, dataset=dataset, replay_books=True)
     receipt = out.cycle2["act"]["receipts"][0]
     assert receipt["status"] != "refused", (receipt, out.pool.current(PID, TENANT).get("decision"), out.pool.current(PID, TENANT))
@@ -252,3 +340,62 @@ def test_two_daily_cycles_genuine_fixture_artifact_refusal_recorded(tmp_path, mo
     assert out.cycle2["learn"]["memory_entries"] == ["admission_refused"], out.cycle2["learn"]
     assert any(f"tried_family:{out.artifact['strategy_id']}" in m["tags"] for m in out.memory)
 
+
+
+# --- trial admission via risk persona consultation (moved from services/persona: needs the Research venv's numpy/vectorbt) ---
+def test_consultation_opened_then_trial_member_admitted_after_approving_memo(tmp_path, monkeypatch):
+    registry, dataset, _, checksum = twse_admittable_registry()
+    out = _two_days(tmp_path, monkeypatch, registry=registry, dataset=dataset, replay_books=True, answers="approve")
+    pool = out.pool.current(PID, TENANT)
+    members = {m["artifact_ref"]: m for m in pool["members"]}
+    assert members["candidate"]["stage"] == "trial" and members["candidate"]["checksum"] == checksum
+    receipt = out.cycle2["act"]["receipts"][0]
+    request = next(iter(out.consult.requests.values()))
+    memo_id = "memo-" + request["request_id"]
+    assert receipt["status"] == "applied" and receipt["consultation_memo_id"] == memo_id
+    # the pool owner linked the memo as evidence on the applied admission, bound to the consultation's pool version
+    decision = pool["decision"]
+    assert decision["consultation_memo_id"] == memo_id
+    assert decision["evidence_refs"] == [{"ref_type": "consultation_memo", "ref_id": memo_id}]
+    assert decision["consultation_pool_version"] == int(request["metadata"]["panel"]["gated_decision"]["target_version"])
+    gated = request["metadata"]["panel"]["gated_decision"]
+    assert gated["type"] == "trial_admission" and gated["candidate_digest"] and len(out.consult.requests) == 1
+    assert out.consult.opened_by == ["persona:" + PID] and out.proposals == []
+    assert out.cycle2["learn"]["memory_entries"] == ["admitted"]
+
+
+def test_risk_oppose_becomes_operator_decision_and_never_admits(tmp_path, monkeypatch):
+    registry, dataset, _, _ = twse_admittable_registry()
+    out = _two_days(tmp_path, monkeypatch, registry=registry, dataset=dataset, replay_books=True, answers="oppose")
+    receipt = out.cycle2["act"]["receipts"][0]
+    assert receipt["status"] == "operator_decision_required" and receipt["reason"] == "risk_persona_requires_operator"
+    assert receipt["operator_decision"]["status"] == "queued"
+    assert not any(m["artifact_ref"] == "candidate" for m in out.pool.current(PID, TENANT)["members"])
+    (proposal,) = out.proposals
+    assert proposal["metadata"]["operator_required"] is True and proposal["metadata"]["candidate"]["artifact_ref"] == "candidate"
+    # not a refused admission and not a tried family
+    assert out.cycle2["learn"]["memory_entries"] == ["admission_operator_decision"] and out.cycle2["learn"]["tried_families"] == []
+    assert not any(t.startswith("tried_family:strat-tw-2883") for m in out.memory for t in m["tags"])
+    # the next daily cycle neither admits nor opens a second consultation nor queues a second decision
+    again = out.day(5)["pool_autonomy"]
+    assert again["act"]["receipts"][0]["status"] == "operator_decision_required"
+    assert again["act"]["receipts"][0]["operator_decision"]["status"] == "already_queued"
+    assert len(out.consult.requests) == 1 and len(out.proposals) == 1
+    assert not any(m["artifact_ref"] == "candidate" for m in out.pool.current(PID, TENANT)["members"])
+
+
+def test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed(tmp_path, monkeypatch):
+    registry, dataset, _, _ = twse_admittable_registry()
+    out = _two_days(tmp_path, monkeypatch, registry=registry, dataset=dataset, replay_books=True, answers=None)
+    receipt = out.cycle2["act"]["receipts"][0]
+    assert receipt["status"] == "consultation_pending" and len(out.consult.requests) == 1
+    assert not any(m["artifact_ref"] == "candidate" for m in out.pool.current(PID, TENANT)["members"])
+    # consultation owner becomes unreachable: recorded reason, still no admission
+    import services.consultation.client as consultation_client
+
+    def down(*a, **k):
+        raise ConnectionError("consultation owner down")
+    monkeypatch.setattr(consultation_client, "ConsultationServiceClient", down)
+    failed = out.day(5)["pool_autonomy"]["act"]["receipts"][0]
+    assert failed["status"] == "not_attempted" and failed["reason"].startswith("consultation_unavailable:ConnectionError")
+    assert not any(m["artifact_ref"] == "candidate" for m in out.pool.current(PID, TENANT)["members"])
