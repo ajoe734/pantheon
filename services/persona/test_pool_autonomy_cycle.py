@@ -235,7 +235,7 @@ def test_candidates_resolve_spec_admissions_to_approved_artifacts_and_unusable_e
     rows = [row("spec-pending", "pending"), row("spec-dlq", "dlq", "boom"), row("spec-unlinked", "completed"), row("spec-good", "completed")]
 
     def transport(method, service, path, tenant, body=None):
-        return rows if service == "research" else [good]
+        return rows if service == "research" else [{"entry": good, "deployment_stage": None}]
     out = HttpPoolCyclePorts(transport).candidates({"persona_id": "p1", "tenant_id": "t1"}, {"members": []})
     assert out == [{"artifact_ref": good["registry_id"], "checksum": good["checksum"], "family": family, "demand_ref": None}]
     # already-pooled artifacts are not re-offered

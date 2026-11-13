@@ -88,7 +88,8 @@ def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewe
         if service == "research" and "alpha-replication" in path:
             return list(supply)
         if service == "registry" and path.endswith("/entries") and "/strategies/" in path:
-            return [e for e in registry.values() if e["metadata"]["strategy_artifact"]["strategy_id"] == path.split("/")[4]]
+            return [{"entry": e, "deployment_stage": None} for e in registry.values()
+                    if e["metadata"]["strategy_artifact"]["strategy_id"] == path.split("/")[4]]
         if service == "registry":
             return {"entry": registry[path.rsplit("/", 1)[1]]}
         if service == "memory" and method == "POST":
@@ -190,29 +191,33 @@ def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatc
     checksum = strategy_artifact_checksum(new)
 
     def owner_entry(name, artifact):
-        """Owner HTTP fixture: registry response whose approved baseline is the owner's (gate-proof verdict).
+        """Owner HTTP fixture (recorded-data scope): a registry response whose gate proof is the owner's to give.
 
-        Shell and gate-proof fields come from the genuine entry; identity, checksum, run id and OOS metrics are the
-        artifact's own computed values and its real backtest on the recorded prices.
+        Identity, checksum, run id and OOS metrics are the artifact's own computed values and its real backtest on
+        the recorded prices; the persisted proof/binding is rewritten coherently around them (explicitly a fixture:
+        the real ReplicationGate refuses this artifact, asserted below). The local baseline validator is untouched.
         """
         evaluation = run_replication_backtest_protocol(strategy_artifact=artifact, dataset=dataset, run_id="bt-" + name)
         oos = evaluation["out_of_sample"]
-        return _spec_linked({**copy.deepcopy(shell), "registry_id": name, "checksum": strategy_artifact_checksum(artifact),
-            "approval_decision_id": "dec-fixture-" + name, "producer_run_id": "bt-" + name, "artifact_type": "execution_bundle",
-            "evaluation_summary": {**shell["evaluation_summary"], "backtest_run_id": "bt-" + name,
-                "out_of_sample_sharpe_ratio": oos["sharpe_ratio"], "max_drawdown": oos["max_drawdown"]},
-            "lineage": {**shell["lineage"], "source_run_ids": ["bt-" + name]}, "metadata": {"strategy_artifact": artifact}})
+        run_id, cs = "bt-" + name, strategy_artifact_checksum(artifact)
+        summary = {**shell["evaluation_summary"], "backtest_run_id": run_id,
+                   "out_of_sample_sharpe_ratio": oos["sharpe_ratio"], "max_drawdown": oos["max_drawdown"]}
+        proof = copy.deepcopy(shell["replication_proof"])
+        proof["backtest_run_id"], proof["evaluation_summary"] = run_id, copy.deepcopy(summary)
+        for result in proof["replication_results"]:
+            if result.get("criterion_id") == "real_backtest_validation":
+                result["details"].update({"backtest_run_id": run_id, "out_of_sample_sharpe_ratio": oos["sharpe_ratio"],
+                                          "out_of_sample_max_drawdown": oos["max_drawdown"]})
+        proof["owner_verified_binding"].update({"backtest_run_id": run_id, "artifact_checksum": cs,
+            "out_of_sample_sharpe_ratio": oos["sharpe_ratio"], "out_of_sample_max_drawdown": oos["max_drawdown"]})
+        return _spec_linked({**copy.deepcopy(shell), "registry_id": name, "checksum": cs,
+            "approval_decision_id": "dec-fixture-" + name, "producer_run_id": run_id, "artifact_type": "execution_bundle",
+            "evaluation_summary": summary, "replication_proof": proof,
+            "lineage": {**shell["lineage"], "source_run_ids": [run_id]}, "metadata": {"strategy_artifact": artifact}})
 
     current, candidate = owner_entry("current", base), owner_entry("candidate", new)
     current["lineage"].pop("source_strategy_spec_id", None)
     registry = {"current": current, "candidate": candidate}
-    # The registry owner's persisted-gate-proof verdict for the fixture entry is the owner's to give (HTTP fixture);
-    # every other baseline check (approved state, checksum vs embedded artifact, run lineage, metrics) stays real.
-    from services.evolution import approved_baselines
-    real_proof_failure = approved_baselines._gate_proof_failure
-    monkeypatch.setattr(approved_baselines, "_gate_proof_failure",
-                        lambda entry, summary, run_id, cs: None if cs in (checksum, current["checksum"]) else real_proof_failure(entry, summary, run_id, cs))
-
     # Real gate on the same artifact and recorded data: refused (not a genuinely gate-approved artifact).
     gate_dataset = twse_recorded_dataset(("2330", "2883", "0050"))  # + 0050 for the gate's benchmark requirement
     evaluation = run_replication_backtest_protocol(strategy_artifact=new, dataset=gate_dataset, run_id="bt-candidate-gate")

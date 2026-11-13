@@ -356,7 +356,11 @@ class HttpPoolCyclePorts:
                 versions = self._call("GET", "registry", "/api/registry/strategies/" + quote(str(family), safe="") + "/entries", persona)
             except Exception:  # noqa: BLE001 - unreadable owner evidence is not a candidate
                 continue
-            for entry in versions or []:
+            for view in versions or []:
+                # The registry owner returns RegistryEntryView rows: {entry, deployment_stage}.
+                entry = view.get("entry") if isinstance(view, dict) else None
+                if not isinstance(entry, dict):
+                    continue
                 ref = entry.get("registry_id")
                 artifact = (entry.get("metadata") or {}).get("strategy_artifact")
                 if (not ref or ref in in_pool or ref in seen or entry.get("artifact_type") != "execution_bundle"
