@@ -133,6 +133,46 @@ Sources are listed in §9.
   receiving weight.
 * Backtest and paper use the same combination function (parity test).
 
+**Operator-approved direction and engineering amendment, 2026-11-13**
+(`PERSONA-POOL-TARGET-POSITIONS-20261113`, PR #7303). The original P-1/P-5
+obligations are combined net views and daily strategy-selected picks. The
+allocation and reconciliation below materially change the original
+expression-unchanged assumption above; they are not implied by that assumption.
+The primary record has now been independently checked: Claude Code session
+`cb4f6795-9064-4bb2-ab77-c0740122bce1`, at
+`/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/cb4f6795-9064-4bb2-ab77-c0740122bce1.jsonl`,
+line 467 (2026-11-13T06:52:40.828Z), proposes daily unpinned pools, allocation
+across underlyings before expression, target-versus-held reconciliation and
+member exits from their own virtual books, before a second strategy trades.
+Line 475 (06:54:55.847Z), user message
+`cd23b4d9-24d7-4799-842b-b9fc9170245b`, replies 「好」 to that proposal.
+This approves the direction; the policy name, exact allocation formula and
+numeric band below remain engineering choices, not operator numerical decisions.
+The evidence manifest records the message identities and hashes. Historical
+technical review is preserved; the current PR head requires independent review
+before integration. This amendment does not establish deployment or activation.
+
+Weights belong to strategies.
+The pinned envelope fixes member artifacts, weights, combination rule and risk
+limits. Every bar evaluates each member with its own position history, converts
+its exit to a zero member target and combines all views before allocating
+capital. `raw[s] = abs(net[s]) × notional_fraction_at_full_strength × gross_limit`;
+if the sum exceeds the gross budget, multiply all targets by the same factor.
+Order of symbol evaluation cannot change these targets.
+
+Multi-member and screened envelopes use `target_position_v1`: zero net closes
+held legs, a weaker net reduces them, an increased target adds only the delta,
+and an opposite target closes before reversal on the next bar. The rebalance
+band is the larger of one held unit's notional and
+`rebalance_band_fraction × target`. The starting fraction `0.2` is the
+coordinator's proposal, not an operator numerical decision. The band, member
+snapshot digests, book and bar allocation inputs are recorded for replay.
+The fraction is already a source default in the proposed envelope builder and
+target policy/replay code, not merely an illustrative value.
+A full-weight unscreened singleton and standalone strategies retain
+`notional_target_v1` with identical decisions. Existing risk gates and limits
+remain authoritative.
+
 ### 4.3 Universe (decision P-5)
 
 * The persona declares a permitted universe P; each member selects its trade-time universe U(D) ⊆ P by the
@@ -141,6 +181,20 @@ Sources are listed in §9.
 * The persona may propose widening P inside the governed Taiwan list (symbols with governed daily bars and
   the point-in-time history the gate needs). Within paper this needs no approval; the change is recorded as
   a pool-level decision with its reason.
+
+The **2026-11-13 approved direction** implements the existing P-5 requirement
+with daily picks outside the pinned envelope: an envelope does not enumerate
+screened members' picks. The snapshots themselves remain recorded and identified
+by digest. This dynamic-pick obligation is distinct from the proposed expression
+policy details in §4.2; the same direct decision cited there covers this direction. Each
+screened member evaluates the complete governed market through the same
+candidate-pool snapshot path as a standalone binding. Its per-bar digest
+identifies those picks; changing that snapshot never changes member weights
+or requires a new pool version. The combined decision universe contains fixed
+member symbols, the current screened picks and every underlying the persona
+still holds. A removed pick with an open member position emits that member's
+exit and lowers the combined target. Missing governed inputs or marks fail
+closed; fixed provisioning lists never substitute for the governed market.
 
 ### 4.4 Pool health and sufficiency (decision P-2)
 

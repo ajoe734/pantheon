@@ -61,3 +61,24 @@ def test_publish_records_use_compare_and_set():
     ok, _ = records.compare_and_set("k", None, {"a": 1})
     stale, current = records.compare_and_set("k", None, {"a": 2})
     assert ok and not stale and current == {"a": 1}
+
+
+def test_publisher_pins_screen_rules_without_enumerating_picks():
+    from types import SimpleNamespace
+    from services.registry.test_candidate_pool import screen_artifact
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+
+    artifact = screen_artifact()
+    checksum = strategy_artifact_checksum(artifact)
+    entry = {"registry_id": artifact["artifact_id"], "version": artifact["version"],
+             "checksum": checksum, "owner_tenant": "t", "artifact_state": "approved",
+             "metadata": {"strategy_artifact": artifact}}
+    coordinator = SimpleNamespace(transport=SimpleNamespace(get=lambda *_: entry))
+    publisher = PersonaPoolPublisher(coordinator=coordinator, pool_store=_Pool())
+    pool = {"members": [{"artifact_ref": artifact["artifact_id"], "checksum": checksum,
+                          "stage": "active", "risk_weight": 1}]}
+    result, pins = publisher._build_envelope("t", SimpleNamespace(strategy_id="pool"), pool,
+        "envelope", "1.0.0", 1, "pool-digest", {"artifact_id": "previous"})
+    assert result["parameters"]["symbols"] == []
+    assert result["expression_policy"]["kind"] == "target_position_v1"
+    assert pins[0]["checksum"] == checksum
