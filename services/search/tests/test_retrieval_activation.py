@@ -250,3 +250,40 @@ def test_refresh_surfaces_embedding_unavailable_as_503_then_recovers(app_factory
         assert "embedding_model_unavailable" in failed.json()["detail"]
         state["fail"] = False
         assert client.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"}).status_code == 200
+
+
+def test_concurrent_refresh_callers_never_run_the_pipeline_concurrently(app_factory, monkeypatch):
+    # Retried callers (timed-out scheduler restarts, ingest completion) must not start duplicate
+    # embedding runs over the same unrecorded objects while an earlier run is still in flight.
+    import threading
+    import time
+    from services.search import main as search_main
+
+    backend = Mock()
+    backend.check_health.return_value = {"status": "ok", "backend": "postgres_pgvector"}
+    real_run = search_main.IncrementalIndexPipeline.run
+    state = {"active": 0, "max_active": 0, "runs": 0}
+    guard = threading.Lock()
+
+    def run(self, **kwargs):
+        with guard:
+            state["active"] += 1
+            state["runs"] += 1
+            state["max_active"] = max(state["max_active"], state["active"])
+        time.sleep(0.3)
+        try:
+            return real_run(self, **kwargs)
+        finally:
+            with guard:
+                state["active"] -= 1
+
+    monkeypatch.setattr(search_main.IncrementalIndexPipeline, "run", run)
+    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)) as client:
+        statuses = []
+        def call():
+            statuses.append(client.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"}).status_code)
+        threads = [threading.Thread(target=call) for _ in range(3)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+    assert statuses == [200, 200, 200]
+    assert state["runs"] == 3 and state["max_active"] == 1

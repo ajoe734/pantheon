@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -681,6 +682,17 @@ def create_app(
         retrieval_backend=retrieval_backend,
     )
 
+    # Local CPU embedding costs seconds per document, so one refresh can outlive a caller's 30s
+    # request boundary while the server thread keeps running. Without single-flight, every caller
+    # retry (scheduler restart, ingest completion) starts another run over the same unrecorded
+    # objects and re-embeds them concurrently. Serialize runs: a later caller waits, then sees the
+    # recorded checkpoint instead of redoing the work. Timeouts and the checkpoint rule are unchanged.
+    pipeline_run_lock = threading.Lock()
+
+    def _run_pipeline(**kwargs: Any) -> Any:
+        with pipeline_run_lock:
+            return pipeline.run(**kwargs)
+
     # Initialize retrievers
     kw_retriever = KeywordRetriever()
     ft_retriever = FullTextRetriever()
@@ -878,7 +890,7 @@ def create_app(
             triggered_by = (body.triggered_by if body else "manual").strip() or "manual"
             trigger_ref = body.trigger_ref if body else None
             force_full = body.force_full if body else False
-            snapshot = pipeline.run(
+            snapshot = _run_pipeline(
                 triggered_by=triggered_by,
                 trigger_ref=trigger_ref,
                 force_full=force_full,
@@ -929,7 +941,7 @@ def create_app(
             "knowledge_object_ids": list(body.knowledge_object_ids),
         }
         try:
-            snapshot = pipeline.run(
+            snapshot = _run_pipeline(
                 triggered_by="ingest_completion",
                 trigger_ref=ingest_run_id,
                 force_full=body.force_full,
