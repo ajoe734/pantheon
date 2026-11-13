@@ -245,3 +245,10 @@ batch. Each record still uses the queue's existing FULL-synchronous transaction,
 identity validation, commit and rollback. Connection setup/teardown is amortized;
 no queued work or per-record durability is removed, and other threads/processes
 continue using independent connections to the same ledger.
+
+A verified market row replay reuses an existing normalized partition only when
+its tenant/item/hash/event/availability identity is present in that partition
+and the producing ingest receipt completed. New and changed rows still use the
+normal writer. Receipt storage summaries add `new_normalized_row_count` and
+`reused_record_count`; the existing reference counts describe all referenced
+objects, including reused objects. A raw cache or cursor alone cannot suppress a write.

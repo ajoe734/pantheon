@@ -2777,9 +2777,17 @@ def test_backfill_normalized_date_partition_is_unchanged_on_replay(steady_stack,
     rows = [json.loads(line) for data in before.values() for line in data.decode().splitlines()]
     assert len(rows) == 20 and len({r["source_id"] for r in rows}) == 20
     assert {r["metadata"]["event_time"][:10] for r in rows} == {"2024-11-12", "2024-11-13"}
+    # Explicitly rewind the fetch request so real raw bundle rows replay, not
+    # merely a no-new-data cursor check. The product config store is used normally.
+    stored = module.runtime.connector_store.get_config(source)
+    fetch = {**stored.fetch, "request": {**stored.fetch.get("request", {}), "cursor": "2020-01-01T00:00:00Z#start"}}
+    module.runtime.connector_store.upsert_config(stored.connector, fetch)
     replay = pull()
     assert replay["summary"]["total_failed"] == 0
-    assert replay["ran"][0]["receipt"]["normalized_count"] == 0
+    receipt = replay["ran"][0]["receipt"]
+    assert receipt["raw_count"] == 20
+    assert receipt["storage_refs"]["summary"]["reused_record_count"] == 20
+    assert receipt["storage_refs"]["summary"]["new_normalized_row_count"] == 0
     after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*.jsonl")}
     assert after == before
 
@@ -2873,11 +2881,14 @@ def test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget(s
         duration = time.perf_counter() - wall_start + clock[0] - model_start
         durations.append(duration); elapsed += duration + 1
         assert result["status"] == "ok" and duration < config.timeout_seconds
-        delivered = sum(r.normalized_count for r in module.runtime.store.list_runs())
+        delivered = len(module.runtime.evidence_repository.list_source_records())
         if delivered == 6002 and not result["continuation_pending"]:
             break
         time.sleep(1)
     assert delivered == 6002 and not result["continuation_pending"]
+    partition = module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily/date=2024-11-12"
+    history_rows = [json.loads(line) for path in partition.glob("*.jsonl") for line in path.read_text().splitlines()]
+    assert len(history_rows) == len({r["source_id"] for r in history_rows}) == 6000
     assert active[0] == 0 and 4 < peak[0] <= cb.HISTORY_RAW_READ_CONCURRENCY
     # Apply the full 6000-row day's observed controller+transport cost per row to
     # all 488*(1375+6000+1349) rows. The sample also includes cold newest sessions,

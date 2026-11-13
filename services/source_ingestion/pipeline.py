@@ -1012,7 +1012,7 @@ class IngestPipelineService:
         try:
             self.runtime._append_audit_actions(result.audit_actions)
             post_processing_stage = "market_storage"
-            storage_refs = persist_market_data_storage_refs(self.manager, self.market_data_storage_writer, result)
+            storage_refs = self._persist_collector_market_storage(result)
             evidence_refs["storage_refs"] = storage_refs
             post_processing_stage = "latest_market_snapshot"
             market_snapshots = persist_latest_market_snapshots(
@@ -1070,6 +1070,63 @@ class IngestPipelineService:
             )
             record_search_refresh_event(self.store, result.run, source_search_refresh)
         return result, evidence_refs, source_search_refresh
+
+    def _persist_collector_market_storage(self, result: Any) -> dict[str, Any]:
+        """Replay verified market rows through their completed persisted receipt.
+
+        Raw cache/cursors alone never suppress a write. Reuse requires the same
+        tenant/item/hash/PIT row in an existing normalized partition and its own
+        completed receipt; new/corrected rows still use the normal writer.
+        """
+        connector = self.manager.get_connector(result.run.connector_id)
+        if (not isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
+                or connector is None or connector.source_type.value != "market"):
+            return persist_market_data_storage_refs(self.manager, self.market_data_storage_writer, result)
+        receipts = {r.ingest_run_id: r for r in self.store.read_freshness_snapshot()["receipts"]
+                    if r.status == "completed" and r.connector_id == connector.connector_id}
+        fresh, reused = [], []
+        partitions: dict[str, set[tuple[Any, ...]]] = {}
+        def identity(source_id: str, meta: Mapping[str, Any]) -> tuple[Any, ...]:
+            return (source_id, *(meta.get(k) for k in ("content_hash", "dataset", "event_time", "available_time")))
+        for record in result.records:
+            prior = self.evidence_repository.get_source_record(record.source_id, tenant_id=record.tenant_id)
+            receipt = receipts.get(str((prior.metadata if prior else {}).get("source_ingest_run_id") or ""))
+            stored = receipt.storage_refs if receipt else {}
+            matched = False
+            for ref in stored.get("normalized_refs", ()):
+                if (ref.get("dataset") != record.metadata.get("dataset")
+                        or ref.get("date") != str(record.metadata.get("event_time") or "")[:10]):
+                    continue
+                uri = str(ref["uri"])
+                if uri not in partitions:
+                    try:
+                        rows = [json.loads(line) for line in Path(uri).read_text().splitlines() if line.strip()]
+                        partitions[uri] = {identity(row["source_id"], row["metadata"]) for row in rows}
+                    except (OSError, ValueError, KeyError) as exc:
+                        raise SourceEvidenceError("completed Collector normalized partition is missing or invalid") from exc
+                if identity(record.source_id, record.metadata) in partitions[uri]:
+                    matched = True
+                    break
+            if matched:
+                reused.append(stored)
+            else:
+                fresh.append(record)
+        refs = persist_market_data_storage_refs(
+            self.manager, self.market_data_storage_writer, replace(result, records=tuple(fresh)))
+        new_count = refs["summary"]["normalized_row_count"]
+        for key in ("raw_refs", "normalized_refs", "feature_refs"):
+            by_uri = {r["uri"]: r for r in refs[key]}
+            for stored in reused:
+                for ref in stored.get(key, ()):
+                    by_uri.setdefault(ref["uri"], ref)
+            refs[key] = list(by_uri.values())
+        refs["summary"] = {
+            "raw_ref_count": len(refs["raw_refs"]), "normalized_ref_count": len(refs["normalized_refs"]),
+            "feature_ref_count": len(refs["feature_refs"]),
+            "normalized_row_count": sum(r["row_count"] for r in refs["normalized_refs"]),
+            "new_normalized_row_count": new_count, "reused_record_count": len(reused),
+        }
+        return refs
 
     def run_ingest_request(self, request: TriggerIngestJobRequest) -> dict[str, Any]:
         if len(request.records) > self.runtime.MAX_RECORDS_PER_JOB:
