@@ -21,6 +21,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from integrations.openclaw.persona_agent_sync import active_harness_version
+from integrations.openclaw.persona_memory_bridge import build_cycle_memory_query
 from integrations.openclaw.persona_ooda_runtime import (
     CycleTurnOutput, build_daily_cycle_prompt, run_persona_ooda_turn,
 )
@@ -28,11 +29,46 @@ from services.control_plane.cron.persona_cron_registrar import PersonaCronRegist
 from services.control_plane.cron.workflows import PERSONA_DAILY_CYCLE_WORKFLOW_ID as WORKFLOW_ID
 from services.control_plane.ooda.jsonl_store import OodaJsonlAppendStore
 from services.control_plane.ooda.ooda_loop_packet import OodaLoopPacket
+from services.knowledge import case_file as case_files
 from services.persona.cron_ooda_closure import append_ooda_packet, resolve_ooda_packet_store_path, _utc_now
 
 log = logging.getLogger(__name__)
 CONTROLLER_NAME = "persona_cycle_controller"
 ELIGIBLE_STATES = {"paper_running", "paper_owner", "consultable"}
+
+
+# Proposal kind -> case-file decision type. harness_patch and no_action have no
+# decision type; they reference the cycle-level case file the turn itself saw.
+CASE_FILE_DECISION_TYPE = {
+    "demand": "research_demand", "widen_universe": "research_demand", "admit": "trial_admission",
+    "reweight": "weight_change", "remove": "member_removal", "mutate_request": "evolution_proposal",
+    "consult_request": "consult",
+}
+
+
+class CaseFileCitationError(ValueError):
+    """A proposal neither cited case-file items nor stated none_applicable (or cited a stranger)."""
+
+
+def case_file_item_ids(case_file: Mapping[str, Any]) -> set[str]:
+    return {i["item_id"] for g in case_file["groups"].values() for i in g["items"]}
+
+
+def check_case_file_citations(output: Any, case_file: Mapping[str, Any]) -> None:
+    known = case_file_item_ids(case_file)
+    for proposal in output.proposals:
+        reason = (proposal.none_applicable_reason or "").strip()
+        if bool(proposal.case_file_item_ids) == bool(reason):
+            raise CaseFileCitationError("proposal must cite case_file_item_ids or state none_applicable_reason")
+        if set(proposal.case_file_item_ids) - known:
+            raise CaseFileCitationError("proposal cites an item that is not in the case file")
+
+
+def _proposal_member_refs(proposal: Any, live_refs: list[str]) -> list[str]:
+    params = proposal.parameters or {}
+    refs = [params[k] for k in ("artifact_ref", "member_ref") if isinstance(params.get(k), str) and params[k]]
+    refs += [r for r in params.get("artifact_refs") or [] if isinstance(r, str) and r]
+    return refs or list(live_refs)
 
 
 def packet_identity(persona: Mapping[str, Any], job_id: str, run: Mapping[str, Any]) -> str:
@@ -139,23 +175,45 @@ class PersonaCycleController:
                 failure = "cron_terminal_" + run["status"]
             elif not failure and observe.get("unavailable"):
                 failure = "observe_prerequisites_unavailable:" + ",".join(observe["unavailable"])
+            cycle_case = None
             if not failure:
                 try:
-                    turn = self.turn_runner(persona["persona_id"], build_daily_cycle_prompt(persona, observe))
+                    cycle_case = self.owners.case_file(persona, observe, packet_id, *self._cycle_decision(observe))
+                    cycle["case_file"] = {"case_file_id": cycle_case["case_file_id"], "digest": cycle_case["digest"],
+                                          "decision_type": cycle_case["subject"]["decision_type"], "scope": "cycle",
+                                          "lesson_query": cycle_case["lesson_query"]}
+                    cycle["case_files"] = {cycle_case["case_file_id"]: cycle_case}
+                    if all(g["status"] == "unavailable" for g in cycle_case["groups"].values()):
+                        raise case_files.CaseFileError("all_case_file_groups_unavailable")
+                except Exception as exc:
+                    # No model turn is bought without the case file it must cite.
+                    failure = "case_file_unavailable:" + str(getattr(exc, "reason", None) or type(exc).__name__)[:120]
+            if not failure:
+                try:
+                    turn = self.turn_runner(persona["persona_id"],
+                                            build_daily_cycle_prompt(persona, observe, cycle_case))
                     cycle["turn"] = turn.to_dict()
                     if turn.status != "completed" or turn.persona_id != persona["persona_id"]:
                         raise ValueError("agent_turn_unavailable")
                     output = CycleTurnOutput.model_validate_json(turn.decision)
                     cycle["output"] = output.model_dump(mode="json")
-                    packet["orient"]["evidence_bundle_refs"] = [f"{packet_id}#persona_cycle/output"]
+                    check_case_file_citations(output, cycle_case)
+                    packet["orient"]["evidence_bundle_refs"] = [f"{packet_id}#persona_cycle/output",
+                        f"{packet_id}#persona_cycle/case_files/{cycle_case['case_file_id']}"]
                     packet["status"] = "oriented"
                     cycle["decisions"] = []
                     # Only the existing deterministic risk decision may reweight
                     # or remove. Every other proposal stays staged until its
                     # owner verifies evidence, consultation and authority.
+                    live_refs = [m["artifact_ref"] for m in (observe.get("pool") or {}).get("members", [])
+                                 if m.get("stage") != "removed"]
                     for proposal in output.proposals:
                         result = {"kind": proposal.kind, "status": "requires_owner_gate",
-                                  "reason": "owner_evidence_and_consultation_required"}
+                                  "reason": "owner_evidence_and_consultation_required",
+                                  "cited_case_file_item_ids": list(proposal.case_file_item_ids),
+                                  "none_applicable_reason": proposal.none_applicable_reason}
+                        result.update(self._proposal_case_file(persona, observe, packet_id, proposal, live_refs,
+                                                               cycle_case, cycle["case_files"]))
                         if proposal.kind == "no_action":
                             result.update(status="no_action", reason=proposal.reason)
                         elif proposal.kind in {"reweight", "remove"}:
@@ -174,6 +232,10 @@ class PersonaCycleController:
                     packet["act"]["safe_mode_refs"] = ["policy://persona-cycle/proposal-only"]
                     packet["learn"]["telemetry_refs"] = [f"{packet_id}#persona_cycle/output/memory_candidates"]
                     packet["status"], packet["closed_at"] = "closed", _utc_now()
+                except CaseFileCitationError:
+                    failure = "case_file_citation_invalid"
+                except case_files.CaseFileError as exc:
+                    failure = "case_file_unavailable:" + exc.reason[:120]
                 except Exception as exc:
                     # Never expose transport exception strings (which may
                     # include credentials or private response bodies).
@@ -197,6 +259,26 @@ class PersonaCycleController:
                 raise ValueError(f"daily-cycle packet failed schema invariants: {errors}")
             append_ooda_packet(self.path, packet)
             return packet
+
+    @staticmethod
+    def _cycle_decision(observe: Mapping[str, Any]) -> tuple[str, list[str]]:
+        """Decision the turn is composing a case file for: demand when short, else a weight review."""
+        subject = observe.get("cycle_subject") or {}
+        refs = list(subject.get("member_refs") or [])
+        real_short = [s for s in subject.get("shortfall", []) if s != "health_inputs_unknown"]
+        return ("research_demand" if real_short or not refs else "weight_change"), refs
+
+    def _proposal_case_file(self, persona, observe, packet_id, proposal, live_refs, cycle_case, store):
+        decision_type = CASE_FILE_DECISION_TYPE.get(proposal.kind)
+        if decision_type is None:
+            return {"case_file_id": cycle_case["case_file_id"], "case_file_digest": cycle_case["digest"],
+                    "case_file_scope": "cycle"}
+        refs = _proposal_member_refs(proposal, live_refs) if decision_type in {
+            "trial_admission", "member_removal", "weight_change", "evolution_proposal"} else list(live_refs)
+        composed = self.owners.case_file(persona, observe, packet_id, decision_type, refs)
+        store[composed["case_file_id"]] = composed
+        return {"case_file_id": composed["case_file_id"], "case_file_digest": composed["digest"],
+                "case_file_scope": "proposal", "case_file_decision_type": decision_type}
 
     def reconcile_once(self) -> dict[str, Any]:
         personas = self.owners.personas()  # fail closed before any cron deletion
@@ -299,23 +381,9 @@ class CycleOwners:
                            if len(feedback) > 100 else {"at": read_at, "id": ""})}
         except Exception:
             bundle["human_feedback"] = {"status": "unavailable", "reason": "agora_owner_unavailable"}
-        # Canonical private memory is refreshed on the Gateway workspace before
-        # every turn, using the already-authenticated adapter materializer.
-        try:
-            base = self.env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"].rstrip("/")
-            request = Request(base + "/api/openclaw-adapter/agents/persona/memory/materialize",
-                data=json.dumps({"persona_id": pid, "workspace_ref": persona["workspace_ref"]}).encode(),
-                headers={"Content-Type": "application/json", "X-Pantheon-Service-Token":
-                         self.env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"]})
-            with urlopen(request, timeout=30) as response:
-                memory = json.load(response)
-            if memory.get("status") != "ok" or not isinstance(memory.get("memory"), dict):
-                raise ValueError("invalid memory receipt")
-            bundle["retrieved_memory"] = memory["memory"]
-        except Exception:
-            bundle["unavailable"].append("canonical_memory")
         if persona["lifecycle_state"] == "consultable":
             bundle["telemetry"] = {"status": "not_applicable", "reason": "non_trading_persona"}
+            self._refresh_memory(persona, bundle)
             return bundle
         try:
             # Runtime summaries carry the capital binding, not persona_id.
@@ -364,7 +432,73 @@ class CycleOwners:
                 bundle["pool_health"] = self.pool_store.health(pid, tenant, bundle["books"], bundle["observations"])
             except Exception:
                 bundle["unavailable"].append("strategy_pool")
+        self._refresh_memory(persona, bundle)
         return bundle
+
+    def _subject_inputs(self, persona, bundle):
+        """Pool-health shortfall, member families and underlyings; nothing is defaulted."""
+        from services.persona.pool_autonomy_cycle import short_measures
+        pid, tenant = persona["persona_id"], persona["tenant_id"]
+        pool = bundle.get("pool") or {}
+        live = [m["artifact_ref"] for m in pool.get("members", []) if m.get("stage") != "removed"]
+        families, underlyings = set(), set()
+        if live:
+            by_id = {e.get("registry_id"): e for e in self.pool_store._lister(pid, tenant)
+                     if e.get("owner_tenant") == tenant}
+            for ref in live:
+                artifact = ((by_id.get(ref) or {}).get("metadata") or {}).get("strategy_artifact") or {}
+                if artifact.get("strategy_id"):
+                    families.add(str(artifact["strategy_id"]))
+                underlyings |= {str(s).split(".")[0] for s in (artifact.get("parameters") or {}).get("symbols") or []}
+        if not families and persona.get("strategy_family"):
+            families.add(str(persona["strategy_family"]))
+        health = bundle.get("pool_health") or {}
+        shortfall = sorted(set(short_measures(pool, health) if pool else []) | set(health.get("demand_reasons", [])))
+        return {"shortfall": shortfall, "families": sorted(families), "underlyings": sorted(underlyings),
+                "member_refs": live}
+
+    def _refresh_memory(self, persona, bundle):
+        """Refresh the workspace memory cache with this cycle's own query, before the turn."""
+        try:
+            subject = self._subject_inputs(persona, bundle)
+            subject["query"], subject["tags"] = build_cycle_memory_query(
+                shortfall=subject["shortfall"], families=subject["families"], underlyings=subject["underlyings"])
+            bundle["cycle_subject"] = subject
+        except Exception as exc:
+            bundle["unavailable"].append("canonical_memory")
+            bundle["canonical_memory_reason"] = str(exc)[:200]
+            return
+        try:
+            base = self.env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"].rstrip("/")
+            request = Request(base + "/api/openclaw-adapter/agents/persona/memory/materialize",
+                data=json.dumps({"persona_id": persona["persona_id"], "workspace_ref": persona["workspace_ref"],
+                                 "query": subject["query"], "tags": subject["tags"]}).encode(),
+                headers={"Content-Type": "application/json", "X-Pantheon-Service-Token":
+                         self.env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"]})
+            with urlopen(request, timeout=30) as response:
+                memory = json.load(response)
+            if memory.get("status") != "ok" or not isinstance(memory.get("memory"), dict):
+                raise ValueError("invalid memory receipt")
+            bundle["retrieved_memory"] = memory["memory"]
+        except Exception:
+            bundle["unavailable"].append("canonical_memory")
+            bundle["canonical_memory_reason"] = "memory_materialization_unavailable"
+
+    def case_file(self, persona, observe, packet_id, decision_type, member_refs):
+        """Compose one decision case file as the persona itself; owner URLs are fixed by env."""
+        subject = observe.get("cycle_subject")
+        if not subject or not subject.get("families"):
+            raise case_files.CaseFileError("subject_field_missing", "cycle_subject.families")
+        roles = tuple(r.strip() for r in self.env.get("PANTHEON_CYCLE_MEMORY_ACTOR_ROLES", "persona_session").split(",")
+                      if r.strip())
+        case_subject = case_files.Subject(
+            decision_type=decision_type, persona_id=persona["persona_id"], tenant_id=persona["tenant_id"],
+            strategy_family=subject["families"][0], underlyings=tuple(subject["underlyings"]),
+            member_artifact_refs=tuple(member_refs),
+            persona_capital_binding_id=observe.get("persona_capital_binding_id") or "")
+        caller = case_files.Caller(actor_id=self.env.get("PANTHEON_CYCLE_ACTOR_ID", CONTROLLER_NAME),
+                                   actor_roles=roles, session_id=packet_id, persona_id=persona["persona_id"])
+        return case_files.compose_case_file(case_subject, caller, case_files.Owners.from_env(self.env))
 
     def risk(self, persona, observe, packet_id):
         if persona["lifecycle_state"] == "consultable":

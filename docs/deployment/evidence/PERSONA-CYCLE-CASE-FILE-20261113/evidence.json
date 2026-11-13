@@ -1,0 +1,38 @@
+{
+  "task_id": "PERSONA-CYCLE-CASE-FILE-20261113",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_KNOWLEDGE_INTEGRATION_2026-11-13.md (M4)",
+  "delivered": [
+    "integrations/openclaw/persona_memory_bridge.py (build_cycle_memory_query; tags; retrieval recorded in context and receipt)",
+    "services/openclaw-gateway-adapter/main.py (materialise route requires query, accepts tags; no default query)",
+    "integrations/openclaw/persona_agent_client.py (client passes query/tags)",
+    "integrations/openclaw/persona_ooda_runtime.py (case_file_item_ids / none_applicable_reason; CaseFile prompt section)",
+    "services/persona/persona_cycle_controller.py (cycle query from shortfall+families+underlyings; cycle and per-proposal case files; citation check; fail-closed reasons)"
+  ],
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/persona services/research/tests/test_persona_cycle_demand_integration.py  -> 1 failure fixed in test_pool_autonomy_cycle.py stub, rerun 17 passed; rest 314 passed",
+      ".venv-pantheon/bin/python3 -m pytest -q services/knowledge integrations/openclaw --ignore=integrations/openclaw/test_dev_gates.py -> 177 passed",
+      ".venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py -> 5 passed",
+      ".venv-pantheon/bin/python3 -m pytest -q services/knowledge/test_case_file_integration.py services/persona/test_persona_cycle_controller.py -> 33 passed"
+    ],
+    "not_run": "integrations/openclaw/test_dev_gates.py (needs a Postgres DSN; unrelated to this change)",
+    "integration_scope": "real PersonaCycleController.consume_run, real persona/pool/telemetry owner stores, real memory service FastAPI app over HTTP, real memory bridge materialiser; only OpenClaw cron/agent-turn HTTP is a fixture. Local fixtures are not hosted, model or trading evidence."
+  },
+  "acceptance": {
+    "1_query_from_shortfall_families_underlyings": "test_two_personas_with_different_shortfalls...; adapter route test_persona_memory_materialize_query.py (no query -> 422, no memory call)",
+    "2_case_file_id_and_digest_in_ooda_packet": "persona_cycle.case_file and per-decision case_file_id/case_file_digest; test_each_proposal_gets_its_own_case_file_composed_for_its_decision",
+    "3_turn_receives_case_file_and_proposal_cites_or_none_applicable": "prompt contains CaseFile; test_proposal_must_cite_case_file_items_or_state_none_applicable (missing / unknown / both -> case_file_citation_invalid)",
+    "4_two_personas_different_lessons_no_private_crossing": "test_two_personas_with_different_shortfalls_get_different_lessons_and_never_each_others_private_memory (cross-matching private entries seeded for each persona; absent from both workspace cache and case file and prompt)"
+  },
+  "fail_closed": [
+    "no family/underlying -> canonical_memory unavailable (cycle_query_subject_missing), no turn",
+    "every case-file group unavailable -> case_file_unavailable:all_case_file_groups_unavailable, no turn",
+    "bad citation -> case_file_citation_invalid, packet stays observing"
+  ],
+  "known_limits": [
+    "case_file.Subject carries one strategy_family: the first sorted family; the memory query itself carries all families",
+    "pool_health observations are not yet projected by the telemetry owner; the test injects them via the telemetry reader",
+    "harness_patch/no_action proposals reference the cycle-level case file; other kinds get their own"
+  ],
+  "standing_rules": "paper only; no model call on the trade path; execution never reads case files (execution_may_read=false); no synthetic data in production code; private memory never crosses personas; no new privileged route"
+}
