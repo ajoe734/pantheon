@@ -156,3 +156,51 @@ def test_bootstrap_sets_consult_policy_and_repairs_half_provisioned_persona():
     assert owner.records[t.RISK_PERSONA_ID]["consult_policy_id"] == t.CONSULT_PANEL_POLICY_ID
     again = t.bootstrap_consult_personas(persona_url="http://p", http=owner)
     assert set(again.values()) == {"exists"}
+
+
+def test_trial_admission_requirement_binds_candidate_checksum_and_pool_version():
+    from services.persona import consult_triggers as ct
+    a = ct.trial_admission_requirement("t", "p", "art", "ck", 3)
+    assert a.decision_type == "trial_admission" and a.target_version == "3" and a.risk_persona_id == ct.RISK_PERSONA_ID
+    assert a.candidate_digest == ct.candidate_digest("art", "ck")
+    ids = {ct.trial_admission_decision_id("t", "p", *args) for args in
+           [("art", "ck", 3), ("art2", "ck", 3), ("art", "ck2", 3), ("art", "ck", 4)]}
+    assert len(ids) == 4
+    members = [{"artifact_ref": "a", "checksum": "c", "stage": "active", "risk_weight": .3},
+               {"artifact_ref": "r", "checksum": "c", "stage": "removed", "risk_weight": 0}]
+    assert ct.pool_membership_signature(members) == ct.pool_membership_signature(
+        [dict(members[0], risk_weight=.9), *members[1:]])  # weights are not membership
+    assert ct.pool_membership_signature(members) != ct.pool_membership_signature([dict(members[0], stage="trial")])
+
+
+def _panel(requirement, recommendations, memo_rec="approve"):
+    from types import SimpleNamespace
+    request = {"request_id": "r1", "tenant_id": "t", "from_persona_id": "p", "status": "published",
+               "target_type": requirement.decision_type, "target_id": requirement.decision_id,
+               "metadata": {"panel": requirement.to_panel_metadata()}}
+    memo = {"memo_id": "m1", "request_id": "r1", "status": "published", "target_type": request["target_type"],
+            "target_id": request["target_id"], "recommendation": memo_rec}
+    transcripts = [{"request_id": "r1", "events": [
+        {"actor": {"actor_type": "persona", "actor_id": pid}, "event_type": "persona_contribution",
+         "content": {"recommendation": rec}, "evidence_refs": ["e"]} for pid, rec in recommendations.items()]}]
+    return SimpleNamespace(get_memo=lambda i: memo if i == "m1" else None, get_request=lambda i: request,
+                           list_transcripts=lambda: transcripts)
+
+
+def test_shared_memo_verification_recomputes_gate_from_participant_transcripts():
+    from services.persona import consult_triggers as ct
+    req = ct.trial_admission_requirement("t", "p", "art", "ck", 3)
+    ok = {"p": "approve", ct.RISK_PERSONA_ID: "approve"}
+    verify = lambda client, requirement=req: ct.verify_published_memo(client, "m1", tenant_id="t", persona_id="p", requirement=requirement)
+    assert verify(_panel(req, ok)).ok
+    # the synthesis' own recommendation cannot override a risk oppose in the transcript
+    oppose = verify(_panel(req, {**ok, ct.RISK_PERSONA_ID: "reject"}))
+    assert not oppose.ok and oppose.operator_decision_required and oppose.reason == "risk_persona_requires_operator"
+    missing = verify(_panel(req, {"p": "approve"}))
+    assert not missing.ok and missing.operator_decision_required
+    conditional = verify(_panel(req, {**ok, ct.RISK_PERSONA_ID: "approve_with_conditions"}))
+    assert conditional.reason == "panel_conditions_require_operator"
+    # a memo for another candidate / pool version is not this decision's evidence
+    other = ct.trial_admission_requirement("t", "p", "art", "ck", 4)
+    assert verify(_panel(req, ok), other).reason == "request_binding_mismatch"
+    assert verify(_panel(req, ok, memo_rec="reject")).operator_decision_required

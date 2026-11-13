@@ -548,3 +548,77 @@ def test_member_baselines_resolve_each_member_from_its_own_gate_proof(env, tmp_p
     # the trial child has no pass of its own: it never inherits the parent's proof
     assert by_ref["art-2"]["baseline"]["reason"] == "strategy_artifact_missing"
     assert by_ref["art-2"]["stage"] == "trial" and by_ref["art-2"]["pool_version"] == 1
+
+
+def _admission_fixture(env):
+    import copy
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    from services.research.tests.test_pool_admission import entries_and_members, recorded_dataset
+
+    client, reg, owner = env
+    entries, one, two = entries_and_members()
+    current = entries[two["artifact_ref"]]
+    candidate = copy.deepcopy(entries[one["artifact_ref"]])
+    artifact = candidate["metadata"]["strategy_artifact"]
+    artifact["strategy_logic"].update(positive_action="BUY", non_positive_action="BUY")
+    artifact["parameters"]["zero_momentum_action"] = "BUY"
+    candidate["checksum"] = strategy_artifact_checksum(artifact)
+    candidate["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = candidate["checksum"]
+    reg.entries = {"current": {**current, "registry_id": "current"}, "candidate": {**candidate, "registry_id": "candidate"}}
+    assert _post(client, [_member("current", checksum=current["checksum"], risk_weight=.7)], 0).status_code == 201
+    books = {ref: _observed_book(e["checksum"], better=ref == "candidate") for ref, e in reg.entries.items()}
+    return client, {"books": books, "dataset": recorded_dataset(), "observations": _risk_observations(books),
+                    "candidate": {"artifact_ref": "candidate", "checksum": candidate["checksum"]}}
+
+
+def test_persona_initiated_admission_needs_verified_consultation_memo_and_links_it(env, monkeypatch):
+    """AC5: a persona-initiated paper admission is refused without a verified memo; an applied one links the memo id."""
+    import persona_strategy_pool as pool_module
+    from services.persona.consult_triggers import MemoCheck
+    client, body = _admission_fixture(env)
+    store = sys.modules["persona_main_pool_test_module"].POOL_STORE
+    verified = []
+    store._verify_memo = lambda tenant, persona, candidate, version, memo: verified.append((tenant, persona, candidate.artifact_ref, version, memo)) or MemoCheck(True)
+
+    missing = _decision(client, 1, "admit", initiated_by="persona", **body)
+    assert missing.json()["decision"]["status"] == "refused" and missing.json()["decision"]["reasons"] == ["consultation_memo_required"]
+    assert len(missing.json()["members"]) == 1 and verified == []
+
+    store._verify_memo = lambda *a: pool_module.MemoCheck(False, "risk_persona_requires_operator") if hasattr(pool_module, "MemoCheck") else MemoCheck(False, "risk_persona_requires_operator")
+    opposed = _decision(client, 2, "admit", initiated_by="persona", consultation_memo_id="memo-x", **body)
+    assert opposed.json()["decision"]["status"] == "refused"
+    assert opposed.json()["decision"]["reasons"] == ["consultation_memo_not_verified:risk_persona_requires_operator"]
+    assert "evidence_refs" not in opposed.json()["decision"]
+
+    def unavailable(*a):
+        raise RuntimeError("consultation down")
+    store._verify_memo = unavailable
+    down = _decision(client, 3, "admit", initiated_by="persona", consultation_memo_id="memo-x", **body)
+    assert down.json()["decision"]["reasons"] == ["consultation_unavailable:RuntimeError"] and len(down.json()["members"]) == 1
+
+    store._verify_memo = lambda tenant, persona, candidate, version, memo: verified.append((tenant, persona, candidate.artifact_ref, version, memo)) or MemoCheck(True)
+    # the refusals above appended versions; the consultation was opened at version 1 with the same live membership
+    applied = _decision(client, 4, "admit", initiated_by="persona", consultation_memo_id="memo-ok",
+                        consultation_pool_version=1, **body)
+    decision = applied.json()["decision"]
+    assert decision["status"] == "applied", decision
+    assert decision["consultation_memo_id"] == "memo-ok"
+    assert decision["evidence_refs"] == [{"ref_type": "consultation_memo", "ref_id": "memo-ok"}]
+    assert verified == [("tenant-a", "persona-1", "candidate", 1, "memo-ok")]  # bound to the pool version of the consultation
+
+
+def test_persona_cycle_actor_cannot_skip_the_memo_and_operator_admission_keeps_its_path(env):
+    """The cycle's own actor is persona-initiated even without the flag; an operator admission needs no memo."""
+    client, body = _admission_fixture(env)
+    store = sys.modules["persona_main_pool_test_module"].POOL_STORE
+    from persona_strategy_pool import PoolDecisionRequest
+    request = PoolDecisionRequest.model_validate({"expected_version": 1, "execution_context": "paper", "action": "admit", **body})
+    store._verify_memo = lambda *a: (_ for _ in ()).throw(AssertionError("operator path must not consult"))
+    refused = store.decide("persona-1", "tenant-a", request, actor_id="persona-pool-cycle")
+    assert refused["decision"]["reasons"] == ["consultation_memo_required"]
+    operator = _decision(client, 2, "admit", **body)
+    assert operator.json()["decision"]["status"] == "applied" and "consultation_memo_id" not in operator.json()["decision"]
+    # A consultation opened before the live membership changed no longer covers this pool.
+    store._verify_memo = lambda *a: (_ for _ in ()).throw(AssertionError("stale memo must not be verified"))
+    stale = _decision(client, 3, "admit", initiated_by="persona", consultation_memo_id="memo-old", consultation_pool_version=1, **body)
+    assert stale.json()["decision"]["reasons"] == ["consultation_stale_pool_membership_changed"]
