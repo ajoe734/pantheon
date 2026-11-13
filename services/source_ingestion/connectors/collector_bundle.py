@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import urllib.request
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -239,6 +240,9 @@ class VerifiedBundle:
     manifest_items: Mapping[str, Mapping[str, Any]]
     raw_bytes: Mapping[str, bytes]  # sha256 -> bytes
     cursor: str
+    # Absolute items.jsonl row index up to which raw files were verified this pull;
+    # None means the whole requested window was verified (no read-budget cut).
+    verified_through: int | None = None
 
     @property
     def status(self) -> str:
@@ -316,6 +320,7 @@ def verify_bundle(
     expected_source_id: str,
     entry: Mapping[str, Any],
     item_window: tuple[int, int] | None = None,
+    deadline: float | None = None,
 ) -> VerifiedBundle:
     """Fetch and verify one bundle; raises on any mismatch, returns nothing partial.
 
@@ -323,6 +328,10 @@ def verify_bundle(
     manifest, items.jsonl, id coverage and bundle_sha256 (declared hashes) are always
     verified, but raw files are fetched and hash/size checked only for the windowed rows.
     Rows outside the window are verified when a later pull's window reaches them.
+
+    ``deadline`` (monotonic seconds) is a whole-operation read budget: once it passes, no
+    further raw file is fetched (at least one is always read so every pull progresses) and
+    ``verified_through`` records how far verification got. Nothing is skipped or assumed.
     """
 
     source_id = str(entry.get("source_id") or "").strip()
@@ -389,7 +398,12 @@ def verify_bundle(
     else:
         wanted_ids = item_ids[max(item_window[0], 0) : max(item_window[1], 0)]
     raw_bytes: dict[str, bytes] = {}
-    for item_id in wanted_ids:
+    verified_through: int | None = None
+    window_start = max(item_window[0], 0) if item_window is not None else 0
+    for offset, item_id in enumerate(wanted_ids):
+        if deadline is not None and offset > 0 and time.monotonic() >= deadline:
+            verified_through = window_start + offset
+            break
         item = manifest_items[item_id]
         declared = str(item.get("content_sha256") or "").strip().lower()
         raw_path = _safe_raw_path(str(item.get("raw_path") or ""))
@@ -411,6 +425,7 @@ def verify_bundle(
         manifest_items=manifest_items,
         raw_bytes=raw_bytes,
         cursor=_cursor_key(finished_at, run_id),
+        verified_through=verified_through,
     )
 
 
@@ -522,6 +537,9 @@ class CollectorBundleAdapter:
     host: str | None = None
     raw_root: str | None = None
     max_records: int = 500
+    # Whole-pull raw read budget, kept below the controller's per-request timeout; the
+    # remainder stays pending behind a partial cursor. None disables the budget.
+    read_budget_seconds: float | None = 15.0
     transport: BundleTransport | None = None
     # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
     # in addition to the symbols that have stored daily bars under the storage roots.
@@ -780,15 +798,23 @@ class CollectorBundleAdapter:
         verified: list[VerifiedBundle] = []
         remaining = max(total_cap, 1)
         unverified_pending = False
+        deadline = (
+            None if self.read_budget_seconds is None else time.monotonic() + max(self.read_budget_seconds, 0.0)
+        )
         for _, key, entry in pending:
             if remaining <= 0:
                 unverified_pending = True
                 break
             skip = partial_skip if key == base_cursor else 0
             bundle = verify_bundle(
-                transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining)
+                transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
+                deadline=deadline,
             )
             verified.append(bundle)
+            if bundle.verified_through is not None:
+                # Read budget exhausted mid-window: later rows/bundles stay pending.
+                unverified_pending = True
+                break
             if bundle.status in {"paused", "partial"}:
                 # Material after an unresolved bundle must remain pending.
                 unverified_pending = True
@@ -803,7 +829,8 @@ class CollectorBundleAdapter:
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
                 break
             skip = partial_skip if bundle.cursor == base_cursor else 0
-            for row in bundle.items[skip:]:
+            stop = len(bundle.items) if bundle.verified_through is None else bundle.verified_through
+            for row in bundle.items[skip:stop]:
                 all_records.append(self._record(bundle, row, trace_id=trace_id))
 
         # The caller's output cap covers raw + derived feature records together. Shrink the
@@ -814,6 +841,10 @@ class CollectorBundleAdapter:
             records, next_cursor, raw_plan = self._select_raw(
                 verified, all_records, cursor, budget, skips={base_cursor: partial_skip} if partial_skip else {}
             )
+            cut = verified[-1] if verified and verified[-1].verified_through is not None else None
+            if cut is not None and len(records) == len(all_records):
+                # Everything verified is returned; resume exactly where the budget stopped.
+                next_cursor = f"{cut.cursor}{_PARTIAL_CURSOR_MARK}{cut.verified_through}"
             plan = self._plan_governed_features(records)
             # Already-acknowledged replays are idempotent and droppable; only pending
             # rows must fit alongside the raw items.

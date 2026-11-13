@@ -1,0 +1,16 @@
+{
+  "task_id": "COLLECTOR-STEADY-REQUEST-BOUND-20261113",
+  "diagnosis": "Primary stacks show the Source API thread inside HttpBundleTransport.read -> verify_bundle (sequential raw-file loop, up to max_records=500 reads, each up to a 20s transport timeout) -> _pull_ordered -> run_frontier_item -> run_scheduled, while the controller waits on _request_json (30s urlopen timeout) from run_schedule_tick. Per-pull work was bounded by record count only, not elapsed time, so a steady pull could outlive the controller request. Which item and the latency distribution remain UNKNOWN.",
+  "change": "CollectorBundleAdapter.read_budget_seconds (default 15s) is a whole-pull raw read budget. verify_bundle(deadline=) stops fetching raw files once exceeded (always at least one read) and records verified_through; _pull_ordered returns only verified rows with the existing partial cursor '<key>|items=<n>' and complete=False, leaving the rest pending. Controller timeout not inflated; no new queue/service.",
+  "preserved": "Every returned row's raw hash/size is still verified; cursor/ack only via existing delivery persistence; hash/size mismatches in later slices still raise; no_new_data requires fully verified boundary.",
+  "tests": {
+    "command": "pytest services/source_ingestion/tests/test_collector_outcome_truth.py test_controller_worker.py test_collector_bundle_connector.py",
+    "result": "368 passed, 1 skipped (deterministic fake clock, no sleeping)",
+    "old_fails_new_passes": "test_slow_reads_make_bounded_scheduler_progress_and_persist_partial_cursor fails with the budget disabled (verified), passes with it. Connector-level budget tests set the budget explicitly so they do not independently demonstrate old-fails."
+  },
+  "limitations": [
+    "A single raw read can still take up to the transport's 20s timeout, and index/manifest/items reads are not budgeted; worst-case pull is about budget + one read + metadata reads, which can approach the 30s controller timeout for a very slow host.",
+    "Several connectors in one scheduler request each get their own 15s budget; overlapping-request/in-flight-execution handling in the controller was not changed.",
+    "No hosted/VM/live verification performed; real latency distribution unknown."
+  ]
+}

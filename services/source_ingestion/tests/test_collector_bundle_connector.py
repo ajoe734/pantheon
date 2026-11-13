@@ -1042,3 +1042,91 @@ def test_native_recorded_rss_bundle_exact_bytes_replay_through_verified_reader(t
     assert rec.metadata["available_time"] == "2026-11-11T04:49:20Z"
     assert rec.metadata["published_at"] == "2026-11-11T04:37:00Z"
     assert len(res.records) == 20
+
+
+# Steady request bound: whole-pull raw read budget ---------------------------------
+class _SlowTransport(_CountingTransport):
+    """Every raw read costs `cost` fake seconds on a deterministic clock (no sleeping)."""
+
+    def __init__(self, files, clock, cost):
+        super().__init__(files)
+        self.clock, self.cost = clock, cost
+
+    def read(self, relative_path, *, max_bytes):
+        if "/raw/" in relative_path:
+            self.clock[0] += self.cost
+        return super().read(relative_path, max_bytes=max_bytes)
+
+
+def _slow_setup(tmp_path, monkeypatch, *, n_rows=12, cost=5.0, budget=15.0, tamper_index=None):
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as cb
+
+    clock = [0.0]
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    source_id = "collector-tw-twse-price-history"
+    files, entry = _day_bundle(source_id, 1, n_rows)
+    if tamper_index is not None:
+        key = sorted(k for k in files if "/raw/" in k)[tamper_index]
+        files[key] = b"tampered"
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    transport = _SlowTransport(files, clock, cost)
+
+    def make():
+        return CollectorBundleAdapter(
+            connector_id="conn-x", raw_root=str(tmp_path / "store"), transport=transport, host=HOST,
+            source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+            max_records=500, read_budget_seconds=budget,
+        )
+
+    return make, transport, clock
+
+
+def test_slow_reads_stop_at_budget_and_resume_without_loss_or_duplicates(tmp_path, monkeypatch):
+    make, transport, clock = _slow_setup(tmp_path, monkeypatch)
+    cursor, delivered, per_pull_elapsed, completes = None, [], [], []
+    for _ in range(10):
+        start, transport.reads = clock[0], []
+        result = make().pull(cursor=cursor)
+        per_pull_elapsed.append(clock[0] - start)
+        delivered.extend(r.source_id for r in result.records)
+        completes.append(result.complete)
+        cursor = result.next_cursor
+        if result.complete:
+            break
+        # a budget-cut pull never claims completion and keeps a partial cursor
+        assert "|items=" in cursor
+    # 12 rows at 5s each under a 15s budget: bounded slices (<= budget + one read), then complete.
+    assert max(per_pull_elapsed) <= 15.0 + 5.0
+    assert completes[:-1] == [False] * (len(completes) - 1) and completes[-1] is True
+    assert len(delivered) == 12 and len(set(delivered)) == 12
+
+
+def test_budget_never_starves_a_pull_even_when_one_read_exceeds_it(tmp_path, monkeypatch):
+    make, _, _ = _slow_setup(tmp_path, monkeypatch, cost=30.0, budget=1.0, n_rows=3)
+    cursor, total = None, 0
+    for _ in range(5):
+        result = make().pull(cursor=cursor)
+        assert len(result.records) >= 1
+        total += len(result.records)
+        cursor = result.next_cursor
+        if result.complete:
+            break
+    assert total == 3 and result.complete
+
+
+def test_budget_cut_slice_still_fails_on_tampered_raw_in_later_slice(tmp_path, monkeypatch):
+    make, _, _ = _slow_setup(tmp_path, monkeypatch, tamper_index=7)
+    cursor = None
+    with pytest.raises(SourceEvidenceError, match="hash mismatch"):
+        for _ in range(10):
+            cursor = make().pull(cursor=cursor).next_cursor
+
+
+def test_no_budget_keeps_single_full_window(tmp_path, monkeypatch):
+    make, transport, _ = _slow_setup(tmp_path, monkeypatch)
+    adapter = make()
+    object.__setattr__(adapter, "read_budget_seconds", None)
+    result = adapter.pull()
+    assert len(result.records) == 12 and result.complete

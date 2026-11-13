@@ -643,3 +643,41 @@ def test_failed_legacy_pull_markers_and_cursor_cannot_acknowledge_unstored_featu
     assert len([r for r in result.records if r.source_type.value == "market"]) == (6 if kind == "macro" else 1)
     assert refs["storage_refs"]["feature_refs"]
     assert runtime.store.get_watermark(connector.connector_id).value == CURSOR
+
+
+def test_slow_reads_make_bounded_scheduler_progress_and_persist_partial_cursor(tmp_path, monkeypatch):
+    """Delayed multi-item transport through the real configured fetcher and scheduler.
+
+    Each raw read costs 20 fake seconds against the 15s whole-pull budget: the first scheduled
+    run returns one verified item with a partial cursor (bounded, never claiming completion),
+    the next resumes at the persisted cursor, and a final run proves no new data.
+    """
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as module
+
+    files, _, _, store, _ = setup_path(tmp_path, monkeypatch)
+    clock = [0.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    reads: list[str] = []
+
+    class Slow(FakeTransport):
+        def read(self, relative_path, *, max_bytes):
+            reads.append(relative_path)
+            if "/raw/" in relative_path:
+                clock[0] += 20.0
+            return super().read(relative_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: Slow(files))
+    first = run_scheduler(tmp_path, store)
+    assert first.run.status.value == "completed"
+    assert first.run.raw_count == 1
+    assert first.watermark.value == CURSOR + "|items=1"
+    assert len([r for r in reads if "/raw/" in r]) == 1
+    second = run_scheduler(tmp_path, store)
+    assert second.run.raw_count == 1 and second.watermark.value == CURSOR
+    assert first.records[0].source_id != second.records[0].source_id
+    third = run_scheduler(tmp_path, store)
+    assert third.run.raw_count == 0 and third.watermark.value == CURSOR
+    state = JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth")
+    assert state["collector_outcome"]["no_new_data"] is True
