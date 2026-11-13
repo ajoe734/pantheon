@@ -170,12 +170,6 @@ class PoolAutonomyCycle:
                 receipts.append({"route": "persona:strategy-pool/decisions", "action": "admit", "status": "not_attempted",
                                  "reason": "candidate_book_unavailable:" + type(exc).__name__})
                 return receipts, learned
-            try:
-                cand_book = ports.candidate_book(persona, cand, dataset)
-            except Exception as exc:  # noqa: BLE001 - no replay, no admission; never fabricate returns
-                receipts.append({"route": "persona:strategy-pool/decisions", "action": "admit", "status": "not_attempted",
-                                 "reason": "candidate_book_unavailable:" + type(exc).__name__})
-                return receipts, learned
             result = ports.decide_pool(persona, {
                 "expected_version": pool["pool_version"], "execution_context": "paper", "action": "admit",
                 "candidate": {"artifact_ref": cand["artifact_ref"], "checksum": cand["checksum"],
@@ -238,6 +232,29 @@ def apply_to_packet(packet: dict[str, Any], result: Mapping[str, Any]) -> None:
     packet["act"]["command_receipt_refs"] = list(packet["act"].get("command_receipt_refs", [])) + [ref + "/act"]
     packet["act"]["live_capital_side_effects"] = False
     packet["learn"]["telemetry_refs"].append(ref + "/learn")
+
+
+def candidate_virtual_book(*, dataset, artifact, checksum, policy) -> dict[str, Any]:
+    """Governed replay book for a not-yet-admitted candidate (telemetry has none before admission).
+
+    Reuses admission's replay (same registry interpreter, previous-bar exposure and
+    Taiwan-cost netting) over the untouched window of the governed daily bars.
+    Nothing is invented: unavailable or misaligned data raises.
+    """
+    from services.execution.lean_runtime.member_virtual_book import NET_BASIS
+    from services.research.pool_admission import _replay
+    from services.research.vectorbt.adapter.vectorbt_adapter import GovernedVectorbtInputAdapter
+
+    prepared = GovernedVectorbtInputAdapter().prepare(dataset)
+    if prepared.data_frequency not in ("daily", "1d"):
+        raise ValueError("backtest_requires_daily_bars")
+    calendars = [tuple(prepared.dates_by_instrument[s]) for s in prepared.instruments]
+    if len(set(calendars)) != 1:
+        raise ValueError("backtest_windows_not_aligned")
+    dates = list(calendars[0][int(len(calendars[0]) * policy.in_sample_fraction):])
+    returns = _replay(prepared, artifact, dates)
+    return {"checksum": checksum, "source_ref": f"governed-replay:{prepared.dataset_id}", "basis": NET_BASIS,
+            "dates": dates[1:], "returns": returns, "since_inception": True, "book_kind": "governed_replay"}
 
 
 def governed_dataset_loader(env: Mapping[str, str] | None = None) -> Callable[[Mapping, Mapping], dict]:
@@ -355,16 +372,6 @@ class HttpPoolCyclePorts:
     def candidate_book(self, persona, candidate, dataset):
         """Candidate's governed replay book; the telemetry owner has none before admission."""
         from services.control_plane.persona.pool_policy import load_policy
-        from services.research.pool_admission import candidate_virtual_book
-        artifact = (self._entry(persona, candidate["artifact_ref"]).get("metadata") or {}).get("strategy_artifact")
-        if not artifact:
-            raise RuntimeError("candidate_strategy_artifact_missing")
-        return candidate_virtual_book(dataset=dataset, artifact=artifact, checksum=candidate["checksum"], policy=load_policy())
-
-    def candidate_book(self, persona, candidate, dataset):
-        """Candidate's governed replay book; the telemetry owner has none before admission."""
-        from services.control_plane.persona.pool_policy import load_policy
-        from services.research.pool_admission import candidate_virtual_book
         artifact = (self._entry(persona, candidate["artifact_ref"]).get("metadata") or {}).get("strategy_artifact")
         if not artifact:
             raise RuntimeError("candidate_strategy_artifact_missing")

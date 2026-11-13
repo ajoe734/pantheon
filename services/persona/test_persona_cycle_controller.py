@@ -260,16 +260,6 @@ def test_trading_pool_risk_owner_runs_when_observe_and_agent_are_unavailable(sys
     assert len(pool.versions(persona["persona_id"], persona["tenant_id"])) == 2
 
 
-def test_failed_pool_cycle_is_reported_as_cycle_failure_even_when_model_turn_succeeds(system):
-    controller, state, owner, _ = system
-    persona = {**owner.list_json()[0], "lifecycle_state": "paper_owner"}
-    controller.pool_cycle = SimpleNamespace(run=lambda persona, observe, packet_id: {
-        "persona_id": persona["persona_id"], "packet_id": packet_id, "status": "failed", "reason": "RuntimeError: boom"})
-    packet = controller.consume_run(persona, "job-1", run(1))
-    assert packet["status"] == "observing"
-    assert packet["persona_cycle"]["failure_reason"].startswith("pool_cycle_failed:RuntimeError")
-
-
 @pytest.mark.parametrize("suffix", [".json", ".jsonl"])
 def test_packet_claim_storage_replays_both_hosted_shapes(system, tmp_path, suffix):
     controller, state, owner, _ = system

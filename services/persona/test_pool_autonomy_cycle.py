@@ -197,3 +197,24 @@ def test_missing_candidate_book_refuses_without_owner_call():
     ports.candidate_book = lambda persona, c, d: (_ for _ in ()).throw(ValueError("backtest_dates_missing_or_duplicate"))
     out = PoolAutonomyCycle(ports, now=lambda: "2026-11-12T00:00:00Z").run(PERSONA, observe(pool(member("a"))), "pk-1")
     assert ports.calls == [] and out["act"]["receipts"][0]["reason"].startswith("candidate_book_unavailable")
+
+
+def test_failed_pool_cycle_is_reported_as_cycle_failure_even_when_model_turn_succeeds(tmp_path):
+    import json
+    from types import SimpleNamespace
+    from services.persona.persona_cycle_controller import PersonaCycleController
+
+    output = {"orient": "No signal.", "proposals": [{"kind": "no_action", "reason": "none", "evidence_refs": []}],
+              "memory_candidates": []}
+    owners = SimpleNamespace(observe=lambda persona, since=None: {"unavailable": [], "telemetry_refs": [], "incident_refs": [],
+                                                                  "human_feedback_refs": [], "harness_version": 1},
+                             risk=lambda persona, observe, packet_id: {"status": "no_change"})
+    controller = PersonaCycleController(None, owners, store_path=tmp_path / "packets.jsonl",
+        turn_runner=lambda pid, prompt: SimpleNamespace(status="completed", persona_id=pid, decision=json.dumps(output),
+                                                        to_dict=lambda: {}),
+        pool_cycle=SimpleNamespace(run=lambda persona, observe, packet_id: {
+            "persona_id": persona["persona_id"], "packet_id": packet_id, "status": "failed", "reason": "RuntimeError: boom"}))
+    persona = {**PERSONA, "lifecycle_state": "paper_owner"}
+    packet = controller.consume_run(persona, "job-1", {"runId": "run-1", "runAtMs": 1794477600000, "jobId": "job-1", "status": "ok"})
+    assert packet["status"] == "observing"
+    assert packet["persona_cycle"]["failure_reason"].startswith("pool_cycle_failed:RuntimeError")
