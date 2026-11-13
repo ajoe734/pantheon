@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Iterable, Mapping
@@ -25,6 +25,7 @@ from services.foundation import (
 )
 
 from .connectors.base import IngestRun, IngestRunStatus, SourceEvidenceError, SourceRecord
+from .connectors.collector_bundle import CollectorDelivery
 from .ingest_manager import IngestManager
 from .process_lock import exclusive_file_lock
 
@@ -75,10 +76,13 @@ class IngestBatch:
     empty_ok: bool = False
     empty_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    derived_records: tuple[SourceRecord, ...] = field(default_factory=tuple)
+    collector_delivery: CollectorDelivery | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "records", tuple(self.records))
-        for record in self.records:
+        object.__setattr__(self, "derived_records", tuple(self.derived_records))
+        for record in (*self.records, *self.derived_records):
             if not isinstance(record, SourceRecord):
                 raise SourceEvidenceError("ingest batch records must be SourceRecord instances")
         object.__setattr__(self, "empty_ok", bool(self.empty_ok))
@@ -190,6 +194,7 @@ class ScheduledIngestResult:
     audit_actions: tuple[AuditAction, ...] = field(default_factory=tuple)
     frontier_id: str | None = None
     typed_failure: Mapping[str, Any] | None = None
+    collector_delivery: CollectorDelivery | None = None
 
 
 @dataclass(frozen=True)
@@ -827,6 +832,7 @@ class IngestionScheduler:
         trace_id: str,
         trigger_type: str = "scheduled",
         frontier_id: str | None = None,
+        defer_commit: bool = False,
     ) -> ScheduledIngestResult:
         connector = self.manager.get_connector(connector_id)
         if connector is None:
@@ -851,6 +857,19 @@ class IngestionScheduler:
                         raise SourceEvidenceError("fetched record connector_id must match job connector")
                     if record.source_type != connector.source_type:
                         raise SourceEvidenceError("fetched record source_type must match job connector")
+                if batch.derived_records and not isinstance(batch.collector_delivery, CollectorDelivery):
+                    raise SourceEvidenceError("derived records require a verified Collector delivery")
+                if batch.collector_delivery is not None:
+                    # The adapter emits derived rows first. Validate its in-process
+                    # proof before composing the records for the existing writer.
+                    batch.collector_delivery.validate((*batch.derived_records, *batch.records))
+                    expected_dataset = {"macro": "tw_macro_series", "social": "tw_community_daily"}.get(
+                        connector.source_type.value)
+                    if any(r.connector_id != connector_id or r.source_type.value != "market"
+                           or r.metadata.get("dataset") != expected_dataset for r in batch.derived_records):
+                        raise SourceEvidenceError("derived record connector/type/dataset mismatch")
+                delivery = batch.collector_delivery
+                batch = replace(batch, records=(*batch.derived_records, *batch.records), derived_records=())
                 run.raw_count = len(batch.records)
                 run.normalized_count = sum(1 for record in batch.records if not record.is_rejected)
                 run.rejected_count = sum(1 for record in batch.records if record.is_rejected)
@@ -905,7 +924,11 @@ class IngestionScheduler:
                     else str(run.finished_at),
                     last_ingest_run_id=run.ingest_run_id,
                 )
-                self.store.update_watermark(watermark)
+                if not defer_commit and not (delivery and any(
+                        r.source_type != connector.source_type for r in batch.records)):
+                    if delivery:
+                        delivery.acknowledge()
+                    self.store.update_watermark(watermark)
                 return ScheduledIngestResult(
                     run=run,
                     watermark=watermark,
@@ -913,6 +936,7 @@ class IngestionScheduler:
                     dlq_entries=tuple(rejected_dlq_entries),
                     audit_actions=tuple(rejected_audit_actions),
                     frontier_id=frontier_id,
+                    collector_delivery=delivery,
                 )
             except Exception as exc:  # noqa: BLE001 - scheduler must DLQ final governed failures.
                 last_error = exc

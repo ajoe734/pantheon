@@ -32,7 +32,9 @@ import re
 import shutil
 import tempfile
 import urllib.request
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -67,6 +69,37 @@ MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_RAW_BYTES = 32 * 1024 * 1024
 COLLECTOR_SOURCE_TYPES = frozenset({"social", "news", "paper", "macro", "filing", "market"})
 COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
+
+# Configured ingestion owns persistence; tuple adapter callers retain their
+# existing eager acknowledgement contract. ContextVar isolates concurrent pulls.
+_DEFER_ACK = ContextVar("collector_defer_ack", default=False)
+
+
+@contextmanager
+def deferred_collector_acknowledgement():
+    token = _DEFER_ACK.set(True)
+    try:
+        yield
+    finally:
+        _DEFER_ACK.reset(token)
+
+
+@dataclass(frozen=True)
+class CollectorDelivery:
+    """In-process verified delivery, never accepted from serialized batch metadata."""
+
+    expected: tuple[SourceRecord, ...]
+    acknowledge: Callable[[], None]
+
+    def validate(self, records: Sequence[SourceRecord]) -> None:
+        if len(records) != len(self.expected):
+            raise SourceEvidenceError("collector delivery record coverage mismatch")
+        for actual, expected in zip(records, self.expected):
+            payload, original = actual.to_dict(), expected.to_dict()
+            payload.pop("metadata")
+            original.pop("metadata")
+            if payload != original or any(actual.metadata.get(k) != v for k, v in expected.metadata.items()):
+                raise SourceEvidenceError("collector delivery identity/hash/PIT/schema mismatch")
 
 
 def collector_host() -> str:
@@ -175,6 +208,7 @@ class CollectorPullResult:
     priority_delivered: int = 0  # items of that bundle delivered so far (it may exceed one pull's cap)
     priority_done: bool = False
     no_new_data: bool = False  # verified complete boundary agrees with the consumed cursor and host status
+    delivery: CollectorDelivery | None = None
 
 
 PRIORITY_LATEST_DATASETS = frozenset({"tw_price_daily"})
@@ -539,7 +573,7 @@ class CollectorBundleAdapter:
             base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining)
         seen = {r.source_id for r in records}
         merged = (*records, *(r for r in base.records if r.source_id not in seen))
-        return CollectorPullResult(
+        result = CollectorPullResult(
             records=merged,
             next_cursor=base.next_cursor,
             bundle_count=base.bundle_count + 1,
@@ -552,6 +586,10 @@ class CollectorBundleAdapter:
             priority_delivered=delivered,
             priority_done=done,
         )
+        if _DEFER_ACK.get():
+            result = replace(result, delivery=CollectorDelivery(
+                result.records, lambda: self.save_resume_cursor(result)))
+        return result
 
     def _priority_latest_enabled(self) -> bool:
         # A sub-hourly Pantheon pull cadence (price-history definitions: 30 min) means the newest
@@ -721,9 +759,13 @@ class CollectorBundleAdapter:
                 first_skip = partial_skip if first.cursor == base_cursor else 0
                 candidate = [r for r in all_records[: max(len(first.items) - first_skip, 0)]]
                 plan = self._plan_governed_features(candidate)
-        feature_records, feature_rejected = self._commit_governed_features(
-            plan, limit=max(total_cap - len(records), 0), trace_id=trace_id
-        )
+        limit = max(total_cap - len(records), 0)
+        selected = self._select_feature_rows(plan, limit)
+        if _DEFER_ACK.get():
+            feature_records = feature_rows_to_records(selected, connector_id=self.connector_id, trace_id=trace_id)
+            feature_rejected = plan.rejected
+        else:
+            feature_records, feature_rejected = self._commit_governed_features(plan, limit=limit, trace_id=trace_id)
         self._write_raw(raw_plan, records)
         observed = observed_from_collector_status(
             self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self._health_cadence_seconds()
@@ -751,7 +793,7 @@ class CollectorBundleAdapter:
         if paused:
             observed = {**observed, "health_state": "degraded",
                         "reasons": (*observed["reasons"], *(f"collector_bundle_paused:{r}" for r in paused))}
-        return CollectorPullResult(
+        result = CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
             bundle_count=len(verified),
@@ -761,6 +803,12 @@ class CollectorBundleAdapter:
             complete=complete,
             no_new_data=no_new_data,
         )
+        if _DEFER_ACK.get():
+            def acknowledge() -> None:
+                self._commit_governed_features(replace(plan, rows=selected), limit=None, trace_id=trace_id)
+                self.save_resume_cursor(result)
+            result = replace(result, delivery=CollectorDelivery(result.records, acknowledge))
+        return result
 
     # -- durable resume cursor (capped public pulls) -------------------------------
     def _resume_cursor_path(self) -> Path:
@@ -783,6 +831,8 @@ class CollectorBundleAdapter:
         Cleared once a pull reaches the end, so a finished sweep replays from scratch exactly
         like an un-cursored pull (idempotent downstream).
         """
+        if _DEFER_ACK.get():
+            return
         if result.priority_key:
             pri = self._priority_key_path()
             pri.parent.mkdir(parents=True, exist_ok=True)
@@ -1115,12 +1165,7 @@ class CollectorBundleAdapter:
         self, plan: "_FeaturePlan", *, limit: int | None, trace_id: str = ""
     ) -> tuple[tuple[SourceRecord, ...], tuple[dict[str, str], ...]]:
         """Return up to ``limit`` rows; acknowledge ledger/markers only for what is returned."""
-        rows = plan.rows
-        if limit is not None and len(rows) > limit:
-            # An output cap must never starve unacknowledged revisions: keep those first
-            # (then already-acknowledged replays), preserving chronological order.
-            ranked = sorted(range(len(rows)), key=lambda i: (plan.is_acked(rows[i]), i))[:limit]
-            rows = tuple(rows[i] for i in sorted(ranked))
+        rows = self._select_feature_rows(plan, limit)
         if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
             path = self._community_ledger_path()
             if plan.fresh_entries:
@@ -1128,34 +1173,34 @@ class CollectorBundleAdapter:
                 with path.open("a", encoding="utf-8") as handle:
                     for entry in plan.fresh_entries:
                         handle.write(json.dumps(entry, sort_keys=True) + "\n")
-            known = set(plan.known_markers)
-            new_markers = []
-            for r in rows:
-                marker = (r["symbol"], r["event_time"], r["available_time"])
-                if marker not in known:
-                    known.add(marker)
-                    new_markers.append(marker)
-            if new_markers:
-                emitted_path = path.with_name("community_emitted.jsonl")
-                emitted_path.parent.mkdir(parents=True, exist_ok=True)
-                with emitted_path.open("a", encoding="utf-8") as handle:
-                    for m in new_markers:
-                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
+            emitted_path = path.with_name("community_emitted.jsonl")
         elif self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
-            known = set(plan.known_markers)
-            new_markers = []
-            for r in rows:
-                marker = (r["symbol"], r["event_time"], r["available_time"])
-                if marker not in known:
-                    known.add(marker)
-                    new_markers.append(marker)
-            if new_markers:
-                emitted_path = self._macro_emitted_path()
-                emitted_path.parent.mkdir(parents=True, exist_ok=True)
-                with emitted_path.open("a", encoding="utf-8") as handle:
-                    for m in new_markers:
-                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
+            emitted_path = self._macro_emitted_path()
+        else:
+            return (), plan.rejected
+        known = set(self._read_markers(emitted_path))
+        new_markers = []
+        for r in rows:
+            marker = (r["symbol"], r["event_time"], r["available_time"])
+            if marker not in known:
+                known.add(marker)
+                new_markers.append(marker)
+        if new_markers:
+            emitted_path.parent.mkdir(parents=True, exist_ok=True)
+            with emitted_path.open("a", encoding="utf-8") as handle:
+                for m in new_markers:
+                    handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
         return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), plan.rejected
+
+    @staticmethod
+    def _select_feature_rows(plan: "_FeaturePlan", limit: int | None) -> tuple:
+        rows = plan.rows
+        if limit is not None and len(rows) > limit:
+            # An output cap must never starve unacknowledged revisions: keep those first
+            # (then already-acknowledged replays), preserving chronological order.
+            ranked = sorted(range(len(rows)), key=lambda i: (plan.is_acked(rows[i]), i))[:limit]
+            rows = tuple(rows[i] for i in sorted(ranked))
+        return tuple(rows)
 
     def fetch_bundle(self, *, cursor: str | None = None, trace_id: str = "") -> CollectorPullResult:
         return self.pull(cursor=cursor, trace_id=trace_id)

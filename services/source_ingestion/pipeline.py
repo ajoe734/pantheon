@@ -923,7 +923,8 @@ class IngestPipelineService:
                 batch_records = fetched.records if isinstance(fetched, IngestBatch) else tuple(fetched)
                 stamped_records = tuple(stamp_source_record_tenant(r, connector_tenant) for r in batch_records)
                 if isinstance(fetched, IngestBatch):
-                    return replace(fetched, records=stamped_records)
+                    return replace(fetched, records=stamped_records, derived_records=tuple(
+                        stamp_source_record_tenant(r, connector_tenant) for r in fetched.derived_records))
                 return stamped_records
             effective_fetch_batch = tenant_stamped_fetch_batch
 
@@ -933,6 +934,7 @@ class IngestPipelineService:
             trigger_type=trigger_type,
             fetch_batch=effective_fetch_batch,
             frontier_id=frontier_id,
+            defer_commit=True,
         )
         evidence_refs: dict[str, Any] = {
             "source_ids": [],
@@ -982,6 +984,12 @@ class IngestPipelineService:
                 evidence_refs,
                 future_tolerance_seconds=self.runtime.SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS,
             )
+            if result.run.status.value == "completed":
+                post_processing_stage = "delivery_acknowledgement"
+                if result.collector_delivery is not None:
+                    result.collector_delivery.acknowledge()
+                if result.watermark is not None:
+                    self.store.update_watermark(result.watermark)
         except Exception as exc:
             persist_ingest_receipt(
                 self.store,
