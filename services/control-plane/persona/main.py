@@ -107,10 +107,15 @@ async def persona_lifespan(app):
             policy_id = str(persona.get("route_policy_id") or "").strip()
             if not policy_id:
                 return {}
-            policy = _owner_surface_reads(persona, lambda surface, pid: surface.get_route_policy_for_persona(pid))
-            if not policy:  # referenced policy unreadable: never score without its constraints
-                raise RuntimeError(f"route_policy_unavailable:{policy_id}")
-            return policy
+            # Resolve the exact referenced policy from the owner catalog by its own identity; the
+            # persona-scoped lookup selects by persona_id and may return a stale, different policy.
+            policies = _owner_surface_reads(persona, lambda surface, pid: surface.list_route_policies())
+            for policy in policies or []:
+                if isinstance(policy, dict) and policy and policy_id in {
+                        str(policy.get("policy_id") or "").strip(), str(policy.get("id") or "").strip()} - {""}:
+                    return policy
+            # referenced policy unreadable/mismatched: never score without (or with other) constraints
+            raise RuntimeError(f"route_policy_unavailable:{policy_id}")
 
         def _capability_snapshot(persona):
             inline = persona.get("capability_snapshot")

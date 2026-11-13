@@ -339,12 +339,12 @@ class _Surface:
     def __init__(self, policy=None, snapshot=None, fail=False):
         self.policy, self.snapshot, self.fail, self.tenants = policy, snapshot, fail, []
 
-    def get_route_policy_for_persona(self, persona_id):
+    def list_route_policies(self):
         from services.control_plane.bff.core.owner_reads import selected_tenant
         self.tenants.append(selected_tenant.get())
         if self.fail:
             raise ConnectionError("route policy owner down")
-        return self.policy
+        return [self.policy] if self.policy else []
 
     def get_capability_snapshot_for_persona(self, persona_id):
         return self.snapshot
@@ -381,3 +381,44 @@ def test_lifespan_daily_loader_without_the_policy_would_have_recommended_the_blo
     demand = {"demand_id": "d1", "persona_id": "p-mom", "tenant_id": TENANT, "status": "open", "missing_families": [],
               "missing_datasets": [], "tried_families": [], "reasons": ["too_few_independent_bets"]}
     assert ports.discover_for_demand(referenced, demand).get("matches")
+
+
+def _real_surface(policies):
+    """Real ReadSurfacePorts whose only double is the in-memory owner catalog of route policies."""
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    class _Catalog:
+        def list_route_policies(self):
+            return list(policies)
+    return ReadSurfacePorts(operations_consultation=_Catalog())
+
+
+def _demand():
+    return {"demand_id": "d1", "persona_id": "p-mom", "tenant_id": TENANT, "status": "open", "missing_families": [],
+            "missing_datasets": [], "tried_families": [], "reasons": ["too_few_independent_bets"]}
+
+
+def test_lifespan_loader_resolves_shared_policy_by_policy_id_through_real_read_surface(monkeypatch, tmp_path):
+    referenced = {**PERSONA, "route_policy_id": "rp-block-qlib"}
+    surface = _real_surface([{"policy_id": "rp-block-qlib", "blocked_backends": ["qlib"]}])  # shared: no persona_id
+    ports = _boot_lifespan(monkeypatch, tmp_path, surface)
+    assert ports.discovery_loader(referenced)["route_policy"]["blocked_backends"] == ["qlib"]
+    ports.read_strategy_specs = lambda persona: []
+    assert not ports.discover_for_demand(referenced, _demand()).get("matches")
+
+
+def test_lifespan_loader_ignores_stale_persona_scoped_row_and_uses_the_referenced_policy(monkeypatch, tmp_path):
+    referenced = {**PERSONA, "route_policy_id": "rp-block-qlib"}
+    surface = _real_surface([{"policy_id": "rp-old-open", "persona_id": "p-mom"},
+                             {"policy_id": "rp-block-qlib", "blocked_backends": ["qlib"]}])
+    ports = _boot_lifespan(monkeypatch, tmp_path, surface)
+    assert ports.discovery_loader(referenced)["route_policy"]["policy_id"] == "rp-block-qlib"
+    ports.read_strategy_specs = lambda persona: []
+    assert not ports.discover_for_demand(referenced, _demand()).get("matches")
+
+
+def test_lifespan_loader_fails_closed_when_only_a_mismatched_persona_row_exists(monkeypatch, tmp_path):
+    referenced = {**PERSONA, "route_policy_id": "rp-block-qlib"}
+    ports = _boot_lifespan(monkeypatch, tmp_path, _real_surface([{"policy_id": "rp-old-open", "persona_id": "p-mom"}]))
+    with pytest.raises(RuntimeError, match="route_policy_unavailable:rp-block-qlib"):
+        ports.discovery_loader(referenced)
