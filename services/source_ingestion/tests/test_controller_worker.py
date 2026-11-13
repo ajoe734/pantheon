@@ -1343,6 +1343,25 @@ def test_main_failure_line_is_unchanged_without_schedule_context(
     assert set(line) == {"tick", "status", "stage", "error", "state_sequence_no"}
 
 
+def test_main_skips_cadence_sleep_only_while_continuation_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results = iter([{"status": "ok", "continuation_pending": True}, {"status": "ok", "continuation_pending": False}])
+    sleeps: list[float] = []
+    config = replace(_config(tmp_path), max_ticks=3, interval_seconds=60)
+    monkeypatch.setattr(controller_worker, "config_from_env", lambda: config)
+    monkeypatch.setattr(controller_worker, "_new_state", lambda: _state())
+    monkeypatch.setattr(controller_worker, "build_loop_writer", lambda **kwargs: RecordingWriter([]))
+    monkeypatch.setattr(controller_worker, "run_controller_tick", lambda **kwargs: next(results, {"status": "ok"}))
+    monkeypatch.setattr(controller_worker.time, "sleep", sleeps.append)
+
+    assert controller_worker.main() == 0
+    capsys.readouterr()
+    assert sleeps == [controller_worker.CONTINUATION_PAUSE_SECONDS, 60]
+
+
 def test_run_controller_tick_exclusively_selects_governed_bounded_connector(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
