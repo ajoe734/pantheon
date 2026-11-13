@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -102,6 +103,7 @@ class SearchGateway:
         index_store: JsonlSearchIndexStore | None = None,
         index_adapter: KeywordIndexAdapter | None = None,
         retrieval_backend: Any | None = None,
+        query_recorder: Any | None = None,
     ) -> None:
         self.repository = repository
         self.retriever = retriever or KeywordRetriever()
@@ -115,6 +117,9 @@ class SearchGateway:
         self.index_store = index_store
         self.index_adapter = index_adapter or KeywordIndexAdapter(repository)
         self.retrieval_backend = retrieval_backend
+        # Called as query_recorder(context=, request=, hits=, latency_ms=) with only
+        # the hits that survived canonical-owner/evidence/ACL validation, in served order.
+        self.query_recorder = query_recorder
 
     def get_capabilities(self) -> dict[str, Any]:
         """Report retrieval capability matrix honestly."""
@@ -162,6 +167,7 @@ class SearchGateway:
 
         mode = request.retrieval_mode
         if self.retrieval_backend is not None and mode in ("keyword", "full_text", "semantic", "hybrid"):
+            _started = time.perf_counter()
             hits = self.retrieval_backend.search(
                 query=request.query,
                 context=context,
@@ -197,6 +203,7 @@ class SearchGateway:
             ranker_ver = hits[0].ranker_version if hits else f"postgres-{mode}-v1"
 
             results: list[RetrievalResult] = []
+            served_hits: list[Any] = []
             backend_rejected = 0
             backend_rejected_by_reason: dict[str, int] = {}
             for hit in hits:
@@ -227,6 +234,7 @@ class SearchGateway:
                     backend_rejected_by_reason[r_key] = backend_rejected_by_reason.get(r_key, 0) + 1
                     continue
 
+                served_hits.append(hit)
                 results.append(
                     RetrievalResult(
                         result_id=ko.knowledge_object_id,
@@ -253,6 +261,11 @@ class SearchGateway:
                     )
                 )
 
+            if self.query_recorder is not None:
+                self.query_recorder(
+                    context=context, request=request, hits=served_hits,
+                    latency_ms=(time.perf_counter() - _started) * 1000.0,
+                )
             response = GovernedSearchResponse(
                 request_id=request.request_id,
                 trace_id=request.trace_id,

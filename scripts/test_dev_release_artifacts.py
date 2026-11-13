@@ -123,6 +123,8 @@ def test_capture_individual_ids_and_absent_registry_metadata(image_case):
     assert len(bundle["archives"]) == len(list(root.glob("*.tar"))) == 3
     assert all(row["repo_digests"] is None for row in bundle["services"].values())
     assert len(checks) >= 5
+    assert "Config.Env" not in str(docker.calls)
+    assert validate(image_case) == bundle
 
 
 def test_third_party_image_without_config_labels_is_inspectable():
@@ -137,8 +139,6 @@ def test_third_party_image_without_config_labels_is_inspectable():
     assert row["id"] == image_id
     assert row["revision"] is None
     assert row["repo_digests"]
-    assert "Config.Env" not in str(docker.calls)
-    assert validate(image_case) == bundle
 
 
 def test_capture_deduplicates_shared_image_without_inventing_revision(tmp_path):

@@ -192,3 +192,14 @@ def test_evaluation_without_dsn_reports_unavailable(monkeypatch, capsys):
     monkeypatch.delenv("PANTHEON_SEARCH_POSTGRES_DSN", raising=False)
     assert main([]) == 2
     assert "unavailable" in capsys.readouterr().out
+
+
+def test_absent_backend_selection_and_dsn_is_unavailable_not_jsonl(app_factory):
+    """Default is the accepted Postgres backend; JSONL needs an explicit choice."""
+    with TestClient(app_factory()) as client:
+        for path in ("/readyz", "/api/search/query"):
+            response = client.get(path) if path == "/readyz" else client.post(path, json={"query": "x"})
+            assert response.headers["X-Retrieval-Backend"] != "jsonl"
+            assert response.headers.get("X-Retrieval-Reason") != "explicit_jsonl_fallback"
+        ready = client.get("/readyz")
+        assert ready.status_code != 200

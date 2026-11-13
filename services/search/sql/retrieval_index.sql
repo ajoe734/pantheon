@@ -99,7 +99,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON search_retrieval_index TO pantheon_retri
 
 -- Retrieval query log: one row per query served on the hybrid backend.
 -- Written only by the search service request path; there is no seed or
--- synthetic writer. persona_private rows keep their persona scope under RLS.
+-- synthetic writer. every query by a persona is persona_private (independent of hits) and keeps
+-- its persona scope under RLS; labels inherit the parent row's visibility.
 CREATE TABLE IF NOT EXISTS retrieval_query_log (
     query_log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
@@ -148,7 +149,10 @@ DROP POLICY IF EXISTS query_label_scope_policy ON retrieval_query_labels;
 CREATE POLICY query_label_scope_policy ON retrieval_query_labels
 FOR ALL
 USING (tenant_id = current_setting('pantheon.current_tenant', true)
-       AND current_setting('pantheon.current_tenant', true) <> '');
+       AND current_setting('pantheon.current_tenant', true) <> ''
+       -- A label is visible only if its parent log row is (log RLS applies here).
+       AND EXISTS (SELECT 1 FROM retrieval_query_log l
+                   WHERE l.query_log_id = retrieval_query_labels.query_log_id));
 
 GRANT SELECT, INSERT ON retrieval_query_log TO pantheon_retrieval;
 GRANT SELECT, INSERT ON retrieval_query_labels TO pantheon_retrieval;

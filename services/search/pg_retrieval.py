@@ -396,14 +396,9 @@ class PostgresRetrievalBackend:
             with conn.cursor() as cur:
                 cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant,))
                 cur.execute("SELECT set_config('pantheon.current_persona', %s, true)", (persona or "",))
-                private = False
-                if hits:
-                    cur.execute(
-                        "SELECT 1 AS private FROM search_retrieval_index WHERE tenant_id = %s AND id = ANY(%s)"
-                        " AND persona_id IS NOT NULL LIMIT 1",
-                        (tenant, [h.id for h in hits]),
-                    )
-                    private = cur.fetchone() is not None
+                # Query text and caller attribution belong to the calling persona
+                # regardless of what (if anything) was returned.
+                private = bool(persona)
                 cur.execute(
                     """INSERT INTO retrieval_query_log
                        (tenant_id, persona_id, workspace_id, persona_private, request_id, query_text,
@@ -435,12 +430,15 @@ class PostgresRetrievalBackend:
                 cur.execute("SELECT * FROM retrieval_query_log ORDER BY recorded_at DESC LIMIT %s", (limit,))
                 return list(cur.fetchall())
 
-    def record_label(self, *, tenant_id: str, query_log_id: str, source_event_id: str, labelled_by: str) -> None:
+    def record_label(self, *, tenant_id: str, query_log_id: str, source_event_id: str, labelled_by: str,
+                     persona_id: str | None = None) -> None:
+        """Label a logged query; a persona-private query can only be labelled in that persona's scope."""
         if not (query_log_id and source_event_id and labelled_by):
             raise ValueError("label needs query_log_id, source_event_id and labelled_by")
         with self._get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant_id,))
+                cur.execute("SELECT set_config('pantheon.current_persona', %s, true)", (persona_id or "",))
                 cur.execute(
                     "INSERT INTO retrieval_query_labels (query_log_id, tenant_id, source_event_id, labelled_by)"
                     " VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",

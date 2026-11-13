@@ -42,6 +42,20 @@ def test_every_served_query_is_recorded(client_factory):
     assert kwargs["request_id"] == "r1" and kwargs["latency_ms"] >= 0
 
 
+def test_log_records_only_gateway_validated_hits(client_factory):
+    """A backend candidate with no canonical owner is dropped by the gateway and must not be logged."""
+    from services.search.pg_retrieval import RetrievalHitItem
+    backend = _backend()
+    backend.search.return_value = [RetrievalHitItem(
+        id="stale-no-canonical-owner", record_kind="knowledge_object", score=1.0, title="t", search_text="s",
+        content_ref=None, citation_label=None, evidence_bundle_id=None, evidence_item_id=None,
+        component_scores={}, metadata={}, updated_at=None, ranker_version="postgres-hybrid-v1")]
+    with client_factory(backend) as client:
+        response = client.post("/api/search/query", json=BODY)
+    assert response.status_code == 200 and response.json()["results"] == []
+    assert backend.record_query.call_args.kwargs["hits"] == []
+
+
 def test_query_fails_closed_when_log_unavailable(client_factory):
     backend = _backend()
     backend.record_query.side_effect = RuntimeError("db down")
@@ -86,6 +100,39 @@ def test_pg_query_log_private_scope_and_eval_unavailable():
         assert main(["--dsn", dsn, "--tenant", tenant]) == 2
     finally:
         backend.delete_document("qlog-private", tenant_id=tenant, hard=True)
+
+
+def test_pg_query_log_private_regardless_of_hits_and_labels_inherit_scope():
+    """Real PostgreSQL: a persona's query is private even with zero or public-only hits; labels follow."""
+    import os, uuid
+    from services.search.filters import SearchAccessContext
+    from services.search.pg_retrieval import PostgresRetrievalBackend
+
+    dsn = os.getenv("PANTHEON_RETRIEVAL_INTEGRATION_DSN")
+    if not dsn:
+        pytest.skip("Set PANTHEON_RETRIEVAL_INTEGRATION_DSN for isolated pgvector integration")
+    engine = Mock(dimension=1024, model_name="test-model")
+    engine.is_ready.return_value = True
+    backend = PostgresRetrievalBackend(dsn, embedding_engine=engine)
+    backend.setup_schema()
+    tenant = "qlog-private-tenant"
+    owner = SearchAccessContext(tenant_id=tenant, persona_id="owner")
+    other = SearchAccessContext(tenant_id=tenant, persona_id="other")
+    rid = f"zero-{uuid.uuid4().hex}"
+    backend.record_query(context=owner, request_id=rid, query="私人決策文字", retrieval_mode="hybrid",
+                         hits=[], latency_ms=1.0, caller_decision_type="cycle_review", source_event_id="evt-private")
+    row = next(r for r in backend.list_query_log(owner) if r["request_id"] == rid)
+    assert row["persona_private"] is True
+    assert rid not in [r["request_id"] for r in backend.list_query_log(other)]
+    backend.record_label(tenant_id=tenant, query_log_id=str(row["query_log_id"]),
+                         source_event_id="evt-x", labelled_by="reviewer", persona_id="owner")
+    with backend._get_connection() as conn:
+        with conn.cursor() as cur:
+            for persona, expected in (("owner", 1), ("other", 0)):
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant,))
+                cur.execute("SELECT set_config('pantheon.current_persona', %s, true)", (persona,))
+                cur.execute("SELECT count(*) AS n FROM retrieval_query_labels WHERE query_log_id = %s", (row["query_log_id"],))
+                assert cur.fetchone()["n"] == expected
 
 
 def test_rebuild_entry_point_fails_closed_without_model(monkeypatch):
