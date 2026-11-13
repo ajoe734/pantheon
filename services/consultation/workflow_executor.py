@@ -830,11 +830,20 @@ def _compose_panel_case_file(
             # Service caller: the shared file may NEVER include private memory.
             persona_id="")
         files = []
+        # Resolve the paper binding from persona-owned registry metadata, as
+        # the persona cycle does. Never infer it from a name or an unrelated
+        # same-tenant runtime. Missing or conflicting bindings stay unavailable.
+        bindings = {(e.get("metadata") or {}).get("persona_capital_binding_id")
+                    for entries in families.values() for e in entries
+                    if (e.get("metadata") or {}).get("persona_id") == persona
+                    and e.get("tenant_id") == config.tenant_id}
+        binding = next(iter(bindings)) if len(bindings) == 1 else ""
         for family, entries in families.items():
             metadata = [e.get("metadata") or {} for e in entries]
             subject = decision_case.Subject(
                 decision_type="trial_admission" if decision["type"] == "trial_admission" else "consult",
                 persona_id=persona, tenant_id=config.tenant_id, strategy_family=family,
+                persona_capital_binding_id=str(binding or ""),
                 member_artifact_refs=tuple(e["registry_id"] for e in entries),
                 backtest_run_refs=tuple(dict.fromkeys(
                     run for e in entries for run in (e.get("lineage") or {}).get("source_run_ids", []))),
