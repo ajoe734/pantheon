@@ -110,6 +110,23 @@ rate-limited for real (GDELT waits 5 s between requests).
 
 ### Step 2.5 — Install and Enable Systemd Timers
 
+Sources enabled in `fetch-policy.json` with `cadence_seconds < 21600` use
+`pantheon-collector-hourly@.timer`: currently `collector-gdelt` and
+`collector-news-rss` (both 3600 seconds). It fires every hour at `:15`, with
+one-second accuracy and no randomized delay. Both timer templates invoke the
+existing `pantheon-collector@<source>.service`.
+
+All other enabled sources retain the unchanged six-hour
+`pantheon-collector@.timer` (`00/6:15:00`, up to 300 seconds of randomized delay).
+When changing the policy, update these source lists and ensure the chosen timer
+is at least as frequent as each source's cadence; a cadence below one hour
+requires a faster timer. The commands below also migrate an existing installation:
+stop and disable the alternate timer before enabling the chosen timer, so each
+source has exactly one active source timer.
+
+GDELT still fetches only the single latest 15-minute export per run; hourly
+scheduling does not provide backfill or full coverage of all 15-minute exports.
+
 ```bash
 sudo cp /opt/pantheon-collector/systemd/pantheon-collector*.service /etc/systemd/system/
 sudo cp /opt/pantheon-collector/systemd/pantheon-collector*.timer /etc/systemd/system/
@@ -118,12 +135,22 @@ sudo systemctl daemon-reload
 # Enable the daily 90-day bundle pruner
 sudo systemctl enable --now pantheon-collector-prune.timer
 
-# Enable timers for enabled sources (PTT mirrors stay disabled per O-11; collector-tw-macro-dgbas is disabled
+# Hourly sources: stop their old six-hour timers before enabling the faster ones.
+for src in \
+  collector-gdelt \
+  collector-news-rss; do
+  sudo systemctl disable --now "pantheon-collector@${src}.timer"
+  sudo systemctl enable --now "pantheon-collector-hourly@${src}.timer"
+done
+
+# Six-hour timers for the remaining enabled sources (PTT mirrors stay disabled per O-11; collector-tw-macro-dgbas is disabled
 # because www.stat.gov.tw serves a Cloudflare challenge, see `disabled_reason` in fetch-policy.json)
 for src in \
   collector-tw-macro-cbc \
   collector-tw-macro-ndc \
-  collector-gdelt \
+  collector-tw-twse-t86 \
+  collector-tw-twse-price-history \
+  collector-tw-tpex-price-history \
   collector-macro-dbnomics \
   collector-papers \
   collector-paper-arxiv \
@@ -135,8 +162,8 @@ for src in \
   collector-tw-ptt-stock \
   collector-youtube-finance \
   collector-youtube-gemini-notes \
-  collector-library-books \
-  collector-news-rss; do
+  collector-library-books; do
+  sudo systemctl disable --now "pantheon-collector-hourly@${src}.timer"
   sudo systemctl enable --now "pantheon-collector@${src}.timer"
 done
 ```
