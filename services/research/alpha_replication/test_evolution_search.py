@@ -145,6 +145,9 @@ class FakeGate:
     def get_family_trial_count(self, fam):
         return self.counts.get(fam, 0)
 
+    def get_family_total_trial_count(self, fam):
+        return sum(v for k, v in self.counts.items() if k == fam or k.startswith(fam + "@"))
+
     def evaluate_candidate(self, request):
         fam = request["family"]
         self.counts[fam] = self.counts.get(fam, 0) + 1
@@ -306,3 +309,14 @@ def test_oos_judgement_reads_and_records_under_frequency_key():
     v = es.judge_child_out_of_sample(child, gate=gate, family_id="fam", request_factory=lambda c: {"family": "fam@5m"})
     assert (v["trial_count_before"], v["trial_count_after"]) == (0, 1)
     assert gate.counts == {"fam@5m": 1} and gate.get_family_trial_count("fam") == 0
+
+
+def test_run_mutation_decision_enforces_aggregate_family_cap_across_frequencies():
+    parent = _factor_parent()
+    parent["parameters"]["bar_frequency"] = "5m"
+    gate = FakeGate(True)
+    gate.counts = {"fam": 300, "fam@1m": 200}  # 500 combined; the 5m bucket itself is empty
+    out = es.run_mutation_decision(parent, gate=gate, family_id="fam", decision_id="evd-cap",
+        children=1, request_factory=lambda c: {"family": "fam@5m"}, register_child=lambda c, v: None)
+    assert gate.counts == {"fam": 300, "fam@1m": 200}
+    assert "family_tried" in str(out)

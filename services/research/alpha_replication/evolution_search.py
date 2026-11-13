@@ -444,7 +444,7 @@ def run_mutation_decision(
     results: list[dict[str, Any]] = []
     taken: list[str] = []  # versions this decision already built: siblings never share a revision
     for index in range(max(1, children)):
-        if gate.get_family_trial_count(artifact_trial_key(family_id, parent)) >= 500:
+        if gate.get_family_total_trial_count(family_id) >= 500:
             results.append({"index": index, "built": False, "error": "family_tried"})
             break
         result: dict[str, Any] | None = None

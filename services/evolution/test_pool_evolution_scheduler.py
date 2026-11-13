@@ -123,9 +123,13 @@ def test_pending_publication_is_retried_before_scheduling(lane):
 
 @pytest.mark.parametrize("frequency,counts,expected", [
     (None, {"fam": 500, "fam@5m": 0}, ["revalidate"]),          # daily exhausted
-    ("5m", {"fam": 500, "fam@5m": 0}, ["revalidate", "retrain"]),  # daily exhaustion must not suppress 5m
-    ("5m", {"fam": 0, "fam@5m": 500}, ["revalidate"]),          # 5m exhausted suppresses 5m
-    ("1m", {"fam": 0, "fam@5m": 500, "fam@1m": 0}, ["revalidate", "retrain"]),
+    ("5m", {"fam": 500, "fam@5m": 0}, ["revalidate"]),          # legacy daily count consumes the family-wide O-17 cap
+    ("5m", {"fam": 0, "fam@5m": 500}, ["revalidate"]),
+    ("1m", {"fam": 0, "fam@5m": 500, "fam@1m": 0}, ["revalidate"]),  # other frequency exhausts family
+    ("1m", {"fam@1m": 400, "fam@5m": 400}, ["revalidate"]),    # combined 800 > 500
+    ("5m", {"fam": 200, "fam@5m": 100, "fam@1m": 100}, ["revalidate", "retrain"]),  # 400 + 50 <= 500
+    ("5m", {"fam": 300, "fam@5m": 100, "fam@1m": 100}, ["revalidate"]),  # 500 reached
+    ("5m", {"fam": 200, "fam@5m": 100, "fam@1m": 160}, ["revalidate"]),  # 460 + 50 > 500
 ])
 def test_family_state_is_frequency_scoped(lane, monkeypatch, frequency, counts, expected):
     from services.research.replication.gate import family_trial_key
@@ -141,6 +145,7 @@ def test_family_state_is_frequency_scoped(lane, monkeypatch, frequency, counts, 
     if frequency:
         artifact.setdefault("parameters", {})["bar_frequency"] = frequency
     owner.family_state = lambda family, bar_frequency=None: {
-        "trials": counts.get(family_trial_key(family, bar_frequency), 0)}
+        "trials": counts.get(family_trial_key(family, bar_frequency), 0),
+        "family_total_trials": sum(v for k, v in counts.items() if k == family or k.startswith(family + "@"))}
     report = scheduler.tick()
     assert [p["action_type"] for p in decisions.proposals] == expected, (report.skipped, report.errors)

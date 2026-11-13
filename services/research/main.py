@@ -1870,8 +1870,13 @@ def evolution_family_state(family_id: str, bar_frequency: Optional[str] = None,
     if not any(((v or {}).get("entry") or {}).get("owner_tenant") == tenant_id for v in views or []):
         raise HTTPException(status_code=404, detail="family not found")
     # Frequency-scoped key (SD §9 K8); omitted/daily keeps the legacy bare family key.
-    trials = SharedFamilyTrialCounterStore(_retrain_trial_counter_path()).get(family_trial_key(family_id, bar_frequency))
-    return {"family_id": family_id, "bar_frequency": (bar_frequency or "").strip().lower() or None, "trials": trials, "status": "tried" if trials >= 500 else "available"}
+    # `trials` stays frequency-isolated; the O-17 lifetime cap (500) is enforced on the
+    # aggregate family total across every frequency bucket.
+    store = SharedFamilyTrialCounterStore(_retrain_trial_counter_path())
+    trials = store.get(family_trial_key(family_id, bar_frequency))
+    total = store.family_total(family_id)
+    return {"family_id": family_id, "bar_frequency": (bar_frequency or "").strip().lower() or None, "trials": trials,
+            "family_total_trials": total, "status": "tried" if total >= 500 else "available"}
 
 
 def _retrain_trial_counter_path() -> Path:
@@ -1926,7 +1931,7 @@ def _retrain_search_update(
         raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
     budget = 50 if params.get("pool_member") else int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
     family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
-    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).get(search.artifact_trial_key(family_id, parent_artifact)) >= 500:
+    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).family_total(family_id) >= 500:
         raise _RetrainFinished("no_candidate", "family_tried")
     from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
 
@@ -2381,6 +2386,9 @@ class _ProofCapturingGate:
 
     def get_family_trial_count(self, family_id: str) -> int:
         return self._gate.get_family_trial_count(family_id)
+
+    def get_family_total_trial_count(self, family_id: str) -> int:
+        return self._gate.get_family_total_trial_count(family_id)
 
     def record_family_trial(self, family_id: str) -> int:
         record = getattr(self._gate, "record_family_trial", None)

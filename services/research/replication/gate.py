@@ -372,6 +372,13 @@ class FamilyTrialCounterStore:
     def get(self, family_id: str) -> int:
         return int(self._counts.get(family_id, 0))
 
+    def family_total(self, family_id: str) -> int:
+        """Aggregate lifetime trials for a family across every frequency bucket
+        (bare legacy/daily key plus ``family_id@<frequency>``); O-17 cap basis."""
+        self.get(family_id)  # shared stores reload (strict) inside get()
+        prefix = f"{family_id}@"
+        return sum(int(v) for k, v in self._counts.items() if k == family_id or k.startswith(prefix))
+
     def increment(self, family_id: str, preset_count: Optional[int] = None) -> int:
         next_val = self.get(family_id) + 1
         if preset_count is not None and int(preset_count) > next_val:
@@ -474,6 +481,10 @@ class ReplicationGate:
         """Return the current number of evaluated trials for a strategy family
         (per bar_frequency; daily/undeclared is the legacy key)."""
         return self._trial_counter_store.get(family_trial_key(family_id, bar_frequency))
+
+    def get_family_total_trial_count(self, family_id: str) -> int:
+        """Aggregate family lifetime trials across all frequencies (O-17 cap of 500)."""
+        return self._trial_counter_store.family_total(family_id)
 
     def evaluate_candidate(self, request: ReplicationRequest) -> ReplicationResponse:
         """
