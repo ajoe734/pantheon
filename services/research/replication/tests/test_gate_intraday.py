@@ -7,6 +7,7 @@ test-side performance injections on top of the recorded evaluation (the counts, 
 snapshot stay as recorded).  Every test goes through ``ReplicationGate.evaluate_candidate``.
 """
 import copy
+import hashlib
 import json
 import random
 from datetime import date, datetime, timedelta, timezone
@@ -24,7 +25,7 @@ from services.research.replication.gate import (
 from services.research.replication.gate_config import GateConfig
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
-FIXTURE_NAMES = ("recorded_backtest_5m_2330.json", "recorded_backtest_5m_2330_2317.json")
+FIXTURE_NAMES = ("recorded_backtest_1m_2330.json", "recorded_backtest_1m_2330_2317.json")
 
 
 def load(name):
@@ -69,12 +70,35 @@ def test_recorded_run_clears_intraday_qualification_and_fails_only_on_performanc
     _, result = evaluate(ev)
     intraday = result.details["intraday"]
     assert intraday["evidence_mode"] == "replay" and intraday["live_or_paper_evidence"] is False
-    assert intraday["bar_frequency"] == "5m" and intraday["replay_clock"] == "bar_end"
+    assert intraday["bar_frequency"] == "1m" and intraday["replay_clock"] == "bar_end"
     assert intraday["source_dataset"] == "tw_price_1m" and intraday["source_snapshot_sha256"]
     assert intraday["clean_sessions"] >= 60 and intraday["in_sample_trades"] >= 300
     assert result.details["status"] == "failed"  # the recorded run loses after costs
     assert "oos_minimum_round_trips_met" not in result.details["failed_checks"]
     assert "oos_sharpe_positive_after_costs" in result.details["failed_checks"]
+
+
+@pytest.mark.parametrize("name", FIXTURE_NAMES)
+def test_one_minute_fixture_is_an_unmodified_terminal_synthetic_protocol_result(name):
+    ev = load(name)
+    provenance = ev.pop("fixture_provenance")
+    assert provenance["classification"].startswith("SYNTHETIC")
+    raw = json.dumps(ev, indent=1, default=str).encode()
+    assert hashlib.sha256(raw).hexdigest() == provenance["raw_result_sha256"]
+    receipt = provenance["execution_receipt"]
+    assert receipt["exit_code"] == 0 and receipt["status"] == "terminal"
+    assert receipt["source_head"] == receipt["source_head_after"] == provenance["source_head"]
+    assert receipt["tracked_source_clean_after"] and receipt["input_hashes_unchanged"]
+    assert receipt["elapsed_seconds"] < receipt["deadline_seconds"] == 900
+    assert ev["intraday"]["clean_sessions"] == 66
+    assert (ev["in_sample"]["num_bars"], ev["out_of_sample"]["num_bars"]) == (46 * 270, 20 * 270)
+    folds = ev["walk_forward"]["folds"]
+    assert [fold["num_bars"] for fold in folds] == [15 * 270, 15 * 270, 16 * 270]
+    for window in [ev["in_sample"], ev["out_of_sample"], *folds]:
+        assert window["total_return"] < 0  # costs are real, no injected profitable fixture
+        for metrics in window["per_instrument_metrics"].values():
+            assert abs(metrics["net_position"]) < 1e-8
+            assert metrics["total_fees_paid"] > 0
 
 
 @pytest.mark.parametrize("name", FIXTURE_NAMES)
@@ -136,7 +160,7 @@ def test_strategy_frequency_must_match_the_evidence_frequency():
     gate = ReplicationGate(config=GateConfig())
     gate.backtest_run_store.record(ev)
     request = request_for(ev)
-    art = {"parameters": {"bar_frequency": "1m"}}
+    art = {"parameters": {"bar_frequency": "5m"}}
     request.research_handoff["strategy_artifact"] = art
     request.metadata = {"strategy_artifact_checksum": ev["strategy_artifact"]["checksum"],
                         "dataset_version_id": ev["dataset_id"]}

@@ -1,45 +1,223 @@
 {
   "task": "INTRADAY-REPLICATION-GATE-20261111",
-  "owner": "Claude",
-  "reviewer": "Codex",
+  "owner": "Codex",
+  "reviewer": "Codex2",
   "plan_ref": "DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10 \u00a74 K6; SD_INTRADAY_MINUTE_BARS_2026-11-11 \u00a77, \u00a79 K6",
-  "base_commit": "000ebdb12608e8fe66554b758ff4b7604723c442",
+  "qualification_source_head": "24951e13886a416957914dca11128915f340c5fe",
+  "qualified_engine_blobs": {
+    "services/research/vectorbt/adapter/vectorbt_adapter.py": "1b61a6987833cbfff4a89e0be461ed3e9cd647c2",
+    "services/research/replication/gate.py": "572259e5262b9b4865d8ceb783bfaa9582cd9c2a"
+  },
   "tracks": {
     "source": {
       "status": "implemented_pending_independent_review",
-      "artifacts": [
-        "services/research/replication/gate.py",
-        "services/research/replication/gate_config.py",
-        "services/research/replication/GATE_CONTRACT.md",
-        "services/research/replication/tests/test_gate_intraday.py",
-        "services/research/replication/fixtures/recorded_backtest_5m_2330.json",
-        "services/research/replication/fixtures/recorded_backtest_5m_2330_2317.json"
-      ],
       "summary": [
-        "GateConfig: min_clean_sessions=60, min_in_sample_trades=300, min_oos_sessions=20, min_oos_trades=100 as floors; lowering raises ValueError.",
-        "gate.run_intraday_replication_protocol: session-boundary 70/30 IS/OOS + 3 walk-forward folds on the K5 engine (real vectorbt), statutory costs, benchmarks; unclean/thin history -> insufficient_history, engine not run.",
-        "ReplicationGate: minute evaluations take an intraday branch (_intraday_refusal): replay label, bar_end clock, reconciled tw_price_1m snapshot hash, frequency equals declared strategy frequency, no waived/quarantined/isolated flags, no unclean sessions, counts >= thresholds; otherwise refused/insufficient. Daily path unchanged.",
-        "Trades are counted as closed round trips. 70/30 with a 20-OOS-session floor implies >= 66 clean sessions in practice (documented in GATE_CONTRACT \u00a73c)."
+        "Session/trade floors 60/300 IS and20/100 OOS; session-boundary70/30 split and three folds; thin/unclean/waived/quarantined/isolated evidence refuses admission.",
+        "Existing immutable OHLCV and observation columns are reused locally per instrument/window. Only catalogue-reset zero-lag generated minute inputs with same-session clocks use session prefixes; aliases, delayed/additional/cross-session inputs fall back to full prefixes. Full referenced-column validation precedes reuse; per-bar Registry PIT validators remain intact.",
+        "Merged Flat TargetAmount actual-position closes are preserved. No Registry source change, new cache/service/backtester, weaker thresholds, altered data/cash/quantity, provider or capital operation.",
+        "Original single and dual66-session1m protocols both complete on the real existing backend; genuine losses remain negative. The old5m substitutes are removed from this unmerged task branch."
       ]
     },
     "tests": {
-      "command": "python -m pytest services/research/replication/tests/test_gate_intraday.py services/research/replication/test_gate.py services/research/replication/tests/test_gate_mechanism.py services/research/replication/tests/test_gate_screen_contribution.py -q",
-      "result": "99 passed (102s, real vectorbt 1.1.1); adjacent consumers test_backtest_owner_readback/test_admission/test_evolution_gate_executor/test_retrain_oos_gate: 17 passed",
-      "note": "Positive gate case applies named test-side performance injections to the recorded evaluation because the recorded synthetic runs lose after costs; counts/labels/snapshot are as recorded."
+      "status": "final_suite_pending",
+      "corrected_engine_controls": "9 passed in9.78s: exact per-bar PIT environments (reset/cross-session/lag/alias/crossing clock), all malformed old observations fail closed, exact actions/close intents/orders/cash/assets/value/costs for dual instruments and declared short/overnight, including identical genuine mandatory-liquidation failure. Controls use the SAME corrected engine with reuse disabled; no replacement backtester.",
+      "intermediate_suite": "78 passed in75.13s before the final crossing-clock assertion was corrected and the final9 controls rerun; not the final fixture suite."
     },
     "merged": {
-      "status": "not_yet_merged"
+      "status": "not_yet_merged",
+      "pr": 7269,
+      "required": "Codex2 exact-head canonical review, required CI, native supervisor integration"
     },
     "hosted": {
       "status": "not_applicable_source_only",
-      "note": "No provider probe, backfill, or production action performed."
+      "note": "No provider, VM, deployment or production action; W5 remains separate."
     }
   },
+  "original_whole_protocol_qualifications": [
+    {
+      "case": "single",
+      "status": "terminal",
+      "source_head": "24951e13886a416957914dca11128915f340c5fe",
+      "command": [
+        "timeout",
+        "--foreground",
+        "--kill-after=15s",
+        "900s",
+        "/tmp/codex-replication-review-20261111/bin/python",
+        "-B",
+        "-u",
+        "/tmp/intraday-k6-1m-validation/run_protocol.py",
+        "/tmp/intraday-k6-1m-validation/k6-1m-single.dataset.json",
+        "/tmp/intraday-k6-1m-validation/k6-1m-single.strategy.json",
+        "/tmp/intraday-k6-1m-validation/qualification-24951e13886a-single.result.json"
+      ],
+      "inputs_sha256": {
+        "k6-1m-single.dataset.json": "020d488765ce37e57a7dd7fbfc3e164f49084800e5ba4e96d1adff73a7683dae",
+        "k6-1m-dual.dataset.json": "20e752c3b8cf45ab054f0b7030754e19aa82658cb00bf20fad25173a60330211",
+        "k6-1m-single.strategy.json": "2907f38e5d153eb642d15df888056f9e6b6af9e819a02cc4f20893400eb64961",
+        "k6-1m-dual.strategy.json": "6ae3031e50fb753eb4be620816fb23ef0fea3b1b3b48e94284da0aa14260027a",
+        "run_protocol.py": "087a6aa814246218e6c4ceddee43fd2bfb73597887d19cfe99b8a7dc67272fd1"
+      },
+      "started_at": "2026-11-13T01:41:25.067637+00:00",
+      "finished_at": "2026-11-13T01:44:24.858883+00:00",
+      "elapsed_seconds": 179.79124205798144,
+      "deadline_seconds": 900,
+      "exit_code": 0,
+      "stdout": "status completed elapsed_s 179\n",
+      "stderr": "",
+      "source_head_after": "24951e13886a416957914dca11128915f340c5fe",
+      "tracked_source_clean_after": true,
+      "scope": "SYNTHETIC controlled original 1m six-window protocol; no real-market/PIT-owner/licence/financial/hosted acceptance",
+      "result_path": "/tmp/intraday-k6-1m-validation/qualification-24951e13886a-single.result.json",
+      "output_sha256": "af6773ef4f02e32f18272394bfe804fbdb653b4fc17eb9a0f81ac8f6c613d39e",
+      "output_bytes": 15708,
+      "input_hashes_unchanged": true,
+      "fixture_path": "services/research/replication/fixtures/recorded_backtest_1m_2330.json",
+      "receipt_sha256": "ce669a5f4bef8ab1b6f0d474e3c9c15a78e8b975ed0745ba1b2ddcb74324b3c9"
+    },
+    {
+      "case": "dual",
+      "status": "terminal",
+      "source_head": "24951e13886a416957914dca11128915f340c5fe",
+      "command": [
+        "timeout",
+        "--foreground",
+        "--kill-after=15s",
+        "900s",
+        "/tmp/codex-replication-review-20261111/bin/python",
+        "-B",
+        "-u",
+        "/tmp/intraday-k6-1m-validation/run_protocol.py",
+        "/tmp/intraday-k6-1m-validation/k6-1m-dual.dataset.json",
+        "/tmp/intraday-k6-1m-validation/k6-1m-dual.strategy.json",
+        "/tmp/intraday-k6-1m-validation/qualification-24951e13886a-dual.result.json"
+      ],
+      "inputs_sha256": {
+        "k6-1m-single.dataset.json": "020d488765ce37e57a7dd7fbfc3e164f49084800e5ba4e96d1adff73a7683dae",
+        "k6-1m-dual.dataset.json": "20e752c3b8cf45ab054f0b7030754e19aa82658cb00bf20fad25173a60330211",
+        "k6-1m-single.strategy.json": "2907f38e5d153eb642d15df888056f9e6b6af9e819a02cc4f20893400eb64961",
+        "k6-1m-dual.strategy.json": "6ae3031e50fb753eb4be620816fb23ef0fea3b1b3b48e94284da0aa14260027a",
+        "run_protocol.py": "087a6aa814246218e6c4ceddee43fd2bfb73597887d19cfe99b8a7dc67272fd1"
+      },
+      "started_at": "2026-11-13T01:44:33.955604+00:00",
+      "finished_at": "2026-11-13T01:52:18.542602+00:00",
+      "elapsed_seconds": 464.58698983100476,
+      "deadline_seconds": 900,
+      "exit_code": 0,
+      "stdout": "status completed elapsed_s 463\n",
+      "stderr": "",
+      "source_head_after": "24951e13886a416957914dca11128915f340c5fe",
+      "tracked_source_clean_after": true,
+      "scope": "SYNTHETIC controlled original 1m six-window protocol; no real-market/PIT-owner/licence/financial/hosted acceptance",
+      "result_path": "/tmp/intraday-k6-1m-validation/qualification-24951e13886a-dual.result.json",
+      "output_sha256": "8957985b8580ad4e36211c523cfd48a43f32a9b3a51fca71c6453dfd51585e2c",
+      "output_bytes": 21414,
+      "input_hashes_unchanged": true,
+      "fixture_path": "services/research/replication/fixtures/recorded_backtest_1m_2330_2317.json",
+      "receipt_sha256": "20e3e62028bf535bff8d9e31e21550a8ea6b0775eb5ba7959626704d0cc787a7"
+    }
+  ],
+  "historical_immutable_witnesses": [
+    {
+      "path": "/tmp/pantheon-goal-resume-20261111/goal-K6-1m-single-supervised-validation-20261112.json",
+      "sha256": "1498a1fcae487b78e8c0a639f4184b7c45ce601f80a4566599806301b04af4e1",
+      "terminal_receipt": {
+        "at": "2026-11-12T21:30:58.236679+00:00",
+        "task": "INTRADAY-REPLICATION-GATE-20261111",
+        "case": "single",
+        "status": "terminal",
+        "source_head": "e3144f9ce03578a03809a1d4560db79567289bfa",
+        "inputs_sha256": {
+          "k6-1m-dual.dataset.json": "20e752c3b8cf45ab054f0b7030754e19aa82658cb00bf20fad25173a60330211",
+          "k6-1m-dual.strategy.json": "6ae3031e50fb753eb4be620816fb23ef0fea3b1b3b48e94284da0aa14260027a",
+          "k6-1m-single.dataset.json": "020d488765ce37e57a7dd7fbfc3e164f49084800e5ba4e96d1adff73a7683dae",
+          "k6-1m-single.strategy.json": "2907f38e5d153eb642d15df888056f9e6b6af9e819a02cc4f20893400eb64961",
+          "prepare_inputs.py": "6d9a643793f31a1f7ccb84ef4770e1a56fe4be70656e7dd4f3987593320a7148",
+          "run_protocol.py": "087a6aa814246218e6c4ceddee43fd2bfb73597887d19cfe99b8a7dc67272fd1"
+        },
+        "command": [
+          "timeout",
+          "--foreground",
+          "--kill-after=15s",
+          "10800s",
+          "/tmp/codex-replication-review-20261111/bin/python",
+          "-B",
+          "-u",
+          "/tmp/intraday-k6-1m-validation/run_protocol.py",
+          "/tmp/intraday-k6-1m-validation/k6-1m-single.dataset.json",
+          "/tmp/intraday-k6-1m-validation/k6-1m-single.strategy.json",
+          "/tmp/intraday-k6-1m-validation/out-single.json"
+        ],
+        "cwd": "/tmp/pantheon-worker-worktrees/pantheon/intraday-replication-gate-20261111",
+        "deadline_seconds": 10800,
+        "scope": "SYNTHETIC labelled controlled1m protocol test only. Real existingVectorbt backend/full6windows. No provider/model/network/VM/data/financial/capital actions or source writes; no source/hosted completion claim.",
+        "finished_at": "2026-11-12T23:48:43.068796+00:00",
+        "exit_code": 0,
+        "stdout": "status completed elapsed_s 8263\n",
+        "stderr": "",
+        "source_head_after": "e3144f9ce03578a03809a1d4560db79567289bfa",
+        "source_head_unchanged": true,
+        "tracked_source_clean_after": true,
+        "output_sha256": "c6c53b1323f47e6edef50f867a336daa66bac17293a2fa835de99f5b2979fd69",
+        "output_bytes": 15835,
+        "protocol_status": "completed",
+        "result_path": "/tmp/intraday-k6-1m-validation/out-single.json",
+        "terminal_exit0_not_real_financial_acceptance": true
+      }
+    },
+    {
+      "path": "/tmp/pantheon-goal-resume-20261111/goal-K6-1m-dual-supervised-validation-20261112.json",
+      "sha256": "6bee9e8a955a36d0d0f4813dc31be7589241be744738e9b62b4b416c218fb212",
+      "terminal_receipt": {
+        "at": "2026-11-12T21:40:05.504493+00:00",
+        "task": "INTRADAY-REPLICATION-GATE-20261111",
+        "case": "dual",
+        "status": "terminal",
+        "source_head": "e3144f9ce03578a03809a1d4560db79567289bfa",
+        "inputs_sha256": {
+          "k6-1m-dual.dataset.json": "20e752c3b8cf45ab054f0b7030754e19aa82658cb00bf20fad25173a60330211",
+          "k6-1m-dual.strategy.json": "6ae3031e50fb753eb4be620816fb23ef0fea3b1b3b48e94284da0aa14260027a",
+          "k6-1m-single.dataset.json": "020d488765ce37e57a7dd7fbfc3e164f49084800e5ba4e96d1adff73a7683dae",
+          "k6-1m-single.strategy.json": "2907f38e5d153eb642d15df888056f9e6b6af9e819a02cc4f20893400eb64961",
+          "prepare_inputs.py": "6d9a643793f31a1f7ccb84ef4770e1a56fe4be70656e7dd4f3987593320a7148",
+          "run_protocol.py": "087a6aa814246218e6c4ceddee43fd2bfb73597887d19cfe99b8a7dc67272fd1"
+        },
+        "command": [
+          "timeout",
+          "--foreground",
+          "--kill-after=15s",
+          "10800s",
+          "/tmp/codex-replication-review-20261111/bin/python",
+          "-B",
+          "-u",
+          "/tmp/intraday-k6-1m-validation/run_protocol.py",
+          "/tmp/intraday-k6-1m-validation/k6-1m-dual.dataset.json",
+          "/tmp/intraday-k6-1m-validation/k6-1m-dual.strategy.json",
+          "/tmp/intraday-k6-1m-validation/out-dual.json"
+        ],
+        "cwd": "/tmp/pantheon-worker-worktrees/pantheon/intraday-replication-gate-20261111",
+        "deadline_seconds": 10800,
+        "scope": "SYNTHETIC labelled controlled1m protocol test only. Real existingVectorbt backend/full6windows. No provider/model/network/VM/data/financial/capital actions or source writes; no source/hosted completion claim.",
+        "finished_at": "2026-11-13T00:40:05.566883+00:00",
+        "exit_code": 124,
+        "stdout": "",
+        "stderr": "",
+        "source_head_after": "e3144f9ce03578a03809a1d4560db79567289bfa",
+        "source_head_unchanged": true,
+        "tracked_source_clean_after": true,
+        "terminal_exit0_not_real_financial_acceptance": false
+      }
+    }
+  ],
+  "profile_basis": {
+    "path": "/tmp/pantheon-goal-resume-20261111/goal-K6-Flat554277-one-existing-test-cProfile-facts-and-local-reuse-20261113.json",
+    "sha256": "0f1e193a952d1684de3efcd9f5c8c0b04cd2eb4895bbd134b97164c5dc327749",
+    "limit": "_artifact_action_sequence13.920691s and its534_closes_window calls1.333972s measured in one existing test. Packaging _artifact_view_strength43.780685s is NOT on the original direct protocol call path and is NOT claimed as its3h cause. Import/JIT times are nested, not additive; no speedup factor inferred from unlike or pre-correction runs."
+  },
   "gaps": [
-    "Fixtures are recorded_backtest_5m_*.json, NOT the scoped recorded_backtest_1m_*.json: the K5 engine cost is quadratic in bars per session; a 66+ session 1m protocol run (IS window alone ~15 min single process) did not complete inside bounded foreground batches (10 min cap). The gate and protocol are frequency-generic (1m accepted); 1m fixtures remain a gap.",
-    "Fixture bars are deterministic synthetic AR(1) bars in the reconciled tw_price_1m replay shape, not market data: no reconciled real tw_price_1m history of >= 66 sessions exists yet (only probe days). No replication claim is made on real minute history.",
-    "Recorded runs lose after costs (OOS Sharpe < 0); the passing gate case uses explicit test-side injections.",
-    "run_replication_backtest_protocol (daily, adapter) was not changed; intraday protocol lives in gate.py (adapter is out of the K6 artifact scope). Screen strategies stay daily-only.",
-    "Merged, hosted (W5) evidence not produced here."
+    "Fixtures use explicitly SYNTHETIC deterministic controlled bars in a reconciled source shape. Real market history, rights/licence, source-owner PIT, profitable financial acceptance and hosted proof are not supplied or claimed.",
+    "Recorded after-cost OOS and fold performance is legitimately negative; real gate rejection is required. Positive gate tests use named test-side performance injections only and never overwrite recorded fixtures.",
+    "The older e314 single nonflat failure and dual10800s timeout124/no-output remain immutable failure witnesses, not passes. New corrected-engine results do not retroactively qualify them.",
+    "Source completion still requires the assigned independent review, current-head CI, native merge and owner finalization; this manifest is evidence, not approval."
   ]
 }
