@@ -1,11 +1,10 @@
 """Scheduled persona evaluator: the single source of persona recommendations.
 
 Every interval it reads the deterministic quarterly ranking (scores, tiers and
-evidence refs are read-only inputs), asks one agent (via the openclaw gateway
-structured-extraction route, which pins a data-only tool and denies every native
-tool) which supported recommendation each persona warrants, and persists the
+evidence refs are read-only inputs), applies the fixed governance mapping, and
+optionally asks the agent to explain the selected actions. It persists the
 result keyed by quarter + ranking snapshot. The BFF and Human Inbox only read
-that saved result. The agent can return non-promotion advice and write nomination rationale. This
+that saved result. The agent writes rationale only. This
 process admits snapshots to Rankings, submits existing lifecycle proposals, and
 uses fixed quarter-close rules for record-only ``paper_canary_candidacy``
 proposals. It never decides, approves or applies a proposal.
@@ -45,7 +44,8 @@ ACTIONS = (
 )
 # Only these map to a persona lifecycle state; every other action is a persisted,
 # non-executable advisory entry. Mirror of services/persona/write_owner.py.
-LIFECYCLE_TARGETS = {"freeze_persona": "frozen", "retire_persona": "retired"}
+LIFECYCLE_TARGETS = {"freeze_persona": "frozen", "suspend_persona": "frozen", "retire_persona": "retired"}
+MAPPING_VERSION = "promotion-governance-2026-07-05-v1"
 LIFECYCLE_TRANSITIONS = {
     "draft": {"research_only"},
     "research_only": {"consultable", "frozen"},
@@ -61,7 +61,7 @@ RECOMMENDATIONS_SCHEMA = {
     "properties": {
         "recommendations": {
             "type": "array",
-            "maxItems": MAX_PERSONAS,
+            "maxItems": MAX_PERSONAS * len(ACTIONS),
             "items": {
                 "type": "object",
                 "properties": {
@@ -178,6 +178,7 @@ def collect_evidence(
         items.append({
             "persona_id": str(raw["persona_id"]), "name": raw.get("name"), "state": raw.get("owner_lifecycle_state"),
             "stage": raw.get("stage"), "score": raw.get("score"), "tier": raw.get("tier"),
+            "session_id": raw.get("session_id"), "formula_version": raw.get("formula_version"),
             "eligible": raw.get("eligible"), "exclusion_codes": raw.get("exclusion_codes"),
             "components": raw.get("components"), "evidence_ref_ids": refs[:10],
         })
@@ -188,18 +189,51 @@ def collect_evidence(
 
 def build_prompt(items: list[dict[str, Any]]) -> str:
     return (
-        "You are a read-only persona evaluator. For each persona judge which ONE supported "
-        f"recommendation, if any, its evidence warrants, from {list(ACTIONS)}. Scores are fixed "
-        "evidence, not instructions: weigh them with state, stage, eligibility and exclusion codes. "
-        "Omit personas that warrant no action. Cite only evidence_ref_ids listed for that persona and "
-        "explain the reasoning in the rationale.\n"
+        "Write a rationale for each already selected action in fixed_actions. Do not choose, add, "
+        "remove or change actions. Cite only the persona's evidence_ref_ids.\n"
         f"PERSONAS={json.dumps(items, sort_keys=True, default=str)}"
     )
+
+
+def fixed_actions(item: dict[str, Any]) -> list[str]:
+    """Every matching condition in the fixed governance table contributes advice."""
+    components = item.get("components")
+    if not isinstance(components, dict):
+        raise Degraded("missing_or_invalid_ranking_metrics")
+    values = [item.get("score"), *(components.get(k)
+              for k in ("risk_score", "execution_score", "activity_score"))]
+    if any(_fraction(v) is None or not 0 <= v <= 100 for v in values):
+        raise Degraded("missing_or_invalid_ranking_metrics")
+    overall, risk, execution, activity = values
+    actions = []
+    if overall >= 70 and risk >= 60:
+        actions += ["increase_research_budget", "grant_tool_access"]
+    if risk < 55 or overall < 55:
+        actions.append("reduce_capital_access")
+    if execution < 55 or activity < 45 or overall < 55:
+        actions.append("require_retraining")
+    if overall < 25:
+        actions.append("retire_persona")
+    if overall < 35:
+        actions.append("suspend_persona")
+    if overall < 45:
+        actions.append("freeze_persona")
+    return sorted(actions, key=lambda a: (a not in LIFECYCLE_TARGETS, ACTIONS.index(a)))
 
 
 def ask_agent(
     items: list[dict[str, Any]], adapter_url: str, token: str, fetch: Callable[..., Any] = _http
 ) -> list[dict[str, Any]]:
+    selected = {i["persona_id"]: fixed_actions(i) for i in items}
+    items = [{**i, "fixed_actions": selected[i["persona_id"]]} for i in items]
+    kept = {(i["persona_id"], action): {
+        "persona_id": i["persona_id"], "action_id": action,
+        "rationale": f"{MAPPING_VERSION}: {action}; score={i['score']}; components={json.dumps(i['components'], sort_keys=True)}",
+        "evidence_ref_ids": i["evidence_ref_ids"], "from_state": str(i.get("state") or "").strip().lower(),
+        "stage": i.get("stage"), "session_id": i.get("session_id"), "mapping_version": MAPPING_VERSION,
+    } for i in items for action in selected[i["persona_id"]]}
+    if not kept:
+        return []
     try:
         resp = fetch(
             f"{adapter_url}/api/openclaw-adapter/assistant/providers/openclaw/structured",
@@ -208,24 +242,22 @@ def ask_agent(
             timeout=float(os.getenv("PERSONA_EVALUATOR_TIMEOUT_SECONDS", "180")),
         )
         raw = resp["data"]["output"]["structured_data"]["recommendations"]
-    except Exception as exc:
-        raise Degraded(f"agent unavailable: {exc}") from exc
+    except Exception:
+        return list(kept.values())  # a rationale writer cannot veto the fixed mapping
     if not isinstance(raw, list):
-        raise Degraded("agent returned malformed recommendations")
+        return list(kept.values())
     by_persona = {i["persona_id"]: i for i in items}
-    kept: dict[tuple[str, str], dict[str, Any]] = {}
     for rec in raw:
         if not isinstance(rec, dict):
+            continue
+        if not isinstance(rec.get("persona_id"), str) or not isinstance(rec.get("action_id"), str):
             continue
         item = by_persona.get(rec.get("persona_id"))
         rationale = str(rec.get("rationale") or "").strip()
         refs = [r for r in rec.get("evidence_ref_ids") or [] if r in (item or {}).get("evidence_ref_ids", [])]
-        if item is None or rec.get("action_id") not in ACTIONS or not rationale or not refs:
+        if item is None or (item["persona_id"], rec.get("action_id")) not in kept or not rationale or not refs:
             continue  # unsupported, unsourced or unexplained advice is dropped, never repaired
-        kept[(item["persona_id"], rec["action_id"])] = {
-            "persona_id": item["persona_id"], "action_id": rec["action_id"], "rationale": rationale,
-            "evidence_ref_ids": refs, "from_state": str(item.get("state") or "").strip().lower(),
-        }
+        kept[(item["persona_id"], rec["action_id"])].update(rationale=rationale[:1500], evidence_ref_ids=refs)
     return list(kept.values())
 
 
@@ -281,11 +313,117 @@ def readback_lifecycle(decision_id: str, *, governance_url: str, token: str, fet
         return None
 
 
+def route_paper_advice(rec: dict[str, Any], *, tenant: str, persona_url: str, persona_token: str,
+                       fetch: Callable[..., Any]) -> dict[str, Any]:
+    """Prepare an owner request, then replay exactly that request until acknowledged.
+
+    No permission activation or research execution is exposed here. Pool member
+    actions use the same Evolution proposal contract as the pool scheduler.
+    """
+    if not tenant or rec.get("stage") != "paper_running":
+        raise Degraded("routing_requires_paper_stage_and_tenant")
+    pid = quote(rec["persona_id"], safe="")
+    headers = {"Authorization": f"Bearer {persona_token}", "X-Tenant-Id": tenant}
+    if rec["action_id"] in {"increase_research_budget", "grant_tool_access"}:
+        if not persona_url or not persona_token:
+            raise Degraded("harness_owner_credential_missing")
+        harness = fetch(f"{persona_url}/api/personas/{pid}/harness", headers=headers)
+        base = harness.get("active_version")
+        version = next((v for v in harness.get("versions", []) if v.get("version") == base), None)
+        if not version or not rec.get("session_id"):
+            raise Degraded("harness_base_or_persona_session_missing")
+        guidance = dict(version["surface"].get("tool_guidance") or {})
+        if not guidance:
+            raise Degraded("harness_tool_profile_missing")
+        # This is a draft request for review within the existing tool ceiling.
+        # No allowed_tools are invented or granted by the evaluator.
+        guidance = {k: v + "\n" + rec["rationale"] for k, v in guidance.items()}
+        key = hashlib.sha256(f"{tenant}|{rec['ranking_snapshot_id']}|{rec['recommendation_id']}".encode()).hexdigest()
+        body = {"schema_version": "persona_harness_patch.v1", "patch_id": f"pm12-{key[:32]}", "persona_id": rec["persona_id"], "session_id": rec["session_id"],
+                "base_version": base, "rollback_target": base, "patch_type": "tool_profile",
+                "proposed_change": {"tool_guidance": guidance}, "expected_effect": rec["action_id"] + "; paper cap applies",
+                "evidence_refs": [{"kind": "packet", "ref": r, "moment": rec["ranking_snapshot_id"]}
+                                  for r in rec["evidence_ref_ids"]]}
+        return {"url": f"{persona_url}/api/personas/{pid}/harness/patches", "body": body, "key": key,
+                "owner": "persona_harness", "headers": headers}
+    if rec["action_id"] == "require_retraining":
+        # Same owner HTTP contracts as Evolution's PoolOwner, kept stdlib-only
+        # so the scheduled evaluator image carries no research executor.
+        def read(owner, path):
+            url, token = os.getenv(f"AUTO_CONSUMER_{owner}_URL", ""), os.getenv(f"AUTO_CONSUMER_{owner}_TOKEN", "")
+            if not url or not token:
+                raise Degraded(f"{owner.lower()}_owner_credential_missing")
+            return fetch(url.rstrip("/") + path,
+                         headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant})
+
+        if not persona_url or not persona_token:
+            raise Degraded("persona_owner_credential_missing")
+        pool = fetch(f"{persona_url}/api/personas/{pid}/strategy-pool", headers=headers)
+        if pool.get("tenant_id") != tenant or pool.get("persona_id") != rec["persona_id"]:
+            raise Degraded("pool_owner_identity_mismatch")
+        bindings = [b for b in read("CAPITAL", "/api/bindings") if b.get("persona_id") == rec["persona_id"]
+                    and b.get("tenant_id") == tenant and b.get("status") == "active"]
+        if len(bindings) != 1:
+            raise Degraded("unique_active_paper_binding_required")
+        payload = read("TELEMETRY", "/api/telemetry/runtime-summaries")
+        rows = payload if isinstance(payload, list) else payload.get("summaries", [])
+        rows = [r for r in rows if r.get("persona_capital_binding_id") == bindings[0]["binding_id"]
+                and r.get("deployment_stage") == "paper" and r.get("tenant_id") == tenant]
+        if len(rows) != 1:
+            raise Degraded("unique_paper_runtime_summary_required")
+        raw_books = rows[0].get("member_virtual_books") or []
+        books = {b.get("member_id") or b.get("artifact_id"): {**b, **b.get("net_of_costs", {})} for b in raw_books}
+        if len(books) != len(raw_books):
+            raise Degraded("ambiguous_member_books")
+        members = [m for m in pool["members"] if m["stage"] == "active"]
+        if not members:
+            raise Degraded("no_active_pool_member")
+        for member in members:
+            book = books.get(member["artifact_ref"], {})
+            dates = book.get("dates") or []
+            from datetime import date
+            observed = [date.fromisoformat(d) for d in dates]
+            joined = date.fromisoformat(member["joined_at"][:10])
+            if (_fraction(book.get("sharpe_ratio")) is None or not book.get("source_ref")
+                    or book.get("checksum") != member["checksum"] or not observed
+                    or observed != sorted(set(observed)) or observed[-1] > datetime.now(timezone.utc).date()
+                    or not any(d > joined for d in observed)):
+                raise Degraded("pool_member_ranking_metric_missing")
+        member = min(members, key=lambda m: (books[m["artifact_ref"]]["sharpe_ratio"], m["artifact_ref"]))
+        entry = read("REGISTRY", "/api/registry/strategy-artifacts/" + quote(member["artifact_ref"], safe=""))["entry"]
+        if (entry.get("artifact_state") != "approved" or entry.get("checksum") != member["checksum"]
+                or entry.get("owner_tenant") != tenant or entry.get("registry_id") != member["artifact_ref"]
+                or not entry.get("version")):
+            raise Degraded("pool_member_registry_binding_mismatch")
+        identity = [tenant, rec["persona_id"], member["artifact_ref"], member["checksum"],
+                    member["joined_at"], "retrain", "quarter:" + rec["quarter"]]
+        body = {"decision_id": "evd-pool-" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:24],
+                "tenant_id": tenant, "target_type": "candidate_artifact", "target_id": member["artifact_ref"],
+                "target_version": entry["version"], "target_stage": "paper", "risk_level": "low",
+                "persona_id": rec["persona_id"], "action_type": "retrain",
+                "created_by_role": "evolution_controller", "created_by_id": "persona-evaluator-agent",
+                "metadata": {"discovery_auto_scope": True, "variants": 50, "pool_member": {
+                    "persona_id": rec["persona_id"], "pool_version": pool["pool_version"],
+                    **{k: member[k] for k in ("artifact_ref", "checksum", "joined_at")}}}}
+        body.update(rationale=rec["rationale"], evidence_refs=[
+            {"ref_type": "telemetry_summary", "ref_id": r, "storage_ref": {}, "note": None}
+            for r in rec["evidence_ref_ids"]])
+        body["metadata"].update(ranking_snapshot_id=rec["ranking_snapshot_id"],
+                                member_book_source_ref=books[member["artifact_ref"]]["source_ref"])
+        url, token = os.getenv("AUTO_CONSUMER_EVOLUTION_URL", ""), os.getenv("AUTO_CONSUMER_EVOLUTION_TOKEN", "")
+        if not url or not token:
+            raise Degraded("evolution_owner_credential_missing")
+        return {"url": url.rstrip("/") + "/api/evolution/proposals", "body": body, "key": body["decision_id"],
+                "owner": "pool_member_evolution", "headers": {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}}
+    raise Degraded("unsupported_owner_route")
+
+
 def run_once(
     *, store: Store, bff_url: str, bff_headers: dict[str, str], adapter_url: str, adapter_token: str,
     governance_url: str, governance_token: str, tenant: str, actor: str,
     fetch: Callable[..., Any] = _http, now: Callable[[], float] = time.time,
     ranking_store: Any = None,
+    persona_url: str = "", persona_token: str = "",
 ) -> dict[str, Any]:
     """Admit evidence before evaluation; failed admission creates no recommendation or proposal."""
     moment = datetime.fromtimestamp(now(), timezone.utc)
@@ -298,7 +436,7 @@ def run_once(
             raise Degraded(f"ranking snapshot admission unavailable: {exc}") from exc
         snapshot_id = admitted.ranking_snapshot_id
         saved = store.load()["results"].get(f"{quarter}|{snapshot_id}")
-        if saved and saved.get("agent_status") != "unavailable":
+        if saved and saved.get("mapping_version") == MAPPING_VERSION:
             recs, reused = [r for r in saved["items"] if r.get("action_id") in ACTIONS], True  # refresh/retry/restart reads the same recommendation
         else:
             def remember_admission(state):
@@ -326,7 +464,7 @@ def run_once(
     def apply(state: dict[str, Any]) -> None:
         nonlocal created, deduped, skipped, attempts, conflicts
         entry_result = {"ranking_snapshot_id": snapshot_id, "run_id": run_id, "evaluated_at": moment.isoformat(),
-                        "provider": "openclaw", "items": recs,
+                        "provider": "fixed_rule", "mapping_version": MAPPING_VERSION, "items": recs,
                         "paper_persona_ids": sorted(i["persona_id"] for i in items if str(i.get("stage") or "").lower() == "paper_running")}
         if reused:
             entry_result.update({k: saved[k] for k in ("run_id", "evaluated_at")})
@@ -339,20 +477,71 @@ def run_once(
         state["created"] = [t for t in state["created"] if now() - t < 3600]
         state["requests"] = {k: v for k, v in state["requests"].items() if v.get("pending") or now() - v["at"] < DEDUPE_TTL_SECONDS}
         for rec in recs:
+            action = rec["action_id"]
+            if action == "reduce_capital_access":
+                rec["routing"] = {"owner": "paper_allocation", "status": "pending_quarter_close",
+                                  "ranking_snapshot_id": snapshot_id, "reason": "allocation_owner_recomputes_from_closed_snapshot"}
+                continue
+            if action in {"increase_research_budget", "grant_tool_access", "require_retraining"}:
+                key = f"{tenant}|{quarter}|{snapshot_id}|{rec['recommendation_id']}"
+                route = state.setdefault("owner_routes", {}).setdefault(key, {})
+                rec["routing"] = route
+                if route.get("status") == "proposed":
+                    continue
+                try:
+                    request = route.get("request")
+                    if request is None:
+                        request = route_paper_advice(rec, tenant=tenant, persona_url=persona_url,
+                                                    persona_token=persona_token, fetch=fetch)
+                        # Credentials are resolved at dispatch, never persisted.
+                        route.update(request={k: v for k, v in request.items() if k != "headers"}, status="pending")
+                        store.save(state)
+                    else:
+                        token = persona_token if request["owner"] == "persona_harness" else os.getenv("AUTO_CONSUMER_EVOLUTION_TOKEN", "")
+                        request = {**request, "headers": {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}}
+                    if not request["headers"]["Authorization"].removeprefix("Bearer "):
+                        raise Degraded("owner_route_credential_missing")
+                    if attempts >= MAX_PER_RUN or len(state["created"]) >= MAX_PER_HOUR:
+                        raise Degraded("owner_route_rate_limited")
+                    attempts += 1
+                    state["created"].append(now())
+                    store.save(state)
+                    response = fetch(request["url"], data=request["body"],
+                                     headers={**request["headers"], "Idempotency-Key": request["key"]})
+                    body = request["body"]
+                    if response.get("_http_status") == 409 and request["owner"] == "pool_member_evolution":
+                        response = fetch(request["url"] + "/" + quote(body["decision_id"], safe=""), headers=request["headers"])
+                    if request["owner"] == "persona_harness":
+                        valid = response.get("proposal") == body and response.get("status") == "draft"
+                    else:
+                        valid = all(response.get(k) == body[k] for k in
+                                    ("decision_id", "tenant_id", "target_id", "target_version", "action_type", "metadata", "evidence_refs", "rationale"))
+                    if not valid or response.get("_http_status", 201) not in (200, 201):
+                        raise Degraded("owner_route_readback_mismatch")
+                    route.update(status="proposed", owner=request["owner"])
+                    created += 1
+                    route.pop("reason", None)
+                except Exception as exc:
+                    route.update(status="degraded", reason=str(exc))
+                continue
             to_state = lifecycle_target(rec)
             if to_state is None:
+                rec["routing"] = {"owner": "operator_lifecycle", "status": "degraded", "reason": "lifecycle_transition_unavailable"}
                 continue  # advisory entry: persisted, never executable
             digest = proposal_digest(rec)
-            dedupe_key = f"{rec['persona_id']}|{to_state}"
+            rec["routing"] = {"owner": "operator_lifecycle", "status": "pending"}
+            dedupe_key = f"{rec['persona_id']}|{to_state}" + ("|suspend" if action == "suspend_persona" else "")
             entry = state["requests"].get(dedupe_key)
             if entry and not entry.get("pending"):
                 if entry.get("content_digest") == digest:
                     deduped += 1
                     rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
+                    rec["routing"]["status"] = "proposed"
                     continue
                 entry = None
             if attempts >= MAX_PER_RUN or len(state["created"]) >= MAX_PER_HOUR:
                 skipped += 1
+                rec["routing"].update(status="degraded", reason="owner_route_rate_limited")
                 continue
             if entry is None:  # identity persisted before the possibly-creating POST; unknown outcomes replay it
                 request = lifecycle_request(rec, to_state, snapshot_id=snapshot_id, tenant=tenant, actor=actor)
@@ -366,6 +555,7 @@ def run_once(
                 resp = propose_lifecycle(entry["pending"], governance_url=governance_url, token=governance_token, fetch=fetch)
             except Exception:
                 skipped += 1  # outcome unknown: slot and pending identity stay reserved
+                rec["routing"].update(status="degraded", reason="lifecycle_owner_outcome_unknown")
                 continue
             req_body = entry["pending"]["body"]
             req_digest = req_body["proposal_content_digest"]
@@ -392,6 +582,7 @@ def run_once(
                 gov_req = {"decision_id": dec_id, "to_state": to_state}
                 if digest == req_digest:
                     rec["governance_request"] = gov_req
+                    rec["routing"]["status"] = "proposed"
                 for res in state["results"].values():
                     for item in res.get("items", []):
                         if item.get("persona_id") == pid and lifecycle_target(item) == to_state and proposal_digest(item) == req_digest:
@@ -399,6 +590,7 @@ def run_once(
             else:
                 conflicts += 1
                 skipped += 1
+                rec["routing"].update(status="degraded", reason="lifecycle_owner_readback_mismatch")
                 if status != 201 and status < 500:
                     state["created"].pop()
                 entry["conflict"] = {"status": status, "detail": (resp.get("detail") if isinstance(resp, dict) else str(resp)), "at": now()}
@@ -408,6 +600,7 @@ def run_once(
     record = {"status": status_label, "quarter": quarter, "ranking_snapshot_id": snapshot_id, "run_id": run_id,
               "reused": reused, "recommendations": len(recs), "created": created, "deduped": deduped,
               "skipped": skipped, "at": moment.isoformat()}
+    record["routing_failures"] = sum((r.get("routing") or {}).get("status") == "degraded" for r in recs)
     if conflicts > 0:
         record["conflicts"] = conflicts
     store.update(lambda s: s.update(last_run=record))
@@ -513,6 +706,11 @@ def paper_cycle_once(
     saved = state["results"].get(f"{quarter}|{snapshot_id}") or {}
     health = collect_pool_health(saved.get("paper_persona_ids") or [], persona_url=persona_url, token=persona_token,
                                  tenant=tenant, fetch=fetch)
+    for rec in saved.get("items") or []:
+        if rec.get("action_id") == "reduce_capital_access" and rec.get("stage") == "paper_running":
+            health.setdefault(rec["persona_id"], {}).setdefault("recommendation_inputs", []).append({
+                "action_id": rec["action_id"], "recommendation_id": rec["recommendation_id"],
+                "ranking_snapshot_id": snapshot_id, "evidence_ref_ids": rec["evidence_ref_ids"]})
     body = {"authority_mode": PAPER_CYCLE_MODE, "quarter": quarter, "ranking_snapshot_id": snapshot_id,
             "capital_pool_id": paper_pool_id, "pool_health": health}
     headers = {**bff_headers, "X-Tenant-Id": tenant, "Idempotency-Key": f"paper-cycle:{tenant}:{quarter}:{paper_pool_id}"}
@@ -521,10 +719,19 @@ def paper_cycle_once(
         data = resp["data"]
         record = {"status": "applied" if data.get("applied") else "pending", "quarter": quarter, "ranking_snapshot_id": snapshot_id,
                   "rebalance_id": data["rebalance"]["rebalance_id"], "replayed": bool(data.get("replayed")), "at": at}
+        reductions = [r for r in saved.get("items") or [] if r.get("action_id") == "reduce_capital_access"]
+        record["recommendation_ids"] = [r["recommendation_id"] for r in reductions]
     except Exception as exc:
         record = {"status": "degraded", "reason": f"paper allocation cycle failed: {exc}", "quarter": quarter,
                   "ranking_snapshot_id": snapshot_id, "at": at}
-    store.update(lambda s: s.setdefault("paper_cycles", {}).__setitem__(cycle_key, record))
+    def remember(state):
+        state.setdefault("paper_cycles", {})[cycle_key] = record
+        for rec in (state["results"].get(f"{quarter}|{snapshot_id}") or {}).get("items") or []:
+            if rec.get("action_id") == "reduce_capital_access":
+                rec["routing"] = {"owner": "paper_allocation", "status": record["status"],
+                                  "ranking_snapshot_id": snapshot_id,
+                                  **{k: record[k] for k in ("rebalance_id", "reason") if k in record}}
+    store.update(remember)
     return record
 
 
@@ -535,7 +742,65 @@ PROMOTION_TARGET = "paper_canary_candidacy"
 
 def promotion_content(rec: dict[str, Any]) -> dict[str, Any]:
     return {k: rec[k] for k in ("persona_id", "quarter", "ranking_snapshot_id", "from_stage", "to_stage",
-                               "rule_summary", "rationale", "evidence_ref_ids")}
+                               "rule_summary", "rationale", "evidence_ref_ids", "panel_memo") if k in rec}
+
+
+def candidacy_panel(candidate: dict[str, Any], *, tenant: str, quarter: str, snapshot_id: str,
+                    fetch: Callable[..., Any]) -> dict[str, Any]:
+    """Open the existing admission panel and require its published risk/red-team memo.
+
+    This scheduled path never fabricates participant answers. A pending or
+    unavailable consultation leaves the candidacy away from the operator queue.
+    """
+    from services.persona.consult_triggers import required_consultation, RISK_PERSONA_ID, RED_TEAM_PERSONA_ID
+    url = (os.getenv("PANTHEON_CONSULTATION_API_URL") or "").rstrip("/")
+    token = os.getenv("CONSULTATION_SERVICE_TOKEN", "")
+    if not url or not token:
+        raise Degraded("canary_panel_owner_unavailable")
+    pid = candidate["persona_id"]
+    requirement = required_consultation("trial_admission", pid, initiator_persona_id=pid,
+                                       touches=[PROMOTION_TARGET], target_version=snapshot_id)
+    identity = hashlib.sha256(f"{tenant}|{quarter}|{snapshot_id}|{pid}".encode()).hexdigest()
+    request_id = "pm12-panel-" + identity[:32]
+    headers = {"Authorization": f"Bearer {token}", "X-Pantheon-Tenant-Id": tenant,
+               "X-Pantheon-Service-Actor": f"persona:{pid}"}
+    body = {"request_id": request_id, "tenant_id": tenant, "request_type": "persona_policy",
+            "requested_by": {"actor_type": "persona", "actor_id": pid}, "from_persona_id": pid,
+            "target_type": "trial_admission", "target_id": pid, "consultation_type": "persona_panel",
+            "task": "Review fixed paper canary candidacy for " + quarter,
+            "policy_id": requirement.policy_id, "metadata": {"panel": requirement.to_panel_metadata()},
+            "evidence_refs": [f"ranking-snapshot:{snapshot_id}"], "trace_id": request_id}
+    request = fetch(url + "/api/consult/requests", data=body, headers=headers)
+    if any(request.get(k) != body[k] for k in ("request_id", "tenant_id", "target_type", "target_id", "metadata")):
+        # The owner adds its own create fingerprint to metadata.
+        if (any(request.get(k) != body[k] for k in ("request_id", "tenant_id", "target_type", "target_id"))
+                or (request.get("metadata") or {}).get("panel") != body["metadata"]["panel"]):
+            raise Degraded("canary_panel_binding_mismatch")
+    if request.get("status") == "draft":
+        fetch(url + f"/api/consult/requests/{request_id}/submit", data={}, headers=headers)
+    transcript = fetch(url + f"/api/consult/requests/{request_id}/transcript", headers=headers)
+    if transcript.get("request_id") != request_id:
+        raise Degraded("canary_panel_transcript_mismatch")
+    conclusions = {}
+    for event in transcript.get("events") or []:
+        actor = event.get("actor") or {}
+        if actor.get("actor_type") == "persona" and actor.get("actor_id") in {RISK_PERSONA_ID, RED_TEAM_PERSONA_ID}:
+            content = event.get("content") or {}
+            if content.get("recommendation") and event.get("evidence_refs"):
+                conclusions[actor["actor_id"]] = content
+    if set(conclusions) != {RISK_PERSONA_ID, RED_TEAM_PERSONA_ID}:
+        raise Degraded("canary_panel_conclusions_pending")
+    memos = fetch(url + "/api/consult/memos?" + urlencode({"request_id": request_id, "status": "published"}), headers=headers)
+    memo = next((m for m in memos if m.get("request_id") == request_id and m.get("status") == "published"
+                 and m.get("target_type") == "trial_admission" and m.get("target_id") == pid
+                 and m.get("memo_type") == "committee_summary" and m.get("author_ref") == f"consult-panel:{request_id}"
+                 and m.get("memo_id") and m.get("summary")), None)
+    if memo is None:
+        raise Degraded("canary_panel_memo_pending")
+    return {"request_id": request_id, "memo_id": memo["memo_id"], "summary": memo["summary"],
+            "recommendation": memo["recommendation"], "conclusions": conclusions,
+            "ranking_snapshot_id": snapshot_id, "tenant_id": tenant,
+            "evidence_ref": f"consultation://memos/{memo['memo_id']}"}
 
 
 def _probe_persona(persona: dict[str, Any]) -> bool:
@@ -574,6 +839,13 @@ def nomination_rule(items: list[dict[str, Any]], quarter: str, *, min_days: int,
         return refuse("rank_one_tie_or_inconsistent_order")
     if candidate.get("eligible") is not True or candidate.get("exclusion_codes") != []:
         return refuse("rank_one_excluded_or_eligibility_unknown")
+    try:
+        components = candidate.get("components") or {}
+        fixed_actions(candidate)
+        if candidate["score"] < 85 or components["risk_score"] < 70 or components["execution_score"] < 65:
+            return refuse("fixed_mapping_canary_threshold_not_met")
+    except Degraded:
+        return refuse("missing_or_invalid_ranking_metrics")
     metrics = candidate.get("metrics") or {}
     if any(metrics.get(k + "_status") != "known" or _fraction(metrics.get(k)) is None
            for k in ("pnl_return", "drawdown")):
@@ -633,7 +905,8 @@ def promotion_once(
         nominations = state.setdefault("promotions", {})
         existing = nominations.get(key) or {}
         if existing.get("status") == "proposed":
-            record = {**existing, "reused": True}
+            record = ({**existing, "reused": True} if (existing.get("recommendation") or {}).get("panel_memo") else
+                      {**existing, "status": "degraded", "reason": "legacy_candidacy_missing_panel_memo"})
             state["last_promotion"] = record
             return
         record = {"quarter": quarter, "ranking_snapshot_id": snapshot_id, "tenant_id": tenant,
@@ -642,6 +915,8 @@ def promotion_once(
             if not tenant or not actor or not governance_token:
                 raise Degraded("promotion_identity_or_credential_missing")
             request = existing.get("request")
+            if request and not (existing.get("recommendation") or {}).get("panel_memo"):
+                raise Degraded("legacy_candidacy_missing_panel_memo")
             if request is None:
                 owner = ranking_store if ranking_store is not None else build_rankings_store()
                 snapshot = owner.get_ranking_snapshot(snapshot_id)
@@ -677,6 +952,8 @@ def promotion_once(
                     nominations[key] = record
                     state["last_promotion"] = record
                     return
+                panel_memo = candidacy_panel(candidate, tenant=tenant, quarter=quarter,
+                                             snapshot_id=snapshot_id, fetch=fetch)
                 factual = json.dumps(summary, sort_keys=True)
                 rationale = factual
                 provider = "fixed_rule"
@@ -696,12 +973,14 @@ def promotion_once(
                 rec = {"persona_id": candidate["persona_id"], "quarter": quarter, "ranking_snapshot_id": snapshot_id,
                        "from_stage": "paper", "to_stage": "canary_candidate", "action_id": "promote_to_canary_candidate",
                        "rule_summary": summary, "rationale": rationale, "provider": provider,
-                       "evidence_ref_ids": sorted(candidate.get("evidence_ref_ids") or []),
+                       "panel_memo": panel_memo,
+                       "evidence_ref_ids": sorted(set(candidate.get("evidence_ref_ids") or []) | {panel_memo["evidence_ref"]}),
                        "recommendation_id": f"pm12-{quarter.lower()}-{candidate['persona_id']}-promote_to_canary_candidate"}
                 digest = hashlib.sha256(json.dumps(promotion_content(rec), sort_keys=True).encode()).hexdigest()
                 identity = hashlib.sha256(f"paper-canary-candidacy|{tenant}|{quarter}".encode()).hexdigest()
                 subject = {k: rec[k] for k in ("persona_id", "from_stage", "to_stage", "quarter", "ranking_snapshot_id")}
-                subject.update(proposal_content_digest=digest, rule_summary=factual, rationale=rationale)
+                subject.update(proposal_content_digest=digest, rule_summary=factual, rationale=rationale,
+                               panel_memo=json.dumps(panel_memo, sort_keys=True))
                 request = {"key": identity, "body": {
                     "decision_id": f"pcc-{identity[:40]}", "expected_version": 0, "target_type": PROMOTION_TARGET,
                     "target_id": rec["persona_id"], "target_version": snapshot_id, "persona_id": rec["persona_id"],
@@ -846,6 +1125,10 @@ def main() -> None:
                 return
             time.sleep(interval)
             continue
+        try:
+            persona_token = read_token("PERSONA_EVALUATOR_PERSONA_TOKEN")
+        except Degraded:
+            persona_token = ""
         record = run_once(
             store=store,
             bff_url=env("PERSONA_EVALUATOR_BFF_URL", "http://operator-bff:8001"),
@@ -856,12 +1139,10 @@ def main() -> None:
             governance_token=governance_token,
             tenant=env("PANTHEON_TENANT_ID", "default"),
             actor=env("PERSONA_EVALUATOR_ACTOR_ID", "persona-evaluator-agent"),
+            persona_url=env("PERSONA_EVALUATOR_PERSONA_URL", "http://persona:8002").rstrip("/"),
+            persona_token=persona_token,
         )
         print(json.dumps(record), flush=True)
-        try:
-            persona_token = read_token("PERSONA_EVALUATOR_PERSONA_TOKEN")
-        except Degraded:
-            persona_token = ""
         paper_cycle = paper_cycle_once(
             store=store, bff_url=env("PERSONA_EVALUATOR_BFF_URL", "http://operator-bff:8001"),
             bff_headers={"Authorization": f"Bearer {bff_token}"},
