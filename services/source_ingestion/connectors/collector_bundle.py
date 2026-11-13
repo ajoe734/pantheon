@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import urllib.request
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -73,6 +74,49 @@ COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
 # Configured ingestion owns persistence; tuple adapter callers retain their
 # existing eager acknowledgement contract. ContextVar isolates concurrent pulls.
 _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
+# Whole-operation monotonic deadline for one pull(): priority, ordered sweep, metadata and
+# every transport read share it, so one request can never run past the controller boundary.
+COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
+_OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
+
+
+class _DeadlineBody:
+    """Response wrapper: a body stream never outlives the operation deadline.
+
+    Raises TimeoutError between chunks once the deadline passes; partial bytes are never
+    returned as data.
+    """
+
+    def __init__(self, response: Any, deadline: float) -> None:
+        self._response = response
+        self._deadline = deadline
+        self.headers = getattr(response, "headers", None)
+
+    def read(self, size: int = -1) -> bytes:
+        if time.monotonic() >= self._deadline:
+            raise TimeoutError("collector response body read exceeded the operation deadline")
+        # read1 performs at most one underlying receive, so the deadline is re-checked
+        # after every socket receive instead of once per (possibly many-recv) buffered
+        # read; the caller loops until EOF and Content-Length truncation is still checked.
+        read1 = getattr(self._response, "read1", None)
+        if read1 is None:
+            return self._response.read(size)
+        chunk = read1(size)
+        if chunk and time.monotonic() >= self._deadline:
+            raise TimeoutError("collector response body read exceeded the operation deadline")
+        return chunk
+
+
+@contextmanager
+def operation_deadline(seconds: float | None):
+    if seconds is None or _OP_DEADLINE.get() is not None:
+        yield
+        return
+    token = _OP_DEADLINE.set(time.monotonic() + max(seconds, 0.0))
+    try:
+        yield
+    finally:
+        _OP_DEADLINE.reset(token)
 
 
 @contextmanager
@@ -205,7 +249,18 @@ class HttpBundleTransport(BundleTransport):
             url,
             headers={"Authorization": f"Bearer {token}", "Accept": "*/*", "User-Agent": "pantheon-source-ingest/0.1"},
         )
-        with open_external_url(request, caller="source_ingest.collector_bundle", timeout=self.timeout_seconds) as response:
+        timeout = self.timeout_seconds
+        op_deadline = _OP_DEADLINE.get()
+        if op_deadline is not None:
+            # A read never outlives the operation budget (1s floor keeps it a real read);
+            # the body stream is held to the same floored deadline, chunk by chunk.
+            timeout = min(timeout, max(op_deadline - time.monotonic(), 1.0))
+            op_deadline = max(op_deadline, time.monotonic() + 1.0)
+        with open_external_url(
+            request, caller="source_ingest.collector_bundle", timeout=timeout, deadline=op_deadline
+        ) as response:
+            if op_deadline is not None:
+                response = _DeadlineBody(response, op_deadline)
             return read_bounded_response(response, max_bytes=max_bytes)
 
 
@@ -239,6 +294,9 @@ class VerifiedBundle:
     manifest_items: Mapping[str, Mapping[str, Any]]
     raw_bytes: Mapping[str, bytes]  # sha256 -> bytes
     cursor: str
+    # Absolute items.jsonl row index up to which raw files were verified this pull;
+    # None means the whole requested window was verified (no read-budget cut).
+    verified_through: int | None = None
 
     @property
     def status(self) -> str:
@@ -316,6 +374,7 @@ def verify_bundle(
     expected_source_id: str,
     entry: Mapping[str, Any],
     item_window: tuple[int, int] | None = None,
+    deadline: float | None = None,
 ) -> VerifiedBundle:
     """Fetch and verify one bundle; raises on any mismatch, returns nothing partial.
 
@@ -323,8 +382,14 @@ def verify_bundle(
     manifest, items.jsonl, id coverage and bundle_sha256 (declared hashes) are always
     verified, but raw files are fetched and hash/size checked only for the windowed rows.
     Rows outside the window are verified when a later pull's window reaches them.
+
+    ``deadline`` (monotonic seconds) is a whole-operation read budget: once it passes, no
+    further raw file is fetched (at least one is always read so every pull progresses) and
+    ``verified_through`` records how far verification got. Nothing is skipped or assumed.
     """
 
+    if deadline is None:
+        deadline = _OP_DEADLINE.get()
     source_id = str(entry.get("source_id") or "").strip()
     date = str(entry.get("date") or "").strip()
     run_id = str(entry.get("run_id") or "").strip()
@@ -389,11 +454,25 @@ def verify_bundle(
     else:
         wanted_ids = item_ids[max(item_window[0], 0) : max(item_window[1], 0)]
     raw_bytes: dict[str, bytes] = {}
-    for item_id in wanted_ids:
+    verified_through: int | None = None
+    window_start = max(item_window[0], 0) if item_window is not None else 0
+    for offset, item_id in enumerate(wanted_ids):
+        if deadline is not None and offset > 0 and time.monotonic() >= deadline:
+            verified_through = window_start + offset
+            break
         item = manifest_items[item_id]
         declared = str(item.get("content_sha256") or "").strip().lower()
         raw_path = _safe_raw_path(str(item.get("raw_path") or ""))
-        data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
+        try:
+            data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
+        except TimeoutError:
+            # A read that started inside the budget but was cut by the shared deadline
+            # discards only its own (never-accepted) bytes; already verified rows keep
+            # their progress and this row is re-read by the next pull's window.
+            if offset > 0 and deadline is not None and time.monotonic() >= deadline:
+                verified_through = window_start + offset
+                break
+            raise
         actual = _sha256(data)
         if declared != actual:
             raise SourceEvidenceError(f"collector bundle raw hash mismatch for item {item_id}: declared={declared} actual={actual}")
@@ -411,6 +490,7 @@ def verify_bundle(
         manifest_items=manifest_items,
         raw_bytes=raw_bytes,
         cursor=_cursor_key(finished_at, run_id),
+        verified_through=verified_through,
     )
 
 
@@ -522,6 +602,9 @@ class CollectorBundleAdapter:
     host: str | None = None
     raw_root: str | None = None
     max_records: int = 500
+    # Whole-pull raw read budget, kept below the controller's per-request timeout; the
+    # remainder stays pending behind a partial cursor. None disables the budget.
+    read_budget_seconds: float | None = COLLECTOR_REQUEST_READ_BUDGET_SECONDS
     transport: BundleTransport | None = None
     # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
     # in addition to the symbols that have stored daily bars under the storage roots.
@@ -627,6 +710,16 @@ class CollectorBundleAdapter:
         the cursor sweep continues with whatever output cap remains. Replays are idempotent.
         """
 
+        with operation_deadline(self.read_budget_seconds):
+            return self._pull_bounded(cursor=cursor, trace_id=trace_id, max_records=max_records)
+
+    def _pull_bounded(
+        self,
+        *,
+        cursor: str | None = None,
+        trace_id: str = "",
+        max_records: int | None = None,
+    ) -> CollectorPullResult:
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         priority = self._pull_priority_latest(
             cursor, trace_id=trace_id, total_cap=total_cap
@@ -635,15 +728,23 @@ class CollectorBundleAdapter:
             return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)
         records, key, paused, delivered, done = priority
         remaining = total_cap - len(records)
-        if remaining <= 0:
+        op_deadline = _OP_DEADLINE.get()
+        base = None
+        if remaining > 0 and not (op_deadline is not None and time.monotonic() >= op_deadline):
+            try:
+                base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining)
+            except TimeoutError:
+                # The shared deadline cut the ordered sweep before any of its rows verified:
+                # keep the already verified priority prefix; ordered work stays pending.
+                if op_deadline is None or time.monotonic() < op_deadline:
+                    raise
+        if base is None:
             base = CollectorPullResult(
                 records=(), next_cursor=cursor, bundle_count=0, complete=False,
                 observed=observed_from_collector_status(
                     self.read_status(), source_id=self.source_id, cursor=cursor, cadence_seconds=self._health_cadence_seconds()
                 ),
             )
-        else:
-            base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining)
         seen = {r.source_id for r in records}
         merged = (*records, *(r for r in base.records if r.source_id not in seen))
         result = CollectorPullResult(
@@ -740,7 +841,8 @@ class CollectorBundleAdapter:
         )
         if bundle.status == "paused":
             return [], key, (f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}",), delivered, False
-        window = bundle.items[delivered:delivered + total_cap]
+        stop = delivered + total_cap if bundle.verified_through is None else bundle.verified_through
+        window = bundle.items[delivered:stop]
         rows = [self._record(bundle, row, trace_id=trace_id) for row in window]
         self._write_raw([(bundle, {})], rows)
         new_delivered = delivered + len(window)
@@ -780,15 +882,36 @@ class CollectorBundleAdapter:
         verified: list[VerifiedBundle] = []
         remaining = max(total_cap, 1)
         unverified_pending = False
+        deadline = _OP_DEADLINE.get()
+        if deadline is None and self.read_budget_seconds is not None:
+            deadline = time.monotonic() + max(self.read_budget_seconds, 0.0)
         for _, key, entry in pending:
+            if verified and deadline is not None and time.monotonic() >= deadline:
+                # Budget spent between bundles: the rest stays pending behind the cursor.
+                unverified_pending = True
+                break
             if remaining <= 0:
                 unverified_pending = True
                 break
             skip = partial_skip if key == base_cursor else 0
-            bundle = verify_bundle(
-                transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining)
-            )
+            try:
+                bundle = verify_bundle(
+                    transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
+                    deadline=deadline,
+                )
+            except TimeoutError:
+                # A later bundle cut by the shared deadline before any of its rows verified
+                # keeps the already verified prefix; that bundle stays pending (no skip, no
+                # forged completion). With nothing verified yet, the timeout is not progress.
+                if verified and deadline is not None and time.monotonic() >= deadline:
+                    unverified_pending = True
+                    break
+                raise
             verified.append(bundle)
+            if bundle.verified_through is not None:
+                # Read budget exhausted mid-window: later rows/bundles stay pending.
+                unverified_pending = True
+                break
             if bundle.status in {"paused", "partial"}:
                 # Material after an unresolved bundle must remain pending.
                 unverified_pending = True
@@ -803,7 +926,8 @@ class CollectorBundleAdapter:
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
                 break
             skip = partial_skip if bundle.cursor == base_cursor else 0
-            for row in bundle.items[skip:]:
+            stop = len(bundle.items) if bundle.verified_through is None else bundle.verified_through
+            for row in bundle.items[skip:stop]:
                 all_records.append(self._record(bundle, row, trace_id=trace_id))
 
         # The caller's output cap covers raw + derived feature records together. Shrink the
@@ -814,6 +938,10 @@ class CollectorBundleAdapter:
             records, next_cursor, raw_plan = self._select_raw(
                 verified, all_records, cursor, budget, skips={base_cursor: partial_skip} if partial_skip else {}
             )
+            cut = verified[-1] if verified and verified[-1].verified_through is not None else None
+            if cut is not None and len(records) == len(all_records):
+                # Everything verified is returned; resume exactly where the budget stopped.
+                next_cursor = f"{cut.cursor}{_PARTIAL_CURSOR_MARK}{cut.verified_through}"
             plan = self._plan_governed_features(records)
             # Already-acknowledged replays are idempotent and droppable; only pending
             # rows must fit alongside the raw items.
