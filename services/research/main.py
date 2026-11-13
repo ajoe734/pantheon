@@ -2273,7 +2273,7 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
                 )
                 if child_context:
                     child["artifact_id"] = new_artifact_id
-            except search.EvolutionSearchError as exc:
+            except (search.EvolutionSearchError, StrategyArtifactValidationError) as exc:
                 raise _RetrainFinished("no_candidate", f"retrain_child_invalid: {exc}") from None
             if child_context:
                 _retrain_record(run_id, evolution_children={new_artifact_id: child_context})

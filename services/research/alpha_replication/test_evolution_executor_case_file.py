@@ -157,7 +157,7 @@ def test_retrain_without_declaration_is_refused_before_training(research, world,
     assert not any(method == "POST" for method, _url in world.calls)
 
 
-def test_retrain_child_keeps_context_in_registry_and_across_retry(research, world, owners, monkeypatch):
+def configure_retrain(research, monkeypatch, updates=None):
     original_call = research._retrain_call
 
     def call(**kw):
@@ -177,12 +177,32 @@ def test_retrain_child_keeps_context_in_registry_and_across_retry(research, worl
             "metrics": {"sharpe_ratio": .5 if kind == "baseline" else 1.5}, "validation_errors": []}}}
 
     monkeypatch.setattr(research, "_retrain_call", call)
-    monkeypatch.setattr(research, "_retrain_search_update", lambda *_: {"entry_z": 1.0})
+    monkeypatch.setattr(research, "_retrain_search_update", lambda *_: updates if updates is not None else {"entry_z": 1.0})
     monkeypatch.setattr(research, "_retrain_evaluate", evaluate)
+
+
+def test_retrain_child_keeps_context_in_registry_and_across_retry(research, world, owners, monkeypatch):
+    from services.registry.strategy_artifact import mutate_strategy_artifact
+
+    configure_retrain(research, monkeypatch)
     run, _ = dispatch(research, world, monkeypatch, {"lesson_ids": [LESSON]}, action="retrain")
     assert run["status"] == "completed" and run["outcome"] == "candidate_created", run
     assert len(world.registered) == 1
     posted = next(iter(world.registered.values()))
+    # Full registration carries the same validated child and direct-parent/run
+    # lineage as the parameter-only Registry mutation endpoint would construct.
+    expected = mutate_strategy_artifact(
+        world.parent, new_artifact_id=posted["registry_id"],
+        new_version=posted["strategy_artifact"]["version"],
+        parameter_updates={"entry_z": 1.0},
+        source_run_ids=["evd-case", "training-1", "proof-candidate"],
+        parent_registry_id=world.parent["artifact_id"],
+    )
+    assert posted["strategy_artifact"] == expected
+    assert posted["artifact_state"] == "candidate"
+    assert posted["producer_run_id"] == run["run_id"]  # this fixture has no real backtest proof
+    assert posted["evaluation_summary"]["out_of_sample_gate"] == run["out_of_sample_gate"]
+    assert posted["metadata"]["persona_id"] == "persona-1"
     assert posted["metadata"]["case_file_id"] == run["evolution_case_file"]["case_file_id"]
     assert posted["metadata"]["addresses_lessons"] == {"lesson_ids": [LESSON]}
     assert run["evolution_children"][posted["registry_id"]] == run["evolution_child_context"]
@@ -192,6 +212,32 @@ def test_retrain_child_keeps_context_in_registry_and_across_retry(research, worl
     assert retry["evolution_case_file"] == run["evolution_case_file"]
     assert retry["evolution_children"] == run["evolution_children"]
     assert len(world.registered) == 1
+
+
+@pytest.mark.parametrize("updates", [{"symbols": ["2317"]}, {"entry_z": 1000000}])
+def test_pool_retrain_full_registration_cannot_bypass_mutation_controls(
+    research, world, owners, monkeypatch, updates,
+):
+    configure_retrain(research, monkeypatch, updates)
+    run, admitted = dispatch(research, world, monkeypatch, {"lesson_ids": [LESSON]}, action="retrain")
+    assert run["status"] == "completed" and run["outcome"] == "no_candidate", run
+    assert run["outcome_reason"].startswith("retrain_child_invalid:")
+    assert not world.registered and not admitted
+    assert "out_of_sample_gate" not in run
+
+
+@pytest.mark.parametrize("action", ["mutate", "retrain"])
+def test_pool_child_with_valid_lesson_still_requires_passing_oos_gate(
+    research, world, owners, monkeypatch, action,
+):
+    if action == "retrain":
+        configure_retrain(research, monkeypatch)
+    world.passes = False
+    run, admitted = dispatch(research, world, monkeypatch, {"lesson_ids": [LESSON]}, action=action)
+    assert run["status"] == "completed" and run["outcome"] == "no_candidate", run
+    assert run["outcome_reason"] == "children_failed_out_of_sample_gate"
+    assert run["evolution_child_context"]["addresses_lessons"] == {"lesson_ids": [LESSON]}
+    assert not world.registered and not admitted
 
 
 def test_service_case_file_excludes_private_and_foreign_persona_memory(research, world, owners, monkeypatch):
