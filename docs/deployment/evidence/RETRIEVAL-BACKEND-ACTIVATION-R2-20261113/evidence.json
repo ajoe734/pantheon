@@ -29,5 +29,10 @@
     "P2_validation": "test_retrieval_activation.py sets PANTHEON_SEARCH_BACKEND=jsonl via setdefault at collection (conftest.py is outside the artifact contract; single-file runs of legacy modules must set it explicitly); production default stays fail-closed postgres_pgvector (default test still passes). Plain `pytest services/search` (CI invocation) 157 passed/22 skipped; with real pgvector DSN 161 passed/18 skipped.",
     "P2_ranx": "ranx==0.3.21 and its closure are pinned in services/search/requirements.lock, installed by the Dockerfile; eval invocation documented in run_retrieval_eval.py docstring. Above-threshold fixture test is wiring regression only, not quality evidence.",
     "also": "deploy/artifacts suites 264 passed/4 skipped"
+  },
+  "review_round_4_fixes": {
+    "P1_smoke": "4 standalone source_ingestion readback tests (test_external_source_connectors, test_provider_management_coverage, test_taiwan_official_connectors, source_ingestion/test_service) now set PANTHEON_SEARCH_BACKEND=jsonl via monkeypatch inside the test; production default stays fail-closed postgres_pgvector.",
+    "verification": "4 affected files: 129 passed/3 skipped. Full services/source_ingestion locally: 1851 passed, 9 failed (test_finmind_broker_backfill.py dependency_unavailable, local environment, untouched by this change; not in CI's earlier failure list).",
+    "tested_code_head": "ccf67f0d2541ba8eb48a0395f12aba451b68ed98"
   }
 }
