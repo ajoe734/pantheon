@@ -1216,8 +1216,8 @@ class SourceIngestionRuntime:
         for record in self.evidence_repository.list_source_records():
             cid = record.connector_id
             # Historical sweeps grow this population on every tick. Ranking only
-            # reads scalar metadata; deep-copying every stored row for each
-            # controller readback makes persistence overhead dominate raw reads.
+            # reads scalar metadata; avoid allocating serialized record and
+            # metadata mappings for every stored row in each readback.
             rec_meta = record.metadata or {}
             norm_row = rec_meta.get("normalized_row") if isinstance(rec_meta.get("normalized_row"), dict) else {}
             rec_run_id = str(rec_meta.get("source_ingest_run_id") or rec_meta.get("ingest_run_id") or "")
@@ -1237,7 +1237,10 @@ class SourceIngestionRuntime:
                 or norm_row.get("date")
                 or ""
             )
-            rec_created = str(record.created_at or "")
+            rec_created = (
+                record.created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+                if isinstance(record.created_at, datetime) else str(record.created_at or "")
+            )
             source_id = str(record.source_id or "")
 
             if cid in COLLECTOR_PRICE_HISTORY_SOURCE_IDS:
@@ -1265,7 +1268,7 @@ class SourceIngestionRuntime:
         documents: dict[str, Any] = {}
         offerings = {}
         for config in configs:
-            fetch = config.fetch
+            fetch = getattr(config, "fetch", None) or {}
             if fetch.get("mode") != "provider_owned_adapter" or fetch.get("adapter") != COLLECTOR_BUNDLE_ADAPTER_TOKEN:
                 continue
             spec = fetch.get("adapter_config") or {}

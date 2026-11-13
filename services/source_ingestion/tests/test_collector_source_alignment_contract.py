@@ -18,6 +18,8 @@ def test_every_enabled_host_source_has_its_own_admitted_definition_or_explicit_h
                 for cid in req["connector_candidates"]}
     held = {item["connector_id"]: item["reason"] for item in desired["held_collector_sources"]}
     exclusions = desired.get("collector_ingestion_exclusions", {})
+    assert set(exclusions) <= set(policy)
+    assert not (set(exclusions) & set(by_source)), "a source cannot be both implemented and explicitly excluded"
     assert {s["id"] for s in COLLECTOR_SOURCE_SPECS} <= set(policy)
     for sid, host_policy in policy.items():
         if not host_policy["enabled"]:

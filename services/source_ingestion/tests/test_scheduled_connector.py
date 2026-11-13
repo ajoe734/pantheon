@@ -2959,3 +2959,15 @@ def test_ingest_queue_connection_failure_keeps_catch_up_admission_nonblocking(tm
     admissions = admit_normalized_records_to_distillation(queue, records)
     assert set(admissions) == {"one", "two"}
     assert all(a["status"] == "admission_failed" for a in admissions.values())
+
+
+def test_scalar_readback_ranking_preserves_mixed_datetime_and_persisted_iso_order(client, monkeypatch):
+    from services.source_ingestion.connectors.base import SourceRecord
+    _, _, module = client
+    older = SourceRecord(source_id="zzz", connector_id="rank-notes", source_type="internal_note",
+                         title="older", content_ref="memory://older", created_at="2026-11-13T01:00:00Z")
+    newer = SourceRecord(source_id="aaa", connector_id="rank-notes", source_type="internal_note",
+                         title="newer", content_ref="memory://newer",
+                         created_at=datetime(2026, 11, 13, 2, tzinfo=timezone.utc))
+    monkeypatch.setattr(module.runtime.evidence_repository, "list_source_records", lambda: [older, newer])
+    assert module.runtime._latest_source_record_by_connector(receipts_by_connector={})["rank-notes"] is newer
