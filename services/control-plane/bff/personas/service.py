@@ -6849,6 +6849,8 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
     if promotion:
         content = {k: saved.get(k) for k in ("persona_id", "quarter", "ranking_snapshot_id", "from_stage", "to_stage",
                                             "rule_summary", "rationale", "evidence_ref_ids")}
+        if "panel_memo" in saved:
+            content["panel_memo"] = saved["panel_memo"]
         digest = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
         subject = (row.get("metadata") or {}).get("subject") if isinstance(row, dict) else None
         bound_subject = (
@@ -14214,6 +14216,10 @@ def _pm12_quarterly_recommendation_item(
         "evaluator_run_id": saved.get("evaluator_run_id"),
         "evaluated_at": saved.get("evaluated_at"),
         "governance_request": saved.get("governance_request"),
+        "routing": {k: v for k, v in (saved.get("routing") or {}).items() if k in
+                    {"owner", "status", "reason", "ranking_snapshot_id", "rebalance_id"}},
+        "panel_memo": saved.get("panel_memo"),
+        "mapping_version": saved.get("mapping_version"),
         "rationale_codes": [
             f"tier:{item.get('tier') or 'unknown'}",
             f"action:{action_id}",
