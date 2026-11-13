@@ -2626,8 +2626,11 @@ def test_full_size_close_through_controller_main_with_persistence(
                 progress[cid].append(state["delivered"])
             if state["done"]:
                 completed_at.setdefault(cid, clock[0] + time.monotonic() - real_start)
-        if len(completed_at) == len(paths) and seconds == 60:
-            raise SessionFinished  # normal cadence resumes after newest + ordered sweep
+        if len(completed_at) == len(paths):
+            # Newest-session proof ends here. The newly eligible ordered sweep
+            # continues in subsequent ticks, covered by the history regressions.
+            assert seconds == cw.CONTINUATION_PAUSE_SECONDS
+            raise SessionFinished
         assert seconds == cw.CONTINUATION_PAUSE_SECONDS, capsys.readouterr().out[-3000:]
 
     monkeypatch.setattr(cw, "time", types.SimpleNamespace(sleep=sleep))
@@ -2668,7 +2671,8 @@ def test_full_size_close_through_controller_main_with_persistence(
             assert item["schedule"]["interval_seconds"] == 600
             fetch = module.runtime.connector_store.get_config(item["connector_id"]).fetch
             assert fetch["max_records"] == 1000
-    assert cw.select_collector_pull_connectors(actual, _steady_reconcile(list(paths))) == []
+    pending = cw.select_collector_pull_connectors(actual, _steady_reconcile(list(paths)))
+    assert pending and set(pending) <= set(paths)  # ordered history remains eligible
     assert active[0] == 0
     assert max(schedule_elapsed) < config.timeout_seconds
     elapsed = clock[0] + time.monotonic() - real_start
