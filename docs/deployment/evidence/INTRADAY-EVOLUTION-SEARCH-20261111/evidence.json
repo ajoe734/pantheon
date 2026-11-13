@@ -11,15 +11,17 @@
         "FamilyTrialCounterStore trial key now family_trial_key(family_id, bar_frequency): daily/undeclared keeps the legacy bare family_id, other frequencies use family_id@frequency. ReplicationGate counts under the declared/evaluated frequency; get_family_trial_count gains optional bar_frequency. Shared store unchanged (key is a plain string).",
         "seed_data.INTRADAY_SEARCH_DECLARATIONS declares tw_price_1m source with 1m/5m frequencies.",
         "No new dispatcher/service, no retired route or FinMind daily bypass, no provider/capital action. Replication thresholds and paper admission untouched.",
-        "D1 search path (evolution_search.search_in_sample / judge_child_out_of_sample / run_mutation_decision, main.py pool_member exhaustion read) uses the existing canonical family_trial_key via artifact_trial_key(parameters.bar_frequency) for IS/OOS counting, fallback record_family_trial, verdict before/after and 500-trial exhaustion; daily keeps legacy key. No new store/service; shared_stores unchanged."
+        "D1 search path (evolution_search.search_in_sample / judge_child_out_of_sample / run_mutation_decision, main.py pool_member exhaustion read) uses the existing canonical family_trial_key via artifact_trial_key(parameters.bar_frequency) for IS/OOS counting, fallback record_family_trial, verdict before/after and 500-trial exhaustion; daily keeps legacy key. No new store/service; shared_stores unchanged.",
+        "Scheduler/client path: GET /api/research/evolution/families/{family}?bar_frequency= (main.evolution_family_state) reads family_trial_key(family, bar_frequency); PoolOwner.family_state and PoolEvolutionScheduler pass the member's declared parameters.bar_frequency (daily/undeclared keeps the one-arg legacy call). Daily exhaustion no longer suppresses 5m and vice versa (test_family_state_is_frequency_scoped; test_family_state_frequency.py).",
+        "Caps interpretation unchanged and explicit: 50 variants per decision (pool_member budget) and 500 lifetime trials per family key (FAMILY_LIMIT / >=500 checks). Frequency-specific keys coexist with these caps; no implicit new 500 per frequency beyond the key identity, no new counter/store/service, no global cap removed. Authoritative family definition remains for coordinator/reviewer clarification."
       ]
     },
     "tests": {
       "status": "passed",
-      "command": "/tmp/codex-replication-review-20261111/bin/python -B -m pytest -p no:cacheprovider services/evolution/tests/test_intraday_frequency_immutable.py services/evolution/test_program_owner.py services/research/replication/test_gate.py services/research/alpha_replication/test_evolution_search.py -q --disable-warnings",
+      "command": "uv run --python 3.12 --with pytest ... python -m pytest -q services/evolution/tests/test_intraday_frequency_immutable.py services/evolution/test_pool_evolution_scheduler.py services/research/alpha_replication/test_evolution_search.py services/research/tests/test_family_state_frequency.py",
       "terminal": {
         "exit_code": 0,
-        "result": "75 passed, 3 skipped (incl. 2 new frequency-key tests in alpha_replication/test_evolution_search.py)"
+        "result": "51 passed (pre-merge-of-latest-dev head 82394981c)"
       },
       "gaps": "3 skipped are pre-existing Postgres-backed cases; full research gate/intraday suite not re-run in this task."
     },
