@@ -2711,36 +2711,46 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
 
     def run_worker():
         rstore = get_store()
+        template_run = _is_template_search_run(rstore.get_run(run_id) or {})
+        label = "Template search" if template_run else "Retrain"
         try:
-            if _evolution_action(params) == "retrain":
+            if template_run:
+                _execute_template_search(run_id, params)
+            elif _evolution_action(params) == "retrain":
                 _execute_retrain(run_id, params)
             else:
                 _execute_evolution_gate(run_id, params)
         except _RetrainFinished as done:
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
             _retrain_record(run_id, outcome=done.outcome, outcome_reason=done.reason)
             _finish_run(
                 run_id, "completed",
-                f"Retrain completed: outcome={done.outcome}, outcome_reason={done.reason}.",
+                f"{label} completed: outcome={done.outcome}, outcome_reason={done.reason}.",
                 _RETRAIN_SOURCE_SERVICE,
             )
         except _RetrainFailure as failure:
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
             _retrain_record(
                 run_id, failed_step=failure.step,
                 rejection={"reason": "retrain_failed", "step": failure.step, "detail": failure.detail},
             )
             _finish_run(
-                run_id, "failed", f"Retrain failed at step {failure.step}: {failure.detail}",
+                run_id, "failed", f"{label} failed at step {failure.step}: {failure.detail}",
                 _RETRAIN_SOURCE_SERVICE,
             )
         except Exception as exc:  # noqa: BLE001 - every attempt must reach a terminal state.
-            logger.exception("retrain executor crashed for %s", run_id)
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
+            logger.exception("%s executor crashed for %s", label, run_id)
             detail = f"{type(exc).__name__}: {exc}"
             if rstore.get_run(run_id):
                 _retrain_record(
                     run_id, failed_step="executor",
                     rejection={"reason": "retrain_failed", "step": "executor", "detail": detail},
                 )
-                _finish_run(run_id, "failed", f"Retrain failed at step executor: {detail}", _RETRAIN_SOURCE_SERVICE)
+                _finish_run(run_id, "failed", f"{label} failed at step executor: {detail}", _RETRAIN_SOURCE_SERVICE)
         finally:
             with _retrain_active_lock:
                 _retrain_active_runs.discard(run_id)
@@ -2756,6 +2766,125 @@ from services.research.query_plan import QueryPlanError, QueryPlanStore  # noqa:
 
 research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.json")
 query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
+
+
+def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
+    """Read the mandate universe and registered templates from their owners."""
+    tenant_id = demand["tenant_id"]
+    persona_url = os.getenv("PERSONA_API_URL", "http://persona:8002").rstrip("/")
+    persona = _retrain_call(
+        step="template_mandate", service="persona", method="GET", tenant_id=tenant_id,
+        token_variable="RESEARCH_PERSONA_SERVICE_TOKEN",
+        url=f"{persona_url}/api/personas/{urllib.parse.quote(demand['persona_id'], safe='')}")
+    if persona.get("tenant_id") != tenant_id or persona.get("persona_id") != demand["persona_id"]:
+        raise ValueError("template_mandate_owner_mismatch")
+    scope = persona.get("market_scope") or (persona.get("metadata") or {}).get("market_scope") or {}
+    universe = scope.get("symbols")
+    if not universe:
+        raise ValueError("mandate_universe_missing")
+    dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
+    if not dataset:
+        raise ValueError("governed_market_data_missing")
+    registry_url = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
+    templates = _retrain_call(
+        step="template_registry", service="registry", method="GET", tenant_id=tenant_id,
+        token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", url=f"{registry_url}/api/registry/alpha-templates?scope=time_series")
+    return {"universe": universe, "dataset": dataset, "templates": templates}
+
+
+def _is_template_search_run(run: Dict[str, Any]) -> bool:
+    # This adapter is only recorded by authenticated demand reconciliation;
+    # dispatch_run rejects it as unknown. Caller-supplied stub parameters do
+    # not grant execution on startup or retry.
+    return (run.get("adapter") == "template_demand_gate"
+            and (run.get("parameters") or {}).get("action_type") == "template_search")
+
+
+def _execute_template_search(run_id: str, params: Dict[str, Any]) -> None:
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    demand = next((row for row in research_demand_store.list(params["tenant_id"], params["persona_id"])
+                   if row["demand_id"] == params["demand_id"]), None)
+    if not demand:
+        raise _RetrainFailure("template_search", "research_demand_missing")
+    run.update(status="running", updated_at=utc_now())
+    store.put_run(run)
+    from services.research.template_demand_search import TemplateDemandSearch
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
+
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(),
+                                 backtest_run_store=SharedBacktestRunStore(data_dir / "backtest_runs.json"))
+    search = TemplateDemandSearch(store=research_demand_store, gate=gate,
+                                  context_loader=_template_search_context, lock_path=data_dir / "template_search.lock",
+                                  run_budget=1)
+    row = search.run(demand)
+    result = (row.get("discovery") or {}).get("template_search") or {}
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    run["template_search"] = {"demand_ref": demand["demand_id"], **result}
+    store.put_run(run)
+    reason = result.get("reason", "demand_closed")
+    if reason.startswith("template_search_unavailable:"):
+        raise _RetrainFailure("template_search", reason)
+    raise _RetrainFinished("template_search_completed", reason)
+
+
+def _search_demand_templates(rows: List[Dict[str, Any]]) -> None:
+    """Record normal Research runs; never perform owner I/O or backtests here."""
+    for row in rows:
+        if row["status"] != "open":
+            continue
+        # An unconfigured owner cannot execute a search. Record the same
+        # unavailable outcome without creating Research tasks that can never
+        # start; credential-file validation and all owner I/O stay in worker.
+        missing = next((name for name in ("RESEARCH_PERSONA_SERVICE_TOKEN", "RESEARCH_REGISTRY_SERVICE_TOKEN")
+                        if not (os.getenv(name, "").strip() or os.getenv(name + "_FILE", "").strip())), None)
+        if missing:
+            research_demand_store.record_template_search(
+                row["tenant_id"], row["demand_id"],
+                {"run_at": utc_now(), "attempts": {}, "paper_only": True,
+                 "reason": "template_search_unavailable:owner_credential_unconfigured:" + missing})
+            continue
+        with _plan_progress_lock:
+            runs = store.list_runs()
+            matching = [r for r in runs if _is_template_search_run(r)
+                        and (r.get("parameters") or {}).get("demand_id") == row["demand_id"]
+                        and r.get("tenant_id") == row["tenant_id"]]
+            active = next((r for r in matching if r.get("status") in ACTIVE_STATUSES), None)
+            if active:
+                run = active
+            else:
+                if sum(r.get("status") in ACTIVE_STATUSES for r in runs) >= MAX_ACTIVE_RUNS:
+                    continue  # next normal persona cycle retries; no separate queue
+                timestamp = utc_now()
+                task = create_task(CreateTaskBody(
+                    title="Search registered templates for " + row["demand_id"],
+                    objective="Compile mandate-compatible templates through the replication gate",
+                    actor_id="persona-pool-cycle",
+                    constraints={"tenant_id": row["tenant_id"], "persona_id": row["persona_id"]},
+                    idempotency_key="template-search:" + row["tenant_id"] + ":" + row["demand_id"]))
+                if task.get("cancellation_fence"):
+                    continue
+                run_id = _next_id("rrun", timestamp, {r["run_id"] for r in runs})
+                event = _event(timestamp, "run_queued", "Template search queued for the replication gate.",
+                               "persona-pool-cycle", run_id, [])
+                run = {"id": run_id, "run_id": run_id, "task_id": task["task_id"],
+                       "adapter": "template_demand_gate", "requested_mode": "replication_gate",
+                       "dispatch_mode": "replication_gate", "production_activation": "disabled",
+                       "status": "queued", "tenant_id": row["tenant_id"], "created_by": "persona-pool-cycle",
+                       "paper_only": True, "attempt_number": 1, "parent_run_id": None, "root_run_id": run_id,
+                       "parameters": {"action_type": "template_search", "tenant_id": row["tenant_id"],
+                                      "persona_id": row["persona_id"], "demand_id": row["demand_id"]},
+                       "created_at": timestamp, "updated_at": timestamp, "events": [event],
+                       "artifact_refs": [], "proposal_refs": [], "registry_writebacks": []}
+                task.update(status="running", updated_at=timestamp)
+                store.put_task(task)
+                store.put_run(run)
+                store.append_event(event)
+        _trigger_retrain_execution(run["run_id"], run["parameters"])
 
 
 def _refresh_collector_query_plan(tenant_id: str) -> None:
@@ -2806,6 +2935,7 @@ def reconcile_persona_research_demands(
     if not persona_id:
         raise HTTPException(status_code=422, detail="persona_id is required")
     rows = research_demand_store.reconcile(tenant_id, persona_id, list(body.get("members") or []))
+    _search_demand_templates(rows)
     _refresh_collector_query_plan(tenant_id)
     return {"demands": rows, "count": len(rows)}
 
@@ -2828,12 +2958,12 @@ def resume_retrain_runs() -> None:
 
     The run, its session and its evaluation job ids are the ones already
     recorded: the same executor continues from them, so no new run, second
-    session or second child is created.  A non-retrain run is not touched.
+    session or second child is created. Template searches use this same worker.
     """
     for record in get_store().list_runs():
         status = str(record.get("status") or "").lower()
         params = record.get("parameters") or {}
-        if status not in {"queued", "running"} or not isinstance(params, dict) or not _is_retrain_action(params):
+        if status not in {"queued", "running"} or not isinstance(params, dict) or not (_is_retrain_action(params) or _is_template_search_run(record)):
             continue
         if record.get("cancellation_fence"):
             continue
@@ -2855,7 +2985,7 @@ def repair_retrain_tasks_left_running() -> None:
         params = run.get("parameters") or {}
         if (
             not isinstance(params, dict)
-            or not _is_retrain_action(params)
+            or not (_is_retrain_action(params) or _is_template_search_run(run))
             or str(run.get("status") or "").lower() not in {"completed", "failed"}
         ):
             continue
@@ -3121,7 +3251,7 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
     adapter = new_run.get("adapter", "stub")
     supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "openclaw_result_synthesis", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk", "evidence_synthesis"}
     is_stage_backend = adapter in supported_stage_backends or params.get("stage") is not None
-    if _is_retrain_action(params):
+    if _is_retrain_action(params) or _is_template_search_run(new_run):
         _trigger_retrain_execution(new_run["run_id"], params)
     elif is_stage_backend and (params.get("stage") or (params.get("plan") and params["plan"].get("stages"))):
         _progress_plan_stages(params.get("plan") or {}, new_run, b.actor_id, store, timestamp)
