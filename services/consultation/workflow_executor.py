@@ -31,6 +31,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from services.knowledge import case_file as decision_case
+
 from .provider import (
     ContributionBlocked,
     ContributionProviderError,
@@ -777,6 +779,130 @@ def _validated_panel(
     return participants, dict(decision)
 
 
+def _compose_panel_case_file(
+    config: ExecutorConfig, request: Mapping[str, Any], decision: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Resolve the existing request subject through owners; callers add no fields.
+
+    Canary candidacy targets a persona, so resolve its pool members rather than
+    treating the persona or ranking snapshot id as a registry artifact.
+    """
+    from dataclasses import replace
+
+    owners = decision_case.Owners.from_env()
+    if config.memory_url:
+        owners = replace(owners, memory=decision_case.OwnerEndpoint(
+            config.memory_url, _memory_headers().get("Authorization", "").removeprefix("Bearer ")))
+    persona = str(request["from_persona_id"])
+    panel = request["metadata"]["panel"]
+    canary = "paper_canary_candidacy" in (panel.get("touches") or [])
+    try:
+        if decision["type"] == "trial_admission" and not canary:
+            refs = [str(decision["id"])]
+        else:
+            pool = decision_case.http_json(
+                owners.pool, f"/api/personas/{urllib.parse.quote(persona, safe='')}/strategy-pool",
+                tenant_id=config.tenant_id)
+            refs = [str(m["artifact_ref"]) for m in pool.get("members", [])
+                    if m.get("stage") != "removed" and m.get("artifact_ref")]
+        if not refs:
+            raise WorkflowBlocked("panel_case_file: no subject member artifacts")
+        # Resolve family/spec/backtest context from registry ownership, never a model.
+        families: dict[str, list[dict[str, Any]]] = {}
+        for ref in dict.fromkeys(refs):
+            row = decision_case.http_json(
+                owners.registry, f"/api/registry/entries/{urllib.parse.quote(ref, safe='')}",
+                tenant_id=config.tenant_id)
+            entry = row.get("entry", row)
+            if entry.get("registry_id") != ref or not entry.get("strategy_id"):
+                raise WorkflowBlocked("panel_case_file: registry subject binding missing")
+            if entry.get("tenant_id") not in (config.tenant_id, "__builtin__"):
+                raise WorkflowBlocked("panel_case_file: registry tenant binding mismatch")
+            families.setdefault(str(entry["strategy_id"]), []).append(entry)
+        caller = decision_case.Caller(
+            actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", CONSUMER_NAME),
+            actor_roles=tuple(x.strip() for x in os.getenv(
+                "PANTHEON_MEMORY_ACTOR_ROLES", "operator").split(",") if x.strip()),
+            session_id=f"consult-{request['request_id']}",
+            # Service caller: the shared file may NEVER include private memory.
+            persona_id="")
+        files = []
+        for family, entries in families.items():
+            metadata = [e.get("metadata") or {} for e in entries]
+            subject = decision_case.Subject(
+                decision_type="trial_admission" if decision["type"] == "trial_admission" else "consult",
+                persona_id=persona, tenant_id=config.tenant_id, strategy_family=family,
+                member_artifact_refs=tuple(e["registry_id"] for e in entries),
+                backtest_run_refs=tuple(dict.fromkeys(
+                    run for e in entries for run in (e.get("lineage") or {}).get("source_run_ids", []))),
+                underlyings=tuple(dict.fromkeys(u for m in metadata for u in m.get("underlyings", []))),
+                instrument_class=next((str(m["instrument_class"]) for m in metadata if m.get("instrument_class")), ""))
+            files.append(decision_case.compose_case_file(subject, caller, owners))
+    except (decision_case.OwnerUnavailable, decision_case.CaseFileError) as exc:
+        raise WorkflowBlocked(f"panel_case_file: {exc}") from exc
+    case = files[0]
+    # Multi-family canary pools use the same bounded library per family. Union
+    # the actual owner results, preserving unavailable reasons and item ids.
+    budgets = decision_case.Budgets()
+    for name in decision_case.GROUPS:
+        groups = [f["groups"][name] for f in files]
+        items = {i["item_id"]: i for g in groups for i in g["items"]}
+        group = case["groups"][name]
+        group["items"] = list(items.values())[:budgets.max_items_per_group]
+        group["unavailable"] = [u for g in groups for u in g["unavailable"]]
+        group["truncated"] = any(g["truncated"] for g in groups) or len(items) > len(group["items"])
+        group["status"] = ("partial" if group["unavailable"] else "ok") if group["items"] else (
+            "unavailable" if group["unavailable"] else "empty")
+    case["subject"]["member_artifact_refs"] = list(dict.fromkeys(refs))
+    case["subject"]["strategy_families"] = list(families)
+    case["subject"]["gated_decision"] = dict(decision)
+    case["subject"]["initiator_persona_id"] = persona
+    case["subject"]["request_id"] = request["request_id"]
+    case["lesson_query"] = {
+        "query": " ".join([str(decision["type"]).replace("_", " "), str(decision["id"]),
+                           *panel.get("touches", []), *[f["lesson_query"]["query"] for f in files]]),
+        "tags": list(dict.fromkeys(t for f in files for t in f["lesson_query"]["tags"]))}
+    case.pop("case_file_id")
+    case.pop("digest")
+    digest = hashlib.sha256(json.dumps(case, sort_keys=True, separators=(",", ":"),
+                                      ensure_ascii=False, default=str).encode()).hexdigest()
+    return {"case_file_id": f"casefile-{digest[:24]}", "digest": digest, **case}
+
+
+def _case_file_rejection(contribution: QualifiedContribution, case: Mapping[str, Any]) -> str | None:
+    """Every claim, summary and finding must cite an existing case item.
+
+    A bare global evidence array is not a citation for an individual claim.
+    Subject assertions, when supplied, must match the cited owner's fields or
+    the decision subject. This checks attribution, not semantic entailment.
+    """
+    items = {i["item_id"]: i for g in case["groups"].values() for i in g["items"]}
+    claims = contribution.event_content.get("claims")
+    if not isinstance(claims, list) or not claims:
+        return "claims_missing"
+    content = contribution.event_content
+    nodes = [*claims, {"claim": contribution.summary, "evidence_refs": content.get("summary_evidence_refs")},
+             *contribution.findings]
+    # A legacy free claim beside the claims list cannot escape validation.
+    if content.get("claim"):
+        nodes.append({"claim": content["claim"], "evidence_refs": content.get("evidence_refs")})
+    for node in nodes:
+        if not isinstance(node, Mapping) or not str(node.get("claim") or "").strip():
+            return "claim_malformed"
+        refs = node.get("evidence_refs")
+        if not isinstance(refs, list) or not refs:
+            return "claim_uncited"
+        if any(not isinstance(ref, str) or ref not in items for ref in refs):
+            return "case_item_unknown"
+        for field, value in (node.get("subject_fields") or {}).items():
+            if not any(value == items[ref].get("subject_fields", {}).get(field)
+                       or value == case["subject"].get(field) for ref in refs):
+                return "claim_subject_mismatch"
+    if any(e["id"] not in items for e in contribution.evidence):
+        return "evidence_not_in_case_file"
+    return None
+
+
 def _panel_contribution(
     *,
     claim: WorkflowClaim,
@@ -823,7 +949,7 @@ def _panel_contribution(
     state.save_progress(
         claim,
         phase="panel_contribution_received",
-        contribution={"panel_contributions": gathered},
+        contribution={"case_file": request["case_file"], "panel_contributions": gathered},
     )
     return contribution
 
@@ -879,7 +1005,7 @@ def _synthesize(
                 "severity": "high",
                 "category": "operator_decision",
                 "claim": "; ".join(gate.reasons),
-                "evidence_refs": [contributions[0].evidence[0]["id"]],
+                "evidence_refs": [contributions[0].evidence[0]["id"]] if contributions else [],
                 "recommendation": "Route to an operator decision.",
             }
         )
@@ -889,7 +1015,7 @@ def _synthesize(
         recommendation = "approve"
     else:
         recommendation = "approve_with_conditions"
-    confidence = min(item.confidence for item in contributions)
+    confidence = min((item.confidence for item in contributions), default=0.0)
     return gate.to_dict(), summary, recommendation, findings, confidence
 
 
@@ -1001,6 +1127,29 @@ def _execute_panel_claim(
             )
         _probe(config, config.evolution_url, "evolution")
 
+    saved = claim.contribution or {}
+    case = saved.get("case_file")
+    if not isinstance(case, Mapping):
+        try:
+            case = _compose_panel_case_file(config, request, decision)
+        except WorkflowBlocked as exc:
+            _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
+                "request_id": claim.request_id, "event_type": "panel_case_file_unavailable",
+                "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+                "content": {"reason": str(exc), "gated_decision": decision},
+                "idempotency_key": f"{claim.request_id}:case-unavailable:{hashlib.sha256(str(exc).encode()).hexdigest()[:16]}"})
+            raise
+        state.save_progress(claim, phase="case_file_composed", contribution={"case_file": case})
+    request = {**request, "case_file": case}
+    case_binding = {"case_file_id": case["case_file_id"], "digest": case["digest"]}
+    recorded = _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
+        "request_id": claim.request_id, "event_type": "panel_case_file_attached",
+        "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+        "content": {**case_binding, "case_file": case},
+        "idempotency_key": f"{claim.request_id}:case-file"})
+    if not isinstance(recorded, Mapping) or not recorded.get("event_id"):
+        raise WorkflowBlocked("panel case file was not durably acknowledged")
+
     gathered: dict[str, dict[str, Any]] = {}
     if isinstance(claim.contribution, Mapping):
         gathered = {
@@ -1008,10 +1157,10 @@ def _execute_panel_claim(
             for k, v in (claim.contribution.get("panel_contributions") or {}).items()
         }
     contributions: list[QualifiedContribution] = []
+    rejected: list[dict[str, Any]] = []
     for participant in participants:
         claim = _renew(state, claim, config)
-        contributions.append(
-            _panel_contribution(
+        contribution = _panel_contribution(
                 claim=claim,
                 state=state,
                 config=config,
@@ -1020,12 +1169,25 @@ def _execute_panel_claim(
                 participant=participant,
                 gathered=gathered,
             )
-        )
+        reason = _case_file_rejection(contribution, case)
+        if reason:
+            invalid = {"persona_id": participant["persona_id"], "contribution_id": contribution.contribution_id,
+                       "reason": reason, **case_binding}
+            rejected.append(invalid)
+            event = _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
+                "request_id": claim.request_id, "event_type": "panel_contribution_rejected",
+                "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+                "content": invalid, "idempotency_key": contribution.contribution_id + ":rejected"})
+            if not isinstance(event, Mapping) or not event.get("event_id"):
+                raise WorkflowBlocked("panel rejection was not durably acknowledged")
+        else:
+            contributions.append(contribution)
     _phase_hook(phase_hook, "panel_contributions_received")
 
     service_actor = {"actor_type": "service", "actor_id": CONSUMER_NAME}
     all_evidence: list[str] = []
-    for participant, contribution in zip(participants, contributions):
+    for contribution in contributions:
+        participant = next(p for p in participants if p["persona_id"] == contribution.participant_ref)
         claim = _renew(state, claim, config)
         base = contribution.contribution_id
         assigned = _api_post(
@@ -1057,6 +1219,7 @@ def _execute_panel_claim(
                     **contribution.event_content,
                     "recommendation": contribution.recommendation,
                     "role": participant["role"],
+                    **case_binding,
                 },
                 "evidence_refs": [str(i["id"]) for i in contribution.evidence],
                 "idempotency_key": base + ":event",
@@ -1084,6 +1247,10 @@ def _execute_panel_claim(
     gate, summary, recommendation, findings, confidence = _synthesize(
         participants, contributions
     )
+    summary += f" Case file: {case['case_file_id']} digest={case['digest']}."
+    if rejected:
+        summary += " Invalid contributions excluded: " + "; ".join(
+            f"{r['persona_id']}: {r['reason']}" for r in rejected) + "."
     synth_ref = f"consult-panel:{claim.request_id}"
     synth_key = _stable_id("panel-synthesis", config.tenant_id, claim.request_id)
     claim = _renew(state, claim, config)
@@ -1108,7 +1275,8 @@ def _execute_panel_claim(
             "request_id": claim.request_id,
             "event_type": "panel_synthesis",
             "actor": {"actor_type": "committee", "actor_id": synth_ref},
-            "content": {"voting": False, "gate": gate, "gated_decision": decision},
+            "content": {"voting": False, "gate": gate, "gated_decision": decision,
+                        **case_binding, "rejected_contributions": rejected},
             "evidence_refs": all_evidence,
             "idempotency_key": synth_key + ":event",
         },
