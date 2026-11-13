@@ -158,9 +158,12 @@ class PoolOwner:
             raise RuntimeError("ambiguous member virtual books")
         return {b.get("member_id") or b["artifact_id"]: {**b, **b.get("net_of_costs", {})} for b in books}
 
-    def family_state(self, family):
+    def family_state(self, family, bar_frequency=None):
         from urllib.parse import quote
-        return self.call("RESEARCH", "GET", "/api/research/evolution/families/" + quote(family, safe=""))
+        path = "/api/research/evolution/families/" + quote(family, safe="")
+        if bar_frequency:
+            path += "?bar_frequency=" + quote(str(bar_frequency), safe="")
+        return self.call("RESEARCH", "GET", path)
 
     def publish(self, pool):
         from urllib.parse import quote

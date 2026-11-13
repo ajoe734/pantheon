@@ -28,6 +28,14 @@ from evolution_decision import (  # type: ignore
 )
 
 
+# SD_INTRADAY_MINUTE_BARS §9 K8: declared source/frequency per intraday search
+# program.  Immutable once declared; each frequency keeps its own trial counter.
+INTRADAY_SEARCH_DECLARATIONS = (
+    {"source_dataset": "tw_price_1m", "bar_frequency": "1m"},
+    {"source_dataset": "tw_price_1m", "bar_frequency": "5m"},
+)
+
+
 def _ev(ref_id: str) -> EvidenceRef:
     return EvidenceRef(
         ref_type=EvidenceRefType.TELEMETRY_SUMMARY,
