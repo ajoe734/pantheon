@@ -1,0 +1,24 @@
+{
+  "task_id": "AGORA-PERSONA-LAB-RESTORE-20261112",
+  "kind": "source_implementation_evidence",
+  "owner": "Claude",
+  "assigned_reviewer": "Codex",
+  "independent_review": "pending",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md#67-restored-agora-learning-surfaces-c7",
+  "hosted_behavior_claimed": false,
+  "acceptance_evidence": {
+    "1_lab_draft_shadow_submit": ["test_draft_and_skill_coaching_forward_to_owner_patches", "test_shadow_run_prechecks_then_runs_owner_shadow", "test_submit_hands_off_to_management_review_or_fails_closed"],
+    "2_skill_coaching": ["test_draft_and_skill_coaching_forward_to_owner_patches (patch_type forced to skill, mismatch refused)"],
+    "3_evaluation_lists": ["test_evaluation_suites_runs_and_shadow_view"],
+    "4_change_log": ["test_change_log_lists_versions_with_evidence_and_actions", "test_accept_and_undo_forward_and_require_inputs", "test_never_again_and_tell_why_create_memory_candidates"],
+    "5_shadow_view": ["test_evaluation_suites_runs_and_shadow_view (base and candidate arms per frozen decision packet)"],
+    "6_forward_only": ["test_routes_are_mounted_on_agora_router_and_hold_no_store", "test_unconfigured_owner_and_owner_refusal_fail_closed"],
+    "owner_shadow_route": ["services/persona/test_harness.py::test_shadow_route_records_incomplete_comparison_without_provider"]
+  },
+  "known_limits": [
+    "The persona owner has no deny-all replay provider wired by default; without one the new owner shadow route records an incomplete KEEP_BASE comparison with its reason. Wiring a provider (harness.shadow_provider_factory) is a separate owner task.",
+    "No in-repo consumer reads the literal trainer_feedback_to_persona_update kind. The submit handoff resolves to the owner's existing governance proposal (Evolution) for outside-paper patches, or to adoption of an approved panel memo in paper.",
+    "Never-again and tell-why both create memory lesson candidates (review_state=proposed, paper) through the Memory owner; the BFF cannot write harness experiences, which stay owner-written."
+  ],
+  "scope_note": "services/persona/harness.py gained one owner route (POST .../harness/patches/{id}/shadow) because no owner route existed to run the shadow comparison."
+}

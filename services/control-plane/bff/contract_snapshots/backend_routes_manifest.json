@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-11-12",
+    "snapshot_date": "2026-11-13",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 621,
+    "total_routes": 634,
     "status_values": [
       "implemented",
       "alias",
@@ -189,6 +189,36 @@
     {
       "method": "GET",
       "path": "/bff/agora/performance/action-receipts/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/persona-lab/{param}/change-log",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/persona-lab/{param}/evaluation/runs",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/persona-lab/{param}/evaluation/suites",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/persona-lab/{param}/harness",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/persona-lab/{param}/patches/{param}/shadow-comparison",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -585,6 +615,54 @@
     {
       "method": "POST",
       "path": "/bff/agora/notes",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{param}/change-log/{param}/accept",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{param}/change-log/{param}/never-again",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{param}/change-log/{param}/tell-why",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{param}/change-log/{param}/undo",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{param}/patches",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{param}/patches/{param}/shadow-runs",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{param}/patches/{param}/submit",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{param}/skill-coaching/patches",
       "family": "agora-core",
       "status": "implemented"
     },

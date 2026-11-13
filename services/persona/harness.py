@@ -473,6 +473,20 @@ def register_harness_routes(app: Any, owner: Any, harness: PersistentHarnessOwne
         authority = scope(persona_id, authorization, tenant_id, True)
         return call(lambda: harness.operate(persona_id, patch_id, "precheck", authority.actor_id))
 
+    @app.post("/api/personas/{persona_id}/harness/patches/{patch_id}/shadow")
+    def shadow(persona_id: str, patch_id: str, authorization: str | None = Header(default=None),
+               tenant_id: str = Header(alias="X-Tenant-Id")) -> dict:
+        authority = scope(persona_id, authorization, tenant_id, True)
+        from services.persona.cron_ooda_closure import resolve_ooda_packet_store_path
+        from services.persona.harness_shadow_eval import run_shadow_comparison
+        # The provider is an owner-side, deny-all replay provider. When none is
+        # configured the owner records an incomplete comparison with its reason.
+        factory = getattr(harness, "shadow_provider_factory", None)
+        provider = factory(persona_id) if callable(factory) else None
+        return call(lambda: run_shadow_comparison(
+            harness, persona_id, patch_id, packet_store_path=resolve_ooda_packet_store_path(),
+            provider=provider, actor=authority.actor_id))
+
     @app.post("/api/personas/{persona_id}/harness/patches/{patch_id}/activate")
     def activate(persona_id: str, patch_id: str, body: ActivatePatch, authorization: str | None = Header(default=None),
                  tenant_id: str = Header(alias="X-Tenant-Id")) -> dict:
