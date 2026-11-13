@@ -4,11 +4,13 @@
   "changes": [
     "scripts/deploy_nonprod_vm.sh: TAIFEX/non-FinMind run_date = latest closed (13:30 Taipei) session via governed TWSE calendar; FinMind 18:00 rule unchanged",
     "services/source_ingestion/controller_worker.py: terminal validation reconciles unique per-connector frontier items (read separately) against the aggregate per-connector counts; any mismatch (concurrent enqueue), duplicate or malformed id fails closed; only never-attempted, error-free queued items after the latest closed/published session are deferred (stay queued/visible); no subtraction from aggregates; requested/earlier/attempted/errored items still fail",
-    "scripts/deploy_nonprod_vm.sh verify_bounded_source_refresh_readback: TAIFEX proof must carry the requested session (latest closed session at deploy start, governed calendar) and an underlying within the active symbol scope"
+    "scripts/deploy_nonprod_vm.sh verify_bounded_source_refresh_readback: TAIFEX proof must carry the requested session (latest closed session at deploy start, governed calendar) and an underlying within the active symbol scope",
+    "controller_worker.py: deferral of queued later-session work now restricted to governed Taiwan connectors (_TAIWAN_SESSION_CONNECTOR_IDS); other connectors (e.g. dev-paper-us-equity-simulation/us_price_daily) keep backlog failing",
+    "deploy_nonprod_vm.sh: preparation selects the session from refresh_started_at (SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT, never future) so preparation and terminal verifier use one session across the 13:30 cutoff; observation clocks unchanged"
   ],
   "tests": {
-    "services/source_ingestion/tests/test_controller_worker.py": "187 passed",
-    "scripts/test_dev_tw_market_refresh.py": "125 passed in two bounded batches (70 + 55) using /tmp/finmind-review-20261111-venv/bin/python; new cases execute the actual embedded verifier (Nov13 morning: date 2026-11-11/2026-11-13 rejected, underlying 9999/ZZF rejected) and controller cases with actual Nov13 02:48Z queue, requested-day + later queued, concurrent enqueue mismatch, duplicates, Sunday/holiday session",
+    "services/source_ingestion/tests/test_controller_worker.py": "188 passed (adds non-Taiwan no-deferral regression)",
+    "scripts/test_dev_tw_market_refresh.py": "-k preflight/receipt/frontier/taifex 64 passed; -k taifex_bounded_prepare/terminal_verifier/latest_eligible 12 passed; positive verifier cases now require returncode 0 with receipt times after start; cross-cutoff prepare (start 13:29:59, prepare 13:31) and verifier (receipt after 13:30) cases added",
     "checks": "bash -n and git diff --check clean"
   },
   "limits": "Contract-reference rows (updated0 snapshots) are not price/fill proof. Queued frontier-a0bceb2da89b not dropped or marked done. Actual recovery/publication remains with the original hosted owner; no workflow dispatch or VM operation performed."
