@@ -1433,3 +1433,16 @@ def test_provider_handler_forwards_request_priority_symbols_without_environment(
     request = {"_effective_max_records": 55, "priority_symbols": ["2330.TWSE", "2317.TWSE"]}
     result = _collector_bundle(_held_session(tmp_path)(), request, "trace")
     assert {"2330", "2317"} <= set(_symbols(result))
+
+
+def test_partial_session_flags_continuation_and_finished_session_does_not(tmp_path):
+    make = _held_session(tmp_path)
+    first = make().pull(priority_symbols=("2330.TWSE",))
+    assert not first.priority_done and first.observed.get("continuation_pending") is True
+    result = first
+    for _ in range(60):
+        if result.priority_done:
+            break
+        make().save_resume_cursor(result)
+        result = make().pull(cursor=result.next_cursor, priority_symbols=("2330.TWSE",))
+    assert result.priority_done and "continuation_pending" not in result.observed

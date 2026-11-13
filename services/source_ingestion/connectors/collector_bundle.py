@@ -779,7 +779,9 @@ class CollectorBundleAdapter:
             next_cursor=base.next_cursor,
             bundle_count=base.bundle_count + 1,
             paused_reasons=(*paused, *base.paused_reasons),
-            observed=base.observed,
+            # Newest-session rows still undelivered: the controller may re-pull before the
+            # finished-source cadence. Only this pull's own acknowledged outcome carries it.
+            observed=({**base.observed, "continuation_pending": True} if not done and not paused else base.observed),
             feature_rejected=base.feature_rejected,
             complete=base.complete,
             no_new_data=not merged and not paused and base.no_new_data,

@@ -1470,6 +1470,25 @@ def registered_collector_connector_ids(actual: Mapping[str, Any], reconcile: Map
     return sorted(found)
 
 
+def _collector_continuation_pending(item: Mapping[str, Any], freshness: Mapping[str, Any]) -> bool:
+    """Newest-session delivery is partial: the last pull succeeded, persisted, and said more remains.
+
+    Only the latest persisted pull's outcome counts (a failed fetch or failed run replaces or
+    outranks it), so a failing source falls back to its normal cadence instead of retrying hot.
+    """
+
+    state = item.get("fetch_state") if isinstance(item.get("fetch_state"), Mapping) else {}
+    outcome = state.get("collector_outcome") if isinstance(state.get("collector_outcome"), Mapping) else {}
+    observed = outcome.get("observed") if isinstance(outcome.get("observed"), Mapping) else {}
+    latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), Mapping) else {}
+    return (
+        observed.get("continuation_pending") is True
+        and not state.get("last_error")
+        and latest_run.get("status") == "completed"
+        and freshness.get("status") not in {"degraded", "disabled", "unscheduled"}
+    )
+
+
 def select_collector_pull_connectors(
     actual: Mapping[str, Any], reconcile: Mapping[str, Any]
 ) -> list[str]:
@@ -1510,7 +1529,7 @@ def select_collector_pull_connectors(
         if schedule.get("enabled") is not True or int(schedule.get("interval_seconds") or 0) <= 0:
             continue
         freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
-        if freshness.get("is_due") is not True:
+        if freshness.get("is_due") is not True and not _collector_continuation_pending(item, freshness):
             continue
         selected.add(connector_id)
     return sorted(selected)
