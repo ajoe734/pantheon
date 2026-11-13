@@ -2257,3 +2257,181 @@ def test_one_failing_collector_does_not_starve_other_admitted_sources(admission_
     succeeded = [c['connector_id'] for c in readback['connectors']
                  if c['connector_id'] in wanted and c.get('latest_source_record')]
     assert succeeded, f'No other admitted source ran after four ticks; batches={batches}; errors={errors}'
+
+
+# --- COLLECTOR-CLOSE-CONTINUATION-20261113: configured handler -> controller selection -> scheduler -> snapshot store ---
+
+_CLOSE_SOURCE = "collector-tw-twse-price-history"
+_CLOSE_DATE = "2026-11-13"
+_CLOSE_ROWS = 600
+_CLOSE_HELD = {531: "2317", 538: "2330"}  # captured positions beyond the first ~55-row verified prefix
+_CLOSE_READ_SECONDS = 0.27  # finite per-read latency: the 15s whole-request budget verifies ~55 rows
+
+
+def _close_files(*, tamper_code: str | None = None, wrong_date_code: str | None = None):
+    import hashlib
+    import json
+
+    from services.source_ingestion.connectors.collector_bundle import compute_bundle_sha256
+
+    run_id, finished = f"close-{_CLOSE_DATE}", "2026-11-13T07:30:00Z"
+    base = f"bundles/{_CLOSE_SOURCE}/{_CLOSE_DATE}/{run_id}"
+    items, rows, files = [], [], {}
+    for n in range(_CLOSE_ROWS):
+        code = _CLOSE_HELD.get(n, f"{1000 + n}")
+        item_id = f"twse-price-history-{_CLOSE_DATE}-{code}"
+        body = f"<r>{_CLOSE_DATE}-{code}</r>".encode()
+        sha = hashlib.sha256(body).hexdigest()
+        items.append({"item_id": item_id, "url": "https://www.twse.com.tw/exchangeReport/MI_INDEX", "http_status": 200,
+                      "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
+        rows.append({
+            "id": item_id, "url": "https://www.twse.com.tw/exchangeReport/MI_INDEX", "fetched_at": "2026-11-13T07:00:00Z",
+            "symbol": code, "security_name": f"name {code}", "exchange": "TWSE", "dataset": "tw_price_daily",
+            "trade_date": "2026-11-12" if code == wrong_date_code else _CLOSE_DATE,
+            "open": 940.0, "high": 955.0, "low": 938.0, "close": 950.0 + n, "volume_shares": 1000, "transactions": 10,
+        })
+        files[f"{base}/raw/{sha}.html"] = b"tampered" if code == tamper_code else body
+    manifest = {
+        "schema_version": "collector_bundle.v1", "source_id": _CLOSE_SOURCE, "run_id": run_id, "collector_version": "1.0.0",
+        "started_at": "2026-11-13T07:00:00Z", "finished_at": finished, "fetch_policy_hash": "fph",
+        "robots_decision": "allowed", "terms_ref": "https://example.test/terms", "attribution": "TWSE", "items": items,
+        "status": "complete", "bundle_sha256": compute_bundle_sha256([m["content_sha256"] for m in items]),
+    }
+    files[f"{base}/manifest.json"] = json.dumps(manifest).encode()
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    files["bundles/index.json"] = json.dumps({"bundles": [
+        {"source_id": _CLOSE_SOURCE, "date": _CLOSE_DATE, "run_id": run_id, "finished_at": finished}]}).encode()
+    files["status.json"] = json.dumps({"sources": {_CLOSE_SOURCE: {"status": "ok", "last_run_at": finished}}}).encode()
+    return files
+
+
+def _close_config(connector_id: str) -> dict:
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+
+    adapter = CollectorBundleAdapter(
+        connector_id=connector_id, source_id=_CLOSE_SOURCE, source_type="market", host=_STEADY_HOST,
+        attribution_required=True, dataset="tw_price_daily", max_records=1000, cadence_seconds=600,
+    )
+    full = adapter.connector().to_dict()
+    allowed = ("connector_id", "source_type", "provider", "license_scope", "auth_type", "supported_modes", "auth_policy",
+               "rate_limit_policy", "license_policy", "source_metadata", "metadata")
+    connector = {key: full[key] for key in allowed if key in full}
+    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a", "definition_id": _CLOSE_SOURCE}
+    fetch = dict(adapter.fetch_config())
+    fetch["adapter_config"] = {
+        **fetch["adapter_config"], "source_type": "market", "host": _STEADY_HOST, "dataset": "tw_price_daily",
+        "attribution_required": True, "cadence_seconds": 600,
+    }
+    return {"connector": connector, "fetch": fetch}
+
+
+def _close_stack(steady_stack, monkeypatch, **file_kwargs):
+    import types
+
+    from services.source_ingestion.connectors import collector_bundle
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
+
+    http, module, _reads = steady_stack
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TWSE,2317.TWSE")
+    clock = [0.0]
+    reads: list[str] = []
+
+    class LatencyTransport(FakeTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            clock[0] += _CLOSE_READ_SECONDS  # every Collector read costs finite time against the request budget
+            reads.append(relative_path)
+            return super().read(relative_path, max_bytes=max_bytes)
+
+    transport = LatencyTransport(_close_files(**file_kwargs))
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: transport)
+    monkeypatch.setattr(collector_bundle, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    cid = "conn-close-twse"
+    assert http.post("/api/source-ingest/connectors", json=_close_config(cid)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{cid}/schedule", json={"interval_seconds": 600, "enabled": True}).status_code == 200
+    return http, module, cid, reads, _steady_reconcile([cid])
+
+
+def _snapshot_date(module, symbol: str):
+    module.runtime.latest_market_snapshot_store.reload()
+    snap = module.runtime.latest_market_snapshot_store.get(symbol)
+    return snap.points[-1].event_time[:10] if snap and snap.points else None
+
+
+def test_held_symbols_reach_snapshot_store_on_first_tick_and_session_completes_across_ticks(steady_stack, monkeypatch) -> None:
+    http, module, cid, reads, reconcile = _close_stack(steady_stack, monkeypatch)
+    ticks, snapshot_after_first, ack_ids = 0, None, []
+    while True:
+        selected, schedule = _steady_step(reconcile)
+        if not selected:
+            break
+        ticks += 1
+        assert selected == [cid] and schedule["summary"]["total_failed"] == 0
+        run = schedule["ran"][0]
+        assert run["run"]["status"] == "completed"
+        # Bounded by the finite-latency whole-request budget: never the whole 600-row session in one pull.
+        if ticks == 1:
+            assert 0 < run["receipt"]["normalized_count"] < 100
+            snapshot_after_first = {s: _snapshot_date(module, s) for s in ("2330.TW", "2317.TW", "1000.TW")}
+        ack_ids.append(run["run"]["ingest_run_id"])
+        assert ticks <= 30, "newest session must finish inside the 30-minute window at one tick per minute"
+    # Held symbols beyond the first prefix were published on the very first tick (old code: ~10 pulls later).
+    assert snapshot_after_first["2330.TW"] == _CLOSE_DATE and snapshot_after_first["2317.TW"] == _CLOSE_DATE
+    assert ticks > 1, "continuation happened across ticks, not within one request"
+    assert len(set(ack_ids)) == len(ack_ids), "no duplicate acknowledgement for one run"
+    # Whole session delivered; cadence is restored afterwards (nothing selected, no new reads).
+    assert _snapshot_date(module, "1599.TW") == _CLOSE_DATE
+    seen = len(reads)
+    assert _steady_step(reconcile) == ([], None) and len(reads) == seen
+    readback = http.get("/api/source-ingest/controller/readback").json()
+    item = next(c for c in readback["connectors"] if c["connector_id"] == cid)
+    assert "continuation_pending" not in item["fetch_state"]["collector_outcome"]["observed"]
+
+
+def test_interrupted_close_pull_acknowledges_nothing_and_retry_resumes(steady_stack, monkeypatch) -> None:
+    from services.source_ingestion.connectors import SourceEvidenceError
+
+    http, module, cid, reads, reconcile = _close_stack(steady_stack, monkeypatch)
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+
+    inner = CollectorBundleAdapter._transport
+    state = {"fail": True}
+
+    def flaky(self):
+        transport = inner(self)
+
+        class Flaky(type(transport)):
+            def read(self_inner, relative_path, *, max_bytes):
+                if state["fail"] and "/raw/" in relative_path:
+                    raise SourceEvidenceError("injected collector outage")
+                return transport.read(relative_path, max_bytes=max_bytes)
+
+        return Flaky(transport.files)
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", flaky)
+    monkeypatch.setattr(module.runtime, "FRONTIER_BACKOFF_SECONDS", 0)  # retry immediately instead of sleeping
+    selected, schedule = _steady_step(reconcile)
+    assert _snapshot_date(module, "2330.TW") is None  # nothing published, nothing acknowledged
+    assert not (schedule and schedule["summary"]["total_failed"] == 0)
+    state["fail"] = False
+    # The retry replays from the unacknowledged start with held symbols first and publishes them.
+    from services.source_ingestion import controller_worker as cw
+
+    retry = cw.run_schedule_tick(
+        api_url="http://source-ingest.test:8097", max_concurrency=1, force_connector_ids=[cid], exclusive_connector_ids=[cid],
+        controller_token="controller-test-token-that-is-at-least-32-characters",
+    )
+    assert retry["summary"]["total_failed"] == 0 and [r["connector_id"] for r in retry["ran"]] == [cid], retry
+    assert _snapshot_date(module, "2330.TW") == _CLOSE_DATE
+    assert _snapshot_date(module, "2317.TW") == _CLOSE_DATE
+
+
+@pytest.mark.parametrize("fault", ["hash", "date"])
+def test_held_close_with_invalid_raw_or_wrong_date_never_publishes_a_snapshot(steady_stack, monkeypatch, fault) -> None:
+    kwargs = {"tamper_code": "2330"} if fault == "hash" else {"wrong_date_code": "2330"}
+    http, module, cid, reads, reconcile = _close_stack(steady_stack, monkeypatch, **kwargs)
+    try:
+        _steady_step(reconcile)
+    except Exception:  # truthful failure is acceptable; a published snapshot is not
+        pass
+    assert _snapshot_date(module, "2330.TW") != _CLOSE_DATE

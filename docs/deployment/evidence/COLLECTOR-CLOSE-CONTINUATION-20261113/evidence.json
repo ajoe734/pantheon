@@ -3,22 +3,30 @@
  "diagnosis": "Newest-session priority delivery advanced in manifest order (55 of 1377 per bounded pull), so held symbols at positions 531/538 (2317/2330) waited ~10+ pulls behind unrelated rows.",
  "change": "Held (active paper) symbol rows are verified and delivered first inside the newest-session bundle; every row still hash/size verified, remaining rows continue in manifest order; persisted priority state records the held set and restarts the session order (idempotent replay) if it changes. Held symbols are resolved in the existing provider_adapters._collector_bundle handler (SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS + request priority_symbols, as the Taiwan official handler) and passed to pull(priority_symbols), same identities as the Taiwan official adapter. No new store/service.",
  "validation": {
-  "command": "pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py test_scheduled_connector.py test_controller_worker.py",
+  "command": "/tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_controller_worker.py",
   "exit": 0,
-  "result": "347 passed, 1 skipped in 100.07s"
+  "result": "351 passed, 1 skipped in 98.37s"
  },
  "source_sha256": {
   "connectors/collector_bundle.py": "f345dcc622bdccac7e2a88372f4328e3ad0899b50878aac56209b994ff210be0",
   "controller_worker.py": "df797c5a279a7d39b339a6e43df3a4442ff74cc8c17173849a9a89808d12bf9d",
   "tests/test_collector_bundle_connector.py": "b24397629b0c24d993892b531d66385a5ca624bef10ccb08a1613028e6e7172e",
   "tests/test_controller_worker.py": "7cd7e5c1cce8d3eccab5b9025d6d1f2c2f7f8a55568a5dcc4e7682ddeffab5ac",
-  "provider_adapters.py": "73bf33768bd44f5126a526ae161cba34bb12f865cca53b53c38d0540383608c7"
+  "provider_adapters.py": "73bf33768bd44f5126a526ae161cba34bb12f865cca53b53c38d0540383608c7",
+  "tests/test_scheduled_connector.py": "e601e73e23e8af8b8f797b93ed6631b6671e3fba878bc69f3e45e90d0bb7d42c"
  },
  "remaining_hosted_gaps": [
   "No hosted/provider verification performed by the author; Ops must deploy and confirm 2330/2317 snapshots reach Nov 13 and SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS is set on the live ingest service.",
   "tw_close_reconcile cover logic (partial-batch receipt) not changed; out of listed scope.",
-  "Fixtures reproduce captured manifest shape only; not production data.",
-  "Reviewer P2 not fully closed: no end-to-end configured scheduler->snapshot finite-latency test added; coverage is adapter flag + controller selection (positive and negative) only."
+  "Fixtures reproduce captured manifest shape only; not production data."
  ],
- "review_repair": "Reviewer P1: partial newest-session progress waited the full 600s cadence (54/600 then selected=[] for 598s). Fix: a pull that leaves newest-session rows undelivered marks observed.continuation_pending (collector_bundle._pull_bounded, only on its own acknowledged outcome); controller_worker.select_collector_pull_connectors treats the source as due when the persisted fetch_state outcome carries it, the last fetch had no error and the latest run completed. Finished-source cadence, failed/degraded runs and fetch errors keep normal cadence. No timeout change, no scope reduction."
+ "review_repair": "Reviewer P1: partial newest-session progress waited the full 600s cadence (54/600 then selected=[] for 598s). Fix: a pull that leaves newest-session rows undelivered marks observed.continuation_pending (collector_bundle._pull_bounded, only on its own acknowledged outcome); controller_worker.select_collector_pull_connectors treats the source as due when the persisted fetch_state outcome carries it, the last fetch had no error and the latest run completed. Finished-source cadence, failed/degraded runs and fetch errors keep normal cadence. No timeout change, no scope reduction.",
+ "integration_tests": {
+  "command": "pytest -q services/source_ingestion/tests/test_scheduled_connector.py -k 'held or close_pull'",
+  "exit": 0,
+  "result": "4 passed",
+  "old_fails_new_passes": "With f6f8d1be6 production files restored, test_held_symbols_reach_snapshot_store_on_first_tick_and_session_completes_across_ticks fails (held 2330/2317 at manifest positions 538/531 not in snapshot store after tick 1); passes on this head.",
+  "coverage": "Real configured CollectorBundleAdapter handler (SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS) -> select_collector_pull_connectors -> run_schedule_tick -> persistence -> LatestMarketSnapshotStore; 600-row newest close, 0.27s per-read latency against the unchanged 15s request budget (~55 rows/pull); held symbols published on tick 1; session completes across ticks within 30 ticks (<=30 min at 1 tick/min) with no timeout/scope change; unique run ids per ack; cadence restored after completion; injected outage acknowledges nothing and retry replays held-first; tampered raw hash and wrong trade date never publish a held snapshot."
+ },
+ "review_repair_2": "Reviewer P2 (AC2/AC5): added configured scheduler-to-snapshot finite-latency integration tests in test_scheduled_connector.py; no production change."
 }
