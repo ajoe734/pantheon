@@ -1,12 +1,15 @@
 # Evaluation stack for the Hindsight comparison.  Dev host only.
 # Not referenced by docker-compose.yml, deploy or release scripts.
-# Start/teardown: see README.md (use start_eval.sh, which checks free disk).
+# Start/teardown and the free-disk check: see README.md.
 name: pantheon-hindsight-eval
 services:
   pg:
     build:
-      context: .
-      dockerfile: Dockerfile.postgres
+      dockerfile_inline: |
+        FROM groonga/pgroonga@sha256:8360a0cd959687f92451f89c4ed2a59ebdf87e44dfbf744a77ca014ba177b738
+        RUN apt-get update \
+         && apt-get install -y --no-install-recommends postgresql-17-pgvector \
+         && rm -rf /var/lib/apt/lists/*
     image: pantheon-hindsight-eval-pg:pgroonga-pgvector
     environment:
       POSTGRES_USER: hindsight

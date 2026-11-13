@@ -16,7 +16,7 @@
       "license": "PostgreSQL License (pgroonga)"
     },
     "postgres_derived": {
-      "build": "Dockerfile.postgres adds Debian postgresql-17-pgvector to the pinned pgroonga base",
+      "build": "compose dockerfile_inline adds Debian postgresql-17-pgvector to the pinned pgroonga base",
       "local_image_id": "sha256:1d9dec1c927a628d8bb1bcfb7048cd2f8c84111fc4a8c34babd7b149151782c8",
       "pgvector_license": "PostgreSQL License"
     }

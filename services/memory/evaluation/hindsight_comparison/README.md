@@ -10,11 +10,14 @@ MEMORY-HINDSIGHT-COMPARISON-RUN-20261113.
 ```bash
 export HINDSIGHT_EVAL_PG_PASSWORD=...           # local only, never committed
 export HINDSIGHT_EVAL_LLM_PROVIDER=openai HINDSIGHT_EVAL_LLM_MODEL=... HINDSIGHT_EVAL_LLM_API_KEY=...
-./start_eval.sh                                  # refuses below 10 GB free (HINDSIGHT_EVAL_MIN_FREE_GB)
+# free-disk guard: refuse to start below 10 GB free
+[ "$(df -BG --output=avail / | tail -1 | tr -dc 0-9)" -ge "${HINDSIGHT_EVAL_MIN_FREE_GB:-10}" ] \
+  || { echo "refusing: less than ${HINDSIGHT_EVAL_MIN_FREE_GB:-10} GB free" >&2; false; }
+docker compose -f docker-compose.eval.yml up -d --build
 docker compose -f docker-compose.eval.yml down -v   # teardown incl. volumes (models cache too)
 ```
 Binds 127.0.0.1 only; compose project name `pantheon-hindsight-eval`. Images: Hindsight API pinned by
-digest; PostgreSQL built from the digest-pinned `groonga/pgroonga` base plus Debian `postgresql-17-pgvector`
+digest; PostgreSQL built inline in the compose file from the digest-pinned `groonga/pgroonga` base plus Debian `postgresql-17-pgvector`
 (no upstream image carries both). Embeddings: local `intfloat/multilingual-e5-large`
 (query/passage prefixes are applied by the provider); reranker: local `BAAI/bge-reranker-v2-m3`.
 The LLM provider/model are configuration, recorded (never the key) in results.
