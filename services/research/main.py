@@ -1923,7 +1923,7 @@ def _retrain_search_update(
         raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
     budget = 50 if params.get("pool_member") else int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
     family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
-    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).get(family_id) >= 500:
+    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).get(search.artifact_trial_key(family_id, parent_artifact)) >= 500:
         raise _RetrainFinished("no_candidate", "family_tried")
     from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
 

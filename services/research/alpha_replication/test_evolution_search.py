@@ -283,3 +283,26 @@ def test_early_gate_refusal_still_counts_a_built_family_trial(parent):
     verdict = es.judge_child_out_of_sample(parent, gate=gate, request_factory=lambda _: {}, family_id="family")
     assert not verdict['passed']
     assert verdict['trial_count_before'] == 0 and verdict['trial_count_after'] == 1
+
+
+def test_trial_key_is_frequency_scoped_and_daily_keeps_legacy_key(parent, tmp_path):
+    minute = copy.deepcopy(parent)
+    minute["parameters"]["bar_frequency"] = "1m"
+    assert es.artifact_trial_key("fam", parent) == "fam"
+    assert es.artifact_trial_key("fam", minute) == "fam@1m"
+    counter = FamilyTrialCounterStore(tmp_path / "t.json")
+    score = lambda art: 1.0 - abs(art["parameters"]["lookback_bars"] - 17) / 40.0
+    es.search_in_sample(parent, score_fn=score, decision_id="d", family_id="fam", budget=5, trial_counter=counter)
+    out = es.search_in_sample(minute, score_fn=score, decision_id="m", family_id="fam", budget=7, trial_counter=counter)
+    assert counter.get("fam") == 5 and counter.get("fam@1m") == 7 and out.family_trial_count == 7
+
+
+def test_oos_judgement_reads_and_records_under_frequency_key():
+    parent = _factor_parent()
+    child, _ = es.build_child_artifact(parent, decision_id="evd-f", kind="mutate",
+                                       rng=random.Random(1), structural_operator="change_window")
+    child["parameters"]["bar_frequency"] = "5m"  # declared frequency carried by the judged child
+    gate = FakeGate(True)
+    v = es.judge_child_out_of_sample(child, gate=gate, family_id="fam", request_factory=lambda c: {"family": "fam@5m"})
+    assert (v["trial_count_before"], v["trial_count_after"]) == (0, 1)
+    assert gate.counts == {"fam@5m": 1} and gate.get_family_trial_count("fam") == 0
