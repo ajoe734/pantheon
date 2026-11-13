@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from integrations.openclaw.persona_memory_bridge import (
     MEMORY_CONTEXT_SCHEMA_VERSION,
     materialize_openclaw_memory_context,
@@ -151,3 +153,46 @@ def test_writeback_candidate_does_not_mutate_canonical_store(tmp_path):
 
     reopened = PersonaMemoryStore(path=store_path)
     assert [entry.memory_id for entry in reopened.list(persona_id=PERSONA_ID)] == ["pm-existing"]
+
+
+def test_cycle_query_comes_from_shortfall_families_and_underlyings_and_fails_closed():
+    from integrations.openclaw.persona_memory_bridge import DEFAULT_MEMORY_QUERY, build_cycle_memory_query
+
+    query, tags = build_cycle_memory_query(
+        shortfall=["gross_utilisation"], families=["Momentum"], underlyings=["2330", "2317"])
+    assert "momentum" in query and "2330" in query and "gross utilisation" in query
+    assert query != DEFAULT_MEMORY_QUERY
+    assert tags == ["family:momentum", "underlying:2317", "underlying:2330", "shortfall:gross_utilisation"]
+    with pytest.raises(ValueError, match="cycle_query_subject_missing"):
+        build_cycle_memory_query(shortfall=["gross_utilisation"], families=[], underlyings=[])
+
+
+def test_materialization_records_query_and_tags_and_sends_tags_to_memory_plane(tmp_path):
+    from unittest.mock import patch
+    from integrations.openclaw.persona_memory_bridge import materialize_persona_memory_from_api
+
+    seen = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            return json.dumps(_retrieval_payload()).encode()
+
+    def fake_urlopen(request, timeout):
+        seen["url"] = request.full_url
+        return _Resp()
+
+    with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen", fake_urlopen):
+        result = materialize_persona_memory_from_api(
+            memory_api_url="http://memory", persona_id=PERSONA_ID, workspace=str(tmp_path / "ws"),
+            query="momentum 2330", tags=["family:momentum", "underlying:2330"])
+    assert "tags=family%3Amomentum" in seen["url"] and "query=momentum+2330" in seen["url"]
+    assert result.to_dict()["retrieval"]["tags"] == ["family:momentum", "underlying:2330"]
+    context = json.loads((tmp_path / "ws" / "memory" / "context.json").read_text(encoding="utf-8"))
+    assert context["retrieval"]["query"] == "momentum 2330"
+    assert context["retrieval"]["tags"] == ["family:momentum", "underlying:2330"]

@@ -2982,8 +2982,15 @@ def _sync_servant_agent(req: OpenClawAgentEnsureRequest) -> Dict[str, Any]:
     )
 
 
-def _gateway_state_memory_materializer(workspace: str, persona: Dict[str, Any], spec: Any) -> Any:
-    """Materialize this persona's canonical memory into its governed workspace."""
+def _gateway_state_memory_materializer(
+    workspace: str, persona: Dict[str, Any], spec: Any, *, query: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+) -> Any:
+    """Materialize this persona's canonical memory into its governed workspace.
+
+    Agent sync keeps the bridge's generic bootstrap query; the daily cycle always
+    supplies its own decision-specific query and tags.
+    """
 
     workspace_path = Path(str(workspace)).resolve()
     if workspace_path.parent != _OPENCLAW_AGENT_WORKSPACE_ROOT:
@@ -3006,6 +3013,7 @@ def _gateway_state_memory_materializer(workspace: str, persona: Dict[str, Any], 
         session_id=os.getenv("PANTHEON_MEMORY_SESSION_ID") or f"openclaw-memory-sync-{spec.persona_id}",
         limit=int(os.getenv("PANTHEON_OPENCLAW_MEMORY_LIMIT", "8")),
         auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN") or None,
+        **({"query": query, "tags": list(tags or [])} if query else {}),
     )
     # The cache files must stay owned by the unprivileged gateway user.
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -3061,10 +3069,12 @@ def _sync_trading_persona_agent(req: OpenClawTradingPersonaEnsureRequest) -> Dic
     }
 
 
-def _refresh_trading_persona_memory(persona_id: str, workspace_ref: str) -> Dict[str, Any]:
+def _refresh_trading_persona_memory(
+    persona_id: str, workspace_ref: str, query: Optional[str], tags: List[str]
+) -> Dict[str, Any]:
     persona = {"persona_id": persona_id, "id": persona_id}
     result = _gateway_state_memory_materializer(
-        workspace_ref, persona, type("Spec", (), {"persona_id": persona_id})()
+        workspace_ref, persona, type("Spec", (), {"persona_id": persona_id})(), query=query, tags=tags
     )
     return result.to_dict()
 
@@ -3488,6 +3498,10 @@ class OpenClawPersonaMemoryRefreshRequest(BaseModel):
 
     persona_id: str
     workspace_ref: str
+    # The daily cycle always states its own query. Omitted, the bridge's bootstrap
+    # query applies (as for agent sync); a present query must be non-blank.
+    query: Optional[str] = Field(default=None, min_length=1, max_length=1000, pattern=r"\S")
+    tags: List[str] = Field(default_factory=list, max_length=40)
 
 
 @app.post("/api/openclaw-adapter/agents/persona/memory/materialize")
@@ -3499,7 +3513,7 @@ def materialize_trading_persona_memory(req: OpenClawPersonaMemoryRefreshRequest)
         OpenClawTradingPersonaEnsureRequest(
             persona={"persona_id": req.persona_id}, workspace_ref=req.workspace_ref
         )
-        result = _refresh_trading_persona_memory(req.persona_id, req.workspace_ref)
+        result = _refresh_trading_persona_memory(req.persona_id, req.workspace_ref, req.query, req.tags)
     except ValueError as exc:
         return JSONResponse(
             status_code=400,
