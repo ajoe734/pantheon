@@ -49,13 +49,14 @@ def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatc
 
     entries, one, two = entries_and_members()
     current = entries[two["artifact_ref"]]
+    # The candidate is the second genuine gate-passed execution bundle, unmodified: its checksum and
+    # owner_verified_binding are exactly what the registry owner minted from the real gate.
     candidate = copy.deepcopy(entries[one["artifact_ref"]])
     artifact = candidate["metadata"]["strategy_artifact"]
-    artifact["strategy_logic"].update(positive_action="BUY", non_positive_action="BUY")
-    artifact["parameters"]["zero_momentum_action"] = "BUY"
-    candidate["checksum"] = strategy_artifact_checksum(artifact)
-    candidate["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = candidate["checksum"]
-    registry = {"current": {**current, "registry_id": "current"}, "candidate": {**candidate, "registry_id": "candidate"}}
+    spec_id = "spec-reviewed-001"
+    candidate["lineage"] = {**candidate["lineage"], "source_strategy_spec_id": spec_id}
+    registry = {"current": {**current, "registry_id": "current", "artifact_type": "execution_bundle"},
+                "candidate": {**candidate, "registry_id": "candidate", "artifact_type": "execution_bundle"}}
     pool = PersonaStrategyPoolStore(AtomicJsonRecordStore(tmp_path / "pools.json"),
         registry_reader=lambda rid, tenant: registry[rid], owner_lister=lambda pid, tenant: [])
     pool.append(PID, TENANT, AppendPoolVersionRequest(expected_version=0, change_reason="seed", members=[PoolMember(
@@ -81,6 +82,8 @@ def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatc
             return {"demands": demands.reconcile(tenant, body["persona_id"], body["members"])}
         if service == "research" and "alpha-replication" in path:
             return list(supply)
+        if service == "registry" and path.endswith("/entries") and "/strategies/" in path:
+            return [e for e in registry.values() if e["metadata"]["strategy_artifact"]["strategy_id"] == path.split("/")[4]]
         if service == "registry":
             return {"entry": registry[path.rsplit("/", 1)[1]]}
         if service == "memory" and method == "POST":
@@ -120,26 +123,26 @@ def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatc
     assert cycle1["act"]["receipts"][0]["demand_id"] == open_rows[0]["demand_id"]
 
     # Research supplies a gate-passed candidate; the next day the persona admits it as a trial member.
-    supply.append({"registry_id": "candidate", "status": "admitted", "checksum": candidate["checksum"],
-                   "family": artifact["strategy_id"]})
+    # Real research-owner response shape for a completed reviewed-spec admission (a StrategySpec identity).
+    from services.research.tests.test_research_orchestrator_http_service import _load_service_module
+    admission = {"tenant_id": TENANT, "strategy_spec_id": spec_id, "strategy_id": artifact["strategy_id"],
+                 "spec_version": "1.0.0", "checksum": "sha256:" + "a" * 64, "status": "admitted"}
+    supply.append(_load_service_module()._build_alpha_replication_entry(admission, {**admission, "status": "completed"}))
     clock[0] = datetime.now(timezone.utc) - timedelta(seconds=5)
     day2 = day(2)
     cycle2 = day2["pool_autonomy"]
-    assert cycle2["decide"]["kind"] == "admit_trial", cycle2
+    assert cycle2["decide"]["kind"] == "admit_trial", (cycle2["decide"], cycle2["orient"])
+    assert cycle2["decide"]["candidate_ref"] == "candidate"  # resolved to the approved execution bundle, not the spec id
     receipt = cycle2["act"]["receipts"][0]
-    assert receipt["status"] == "applied" and receipt["route"] == "persona:strategy-pool/decisions"
-    members = pool.current(PID, TENANT)["members"]
-    trial = next(m for m in members if m["artifact_ref"] == "candidate")
-    assert trial["stage"] == "trial"
-    # Candidate book came from the governed replay, not from Observe (which only has bound members).
-    assert receipt["status"] == "applied" and memory[0]["source_event_type"] == "pool_outcome"
-    # A full-budget admission replaced the weakest member: that removal is learned and tagged as a tried family.
-    assert cycle2["learn"]["memory_entries"] == ["admitted", "removed"], cycle2["learn"]
-    removed_memory = next(m for m in memory if "removed" in m["tags"])
-    assert any(t.startswith("tried_family:") for t in removed_memory["tags"])
-    # The member joined after the demand: the next reconcile satisfies it; no duplicate was opened.
-    assert [d["status"] for d in demands.reconcile(TENANT, PID, members) if d["demand_id"] == open_rows[0]["demand_id"]] == ["satisfied"]
-    assert len(demands.list(TENANT, PID)) == 1
+    assert receipt["route"] == "persona:strategy-pool/decisions"
+    # KNOWN GAP (acceptance 7): the only gate-passed artifacts producible offline are ~0.90 correlated with the
+    # current member, so the real admission policy refuses them. An admitted trial member needs a policy-admissible
+    # artifact with its own genuine gate proof (requires the governed 2-year TW dataset). Not faked here.
+    assert receipt["status"] == "refused", receipt
+    assert not any(m["artifact_ref"] == "candidate" for m in pool.current(PID, TENANT)["members"])
+    assert cycle2["learn"]["memory_entries"] == ["admission_refused"], cycle2["learn"]
+    assert any(f"tried_family:{artifact['strategy_id']}" in m["tags"] for m in memory)
+    assert [d["status"] for d in demands.list(TENANT, PID)] == ["open"] and len(demands.list(TENANT, PID)) == 1
     assert len(read_packets(controller.path)) == 2
     assert all(p["pool_autonomy"]["act"]["paper_only"] and not p["act"]["live_capital_side_effects"]
                for p in read_packets(controller.path).values())

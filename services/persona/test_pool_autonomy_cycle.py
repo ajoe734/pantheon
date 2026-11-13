@@ -218,3 +218,29 @@ def test_failed_pool_cycle_is_reported_as_cycle_failure_even_when_model_turn_suc
     packet = controller.consume_run(persona, "job-1", {"runId": "run-1", "runAtMs": 1794477600000, "jobId": "job-1", "status": "ok"})
     assert packet["status"] == "observing"
     assert packet["persona_cycle"]["failure_reason"].startswith("pool_cycle_failed:RuntimeError")
+
+
+def test_candidates_resolve_spec_admissions_to_approved_artifacts_and_unusable_entries_do_not_starve_supply():
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+    from services.evolution.test_approved_baselines import genuine_entry
+    from services.research.tests.test_research_orchestrator_http_service import _load_service_module
+    module = _load_service_module()
+    good = {**genuine_entry(tenant="t1"), "artifact_type": "execution_bundle"}
+    good["lineage"] = {**good["lineage"], "source_strategy_spec_id": "spec-good"}
+    family = good["metadata"]["strategy_artifact"]["strategy_id"]
+
+    def row(spec, queue_status, error=None):
+        admission = {"tenant_id": "t1", "strategy_spec_id": spec, "strategy_id": family, "checksum": "sha256:" + "a" * 64, "status": "admitted"}
+        return module._build_alpha_replication_entry(admission, {**admission, "status": queue_status, "failure_reason": error})
+    rows = [row("spec-pending", "pending"), row("spec-dlq", "dlq", "boom"), row("spec-unlinked", "completed"), row("spec-good", "completed")]
+
+    def transport(method, service, path, tenant, body=None):
+        return rows if service == "research" else [good]
+    out = HttpPoolCyclePorts(transport).candidates({"persona_id": "p1", "tenant_id": "t1"}, {"members": []})
+    assert out == [{"artifact_ref": good["registry_id"], "checksum": good["checksum"], "family": family, "demand_ref": None}]
+    # already-pooled artifacts are not re-offered
+    assert HttpPoolCyclePorts(transport).candidates({"persona_id": "p1", "tenant_id": "t1"},
+        {"members": [{"artifact_ref": good["registry_id"], "stage": "active"}]}) == []
+    # an artifact without the approved gate proof is not a candidate
+    good["replication_success"] = False
+    assert HttpPoolCyclePorts(transport).candidates({"persona_id": "p1", "tenant_id": "t1"}, {"members": []}) == []

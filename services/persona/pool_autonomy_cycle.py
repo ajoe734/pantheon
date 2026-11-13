@@ -335,13 +335,42 @@ class HttpPoolCyclePorts:
         return self._call("POST", "research", "/api/research/persona-demands", persona, body)
 
     def candidates(self, persona, pool):
+        """Gate-passed StrategyArtifact candidates resolved through owner evidence.
+
+        alpha-replication entries describe a reviewed StrategySpec (its id/checksum),
+        not the executable artifact. Only a completed, un-failed research entry is
+        followed to the registry's approved execution bundle whose lineage names that
+        spec and whose own gate proof resolves; anything else is skipped so an unusable
+        entry can never starve valid supply.
+        """
+        from services.evolution.approved_baselines import resolve_member_baseline
         rows = self._call("GET", "research", "/api/research-orchestrator/alpha-replication/entries", persona)
-        out = []
+        in_pool = {m["artifact_ref"] for m in (pool or {}).get("members", []) if m.get("stage") != "removed"}
+        out, seen = [], set()
         for row in rows or []:
-            ref = row.get("registry_id") or row.get("strategy_spec_id")
-            if row.get("status") == "admitted" and ref and row.get("checksum"):
-                out.append({"artifact_ref": ref, "checksum": row["checksum"], "family": row.get("family") or row.get("strategy_id"),
-                            "demand_ref": row.get("demand_ref")})
+            spec_id, family = row.get("strategy_spec_id"), row.get("strategy_id")
+            if (row.get("admission_status") or row.get("status")) != "admitted" or row.get("queue_status") != "completed" \
+                    or row.get("last_error") or not spec_id or not family:
+                continue
+            try:
+                versions = self._call("GET", "registry", "/api/registry/strategies/" + quote(str(family), safe="") + "/entries", persona)
+            except Exception:  # noqa: BLE001 - unreadable owner evidence is not a candidate
+                continue
+            for entry in versions or []:
+                ref = entry.get("registry_id")
+                artifact = (entry.get("metadata") or {}).get("strategy_artifact")
+                if (not ref or ref in in_pool or ref in seen or entry.get("artifact_type") != "execution_bundle"
+                        or (entry.get("lineage") or {}).get("source_strategy_spec_id") != spec_id or not artifact):
+                    continue
+                baseline = resolve_member_baseline(
+                    tenant_id=persona["tenant_id"], persona_id=persona["persona_id"], artifact_ref=ref,
+                    checksum=entry.get("checksum") or "", entry=entry)
+                if baseline.get("status") != "approved":
+                    continue
+                self._entries[(persona["tenant_id"], ref)] = entry
+                seen.add(ref)
+                out.append({"artifact_ref": ref, "checksum": entry["checksum"],
+                            "family": artifact.get("strategy_id") or family, "demand_ref": row.get("demand_ref")})
         return out
 
     def _entry(self, persona, ref):
