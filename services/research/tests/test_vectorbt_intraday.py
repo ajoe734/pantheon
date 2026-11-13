@@ -23,6 +23,7 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
     BacktestConfig,
     GovernedVectorbtInputAdapter,
     IntradayDataUnavailable,
+    IntradayExecutionError,
     VectorbtWorkflowError,
     _artifact_cross_session,
     _bar_features_for_index,
@@ -643,3 +644,127 @@ def test_matching_frequency_positive_control(tmp_path, monkeypatch):
     pytest.importorskip("vectorbt")
     monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
     assert _real_run(_replay_ds(tmp_path))
+
+
+# --- actual-fill corrective witness (synthetic, never original K6 acceptance) --------------------
+
+def _actual_fill_case(*, full_sessions=False, days=SESSIONS, overnight=False, short=False):
+    ds = _dataset(width=1, freq="1m", opens=lambda k: 600.0, closes=lambda k: 600.0, days=days)
+    if not full_sessions:
+        # A bounded 13:00..13:29 slice retains the real 13:25 flatten deadline.
+        ds["records"] = [r for r in ds["records"] if r["bar_start"][11:13] == "13"]
+        _resnap(ds)
+    art = _minute_art("1m", **({"holding": "overnight"} if overnight else {}))
+    art["parameters"]["symbols"] = ["2330.TW"]
+    art["parameters"]["order_quantity"] = 1000
+    if short:
+        import copy
+
+        art["strategy_logic"]["entry"]["short_when"] = copy.deepcopy(art["strategy_logic"]["entry"]["long_when"])
+        art["strategy_logic"]["entry"]["long_when"] = None
+    return ds, art
+
+
+def _capture_actual_portfolios(monkeypatch):
+    vbt = pytest.importorskip("vectorbt")
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    original = vbt.Portfolio.from_orders
+    net, gross = [], []
+
+    def capture(*args, **kwargs):
+        pf = original(*args, **kwargs, log=True)
+        (gross if isinstance(kwargs["fees"], float) and kwargs["fees"] == 0.0 else net).append(pf)
+        return pf
+
+    monkeypatch.setattr(vbt.Portfolio, "from_orders", capture)
+    return net, gross
+
+
+def _run_actual_fill_case(ds, art, **cfg):
+    from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
+
+    return run_vectorbt_workflow(
+        ds, config=BacktestConfig(strategy_artifact=art, **cfg), backend=VectorbtBackend(),
+    ).backtest_result.per_instrument_metrics["2330"]
+
+
+def _assert_actual_costs(pf, metrics):
+    orders = pf.orders.records_readable
+    notional = orders["Size"] * orders["Price"]
+    commission = float(notional.sum()) * 0.001425
+    tax = float(notional[orders["Side"] == "Sell"].sum()) * 0.003
+    assert metrics["total_commission_paid"] == pytest.approx(commission, abs=1e-6)
+    assert metrics["total_transaction_tax_paid"] == pytest.approx(tax, abs=1e-6)
+    assert metrics["total_fees_paid"] == pytest.approx(commission + tax, abs=1e-6)
+    assert float(pf.orders.fees.sum()) == pytest.approx(commission + tax)
+
+
+def test_real_multisession_partial_and_rejected_entry_closes_without_undeclared_short(monkeypatch):
+    net, gross = _capture_actual_portfolios(monkeypatch)
+    ds, art = _actual_fill_case(full_sessions=True)
+    metrics = _run_actual_fill_case(ds, art)
+    pf = net[-1]
+    logs = pf.logs.records
+    first_buy = logs[logs["idx"] == 4].iloc[0]
+    assert first_buy["req_size"] == 1000.0
+    assert first_buy["req_price"] == 600.0  # 09:03 bar end -> 09:04 next-bar OPEN
+    assert first_buy["res_size"] == pytest.approx(100000.0 / (600.0 * 1.001425))
+    assert first_buy["res_status"] == 0  # actual partial fill
+    rejected = logs[logs["idx"] == 5].iloc[0]
+    assert rejected["res_status"] == 2 and rejected["res_status_info"] == 7  # NoCashLong
+    close = logs[logs["idx"] == 7].iloc[0]
+    assert close["req_size"] == 0.0 and close["req_size_type"] == 3
+    assert close["res_size"] == pytest.approx(first_buy["res_size"])
+    assert close["new_position"] == 0.0  # old amount=-1000 created an 833.57-share short
+    assert float(pf.assets().min()) >= -1e-8
+    for flatten, end in ((265, 269), (535, 539)):
+        assert all(abs(float(x)) < 1e-8 for x in pf.assets().iloc[flatten:end + 1])
+    assert metrics["net_position"] == pytest.approx(0.0, abs=1e-8)
+    assert -1.0 < metrics["total_return"] < 0.0  # legitimate cost-dominated loss remains
+    assert metrics["gross_total_return"] == 0.0
+    assert float(gross[-1].assets().iloc[4]) != float(pf.assets().iloc[4])  # independent fee-free fills
+    _assert_actual_costs(pf, metrics)
+
+
+def test_real_fully_rejected_entry_never_turns_close_into_short(monkeypatch):
+    net, _ = _capture_actual_portfolios(monkeypatch)
+    ds, art = _actual_fill_case()
+    metrics = _run_actual_fill_case(ds, art, init_cash=0.0)
+    assert int(net[-1].orders.count()) == 0
+    assert all(float(x) == 0.0 for x in net[-1].assets())
+    assert metrics["net_position"] == 0.0 and metrics["total_fees_paid"] == 0.0
+
+
+@pytest.mark.parametrize("short,overnight", [(True, False), (False, True), (True, True)])
+def test_real_declared_short_and_overnight_semantics_remain(monkeypatch, short, overnight):
+    net, _ = _capture_actual_portfolios(monkeypatch)
+    ds, art = _actual_fill_case(days=SESSIONS[:1], short=short, overnight=overnight)
+    metrics = _run_actual_fill_case(ds, art)
+    pf = net[-1]
+    if short:
+        assert float(pf.assets().iloc[4]) == -1000.0  # explicit short keeps amount/share sizing
+        assert float(pf.assets().iloc[7]) == 0.0  # BUY close uses actual target-zero, no sell tax
+        assert float(pf.assets().max()) <= 1e-8
+    if overnight:
+        assert abs(float(pf.assets().iloc[25])) > 0.0
+        assert abs(metrics["net_position"]) > 0.0
+    else:
+        assert metrics["net_position"] == pytest.approx(0.0, abs=1e-8)
+    _assert_actual_costs(pf, metrics)
+
+
+def test_real_failed_mandatory_short_liquidation_preserves_account_and_fails(monkeypatch):
+    net, _ = _capture_actual_portfolios(monkeypatch)
+    ds, art = _actual_fill_case(days=SESSIONS[:1], short=True)
+    art["strategy_logic"]["exit"].update(max_holding_bars=None, flat_when=None)
+    for row in ds["records"]:
+        if row["bar_start"][11:16] >= "13:25":
+            row.update(open=1000000.0, high=1000001.0)  # genuine cash-limited cover at the deadline
+    _resnap(ds)
+    with pytest.raises(IntradayExecutionError, match="mandatory_flatten_unfilled") as exc:
+        _run_actual_fill_case(ds, art)
+    pf = net[-1]
+    assert exc.value.bar_start == "2026-11-09T13:25:00+08:00"
+    assert exc.value.cash == float(pf.cash().iloc[25]) == 0.0
+    assert exc.value.position == float(pf.assets().iloc[25]) < 0.0
+    assert float(pf.value().iloc[25]) < 0.0  # never fabricate zero assets or a successful result

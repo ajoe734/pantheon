@@ -1,0 +1,913 @@
+{
+  "task_id": "INTRADAY-ACTUAL-FILL-FLAT-CONTRACT-20261113",
+  "classification": "SYNTHETIC controlled software mechanism validation only; source and isolated local tests",
+  "financial_or_hosted_acceptance": false,
+  "status": "implementation anchor; validation pending; independent review pending",
+  "scope": [
+    "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "services/research/tests/test_vectorbt_intraday.py",
+    "docs/deployment/evidence/INTRADAY-ACTUAL-FILL-FLAT-CONTRACT-20261113/evidence.json"
+  ],
+  "original_k6": {
+    "source_head": "e3144f9ce03578a03809a1d4560db79567289bfa",
+    "single_exit_code": 0,
+    "elapsed_seconds": 8263,
+    "reported_windows": [
+      {
+        "window": "in_sample",
+        "total_return": -105.219575,
+        "gross_total_return": -0.147107,
+        "final_portfolio_value": -10421957.4611,
+        "net_position": -17324.029724667766,
+        "trade_count": 5981,
+        "buy_fill_count": 2991,
+        "sell_fill_count": 2990,
+        "round_trips": 3020,
+        "total_fees_paid": 10476219.759183
+      },
+      {
+        "window": "out_of_sample",
+        "total_return": -45.539822,
+        "gross_total_return": -0.072343,
+        "final_portfolio_value": -4453982.1772,
+        "net_position": -7436.823804474285,
+        "trade_count": 2601,
+        "buy_fill_count": 1301,
+        "sell_fill_count": 1300,
+        "round_trips": 1329,
+        "total_fees_paid": 4553447.780335
+      },
+      {
+        "window": "walk_forward_1",
+        "total_return": -34.592638,
+        "gross_total_return": -0.101213,
+        "final_portfolio_value": -3359263.7784,
+        "net_position": -5550.191914735597,
+        "trade_count": 1951,
+        "buy_fill_count": 976,
+        "sell_fill_count": 975,
+        "round_trips": 1005,
+        "total_fees_paid": 3418533.425329
+      },
+      {
+        "window": "walk_forward_2",
+        "total_return": -33.99023,
+        "gross_total_return": -0.004945,
+        "final_portfolio_value": -3299023.0007,
+        "net_position": -5523.044884297281,
+        "trade_count": 1951,
+        "buy_fill_count": 976,
+        "sell_fill_count": 975,
+        "round_trips": 1004,
+        "total_fees_paid": 3412650.222499
+      },
+      {
+        "window": "walk_forward_3",
+        "total_return": -36.600716,
+        "gross_total_return": -0.043971,
+        "final_portfolio_value": -3560071.5947,
+        "net_position": -5917.773734722057,
+        "trade_count": 2081,
+        "buy_fill_count": 1041,
+        "sell_fill_count": 1040,
+        "round_trips": 1069,
+        "total_fees_paid": 3645320.705807
+      }
+    ],
+    "proofs": [
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/goal-K6-single-negative-equity-fill-accounting-contract-readonly-20261113.json",
+        "sha256": "8dd114f0fc16eba7b43cce169bde570a8299c743812ab2711a875190909c2acf"
+      },
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/goal-K6-1m-single-supervised-validation-20261112.json",
+        "sha256": "1498a1fcae487b78e8c0a639f4184b7c45ce601f80a4566599806301b04af4e1"
+      },
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/K6-SYNTHETIC-controlled-1m-20261112/SYNTHETIC-provenance.json",
+        "sha256": "30afc19267b642a9b9c289d40d8ba19efd0e770e41fcfc7415909aeedb37c618"
+      },
+      {
+        "path": "/tmp/pantheon-goal-resume-20261111/K6-SYNTHETIC-controlled-1m-20261112/single-protocol-result.json",
+        "sha256": "c6c53b1323f47e6edef50f867a336daa66bac17293a2fa835de99f5b2979fd69"
+      }
+    ],
+    "causal_limit": "The old five window summaries contain no order/cash/rejection records. They prove non-flat negative terminal inventory, not its precise first divergence. The controlled trace establishes the local mechanism; it is not an original K6 replay or an exact reconstruction of its first failing order.",
+    "frozen_original_modified": false,
+    "dual": "No dual inputs/results/process were accessed or stopped; its original finite deadline is preserved."
+  },
+  "bounded_before": {
+    "command": "timeout --foreground --kill-after=5s 180s .venv-pantheon/bin/python3 -B /tmp/intraday-actual-fill-diagnostic.py",
+    "exit_code": 0,
+    "raw_trace_sha256": "dbee5c175cbb623b37b7c566a12f40b96277da118c445b8a31896bbd4e800514",
+    "source_head": "04947d53b",
+    "fixture": "Two full 270-bar one-minute sessions, two instruments, constant OPEN/CLOSE=600; canonical governed-minute test artifact with z_window=4, hold_bars=3, short_when=null, default intraday holding, requested 1000 SHARES, init_cash=100000 and unchanged Taiwan fee/tax schedule. Synthetic snapshot flags are fixture metadata, never owner admission.",
+    "result": {
+      "classification": "SYNTHETIC controlled diagnostic; real Vectorbt; not original K6 rerun or financial acceptance",
+      "version": "1.1.1",
+      "artifact": {
+        "artifact_schema_version": "1.0",
+        "artifact_id": "strat-tw-rev-yoy-factor-v1-001",
+        "strategy_id": "tw_rev_yoy_factor_v1",
+        "version": "1.0.0",
+        "algorithm_ref": {
+          "engine": "lean",
+          "repository": "ajoe734/pantheon-lean",
+          "commit": "5ad0249432459c119f26718007e083808ef7995d",
+          "path": "Algorithm.Python/pantheon_algo/base.py",
+          "entrypoint": "pantheon_algo.base:PantheonAlgoBase",
+          "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+          "signal_schema_version": "1.0",
+          "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action"
+        },
+        "strategy_logic": {
+          "kind": "factor_rule_v1",
+          "inputs": [
+            {
+              "name": "px",
+              "dataset": "tw_price_1m",
+              "field": "close",
+              "availability_lag_days": 0
+            }
+          ],
+          "signal": {
+            "op": "ts_mean",
+            "args": [
+              {
+                "ref": "px"
+              },
+              {
+                "const_param": "z_window"
+              }
+            ]
+          },
+          "entry": {
+            "long_when": {
+              "op": "gt",
+              "args": [
+                {
+                  "ref": "signal"
+                },
+                {
+                  "const_param": "entry_z"
+                }
+              ]
+            },
+            "short_when": null
+          },
+          "exit": {
+            "max_holding_bars": {
+              "const_param": "hold_bars"
+            },
+            "flat_when": {
+              "op": "lt",
+              "args": [
+                {
+                  "ref": "signal"
+                },
+                {
+                  "const_param": "exit_z"
+                }
+              ]
+            }
+          },
+          "strength": {
+            "op": "clip01",
+            "args": [
+              {
+                "op": "div",
+                "args": [
+                  {
+                    "op": "abs",
+                    "args": [
+                      {
+                        "ref": "signal"
+                      }
+                    ]
+                  },
+                  {
+                    "const_param": "strength_scale"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "parameters": {
+          "market": "TW",
+          "symbols": [
+            "2330.TW",
+            "2317.TW"
+          ],
+          "bar_frequency": "1m",
+          "data_source": "twse_openapi",
+          "order_quantity": 1000,
+          "quantity_type": "SHARES",
+          "z_window": 4,
+          "entry_z": 0.8,
+          "exit_z": -0.5,
+          "hold_bars": 3,
+          "strength_scale": 2.0
+        },
+        "mutation_surface": {
+          "controls": [
+            {
+              "parameter_key": "z_window",
+              "value_type": "integer",
+              "current_value": 4,
+              "allowed_range": {
+                "min": 2,
+                "max": 24
+              },
+              "step": 1
+            },
+            {
+              "parameter_key": "entry_z",
+              "value_type": "number",
+              "current_value": 0.8,
+              "allowed_range": {
+                "min": 0.2,
+                "max": 3.0
+              },
+              "step": 0.1
+            },
+            {
+              "parameter_key": "exit_z",
+              "value_type": "number",
+              "current_value": -0.5,
+              "allowed_range": {
+                "min": -2.5,
+                "max": 0.5
+              },
+              "step": 0.1
+            },
+            {
+              "parameter_key": "hold_bars",
+              "value_type": "integer",
+              "current_value": 3,
+              "allowed_range": {
+                "min": 1,
+                "max": 20
+              },
+              "step": 1
+            },
+            {
+              "parameter_key": "strength_scale",
+              "value_type": "number",
+              "current_value": 2.0,
+              "allowed_range": {
+                "min": 0.5,
+                "max": 5.0
+              },
+              "step": 0.5
+            }
+          ],
+          "immutable_parameters": [
+            "market",
+            "symbols",
+            "bar_frequency",
+            "data_source",
+            "order_quantity",
+            "quantity_type"
+          ]
+        },
+        "lineage": {
+          "source_run_ids": [
+            "run-factor-seed-001"
+          ],
+          "source_dataset_refs": [
+            "tw_monthly_revenue:2026-11"
+          ],
+          "source_strategy_spec_id": "spec-tw-rev-yoy-v1"
+        },
+        "provenance_refs": [
+          "evidence:tw-rev-yoy-001"
+        ]
+      },
+      "metrics": {
+        "2317": {
+          "total_return": -4.55793,
+          "sharpe_ratio": -53.970647,
+          "max_drawdown": 1.009374,
+          "final_portfolio_value": -355792.995,
+          "trade_count": 261,
+          "num_bars": 540,
+          "net_position": -592.9883249702561,
+          "commission_rate": 0.001425,
+          "transaction_tax_rate": 0.003,
+          "buy_fill_count": 131,
+          "sell_fill_count": 130,
+          "round_trips": 159,
+          "total_commission_paid": 221792.994982,
+          "total_transaction_tax_paid": 234000.0,
+          "total_fees_paid": 455792.994982,
+          "gross_total_return": 0.0,
+          "gross_final_portfolio_value": 100000.0,
+          "bars_per_year": 68040,
+          "fill_rule": "next_bar_open"
+        },
+        "2330": {
+          "total_return": -4.55793,
+          "sharpe_ratio": -53.970647,
+          "max_drawdown": 1.009374,
+          "final_portfolio_value": -355792.995,
+          "trade_count": 261,
+          "num_bars": 540,
+          "net_position": -592.9883249702561,
+          "commission_rate": 0.001425,
+          "transaction_tax_rate": 0.003,
+          "buy_fill_count": 131,
+          "sell_fill_count": 130,
+          "round_trips": 159,
+          "total_commission_paid": 221792.994982,
+          "total_transaction_tax_paid": 234000.0,
+          "total_fees_paid": 455792.994982,
+          "gross_total_return": 0.0,
+          "gross_final_portfolio_value": 100000.0,
+          "bars_per_year": 68040,
+          "fill_rule": "next_bar_open"
+        }
+      },
+      "trace": [
+        {
+          "fill_bar": "2026-11-09T09:03:00+08:00",
+          "decision_time": "2026-11-09T09:03:00+08:00",
+          "action": null,
+          "view": null,
+          "requested_size": null,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 100000.0,
+              "position": 0.0,
+              "req_size": null,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 100000.0,
+              "new_position": 0.0,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 1,
+              "res_status_info": 0
+            }
+          ],
+          "actual_assets": 0.0,
+          "cash": 100000.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:04:00+08:00",
+          "decision_time": "2026-11-09T09:04:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 0
+          },
+          "requested_size": 1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 100000.0,
+              "position": 0.0,
+              "req_size": 1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": 166.4295046225795,
+              "res_size": 166.4295046225795,
+              "res_fees": 142.29722645231232,
+              "res_side": 0,
+              "res_status": 0,
+              "res_status_info": -1
+            }
+          ],
+          "actual_assets": 166.4295046225795,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:05:00+08:00",
+          "decision_time": "2026-11-09T09:05:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 1
+          },
+          "requested_size": 1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": 166.4295046225795,
+              "req_size": 1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": 166.4295046225795,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 2,
+              "res_status_info": 7
+            }
+          ],
+          "actual_assets": 166.4295046225795,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:06:00+08:00",
+          "decision_time": "2026-11-09T09:06:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 2
+          },
+          "requested_size": 1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": 166.4295046225795,
+              "req_size": 1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": 166.4295046225795,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 2,
+              "res_status_info": 7
+            }
+          ],
+          "actual_assets": 166.4295046225795,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:07:00+08:00",
+          "decision_time": "2026-11-09T09:07:00+08:00",
+          "action": "SELL",
+          "view": {
+            "action": "SELL",
+            "direction": "SHORT",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "FLAT",
+            "holding_bars": 0
+          },
+          "requested_size": -1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": 166.4295046225795,
+              "req_size": -1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 597345.0,
+              "new_position": -833.5704953774205,
+              "res_size": 1000.0,
+              "res_fees": 2655.0,
+              "res_side": 1,
+              "res_status": 0,
+              "res_status_info": -1
+            }
+          ],
+          "actual_assets": -833.5704953774205,
+          "cash": 597345.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:08:00+08:00",
+          "decision_time": "2026-11-09T09:08:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 0
+          },
+          "requested_size": 1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 597345.0,
+              "position": -833.5704953774205,
+              "req_size": 1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": 160.5878290103269,
+              "res_size": 994.1583243877474,
+              "res_fees": 850.0053673515795,
+              "res_side": 0,
+              "res_status": 0,
+              "res_status_info": -1
+            }
+          ],
+          "actual_assets": 160.5878290103269,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:09:00+08:00",
+          "decision_time": "2026-11-09T09:09:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 1
+          },
+          "requested_size": 1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": 160.5878290103269,
+              "req_size": 1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": 160.5878290103269,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 2,
+              "res_status_info": 7
+            }
+          ],
+          "actual_assets": 160.5878290103269,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:10:00+08:00",
+          "decision_time": "2026-11-09T09:10:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 2
+          },
+          "requested_size": 1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": 160.5878290103269,
+              "req_size": 1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": 160.5878290103269,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 2,
+              "res_status_info": 7
+            }
+          ],
+          "actual_assets": 160.5878290103269,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:11:00+08:00",
+          "decision_time": "2026-11-09T09:11:00+08:00",
+          "action": "SELL",
+          "view": {
+            "action": "SELL",
+            "direction": "SHORT",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "FLAT",
+            "holding_bars": 0
+          },
+          "requested_size": -1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": 160.5878290103269,
+              "req_size": -1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 597345.0,
+              "new_position": -839.4121709896731,
+              "res_size": 1000.0,
+              "res_fees": 2655.0,
+              "res_side": 1,
+              "res_status": 0,
+              "res_status_info": -1
+            }
+          ],
+          "actual_assets": -839.4121709896731,
+          "cash": 597345.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:12:00+08:00",
+          "decision_time": "2026-11-09T09:12:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 0
+          },
+          "requested_size": 1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 597345.0,
+              "position": -839.4121709896731,
+              "req_size": 1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": 154.74615339807428,
+              "res_size": 994.1583243877474,
+              "res_fees": 850.0053673515795,
+              "res_side": 0,
+              "res_status": 0,
+              "res_status_info": -1
+            }
+          ],
+          "actual_assets": 154.74615339807428,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-09T09:13:00+08:00",
+          "decision_time": "2026-11-09T09:13:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 1
+          },
+          "requested_size": 1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": 154.74615339807428,
+              "req_size": 1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": 154.74615339807428,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 2,
+              "res_status_info": 7
+            }
+          ],
+          "actual_assets": 154.74615339807428,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-09T13:25:00+08:00",
+          "decision_time": "2026-11-09T13:25:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 1
+          },
+          "requested_size": -131000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": -213.27941017384137,
+              "req_size": 0.0,
+              "req_price": 600.0,
+              "req_size_type": 3,
+              "new_cash": 0.0,
+              "new_position": -213.27941017384137,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 2,
+              "res_status_info": 7
+            }
+          ],
+          "actual_assets": -213.27941017384137,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-09T13:29:00+08:00",
+          "decision_time": "2026-11-09T13:29:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 1
+          },
+          "requested_size": null,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": -213.27941017384137,
+              "req_size": null,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": -213.27941017384137,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 1,
+              "res_status_info": 0
+            }
+          ],
+          "actual_assets": -213.27941017384137,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-10T09:00:00+08:00",
+          "decision_time": "2026-11-09T13:30:00+08:00",
+          "action": "BUY",
+          "view": null,
+          "requested_size": null,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": -213.27941017384137,
+              "req_size": null,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": -213.27941017384137,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 1,
+              "res_status_info": 0
+            }
+          ],
+          "actual_assets": -213.27941017384137,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-10T09:04:00+08:00",
+          "decision_time": "2026-11-10T09:04:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 0
+          },
+          "requested_size": 1000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": -213.27941017384137,
+              "req_size": 1000.0,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": -213.27941017384137,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 2,
+              "res_status_info": 7
+            }
+          ],
+          "actual_assets": -213.27941017384137,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-10T13:25:00+08:00",
+          "decision_time": "2026-11-10T13:25:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 1
+          },
+          "requested_size": -131000.0,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": -592.9883249702623,
+              "req_size": 0.0,
+              "req_price": 600.0,
+              "req_size_type": 3,
+              "new_cash": 0.0,
+              "new_position": -592.9883249702623,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 2,
+              "res_status_info": 7
+            }
+          ],
+          "actual_assets": -592.9883249702623,
+          "cash": 0.0
+        },
+        {
+          "fill_bar": "2026-11-10T13:29:00+08:00",
+          "decision_time": "2026-11-10T13:29:00+08:00",
+          "action": "BUY",
+          "view": {
+            "action": "BUY",
+            "direction": "LONG",
+            "signal": 600.0,
+            "momentum": 600.0,
+            "strength": 1.0,
+            "target_direction": "LONG",
+            "holding_bars": 1
+          },
+          "requested_size": null,
+          "next_open": 600.0,
+          "logs": [
+            {
+              "cash": 0.0,
+              "position": -592.9883249702623,
+              "req_size": null,
+              "req_price": 600.0,
+              "req_size_type": 0,
+              "new_cash": 0.0,
+              "new_position": -592.9883249702623,
+              "res_size": null,
+              "res_fees": null,
+              "res_side": -1,
+              "res_status": 1,
+              "res_status_info": 0
+            }
+          ],
+          "actual_assets": -592.9883249702623,
+          "cash": 0.0
+        }
+      ]
+    }
+  },
+  "proven_controlled_cause": [
+    "09:04 amount BUY 1000 partially fills 166.4295046225795 shares at OPEN=600; 09:05/09:06 further BUY requests reject NoCashLong (status=2, info=7).",
+    "09:06 decision at 09:07 has target_direction=FLAT. Old mapping sends amount SELL 1000 at 09:07 rather than closing actual 166.4295046225795, creating -833.5704953774205 shares without short_when.",
+    "Repeated turnover exhausts equity; at 13:25 target-zero cover is rejected NoCashLong and real negative inventory remains across the session boundary. Old real backend nonetheless returns a complete result.",
+    "Net value, orders, fees and inventory all belong to the same net portfolio. Gross is a distinct zero-fee simulation with different cash-limited fills. Negative net returns themselves are valid."
+  ],
+  "repair": [
+    "Retain existing Registry factor-rule post-decision target_direction inside the intraday adapter; map FLAT actions to TargetAmount=0 on the existing next-bar OPEN. Entry amount/share sizes and explicit shorts remain unchanged.",
+    "Extend the existing actual-side close tax calculation to strategy closes as well as deadline closes.",
+    "Reject an unfilled mandatory flatten with IntradayExecutionError(reason=mandatory_flatten_unfilled), preserving instrument, deadline, actual cash and actual residual position. No fabricated fills, no position-output zeroing, no new capital policy."
+  ],
+  "remaining_acceptance": [
+    "Focused local real-engine validation pending at anchor.",
+    "Assigned independent Claude review, required CI and supervisor integration pending.",
+    "Original full K6 protocol acceptance remains with original K6 after its genuine terminal; no duplicate long run, real-market or hosted proof claimed."
+  ]
+}
