@@ -503,6 +503,9 @@ services:
     restart: unless-stopped
     environment:
       PORT: "8098"
+      PANTHEON_SEARCH_JWT_SECRET: ${PANTHEON_SEARCH_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
+      PANTHEON_SEARCH_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
+      PANTHEON_SEARCH_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       SEARCH_DATA_DIR: /data/search
       SEARCH_INDEX_STORE_PATH: /data/search/search-index.jsonl
       SEARCH_MATERIALIZE_STORE_PATH: /data/search/search-materialize.jsonl
@@ -2045,6 +2048,8 @@ services:
       PANTHEON_MEMORY_JWT_SECRET: ${PANTHEON_MEMORY_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
       PANTHEON_MEMORY_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_MEMORY_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_MEMORY_SEARCH_SERVICE_TOKEN:-}
       PANTHEON_MEMORY_DATA_DIR: /data/memory
       # memory.retrieve policy is evaluated by the canonical governance
       # service (POST /api/governance/authz/check, which takes no bearer).

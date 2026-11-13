@@ -14,6 +14,7 @@ import json
 import logging
 import urllib.request
 from types import SimpleNamespace
+from uuid import uuid4
 from typing import Any, Iterable, List, Optional
 
 from services.search.filters import SearchAccessContext, SearchFilters
@@ -41,13 +42,16 @@ class SearchServiceClient:
     def __init__(self, url: str, token: str = "") -> None:
         self.url = url.rstrip("/")
         self.token = token
+        self.source_event_id = None
         self.last_mode = "hybrid"
         self.last_reason = None
 
     def _post(self, path: str, payload: dict) -> dict:
         headers = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
+        from services.service_token_file import configured_service_token
+        token = self.token or configured_service_token("PANTHEON_SEARCH_SERVICE_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         request = urllib.request.Request(self.url + path, data=json.dumps(payload).encode(),
                                          headers=headers, method="POST")
         with urllib.request.urlopen(request, timeout=15) as response:
@@ -55,23 +59,29 @@ class SearchServiceClient:
 
     def project(self, entry: Any) -> dict:
         kind = "institutional_memory" if isinstance(entry, InstitutionalMemoryEntry) else "persona_memory"
-        return self._post("/api/search/index/refresh", {
+        result = self._post("/api/search/index/refresh", {
             "memory_entries": [{"record_kind": kind, "entry": entry.to_dict()}],
         })
+        if result.get("projected") != 1:
+            raise ValueError("search_projection_acknowledgment_missing")
+        return result
 
     def search(self, *, query, context, filters, top_k, mode, record_kind):
         result = self._post("/api/search/query", {
             "query": query, "memory_record_kind": record_kind,
+            "request_id": str(uuid4()), "source_event_id": self.source_event_id,
             "top_k": top_k, "retrieval_mode": mode,
             "role_refs": ["system"],
             "filters": {"source_types": list(filters.source_types)},
             "access_context": {
                 "tenant_id": context.tenant_id,
-                "persona_id": context.persona_id or "institutional",
+                "persona_id": context.persona_id or "memory-svc",
                 "workspace_id": context.workspace_id or "memory",
                 "role_refs": ["system"], "environment": "paper",
             },
         })
+        if result.get("retrieval_mode") not in {"hybrid", "lexical_only"}:
+            raise ValueError("search_retrieval_mode_invalid")
         self.last_mode = result["retrieval_mode"]
         self.last_reason = result.get("fallback_reason")
         return [SimpleNamespace(**hit) for hit in result["candidates"]]
@@ -81,7 +91,9 @@ def get_search_retrieval_backend() -> Any:
     if _GLOBAL_SEARCH_BACKEND is not None:
         return _GLOBAL_SEARCH_BACKEND
     url = os.getenv("PANTHEON_SEARCH_API_URL", "").strip()
-    return SearchServiceClient(url, os.getenv("PANTHEON_SEARCH_SERVICE_TOKEN", "")) if url else None
+    if not url:
+        return None
+    return SearchServiceClient(url)
 
 
 def set_search_retrieval_backend(backend: Any) -> None:
@@ -229,6 +241,8 @@ def retrieve_institutional_with_backend(
     *,
     query: str = "",
     tenant_id: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
     knowledge_type: Optional[str] = None,
     scope: Optional[str] = None,
     scope_filter: Optional[str] = None,
@@ -247,7 +261,8 @@ def retrieve_institutional_with_backend(
         try:
             candidate_hits = active_backend.search(
                 query=query,
-                context=SearchAccessContext(tenant_id=tenant_id or "default", environment="paper",
+                context=SearchAccessContext(tenant_id=tenant_id or "default", persona_id=persona_id,
+                                            workspace_id=workspace_id, environment="paper",
                                             access_scopes=["public", "operator", "research"]),
                 filters=SearchFilters(source_types=(knowledge_type,) if knowledge_type else ()),
                 top_k=max(limit * 3, 20), mode="hybrid", record_kind="institutional_memory",
@@ -259,7 +274,7 @@ def retrieve_institutional_with_backend(
     else:
         _fallback(diagnostics, "empty_query" if not query.strip() else "search_service_unconfigured")
     if candidate_hits is None:
-        candidate_hits = [SimpleNamespace(id=hit.entry.entry_id, score=hit.relevance_score / 100)
+        candidate_hits = [SimpleNamespace(id=hit.entry.entry_id, score=(hit.relevance_score - hit.entry.reuse_count) / 100)
                           for hit in store.retrieve(query=query, knowledge_type=knowledge_type, scope=scope,
                                                     scope_filter=scope_filter, tags=tags, limit=len(store.list()))]
 
@@ -347,7 +362,7 @@ def retrieve_persona_with_backend(
     else:
         _fallback(diagnostics, "empty_query" if not query.strip() else "search_service_unconfigured")
     if candidate_hits is None:
-        candidate_hits = [SimpleNamespace(id=hit.entry.memory_id, score=hit.relevance_score / 100)
+        candidate_hits = [SimpleNamespace(id=hit.entry.memory_id, score=(hit.relevance_score - hit.entry.reuse_count) / 100)
                           for hit in store.retrieve(persona_id=persona_id, query=query, memory_type=memory_type,
                                                     relevance_scope=relevance_scope, tags=tags, limit=len(store.list()))]
 
