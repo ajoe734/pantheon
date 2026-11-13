@@ -37,6 +37,17 @@
       "result": "44 passed, 37 warnings in 9.78s"
     },
     {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -v --disable-warnings services/research/tests/test_backtest_owner_readback.py services/research/tests/test_persona_cycle_demand_integration.py services/persona/test_persona_demand_discovery.py services/persona/test_pool_autonomy_cycle.py",
+      "exit_code": 0,
+      "result": "56 passed, 370 warnings in 176.18s (0:02:56)",
+      "note": "Bounded retry of relevant readback/persona regressions, including recorded-TWSE integration; all terminal output collected"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    },
+    {
       "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_research_single_owner_routes.py services/research/tests/test_backtest_owner_readback.py services/research/tests/test_persona_cycle_demand_integration.py services/persona/test_persona_demand_discovery.py services/persona/test_pool_autonomy_cycle.py",
       "exit_code": 124,
       "result": "Timed out at the batch limit; partial progress is not counted as passed"
