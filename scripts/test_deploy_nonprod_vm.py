@@ -2658,7 +2658,6 @@ def _prepare_finmind_dataset(symbol_count: int, extra_env: dict[str, str] | None
     symbols = [str(1101 + i) + ".TW" for i in range(symbol_count)]
     env_in = dict(extra_env or {})
     fixed_now = env_in.pop("_FIXED_NOW", "")
-    connector_args = env_in.pop("_CONNECTOR", "tw-finmind-broker-daily-report,tw_broker_top").split(",")
     # Isolated-test clock: patch datetime.now inside the child process only; production has no override.
     clock = (
         "import datetime as _dt\n"
@@ -2701,7 +2700,7 @@ def _prepare_finmind_dataset(symbol_count: int, extra_env: dict[str, str] | None
     try:
         proc = subprocess.run(
             ["python3", "-c", f"import sys\n{clock}exec(compile({body!r}, 'prepare', 'exec'))\n",
-             *connector_args, ",".join(symbols)],
+             "tw-finmind-broker-daily-report", "tw_broker_top", ",".join(symbols)],
             cwd=ROOT,
             env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
                  "SOURCE_INGEST_CONTROLLER_TOKEN": "t", **env_in},
@@ -3590,23 +3589,6 @@ def test_finmind_prepare_selects_latest_published_session(now: str, expected: st
     assert {d for _, d in calls} == {expected}
     assert sorted(s for s, _ in calls) == ["1101", "1102", "1103"]
     assert len(records) == 3 * 1 * 2 or len(records) >= 3
-
-
-@pytest.mark.parametrize(
-    "now,expected",
-    [
-        ("2026-11-13T02:48:00Z", "2026-11-12"),  # actual 10:48 Taipei Nov13: Nov13 not yet closed
-        ("2026-11-13T05:29:00Z", "2026-11-12"),  # 13:29 Taipei, still open
-        ("2026-11-13T05:30:00Z", "2026-11-13"),  # 13:30 close
-        ("2026-11-16T02:00:00Z", "2026-11-13"),  # Monday morning -> Friday
-    ],
-)
-def test_taifex_bounded_prepare_targets_latest_closed_session(now: str, expected: str) -> None:
-    result, posted = _prepare_finmind_dataset(
-        3, {"_FIXED_NOW": now, "_CONNECTOR": "tw-taifex-futures-options-chip,taifex_ssf_contracts"}
-    )
-    schedule = next(item for item in posted if item["path"].endswith("/active-universe/schedule"))
-    assert schedule["run_date"] == expected
 
 
 def test_finmind_prepare_keeps_all_symbols_and_batch_caps_across_publication(monkeypatch: pytest.MonkeyPatch) -> None:

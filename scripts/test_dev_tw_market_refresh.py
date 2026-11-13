@@ -3251,3 +3251,60 @@ def test_bounded_refresh_terminating_signal_restores_and_exits_nonzero(tmp_path:
     sent = next(i for i, e in enumerate(events) if e.get("event") == "QA_signal_sent")
     assert not any("projector" in json.dumps(e) and e.get("event") in {"docker_run", "run"} for e in events[sent + 1:])
     assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+
+@pytest.mark.parametrize(
+    "now,expected",
+    [
+        ("2026-11-13T02:48:00Z", "2026-11-12"),  # actual 10:48 Taipei Nov13: Nov13 not yet closed
+        ("2026-11-13T05:29:00Z", "2026-11-12"),  # 13:29 Taipei, still open
+        ("2026-11-13T05:30:00Z", "2026-11-13"),  # 13:30 close
+        ("2026-11-16T02:00:00Z", "2026-11-13"),  # Monday morning -> Friday
+    ],
+)
+def test_taifex_bounded_prepare_targets_latest_closed_session(now: str, expected: str) -> None:
+    import http.server
+    import threading
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'PREPARE_DATASET_PY'\n", 1)[1].split("\nPREPARE_DATASET_PY", 1)[0]
+    posted: list[dict] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            posted.append({"path": self.path, **json.loads(self.rfile.read(int(self.headers["Content-Length"])))})
+            raw = b"{}"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        do_PUT = do_POST
+
+        def log_message(self, *args) -> None:
+            pass
+
+    # Isolated test clock inside the child process only; production has no override.
+    clock = (
+        "import datetime as _dt\n_REAL = _dt.datetime\n"
+        f"_FIX = _dt.datetime.fromisoformat({now!r}.replace('Z', '+00:00'))\n"
+        "class _D(_dt.datetime):\n    @classmethod\n    def now(cls, tz=None):\n"
+        "        return _FIX.astimezone(tz) if tz else _FIX.replace(tzinfo=None)\n"
+        "_dt.datetime = _D\n"
+    )
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", f"import sys\n{clock}exec(compile({body!r}, 'prepare', 'exec'))\n",
+             "tw-taifex-futures-options-chip", "taifex_ssf_contracts", "2330.TW,0050.TW,2317.TW"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
+                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t"},
+            capture_output=True, text=True, check=False,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    schedule = next(item for item in posted if item["path"].endswith("/active-universe/schedule"))
+    assert schedule["run_date"] == expected

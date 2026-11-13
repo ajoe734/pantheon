@@ -743,6 +743,7 @@ def _validate_terminal_readback(
     expected_exclusive_connector_ids: Sequence[str] = (),
     collector_connector_ids: Sequence[str] = (),
     now: datetime | None = None,
+    frontier_items: Sequence[Mapping[str, Any]] = (),
 ) -> int:
     collector_ids = {str(item).strip() for item in collector_connector_ids if str(item).strip()}
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
@@ -948,21 +949,18 @@ def _validate_terminal_readback(
     if validated_frontier_backlog and exclusive_connector_ids:
         # Queued, never-attempted work whose business run_date is after the latest
         # closed/published session stays visible but is not proof for that session.
-        untouched = actual.get("frontier_untouched_run_dates_by_connector")
-        if isinstance(untouched, Mapping):
-            for connector_id in sorted(exclusive_connector_ids):
-                entries = untouched.get(connector_id)
-                if not isinstance(entries, list) or not entries:
-                    continue
-                session_date = _latest_eligible_session(connector_id, now_dt)
-                for entry in entries:
-                    if (
-                        isinstance(entry, Mapping)
-                        and isinstance(entry.get("frontier_id"), str)
-                        and isinstance(entry.get("run_date"), str)
-                        and _iso_date_after(entry["run_date"], session_date)
-                    ):
-                        deferred_frontier_ids.append(entry["frontier_id"])
+        for item in frontier_items:
+            connector_id = str(item.get("connector_id") or "")
+            run_date = str((item.get("job_parameters") or {}).get("run_date") or "")
+            if (
+                connector_id in exclusive_connector_ids
+                and item.get("status") == "queued"
+                and item.get("attempts") == 0
+                and not item.get("last_error")
+                and isinstance(item.get("frontier_id"), str)
+                and _iso_date_after(run_date, _latest_eligible_session(connector_id, now_dt))
+            ):
+                deferred_frontier_ids.append(item["frontier_id"])
         deferred_frontier_ids = deferred_frontier_ids[:validated_frontier_backlog]
         validated_frontier_backlog -= len(deferred_frontier_ids)
     if validated_frontier_backlog:
@@ -2064,6 +2062,15 @@ def run_controller_tick(
                 expected_deployment=state.deployment,
                 expected_exclusive_connector_ids=exclusive_connector_ids,
                 collector_connector_ids=steady_pull_ids if steady else (),
+                frontier_items=(
+                    read_frontier_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+                    if exclusive_connector_ids
+                    and any(
+                        (actual.get("frontier_backlog_by_connector") or {}).get(connector_id)
+                        for connector_id in exclusive_connector_ids
+                    )
+                    else ()
+                ),
             )
         wanted_connector_ids = set(_connector_ids(reconcile))
         evidence_refs = [

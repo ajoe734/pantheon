@@ -3287,7 +3287,7 @@ def test_steady_batch_is_bounded_by_scheduler_slots_and_starts_with_least_recent
     assert controller_worker.limit_collector_pull_batch(actual, [], limit=2) == []
 
 
-def _deferred_scope_validate(actual: dict[str, Any], now: datetime):
+def _deferred_scope_validate(actual: dict[str, Any], now: datetime, items: list[dict[str, Any]] | None = None):
     schedule = _schedule()
     schedule["summary"]["exclusive_connector_count"] = 1
     return _validate_terminal_readback_impl(
@@ -3299,7 +3299,15 @@ def _deferred_scope_validate(actual: dict[str, Any], now: datetime):
         expected_deployment=actual["controller_state"]["deployment"],
         expected_exclusive_connector_ids=(CONNECTOR_ID,),
         now=now,
+        frontier_items=items or [],
     )
+
+
+def _queued_item(run_date: str, **overrides: Any) -> dict[str, Any]:
+    return {
+        "frontier_id": "frontier-a0bceb2da89b", "connector_id": CONNECTOR_ID, "status": "queued",
+        "attempts": 0, "last_error": None, "job_parameters": {"run_date": run_date}, **overrides,
+    }
 
 
 def _queued_actual(run_date: str, now: datetime) -> dict[str, Any]:
@@ -3307,29 +3315,29 @@ def _queued_actual(run_date: str, now: datetime) -> dict[str, Any]:
     actual["captured_at"] = now.isoformat().replace("+00:00", "Z")
     actual["frontier_backlog"] = 1
     actual["frontier_backlog_by_connector"] = {CONNECTOR_ID: 1}
-    actual["frontier_untouched_run_dates_by_connector"] = {
-        CONNECTOR_ID: [{"frontier_id": "frontier-a0bceb2da89b", "run_date": run_date}]
-    }
     return actual
 
 
 def test_terminal_readback_defers_untouched_queue_for_unclosed_later_session() -> None:
     now = datetime.now(timezone.utc)
-    assert _deferred_scope_validate(_queued_actual("2099-01-01", now), now) == 0  # later than any closed session
+    items = [_queued_item("2099-01-01")]  # later than any closed session
+    assert _deferred_scope_validate(_queued_actual("2099-01-01", now), now, items) == 0
 
 
-def test_terminal_readback_rejects_untouched_queue_for_requested_closed_session() -> None:
+@pytest.mark.parametrize(
+    "item",
+    [
+        _queued_item("2000-01-03"),  # requested/closed session stays a hard failure
+        _queued_item("2099-01-01", attempts=1),
+        _queued_item("2099-01-01", last_error="boom"),
+        _queued_item("2099-01-01", status="retry"),
+        _queued_item("2099-01-01", connector_id="other"),
+    ],
+)
+def test_terminal_readback_still_rejects_non_deferrable_queue(item: dict[str, Any]) -> None:
     now = datetime.now(timezone.utc)
     with pytest.raises(ControllerTickError, match="unresolved frontier"):
-        _deferred_scope_validate(_queued_actual("2000-01-03", now), now)
-
-
-def test_terminal_readback_rejects_attempted_or_unlisted_later_queue() -> None:
-    now = datetime.now(timezone.utc)
-    actual = _queued_actual("2099-01-01", now)
-    del actual["frontier_untouched_run_dates_by_connector"]  # attempted/errored items are not listed
-    with pytest.raises(ControllerTickError, match="unresolved frontier"):
-        _deferred_scope_validate(actual, now)
+        _deferred_scope_validate(_queued_actual(item["job_parameters"]["run_date"], now), now, [item])
 
 
 @pytest.mark.parametrize(
