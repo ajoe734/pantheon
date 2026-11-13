@@ -191,6 +191,25 @@ def _frontier_backlog_readback(frontier: Iterable[Any]) -> tuple[int, dict[str, 
     return sum(ordered.values()), ordered
 
 
+def _frontier_untouched_run_dates_readback(frontier: Iterable[Any]) -> dict[str, list[dict[str, str]]]:
+    """Queued, never-attempted, error-free items keyed by their business run_date.
+
+    Lets terminal validation tell honest queued work for a later session apart
+    from work that was actually attempted/failed for the requested session.
+    """
+    by_connector: dict[str, list[dict[str, str]]] = {}
+    for item in frontier:
+        if item.status != "queued" or item.attempts != 0 or item.last_error:
+            continue
+        run_date = str((item.job_parameters or {}).get("run_date") or "").strip()
+        if not run_date:
+            continue
+        by_connector.setdefault(item.connector_id, []).append(
+            {"frontier_id": item.frontier_id, "run_date": run_date}
+        )
+    return {key: sorted(value, key=lambda e: e["frontier_id"]) for key, value in sorted(by_connector.items())}
+
+
 def _active_contract_symbols() -> set[str]:
     raw = os.getenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "")
     symbols: set[str] = set()
@@ -1363,6 +1382,7 @@ class SourceIngestionRuntime:
             "dlq_status_counts_by_connector": dict(sorted(dlq_status_counts_by_connector.items())),
             "frontier_backlog": frontier_backlog,
             "frontier_backlog_by_connector": dict(sorted(frontier_backlog_by_connector.items())),
+            "frontier_untouched_run_dates_by_connector": _frontier_untouched_run_dates_readback(frontier),
             "max_lag_seconds": max(staleness_values, default=0),
             "connectors": connector_readbacks,
         }

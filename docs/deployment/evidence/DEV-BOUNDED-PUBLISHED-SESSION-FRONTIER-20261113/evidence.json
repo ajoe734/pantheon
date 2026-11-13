@@ -1,0 +1,14 @@
+{
+  "task": "DEV-BOUNDED-PUBLISHED-SESSION-FRONTIER-20261113",
+  "root_cause": "prepare helper used Taipei current date for non-FinMind (enqueued run_date 2026-11-13 at 10:48, before 13:30 close) while preflight selected closed session 2026-11-12; terminal readback then counted that untouched queued item as selected-connector backlog.",
+  "changes": [
+    "scripts/deploy_nonprod_vm.sh: TAIFEX/non-FinMind run_date = latest closed (13:30 Taipei) session via governed TWSE calendar; FinMind 18:00 rule unchanged",
+    "services/source_ingestion/runtime.py: readback adds frontier_untouched_run_dates_by_connector (queued, attempts=0, no error)",
+    "services/source_ingestion/controller_worker.py: terminal validation excludes only untouched queued items whose run_date is after the latest closed/published session from selected-scope backlog; item stays queued and visible in readback; attempted/errored/requested-or-earlier items still fail"
+  ],
+  "tests": {
+    "services/source_ingestion/tests (excl. pre-existing unrelated test_finmind_broker_backfill.py, 9 failing in this env, file untouched)": "1635 passed, 4 skipped",
+    "scripts/test_deploy_nonprod_vm.py + scripts/test_dev_tw_market_refresh.py": "252 passed, 2 skipped"
+  },
+  "limits": "Contract-reference rows (updated0 snapshots) are not price/fill proof. Queued frontier-a0bceb2da89b not dropped or marked done. Actual recovery/publication remains with the original hosted owner; no workflow dispatch or VM operation performed."
+}

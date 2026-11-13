@@ -3285,3 +3285,66 @@ def test_steady_batch_is_bounded_by_scheduler_slots_and_starts_with_least_recent
     assert controller_worker.limit_collector_pull_batch(actual, selected, limit=2) == ["collector-b", "collector-c"]
     assert controller_worker.limit_collector_pull_batch(actual, selected, limit=10) == selected
     assert controller_worker.limit_collector_pull_batch(actual, [], limit=2) == []
+
+
+def _deferred_scope_validate(actual: dict[str, Any], now: datetime):
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+    return _validate_terminal_readback_impl(
+        reconcile=_reconcile(),
+        schedule=schedule,
+        actual=actual,
+        expected_controller_id=actual["controller_state"]["controller_id"],
+        expected_sequence_no=actual["controller_state"]["sequence_no"],
+        expected_deployment=actual["controller_state"]["deployment"],
+        expected_exclusive_connector_ids=(CONNECTOR_ID,),
+        now=now,
+    )
+
+
+def _queued_actual(run_date: str, now: datetime) -> dict[str, Any]:
+    actual = _actual_readback()
+    actual["captured_at"] = now.isoformat().replace("+00:00", "Z")
+    actual["frontier_backlog"] = 1
+    actual["frontier_backlog_by_connector"] = {CONNECTOR_ID: 1}
+    actual["frontier_untouched_run_dates_by_connector"] = {
+        CONNECTOR_ID: [{"frontier_id": "frontier-a0bceb2da89b", "run_date": run_date}]
+    }
+    return actual
+
+
+def test_terminal_readback_defers_untouched_queue_for_unclosed_later_session() -> None:
+    now = datetime.now(timezone.utc)
+    assert _deferred_scope_validate(_queued_actual("2099-01-01", now), now) == 0  # later than any closed session
+
+
+def test_terminal_readback_rejects_untouched_queue_for_requested_closed_session() -> None:
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(_queued_actual("2000-01-03", now), now)
+
+
+def test_terminal_readback_rejects_attempted_or_unlisted_later_queue() -> None:
+    now = datetime.now(timezone.utc)
+    actual = _queued_actual("2099-01-01", now)
+    del actual["frontier_untouched_run_dates_by_connector"]  # attempted/errored items are not listed
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(actual, now)
+
+
+@pytest.mark.parametrize(
+    "now,connector,expected",
+    [
+        ("2026-11-13T02:48:00Z", "tw-taifex-futures-options-chip", "2026-11-12"),  # actual 10:48 Taipei
+        ("2026-11-13T05:29:00Z", "tw-taifex-futures-options-chip", "2026-11-12"),
+        ("2026-11-13T05:30:00Z", "tw-taifex-futures-options-chip", "2026-11-13"),  # 13:30 close
+        ("2026-11-16T02:00:00Z", "tw-taifex-futures-options-chip", "2026-11-13"),  # Monday -> Friday
+        ("2026-11-13T05:30:00Z", "tw-finmind-broker-daily-report", "2026-11-12"),  # FinMind 18:00 cutoff kept
+        ("2026-11-13T10:00:00Z", "tw-finmind-broker-daily-report", "2026-11-13"),
+    ],
+)
+def test_latest_eligible_session_boundaries(now: str, connector: str, expected: str) -> None:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
+    assert _latest_eligible_session(connector, parsed).isoformat() == expected

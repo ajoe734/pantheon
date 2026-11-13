@@ -700,6 +700,38 @@ def _collector_cover_session_close(trade_date: str) -> datetime:
     return datetime(day.year, day.month, day.day, 5, 30, tzinfo=timezone.utc)  # 13:30 Asia/Taipei
 
 
+def _iso_date_after(run_date: str, session_date: Any) -> bool:
+    from datetime import date as _date
+
+    try:
+        return _date.fromisoformat(run_date) > session_date
+    except ValueError:
+        return False
+
+
+def _latest_eligible_session(connector_id: str, now: datetime | None) -> Any:
+    """Latest closed (TWSE/TAIFEX 13:30) or published (FinMind 18:00) Taipei session."""
+    from datetime import time as _time, timedelta
+
+    from .connectors.finmind_taiwan import latest_published_broker_session
+    from .connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    def is_session_day(day: Any) -> bool:
+        evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+        return day.weekday() < 5 and (not evidence or day.isoformat() not in (evidence.get("holidays") or {}))
+
+    current = now or datetime.now(timezone.utc)
+    if connector_id == "tw-finmind-broker-daily-report":
+        return latest_published_broker_session(current, is_session_day=is_session_day)
+    taipei = current.astimezone(timezone(timedelta(hours=8)))
+    cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
+    for _ in range(20):
+        if is_session_day(cursor):
+            break
+        cursor -= timedelta(days=1)
+    return cursor
+
+
 def _validate_terminal_readback(
     *,
     reconcile: Mapping[str, Any],
@@ -912,6 +944,27 @@ def _validate_terminal_readback(
         if exclusive_connector_ids
         else frontier_backlog
     )
+    deferred_frontier_ids: list[str] = []
+    if validated_frontier_backlog and exclusive_connector_ids:
+        # Queued, never-attempted work whose business run_date is after the latest
+        # closed/published session stays visible but is not proof for that session.
+        untouched = actual.get("frontier_untouched_run_dates_by_connector")
+        if isinstance(untouched, Mapping):
+            for connector_id in sorted(exclusive_connector_ids):
+                entries = untouched.get(connector_id)
+                if not isinstance(entries, list) or not entries:
+                    continue
+                session_date = _latest_eligible_session(connector_id, now_dt)
+                for entry in entries:
+                    if (
+                        isinstance(entry, Mapping)
+                        and isinstance(entry.get("frontier_id"), str)
+                        and isinstance(entry.get("run_date"), str)
+                        and _iso_date_after(entry["run_date"], session_date)
+                    ):
+                        deferred_frontier_ids.append(entry["frontier_id"])
+        deferred_frontier_ids = deferred_frontier_ids[:validated_frontier_backlog]
+        validated_frontier_backlog -= len(deferred_frontier_ids)
     if validated_frontier_backlog:
         scope = "selected connector scope" if exclusive_connector_ids else "global scope"
         raise ControllerTickError(

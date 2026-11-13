@@ -2784,7 +2784,15 @@ if is_finmind:
             raise SystemExit(f"Requested broker trade date {_explicit} is not yet published (latest published: {run_date})")
         run_date = _explicit
 else:
-    run_date = _now.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    # Same rule as preflight: the latest CLOSED session (13:30 Taipei), never an open/future day.
+    from datetime import time as _time
+    _taipei = _now.astimezone(timezone(timedelta(hours=8)))
+    _cursor = _taipei.date() if _taipei.time() >= _time(13, 30) else _taipei.date() - timedelta(days=1)
+    for _ in range(20):
+        if _cursor.weekday() < 5 and _twse_session_day(_cursor):
+            break
+        _cursor -= timedelta(days=1)
+    run_date = _cursor.isoformat()
 members = [
     {
         "symbol": sym,
