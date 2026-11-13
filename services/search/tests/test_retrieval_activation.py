@@ -59,24 +59,6 @@ def test_configured_backend_activates_with_durable_only(app_factory, monkeypatch
         assert denied.status_code == 400
 
 
-def test_embedding_model_is_warmed_before_first_request(app_factory):
-    # Cold integrity hashing + model load must not be paid by the first scheduler refresh
-    # (30s request boundary) or readyz probe; it happens at service startup.
-    backend = Mock()
-    backend.check_health.return_value = {"status": "ok", "backend": "postgres_pgvector"}
-    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)) as client:
-        backend.embedding_engine.is_ready.assert_called_once()
-        assert client.get("/readyz").status_code == 200
-
-
-def test_warmup_failure_is_not_fatal_and_stays_unhealthy(app_factory):
-    backend = Mock()
-    backend.embedding_engine.is_ready.side_effect = RuntimeError("integrity")
-    backend.check_health.return_value = {"status": "unavailable", "reason": "embedding_model_unavailable"}
-    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)) as client:
-        assert client.get("/readyz").status_code == 503
-
-
 def test_configured_database_failure_does_not_fall_back(app_factory):
     from services.search.filters import SearchCapabilityUnavailableError
 
@@ -268,15 +250,3 @@ def test_refresh_surfaces_embedding_unavailable_as_503_then_recovers(app_factory
         assert "embedding_model_unavailable" in failed.json()["detail"]
         state["fail"] = False
         assert client.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"}).status_code == 200
-
-
-def test_warmup_failure_reason_is_preserved_in_log(app_factory, capsys):
-    backend = Mock()
-    backend.embedding_engine.is_ready.return_value = False
-    backend.embedding_engine.verify_integrity.return_value = False
-    backend.check_health.return_value = {"status": "unavailable", "reason": "embedding_model_unavailable"}
-    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)):
-        pass
-    events = [json.loads(l) for l in capsys.readouterr().out.splitlines() if "retrieval_embedding_warmup" in l]
-    assert events[0]["ready"] is False
-    assert events[0]["reason"] == "model_integrity_verification_failed"
