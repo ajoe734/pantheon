@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -555,6 +556,11 @@ class StackDocker:
         self.no_stop = set()        # services that ignore "docker stop"
         self.up_calls = []
         self.pinned = {}            # service -> digest-pinned Compose image reference
+        self.source_scratch = tempfile.TemporaryDirectory(prefix="source-codec-test-")
+        self.source_journal = Path(self.source_scratch.name) / "journal.jsonl"
+        from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+        self.source_journal.write_text(market_snapshot_writer_samples()["official_daily"])
+        self.source_codecs = {}  # image id -> exact immutable Git revision
         for index, service in enumerate(self.names):
             image = _sid("a", index)
             self.add_image(image)
@@ -599,6 +605,8 @@ class StackDocker:
 
     def call(self, *args):
         self.calls.append(args)
+        if args[0] == "run":
+            return run_local_source_probe(self, args)
         if args[0] == "ps":
             rows = list(self.containers.items())
             if len(args) > 5:
@@ -613,6 +621,8 @@ class StackDocker:
                                    "health_test": row["health_test"], "health": row["health"]})
             if args[2] == artifacts.STACK_ENV_FORMAT:
                 return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row["env"].items())
+            if args[2] == artifacts.SOURCE_PATH_FORMAT:
+                return json.dumps("SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH=" + str(self.source_journal)) + "\n"
             if args[2] in (artifacts.CONTROL_ENV_FORMAT, artifacts.API_ENV_FORMAT, artifacts.PAPER_ENV_FORMAT):
                 keys = artifacts.CONTROL_POSTURE[service][0]
                 return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row.get("control_env", {}).items() if k in keys)
@@ -675,6 +685,31 @@ class StackDocker:
                            health=None if name == ONE_SHOT else ("unhealthy" if name in self.unhealthy else "healthy"))
             return ""
         raise AssertionError(args)
+
+
+def run_local_source_probe(docker, args):
+    """Docker transport fixture; codec and lifecycle calls execute for real.
+
+    This proves source behavior locally, not Docker isolation or hosted recovery.
+    """
+    image = args[args.index("--entrypoint") + 2]
+    code = args[args.index("-c") + 1]
+    mode, argument = args[-2:]
+    bootstrap = ""
+    if image in docker.source_codecs:
+        ref = docker.source_codecs[image]
+        bootstrap = (
+            "import sys, services.source_ingestion as package\n"
+            "from services.source_ingestion.tests.frozen_source_codec import frozen_source_codec\n"
+            f"module=frozen_source_codec({ref!r})\n"
+            "sys.modules['services.source_ingestion.requirement_state']=module\n"
+            "package.requirement_state=module\n"
+        )
+    result = subprocess.run([sys.executable, "-c", bootstrap + code, mode, argument],
+                            capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise artifacts.ArtifactError("local codec subprocess failed")
+    return result.stdout
 
 
 class Clock:
@@ -815,13 +850,14 @@ def test_unhealthy_service_fails_only_after_the_stated_budget(stack_case):
 
 
 def test_slow_service_that_becomes_healthy_within_budget_passes(stack_case):
-    _, docker, _, _, _, _, _ = stack_case
+    _, docker, _, _, stack, _, _ = stack_case
     docker.mutate_to_candidate()
     original = docker.call
     state = {"polls": 0}
 
     def slow(*args):
-        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT and docker.by_cid(args[-1])[0] == "source-ingest":
+        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT and docker.by_cid(args[-1])[0] == "source-ingest" and \
+                docker.containers["source-ingest"]["image_id"] == stack["services"]["source-ingest"]["image_id"]:
             state["polls"] += 1
             if state["polls"] < 20:      # ~110 s at the 5 s poll interval
                 docker.containers["source-ingest"]["health"] = "starting"
@@ -1165,3 +1201,88 @@ def test_control_posture_validation_rejects_tampering(stack_case):
         mutate(value)
         with pytest.raises(artifacts.ArtifactError):
             artifacts.validate_stack(value)
+
+
+def test_source_restore_rejects_exact_bee_before_any_owner_switch(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    root, docker, _, _, stack, _, _ = stack_case
+    samples = market_snapshot_writer_samples()
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    docker.source_codecs[retained] = "bee62bc2978618539984aff9db136b064adc14a0"
+    docker.source_journal.write_text(samples["official_daily"] * 4882 + samples["collector_close"])
+    docker.mutate_to_candidate()
+    before_data = docker.source_journal.read_bytes()
+    before_owners = copy.deepcopy(docker.containers)
+    docker.calls.clear()
+    with pytest.raises(artifacts.SourceCompatibilityError, match="point_schema at journal line 4883") as caught:
+        restore_stack(stack_case)
+    assert docker.source_journal.read_bytes() == before_data
+    assert docker.containers == before_owners
+    assert not any(call[0] in ("compose", "stop", "start", "tag") for call in docker.calls)
+    record = artifacts.failure_record(caught.value, "restore")
+    assert record["source_compatibility"] == {"reason": "point_schema", "line": 4883}
+    assert artifacts.remote_failure_record(json.dumps(record).encode()) == record
+    assert str(root) not in json.dumps(record)
+
+
+def test_source_writer_refused_before_extended_v1_can_poison_bee(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    docker.source_codecs[retained] = "bee62bc2978618539984aff9db136b064adc14a0"
+    writer = _sid("f", 88)
+    before = docker.source_journal.read_bytes()
+    owners = copy.deepcopy(docker.containers)
+    with pytest.raises(artifacts.SourceCompatibilityError):
+        artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                         writer_image=writer, check_lease=lambda: None)
+    assert docker.source_journal.read_bytes() == before
+    assert docker.containers == owners
+    assert not docker.up_calls
+    probes = [call for call in docker.calls if call[0] == "run"]
+    assert probes
+    for call in probes:
+        assert call[call.index("--network") + 1] == "none"
+        assert "--read-only" in call and "--cap-drop" in call
+        if call[-2] == "journal":
+            assert call[call.index("--volumes-from") + 1].endswith(":ro")
+        else:
+            assert "--volumes-from" not in call  # synthetic writer never sees owner data
+
+
+def test_compatible_retained_70a_and_current_writer_preserve_every_form(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    docker.source_codecs[retained] = "70a5bb860e855beacd14445c29bff64ccfa7e8f2"
+    # Both readers must consume historical extended-v1 as well as the synthetic
+    # writer protocol, using their actual complete codecs and checksums.
+    docker.source_journal.write_text("".join(market_snapshot_writer_samples().values()))
+    before = docker.source_journal.read_bytes()
+    proof = artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                             writer_image=_sid("f", 88), check_lease=lambda: None)
+    assert proof["retained"]["journal_sha256"] == hashlib.sha256(before).hexdigest()
+    assert proof["retained"]["projection_sha256"] == proof["writer"]["projection_sha256"]
+    assert docker.source_journal.read_bytes() == before
+    assert not docker.up_calls
+
+
+def test_source_capture_cannot_seal_an_already_incompatible_reader(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    docker.source_codecs[retained] = "bee62bc2978618539984aff9db136b064adc14a0"
+    docker.source_journal.write_text(market_snapshot_writer_samples()["collector_close"])
+    docker.calls.clear()
+    with pytest.raises(artifacts.SourceCompatibilityError, match="point_schema"):
+        artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lambda: None)
+    assert not any(call[0] in ("compose", "stop", "start", "tag") for call in docker.calls)
+
+
+def test_exited_zero_initializer_image_still_fails_exact_stack_readback(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    expected = stack["services"][ONE_SHOT]
+    assert expected["state"] == "completed"
+    docker.containers[ONE_SHOT]["image_id"] = _sid("f", 88)
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        artifacts.readback_stack(stack, docker=docker, check_lease=lambda: None)
+    assert ONE_SHOT in caught.value.services

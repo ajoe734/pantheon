@@ -2,6 +2,7 @@
 Subject: metadata['subject']; approving deciders: metadata['approvals']."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, List, Mapping, Optional
 
@@ -12,6 +13,8 @@ SUBJECT_FIELDS = {
     'capital_pool_activation': ('pool_id', 'risk_direction'),
     'capital_binding_activation': ('binding_id', 'persona_id', 'capital_pool_id', 'risk_direction'),
     'persona_lifecycle_transition': ('persona_id', 'from_state', 'to_state'),
+    'paper_canary_candidacy': ('persona_id', 'from_stage', 'to_stage', 'quarter',
+                              'ranking_snapshot_id', 'proposal_content_digest'),
     'evolution_execute': ('proposal_id', 'proposal_content_digest'),
 }
 RISK_DIRECTIONS = frozenset({'increase', 'reduce', 'neutral'})
@@ -71,6 +74,13 @@ def subject_errors(target_type: Any, metadata: Optional[Mapping[str, Any]]) -> L
               if not isinstance(subject.get(name), str) or not subject[name].strip()]
     if 'risk_direction' in subject and subject['risk_direction'] not in RISK_DIRECTIONS:
         errors.append('subject.risk_direction must be increase, reduce or neutral')
+    if target_name(target_type) == 'paper_canary_candidacy':
+        if subject.get('from_stage') != 'paper' or subject.get('to_stage') != 'canary_candidate':
+            errors.append('subject stages must be paper -> canary_candidate')
+        if not re.fullmatch(r'\d{4}-Q[1-4]', str(subject.get('quarter') or '')):
+            errors.append('subject.quarter must be YYYY-Q1..Q4')
+        if not re.fullmatch(r'[0-9a-f]{64}', str(subject.get('proposal_content_digest') or '')):
+            errors.append('subject.proposal_content_digest must be SHA256')
     return errors
 
 

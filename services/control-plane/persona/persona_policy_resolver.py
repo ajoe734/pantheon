@@ -60,6 +60,20 @@ class ConsultPolicy:
     """A consult policy entry controlling allowed consultation skills."""
     policy_id: str
     allowed_skills: List[str] = field(default_factory=list)
+    # Panel personas (risk, red team) are consultable but never trade; a
+    # consult policy with ``consultable=False`` keeps a persona off panels.
+    consultable: bool = True
+
+
+# Consult policy recorded on the risk / red team panel personas by the governed
+# bootstrap (services.persona.consult_triggers.CONSULT_PANEL_POLICY_ID):
+# consultable, no skills; with no tool or route policy they hold no trading
+# authority.
+BUILTIN_CONSULT_POLICIES: Dict[str, ConsultPolicy] = {
+    "consult-panel.non-trading": ConsultPolicy(
+        "consult-panel.non-trading", allowed_skills=[], consultable=True
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +93,7 @@ class PolicyResolutionResult:
     effective_workflows: List[str] = field(default_factory=list)
     source_refs: List[str] = field(default_factory=list)
     denial_reasons: List[str] = field(default_factory=list)
+    consultable: bool = False
 
     @property
     def denied(self) -> bool:
@@ -117,7 +132,12 @@ class PersonaPolicyResolver:
     ) -> None:
         self._tool_profiles: Dict[str, ToolProfile] = tool_profiles or {}
         self._route_policies: Dict[str, RoutePolicy] = route_policies or {}
-        self._consult_policies: Dict[str, ConsultPolicy] = consult_policies or {}
+        # Built-in panel policy first so a caller catalog can never be
+        # required to carry it, and can never weaken it by reusing its id.
+        self._consult_policies: Dict[str, ConsultPolicy] = {
+            **(consult_policies or {}),
+            **BUILTIN_CONSULT_POLICIES,
+        }
         self._binding_store = binding_store
 
     # ------------------------------------------------------------------
@@ -153,6 +173,7 @@ class PersonaPolicyResolver:
         effective_skills: List[str] = []
         effective_workflows: List[str] = []
         source_refs: List[str] = []
+        consultable = False
 
         persona_id: str = str(getattr(persona, "persona_id", "") or "")
 
@@ -205,6 +226,7 @@ class PersonaPolicyResolver:
                     if skill not in effective_skills:
                         effective_skills.append(skill)
                 source_refs.append(f"consult_policy:{consult_policy_id}")
+                consultable = bool(consult_policy.consultable)
 
         # 5. Capital eligibility — only when both capital_pool_id and target_scope
         #    are provided and a binding_store is configured.
@@ -228,6 +250,7 @@ class PersonaPolicyResolver:
             effective_workflows=effective_workflows,
             source_refs=source_refs,
             denial_reasons=denial_reasons,
+            consultable=consultable,
         )
 
     def resolve_to_snapshot(

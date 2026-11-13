@@ -108,6 +108,10 @@ class RollbackPatch(StrictModel):
     reason: str = Field(min_length=1, pattern=r"\S")
 
 
+class ObservationRequest(StrictModel):
+    packet_ids: list[str] = Field(min_length=1, max_length=100)
+
+
 class HarnessError(ValueError):
     def __init__(self, reason: str, status_code: int = 422):
         super().__init__(reason)
@@ -222,10 +226,12 @@ def _reflection_evidence(persona: Any, ref: EvidenceReference) -> bool:
 class PersistentHarnessOwner:
     def __init__(self, persona_owner: Any, *, evidence_verifier: EvidenceVerifier | None = None,
                  adoption_verifier: AdoptionVerifier | None = None, script_root: Path = REPOSITORY_ROOT):
+        from services.persona.harness_adoption import HarnessAdoption
         self.personas = persona_owner
         self.evidence_verifier = evidence_verifier or _reflection_evidence
-        self.adoption_verifier = adoption_verifier
         self.script_root = script_root
+        self.adoption = HarnessAdoption(self)
+        self.adoption_verifier = adoption_verifier or self.adoption.verify
 
     def read(self, persona_id: str) -> dict[str, Any]:
         state = self.personas.get(persona_id).metadata.get(STATE_KEY)
@@ -233,12 +239,12 @@ class PersistentHarnessOwner:
             return {"status": "unavailable", "reason": "harness_not_initialized", "active_version": None}
         return copy.deepcopy(state)
 
-    def _mutate(self, persona_id: str, actor: str, reduce: Callable) -> dict[str, Any]:
+    def _mutate(self, persona_id: str, actor: str, reduce: Callable, *, paper_only: bool = True) -> dict[str, Any]:
         from services.persona.write_owner import PersonaConcurrentUpdate
         for _ in range(4):
             result: dict[str, Any] = {}
             def update(persona: Any) -> dict[str, Any]:
-                if persona.lifecycle_state != "paper_owner" or persona.status != "active":
+                if paper_only and (persona.lifecycle_state != "paper_owner" or persona.status != "active"):
                     raise HarnessError("paper_owner_required", 409)
                 if not persona.tenant_id:
                     raise HarnessError("persona_tenant_binding_missing", 403)
@@ -294,10 +300,34 @@ class PersistentHarnessOwner:
                 raise HarnessError("patch_id_conflict", 409)
             if patch.base_version != state["active_version"] or patch.rollback_target != patch.base_version:
                 raise HarnessError("stale_base_or_invalid_rollback_target", 409)
-            row = {"proposal": patch.model_dump(mode="json"), "status": "draft", "checks": []}
+            from services.persona.harness_adoption import relevant_experiences
+            row = {"proposal": patch.model_dump(mode="json"), "status": "draft", "checks": [],
+                   "experience_refs": relevant_experiences(state, patch)}
+            if persona.lifecycle_state != "paper_owner" or persona.status != "active":
+                row["status"] = "governance_required"
+                self.adoption.queue_governance(persona, state, row, "outside_paper")
             state["patches"][patch.patch_id] = row
             self._event(state, "proposed", actor, patch_id=patch.patch_id)
             return state, row
+        result = self._mutate(persona_id, actor, reduce, paper_only=False)
+        if result["status"] == "governance_required":
+            self.adoption.deliver(persona_id, actor)
+        return result
+
+    def record_comparison(self, persona_id: str, patch_id: str, record: dict[str, Any], actor: str) -> dict[str, Any]:
+        """Append a shadow comparison record. It never changes status or activates anything."""
+        def reduce(persona: Any, state: Any) -> tuple[dict, dict]:
+            if not state or patch_id not in state["patches"]:
+                raise HarnessError("patch_not_found", 404)
+            row = state["patches"][patch_id]
+            if row["status"] != "previewed":
+                raise HarnessError("precheck_required", 409)
+            if record.get("patch_id") != patch_id or record.get("persona_id") != persona_id:
+                raise HarnessError("comparison_binding_mismatch")
+            row.setdefault("comparisons", []).append(copy.deepcopy(record))
+            self._event(state, "shadow_compared", actor, patch_id=patch_id,
+                        status=record.get("status"), decision=record.get("decision"))
+            return state, {"patch_id": patch_id, "comparisons": len(row["comparisons"])}
         return self._mutate(persona_id, actor, reduce)
 
     def _check(self, persona: Any, state: dict, row: dict) -> tuple[HarnessSurface | None, list[str]]:
@@ -327,18 +357,22 @@ class PersistentHarnessOwner:
             row = state["patches"][patch_id]
             patch = PersonaPatch.model_validate(row["proposal"])
             if action == "rollback":
-                if state["active_experiment"] != patch_id or row["status"] != "committed":
+                if (state["active_version"] != row.get("version")
+                        or row["status"] not in {"committed", "observed"}
+                        or state["active_experiment"] not in {None, patch_id}):
                     raise HarnessError("patch_is_not_active_experiment", 409)
                 state["active_version"] = patch.rollback_target
                 state["active_experiment"] = None
                 row["status"] = "rolled_back"
+                self.adoption.cooldown(state, row)
                 self._event(state, "rolled_back", actor, patch_id=patch_id,
                             version=patch.rollback_target, reason=reason)
                 return state, row
-            if row["status"] in {"committed", "rolled_back"}:
+            if row["status"] in {"committed", "rolled_back", "observed", "governance_required"}:
                 raise HarnessError("patch_already_terminal", 409)
             candidate, reasons = self._check(persona, state, row)
             if action == "activate":
+                reasons.extend(self.adoption.cooldown_reasons(state, row))
                 if state["active_experiment"] is not None:
                     reasons.append("active_experiment_exists")
                 if row["status"] != "previewed":
@@ -349,6 +383,11 @@ class PersistentHarnessOwner:
                                     "proposal": row["proposal"],
                                     "candidate_digest": digest(candidate.model_dump(mode="json")),
                                 }, adoption_ref) is True)
+                except HarnessError as exc:
+                    approved = False
+                    reasons.append(str(exc))
+                    if str(exc) in {"risk_persona_requires_operator", "panel_conditions_require_operator"}:
+                        self.adoption.queue_governance(persona, state, row, str(exc))
                 except Exception:
                     approved = False
                 if not approved:
@@ -367,9 +406,15 @@ class PersistentHarnessOwner:
                 state["active_version"] = version["version"]
                 state["active_experiment"] = patch_id
                 row.update(status="committed", version=version["version"], adoption_ref=adoption_ref)
+                row["adopted_at"] = self.adoption.now().isoformat()
+                row["observation_trading_days"] = self.adoption.observation_trading_days
+                row["observation_criterion"] = "net_of_costs_total_return"
             self._event(state, action, actor, patch_id=patch_id, version=state["active_version"])
             return state, row
-        return self._mutate(persona_id, actor, reduce)
+        result = self._mutate(persona_id, actor, reduce)
+        if action == "activate":
+            self.adoption.deliver(persona_id, actor)
+        return result
 
 
 def register_harness_routes(app: Any, owner: Any, harness: PersistentHarnessOwner) -> None:
@@ -439,3 +484,12 @@ def register_harness_routes(app: Any, owner: Any, harness: PersistentHarnessOwne
                  tenant_id: str = Header(alias="X-Tenant-Id")) -> dict:
         authority = scope(persona_id, authorization, tenant_id, True)
         return call(lambda: harness.operate(persona_id, body.patch_id, "rollback", authority.actor_id, reason=body.reason))
+
+    # Same Persona-plane authority and tenant boundary as every harness write.
+    # The body supplies references only; facts are resolved from owner packets.
+    @app.post("/api/personas/{persona_id}/harness/patches/{patch_id}/observe")
+    def observe(persona_id: str, patch_id: str, body: ObservationRequest,
+                authorization: str | None = Header(default=None),
+                tenant_id: str = Header(alias="X-Tenant-Id")) -> dict:
+        authority = scope(persona_id, authorization, tenant_id, True)
+        return call(lambda: harness.adoption.observe(persona_id, patch_id, body, authority.actor_id))

@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import copy
 import inspect
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Body, Header, Query, Request
+from fastapi import APIRouter, Body, Header, Query, Request, HTTPException
+from services.control_plane.bff.core.owner_reads import selected_tenant
 
 from services.control_plane.bff.loop_inventory import (
     LoopHealthDetailEnvelope,
@@ -211,6 +213,23 @@ def create_control_loops_router(
         return await result if inspect.isawaitable(result) else result
 
     # 1-2: OODA packet management reads.
+    @contextmanager
+    def packet_tenant_scope(identity):
+        # The request middleware carries the raw tenant header for owner
+        # transports. It is not admission evidence for private packet reads.
+        try:
+            tenant, _ = resolved_service.authenticated_loop_truth_scope(
+                identity, requested_tenant=selected_tenant.get(), requested_environment=None)
+        except HTTPException:
+            # Legacy unscoped packets retain their read contract; private
+            # persona cycles remain invisible without an admitted tenant.
+            tenant = None
+        token = selected_tenant.set(tenant)
+        try:
+            yield
+        finally:
+            selected_tenant.reset(token)
+
     @router.get("/bff/ooda/packets")
     def bff_list_ooda_packets(
         status: Optional[str] = None,
@@ -223,15 +242,12 @@ def create_control_loops_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)
-        response = resolved_service.list_ooda_packets(
-            status=status,
-            stage=stage,
-            strategy_id=strategy_id,
-            runtime_id=runtime_id,
-            evolution_program_id=evolution_program_id,
-            page_token=page_token,
-            page_size=page_size,
-        )
+        with packet_tenant_scope(identity):
+            response = resolved_service.list_ooda_packets(
+                status=status, stage=stage, strategy_id=strategy_id,
+                runtime_id=runtime_id, evolution_program_id=evolution_program_id,
+                page_token=page_token, page_size=page_size,
+            )
         redacted_items, redacted_count = redact_ooda_packet_items(
             identity, response["items"], redact_fn=_redact, capabilities_fn=_capabilities
         )
@@ -246,7 +262,8 @@ def create_control_loops_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)
-        response = resolved_service.get_ooda_packet(str(packet_id or "").strip())
+        with packet_tenant_scope(identity):
+            response = resolved_service.get_ooda_packet(str(packet_id or "").strip())
         response["data"], redacted_count = redact_ooda_packet(
             identity, response["data"], redact_fn=_redact, capabilities_fn=_capabilities
         )

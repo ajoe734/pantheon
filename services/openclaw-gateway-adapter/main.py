@@ -40,6 +40,7 @@ GET  /api/openclaw-adapter/broker/audit              — paper intent/result aud
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import hmac
@@ -111,7 +112,13 @@ from assistant_provider_runtime import (
     ProviderInvocationRequest,
 )
 from integrations.openclaw.adapter.agora_servant import ensure_agora_servant_agent
-from integrations.openclaw.persona_agent_sync import desired_agent_spec
+from integrations.openclaw.persona_agent_sync import (
+    agent_registry_lock,
+    desired_agent_spec,
+    persona_agent_runtime_policy,
+    sync_persona_agents,
+)
+from integrations.openclaw.persona_memory_bridge import materialize_persona_memory_from_api
 
 from services.foundation.health import (
     health_payload,
@@ -2128,6 +2135,11 @@ def _invoke_gateway_cron_call(
 
 
 _PERSONA_CRON_CATALOG: Dict[str, Dict[str, str]] = {
+    "pantheon.persona.daily-cycle": {
+        "schedule": "0 10 * * 1-5",
+        "policy_id": "oc002.cron.persona-daily-cycle",
+        "upstream_entrypoint": "persona.daily-cycle",
+    },
     "pantheon.ingest": {
         "schedule": "0 */6 * * *",
         "policy_id": "oc002.cron.ingest",
@@ -2251,7 +2263,17 @@ def _assert_persona_owned_cron_call(
                 error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
             )
         return
-    if method not in {"cron.update", "cron.remove"}:
+    if method == "cron.runs":
+        if (set(request_params) - {"id", "limit", "offset"}
+                or type(request_params.get("limit", 100)) is not int
+                or not 1 <= request_params.get("limit", 100) <= 100
+                or type(request_params.get("offset", 0)) is not int
+                or request_params.get("offset", 0) < 0):
+            raise GatewayOpenClawProviderError(
+                "cron.runs requires a bounded persona job read.",
+                status_code=403, error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+            )
+    if method not in {"cron.update", "cron.remove", "cron.runs"}:
         raise GatewayOpenClawProviderError(
             f"{method} is outside the Persona cron proxy contract.",
             status_code=403,
@@ -2335,6 +2357,15 @@ def _assert_persona_owned_cron_call(
             error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
         )
     current_owner = _pantheon_persona_cron_owner(matches[0])
+    if method == "cron.runs" and (
+        current_owner is None
+        or current_owner[1] != "pantheon.persona.daily-cycle"
+        or not _is_well_formed_persona_cron_job(matches[0])
+    ):
+        raise GatewayOpenClawProviderError(
+            "cron.runs is restricted to an exact persona daily-cycle job.",
+            status_code=403, error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+        )
     reserved_name = str(matches[0].get("name") or "").startswith("pantheon-")
     if current_owner is None and not (method == "cron.remove" and reserved_name):
         raise GatewayOpenClawProviderError(
@@ -2527,6 +2558,33 @@ class OpenClawPersonaOpinionEnsureRequest(BaseModel):
     @model_validator(mode="after")
     def validate_exact_admission(self) -> "OpenClawPersonaOpinionEnsureRequest":
         _validate_persona_opinion_admission(self.model_dump(mode="json"))
+        return self
+
+
+class OpenClawTradingPersonaEnsureRequest(BaseModel):
+    """Registry record of one trading persona to reconcile into its own agent.
+
+    The harness (``metadata.persona_harness``) travels with the Persona owner
+    record and is validated by the shared SOUL renderer; it is never invented.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    persona: Dict[str, Any]
+    workspace_ref: str
+    model_routing: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def validate_trading_persona(self) -> "OpenClawTradingPersonaEnsureRequest":
+        persona_id = str(self.persona.get("persona_id") or self.persona.get("id") or "").strip()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", persona_id):
+            raise ValueError("trading persona id is not a canonical agent id")
+        if persona_id.startswith(("agora-servant-", _PERSONA_OPINION_AGENT_PREFIX)) or persona_id == "main":
+            raise ValueError("trading persona agent cannot reuse a servant, opinion or main agent id")
+        expected = (_OPENCLAW_AGENT_WORKSPACE_ROOT / persona_id).resolve()
+        workspace = Path(str(self.workspace_ref or "").strip()).resolve()
+        if workspace != expected or _OPENCLAW_AGENT_WORKSPACE_ROOT not in workspace.parents:
+            raise ValueError("workspace_ref does not match the trading persona agent")
         return self
 
 
@@ -2924,6 +2982,93 @@ def _sync_servant_agent(req: OpenClawAgentEnsureRequest) -> Dict[str, Any]:
     )
 
 
+def _gateway_state_memory_materializer(workspace: str, persona: Dict[str, Any], spec: Any) -> Any:
+    """Materialize this persona's canonical memory into its governed workspace."""
+
+    workspace_path = Path(str(workspace)).resolve()
+    if workspace_path.parent != _OPENCLAW_AGENT_WORKSPACE_ROOT:
+        raise ValueError("memory workspace is outside the governed Persona workspace root")
+    memory_url = (
+        os.getenv("PANTHEON_MEMORY_API_URL") or os.getenv("PANTHEON_MEMORY_SERVICE_URL") or ""
+    ).strip()
+    if not memory_url:
+        raise RuntimeError("memory_api_unconfigured")
+    result = materialize_persona_memory_from_api(
+        memory_api_url=memory_url,
+        persona_id=spec.persona_id,
+        workspace=str(workspace_path),
+        actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "openclaw-persona-sync"),
+        actor_roles=[
+            part.strip()
+            for part in os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "operator").split(",")
+            if part.strip()
+        ] or ["operator"],
+        session_id=os.getenv("PANTHEON_MEMORY_SESSION_ID") or f"openclaw-memory-sync-{spec.persona_id}",
+        limit=int(os.getenv("PANTHEON_OPENCLAW_MEMORY_LIMIT", "8")),
+        auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN") or None,
+    )
+    # The cache files must stay owned by the unprivileged gateway user.
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        for root, dirs, files in os.walk(workspace_path):
+            for name in [root, *[os.path.join(root, n) for n in (*dirs, *files)]]:
+                os.chown(name, 1000, 1000)
+    return result
+
+
+def _sync_trading_persona_agent(req: OpenClawTradingPersonaEnsureRequest) -> Dict[str, Any]:
+    """Create/update the persona's own agent; memory failure degrades, never hides."""
+
+    persona = dict(req.persona)
+    persona["workspace_ref"] = req.workspace_ref
+    spec = desired_agent_spec(persona, route_policy=req.model_routing)
+    report = sync_persona_agents(
+        [persona],
+        runner=_gateway_state_agent_runner,
+        soul_writer=_gateway_state_soul_writer,
+        memory_materializer=_gateway_state_memory_materializer,
+        route_policy_resolver=(lambda _persona: req.model_routing) if req.model_routing else None,
+        runtime_policy=persona_agent_runtime_policy(),
+    ).to_dict()
+    memory_failures = [
+        item for item in report["failed"]
+        if str(item.get("error") or "").startswith("memory_materialization_failed")
+    ]
+    agent_failures = [item for item in report["failed"] if item not in memory_failures]
+    if agent_failures:
+        raise RuntimeError(str(agent_failures[0].get("error") or "trading persona agent sync failed"))
+    if spec.persona_id in report["created"]:
+        status = "created"
+    elif spec.persona_id in report["updated"]:
+        status = "updated"
+    else:
+        status = "unknown"
+    memory = (
+        {"status": "degraded", "reason": str(memory_failures[0]["error"])[:300]}
+        if memory_failures
+        else {"status": "materialized" if spec.persona_id in report["memory_materialized"] else "not_requested"}
+    )
+    return {
+        "status": status,
+        "agent_id": spec.persona_id,
+        "model_id": f"openclaw/{spec.persona_id}",
+        "model": spec.model,
+        "fallback_models": list(spec.fallback_models),
+        "model_policy": spec.model_policy(),
+        "routing_mode": spec.routing_mode,
+        "workspace_ref": spec.workspace,
+        "tool_profile": persona_agent_runtime_policy()["tools"],
+        "memory": memory,
+    }
+
+
+def _refresh_trading_persona_memory(persona_id: str, workspace_ref: str) -> Dict[str, Any]:
+    persona = {"persona_id": persona_id, "id": persona_id}
+    result = _gateway_state_memory_materializer(
+        workspace_ref, persona, type("Spec", (), {"persona_id": persona_id})()
+    )
+    return result.to_dict()
+
+
 def _persona_opinion_soul(req: OpenClawPersonaOpinionEnsureRequest) -> str:
     """Render the immutable advice-only identity for one frozen Persona agent."""
 
@@ -3029,6 +3174,12 @@ def _agent_ensure_fingerprint(req: BaseModel) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _agent_registry_lock() -> Any:
+    """Shared (CLI + adapter) reentrant lock serializing every agents.list writer."""
+
+    return agent_registry_lock()
+
+
 def _ensure_agent_idempotently(
     req: BaseModel,
     *,
@@ -3054,26 +3205,18 @@ def _ensure_agent_idempotently(
     """
 
     fingerprint = _agent_ensure_fingerprint(req)
-    _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = _OPENCLAW_AGENT_IDEMPOTENCY_DB.with_name(
-        _OPENCLAW_AGENT_IDEMPOTENCY_DB.name + ".ensure.lock"
-    )
-    with open(lock_path, "a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            return _ensure_agent_locked(
-                req,
-                fingerprint=fingerprint,
-                idempotency_key=idempotency_key,
-                request_id=request_id,
-                sync_fn=sync_fn,
-                preflight_fn=preflight_fn,
-                commit_fn=commit_fn,
-                postcondition_fn=postcondition_fn,
-                replay_fn=replay_fn,
-            )
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    with _agent_registry_lock():
+        return _ensure_agent_locked(
+            req,
+            fingerprint=fingerprint,
+            idempotency_key=idempotency_key,
+            request_id=request_id,
+            sync_fn=sync_fn,
+            preflight_fn=preflight_fn,
+            commit_fn=commit_fn,
+            postcondition_fn=postcondition_fn,
+            replay_fn=replay_fn,
+        )
 
 
 def _ensure_agent_locked(
@@ -3088,6 +3231,7 @@ def _ensure_agent_locked(
     postcondition_fn: Optional[Any],
     replay_fn: Optional[Any],
 ) -> tuple[int, Dict[str, Any]]:
+    _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(
         str(_OPENCLAW_AGENT_IDEMPOTENCY_DB),
         timeout=130.0,
@@ -3286,6 +3430,88 @@ def ensure_servant_agent(
             },
         )
     return JSONResponse(status_code=status_code, content=payload)
+
+
+@app.post("/api/openclaw-adapter/agents/persona/ensure")
+def ensure_trading_persona_agent(
+    req: OpenClawTradingPersonaEnsureRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+) -> JSONResponse:
+    """Reconcile one trading persona into its own read-only+proposal agent."""
+
+    if not str(idempotency_key or "").strip() or not str(x_request_id or "").strip():
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "invalid_request",
+                "error_code": "AGENT_SYNC_HEADERS_REQUIRED",
+                "message": "Idempotency-Key and X-Request-Id are required.",
+            },
+        )
+    try:
+        # No replay cache: the sync is idempotent and re-renders SOUL/memory from
+        # current owner state, so a retry must observe the latest harness/memory.
+        with _agent_registry_lock():
+            agent = _sync_trading_persona_agent(req)
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "invalid_request",
+                "error_code": "AGENT_SYNC_POLICY_DENIED",
+                "message": str(exc),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "upstream_unavailable",
+                "error_code": "OPENCLAW_PERSONA_AGENT_SYNC_FAILED",
+                "message": str(exc)[:300],
+            },
+        )
+    return JSONResponse(
+        status_code=201 if agent["status"] == "created" else 200,
+        content={
+            "status": "ok",
+            "request_id": str(x_request_id).strip(),
+            "idempotency_key": str(idempotency_key).strip(),
+            "agent": agent,
+        },
+    )
+
+
+class OpenClawPersonaMemoryRefreshRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    persona_id: str
+    workspace_ref: str
+
+
+@app.post("/api/openclaw-adapter/agents/persona/memory/materialize")
+def materialize_trading_persona_memory(req: OpenClawPersonaMemoryRefreshRequest) -> JSONResponse:
+    """Refresh one persona's workspace memory cache before a cycle turn."""
+
+    try:
+        # Reuse the request validator so persona id / workspace binding are identical.
+        OpenClawTradingPersonaEnsureRequest(
+            persona={"persona_id": req.persona_id}, workspace_ref=req.workspace_ref
+        )
+        result = _refresh_trading_persona_memory(req.persona_id, req.workspace_ref)
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "invalid_request", "error_code": "AGENT_MEMORY_POLICY_DENIED", "message": str(exc)},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=503,
+            content={"status": "upstream_unavailable", "error_code": "PERSONA_MEMORY_MATERIALIZATION_FAILED",
+                     "message": str(exc)[:300]},
+        )
+    return JSONResponse(status_code=200, content={"status": "ok", "memory": result})
 
 
 @app.post("/api/openclaw-adapter/agents/persona-opinion/ensure")

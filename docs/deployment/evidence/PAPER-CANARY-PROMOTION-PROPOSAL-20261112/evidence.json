@@ -1,0 +1,79 @@
+{
+  "task_id": "PAPER-CANARY-PROMOTION-PROPOSAL-20261112",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "base": "452eb1a6a",
+  "evidence_boundary": "Local source and integration proof. No hosted deployment, live proposal, capital, lifecycle or runtime mutation was attempted. All test principals and metrics are fixtures. Review and merge remain independent gates.",
+  "design": {
+    "trigger": "main() invokes promotion_once after the existing paper_cycle_once, both selecting closed_quarter_snapshot(state, current_quarter). Only the latest closed quarter with saved admission is considered, as in the upstream paper cycle.",
+    "ranking": "Read immutable Rankings snapshot by the saved latest ID; verify quarter, surface, ID, supported formula and recomputed content digest. Snapshot admission is saved before the advisory agent call, including when that agent is unavailable.",
+    "rule": "Unique paper rank one, eligible=True, exclusion_codes=[], known score and quarter PnL/drawdown/fill metrics, no score tie or inconsistent ordering. No runner-up substitution. Persona owner identity and tenant must match; release/acceptance/test-scope personas are rejected.",
+    "sample": "Defaults: 30 distinct UTC dates with retained owner quarter-equity observation evidence; 20 distinct (runtime,binding,order) identities submitted in the quarter with positive quarter filled quantity. Partial fills count one order, rejected/unfilled orders do not. Duplicate dates/orders count once. Calendar elapsed time and cumulative fill counters are never sample proxies.",
+    "sample_limits": "Observation-date coverage is not proof of exchange-calendar or complete intraday coverage. The factual summary explicitly records its basis. Missing period facts fail closed.",
+    "configuration": [
+      "PERSONA_EVALUATOR_PROMOTION_MIN_TRADING_DAYS=30",
+      "PERSONA_EVALUATOR_PROMOTION_MIN_FILLED_ORDERS=20"
+    ],
+    "agent": "Promotion removed from advisory ACTIONS and parser allowlist. After fixed selection a separate rationale-only extraction can append text. Failure still submits factual rule data.",
+    "governance": "New paper_canary_candidacy target in wire model, platform enum and JSON schema; subject binds persona, from_stage=paper, to_stage=canary_candidate, quarter, ranking_snapshot_id and SHA256 proposal_content_digest. Admission validates matching target ID/version/digest. One authorized non-proposer decides.",
+    "idempotency": "Decision ID and Idempotency-Key derive from tenant+quarter alone. Full request and recommendation are persisted before POST. Unknown outcome retries frozen bytes; conflicts require exact owner readback. New snapshots and rejection never create a second quarter proposal.",
+    "readback": "Saved evaluator result composes the frozen nomination even if latest advice later changes snapshot. Existing Human Inbox shows approval:<id>; facts appear in pending rationale. GET /bff/approvals/<id> offers owner actions; POST /bff/approvals/<id>/decide records a vote. Promotion review reads exact Governance subject/content to report pending_human_gate, decision_accepted or decision_rejected. Summaries count both terminal outcomes correctly.",
+    "non_execution": "No new route, scheduler, consumer or command executor. Existing freeze/retire target stays persona_lifecycle_transition. Candidacy cannot satisfy existing lifecycle/Capital exact-target approval checks. Real-capital canary allocation waits for a separate production-open delivery."
+  },
+  "acceptance": {
+    "1": "test_scheduled_paper_candidacy_inbox_decision_journey executes real main(); existing allocation and nomination share closed_quarter_snapshot.",
+    "2": "nomination_rule plus sample/config/probe/tenant negative tests in test_persona_evaluator_agent.py.",
+    "3": "test_promotion_fail_closed_records_readable_reason; integration tie and insufficient cases; evaluator API exposes last_promotion and result.promotion_nomination.",
+    "4": "test_fixed_promotion_survives_agent_outage_and_rerun_and_catchup; test_unknown_governance_outcome_replays_frozen_request; subject validation tests.",
+    "5": "test_agent_cannot_choose_promotion; agent-down integration still submits factual rationale.",
+    "6": "Real BFF Human Inbox, approval detail/actions, decide route and promotion review route in integration, approved/rejected cases.",
+    "7": "Integration asserts all outbound POST destinations: rationale extraction, Governance proposal, Governance decide, and existing independent pattern-review calls only. Existing consumers reject the candidacy target as lifecycle/rebalance/binding approval.",
+    "8": "Existing evaluator lifecycle, platform ApprovalDecision, Governance API and Persona verifier regression batches; unchanged lifecycle consumer.",
+    "9": "services/governance/test_approval_targets.py::test_scheduled_paper_candidacy_inbox_decision_journey: four cases; actual main scheduler, Rankings/PostgreSQL, Governance strict JWT/CAS/PostgreSQL, BFF production ports and real route factories. Only HTTP is redirected: owner facts are test fixtures, agent raises unavailable, internal HTTP forwards emitted headers verbatim into production FastAPI apps. Real evaluator HTTP server is started and closed in the harness. Rerun is exercised after approve and reject.",
+    "10": "docs/02-architecture/phase4-bff-thinning.md new candidacy section; services/governance/contract.md new record-only contract."
+  },
+  "verification": [
+    {
+      "command": "GOV_APPROVAL_TEST_DSN=<isolated gov_approval_test PostgreSQL> .venv-pantheon/bin/python3 -m pytest -q services/governance/test_approval_targets.py services/persona-evaluator-agent/test_persona_evaluator_agent.py --tb=short",
+      "result": "156 passed, exit 0 (before four additional evaluator test cases; those pass in the final 98-test batch)",
+      "log": "owner-tests.log"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona-evaluator-agent/test_persona_evaluator_agent.py services/control-plane/bff/tests/test_persona_governance_owner_readback.py --tb=short",
+      "result": "98 passed, exit 0",
+      "log": "evaluator-readback.log"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_governance_owner_readback.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py --tb=short",
+      "result": "27 passed, exit 0 (before eight additional readback cases; those pass in the final 98-test batch)"
+    },
+    {
+      "command": "GOV_APPROVAL_TEST_DSN=<isolated gov_approval_test PostgreSQL> .venv-pantheon/bin/python3 -m pytest -q services/governance/test_governance_api.py services/persona/test_lifecycle_approval_verifier.py --tb=short",
+      "result": "59 passed, 1 baseline Compose failure; not counted as a passing batch"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
+      "result": "routes match snapshot; exit 0"
+    },
+    {
+      "command": "git diff --check",
+      "result": "exit 0"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/governance/test_approval_decision.py --tb=short",
+      "result": "47 passed, exit 0"
+    }
+  ],
+  "baseline_failures": {
+    "base": "452eb1a6a (unaltered git archive with its own provisioned .venv-pantheon)",
+    "comparison": "Same four tests fail with the same assertions on base and changed source. Broad combined batch: 193 passed / 3 BFF failures; separate owner regression: 59 passed / 1 Compose failure. Baseline four-test comparison: 4 failed, exit 1.",
+    "tests": [
+      "test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks: elapsed exceeds 1 second",
+      "test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied: read_timeout reason absent",
+      "test_bff_promotion_review_governance.py::test_cockpit_timeout_degrades_without_blocking_health: read_timeout reason absent",
+      "test_lifecycle_approval_verifier.py::test_rendered_compose_gives_persona_the_bff_jwt_verifier_config: rendered services has no persona key"
+    ],
+    "log": "baseline-comparison.log"
+  },
+  "review_state": "Implementation ready for independent exact-head Claude review; owner does not attest reviewer approval or mark done."
+}
