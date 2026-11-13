@@ -19,14 +19,67 @@
   "implementation": {
     "function": "scripts/deploy_nonprod_vm.sh: dump_dev_root_failure_diagnostics",
     "worker_identity": "Resolve search-index-scheduler with compose ps -a -q, then read that container ID, separately from search-svc.",
-    "logs": "Read at most the last 200 Docker log lines; use existing redact_bounded_refresh_log. Select only traceback header, scheduler_worker.py frames with line number and known entry-point functions, exception class without message, and failed JSON tick status/tick/error_type. Successful tick JSON, result/detail bodies, arbitrary text, source lines, absolute paths, and exception messages are omitted.",
+    "logs": "Read at most the last 200 Docker log lines, merging stdout and stderr before the existing redact_bounded_refresh_log and structural selector. Select only traceback header, scheduler_worker.py frames with line number and known entry-point functions, exception class without message, and failed JSON tick status/tick/error_type. Successful tick JSON, result/detail bodies, arbitrary text (including daemon errors), source lines, absolute paths, and exception messages are omitted.",
     "state": ["status", "restart_count", "health", "exit_code", "oom_killed"],
     "excluded_inspect_fields": ["Config.Env", "State.Error", "full inspect", "healthcheck output"],
     "failure_tolerance": "Missing container, compose lookup failure, log failure, and inspect failure do not bypass compensation or turn the original rollout green. Existing restore/verify policy and exit 1 are unchanged.",
-    "code_sha256": "f73013d0dacf6547c38a8e4b6f90b09c948a28b58d511a5e497d63ae83dd1482",
-    "contract_test_sha256": "5fa3a89fb5414827442aaa32f414fceea8c21747a5791ab24ff9db52c3667597"
+    "code_sha256": "831d99bc8ad91af696207be35facfc77146b852cdb788bcf9cfd59d8e1d691d8",
+    "contract_test_sha256": "0aaf5ca2017cdbca64efa2efa21f02a11f1d310743c53a3500e8fa48216ae667"
+  },
+  "stderr_revision": {
+    "prior_head": "47e52e7f3e55ebb88269e6b92c66a651c8970c25",
+    "reason": "Prior docker logs redirected CLI stderr to /dev/null, losing the container stderr traceback. The former positive fixture sent every log to stdout and did not detect this omission.",
+    "supplied_counterexample_path": "/tmp/pantheon-goal-resume-20261111/goal-diagnostics7327-real-stderr-direction-executed-counterexample-20261113.json",
+    "supplied_counterexample_sha256_verified_locally": "de8720febb9739a5d52554981e333bcaf801cf053327274156e8334c7e914a1b",
+    "primary_stream_contract": "https://github.com/docker/cli/blob/v29.7.2/cli/command/container/logs.go",
+    "primary_source_checked": "https://raw.githubusercontent.com/docker/cli/v29.7.2/cli/command/container/logs.go",
+    "upstream_behavior": "For non-TTY containers, stdcopy.StdCopy routes container stdout to dockerCli.Out() and stderr to dockerCli.Err().",
+    "anchor_commit": "2ff560318",
+    "review_boundary": "Claude's earlier approval of 47e52 remains historical. It does not approve this revision. A fresh exact-head handoff, assigned Claude review, required CI and native integration remain necessary."
   },
   "local_validation": [
+    {
+      "command": "timeout 60 python3 scripts/dev/provision_python_distribution.py",
+      "exit_status": 0,
+      "result": "Checkout-scoped interpreter provisioned and import mapping plus pytest verified."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest scripts/test_source_ingest_deploy_diagnostics_contract.py -q -k failure_retained_before_compensation --tb=short",
+      "exit_status": 1,
+      "result": "Negative control before the handler fix: 1 passed (stdout), 1 failed (stderr), 34 deselected in 2.16s. The new mixed-stream regression loses the traceback against the unchanged 47e52 deploy script. This is an expected reproduction, not a passed validation."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest scripts/test_source_ingest_deploy_diagnostics_contract.py -q -k 'search_worker or root_failure_diagnostics or source_refresh_wait' --tb=short",
+      "exit_status": 0,
+      "result": "21 passed, 15 deselected in 13.01s",
+      "behavior": "Real extracted shell functions with fake Docker only. Mixed stdout failed/success JSON and stderr traceback preserve failure structure before restore. Bearer/JWT secrets, private paths, source lines and business payload sentinels are excluded on both streams. Daemon-error stderr from failed logs is excluded while restart metadata and original exit 1 survive. Missing/failed diagnostics remain crossed with successful/failed restore and unacknowledged-candidate verify."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest scripts/test_source_ingest_deploy_diagnostics_contract.py -q --tb=short",
+      "exit_status": 1,
+      "result": "34 passed, 2 failed in 26.82s. The added stderr parameter accounts for the extra pass versus the historical 33-pass result. Both failures are the unchanged baseline failures listed below. This suite is not fully green.",
+      "baseline_failures": [
+        "test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse: connector allowlist assertion excludes tw-finmind-broker-daily-report",
+        "test_taifex_preflight_skips_weekend_holiday_and_session_not_closed_before_dataset_missing: expected skipped vs actual proceed"
+      ]
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest /tmp/dev-deploy-search-evidence-baseline-20261113/test_source_ingest_deploy_diagnostics_contract.py -q -k 'workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse or taifex_preflight_skips_weekend_holiday_and_session_not_closed_before_dataset_missing' --tb=short",
+      "exit_status": 1,
+      "result": "Same 2 failures, 19 deselected in 7.32s. Re-executed the existing pinned abfb baseline fixture; deploy script SHA256 again matches e49de11842946b1783a68c3b9d17c7d54987eeed8c77aa69b7d99c384002322d. Only test path constants point at the fixture/current checkout."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest scripts/test_deploy_nonprod_vm.py -q -k 'bounded_refresh_failure_prints_last_200_log_lines_redacted or verify_exact_component_receipt_write_failure_reaches_rollback_caller' --tb=short",
+      "exit_status": 0,
+      "result": "3 passed, 131 deselected in 4.23s"
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh; git diff --check",
+      "exit_status": 0,
+      "result": "Shell syntax and whitespace checks passed."
+    }
+  ],
+  "historical_local_validation_at_47e52": [
     {
       "command": "python3 scripts/dev/provision_python_distribution.py",
       "exit_status": 0,
