@@ -279,3 +279,68 @@ def test_real_http_reader_denial_never_reuses_prior_no_new_data(tmp_path, monkey
     state = JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth")
     assert state["collector_outcome"]["no_new_data"] is False
     assert state["collector_outcome"]["observed"]["health_state"] == "degraded"
+
+
+@pytest.mark.parametrize("kind", ["macro", "social"])
+def test_governed_features_persist_through_configured_pipeline(tmp_path, monkeypatch, kind):
+    """Regression for the retained NDC/PTT type failures, using local bundle fixtures.
+
+    The read-only hosted proof records failed receipts, not raw provider payloads.
+    Bundle bytes here are the existing local contract fixtures; no hosted data is
+    fetched and no local result is claimed as hosted acceptance.
+    """
+    from services.source_ingestion.runtime import create_runtime
+
+    source = "collector-tw-macro-ndc" if kind == "macro" else SOURCE
+    dataset = "tw_macro_series" if kind == "macro" else "tw_community_daily"
+    files, entry, _ = make_bundle(source_id=source)
+    base = f"bundles/{source}/2026-11-10/run1"
+    rows = [json.loads(line) for line in files[f"{base}/items.jsonl"].splitlines()]
+    for row, period in zip(rows, ("2026-09-30", "2026-08-31")):
+        if kind == "macro":
+            row.update(series_id="NDC:6099:MONITORING_SCORE", period_end=period,
+                       value=28.0, metrics={"leading_index": 101.0, "coincident_index": 99.0})
+        else:
+            row["symbols"] = ["2330.TWSE"]
+    files[f"{base}/items.jsonl"] = b"\n".join(json.dumps(row).encode() for row in rows)
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    files["status.json"] = json.dumps({"sources": {source: {
+        "status": "ok", "last_run_at": "2026-11-10T02:05:00Z",
+    }}}).encode()
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEARCH_INGEST_NOTIFY_URL", "")
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(files))
+    monkeypatch.setattr(CollectorBundleAdapter, "_instrument_authority",
+                        lambda self: {"2330": ("2330.TWSE",)})
+    runtime = create_runtime(data_dir=tmp_path)
+    adapter = CollectorBundleAdapter(connector_id="conn-features", source_id=source,
+        source_type=kind, platform="ndc" if kind == "macro" else "ptt", host=HOST,
+        raw_root=str(tmp_path / "market_data_store"))
+    connector_data = adapter.connector().to_dict()
+    connector_data["metadata"]["tenant_id"] = "tenant-a"
+    from services.source_ingestion.connectors import SourceConnector
+    connector = SourceConnector.from_dict(connector_data)
+    runtime.manager.register_connector(connector)
+    runtime.connector_store.upsert_config(connector, {
+        "mode": "provider_owned_adapter", "adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+        "adapter_config": {"source_id": source, "source_type": kind,
+            "platform": adapter.platform, "host": HOST, "raw_root": adapter.raw_root},
+        "max_records": 100,
+    })
+    result, refs, _ = runtime.pipeline.run_job(connector=connector, trace_id="trace-features",
+        trigger_type="scheduled", fetch_batch=runtime.pipeline.configured_fetch(
+            connector.connector_id, trace_id="trace-features"))
+    assert result.run.status.value == "completed", [event.message for event in result.run.events]
+    raw = [r for r in result.records if r.source_type.value == kind]
+    features = [r for r in result.records if r.source_type.value == "market"]
+    assert len(raw) == 2
+    assert len(features) == (6 if kind == "macro" else 1)
+    assert all(r.metadata["dataset"] == "collector_bundle_items" for r in raw)
+    assert all(r.metadata["dataset"] == dataset for r in features)
+    assert {r.metadata["dataset"] for r in result.records} == {
+        ref["dataset"] for ref in refs["storage_refs"]["normalized_refs"]}
+    receipt = runtime.store.get_receipt(result.run.ingest_run_id)
+    assert receipt.status == "completed"
+    assert receipt.normalized_count == len(result.records)
+    assert set(refs["source_ids"]) == {r.source_id for r in result.records}
+    assert result.watermark.value == CURSOR
