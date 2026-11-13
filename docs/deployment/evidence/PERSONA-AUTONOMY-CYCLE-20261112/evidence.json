@@ -55,5 +55,43 @@
   "candidate_book": "pool_autonomy_cycle.candidate_virtual_book (reusing pool_admission._replay) replays the candidate's registry artifact over the governed dataset's untouched window (same interpreter/netting as admission, NET_BASIS, source_ref governed-replay:<dataset_id>); HttpPoolCyclePorts.candidate_book supplies it as books[candidate]. Replay failure records not_attempted:candidate_book_unavailable with no owner call and no fabricated returns. Integration test Observe now returns books only for live members.",
   "removal_learning": "A successful admission learns every removed member by before/after diff plus decision.replaced_artifact_ref, with family, so removed families are tagged tried_family and excluded from the next demand (integration asserts memory_entries == [admitted, removed]).",
   "pool_failure_health": "persona_cycle_controller sets failure_reason pool_cycle_failed:<reason> when the pool cycle fails, so the packet stays observing and cycle health is not completed; failures remain per-persona."
+ },
+ "real_data_admission_search": {
+  "dataset": "recorded TWSE MI_INDEX 2024-11-11..2026-11-12 (sha256 7af9415d...4c43), 487 bars, 731 days; OOS window by unmodified pool policy 2026-04-13..2026-11-12",
+  "gate_search": "Unmodified ReplicationGate via build_canonical_tw_strategy_artifact: 61 symbols x lookback{2,5,10,20} x threshold{0,0.01} (~480 trials) + 12 baskets x lookback{2,10,20} x threshold{0,0.01}: 0 pass. Closest: 1519 lb10 thr0 fails walk_forward_consistent_across_folds (fold Sharpe 0.058/-0.019/0.515); 2360 lb10 thr0 fails oos_max_drawdown_within_mandate (OOS Sharpe 1.504); 2337 lb10 thr0 fails walk_forward_consistent (OOS 1.324). Others fail oos_sharpe_positive_after_costs, oos_sharpe_beats_buy_and_hold, deflated threshold 0.5.",
+  "genuine_artifact_replay": "Unmodified genuine approved registry entries (services/evolution/test_approved_baselines.genuine_entry: recorded_backtest_tw_2330 and recorded_backtest_tw_2330_2317, each with its own approved baseline) replayed through unmodified evaluate_admission + persona pool_policy, one as starting member (weight .7) and the other as candidate (weight .1), trial_count=1. 2317 is missing 2025-07-30 in the source, so windows are aligned only after dropping that date from both symbols (otherwise backtest_windows_not_aligned).",
+  "results": [
+   {
+    "candidate": "2330+2317",
+    "pool_member": "2330",
+    "admitted": false,
+    "correlation": 0.7233,
+    "correlation_cutoff": "0.5",
+    "pool_oos_sharpe": -1.532,
+    "combined_oos_sharpe": -1.874,
+    "candidate_oos_sharpe": -2.918,
+    "required_candidate_sharpe": 0.5,
+    "reasons": [
+     "candidate_correlated_with_active_member",
+     "combined_oos_sharpe_did_not_improve",
+     "candidate_oos_sharpe_below_persona_trial_threshold"
+    ]
+   },
+   {
+    "candidate": "2330",
+    "pool_member": "2330+2317",
+    "admitted": false,
+    "correlation": 0.7233,
+    "pool_oos_sharpe": -2.918,
+    "combined_oos_sharpe": -2.866,
+    "candidate_oos_sharpe": -1.532,
+    "required_candidate_sharpe": 0.5,
+    "reasons": [
+     "candidate_correlated_with_active_member",
+     "candidate_oos_sharpe_below_persona_trial_threshold"
+    ]
+   }
+  ],
+  "conclusion": "No genuine approved artifact in the system is admissible on the real data under the unmodified pool policy; blocked per coordinator option 3. Builder/synthetic proof remains rejected."
  }
 }
