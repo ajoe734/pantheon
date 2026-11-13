@@ -1450,6 +1450,7 @@ REQUIRED_LOOP_WORKERS=(
   operator-bff
   loop-run-projector-scheduler
   # shared search index behind source + agora reads
+  retrieval-postgres
   search-svc
   search-index-scheduler
 )
@@ -4747,7 +4748,7 @@ verify_exact_component_deployment() {
       if [[ "$compose_image_id" =~ ^[0-9a-f]{64}$ ]]; then
         compose_image_id="sha256:${compose_image_id}"
       fi
-      image_rev="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container_id" 2>/dev/null || true)"
+      image_rev="$(docker inspect --format '{{with .Config.Labels}}{{with index . "org.opencontainers.image.revision"}}{{.}}{{end}}{{end}}' "$container_id" 2>/dev/null || true)"
       cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || true)"
       started_at="$(docker inspect --format '{{.State.StartedAt}}' "$container_id" 2>/dev/null || true)"
 

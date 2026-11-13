@@ -26,6 +26,7 @@ from services.search.filters import (
     SearchPolicyError,
 )
 from services.search.local_embeddings import LocalEmbeddingEngine
+from services.search.zh_segmentation import lexical_text
 
 
 def _now_iso() -> str:
@@ -48,8 +49,7 @@ def _parse_iso(value: Any) -> datetime | None:
 
 
 def _format_lexical_query(query: str) -> str:
-    """Space-separate CJK characters so simple FTS parser indexes and queries unigrams."""
-    return re.sub(r"([\u4e00-\u9fff])", r" \1 ", str(query or "")).strip()
+    return lexical_text(query)
 
 
 @dataclass
@@ -134,38 +134,47 @@ class PostgresRetrievalBackend:
             "postgresql://postgres:postgres@localhost:25432/pantheon_search",
         )
         self.embedding_engine = embedding_engine or LocalEmbeddingEngine()
+        if self.embedding_engine.dimension != 1024:
+            raise SearchCapabilityUnavailableError("Selected model dimension requires an explicit retrieval schema migration")
 
-    def _get_connection(self) -> psycopg.Connection:
+    def _get_connection(self, *, schema_admin: bool = False) -> psycopg.Connection:
+        conn = None
         try:
-            conn = psycopg.connect(self.dsn, row_factory=dict_row)
-            if _PGVECTOR_AVAILABLE:
+            conn = psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5,
+                                   options="-c statement_timeout=10000")
+            if _PGVECTOR_AVAILABLE and not schema_admin:
                 pgvector.psycopg.register_vector(conn)
             with conn.cursor() as cur:
                 cur.execute("SET random_page_cost = 1.1;")
+                if not schema_admin:
+                    cur.execute("SET ROLE pantheon_retrieval")
             return conn
         except Exception as exc:
-            raise SearchCapabilityUnavailableError(f"Cannot connect to Postgres at {self.dsn}: {exc}") from exc
+            if conn is not None:
+                conn.close()
+            raise SearchCapabilityUnavailableError("Retrieval database connection unavailable") from exc
 
     def check_health(self) -> dict[str, Any]:
         try:
+            lexical_text("")
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
                     cur.execute("SELECT extversion FROM pg_extension WHERE extname='vector'")
                     row = cur.fetchone()
                     vector_version = row["extversion"] if row else None
-                    cur.execute("SELECT count(*) as count FROM search_retrieval_index WHERE is_active=TRUE")
-                    doc_count = cur.fetchone()["count"]
+                    cur.execute("SELECT lexical_text FROM search_retrieval_index LIMIT 0")
+            embedding_ready = self.embedding_engine.is_ready()
             return {
-                "status": "ok",
+                "status": "ok" if vector_version and embedding_ready else "unavailable",
                 "backend": "postgres_pgvector",
                 "pgvector_version": vector_version,
                 "vector_dimension": self.embedding_engine.dimension,
-                "document_count": doc_count,
-                "embedding_ready": self.embedding_engine.is_ready(),
+                "embedding_ready": embedding_ready,
+                "reason": None if embedding_ready else "embedding_model_unavailable",
             }
         except Exception as exc:
-            return {"status": "degraded", "backend": "postgres_pgvector", "error": str(exc)}
+            return {"status": "unavailable", "backend": "postgres_pgvector", "reason": "retrieval_database_unavailable"}
 
     def setup_schema(self, schema_file: str | None = None) -> None:
         sql_path = schema_file or str(Path(__file__).parent / "sql" / "retrieval_index.sql")
@@ -173,7 +182,7 @@ class PostgresRetrievalBackend:
             return
         with open(sql_path, "r", encoding="utf-8") as f:
             sql = f.read()
-        with self._get_connection() as conn:
+        with self._get_connection(schema_admin=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
                 cur.execute("""
@@ -256,14 +265,14 @@ class PostgresRetrievalBackend:
             sensitivity, capital_pool_scope, source_type, asset_class,
             strategy_id, title, search_text, content_ref, citation_label,
             evidence_bundle_id, evidence_item_id, event_time, available_time,
-            relevance_score, embedding, metadata, version, is_active
+            relevance_score, embedding, lexical_text, metadata, version, is_active
         ) VALUES (
             %(id)s, %(record_kind)s, %(tenant_id)s, %(persona_id)s, %(workspace_id)s,
             %(environment_scope)s, %(access_scope)s, %(license_scope)s, %(role_scope)s,
             %(sensitivity)s, %(capital_pool_scope)s, %(source_type)s, %(asset_class)s,
             %(strategy_id)s, %(title)s, %(search_text)s, %(content_ref)s, %(citation_label)s,
             %(evidence_bundle_id)s, %(evidence_item_id)s, %(event_time)s, %(available_time)s,
-            %(relevance_score)s, %(embedding)s, %(metadata)s, %(version)s, %(is_active)s
+            %(relevance_score)s, %(embedding)s, %(lexical_text)s, %(metadata)s, %(version)s, %(is_active)s
         )
         ON CONFLICT (tenant_id, id) DO UPDATE SET
             record_kind = EXCLUDED.record_kind,
@@ -280,6 +289,7 @@ class PostgresRetrievalBackend:
             strategy_id = EXCLUDED.strategy_id,
             title = EXCLUDED.title,
             search_text = EXCLUDED.search_text,
+            lexical_text = EXCLUDED.lexical_text,
             content_ref = EXCLUDED.content_ref,
             citation_label = EXCLUDED.citation_label,
             evidence_bundle_id = EXCLUDED.evidence_bundle_id,
@@ -319,6 +329,7 @@ class PostgresRetrievalBackend:
                         "strategy_id": rec.strategy_id,
                         "title": rec.title,
                         "search_text": rec.search_text,
+                        "lexical_text": lexical_text(f"{rec.title} {rec.search_text}"),
                         "content_ref": rec.content_ref,
                         "citation_label": rec.citation_label,
                         "evidence_bundle_id": rec.evidence_bundle_id,
@@ -360,6 +371,80 @@ class PostgresRetrievalBackend:
                 affected = cur.rowcount
             conn.commit()
         return affected > 0
+
+    def record_query(
+        self,
+        *,
+        context: SearchAccessContext,
+        request_id: str,
+        query: str,
+        retrieval_mode: str,
+        hits: Sequence[RetrievalHitItem],
+        latency_ms: float,
+        caller_decision_type: str | None = None,
+        source_event_id: str | None = None,
+    ) -> str:
+        """Record one served query. Raises on failure so a query is never served unlogged."""
+        tenant = getattr(context, "tenant_id", "default") or "default"
+        persona = getattr(context, "persona_id", None)
+        missing = []
+        if not caller_decision_type:
+            missing.append("caller_decision_type")
+        if not source_event_id:
+            missing.append("source_event_id")
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant,))
+                cur.execute("SELECT set_config('pantheon.current_persona', %s, true)", (persona or "",))
+                # Query text and caller attribution belong to the calling persona
+                # regardless of what (if anything) was returned.
+                private = bool(persona)
+                cur.execute(
+                    """INSERT INTO retrieval_query_log
+                       (tenant_id, persona_id, workspace_id, persona_private, request_id, query_text,
+                        caller_decision_type, source_event_id, attribution_missing_reason,
+                        retrieval_mode, model_name, returned_ids, returned_source_event_ids, latency_ms)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING query_log_id""",
+                    (
+                        tenant, persona, getattr(context, "workspace_id", None), private, request_id, query,
+                        caller_decision_type, source_event_id,
+                        ("missing:" + ",".join(missing)) if missing else None,
+                        retrieval_mode, self.embedding_engine.model_name,
+                        [h.id for h in hits],
+                        [str(h.metadata.get("source_event_id") or h.evidence_item_id or h.id) for h in hits],
+                        float(latency_ms),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return str(row["query_log_id"])
+
+    def list_query_log(self, context: SearchAccessContext, limit: int = 1000) -> list[dict[str, Any]]:
+        """Read the log under the caller's scope; other personas' private rows are invisible."""
+        tenant = getattr(context, "tenant_id", "default") or "default"
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant,))
+                cur.execute("SELECT set_config('pantheon.current_persona', %s, true)",
+                            (getattr(context, "persona_id", None) or "",))
+                cur.execute("SELECT * FROM retrieval_query_log ORDER BY recorded_at DESC LIMIT %s", (limit,))
+                return list(cur.fetchall())
+
+    def record_label(self, *, tenant_id: str, query_log_id: str, source_event_id: str, labelled_by: str,
+                     persona_id: str | None = None) -> None:
+        """Label a logged query; a persona-private query can only be labelled in that persona's scope."""
+        if not (query_log_id and source_event_id and labelled_by):
+            raise ValueError("label needs query_log_id, source_event_id and labelled_by")
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant_id,))
+                cur.execute("SELECT set_config('pantheon.current_persona', %s, true)", (persona_id or "",))
+                cur.execute(
+                    "INSERT INTO retrieval_query_labels (query_log_id, tenant_id, source_event_id, labelled_by)"
+                    " VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                    (query_log_id, tenant_id, source_event_id, labelled_by),
+                )
+            conn.commit()
 
     def search(
         self,
@@ -635,3 +720,37 @@ class PostgresRetrievalBackend:
             )
 
         return hits
+
+
+def rebuild_index(dsn: str | None = None, evidence_path: Path | None = None, pipeline_path: Path | None = None) -> dict[str, Any]:
+    """Rebuild the retrieval index from the canonical evidence store (python -m services.search.pg_retrieval rebuild).
+
+    Applies the idempotent schema, then force-fully re-indexes every knowledge object. The index
+    is disposable derived data; the query log and labels are untouched. Fails closed if the model
+    or database is unavailable.
+    """
+    from .index_pipeline import IncrementalIndexPipeline, JsonlIndexPipelineStore
+    from .pg_store import build_search_evidence_repository
+
+    backend = PostgresRetrievalBackend(dsn=dsn)
+    health = backend.check_health()
+    if health.get("status") != "ok":
+        raise RuntimeError(f"retrieval backend unavailable: {health.get('reason')}")
+    backend.setup_schema()
+    repository = build_search_evidence_repository(
+        evidence_path or Path(os.getenv("SEARCH_EVIDENCE_STORE_PATH", "/data/source-ingest/source_evidence.jsonl")))
+    store = JsonlIndexPipelineStore(
+        pipeline_path or Path(os.getenv("SEARCH_PIPELINE_STORE_PATH", "/data/search/search-pipeline.jsonl")))
+    return IncrementalIndexPipeline(repository, store, retrieval_backend=backend).run(
+        triggered_by="rebuild_index", force_full=True).to_dict()
+
+
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] != ["rebuild"]:
+        raise SystemExit("usage: python -m services.search.pg_retrieval rebuild")
+    try:
+        print(rebuild_index())
+    except Exception as exc:
+        print(f"rebuild failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)

@@ -1,11 +1,11 @@
 {
   "contract_version": "pantheon.search-backend-contract.v2",
-  "task_id": "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001",
+  "task_id": "RETRIEVAL-BACKEND-ACTIVATION-R2-20261113",
   "accepted": true,
   "chosen_backend": "postgres_pgvector",
-  "delivery_state": "accepted_single_production_backend",
+  "delivery_state": "activated_pending_real_query_evaluation",
   "activation_allowed": true,
-  "reason": "PostgreSQL (native FTS + pgvector) selected per Requirement 3: achieves equivalent quality with Qdrant baseline (Recall@10 = 1.0, nDCG@10 >= 0.99), p95 latency under 1s, zero external inference, and eliminates dedicated vector database operational overhead (zero extra container, backup, patch, and RAM cost).",
+  "reason": "PostgreSQL native FTS plus pgvector in a dedicated rebuildable retrieval-postgres. multilingual-e5-large (accepted 2026-09-10) ships now by operator decision 2026-11-13; model/mode comparison waits for 150 recorded labelled queries (RETRIEVAL-MODEL-EVAL-REAL-QUERIES-20261113).",
   "product_runtime": {
     "retained_ranker_base": "5d15c7b821a846d24b76ce4f653f990482da0518",
     "source": "origin/dev at recovery; exact base verified in task evidence",
@@ -23,12 +23,13 @@
     "services/memory/search_retrieval.py"
   ],
   "candidate_status": "PostgreSQL pgvector backend accepted as sole production backend; Qdrant benchmarked as comparative evaluation baseline and retained for regression verification.",
-  "dependencies_and_models": "Pinned model intfloat/multilingual-e5-large (dimension 1024, revision 66076b8dc6e367337e3e90e6fb309fb0f3addaf6) via FastEmbed ONNX local execution with zero external inference.",
+  "dependencies_and_models": "multilingual-e5-large pinned in model-manifest.json with checksums, packaged offline into the search image, verified at start (fail-closed readiness).",
   "infrastructure_consumer": {
     "task": "OSS-INFRA-PROFILES-001",
     "instruction": "Consume accepted postgres_pgvector backend contract. No Qdrant dedicated daemon required in root Compose."
   },
   "validation_entrypoint": "services/search/evaluation/run_retrieval_eval.py",
   "validation_exit_status": 0,
-  "rebuild_rollback": "Idempotent schema migration via services/search/sql/retrieval_index.sql; soft-delete tombstones and checkpoint recovery verified."
+  "rebuild_rollback": "Idempotent schema migration via services/search/sql/retrieval_index.sql; soft-delete tombstones and checkpoint recovery verified.",
+  "model_acceptance_required": false
 }
