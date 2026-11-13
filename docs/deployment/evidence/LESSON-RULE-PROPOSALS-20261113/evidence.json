@@ -10,7 +10,8 @@
     "services/governance/test_lesson_rule_targets.py",
     "services/governance/contract.md",
     "services/control-plane/governance/approval_decision.py",
-    "services/control-plane/governance/approval_decision.schema.json"
+    "services/control-plane/governance/approval_decision.schema.json",
+    "services/memory/main.py"
   ],
   "verification": {
     "command": "python -m pytest services/persona/test_lesson_rule_proposals.py services/governance/test_lesson_rule_targets.py -q; python -m pytest services/persona -q",
@@ -31,5 +32,11 @@
     "The pool-parameter denylist (capital, risk, leverage, limit, execution, order, stop, kill) is a coordinator starting value.",
     "Callers supply the composed case file; the converter verifies schema, digest, persona/tenant and that every cited lesson's memory entry is in it.",
     "Not hosted-verified; hosted acceptance is MEMORY-KNOWLEDGE-HOSTED-ACCEPTANCE-20261113."
-  ]
+  ],
+  "review_fix": {
+    "finding": "Memory GET /api/memory/trade-lessons/{id} returned 403 for the persona.admin caller JWT forwarded by MemoryLessonReader",
+    "fix": "single-lesson GET admits persona.admin (_MEMORY_LESSON_GET_ROLES); list/write routes unchanged; tenant binding still enforced by _lesson_identity/_owned_lesson",
+    "regression": "test_production_reader_passes_real_memory_read_route_for_persona_owner (production MemoryLessonReader bridged to real Memory app; cross-tenant returns None; list route still 403)",
+    "verification": "services/persona/test_lesson_rule_proposals.py + services/memory: 108 passed, 1 skipped"
+  }
 }
