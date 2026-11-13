@@ -74,6 +74,21 @@ COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
 # Configured ingestion owns persistence; tuple adapter callers retain their
 # existing eager acknowledgement contract. ContextVar isolates concurrent pulls.
 _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
+# Whole-operation monotonic deadline for one pull(): priority, ordered sweep, metadata and
+# every transport read share it, so one request can never run past the controller boundary.
+_OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
+
+
+@contextmanager
+def _operation_deadline(seconds: float | None):
+    if seconds is None or _OP_DEADLINE.get() is not None:
+        yield
+        return
+    token = _OP_DEADLINE.set(time.monotonic() + max(seconds, 0.0))
+    try:
+        yield
+    finally:
+        _OP_DEADLINE.reset(token)
 
 
 @contextmanager
@@ -206,7 +221,12 @@ class HttpBundleTransport(BundleTransport):
             url,
             headers={"Authorization": f"Bearer {token}", "Accept": "*/*", "User-Agent": "pantheon-source-ingest/0.1"},
         )
-        with open_external_url(request, caller="source_ingest.collector_bundle", timeout=self.timeout_seconds) as response:
+        timeout = self.timeout_seconds
+        op_deadline = _OP_DEADLINE.get()
+        if op_deadline is not None:
+            # A read never outlives the operation budget (1s floor keeps it a real read).
+            timeout = min(timeout, max(op_deadline - time.monotonic(), 1.0))
+        with open_external_url(request, caller="source_ingest.collector_bundle", timeout=timeout) as response:
             return read_bounded_response(response, max_bytes=max_bytes)
 
 
@@ -334,6 +354,8 @@ def verify_bundle(
     ``verified_through`` records how far verification got. Nothing is skipped or assumed.
     """
 
+    if deadline is None:
+        deadline = _OP_DEADLINE.get()
     source_id = str(entry.get("source_id") or "").strip()
     date = str(entry.get("date") or "").strip()
     run_id = str(entry.get("run_id") or "").strip()
@@ -645,6 +667,16 @@ class CollectorBundleAdapter:
         the cursor sweep continues with whatever output cap remains. Replays are idempotent.
         """
 
+        with _operation_deadline(self.read_budget_seconds):
+            return self._pull_bounded(cursor=cursor, trace_id=trace_id, max_records=max_records)
+
+    def _pull_bounded(
+        self,
+        *,
+        cursor: str | None = None,
+        trace_id: str = "",
+        max_records: int | None = None,
+    ) -> CollectorPullResult:
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         priority = self._pull_priority_latest(
             cursor, trace_id=trace_id, total_cap=total_cap
@@ -653,7 +685,8 @@ class CollectorBundleAdapter:
             return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)
         records, key, paused, delivered, done = priority
         remaining = total_cap - len(records)
-        if remaining <= 0:
+        op_deadline = _OP_DEADLINE.get()
+        if remaining <= 0 or (op_deadline is not None and time.monotonic() >= op_deadline):
             base = CollectorPullResult(
                 records=(), next_cursor=cursor, bundle_count=0, complete=False,
                 observed=observed_from_collector_status(
@@ -758,7 +791,8 @@ class CollectorBundleAdapter:
         )
         if bundle.status == "paused":
             return [], key, (f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}",), delivered, False
-        window = bundle.items[delivered:delivered + total_cap]
+        stop = delivered + total_cap if bundle.verified_through is None else bundle.verified_through
+        window = bundle.items[delivered:stop]
         rows = [self._record(bundle, row, trace_id=trace_id) for row in window]
         self._write_raw([(bundle, {})], rows)
         new_delivered = delivered + len(window)
@@ -798,10 +832,14 @@ class CollectorBundleAdapter:
         verified: list[VerifiedBundle] = []
         remaining = max(total_cap, 1)
         unverified_pending = False
-        deadline = (
-            None if self.read_budget_seconds is None else time.monotonic() + max(self.read_budget_seconds, 0.0)
-        )
+        deadline = _OP_DEADLINE.get()
+        if deadline is None and self.read_budget_seconds is not None:
+            deadline = time.monotonic() + max(self.read_budget_seconds, 0.0)
         for _, key, entry in pending:
+            if verified and deadline is not None and time.monotonic() >= deadline:
+                # Budget spent between bundles: the rest stays pending behind the cursor.
+                unverified_pending = True
+                break
             if remaining <= 0:
                 unverified_pending = True
                 break

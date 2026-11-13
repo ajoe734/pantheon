@@ -1130,3 +1130,81 @@ def test_no_budget_keeps_single_full_window(tmp_path, monkeypatch):
     object.__setattr__(adapter, "read_budget_seconds", None)
     result = adapter.pull()
     assert len(result.records) == 12 and result.complete
+
+
+# Reviewer counterexamples: one operation budget across bundles, priority path, read timeout ----
+def _singleton_bundles(tmp_path, monkeypatch, *, count=12, cost=5.0, cadence=0):
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as cb
+
+    clock = [0.0]
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    source_id = "collector-tw-twse-price-history"
+    files, entries = {}, []
+    for n in range(1, count + 1):
+        f, e = _day_bundle(source_id, n, 1)
+        files.update(f)
+        entries.append(e)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    transport = _SlowTransport(files, clock, cost)
+
+    def make():
+        return CollectorBundleAdapter(
+            connector_id="conn-y", raw_root=str(tmp_path / "store"), transport=transport, host=HOST,
+            source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+            max_records=500, cadence_seconds=cadence,
+        )
+
+    return make, clock
+
+
+@pytest.mark.parametrize("cadence", [0, 1800])
+def test_many_singleton_bundles_stay_within_budget_and_drain_without_loss(tmp_path, monkeypatch, cadence):
+    make, clock = _singleton_bundles(tmp_path, monkeypatch, cadence=cadence)
+    cursor, seen, elapsed = None, [], []
+    for _ in range(20):
+        start = clock[0]
+        result = make().pull(cursor=cursor)
+        elapsed.append(clock[0] - start)
+        seen.extend(r.source_id for r in result.records)
+        cursor = result.next_cursor
+        if result.complete:
+            break
+        assert not result.complete
+    assert max(elapsed) <= 15.0 + 5.0 and len(elapsed) > 1
+    # priority-latest replays (idempotent, state saved by the persistence owner) may repeat ids
+    assert result.complete and len(set(seen)) == 12 and (cadence or len(seen) == 12)
+
+
+def test_http_read_timeout_is_capped_by_remaining_operation_budget(monkeypatch):
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as cb
+
+    clock, timeouts = [100.0], []
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "tok")
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_open(request, *, caller, timeout):
+        timeouts.append(timeout)
+        return _Resp()
+
+    monkeypatch.setattr(cb, "open_external_url", fake_open)
+    monkeypatch.setattr(cb, "read_bounded_response", lambda r, max_bytes: b"{}")
+    transport = cb.HttpBundleTransport(host=HOST)
+    with cb._operation_deadline(15.0):
+        transport.read("a", max_bytes=10)
+        clock[0] += 14.0
+        transport.read("b", max_bytes=10)  # 1s left: must not get the full 20s
+        clock[0] += 5.0
+        transport.read("c", max_bytes=10)  # budget spent: 1s floor
+    transport.read("d", max_bytes=10)  # outside an operation: unchanged
+    assert timeouts == [15.0, 1.0, 1.0, 20.0]
