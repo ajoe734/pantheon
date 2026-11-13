@@ -65,6 +65,17 @@ Propose a new ApprovalDecision.
 - `409 Conflict` — `decision_id` already exists
 - `422 Unprocessable Entity` — structural validation failure
 
+**Lesson-derived rule proposals (LESSON-RULE-PROPOSALS-20261113)**: `target_type` may also be
+`lesson_gate_check_proposal` (a validation-gate check for the research gate owner) or
+`pool_policy_parameter_proposal` (a pool-policy parameter). They are pending decision records only:
+approving one never changes a gate, pool policy, execution, risk limit or capital limit; the owning
+service applies an approved decision through its own route. Propose-time rules (`422` otherwise):
+`risk_level` is `high` or `critical` (so an `automated_gate` cannot decide), `persona_id` is set, and
+`subject` carries `proposal_kind` (`gate_check` or `pool_policy`, matching the target type),
+`lesson_ids` (comma-joined endorsed lesson ids), `case_file_id` and `proposal_digest`. The persona owner
+route `POST /api/personas/{persona_id}/lesson-rule-proposals` is the only producer; harness patches
+from the same route go through the existing harness pipeline instead.
+
 ---
 
 ### `GET /api/governance/approvals`

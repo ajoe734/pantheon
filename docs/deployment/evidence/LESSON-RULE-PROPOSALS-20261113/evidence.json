@@ -1,0 +1,35 @@
+{
+  "task_id": "LESSON-RULE-PROPOSALS-20261113",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_KNOWLEDGE_INTEGRATION_2026-11-13.md (M6)",
+  "delivered": [
+    "services/persona/lesson_rule_proposals.py",
+    "services/persona/test_lesson_rule_proposals.py",
+    "services/persona/write_owner.py",
+    "services/governance/models.py",
+    "services/governance/main.py",
+    "services/governance/test_lesson_rule_targets.py",
+    "services/governance/contract.md",
+    "services/control-plane/governance/approval_decision.py",
+    "services/control-plane/governance/approval_decision.schema.json"
+  ],
+  "verification": {
+    "command": "python -m pytest services/persona/test_lesson_rule_proposals.py services/governance/test_lesson_rule_targets.py -q; python -m pytest services/persona -q",
+    "result": "lesson-rule tests 11 + 15 passed; services/persona 316 passed, 3 failed only for missing yaml/asyncpg modules in this venv (test_lifecycle_approval_verifier, test_persona_cycle_controller x2)",
+    "environment": "python 3.12 venv with fastapi, httpx, pytest, pydantic, jsonschema, psycopg, uvicorn; no PostgreSQL or libpq in the worker, so Governance HTTP+Postgres tests were not run",
+    "integration_scope": "real persona owner app (create_app) route, real harness pipeline, real lesson lifecycle (TradeLessonCandidateStore + LessonGovernanceService), real case file digest rules; Governance hop runs the real propose-time check and the real ApprovalDecision state machine in process"
+  },
+  "acceptance": {
+    "1_three_conversions_cite_lessons_and_case_file": "test_each_proposal_type_is_created_through_the_real_route; each record and patch/decision carries lesson_ids and case_file_id",
+    "2_routing": "harness patch -> PersistentHarnessOwner.propose (draft, precheck/shadow/adoption still required, evidence resolves via owner record); gate_check and pool_policy -> lesson_gate_check_proposal / pool_policy_parameter_proposal decisions in proposed state, risk high so an automated gate cannot decide",
+    "3_no_direct_effect_and_unendorsed_refused": "test_unendorsed_lessons_cannot_be_converted (proposed, pending_review, rejected, quarantined, expired), test_conversion_never_touches_execution_risk_or_capital (capital/risk/limit/execution parameters refused, tool_profile patch refused, loosened threshold refused by harness precheck)",
+    "4_integration_decision_pending": "test_each_proposal_type_is_created_through_the_real_route asserts decision_state=proposed and decision=None for both governance types"
+  },
+  "known_limits": [
+    "Governance HTTP + PostgreSQL path for the new target types was not exercised here (no Postgres in the worker); propose-time rules and the state machine are covered in process.",
+    "The default Governance sender needs PANTHEON_GOVERNANCE_API_URL and a propose-only LESSON_RULE_PROPOSER_TOKEN whose actor id equals PANTHEON_LESSON_RULE_PROPOSER_ID; without them the route fails closed with governance_unavailable (503) and records governance_delivery_pending for retry. Provisioning that principal is an operator/deploy step.",
+    "Applying an approved gate-check or pool-policy decision is owned by the research gate owner and pool owner and is not part of this task.",
+    "The pool-parameter denylist (capital, risk, leverage, limit, execution, order, stop, kill) is a coordinator starting value.",
+    "Callers supply the composed case file; the converter verifies schema, digest, persona/tenant and that every cited lesson's memory entry is in it.",
+    "Not hosted-verified; hosted acceptance is MEMORY-KNOWLEDGE-HOSTED-ACCEPTANCE-20261113."
+  ]
+}
