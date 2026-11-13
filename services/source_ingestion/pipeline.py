@@ -47,6 +47,7 @@ from .connectors import (
     SourceRecordStatus,
 )
 from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+from .connectors.collector_bundle import COLLECTOR_REQUEST_READ_BUDGET_SECONDS, operation_deadline
 from .controller_state import read_controller_state
 from .distillation_worker import DistillationJobQueue
 from .external_sources import (
@@ -1380,34 +1381,37 @@ class IngestPipelineService:
             now=now_iso,
             connector_ids=exclusive_connector_ids or None,
         )
-        for frontier in claimed:
-            try:
-                result, evidence_refs, updated_frontier, source_search_refresh = self.run_frontier_item(frontier)
-                payload = {
-                    "connector_id": frontier.connector_id,
-                    "frontier": updated_frontier.to_dict(),
-                    "run": result.run.to_dict(),
-                    "evidence_refs": evidence_refs,
-                    "source_search_refresh": source_search_refresh,
-                    "receipt": (
-                        self.store.get_receipt(result.run.ingest_run_id).to_dict()
-                        if self.store.get_receipt(result.run.ingest_run_id) is not None
-                        else None
-                    ),
-                }
-                if result.run.status.value != "completed":
-                    failed.append({**payload, "error": result_error(result)})
-                else:
-                    ran.append(payload)
-            except (EvidenceValidationError, SourceEvidenceError) as exc:
-                latest = self.store.get_frontier(frontier.frontier_id)
-                failed.append(
-                    {
+        # One whole-request read budget shared by every serially executed claimed connector, so
+        # N Collector pulls cannot each spend a fresh budget inside one controller HTTP request.
+        with operation_deadline(COLLECTOR_REQUEST_READ_BUDGET_SECONDS):
+            for frontier in claimed:
+                try:
+                    result, evidence_refs, updated_frontier, source_search_refresh = self.run_frontier_item(frontier)
+                    payload = {
                         "connector_id": frontier.connector_id,
-                        "frontier": latest.to_dict() if latest else frontier.to_dict(),
-                        "error": str(exc),
+                        "frontier": updated_frontier.to_dict(),
+                        "run": result.run.to_dict(),
+                        "evidence_refs": evidence_refs,
+                        "source_search_refresh": source_search_refresh,
+                        "receipt": (
+                            self.store.get_receipt(result.run.ingest_run_id).to_dict()
+                            if self.store.get_receipt(result.run.ingest_run_id) is not None
+                            else None
+                        ),
                     }
-                )
+                    if result.run.status.value != "completed":
+                        failed.append({**payload, "error": result_error(result)})
+                    else:
+                        ran.append(payload)
+                except (EvidenceValidationError, SourceEvidenceError) as exc:
+                    latest = self.store.get_frontier(frontier.frontier_id)
+                    failed.append(
+                        {
+                            "connector_id": frontier.connector_id,
+                            "frontier": latest.to_dict() if latest else frontier.to_dict(),
+                            "error": str(exc),
+                        }
+                    )
 
         if exclusive_connector_ids:
             accounted_connector_ids = {

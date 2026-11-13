@@ -681,3 +681,26 @@ def test_slow_reads_make_bounded_scheduler_progress_and_persist_partial_cursor(t
     assert third.run.raw_count == 0 and third.watermark.value == CURSOR
     state = JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth")
     assert state["collector_outcome"]["no_new_data"] is True
+
+
+def test_scheduled_request_shares_one_read_deadline_across_claimed_connectors(tmp_path, monkeypatch):
+    """Serial claimed pulls in one scheduler request see the same absolute deadline; it is cleared after."""
+    from services.source_ingestion.api_models import RunScheduledRequest
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, "news", producer=True)
+    runtime.schedule_config_store.upsert_schedule(connector.connector_id, interval_seconds=60, enabled=True)
+    seen = []
+    real = cb.CollectorBundleAdapter._pull_bounded
+
+    def spy(self, **kw):
+        seen.append(cb._OP_DEADLINE.get())
+        return real(self, **kw)
+
+    monkeypatch.setattr(cb.CollectorBundleAdapter, "_pull_bounded", spy)
+    payload = runtime.pipeline.run_scheduled_connectors(
+        RunScheduledRequest(exclusive_connector_ids=[connector.connector_id])
+    )
+    assert not payload["failed"], payload
+    assert seen and all(d is not None for d in seen)
+    assert cb._OP_DEADLINE.get() is None

@@ -76,11 +76,12 @@ COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
 _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
 # Whole-operation monotonic deadline for one pull(): priority, ordered sweep, metadata and
 # every transport read share it, so one request can never run past the controller boundary.
+COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
 
 
 @contextmanager
-def _operation_deadline(seconds: float | None):
+def operation_deadline(seconds: float | None):
     if seconds is None or _OP_DEADLINE.get() is not None:
         yield
         return
@@ -224,10 +225,12 @@ class HttpBundleTransport(BundleTransport):
         timeout = self.timeout_seconds
         op_deadline = _OP_DEADLINE.get()
         if op_deadline is not None:
-            # A read never outlives the operation budget (1s floor keeps it a real read).
+            # A read never outlives the operation budget (1s floor keeps it a real read);
+            # the body stream is held to the same floored deadline, chunk by chunk.
             timeout = min(timeout, max(op_deadline - time.monotonic(), 1.0))
+            op_deadline = max(op_deadline, time.monotonic() + 1.0)
         with open_external_url(request, caller="source_ingest.collector_bundle", timeout=timeout) as response:
-            return read_bounded_response(response, max_bytes=max_bytes)
+            return read_bounded_response(response, max_bytes=max_bytes, deadline=op_deadline)
 
 
 @dataclass(frozen=True)
@@ -561,7 +564,7 @@ class CollectorBundleAdapter:
     max_records: int = 500
     # Whole-pull raw read budget, kept below the controller's per-request timeout; the
     # remainder stays pending behind a partial cursor. None disables the budget.
-    read_budget_seconds: float | None = 15.0
+    read_budget_seconds: float | None = COLLECTOR_REQUEST_READ_BUDGET_SECONDS
     transport: BundleTransport | None = None
     # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
     # in addition to the symbols that have stored daily bars under the storage roots.
@@ -667,7 +670,7 @@ class CollectorBundleAdapter:
         the cursor sweep continues with whatever output cap remains. Replays are idempotent.
         """
 
-        with _operation_deadline(self.read_budget_seconds):
+        with operation_deadline(self.read_budget_seconds):
             return self._pull_bounded(cursor=cursor, trace_id=trace_id, max_records=max_records)
 
     def _pull_bounded(

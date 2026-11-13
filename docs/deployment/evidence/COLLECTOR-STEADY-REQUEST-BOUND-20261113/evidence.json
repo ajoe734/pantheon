@@ -14,5 +14,11 @@
     "Priority-latest state is persisted by the caller's delivery; bare adapter tests replay priority rows idempotently.",
     "services/source_ingestion/tests collection errors in test_l12_* modules are unrelated (missing deps); controller tests need uvicorn/asyncpg (ran in /tmp/bffvenv).",
     "No hosted/VM/live verification; real latency distribution unknown."
-  ]
+  ],
+  "review_fix_20261113": {
+    "p1_request_deadline": "run_scheduled_connectors wraps the serial claimed-frontier loop in one operation_deadline(15s); per-pull budget no longer resets (reentrant, outermost wins).",
+    "p1_body_deadline": "read_bounded_response takes deadline/clock and raises TimeoutError between chunks; HttpBundleTransport passes the 1s-floored op deadline.",
+    "tests": "373 passed, 1 skipped (3 scoped suites) + 3 new tests",
+    "limitations": "A blocking single read.read() is bounded only by socket timeout; each pull after budget exhaustion still performs its mandatory one raw read (progress guarantee), so worst case is budget plus N minimal reads, not strictly 15s. Source/local only; no hosted claims."
+  }
 }

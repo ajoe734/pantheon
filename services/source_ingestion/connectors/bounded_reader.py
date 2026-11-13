@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import time
+from typing import Any, Callable
 
 from .base import SourceEvidenceError
 
@@ -31,6 +32,8 @@ def read_bounded_response(
     *,
     oversized_error_cls: type[Exception] = SourceEvidenceError,
     truncation_error_cls: type[Exception] = ResponseTruncated,
+    deadline: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> bytes:
     """Read a response stream until EOF (empty chunk) up to max_bytes.
 
@@ -42,6 +45,9 @@ def read_bounded_response(
     chunks: list[bytes] = []
     total = 0
     while True:
+        if deadline is not None and clock() >= deadline:
+            # A slow-drip body must not outlive the operation budget; never returned as data.
+            raise TimeoutError("response body read exceeded the operation deadline")
         chunk = response.read(chunk_size)
         if not chunk:
             break

@@ -1198,9 +1198,9 @@ def test_http_read_timeout_is_capped_by_remaining_operation_budget(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr(cb, "open_external_url", fake_open)
-    monkeypatch.setattr(cb, "read_bounded_response", lambda r, max_bytes: b"{}")
+    monkeypatch.setattr(cb, "read_bounded_response", lambda r, max_bytes, deadline=None: b"{}")
     transport = cb.HttpBundleTransport(host=HOST)
-    with cb._operation_deadline(15.0):
+    with cb.operation_deadline(15.0):
         transport.read("a", max_bytes=10)
         clock[0] += 14.0
         transport.read("b", max_bytes=10)  # 1s left: must not get the full 20s
@@ -1208,3 +1208,40 @@ def test_http_read_timeout_is_capped_by_remaining_operation_budget(monkeypatch):
         transport.read("c", max_bytes=10)  # budget spent: 1s floor
     transport.read("d", max_bytes=10)  # outside an operation: unchanged
     assert timeouts == [15.0, 1.0, 1.0, 20.0]
+
+
+def test_body_stream_stops_at_operation_deadline_not_returned_as_data():
+    """Slow-drip body: four 10s chunks under a 15s budget must fail, never return data."""
+    from services.source_ingestion.connectors.bounded_reader import read_bounded_response
+
+    now = [0.0]
+
+    class _Slow:
+        headers: dict = {}
+
+        def read(self, _n):
+            now[0] += 10.0
+            return b"x"
+
+    with pytest.raises(TimeoutError):
+        read_bounded_response(_Slow(), max_bytes=100, deadline=15.0, clock=lambda: now[0])
+    assert now[0] <= 20.0
+
+
+def test_request_scope_deadline_is_shared_across_serial_pulls(monkeypatch):
+    """A request-level deadline is not reset by each pull's own read budget."""
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    now = [100.0]
+    monkeypatch.setattr(cb.time, "monotonic", lambda: now[0])
+    seen = []
+    adapter = cb.CollectorBundleAdapter.__new__(cb.CollectorBundleAdapter)
+    object.__setattr__(adapter, "read_budget_seconds", 15.0)
+    monkeypatch.setattr(
+        cb.CollectorBundleAdapter, "_pull_bounded",
+        lambda self, **kw: (seen.append(cb._OP_DEADLINE.get()), now.__setitem__(0, now[0] + 10.0)),
+    )
+    with cb.operation_deadline(15.0):
+        adapter.pull()
+        adapter.pull()
+    assert seen == [115.0, 115.0]
