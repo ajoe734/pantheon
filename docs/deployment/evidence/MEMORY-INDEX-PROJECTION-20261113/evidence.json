@@ -6,8 +6,8 @@
   "source_status": "implemented_pending_independent_review",
   "review_decision": "pending_assigned_reviewer",
   "hosted_status": "not_claimed",
-  "integration_base": "696e4579a",
-  "runtime_verified_commit": "4990d2ef1",
+  "integration_base": "b5530c692bdd72ec32a9a7c5240c9490a47d4a0c",
+  "runtime_verified_commit": "4990d2ef10ebd45f8638b531780e08d4b0c975b7",
   "scope": "Canonical memory lifecycle projections through existing search HTTP routes; paper only; no execution-path memory access or model call.",
   "acceptance": [
     {
@@ -70,5 +70,12 @@
     "services/memory/persona_memory.schema.json",
     "docker-compose.yml"
   ],
-  "delivery": "Exact final PR/head/evidence binding and independent review remain governed by task handoff. No approval or merge is claimed by this owner manifest."
+  "delivery": "Exact final PR/head/evidence binding and independent review remain governed by task handoff. No approval or merge is claimed by this owner manifest.",
+  "composed_validation": {
+    "base_refresh": "Merged current dev BFF pool read delivery without conflicts; no memory/search runtime changes.",
+    "command": "SEARCH_JIEBA_DICTIONARY=/tmp/dict.txt.big PANTHEON_RETRIEVAL_INTEGRATION_DSN=<isolated-local-test-dsn> /tmp/retrieval-activation-venv/bin/python -m pytest services/memory/test_memory_index_projection.py -q --tb=short",
+    "exit_status": 0,
+    "result": "12 passed, 3 warnings in 5.50 seconds",
+    "composed_commit": "a773c6332e1a4a934c2dc6cc656eb6d14902bd61"
+  }
 }
