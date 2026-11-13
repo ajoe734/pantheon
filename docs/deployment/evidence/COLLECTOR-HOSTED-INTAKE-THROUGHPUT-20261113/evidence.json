@@ -2,7 +2,7 @@
   "task_id": "COLLECTOR-HOSTED-INTAKE-THROUGHPUT-20261113",
   "owner": "Codex2",
   "reviewer": "Claude",
-  "stage": "diagnosed_before_product_edits",
+  "stage": "source_validation_in_progress",
   "hosted_acceptance_task": "COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113",
   "hosted_observations": {
     "provenance": "Task brief; operator read-only observations 2026-11-13 16:00-16:30Z, not independently re-probed by worker",
@@ -17,7 +17,7 @@
   },
   "baseline": {
     "source_commit": "3ed0ea555",
-    "method": "Load exact candidate adapter from git show, existing _day_bundle fixture at 1375/6000/1349 rows, one real-size day per source. Local wall includes parse/hash/raw cache; read_budget uses deterministic serial 50ms raw-read cost (not measured hosted latency).",
+    "method": "Load exact candidate adapter from git show, existing _day_bundle fixture at 1375/6000/1349 rows, one real-size day per source. Local wall includes parse/hash/raw cache; read_budget uses deterministic serial 50ms raw-read cost (not measured hosted latency). The original additive-clock stress transport serializes cost across concurrent calls; it is an aggregate serialized-service model, not an overlap-aware latency measurement. The later exact-candidate ordered benchmark below uses shared start/finish times with real overlapping threads and recorded row/raw JSON shape.",
     "command": "PYTHONPATH=. /tmp/codex2-collector-steady-review-venv/bin/python /tmp/collector-intake-baseline.py",
     "measurements": [
       {
@@ -118,12 +118,222 @@
       }
     ],
     "diagnosis": [
-      "Local transport: max_records binds first pull at 1000/1000/500 rows; verification wall below 1 second.",
-      "50ms serial raw read model: 15 second whole-operation budget binds at 300 rows; metadata cost excluded in model. Hosted counts 260/308 are consistent with read budget, but host latency cannot be proven without acceptance SSH.",
-      "T86 and ordered history never set continuation_pending, so full 86400/600 second cadence binds aggregate throughput even when a pull succeeds.",
-      "At 500 rows/day T86 alone needs ceil(488*1349/500)=1317 daily pulls, versus required 48 hours.",
-      "Serial 50ms verification of all 488*(1375+6000+1349) rows takes 59.13h before cadence and persistence; sweep needs bounded overlap plus continuation.",
-      "Controller request timeout is retained; no timeout increase or collector-to-exchange request-rate change is proposed."
+      "The 3ed0ea555 candidate already overlaps newest price-session reads four at a time. Its newest counts 260/308 cannot be limited by max_records=1000; they are consistent with a shared read deadline and expensive reads, but worker cannot prove hosted latency or why persisted continuation stalled without hosted access.",
+      "Fast local transport first pulls hit max_records=1000/1000/500. Serialized-service 50ms raw-read stress hits the 15-second operation budget at 300 rows. These are synthetic profiles, not hosted timings.",
+      "The exact candidate ordered sweep reads raw serially and never emits continuation_pending for history/T86. The 600/86400-second cadence therefore binds aggregate throughput after each successful capped pull.",
+      "T86 evidence URL-only dedupe also keeps the first prefix record/run identity. A real controller regression reproduced record_run_mismatch on the second completed pull; verified native market item dedupe fixes it without weakening terminal validation.",
+      "The ordered path mapped all bundle rows even when only a capped raw window was verified. It now constructs only the verified window while deriving partial cursors from full declared item coverage.",
+      "Controller readback ranking deep-copied the full stored history on each snapshot. It now reads immutable record scalar metadata directly; only the selected records are serialized.",
+      "At 500 rows/day T86 needs 1317 pulls for 488*1349 rows, making the previous daily cadence incompatible with 48 hours.",
+      "The 15-second read budget, one scheduled pull per controller request, record caps and controller timeout remain unchanged. Upstream exchange request policy is unchanged."
     ]
-  }
+  },
+  "ordered_before_after": {
+    "method": "Exact 3ed0ea555 reader vs task reader; recorded-size raw JSON shape and real-size bundle rows, acknowledged latest sidecar seeded to benchmark ordered history, 50ms virtual read latency including metadata with real overlapping threads. Wall time is local parse/hash/cache time plus short actual I/O yields; model time is separate.",
+    "measurements": [
+      {
+        "version": "3ed0ea555",
+        "source": "collector-tw-twse-price-history",
+        "bundle_rows": 1375,
+        "rows": 296,
+        "raw_reads": 296,
+        "wall_seconds": 0.5629354770062491,
+        "model_seconds": 15.050000000000079,
+        "cap": 1000,
+        "cadence_seconds": 600,
+        "continuation_pending": false
+      },
+      {
+        "version": "current",
+        "source": "collector-tw-twse-price-history",
+        "bundle_rows": 1375,
+        "rows": 1000,
+        "raw_reads": 1000,
+        "wall_seconds": 1.151271544978954,
+        "model_seconds": 12.750000000000046,
+        "cap": 1000,
+        "cadence_seconds": 600,
+        "continuation_pending": true
+      },
+      {
+        "version": "3ed0ea555",
+        "source": "collector-tw-tpex-price-history",
+        "bundle_rows": 6000,
+        "rows": 296,
+        "raw_reads": 296,
+        "wall_seconds": 0.6326964099716861,
+        "model_seconds": 15.050000000000079,
+        "cap": 1000,
+        "cadence_seconds": 600,
+        "continuation_pending": false
+      },
+      {
+        "version": "current",
+        "source": "collector-tw-tpex-price-history",
+        "bundle_rows": 6000,
+        "rows": 1000,
+        "raw_reads": 1000,
+        "wall_seconds": 1.2485916029836517,
+        "model_seconds": 12.850000000000048,
+        "cap": 1000,
+        "cadence_seconds": 600,
+        "continuation_pending": true
+      },
+      {
+        "version": "3ed0ea555",
+        "source": "collector-tw-twse-t86",
+        "bundle_rows": 1349,
+        "rows": 297,
+        "raw_reads": 297,
+        "wall_seconds": 0.6043948639999144,
+        "model_seconds": 15.050000000000079,
+        "cap": 500,
+        "cadence_seconds": 86400,
+        "continuation_pending": false
+      },
+      {
+        "version": "current",
+        "source": "collector-tw-twse-t86",
+        "bundle_rows": 1349,
+        "rows": 500,
+        "raw_reads": 500,
+        "wall_seconds": 0.5374790630012285,
+        "model_seconds": 6.449999999999985,
+        "cap": 500,
+        "cadence_seconds": 86400,
+        "continuation_pending": true
+      }
+    ]
+  },
+  "scaled_sweeps": {
+    "method": "Two historical per-date backfill bundles at bundles/<source>/2026-11-11/backfill-YYYY-MM-DD/ plus a newest close; full declared row counts. All rows traverse real adapter metadata/raw/hash/PIT mapping, cursor and durable sidecars. 50ms per transport receive is modeled; 0.5ms real waits permit actual overlap. No network or hosted claim.",
+    "measurements": [
+      {
+        "source": "collector-tw-twse-price-history",
+        "days": 3,
+        "unique_rows": 4125,
+        "pulls": 6,
+        "rows_per_pull": [
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          500
+        ],
+        "model_seconds": 71.54999999999808,
+        "max_pull_seconds": 13.349999999999671,
+        "wall_seconds": 6.625300043000607,
+        "raw_reads": 5500,
+        "peak_inflight": 4,
+        "extrapolated_488_days_seconds": 12614.799999999688
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "days": 3,
+        "unique_rows": 18000,
+        "pulls": 24,
+        "rows_per_pull": [
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000
+        ],
+        "model_seconds": 307.2000000000356,
+        "max_pull_seconds": 12.900000000000048,
+        "wall_seconds": 24.667756822978845,
+        "raw_reads": 24000,
+        "peak_inflight": 4,
+        "extrapolated_488_days_seconds": 53875.20000000578
+      },
+      {
+        "source": "collector-tw-twse-t86",
+        "days": 3,
+        "unique_rows": 4047,
+        "pulls": 9,
+        "rows_per_pull": [
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          47
+        ],
+        "model_seconds": 53.199999999999115,
+        "max_pull_seconds": 6.6500000000000945,
+        "wall_seconds": 3.8933912880020216,
+        "raw_reads": 4047,
+        "peak_inflight": 4,
+        "extrapolated_488_days_seconds": 10117.866666666523
+      }
+    ],
+    "formula": "Per source: (modeled_read_seconds + local_wall_seconds + pull_count*1s pause) * (488/3). Sum all three serial sweeps, including newest-session ordered replay. A 600-second worst-phase admission delay is added once. This is adapter-only until controller persistence overhead is added below.",
+    "adapter_plus_wall_488_days_seconds": 82931.52889971965
+  },
+  "t86_controller": {
+    "command": "timeout 90 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q -s services/source_ingestion/tests/test_scheduled_connector.py::test_real_controller_drains_1349_t86_rows_before_daily_cadence",
+    "exit_code": 0,
+    "passed": 1,
+    "rows_per_tick": [
+      500,
+      500,
+      349
+    ],
+    "tick_wall_seconds": [
+      6.5302612359810155,
+      6.257930438994663,
+      4.093736544018611
+    ],
+    "default_cap": 500,
+    "default_cadence_seconds": 86400,
+    "request_timeout_seconds": 30,
+    "provenance": "Real controller tick -> reconcile definition -> HTTP handler via TestClient -> native scheduler/adapter -> normalization/storage/evidence -> terminal readback. This pre-dates the scalar readback optimization, so is a conservative processing measurement."
+  },
+  "rollback": {
+    "reader": "bee62bc29",
+    "test": "test_bee62bc29_reader_parses_new_cursor_status_and_additive_readback",
+    "result": "passed actual release module loaded from git object; new resume_cursor.json parsed, status offered fields ignored without error. bee62bc29 predates latest_priority.json and ignores it. Cursor and latest sidecar shape unchanged by this task; controller offering is an additive readback key."
+  },
+  "host_offered_sources": {
+    "truth": "Host BundleWriter derives every source from fetch-policy plus host credential availability; optional COLLECTOR_SCHEDULED_SOURCE_IDS supplies installed timer inventory. No hosted allowlist.",
+    "legacy": "Missing offered fields retain legacy scheduling; missing or malformed capability reads report unknown.",
+    "rollout": "Rebuild collector image and publish status through its normal run. Supply actual timer inventory as COLLECTOR_SCHEDULED_SOURCE_IDS if no_timer must be attested. Without inventory timer_enabled is null, never invented. Do not enable DGBAS/YouTube. Hosted acceptance owner must inspect actual status and timer evidence."
+  },
+  "source_alignment": {
+    "dbnomics": "collector_macro_series, desired admitted",
+    "individual_papers": "Independent arxiv/openalex/nber bundle definitions and admission; composite strategy-seed-paper-corpus reads collector-papers only.",
+    "gemini_notes": "collector_social_posts, existing 50-record community cap",
+    "held": "collector-library-books retains operator hold",
+    "contract": "test_collector_source_alignment_contract.py compares policy with definitions and default desired state"
+  },
+  "excluded_actions": [
+    "No hosted/collector SSH or deployment performed",
+    "No exchange request-policy/rate changes",
+    "No DGBAS/YouTube host enablement",
+    "No GDELT/Threads repair",
+    "No cleanup of existing 50 pending DLQ entries"
+  ]
 }

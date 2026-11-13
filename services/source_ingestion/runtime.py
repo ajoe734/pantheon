@@ -1215,8 +1215,10 @@ class SourceIngestionRuntime:
         latest: dict[str, tuple[tuple[Any, ...], SourceRecord]] = {}
         for record in self.evidence_repository.list_source_records():
             cid = record.connector_id
-            rec_dict = record.to_dict()
-            rec_meta = rec_dict.get("metadata") or {}
+            # Historical sweeps grow this population on every tick. Ranking only
+            # reads scalar metadata; deep-copying every stored row for each
+            # controller readback makes persistence overhead dominate raw reads.
+            rec_meta = record.metadata or {}
             norm_row = rec_meta.get("normalized_row") if isinstance(rec_meta.get("normalized_row"), dict) else {}
             rec_run_id = str(rec_meta.get("source_ingest_run_id") or rec_meta.get("ingest_run_id") or "")
             target_run_id = latest_run_by_connector.get(cid, "")
@@ -1235,7 +1237,7 @@ class SourceIngestionRuntime:
                 or norm_row.get("date")
                 or ""
             )
-            rec_created = str(rec_dict.get("created_at") or "")
+            rec_created = str(record.created_at or "")
             source_id = str(record.source_id or "")
 
             if cid in COLLECTOR_PRICE_HISTORY_SOURCE_IDS:
