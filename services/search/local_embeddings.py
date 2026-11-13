@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -38,7 +39,9 @@ class LocalEmbeddingEngine:
 
         explicit_cache = cache_dir or os.getenv("SEARCH_EMBEDDING_CACHE_DIR", "/tmp/fastembed_cache")
         self.cache_dir = Path(explicit_cache)
-        self.local_files_only = local_files_only
+        if not local_files_only:
+            raise SearchCapabilityUnavailableError("Online embedding model loading is forbidden")
+        self.local_files_only = True
         self._embedder: Any = None
         self._query_cache: dict[str, list[float]] = {}
         self._verified: bool | None = None
@@ -56,6 +59,10 @@ class LocalEmbeddingEngine:
             ) from exc
 
     def _find_snapshot_dir(self) -> Path | None:
+        # Offline image packaging uses a flat directory. FastEmbed must load
+        # this exact verified path rather than selecting a different HF cache.
+        if (self.cache_dir / "model.onnx").is_file():
+            return self.cache_dir
         if not self.cache_dir.exists():
             return None
         candidate_prefixes = [
@@ -69,18 +76,6 @@ class LocalEmbeddingEngine:
             if target.exists():
                 if expected_rev and (target / expected_rev).is_dir():
                     return target / expected_rev
-                snapshots = [s for s in target.iterdir() if s.is_dir()]
-                if snapshots:
-                    return sorted(snapshots)[-1]
-        for child in self.cache_dir.iterdir():
-            if child.is_dir() and "multilingual-e5-large" in child.name:
-                snap_dir = child / "snapshots"
-                if snap_dir.exists():
-                    if expected_rev and (snap_dir / expected_rev).is_dir():
-                        return snap_dir / expected_rev
-                    snaps = [s for s in snap_dir.iterdir() if s.is_dir()]
-                    if snaps:
-                        return sorted(snaps)[-1]
         return None
 
     def verify_integrity(self) -> bool:
@@ -89,12 +84,15 @@ class LocalEmbeddingEngine:
             return self._verified
 
         expected_rev = self.manifest.get("revision")
+        if self.manifest.get("validation_status") != "accepted" or not re.fullmatch(r"[0-9a-f]{40}", str(expected_rev)):
+            self._verified = False
+            return False
         target_dir = self._find_snapshot_dir()
         if target_dir is None:
             self._verified = False
             return False
 
-        if expected_rev and target_dir.name != expected_rev:
+        if target_dir != self.cache_dir and target_dir.name != expected_rev:
             self._verified = False
             return False
 
@@ -112,19 +110,23 @@ class LocalEmbeddingEngine:
                 return False
 
         files_spec = self.manifest.get("files", {})
-        if not files_spec:
-            self._verified = True
-            return True
+        if not {"model.onnx", "config.json", "tokenizer.json"}.issubset(files_spec):
+            self._verified = False
+            return False
 
         for filename, spec in files_spec.items():
             expected_sha = spec.get("sha256")
             fpath = target_dir / filename
+            if not re.fullmatch(r"[0-9a-f]{64}", str(expected_sha)) or not fpath.resolve().is_relative_to(target_dir.resolve()):
+                self._verified = False
+                return False
             if not fpath.exists():
                 self._verified = False
                 return False
             if expected_sha:
                 real_file = fpath.resolve()
-                computed = hashlib.sha256(real_file.read_bytes()).hexdigest()
+                with real_file.open("rb") as handle:
+                    computed = hashlib.file_digest(handle, "sha256").hexdigest()
                 if computed.lower() != expected_sha.lower():
                     self._verified = False
                     return False
@@ -152,6 +154,7 @@ class LocalEmbeddingEngine:
                 model_name=self.model_name,
                 cache_dir=str(self.cache_dir),
                 local_files_only=self.local_files_only,
+                specific_model_path=str(self._find_snapshot_dir()),
             )
             return self._embedder
         except Exception as exc:

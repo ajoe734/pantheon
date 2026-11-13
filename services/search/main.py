@@ -40,7 +40,6 @@ from .pg_store import build_search_evidence_repository, build_search_index_store
 from .retriever import (
     FullTextRetriever,
     KeywordRetriever,
-    MockVectorEmbeddingBackend,
     SemanticRetriever,
 )
 from .structured_alpha import StructuredAlphaEngine, StructuredAlphaQuery
@@ -590,18 +589,43 @@ def create_app(
     durable_repository = build_search_evidence_repository(evidence_store_path or EVIDENCE_STORE_PATH)
     materialize_store = JsonlMaterializedIndexStore(materialize_store_path or MATERIALIZE_STORE_PATH)
     durable_only = durable_index_only if durable_index_only is not None else DURABLE_INDEX_ONLY
-    if retrieval_backend is None and not durable_only:
+    dsn = os.getenv("PANTHEON_SEARCH_POSTGRES_DSN") or os.getenv("SEARCH_POSTGRES_DSN")
+    backend_mode = os.getenv("PANTHEON_SEARCH_BACKEND", "postgres_pgvector" if dsn else "jsonl")
+    activation_error = None
+    if retrieval_backend is None and backend_mode == "postgres_pgvector":
         contract_path = Path(__file__).parent / "backend-contract.json"
         if contract_path.exists():
             try:
                 contract = json.loads(contract_path.read_text(encoding="utf-8"))
                 if contract.get("accepted") and contract.get("activation_allowed"):
-                    dsn = os.getenv("PANTHEON_SEARCH_POSTGRES_DSN") or os.getenv("SEARCH_POSTGRES_DSN")
                     if dsn:
                         from .pg_retrieval import PostgresRetrievalBackend
                         retrieval_backend = PostgresRetrievalBackend(dsn=dsn)
+                    else:
+                        activation_error = "retrieval_dsn_missing"
+                else:
+                    activation_error = "retrieval_contract_unaccepted"
             except Exception:
-                pass
+                activation_error = "retrieval_initialization_failed"
+        else:
+            activation_error = "retrieval_contract_missing"
+    elif retrieval_backend is None and backend_mode != "jsonl":
+        activation_error = "retrieval_backend_unknown"
+
+    def retrieval_status() -> dict[str, Any]:
+        if activation_error:
+            return {"status": "unavailable", "backend": backend_mode, "reason": activation_error}
+        if retrieval_backend is not None:
+            return retrieval_backend.check_health()
+        return {"status": "ok", "backend": "jsonl", "reason": "explicit_jsonl_fallback"}
+
+    @app.middleware("http")
+    async def report_retrieval_mode(request, call_next):
+        response = await call_next(request)
+        response.headers["X-Retrieval-Backend"] = "postgres_pgvector" if retrieval_backend is not None else backend_mode
+        if retrieval_backend is None:
+            response.headers["X-Retrieval-Reason"] = activation_error or "explicit_jsonl_fallback"
+        return response
 
     retention_runs = pipeline_retention_runs if pipeline_retention_runs is not None else PIPELINE_RETENTION_RUNS
     pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
@@ -617,8 +641,9 @@ def create_app(
     kw_retriever = KeywordRetriever()
     ft_retriever = FullTextRetriever()
     embedding_backend = vector_embedding_backend
-    if embedding_backend is None and VECTOR_EMBEDDING_ENABLED:
-        embedding_backend = MockVectorEmbeddingBackend()
+    if embedding_backend is None and VECTOR_EMBEDDING_ENABLED and retrieval_backend is None:
+        from .local_embeddings import LocalEmbeddingEngine
+        embedding_backend = LocalEmbeddingEngine()
     sem_retriever = SemanticRetriever(embedding_backend=embedding_backend)
     hyb_retriever = HybridRetriever(lexical_retriever=ft_retriever, semantic_retriever=sem_retriever)
     alpha_eng = alpha_engine or StructuredAlphaEngine()
@@ -697,6 +722,7 @@ def create_app(
         "pantheon-search",
         dependencies=lambda: {
             "source_search_posture": PRODUCTION_POSTURE.to_dict(),
+            "retrieval": retrieval_status(),
         },
         metrics=lambda: {
             "snapshot_count": len(store.list_snapshots()),
@@ -719,7 +745,7 @@ def create_app(
         store.reload()
         durable_repository.reload()
         return {
-            "status": "ok",
+            "status": retrieval_status()["status"],
             "service": "pantheon-search",
             "index_store_path": str(store.path),
             "evidence_store_path": str(durable_repository.path),
@@ -729,6 +755,7 @@ def create_app(
             "pipeline_retention_runs": pipeline_store.max_retention,
             "freshness_sla_seconds": sla_seconds,
             "durable_index_only": durable_only,
+            "retrieval": retrieval_status(),
             "capabilities": _build_gateway(durable_repository).get_capabilities(),
             "source_search_posture": PRODUCTION_POSTURE.to_dict(),
             "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
@@ -877,6 +904,8 @@ def create_app(
         auth_ctx: AuthContext | None = None,
     ) -> dict[str, Any]:
         try:
+            if activation_error:
+                raise SearchCapabilityUnavailableError(activation_error)
             if body.documents:
                 if durable_only:
                     raise ValueError(
@@ -928,6 +957,7 @@ def create_app(
             snapshot = store.get_snapshot(response.request_id)
             return {
                 **response.to_dict(),
+                "retrieval_backend": "postgres_pgvector" if retrieval_backend is not None else "jsonl",
                 "index_adapter": index_adapter.snapshot().to_dict(),
                 "index_snapshot": snapshot.to_dict() if snapshot else None,
             }

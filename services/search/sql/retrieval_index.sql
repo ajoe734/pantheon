@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS search_retrieval_index (
     available_time TIMESTAMPTZ,
     relevance_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     embedding vector(1024),
-    tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', regexp_replace(coalesce(title, '') || ' ' || coalesce(search_text, ''), '([\u4e00-\u9fff])', ' \1 ', 'g'))) STORED,
+    lexical_text TEXT NOT NULL DEFAULT '',
+    tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', lexical_text)) STORED,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     version INT NOT NULL DEFAULT 1,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -34,6 +35,22 @@ CREATE TABLE IF NOT EXISTS search_retrieval_index (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (tenant_id, id)
 );
+
+-- This is a disposable projection. Old unigram indexes must be rebuilt from
+-- owner stores, never retokenized in SQL with different segmentation rules.
+ALTER TABLE search_retrieval_index ADD COLUMN IF NOT EXISTS lexical_text TEXT NOT NULL DEFAULT '';
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'search_retrieval_index' AND column_name = 'tsv'
+          AND generation_expression LIKE '%regexp_replace%'
+    ) THEN
+        ALTER TABLE search_retrieval_index DROP COLUMN tsv;
+        ALTER TABLE search_retrieval_index ADD COLUMN tsv tsvector
+            GENERATED ALWAYS AS (to_tsvector('simple', lexical_text)) STORED;
+    END IF;
+END $$;
 
 -- Lexical Full-Text Search Index (GIN)
 CREATE INDEX IF NOT EXISTS idx_search_retrieval_tsv

@@ -26,6 +26,7 @@ from services.search.filters import (
     SearchPolicyError,
 )
 from services.search.local_embeddings import LocalEmbeddingEngine
+from services.search.zh_segmentation import lexical_text
 
 
 def _now_iso() -> str:
@@ -48,8 +49,7 @@ def _parse_iso(value: Any) -> datetime | None:
 
 
 def _format_lexical_query(query: str) -> str:
-    """Space-separate CJK characters so simple FTS parser indexes and queries unigrams."""
-    return re.sub(r"([\u4e00-\u9fff])", r" \1 ", str(query or "")).strip()
+    return lexical_text(query)
 
 
 @dataclass
@@ -144,7 +144,7 @@ class PostgresRetrievalBackend:
                 cur.execute("SET random_page_cost = 1.1;")
             return conn
         except Exception as exc:
-            raise SearchCapabilityUnavailableError(f"Cannot connect to Postgres at {self.dsn}: {exc}") from exc
+            raise SearchCapabilityUnavailableError("Retrieval database connection unavailable") from exc
 
     def check_health(self) -> dict[str, Any]:
         try:
@@ -157,7 +157,7 @@ class PostgresRetrievalBackend:
                     cur.execute("SELECT count(*) as count FROM search_retrieval_index WHERE is_active=TRUE")
                     doc_count = cur.fetchone()["count"]
             return {
-                "status": "ok",
+                "status": "ok" if vector_version and self.embedding_engine.is_ready() else "unavailable",
                 "backend": "postgres_pgvector",
                 "pgvector_version": vector_version,
                 "vector_dimension": self.embedding_engine.dimension,
@@ -165,7 +165,7 @@ class PostgresRetrievalBackend:
                 "embedding_ready": self.embedding_engine.is_ready(),
             }
         except Exception as exc:
-            return {"status": "degraded", "backend": "postgres_pgvector", "error": str(exc)}
+            return {"status": "unavailable", "backend": "postgres_pgvector", "reason": "retrieval_database_unavailable"}
 
     def setup_schema(self, schema_file: str | None = None) -> None:
         sql_path = schema_file or str(Path(__file__).parent / "sql" / "retrieval_index.sql")
@@ -256,14 +256,14 @@ class PostgresRetrievalBackend:
             sensitivity, capital_pool_scope, source_type, asset_class,
             strategy_id, title, search_text, content_ref, citation_label,
             evidence_bundle_id, evidence_item_id, event_time, available_time,
-            relevance_score, embedding, metadata, version, is_active
+            relevance_score, embedding, lexical_text, metadata, version, is_active
         ) VALUES (
             %(id)s, %(record_kind)s, %(tenant_id)s, %(persona_id)s, %(workspace_id)s,
             %(environment_scope)s, %(access_scope)s, %(license_scope)s, %(role_scope)s,
             %(sensitivity)s, %(capital_pool_scope)s, %(source_type)s, %(asset_class)s,
             %(strategy_id)s, %(title)s, %(search_text)s, %(content_ref)s, %(citation_label)s,
             %(evidence_bundle_id)s, %(evidence_item_id)s, %(event_time)s, %(available_time)s,
-            %(relevance_score)s, %(embedding)s, %(metadata)s, %(version)s, %(is_active)s
+            %(relevance_score)s, %(embedding)s, %(lexical_text)s, %(metadata)s, %(version)s, %(is_active)s
         )
         ON CONFLICT (tenant_id, id) DO UPDATE SET
             record_kind = EXCLUDED.record_kind,
@@ -280,6 +280,7 @@ class PostgresRetrievalBackend:
             strategy_id = EXCLUDED.strategy_id,
             title = EXCLUDED.title,
             search_text = EXCLUDED.search_text,
+            lexical_text = EXCLUDED.lexical_text,
             content_ref = EXCLUDED.content_ref,
             citation_label = EXCLUDED.citation_label,
             evidence_bundle_id = EXCLUDED.evidence_bundle_id,
@@ -319,6 +320,7 @@ class PostgresRetrievalBackend:
                         "strategy_id": rec.strategy_id,
                         "title": rec.title,
                         "search_text": rec.search_text,
+                        "lexical_text": lexical_text(f"{rec.title} {rec.search_text}"),
                         "content_ref": rec.content_ref,
                         "citation_label": rec.citation_label,
                         "evidence_bundle_id": rec.evidence_bundle_id,
