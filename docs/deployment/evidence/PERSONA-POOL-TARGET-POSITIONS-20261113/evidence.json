@@ -1,6 +1,6 @@
 {
   "task_id": "PERSONA-POOL-TARGET-POSITIONS-20261113",
-  "owner": "Codex",
+  "owner": "Codex2",
   "reviewer": "Claude",
   "recorded_at": "2026-11-13",
   "source_status": "implemented_direction_authorized_pending_exact_head_review",
@@ -260,7 +260,7 @@
     "branch": "task/PERSONA-POOL-TARGET-POSITIONS-20261113",
     "target": "dev",
     "review_file": "docs/deployment/evidence/PERSONA-POOL-TARGET-POSITIONS-20261113/evidence.json",
-    "state": "provenance_resolved_preparing_exact_head_review",
+    "state": "current_base_validated_ready_for_exact_head_review",
     "pr": 7303,
     "integration": "not_merged_current_head_requires_independent_review"
   },
@@ -268,5 +268,35 @@
     "method": "Read only the two identified primary JSONL records; confirm assistant proposal, human reply 好, timestamps and parent UUID linkage; compute SHA-256 of each original JSONL line including newline",
     "exit_status": 0,
     "result": "Verified the approved direction without expanding it into numerical authority; prior bounded lookup did not cover this decision"
+  },
+  "current_base_validation": {
+    "actor": "Codex2",
+    "validated_source_commit": "c40309984ee59208f3c81ecb62f293236d651e12",
+    "base_sha": "882902724d10954ed6a4590a1bbae24bc3dc869d",
+    "checks": [
+      {
+        "command": "timeout 300 /tmp/persona-portfolio-venv/bin/python -m pytest services/registry/test_portfolio_envelope.py services/registry/test_strategy_artifact.py services/registry/test_candidate_pool.py services/execution/lean_runtime/test_expression_policy.py services/execution/lean_runtime/test_expression_replay.py services/execution/lean_runtime/test_expression_inputs.py services/execution/lean_runtime/test_member_virtual_book.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_paper_runtime.py services/execution/lean_runtime/test_current_artifact_signal.py services/execution/lean_runtime/test_portfolio_target_positions.py -q --tb=short --show-capture=no",
+        "exit_status": 0,
+        "result": "422 passed; 63 subtests passed; 157.67 seconds",
+        "scope": "Fresh composed regression on current dev; terminal output collected with exit status 0",
+        "log": "/tmp/target-positions-codex2-core.log",
+        "log_sha256": "275b844babedfd5687591e508a4202e178e2d0468962729d1674331c999cd222"
+      },
+      {
+        "command": "timeout 300 /tmp/persona-portfolio-venv/bin/python -m pytest services/research/vectorbt/test_adapter.py services/research/tests/test_pool_admission.py services/research/tests/test_portfolio_target_parity.py services/research/tests/test_portfolio_envelope_parity.py services/research/tests/test_candidate_pool_parity.py services/control-plane/bff/test_persona_pool_publisher.py services/evolution/test_program_qualification.py -q --tb=short --show-capture=no",
+        "exit_status": 0,
+        "result": "124 passed; 5 subtests passed; 227.00 seconds",
+        "scope": "Fresh composed regression on current dev; terminal output collected with exit status 0",
+        "log": "/tmp/target-positions-codex2-research.log",
+        "log_sha256": "0d02efd9bbbff2c0e712df784e9ef92756b384b4ffe667f699c8dd9f12b0403d"
+      }
+    ],
+    "legacy_equivalence": {
+      "command": "PYTHONPATH=. /tmp/persona-portfolio-venv/bin/python -c 'import json; from pathlib import Path; manifest=json.loads(Path(\"docs/deployment/evidence/PERSONA-POOL-TARGET-POSITIONS-20261113/evidence.json\").read_text()); exec(manifest[\"legacy_equivalence\"][\"probe_source\"])'",
+      "baseline": "882902724d10954ed6a4590a1bbae24bc3dc869d",
+      "result": "12 byte-identical complete serialized standalone/singleton decisions",
+      "exit_status": 0
+    },
+    "authority": "Owner verification only; historical technical approval does not approve the refreshed head. Independent Claude exact-head review and supervisor integration remain required."
   }
 }
