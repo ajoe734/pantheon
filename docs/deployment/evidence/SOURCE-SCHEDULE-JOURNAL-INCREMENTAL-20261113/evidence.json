@@ -1,0 +1,268 @@
+{
+  "task_id": "SOURCE-SCHEDULE-JOURNAL-INCREMENTAL-20261113",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "delivery_status": "source_ready_for_independent_review",
+  "review_decision": "pending_independent_Codex2_review",
+  "base_commit": "3ed0ea555b07ed8569ea005bc2a27716a31c9371",
+  "scope": {
+    "owned_layer": "JsonlIngestScheduleStore incremental replay under its existing exclusive sidecar file lock",
+    "changed": [
+      "services/source_ingestion/scheduler.py",
+      "services/source_ingestion/tests/test_ingest_schedule_incremental_replay.py",
+      "docs/deployment/evidence/SOURCE-SCHEDULE-JOURNAL-INCREMENTAL-20261113/evidence.json"
+    ],
+    "unchanged": [
+      "BFF source and data-sources read budget",
+      "JSONL envelope and payload formats",
+      "LatestMarketSnapshotStore",
+      "endpoints, settings, compaction, rotation and persistence technology"
+    ]
+  },
+  "implementation": [
+    "Track the byte offset and physical line number of the last successfully consumed newline-terminated row; seek directly there on same-inode growth.",
+    "All ten write entry points catch up changes before mutating under the unchanged exclusive_file_lock. Own durable appends advance stat identity, offset and line number before releasing that lock, so the following read and no-op poll do no journal reads.",
+    "Explicit reload/startup, missing/replaced inode, observed shrink and same-size mtime changes rebuild all four projections. Only explicit reload/startup invokes the existing stranded-processing-receipt recovery.",
+    "Decode complete rows after checking the binary newline boundary. An incomplete tail, including partial UTF-8, stays unconsumed until completed. A local append refuses an incomplete tail instead of corrupting the next JSONL row.",
+    "Complete malformed rows retain the error and byte/physical-line position on retry. Existing per-record deserializers, fsync and directory durability semantics are retained."
+  ],
+  "acceptance_evidence": {
+    "AC1": "Instrumented Path.open/readline/seek verifies exact external tail bytes and zero journal reads after own writes and unchanged no-op polls.",
+    "AC2": "Two independent stores alternate run, large/ordinary receipt, watermark and queued/running/done frontier appends. Every round compares all four serialized maps against each other and a fresh full replay.",
+    "AC3": "Separate parameterized replacement, same-inode shrink, same-size rewrite and deletion cases assert full reset at offset zero; startup and existing-reader partial UTF-8 tests preserve the complete prefix until the final newline arrives.",
+    "AC4": "Startup recovery remains durable and idempotent, ordinary catch-up leaves processing receipts alone. A spawned process is blocked by the existing file lock and claims the frontier exactly once. Complete source-ingestion suite: 1896 passed, 14 skipped, no failures.",
+    "AC5": "46.43 MB realistic journal, 22 registered connectors, actual local HTTP GET /api/source-ingest/registry after every 594529-byte external append; five samples with two-second pauses. Registry p50 30.95 ms versus baseline 1017.49 ms.",
+    "AC6": "Only scheduler.py changes production code; no BFF, receipt format, endpoint, cache layer or new setting changes.",
+    "AC7": "No existing test file was changed or deleted. New-test development corrected an expected seek count from 10 to 5 because only the reader needs to catch up the writer, and extended the partial-line test to a nonempty consumed prefix."
+  },
+  "fixture": {
+    "path": "services/source_ingestion/tests/fixtures/hosted_registry_20261112.json",
+    "sha256": "01104cfb18918d5ef95b394219507f2ae7b74c9b44b3782930bbbf8a67abb1e2",
+    "provenance": "Existing committed complete registry capture; no hosted access performed for this task.",
+    "shape": "The four per-type counts in the brief total 14234 rows. The generated journal uses those exact counts, five complete captured Taiwan official receipts with 96 snapshots each, and 3197 complete captured TAIFEX receipts (~10 KB each); no padding blobs. Snapshots retain calendar_evidence, closes and lineage.",
+    "registered_connectors": "Seven captured connector definitions plus fifteen additional registered identities using those definitions. Registry router, static generators, freshness logic and receipt projection are production code with no mocks.",
+    "boundary": "Functional journal replay/registry timing fixture, not a replica of hosted source records, databases, VM contention or end-to-end BFF latency."
+  },
+  "benchmark": {
+    "results": {
+      "fixture_sha256": "01104cfb18918d5ef95b394219507f2ae7b74c9b44b3782930bbbf8a67abb1e2",
+      "python": "3.12.3",
+      "platform": "Linux-7.0.0-1014-gcp-x86_64-with-glibc2.39",
+      "cpu_count": 12,
+      "variants": {
+        "before": {
+          "initial_journal_bytes": 46430489,
+          "row_counts": {
+            "ingest_run": 4740,
+            "ingest_receipt": 3202,
+            "crawl_frontier_item": 4755,
+            "source_watermark": 1537
+          },
+          "row_bytes": {
+            "ingest_run": 6684980,
+            "ingest_receipt": 36451629,
+            "crawl_frontier_item": 2794355,
+            "source_watermark": 499525
+          },
+          "final_journal_bytes": 49403134,
+          "samples": 5,
+          "pause_before_each_append_seconds": 2,
+          "append_bytes_per_sample": 594529,
+          "idle_poll_wall_ms": [
+            1120.1174599991646,
+            975.747599004535,
+            974.7976820217445,
+            955.761449993588,
+            1045.2478670049459
+          ],
+          "idle_poll_cpu_ms": [
+            1119.9521019999993,
+            975.5724640000026,
+            974.271047000002,
+            955.406158999999,
+            1044.8562159999994
+          ],
+          "idle_poll_p50_ms": 975.747599004535,
+          "registry_wall_ms": [
+            1750.975117989583,
+            1017.4888249894138,
+            991.276847984409,
+            1023.2832699839491,
+            997.1857030177489
+          ],
+          "registry_cpu_ms": [
+            1750.764544,
+            1017.2724669999998,
+            991.2357489999995,
+            1023.3096489999998,
+            997.3472499999989
+          ],
+          "registry_p50_ms": 1017.4888249894138,
+          "registry_cpu_p50_ms": 1017.2724669999998,
+          "write_wall_ms": [
+            1083.9939870056696,
+            1039.2309360031504,
+            1271.9833029841539,
+            1139.5654719963204,
+            1019.4382730114739
+          ],
+          "write_cpu_ms": [
+            992.5316340000005,
+            1034.2059310000006,
+            1267.9125510000001,
+            1135.450371000001,
+            1012.9495760000004
+          ],
+          "write_p50_ms": 1083.9939870056696,
+          "write_cpu_p50_ms": 1034.2059310000006
+        },
+        "after": {
+          "initial_journal_bytes": 46430489,
+          "row_counts": {
+            "ingest_run": 4740,
+            "ingest_receipt": 3202,
+            "crawl_frontier_item": 4755,
+            "source_watermark": 1537
+          },
+          "row_bytes": {
+            "ingest_run": 6684980,
+            "ingest_receipt": 36451629,
+            "crawl_frontier_item": 2794355,
+            "source_watermark": 499525
+          },
+          "final_journal_bytes": 49403134,
+          "samples": 5,
+          "pause_before_each_append_seconds": 2,
+          "append_bytes_per_sample": 594529,
+          "idle_poll_wall_ms": [
+            2.208855003118515,
+            1.593602995853871,
+            1.4143640000838786,
+            1.359100016998127,
+            1.3172610197216272
+          ],
+          "idle_poll_cpu_ms": [
+            2.211671000001303,
+            1.5974049999982753,
+            1.4181780000015465,
+            1.3633759999969186,
+            1.3206150000009131
+          ],
+          "idle_poll_p50_ms": 1.4143640000838786,
+          "registry_wall_ms": [
+            36.7699220078066,
+            30.954315996496007,
+            28.760409011738375,
+            31.7352729907725,
+            29.880676011089236
+          ],
+          "registry_cpu_ms": [
+            37.04111000000054,
+            31.141678000000894,
+            28.922729000001368,
+            31.956029999999913,
+            30.129749000000317
+          ],
+          "registry_p50_ms": 30.954315996496007,
+          "registry_cpu_p50_ms": 31.141678000000894,
+          "write_wall_ms": [
+            135.52767402143218,
+            11.332194990245625,
+            17.215137981111184,
+            16.39254900510423,
+            15.937843010760844
+          ],
+          "write_cpu_ms": [
+            43.83581300000117,
+            7.32996099999994,
+            12.98310700000016,
+            12.140528999999844,
+            10.659995000001032
+          ],
+          "write_p50_ms": 16.39254900510423,
+          "write_cpu_p50_ms": 12.140528999999844
+        }
+      }
+    },
+    "method": "Before class is the unmodified scheduler.py loaded from the exact base commit. Each variant constructs a separate identical journal using build_real_shape_journal, then runs the same production registry router and measure_registry helper. Wall: perf_counter; process CPU including HTTP worker threads: process_time. First sample included; no timing samples discarded. Idle-poll results include frontier scan but no append. Local results do not prove hosted acceptance.",
+    "command": ".venv-pantheon/bin/python3 /tmp/source-schedule-benchmark.py",
+    "baseline_extraction_command": "git show 3ed0ea555b07ed8569ea005bc2a27716a31c9371:services/source_ingestion/scheduler.py > /tmp/source-schedule-baseline.py",
+    "reproducer_python": "import importlib.util\nimport json\nimport platform\nimport tempfile\nfrom hashlib import sha256\nfrom pathlib import Path\nfrom statistics import median\nfrom time import perf_counter, process_time\n\nfrom services.source_ingestion.tests.test_ingest_schedule_incremental_replay import registry_on_journal, measure_registry\nfrom services.source_ingestion.scheduler import JsonlIngestScheduleStore\n\nspec = importlib.util.spec_from_file_location('services.source_ingestion._schedule_baseline', '/tmp/source-schedule-baseline.py')\nimport sys\nmodule = importlib.util.module_from_spec(spec)\nsys.modules[spec.name] = module\nspec.loader.exec_module(module)\nfixture = Path('services/source_ingestion/tests/fixtures/hosted_registry_20261112.json')\ncaptured = json.loads(fixture.read_bytes())\nresults = {'fixture_sha256': sha256(fixture.read_bytes()).hexdigest(), 'python': platform.python_version(),\n           'platform': platform.platform(), 'cpu_count': __import__('os').cpu_count(), 'variants': {}}\nwith tempfile.TemporaryDirectory(prefix='schedule-benchmark-') as temp:\n    for name, cls in [('before', module.JsonlIngestScheduleStore), ('after', JsonlIngestScheduleStore)]:\n        runtime, client, writer = registry_on_journal(Path(temp) / name, captured, cls)\n        path = runtime.SCHEDULE_STORE_PATH\n        counts, sizes = {}, {}\n        with path.open('rb') as handle:\n            for line in handle:\n                kind = json.loads(line)['record_type']\n                counts[kind] = counts.get(kind, 0) + 1\n                sizes[kind] = sizes.get(kind, 0) + len(line)\n        initial_size = path.stat().st_size\n        with client:\n            metrics = measure_registry(runtime, client, writer, captured, samples=5, interval=2)\n        idle_wall, idle_cpu = [], []\n        for _ in range(5):\n            start, cpu_start = perf_counter(), process_time()\n            assert writer.claim_due_frontier(limit=1) == []\n            idle_wall.append((perf_counter() - start) * 1000)\n            idle_cpu.append((process_time() - cpu_start) * 1000)\n        results['variants'][name] = {'initial_journal_bytes': initial_size, 'row_counts': counts,\n                                   'row_bytes': sizes, 'final_journal_bytes': path.stat().st_size,\n                                   'samples': 5, 'pause_before_each_append_seconds': 2,\n                                   'append_bytes_per_sample': (path.stat().st_size - initial_size) // 5,\n                                   'idle_poll_wall_ms': idle_wall, 'idle_poll_cpu_ms': idle_cpu,\n                                   'idle_poll_p50_ms': median(idle_wall), **metrics}\n        Path('/tmp/source-schedule-benchmark-results.json').write_text(json.dumps(results, indent=2) + '\\n')\n        print(name, json.dumps(results['variants'][name]), flush=True)\nassert results['variants']['after']['registry_p50_ms'] < 300\n"
+  },
+  "latest_market_snapshot_store_audit": {
+    "path": "services/source_ingestion/requirement_state.py",
+    "finding": "LatestMarketSnapshotStore.reload parses the entire file with _market_snapshots_from_lines. append_normalized_records and withdraw_sessions seek(0) and parse the entire file under their existing flock before writing. get reads the existing in-memory projection. It has no remembered byte offset and does share the full-replay-before-write pattern; not an identical change-detected replay on every get.",
+    "code_references": [
+      "LatestMarketSnapshotStore.reload:883",
+      "LatestMarketSnapshotStore.withdraw_sessions:948",
+      "LatestMarketSnapshotStore.append_normalized_records:1193"
+    ],
+    "action": "Read-only source audit only; this store and its tests are unchanged."
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped Python 3.12.3 distribution and pytest imports verified."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_ingest_schedule_incremental_replay.py -s",
+      "exit_code": 0,
+      "result": "11 passed, 1 existing Starlette deprecation warning in 7.92s; final strengthened partial-prefix case included.",
+      "output": "/tmp/source-schedule-focused-final.log"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 /tmp/source-schedule-benchmark.py",
+      "exit_code": 0,
+      "result": "Both variants completed; five timed registry reads and five idle polls each; after p50 <300 ms.",
+      "output": "/tmp/source-schedule-benchmark-results.json"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pip install 'pyarrow>=15,<30'",
+      "exit_code": 0,
+      "result": "Installed declared source-ingestion dependency pyarrow 26.0.1 only into this checkout-scoped venv; shared interpreter, dependency declarations and repo files unchanged."
+    },
+    {
+      "command": "timeout --signal=INT 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_scheduler.py services/source_ingestion/tests/test_ingest_schedule_incremental_replay.py --tb=short",
+      "exit_code": 0,
+      "result": "30 passed, 1 existing Starlette deprecation warning in 12.74s after dependency provisioning.",
+      "output": "/tmp/source-schedule-targeted-provisioned.log"
+    },
+    {
+      "command": "timeout --signal=INT 720 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion --tb=short",
+      "exit_code": 0,
+      "result": "1896 passed, 14 skipped, 15 existing deprecation warnings in 662.03s (0:11:02). Includes all existing scheduler/source-ingestion cases and the new replay tests; terminal output collected.",
+      "output": "/tmp/source-schedule-suite-provisioned.log"
+    },
+    {
+      "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --head HEAD; JSON parse and changed-path scope inspection",
+      "exit_code": 0,
+      "result": "Clean diff; only the three declared artifacts changed; evidence remains below 400 added lines. Production +78/-54, tests +358/-0; no original tests changed."
+    }
+  ],
+  "hosted_acceptance": {
+    "status": "not_performed_in_this_source_task",
+    "owner_task": "STRAT-DATASRC-HOSTED-ACCEPT-20261110",
+    "boundary": "No VM, SSH, operator key, provider or hosted endpoint access. No deployment or hosted readiness claim."
+  },
+  "validation_diagnostics": [
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion",
+      "exit_code": 124,
+      "result": "Timeout after 240 seconds; incomplete, not passed. Nine failures observed before timeout; isolated below.",
+      "output": "/tmp/source-schedule-suite.log"
+    },
+    {
+      "command": "timeout --signal=INT 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py --tb=short",
+      "exit_code": 1,
+      "result": "9 failed, 8 passed in 1.63s; all nine caused by missing declared pyarrow dependency. No scheduler/test source change made to address these.",
+      "output": "/tmp/source-schedule-failures.log"
+    },
+    {
+      "command": "timeout --signal=INT 720 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion --tb=short",
+      "exit_code": 2,
+      "result": "Explicitly interrupted task-owned pytest before installing missing dependency: 50 passed, 9 skipped in 42.77s; incomplete, not passed.",
+      "output": "/tmp/source-schedule-suite-complete.log"
+    }
+  ]
+}
