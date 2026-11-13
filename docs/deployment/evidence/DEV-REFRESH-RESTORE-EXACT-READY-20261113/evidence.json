@@ -3,7 +3,7 @@
   "owner": "Codex2",
   "assigned_independent_reviewer": "Claude",
   "delivery_scope": "Source and local regression tests only; no hosted success claimed",
-  "base_sha": "b01bb86562c976b39b293c8a041b4816b0212271",
+  "base_sha": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
   "anchor_commit": "ca2419849048fd5aaf94bdf4dd8b7705bebd977e",
   "source_file_sha256": {
     "scripts/deploy_nonprod_vm.sh": "e78446dd8e24d2625e5b2021ebfe54306766bd3a67a6d206c4903117765287fb",
@@ -151,6 +151,11 @@
       "command": "bash -n scripts/deploy_nonprod_vm.sh && git diff --check origin/dev...HEAD && git diff --check",
       "exit_status": 0,
       "result": "Shell syntax and scoped diff checks clean."
+    },
+    {
+      "command": "Verify all source_file_sha256 entries after merging current dev; bash -n scripts/deploy_nonprod_vm.sh; git diff --check origin/dev...HEAD",
+      "exit_status": 0,
+      "result": "All three script/test hashes unchanged; current base is contained; syntax and diff checks pass."
     }
   ],
   "preserved_baseline_workflow_failures": [
@@ -191,7 +196,12 @@
     "publication": "Rebased original task changes onto current dev, skipped duplicate original patch history, and retained original published tip as merge parent for a normal non-force push. Only the four scoped artifacts differ from dev.",
     "additional_grant": "Human/Ops 2026-11-13T03:39:35Z explicitly authorizes updating only the obsolete fallback assertion in test_collector_host_gate_steady_restore_and_refresh_guard in addition to the two diagnostic assertion changes.",
     "additional_implementation": "Replace only the fallback-specific assertion with captured-environment-missing refusal and restore_rc=1 assertions; retain every other Collector identity/allowlist and official bounded-host assertion. Production behavior and original restore/readiness tests unchanged.",
-    "final_verification": "12 affected image-pin/Collector tests and 35 focused restore/readiness/signal cases pass against current dev. All terminal outputs collected with exit status 0 before handoff."
+    "final_verification": "12 affected image-pin/Collector tests and 35 focused restore/readiness/signal cases pass against current dev. All terminal outputs collected with exit status 0 before handoff.",
+    "post_validation_base_refresh": {
+      "previous_tested_base": "b01bb86562c976b39b293c8a041b4816b0212271",
+      "admission_base": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
+      "reason": "dev advanced during validation; merged independently landed persona/BFF changes before retrying owner admission. All three scoped script/test SHA256 hashes remain unchanged; no affected behavior or fixture dependency changed."
+    }
   },
   "resolved_changed_test_failure": {
     "test": "scripts/test_deploy_nonprod_vm.py::test_collector_host_gate_steady_restore_and_refresh_guard",
