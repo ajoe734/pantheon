@@ -19,10 +19,11 @@
     "7": "services/persona/test_pool_admission_consult_integration.py runs real PersonaCycleController.consume_run daily cycles with only owner/provider HTTP faked: approve -> admitted trial member, oppose -> operator decision and no admission"
   },
   "limitations": [
+    "services/persona/test_pool_dataset_authority.py (outside this task's artifact contract) has 7 admission-cycle tests that fail until it stubs the published risk memo: after building ports add `ports.trial_admission_consultation = lambda persona, pl, cand, packet_id: {'state':'verified','memo_id':'memo-fixture','decision_id':'d','request_id':'r','pool_version':pl['pool_version']}` and `pool._verify_memo = lambda *a: MemoCheck(True)` (MemoCheck from services.persona.consult_triggers). Requires Human/Ops artifact-contract add.",
     "The consultation owner boundary and provider answers are test fixtures (FakeConsultationOwner); no hosted consultation service run is claimed.",
     "A candidate held by an operator decision stays the first fresh candidate each day (receipts repeat as already_queued) until the operator resolves it; it is not yet filtered out of candidate selection.",
     "Deployment must provide the consultation owner URL/token to the persona service; unconfigured fails closed with consultation_unavailable.",
     "hosted_behavior_claimed: false"
   ],
-  "verification": "/tmp/gfd-venv python -m pytest: test_consult_triggers, test_harness_adoption, test_pool_autonomy_cycle, test_persona_strategy_pool, test_pool_admission_consult_integration (3), test_persona_cycle_demand_integration (2), test_pool_dataset_authority, test_persona_demand_discovery, test_persona_cycle_controller all passed"
+  "verification": "/tmp/gfd-venv python -m pytest: test_consult_triggers, test_harness_adoption, test_pool_autonomy_cycle, test_persona_strategy_pool, test_pool_admission_consult_integration (3), test_persona_cycle_demand_integration (2), test_persona_demand_discovery, test_persona_cycle_controller all passed"
 }
