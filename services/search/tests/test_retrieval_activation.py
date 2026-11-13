@@ -209,3 +209,128 @@ def test_absent_backend_selection_and_dsn_is_unavailable_not_jsonl(app_factory):
             assert response.headers.get("X-Retrieval-Reason") != "explicit_jsonl_fallback"
         ready = client.get("/readyz")
         assert ready.status_code != 200
+
+
+def test_pg_index_documents_fails_instead_of_writing_null_embeddings():
+    from services.search.filters import SearchCapabilityUnavailableError
+    from services.search.pg_retrieval import PostgresRetrievalBackend, RetrievalIndexRecord
+
+    engine = Mock()
+    engine.dimension = 1024
+    engine.is_ready.return_value = False
+    backend = PostgresRetrievalBackend(dsn="postgresql://unused/unused", embedding_engine=engine)
+    backend._get_connection = Mock(side_effect=AssertionError("must not write when embeddings unavailable"))
+    record = RetrievalIndexRecord(
+        id="r1", record_kind="knowledge_object", tenant_id="default", persona_id=None,
+        title="t", search_text="momentum", embedding=None,
+    )
+    with pytest.raises(SearchCapabilityUnavailableError, match="embedding_model_unavailable"):
+        backend.index_documents([record])
+    engine.embed_documents.assert_not_called()
+
+
+def test_refresh_surfaces_embedding_unavailable_as_503_then_recovers(app_factory, monkeypatch):
+    from services.search import main as search_main
+    from services.search.filters import SearchCapabilityUnavailableError
+
+    backend = Mock()
+    backend.check_health.return_value = {"status": "ok", "backend": "postgres_pgvector"}
+    real_run = search_main.IncrementalIndexPipeline.run
+    state = {"fail": True}
+
+    def run(self, **kwargs):
+        if state["fail"]:
+            raise SearchCapabilityUnavailableError("embedding_model_unavailable: not ready")
+        return real_run(self, **kwargs)
+
+    monkeypatch.setattr(search_main.IncrementalIndexPipeline, "run", run)
+    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)) as client:
+        failed = client.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"})
+        assert failed.status_code == 503
+        assert "embedding_model_unavailable" in failed.json()["detail"]
+        state["fail"] = False
+        assert client.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"}).status_code == 200
+
+
+def test_source_completion_surfaces_embedding_unavailable_as_503_then_recovers(app_factory, monkeypatch):
+    from services.search import main as search_main
+    from services.search.filters import SearchCapabilityUnavailableError
+
+    backend = Mock()
+    backend.check_health.return_value = {"status": "ok", "backend": "postgres_pgvector"}
+    real_run = search_main.IncrementalIndexPipeline.run
+    state = {"fail": True}
+
+    def run(self, **kwargs):
+        if state["fail"]:
+            raise SearchCapabilityUnavailableError("embedding_model_unavailable: not ready")
+        return real_run(self, **kwargs)
+
+    monkeypatch.setattr(search_main.IncrementalIndexPipeline, "run", run)
+    body = {"ingest_run_id": "ingest-503-1", "materialize": False}
+    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)) as client:
+        failed = client.post("/api/search/index/source-completions", json=body)
+        assert failed.status_code == 503
+        assert "embedding_model_unavailable" in failed.json()["detail"]
+        state["fail"] = False
+        assert client.post("/api/search/index/source-completions", json=body).status_code == 200
+
+
+def test_concurrent_refresh_callers_never_run_the_pipeline_concurrently(app_factory, monkeypatch):
+    # Retried callers (timed-out scheduler restarts, ingest completion) must not start duplicate
+    # embedding runs over the same unrecorded objects while an earlier run is still in flight.
+    import threading
+    import time
+    from services.search import main as search_main
+
+    backend = Mock()
+    backend.check_health.return_value = {"status": "ok", "backend": "postgres_pgvector"}
+    real_run = search_main.IncrementalIndexPipeline.run
+    state = {"active": 0, "max_active": 0, "runs": 0}
+    guard = threading.Lock()
+
+    def run(self, **kwargs):
+        with guard:
+            state["active"] += 1
+            state["runs"] += 1
+            state["max_active"] = max(state["max_active"], state["active"])
+        time.sleep(0.3)
+        try:
+            return real_run(self, **kwargs)
+        finally:
+            with guard:
+                state["active"] -= 1
+
+    monkeypatch.setattr(search_main.IncrementalIndexPipeline, "run", run)
+    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)) as client:
+        statuses = []
+        def call():
+            statuses.append(client.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"}).status_code)
+        threads = [threading.Thread(target=call) for _ in range(3)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+    assert statuses == [200, 200, 200]
+    assert state["runs"] == 3 and state["max_active"] == 1
+
+
+def test_pg_indexed_document_states_honor_inactive_and_tenant():
+    """Real SQL predicate: tombstoned rows report False, other tenants stay invisible."""
+    from services.search.pg_retrieval import PostgresRetrievalBackend, RetrievalIndexRecord
+
+    dsn = os.getenv("PANTHEON_RETRIEVAL_INTEGRATION_DSN")
+    if not dsn:
+        pytest.skip("Set PANTHEON_RETRIEVAL_INTEGRATION_DSN for isolated pgvector integration")
+    engine = Mock(dimension=1024)
+    engine.is_ready.return_value = True
+    backend = PostgresRetrievalBackend(dsn, embedding_engine=engine)
+    backend.setup_schema()
+    vector = [1.0] + [0.0] * 1023
+    mk = lambda i, t, active: RetrievalIndexRecord(
+        id=i, record_kind="knowledge_object", tenant_id=t, title=i, search_text=i, embedding=vector, is_active=active)
+    try:
+        backend.upsert_documents([mk("st-act", "st-a", True), mk("st-off", "st-a", False), mk("st-act", "st-b", True)])
+        assert backend.indexed_document_states("st-a", ["st-act", "st-off", "st-none"]) == {"st-act": True, "st-off": False}
+        assert backend.indexed_document_states("st-c", ["st-act", "st-off"]) == {}
+    finally:
+        for t, i in (("st-a", "st-act"), ("st-a", "st-off"), ("st-b", "st-act")):
+            backend.delete_document(i, tenant_id=t, hard=True)

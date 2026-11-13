@@ -208,10 +208,13 @@ class PostgresRetrievalBackend:
         texts_to_embed = [r.search_text for r in records if r.embedding is None]
         embeddings = []
         if texts_to_embed:
-            if self.embedding_engine.is_ready():
-                embeddings = self.embedding_engine.embed_documents(texts_to_embed)
-            else:
-                embeddings = [None] * len(texts_to_embed)
+            if not self.embedding_engine.is_ready():
+                # Never upsert null embeddings into the hybrid index: that would let the
+                # pipeline checkpoint and scheduler report a healthy tick over an unsearchable index.
+                raise SearchCapabilityUnavailableError(
+                    "embedding_model_unavailable: local embedding engine is not ready; index not written"
+                )
+            embeddings = self.embedding_engine.embed_documents(texts_to_embed)
 
         emb_idx = 0
         final_records = []
@@ -345,6 +348,26 @@ class PostgresRetrievalBackend:
                     cur.execute(insert_sql, params)
             conn.commit()
         return len(records)
+
+    def indexed_document_states(self, tenant_id: str, document_ids: Sequence[str]) -> dict[str, bool]:
+        """Return {id: is_active} for ids already indexed (embedded) for tenant_id (RLS-scoped).
+
+        Inactive rows (tombstones) are reported as False so callers can tell a deliberately
+        inactive canonical record apart from a missing one.
+        """
+        tenant = tenant_id or "default"
+        ids = list(document_ids)
+        if not ids:
+            return {}
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant,))
+                cur.execute(
+                    "SELECT id, is_active FROM search_retrieval_index "
+                    "WHERE tenant_id = %s AND (NOT is_active OR embedding IS NOT NULL) AND id = ANY(%s)",
+                    (tenant, ids),
+                )
+                return {row["id"]: bool(row["is_active"]) for row in cur.fetchall()}
 
     def delete_document(
         self,
