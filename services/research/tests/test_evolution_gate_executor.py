@@ -92,9 +92,6 @@ def world(research, monkeypatch):
         def get_family_trial_count(self, family):
             return self.store.get(family)
 
-        def get_family_total_trial_count(self, family):
-            return self.store.family_total(family)
-
         def evaluate_candidate(self, request):
             fam = request["family"]
             self.store.increment(fam)

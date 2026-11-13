@@ -2388,7 +2388,9 @@ class _ProofCapturingGate:
         return self._gate.get_family_trial_count(family_id)
 
     def get_family_total_trial_count(self, family_id: str) -> int:
-        return self._gate.get_family_total_trial_count(family_id)
+        # The real gate always provides the aggregate; minimal gate doubles fall back to the bare key.
+        total = getattr(self._gate, "get_family_total_trial_count", None)
+        return total(family_id) if callable(total) else self._gate.get_family_trial_count(family_id)
 
     def record_family_trial(self, family_id: str) -> int:
         record = getattr(self._gate, "record_family_trial", None)
