@@ -233,4 +233,18 @@ def test_deployed_consultation_supplies_case_file_owners():
     owners = wf.decision_case.Owners.from_env(env)
     assert all(getattr(owners, name) is not None for name in (
         "registry", "pool", "research", "telemetry", "memory", "search"))
-    assert env["PANTHEON_MEMORY_ACTOR_ID"] and env["PANTHEON_MEMORY_ACTOR_ROLES"]
+    # Unset deployment credentials/context must stay empty, never become
+    # a local service token or a privileged role.
+    assert env["PANTHEON_PERSONA_SERVICE_TOKEN"] == "${PANTHEON_PERSONA_SERVICE_TOKEN:-}"
+    assert env["PANTHEON_MEMORY_ACTOR_ID"] == "${PANTHEON_MEMORY_ACTOR_ID:-}"
+    assert env["PANTHEON_MEMORY_ACTOR_ROLES"] == "${PANTHEON_MEMORY_ACTOR_ROLES:-}"
+
+
+@pytest.mark.parametrize("key", ["PANTHEON_MEMORY_ACTOR_ID", "PANTHEON_MEMORY_ACTOR_ROLES"])
+def test_case_composition_requires_explicit_caller_context(stack, monkeypatch, key):
+    monkeypatch.delenv(key)
+    with pytest.raises(wf.WorkflowBlocked, match="caller_context_missing"):
+        wf._compose_panel_case_file(_config(stack, "http://unused"), {
+            "request_id": "missing-context", "from_persona_id": INITIATOR,
+            "metadata": {"panel": {"touches": []}},
+        }, {"type": "trial_admission", "id": "reg-trial"})

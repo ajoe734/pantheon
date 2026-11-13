@@ -823,9 +823,9 @@ def _compose_panel_case_file(
                 raise WorkflowBlocked("panel_case_file: registry tenant binding mismatch")
             families.setdefault(str(entry["strategy_id"]), []).append(entry)
         caller = decision_case.Caller(
-            actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", CONSUMER_NAME),
+            actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "").strip(),
             actor_roles=tuple(x.strip() for x in os.getenv(
-                "PANTHEON_MEMORY_ACTOR_ROLES", "operator").split(",") if x.strip()),
+                "PANTHEON_MEMORY_ACTOR_ROLES", "").split(",") if x.strip()),
             session_id=f"consult-{request['request_id']}",
             # Service caller: the shared file may NEVER include private memory.
             persona_id="")

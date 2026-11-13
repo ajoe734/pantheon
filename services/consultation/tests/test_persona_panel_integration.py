@@ -25,7 +25,7 @@ from typing import Any, Iterator
 
 import pytest
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 
 from services.consultation import main as consultation_main
 from services.consultation.client import ConsultationServiceClient
@@ -161,6 +161,8 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
     monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
     monkeypatch.delenv("PANTHEON_MEMORY_AUTHZ_MODE", raising=False)
     monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", _make_jwt(roles=["memory-writer"], tenant_id=TENANT))
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "memory-operator-1")
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "memory-writer")
     monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "institutional.json"))
     monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "persona.json"))
     monkeypatch.setenv("PANTHEON_MEMORY_DATA_DIR", str(tmp_path / "memory"))
@@ -194,8 +196,8 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
     facts = FastAPI()
 
     @facts.get("/api/registry/entries/{ref}")
-    def registry_entry(ref: str):
-        return {"registry_id": ref, "tenant_id": TENANT, "strategy_id": "momentum",
+    def registry_entry(ref: str, tenant_id: str = Header(alias="X-Tenant-Id")):
+        return {"registry_id": ref, "tenant_id": tenant_id, "strategy_id": "momentum",
                 "artifact_type": "strategy_spec", "version": "1", "artifact_state": "candidate",
                 "metadata": {"underlyings": ["2330"], "instrument_class": "equity"},
                 "evaluation_summary": {"sharpe": 1.1}}
