@@ -1,0 +1,45 @@
+# Evaluation stack for the Hindsight comparison.  Dev host only.
+# Not referenced by docker-compose.yml, deploy or release scripts.
+# Start/teardown: see README.md (use start_eval.sh, which checks free disk).
+name: pantheon-hindsight-eval
+services:
+  pg:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    image: pantheon-hindsight-eval-pg:pgroonga-pgvector
+    environment:
+      POSTGRES_USER: hindsight
+      POSTGRES_PASSWORD: ${HINDSIGHT_EVAL_PG_PASSWORD:?set HINDSIGHT_EVAL_PG_PASSWORD}
+      POSTGRES_DB: hindsight
+    volumes:
+      - eval_pg:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${HINDSIGHT_EVAL_PG_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hindsight -d hindsight"]
+      interval: 5s
+      retries: 20
+  hindsight:
+    # index digest of ghcr.io/vectorize-io/hindsight-api:latest resolved 2026-11-13
+    image: ghcr.io/vectorize-io/hindsight-api@sha256:662109ece429871a81e036427fb93fbb09ba9dc4b01d320d356f114c0e1aedd8
+    depends_on:
+      pg:
+        condition: service_healthy
+    environment:
+      HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:${HINDSIGHT_EVAL_PG_PASSWORD}@pg:5432/hindsight
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_EVAL_LLM_PROVIDER:-openai}
+      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_EVAL_LLM_MODEL:-}
+      HINDSIGHT_API_LLM_BASE_URL: ${HINDSIGHT_EVAL_LLM_BASE_URL:-}
+      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_EVAL_LLM_API_KEY:-}
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: local
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL: ${HINDSIGHT_EVAL_EMBED_MODEL:-intfloat/multilingual-e5-large}
+      HINDSIGHT_API_RERANKER_PROVIDER: local
+      HINDSIGHT_API_RERANKER_LOCAL_MODEL: ${HINDSIGHT_EVAL_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+    volumes:
+      - eval_models:/home/hindsight/.cache
+    ports:
+      - "127.0.0.1:${HINDSIGHT_EVAL_API_PORT:-58888}:8888"
+volumes:
+  eval_pg:
+  eval_models:
