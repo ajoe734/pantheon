@@ -42,7 +42,11 @@ authorization forwarding, tenant header and bounded timeout.
 Validation commands, terminal results, acceptance mapping and limits are in
 `evidence.json`. On the corrected delivery the exact direct-store regression,
 all 39 architecture tests, 67 pool/owner regressions and 6 focused detail tests
-passed. Prior delivery results, including timeouts, remain recorded separately
+passed. Tenant audit completed with 140 passed and 1 existing skip. The
+existing `scripts/run-acceptance.sh smoke` completed with exit 0 using the
+virtualenv on PATH; its BFF smoke, baseline, bundle digests and diagnostics
+failure-path gates all passed. The initial system-Python/PEP 668 failure is
+disclosed separately. Prior delivery results, including timeouts, remain recorded separately
 and are not used as evidence for the corrected delivery.
 
 The unrelated route-count assertion expects 49 routes while the unchanged

@@ -120,6 +120,16 @@
       "command": "timeout 300s env PYTHON=/tmp/bffvenv/bin/python ./scripts/run-acceptance.sh smoke",
       "exit_code": 1,
       "result": "stage0-validate passed; baseline subprocess python3 resolved to system interpreter and pip refused externally-managed environment (PEP 668). Corrected PATH rerun recorded separately."
+    },
+    {
+      "command": "timeout 600s env PATH=\"/tmp/bffvenv/bin:$PATH\" PYTHON=/tmp/bffvenv/bin/python ./scripts/run-acceptance.sh smoke",
+      "exit_code": 0,
+      "result": "Full existing Smoke invocation reached acceptance mode='smoke' complete. stage0 validate and baseline passed, including 26 BFF smoke tests, 132 deploy-tool tests (2 skips), 80 release/credential/strict-auth/trailer tests; 9 Agora bundle digest tests and 28 dev-paper diagnostics failure-path tests passed. No active command handles remain."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Passed"
     }
   ]
 }
