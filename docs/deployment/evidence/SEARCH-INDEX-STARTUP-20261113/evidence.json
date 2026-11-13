@@ -4,18 +4,20 @@
   "diagnosis": {
     "entry_point": "python -m services.search.scheduler_worker against uvicorn services.search.main:app, PANTHEON_SEARCH_BACKEND=postgres_pgvector, SEARCH_EVIDENCE_BACKEND=postgres (compose env)",
     "hosted_exception": "Root43460083439 scheduler traceback was never captured (no VM/log authority). Not claimed as proven hosted exception; the local reproduction below is the same real entry point and matches the captured symptom (scheduler exits, docker restart_count 3->5).",
-    "reproduced_cause": "WITHDRAWN / UNKNOWN. The earlier cold-model-vs-30s-boundary hypothesis is disproven for the official readyz-before-scheduler order (see review_round_3_official_order): unmodified abfb72c8c succeeds there (exit 0, 9.9s) because check_health() loads the embedding engine before readyz returns 200. The actual Root43460083439 exception and exit cause are NOT established. The startup warmup and failed-tick observability are hardening only, not a reproduced repair. Needs Ops-retained scheduler stderr/traceback, exit code/restart evidence and runtime settings.",
+    "reproduced_cause": "SUPPORTED, not proven as the hosted exception: refresh work scales with unrecorded objects, and local CPU e5-large embedding costs ~1.85s/doc (2 CPUs, 300-char docs). Any refresh with more than ~15 new/changed objects (e.g. the 50-increment ingest_completion at 16:34:23) outlives the unchanged 30s request boundary; the unmodified scheduler has no handler, so urllib TimeoutError exits it, docker restarts it ~4s later (30s+4s = the ~34s restart cadence in the retained logs), and each restart's refresh starts ANOTHER server-side run over the same objects because the checkpoint is only recorded after index_documents finishes. Duplicate concurrent embeds starve CPU so no run finishes. Historical stderr/exit code/effective overrides remain irretrievable and are not claimed.",
     "reproduction": {
       "setup": "pgvector/pgvector:0.8.0-pg16 (repo sql schema) + postgres:16 with source_ingest.source_evidence loaded with 3 canonical fixtures (12 records, metadata.tenant_id=default), search image pantheon-search-r2-test:local with worktree mounted, search-svc docker --cpus 0.5, cold (empty data volume, empty index table)",
       "pre_fix": "unmodified base scheduler_worker (abfb72c8c) with MAX_TICKS=1: TimeoutError: timed out after 30.97s, exit nonzero (a 1-CPU run passed: cause is cold cost vs 30s boundary)",
       "readyz_cold_timing": "first GET /readyz on cold service took 23.4s (default cpus)",
       "note": "Pre-fix result applies only to starting the scheduler against a not-yet-ready service, which is not the official order."
     },
-    "superseded_hypothesis": "On a cold search-svc the embedding model integrity hashing + ONNX load (LocalEmbeddingEngine.is_ready) was paid lazily by the first request (readyz probe or the scheduler's first /api/search/index/refresh). On a CPU-limited cold start this exceeds the scheduler's 30s per-request boundary, so urlopen raised TimeoutError, main() had no handler, the process exited and docker restart:unless-stopped looped it. Also the compose readyz healthcheck has a 5s timeout and hit the same cold cost."
+    "superseded_hypothesis": "On a cold search-svc the embedding model integrity hashing + ONNX load (LocalEmbeddingEngine.is_ready) was paid lazily by the first request (readyz probe or the scheduler's first /api/search/index/refresh). On a CPU-limited cold start this exceeds the scheduler's 30s per-request boundary, so urlopen raised TimeoutError, main() had no handler, the process exited and docker restart:unless-stopped looped it. Also the compose readyz healthcheck has a 5s timeout and hit the same cold cost.",
+    "withdrawn_hypothesis": "Cold-model-vs-30s at first tick (official readyz-before-scheduler order) remains disproven; startup warmup removed."
   },
   "change": {
-    "services/search/main.py": "create_app registers a startup hook that calls retrieval_backend.embedding_engine.is_ready() so integrity+load happen before traffic is accepted; failure is logged and non-fatal, readyz keeps reporting unavailable (no false health). Timeout (30s), cadence (300s), model pin, dictionaries, tenant/persona isolation, deployment gate unchanged.",
-    "services/search/scheduler_worker.py": "(previous commit) per-tick failure is printed as JSON status=failed with error_type/reason, alive file is only touched on success, loop continues at unchanged interval. Secondary observability measure, not the repair."
+    "services/search/main.py": "startup warmup REMOVED (unsupported). pipeline.run in /index/refresh and /index/source-completions now goes through one threading.Lock (single-flight) so retried/concurrent callers wait and then see the recorded checkpoint instead of re-embedding; SearchCapabilityUnavailableError -> HTTP 503 with reason. 30s boundary, 300s cadence, pins, tenant/persona isolation, deployment gate unchanged.",
+    "services/search/scheduler_worker.py": "failed tick (incl. TimeoutError/HTTP error) printed as JSON status=failed with error_type/reason; alive file touched only on success; loop continues.",
+    "services/search/pg_retrieval.py": "index_documents raises embedding_model_unavailable instead of upserting null embeddings."
   },
   "validation": {
     "post_fix_cold_first_tick": "same 0.5-CPU cold setup, UNMODIFIED base scheduler MAX_TICKS=1: exit 0 in ~11s; refresh indexed 3, materialize ok, search_retrieval_index rows=3 with embeddings=3",
@@ -66,5 +68,15 @@
       "[head-0.5cpu] starting scheduler (unmodified pre-fix worker, MAX_TICKS=1)",
       "[head-0.5cpu] scheduler exit=0 elapsed=10.612667846s"
     ]
+  },
+  "retained_state_probe": {
+    "labelled": "PROBE FIXTURE: synthetic isolated DBs probe_src/probe_retrieval in a throwaway pgvector container; 8208 canonical objects, retained pipeline checkpoint indexed_count=8158 (incremental_count=0, indexed_at 16:30:14Z) mirroring the retained scan; hybrid backend EMPTY; 50 objects newer than the checkpoint (mirrors 50 increments). Real configured offline e5-large model, real PG, real uvicorn, real scheduler entry point, 2 CPUs. Not the exact failed input (restored corpus 8477 objects).",
+    "phases_before_index_documents": "repo.reload 2.1s (32.8k evidence rows), select 50 new, documents_for/to_record ~0s: not the slow phase. materialize traverses adapter.snapshot (metadata only): not the slow phase.",
+    "embed_rate": "2 CPUs: 300 chars 1.85s/doc (50 docs ~93s); 900 chars 4.56s/doc.",
+    "prefix_abfb72c8c_restart_loop": "unmodified scheduler MAX_TICKS=1 restarted 3x with 4s gaps: each TimeoutError after 31-34s (cycle ~34-38s); server log shows 3 concurrent 'EMBED start n=50' duplicates, no checkpoint recorded, index rows 0.",
+    "postfix_continuous": "current scheduler INTERVAL=15 MAX_TICKS=14: ticks1-4 status=failed TimeoutError (observable, no exit); exactly ONE 'EMBED start n=50' (186s) ran; ticks 5-14 succeeded (refresh+materialize), alive file created only after success, exit 0, no restart; search_retrieval_index rows=50 embeddings=50.",
+    "query": "POST /api/search/query hybrid -> 200, X-Retrieval-Backend postgres_pgvector, results ko-p8184, ko-p8201, ko-p8190.",
+    "regression_test": "test_concurrent_refresh_callers_never_run_the_pipeline_concurrently fails without the lock (max_active 3) and passes with it; pytest scheduler + retrieval_activation: 22 passed, 1 skipped.",
+    "not_proven": "A checkpoint of 8158 does not prove 8158 vectors exist in the new hybrid backend: with a non-empty retained checkpoint and an empty backend, pre-existing objects are never indexed by incremental runs (force_full needed). That lives in index_pipeline.py, outside the six scoped artifacts; evidence/scope request returned rather than edited. Long single-request embedding (>30s) still fails the caller's tick by design (boundary unchanged); it now completes server-side once and the next tick records success."
   }
 }
