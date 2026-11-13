@@ -1644,6 +1644,15 @@ def mount_bff_routers(
         get_journal_write_owner=get_journal_write_owner,
     )
     app.include_router(agora_router)
+    from ..agora.committee.router import create_committee_router
+    from ..agora.memory_review.router import create_memory_review_router
+    for restored_router in (create_committee_router, create_memory_review_router):
+        app.include_router(restored_router(
+            extract_identity=_dep("_extract_identity"),
+            require_read_role=_dep("_require_read_role"),
+            require_write_role=_dep("_require_operator_role"),
+            utc_now=_dep("utc_now"),
+        ))
 
     # Attach shared instances onto app.state
     app.state.events_router = events_router
