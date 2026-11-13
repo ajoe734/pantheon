@@ -409,7 +409,7 @@ def _resolve_search_access_context(
 class SearchQueryBody(BaseModel):
     query: str = ""
     schema_version: str = "governed_search_request.v2"
-    retrieval_mode: str = "keyword"
+    retrieval_mode: str | None = None
     actor_ref: str | None = None
     role_refs: list[str] = Field(default_factory=lambda: ["researcher"])
     purpose: str = "research"
@@ -661,6 +661,18 @@ def create_app(
             retrieval_backend=retrieval_backend,
         )
 
+    def capabilities() -> dict[str, Any]:
+        result = _build_gateway(durable_repository).get_capabilities()
+        if backend_mode == "postgres_pgvector" or retrieval_backend is not None:
+            status = retrieval_status()
+            available = status.get("status") == "ok"
+            for mode in ("keyword", "full_text", "semantic", "hybrid"):
+                result[mode] = {
+                    "available": available,
+                    "ranker_version": f"postgres-{mode}-v1" if available else None,
+                }
+        return result
+
     def _materialize_index_state(
         *,
         triggered_by: str = "manual_materialize",
@@ -756,7 +768,7 @@ def create_app(
             "freshness_sla_seconds": sla_seconds,
             "durable_index_only": durable_only,
             "retrieval": retrieval_status(),
-            "capabilities": _build_gateway(durable_repository).get_capabilities(),
+            "capabilities": capabilities(),
             "source_search_posture": PRODUCTION_POSTURE.to_dict(),
             "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
         }
@@ -764,7 +776,7 @@ def create_app(
     @app.get("/api/search/capabilities")
     def search_capabilities() -> dict[str, Any]:
         """Report retrieval mode capabilities honestly."""
-        return _build_gateway(durable_repository).get_capabilities()
+        return capabilities()
 
     @app.post("/api/search/index/refresh")
     def refresh_index(
@@ -935,7 +947,7 @@ def create_app(
                 schema_version=body.schema_version,
                 request_id=body.request_id,
                 query=body.query,
-                retrieval_mode=body.retrieval_mode,
+                retrieval_mode=body.retrieval_mode or ("hybrid" if retrieval_backend is not None else "keyword"),
                 actor_ref=context.actor_ref,
                 persona_id=context.persona_id,
                 workspace_id=context.workspace_id,
@@ -958,6 +970,7 @@ def create_app(
             return {
                 **response.to_dict(),
                 "retrieval_backend": "postgres_pgvector" if retrieval_backend is not None else "jsonl",
+                "capabilities": capabilities(),
                 "index_adapter": index_adapter.snapshot().to_dict(),
                 "index_snapshot": snapshot.to_dict() if snapshot else None,
             }

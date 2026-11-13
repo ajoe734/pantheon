@@ -1,6 +1,12 @@
 -- Governed search and memory retrieval index schema with native FTS and pgvector
 CREATE EXTENSION IF NOT EXISTS vector;
 
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pantheon_retrieval') THEN
+        CREATE ROLE pantheon_retrieval NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS search_retrieval_index (
     id VARCHAR(128) NOT NULL,
     record_kind VARCHAR(64) NOT NULL,
@@ -43,7 +49,7 @@ DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'search_retrieval_index' AND column_name = 'tsv'
+        WHERE table_schema = current_schema() AND table_name = 'search_retrieval_index' AND column_name = 'tsv'
           AND generation_expression LIKE '%regexp_replace%'
     ) THEN
         ALTER TABLE search_retrieval_index DROP COLUMN tsv;
@@ -88,3 +94,5 @@ USING (
     AND current_setting('pantheon.current_tenant', true) IS NOT NULL
     AND current_setting('pantheon.current_tenant', true) != ''
 );
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON search_retrieval_index TO pantheon_retrieval;

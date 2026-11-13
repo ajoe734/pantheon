@@ -510,7 +510,8 @@ def test_required_loop_workers_includes_agora_interaction_worker() -> None:
     array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
     required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
 
-    assert len(required) == 28
+    assert len(required) == 29
+    assert "retrieval-postgres" in required
     assert "agora-interaction-worker" in required
     assert "policy-learning-svc" in required
     assert "operator-bff" in required

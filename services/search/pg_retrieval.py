@@ -134,35 +134,44 @@ class PostgresRetrievalBackend:
             "postgresql://postgres:postgres@localhost:25432/pantheon_search",
         )
         self.embedding_engine = embedding_engine or LocalEmbeddingEngine()
+        if self.embedding_engine.dimension != 1024:
+            raise SearchCapabilityUnavailableError("Selected model dimension requires an explicit retrieval schema migration")
 
-    def _get_connection(self) -> psycopg.Connection:
+    def _get_connection(self, *, schema_admin: bool = False) -> psycopg.Connection:
+        conn = None
         try:
-            conn = psycopg.connect(self.dsn, row_factory=dict_row)
-            if _PGVECTOR_AVAILABLE:
+            conn = psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5,
+                                   options="-c statement_timeout=10000")
+            if _PGVECTOR_AVAILABLE and not schema_admin:
                 pgvector.psycopg.register_vector(conn)
             with conn.cursor() as cur:
                 cur.execute("SET random_page_cost = 1.1;")
+                if not schema_admin:
+                    cur.execute("SET ROLE pantheon_retrieval")
             return conn
         except Exception as exc:
+            if conn is not None:
+                conn.close()
             raise SearchCapabilityUnavailableError("Retrieval database connection unavailable") from exc
 
     def check_health(self) -> dict[str, Any]:
         try:
+            lexical_text("")
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
                     cur.execute("SELECT extversion FROM pg_extension WHERE extname='vector'")
                     row = cur.fetchone()
                     vector_version = row["extversion"] if row else None
-                    cur.execute("SELECT count(*) as count FROM search_retrieval_index WHERE is_active=TRUE")
-                    doc_count = cur.fetchone()["count"]
+                    cur.execute("SELECT lexical_text FROM search_retrieval_index LIMIT 0")
+            embedding_ready = self.embedding_engine.is_ready()
             return {
-                "status": "ok" if vector_version and self.embedding_engine.is_ready() else "unavailable",
+                "status": "ok" if vector_version and embedding_ready else "unavailable",
                 "backend": "postgres_pgvector",
                 "pgvector_version": vector_version,
                 "vector_dimension": self.embedding_engine.dimension,
-                "document_count": doc_count,
-                "embedding_ready": self.embedding_engine.is_ready(),
+                "embedding_ready": embedding_ready,
+                "reason": None if embedding_ready else "embedding_model_unavailable",
             }
         except Exception as exc:
             return {"status": "unavailable", "backend": "postgres_pgvector", "reason": "retrieval_database_unavailable"}
@@ -173,7 +182,7 @@ class PostgresRetrievalBackend:
             return
         with open(sql_path, "r", encoding="utf-8") as f:
             sql = f.read()
-        with self._get_connection() as conn:
+        with self._get_connection(schema_admin=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
                 cur.execute("""

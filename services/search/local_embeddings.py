@@ -102,7 +102,7 @@ class LocalEmbeddingEngine:
             try:
                 cfg = json.loads(config_file.read_text(encoding="utf-8"))
                 hidden_size = cfg.get("hidden_size")
-                if hidden_size is not None and int(hidden_size) != self.dimension:
+                if hidden_size is None or int(hidden_size) != self.dimension:
                     self._verified = False
                     return False
             except Exception:
