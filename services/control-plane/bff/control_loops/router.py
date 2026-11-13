@@ -34,7 +34,7 @@ from services.control_plane.bff.models import (
     safe_redact_evidence_refs,
 )
 
-from services.control_plane.bff.case_file_view import project_packet
+from services.control_plane.bff.agora.committee.owner import project_packet
 from .service import ControlLoopsService, default_bff_error
 
 

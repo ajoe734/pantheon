@@ -45,7 +45,7 @@ class CommitteeOwnerClient:
 
     def case_file_view(self, session_id: str) -> dict:
         """Owner-persisted case file of a panel; failure is a recorded reason, never a guess."""
-        from ...case_file_view import project_panel, unavailable as no_case
+        from .owner import project_panel, unavailable_case as no_case
         try:
             transcript = self.call("GET", f"/api/consult/requests/{quote(session_id, safe='')}/transcript")
         except HTTPException as exc:
