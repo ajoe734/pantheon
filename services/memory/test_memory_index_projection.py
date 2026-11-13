@@ -243,3 +243,44 @@ def test_search_candidate_modes_and_logging_fail_closed(search_http, ready, mode
     backend.record_query.side_effect = RuntimeError("database unavailable")
     response = client.post("/api/search/query", json=body, headers=headers)
     assert response.status_code == 501 and "retrieval_query_log_unavailable" in response.text
+
+
+def test_institutional_candidates_are_revalidated_before_limit(canonical):
+    store, _ = canonical
+    valid = institution(scope="strategy_family", scope_filter="momentum")
+    entries = [replace(valid, entry_id=f"mem-{uuid.uuid4()}", tenant_id="other"),
+               replace(valid, entry_id=f"mem-{uuid.uuid4()}", scope_filter="value"),
+               replace(valid, entry_id=f"mem-{uuid.uuid4()}", content={"headline": "x", "body": "x", "tags": ["other"]}),
+               replace(valid, entry_id=f"mem-{uuid.uuid4()}", superseded_by="replacement"),
+               replace(valid, entry_id=f"mem-{uuid.uuid4()}", expires_at="2020-01-01T00:00:00Z"), valid]
+    for entry in entries:
+        store.create(entry)
+    backend = SimpleNamespace(search=lambda **kw: [SimpleNamespace(id="missing", score=1)] +
+                              [SimpleNamespace(id=e.entry_id, score=1) for e in entries] * 2)
+    hits = retrieval.retrieve_institutional_with_backend(store, backend=backend, query="風控",
+        tenant_id="projection-test", scope="strategy_family", scope_filter="momentum", tags=["risk"], limit=1)
+    assert [h.entry.entry_id for h in hits] == [valid.entry_id]
+
+
+def test_backend_configuration_never_opens_postgres_in_memory(monkeypatch):
+    monkeypatch.setattr(retrieval, "_GLOBAL_SEARCH_BACKEND", None)
+    monkeypatch.setenv("PANTHEON_SEARCH_POSTGRES_DSN", "postgresql://unused.invalid")
+    monkeypatch.delenv("PANTHEON_SEARCH_API_URL", raising=False)
+    assert retrieval.get_search_retrieval_backend() is None
+    monkeypatch.setenv("PANTHEON_SEARCH_API_URL", "http://search-svc:8098")
+    assert isinstance(retrieval.get_search_retrieval_backend(), retrieval.SearchServiceClient)
+
+
+def test_backfill_recovers_persisted_entries_after_failed_projection(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(retrieval, "get_search_retrieval_backend", lambda: None)
+    inst_path, per_path = tmp_path / "inst.json", tmp_path / "per.json"
+    inst, per = InstitutionalMemoryStore(inst_path), PersonaMemoryStore(per_path)
+    saved = inst.create(institution())
+    per.create(persona())
+    inst.archive(saved.entry_id, reason="retired")
+    assert "memory_projection_failed" in caplog.text
+    inst, per = InstitutionalMemoryStore(inst_path), PersonaMemoryStore(per_path)
+    projected = []
+    monkeypatch.setattr(retrieval, "get_search_retrieval_backend", lambda: SimpleNamespace(project=projected.append))
+    report = retrieval.backfill_memory_index(inst, per)
+    assert report["projected"] == 2 and report["tombstones"] == 1 and not report["failures"]

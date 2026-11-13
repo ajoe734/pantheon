@@ -1,0 +1,74 @@
+{
+  "task_id": "MEMORY-INDEX-PROJECTION-20261113",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "recorded_at": "2026-11-13",
+  "source_status": "implemented_pending_independent_review",
+  "review_decision": "pending_assigned_reviewer",
+  "hosted_status": "not_claimed",
+  "integration_base": "696e4579a",
+  "runtime_verified_commit": "4990d2ef1",
+  "scope": "Canonical memory lifecycle projections through existing search HTTP routes; paper only; no execution-path memory access or model call.",
+  "acceptance": [
+    {
+      "id": 1,
+      "evidence": "Store mutation hooks project institutional and persona creates, supersedes, explicit archives and expiry to search. Projection metadata carries tenant, persona/relevance scope, institutional scope/filter and source event id; inactive/expired records are tombstones. Tests exercise both store types."
+    },
+    {
+      "id": 2,
+      "evidence": "python -m services.memory.search_retrieval replays both stores including tombstones, reports processed/projected/tombstones/failures and exits 1 for failures. Repeated real-Postgres backfill preserves IDs; persisted-store restart test recovers failed projections."
+    },
+    {
+      "id": 3,
+      "evidence": "Memory HTTP asks search HTTP for IDs/scores, hydrates owner entries, then rejects missing, inactive, expired, wrong-tenant, wrong-persona, wrong-scope/filter/type/tag candidates. Consultation sessions retain persona_and_committee only. Canonical revalidation also protects fallback and stale tombstones."
+    },
+    {
+      "id": 4,
+      "evidence": "Responses expose hybrid, lexical_only or keyword_fallback plus aggregate/per-store reasons. Keyword fallback emits a warning. Search query logging fails closed and carries the real session id. HTTP tests cover hybrid/lexical modes and unavailable logs."
+    },
+    {
+      "id": 5,
+      "evidence": "test_memory_http_to_search_http_real_postgres_zh writes through memory HTTP routes, invokes search HTTP handlers through the real JSON/auth client transport, and runs real pgvector/PostgreSQL FTS. Traditional Chinese query 流動性風控 finds the institutional entry although canonical space-splitting retrieval returns no hits; persona query 流動性下單 also succeeds. Supersede/archive tombstones exclude subsequent hits."
+    }
+  ],
+  "validation": [
+    {
+      "command": "PANTHEON_SEARCH_BACKEND=jsonl SEARCH_JIEBA_DICTIONARY=/tmp/dict.txt.big PANTHEON_RETRIEVAL_INTEGRATION_DSN=<isolated-local-test-dsn> /tmp/retrieval-activation-venv/bin/python -m pytest services/memory services/search -q --tb=short",
+      "exit_status": 0,
+      "result": "278 passed, 19 skipped, 6 subtests passed; 127.40 seconds",
+      "log": "/tmp/MEMORY-INDEX-PROJECTION-20261113-regression.log"
+    },
+    {
+      "command": "SEARCH_JIEBA_DICTIONARY=/tmp/dict.txt.big PANTHEON_RETRIEVAL_INTEGRATION_DSN=<isolated-local-test-dsn> /tmp/retrieval-activation-venv/bin/python -m pytest services/memory/test_memory_index_projection.py -q --tb=short",
+      "exit_status": 0,
+      "result": "12 passed; 8.75 seconds, including three additional canonical revalidation/configuration/persistence tests after the broad run",
+      "log": "/tmp/MEMORY-INDEX-PROJECTION-20261113-projection.log"
+    },
+    {
+      "command": "docker compose --profile core config --quiet",
+      "exit_status": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0
+    }
+  ],
+  "integration_fixture": {
+    "database": "Existing local retrieval-activation-test-20261113 container, real pgvector/PostgreSQL, localhost:25432; credentials read privately from container configuration and never recorded here.",
+    "transport": "FastAPI TestClients for memory and search; urllib JSON requests are bridged to search ASGI handlers. Database queries/indexing/query logging are real. JWTs and entries are test fixtures only.",
+    "embedding": "Disabled fixture engine for real SQL test, explicitly lexical_only; separate mocked HTTP test verifies hybrid mode routing. No semantic-quality, hosted-deployment or model-evaluation claim."
+  },
+  "operational_limits": [
+    "Projection failure preserves canonical writes and emits a structured warning with entry/source event identity; replay uses the operator backfill CLI. No automatic retry daemon is introduced. Search outages can reduce recall until replay, while canonical hydration rejects stale tombstones.",
+    "Hosted activation requires the existing issuer to provision a memory-svc/system search credential with tenant/persona/workspace grants, valid expiry and matching search issuer/audience. The client supports per-request rotating credential files; memory does not mint credentials.",
+    "Expiry tombstones are emitted on active reads or explicit archive_expired/backfill, not by a new wall-clock daemon; canonical expiry is checked independently during every retrieval.",
+    "The broad regression includes 19 skipped optional tests; the new real-Postgres memory HTTP integration test ran and passed."
+  ],
+  "artifact_contract_additions_needed": [
+    "services/search/main.py",
+    "services/search/gateway.py",
+    "services/memory/persona_memory.schema.json",
+    "docker-compose.yml"
+  ],
+  "delivery": "Exact final PR/head/evidence binding and independent review remain governed by task handoff. No approval or merge is claimed by this owner manifest."
+}
