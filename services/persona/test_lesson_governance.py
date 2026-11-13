@@ -49,7 +49,7 @@ def make_valid_candidate(overrides: dict | None = None) -> dict:
         "review_state": "proposed",
         "created_at": utc_now(),
         "updated_at": utc_now(),
-        "expiry": utc_now(),
+        "expiry": "2099-01-01T00:00:00Z",
         "reflection_version": "v1",
     }
     if overrides:

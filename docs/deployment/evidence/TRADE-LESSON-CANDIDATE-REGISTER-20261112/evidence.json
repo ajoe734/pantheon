@@ -1,0 +1,20 @@
+{
+  "task_id": "TRADE-LESSON-CANDIDATE-REGISTER-20261112",
+  "verified": "local pytest, in-process apps (no hosted proof)",
+  "commands": [
+    "pytest -q services/persona services/memory -> 336 passed, 2 skipped, 1 failed (test_lifecycle_approval_verifier compose-render KeyError 'persona', unrelated, untouched files)"
+  ],
+  "acceptance": {
+    "1_register_once": "MemoryLessonRegistrar + write_owner register_lessons; duplicate -> already_registered (test_reflection_to_registered_candidate_...)",
+    "2_paper_endorse_merge": "POST /api/memory/trade-lessons/{id}/paper-endorse; risk persona review id recorded in receipt",
+    "3_sensitive_pending": "test_sensitive_lesson_stays_pending_human_endorsement",
+    "4_expired_quarantined": "test_expired_and_quarantined_never_merge; merge_to_memory rejects expired",
+    "5_doc": "PERSONA_TRADE_JOURNAL_GAP.md section 7D",
+    "6_integration": "services/memory/test_lesson_governance_api.py::test_reflection_to_registered_candidate_to_endorsement_to_merged_memory"
+  },
+  "limits": [
+    "Risk persona review is supplied in the request and checked for shape (risk role, approve, distinct persona); not verified against a persona service.",
+    "Registration runs before reflection persistence; a lost pattern-review race can leave an orphan candidate.",
+    "No hosted PASS claimed; natural event, retrieval/retry and cross-persona denial hosted proof remain outstanding."
+  ]
+}

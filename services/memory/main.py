@@ -959,6 +959,27 @@ async def decide_trade_lesson(candidate_id: str, payload: DecidePayload, x_actor
         raise HTTPException(status_code=422, detail={"error": "decision_failed", "message": msg}) from exc
 
 
+class PaperEndorsePayload(BaseModel):
+    risk_review: Dict[str, Any]
+    episodes: List[Dict[str, Any]] = []
+
+
+@app.post("/api/memory/trade-lessons/{candidate_id}/paper-endorse")
+async def paper_endorse_trade_lesson(candidate_id: str, payload: PaperEndorsePayload, authorization: Optional[str] = Header(None, alias="Authorization")):
+    """Paper-scope endorsement: gates + recorded risk persona review, then merge. Sensitive lessons are refused."""
+    ctx, tenant_id = _lesson_identity(authorization, write=True)
+    _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.decide")
+    _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.merge")
+    _owned_lesson(candidate_id, tenant_id)
+    try:
+        return _governance_service().paper_endorse_and_merge(
+            candidate_id, operator_id=ctx.actor_id, risk_review=payload.risk_review,
+            episodes=payload.episodes, memory_store=_persona_store(),
+        )
+    except TradeLessonCandidateError as exc:
+        raise HTTPException(status_code=422, detail={"error": "paper_endorse_failed", "message": str(exc)}) from exc
+
+
 @app.post("/api/memory/trade-lessons/{candidate_id}/merge")
 async def merge_trade_lesson(
     candidate_id: str,

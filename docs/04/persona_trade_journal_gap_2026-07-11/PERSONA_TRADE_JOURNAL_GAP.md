@@ -136,6 +136,18 @@ lesson state：`proposed → pending_review → endorsed → merged`，或 `quar
 - paper/canary/live 分層，不以 paper lesson 自動改 live。
 - 敏感 broker/account 欄位依角色遮罩；所有讀取與 review command 可稽核。
 
+### D. Lesson candidate 登記與 paper-scope 背書規則
+
+- 每個已儲存 reflection 內的每個 `lesson_candidates` 項目，於 reflection 寫入前以其
+  `lesson_candidate_id` 登記到 memory service lesson review（含 supporting episodes 與 expiry）；
+  重複登記視為已登記，不會產生第二筆。登記失敗回 503（retryable），不留下 reflection。
+- **Paper-scope 背書規則**：只影響 paper 行為的 lesson（非 policy/risk/capital/live、target_env=paper），
+  在既有樣本數與跨 regime gate 通過、且已記錄一筆來自「非本 persona 的 risk persona」之 approve
+  review 後，可經 `POST /api/memory/trade-lessons/{id}/paper-endorse` 背書並併入該 persona 的記憶。
+  review id 記入 endorsement receipt。
+- 涉及 risk、capital、policy、live 的 lesson，或 target_env 非 paper 者，維持 pending，需人工背書
+  與既有 governance approval；expired、quarantined、rejected 的 candidate 一律不得背書或 merge。
+
 ## 8. API / Event 設計
 
 ### BFF read APIs

@@ -1749,6 +1749,7 @@ from services.persona.trade_reflection_pipeline import (
     provider_extraction_schema,
     reflection_schema_errors,
 )
+from services.persona.lesson_governance import MemoryLessonRegistrar, candidates_from_reflection
 from services.persona.trade_pattern_review import EpisodeLister, covered_episode_ids, review_pattern, telemetry_episode_lister
 
 
@@ -1794,6 +1795,7 @@ def create_app(
     telemetry_fetcher: Callable[[str, str | None, str | None], dict[str, Any] | None] | None = None,
     pattern_episode_lister: EpisodeLister | None = None,
     harness_owner: PersistentHarnessOwner | None = None,
+    lesson_registrar: MemoryLessonRegistrar | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
     governance_decision_verifier = (
@@ -1807,6 +1809,16 @@ def create_app(
     active_reflection_provider = reflection_provider or OpenClawReflectionProvider()
     active_telemetry_fetcher = telemetry_fetcher or _default_telemetry_fetcher
     active_episode_lister = pattern_episode_lister or telemetry_episode_lister()
+    active_lesson_registrar = lesson_registrar or MemoryLessonRegistrar()
+
+    def register_lessons(artifact: dict[str, Any], tenant_id: str, authorization: str | None) -> dict[str, Any]:
+        """Register every lesson candidate of the reflection in memory review before it is persisted."""
+        candidates = candidates_from_reflection(artifact, tenant_id)
+        if not candidates: return {"status": "no_candidates"}
+        if not active_lesson_registrar.configured: return {"status": "skipped_unconfigured", "candidates": len(candidates)}
+        try: return {"status": "registered", **active_lesson_registrar.register(candidates, authorization)}
+        except Exception as exc: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Lesson registration failed: {exc}", "retryable": True}}) from exc
+
     app = FastAPI(
         title="Pantheon Persona Registry Owner",
         version="1.0.0",
@@ -2110,8 +2122,9 @@ def create_app(
                     trade_episode_ids=(episode_id,), trigger="manual_retry", facts=raw_facts, missing_refs=episode_missing_refs(raw_facts),
                 ))
             except Exception as exc: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Reflection generation failed: {exc}", "retryable": True}}) from exc
+            lesson_registration = register_lessons(artifact, persona.tenant_id, authorization)
             resp = {
-                "data": {"receipt_id": f"owner-{uuid.uuid4().hex[:8]}", "action": "reflection.retry", "persona_id": persona_id, "resource_id": episode_id, "status": "accepted", "facts_snapshot_ref": canon_ref, "reflection_id": artifact["reflection_id"]},
+                "data": {"lesson_registration": lesson_registration, "receipt_id": f"owner-{uuid.uuid4().hex[:8]}", "action": "reflection.retry", "persona_id": persona_id, "resource_id": episode_id, "status": "accepted", "facts_snapshot_ref": canon_ref, "reflection_id": artifact["reflection_id"]},
                 "audit": {"durable": True, "record_ref": f"persona-metadata:{persona_id}:reflection:{artifact['reflection_id']}"},
             }
             for _ in range(5):
@@ -2158,6 +2171,7 @@ def create_app(
         artifact = result.pop("artifact", None)
         if artifact is None: return {"data": result}
         identity, snapshot_hash = artifact["trade_episode_id"], artifact["facts_snapshot_hash"]
+        result["lesson_registration"] = register_lessons(artifact, tenant_id, authorization)
 
         def _not_yet_persisted(cur: PersonaBody) -> bool:
             rows = (cur.metadata or {}).get("trade_reflections", [])
