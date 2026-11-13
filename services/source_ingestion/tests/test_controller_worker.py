@@ -1343,6 +1343,25 @@ def test_main_failure_line_is_unchanged_without_schedule_context(
     assert set(line) == {"tick", "status", "stage", "error", "state_sequence_no"}
 
 
+def test_main_skips_cadence_sleep_only_while_continuation_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results = iter([{"status": "ok", "continuation_pending": True}, {"status": "ok", "continuation_pending": False}])
+    sleeps: list[float] = []
+    config = replace(_config(tmp_path), max_ticks=3, interval_seconds=60)
+    monkeypatch.setattr(controller_worker, "config_from_env", lambda: config)
+    monkeypatch.setattr(controller_worker, "_new_state", lambda: _state())
+    monkeypatch.setattr(controller_worker, "build_loop_writer", lambda **kwargs: RecordingWriter([]))
+    monkeypatch.setattr(controller_worker, "run_controller_tick", lambda **kwargs: next(results, {"status": "ok"}))
+    monkeypatch.setattr(controller_worker.time, "sleep", sleeps.append)
+
+    assert controller_worker.main() == 0
+    capsys.readouterr()
+    assert sleeps == [controller_worker.CONTINUATION_PAUSE_SECONDS, 60]
+
+
 def test_run_controller_tick_exclusively_selects_governed_bounded_connector(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3563,3 +3582,40 @@ def test_controller_disconnect_keeps_execution_lock_and_terminal_receipt_without
     assert module.runtime.connector_store.get_fetch_state("conn-disconnect")["attempts"] == 1
     receipt = test_client.get(f"/api/source-ingest/receipts/{runs[0].ingest_run_id}")
     assert receipt.status_code == 200 and receipt.json()["receipt"]["status"] == "completed"
+
+
+def _continuing(actual: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    item = actual["connectors"][0]
+    state = {
+        "last_error": None,
+        "collector_outcome": {"observed": {"continuation_pending": True}, "complete": False},
+    }
+    state.update(overrides.pop("state", {}))
+    item["fetch_state"] = state
+    item["freshness"]["latest_run"] = {"status": overrides.pop("run_status", "completed")}
+    item["freshness"].update(overrides)
+    return actual
+
+
+def test_selection_continues_partial_newest_session_before_cadence() -> None:
+    actual = _continuing(_collector_actual(is_due=False))
+    assert controller_worker.select_collector_pull_connectors(
+        actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+    ) == [COLLECTOR_CONNECTOR_ID]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"state": {"last_error": "boom"}},
+        {"state": {"collector_outcome": {"observed": {}, "complete": False}}},
+        {"state": {"collector_outcome": {"observed": {"continuation_pending": "yes"}}}},
+        {"run_status": "failed"},
+        {"status": "degraded"},
+    ],
+)
+def test_selection_continuation_negatives_keep_finished_cadence(overrides: dict[str, Any]) -> None:
+    actual = _continuing(_collector_actual(is_due=False), **overrides)
+    assert controller_worker.select_collector_pull_connectors(
+        actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+    ) == []

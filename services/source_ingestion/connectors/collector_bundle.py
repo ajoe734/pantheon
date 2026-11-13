@@ -33,12 +33,13 @@ import shutil
 import tempfile
 import time
 import urllib.request
-from contextlib import contextmanager
-from contextvars import ContextVar
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Collection, Iterable, Mapping, Sequence
 
 from services.external_egress import open_external_url
 
@@ -77,6 +78,10 @@ _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
 # Whole-operation monotonic deadline for one pull(): priority, ordered sweep, metadata and
 # every transport read share it, so one request can never run past the controller boundary.
 COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
+# Only newest-session raw reads overlap. Metadata and the historical sweep remain
+# ordered; at most four guarded Collector requests are in flight, with no queue
+# beyond that batch and no reader surviving the pull.
+LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
 
 
@@ -315,6 +320,7 @@ class CollectorPullResult:
     priority_key: str | None = None  # newest-trading-day bundle delivered ahead of the cursor sweep
     priority_delivered: int = 0  # items of that bundle delivered so far (it may exceed one pull's cap)
     priority_done: bool = False
+    priority_held: tuple[str, ...] = ()  # held instrument codes the delivery order was built for
     no_new_data: bool = False  # verified complete boundary agrees with the consumed cursor and host status
     delivery: CollectorDelivery | None = None
 
@@ -325,6 +331,11 @@ PRIORITY_LATEST_MAX_CADENCE_SECONDS = 3600
 # exchange day) so the 30-minute deadline never depends on a second scheduled pull.
 PRIORITY_LATEST_MAX_ROWS = 5000
 _BUNDLE_TRADE_DATE_RE = re.compile(r"^(?:backfill|close)-(\d{4}-\d{2}-\d{2})")
+
+
+def _held_codes(symbols: Sequence[str]) -> tuple[str, ...]:
+    """Bare instrument codes (``2330.TWSE`` -> ``2330``) of the active paper symbols, sorted."""
+    return tuple(sorted({str(s).strip().split(".", 1)[0].upper() for s in symbols if str(s).strip()}))
 
 
 def _bundle_trade_date(entry: Mapping[str, Any]) -> str:
@@ -375,6 +386,8 @@ def verify_bundle(
     entry: Mapping[str, Any],
     item_window: tuple[int, int] | None = None,
     deadline: float | None = None,
+    priority_codes: Collection[str] = (),
+    raw_read_concurrency: int = 1,
 ) -> VerifiedBundle:
     """Fetch and verify one bundle; raises on any mismatch, returns nothing partial.
 
@@ -383,9 +396,17 @@ def verify_bundle(
     verified, but raw files are fetched and hash/size checked only for the windowed rows.
     Rows outside the window are verified when a later pull's window reaches them.
 
+    ``priority_codes`` (instrument codes such as ``2330``) reorder ``items``/the window so the
+    rows whose item id ends in ``-<code>`` come first (stable, otherwise manifest order); every
+    raw file is still fetched and hash/size verified, only the order of verification changes.
+
     ``deadline`` (monotonic seconds) is a whole-operation read budget: once it passes, no
     further raw file is fetched (at least one is always read so every pull progresses) and
     ``verified_through`` records how far verification got. Nothing is skipped or assumed.
+
+    ``raw_read_concurrency`` overlaps at most four reads per bounded batch for
+    newest closes. Every reader shares the operation context/deadline and joins
+    before return; a timeout can retain only an ordered verified prefix.
     """
 
     if deadline is None:
@@ -449,6 +470,18 @@ def verify_bundle(
     if sorted(item_ids) != sorted(manifest_items) or len(set(item_ids)) != len(item_ids):
         raise SourceEvidenceError("collector bundle items.jsonl ids do not match manifest.items")
 
+    if priority_codes:
+        codes = {str(c).strip().upper() for c in priority_codes if str(c).strip()}
+        first = [
+            r for r in items
+            if str(r.get("id") or "").rsplit("-", 1)[-1].upper() in codes
+            or str(r.get("symbol") or "").strip().upper() in codes
+        ]
+        if first:
+            lead = {id(r) for r in first}
+            items = first + [r for r in items if id(r) not in lead]
+            item_ids = [str(row.get("id") or "").strip() for row in items]
+
     if item_window is None:
         wanted_ids = list(manifest_items)
     else:
@@ -456,29 +489,48 @@ def verify_bundle(
     raw_bytes: dict[str, bytes] = {}
     verified_through: int | None = None
     window_start = max(item_window[0], 0) if item_window is not None else 0
-    for offset, item_id in enumerate(wanted_ids):
-        if deadline is not None and offset > 0 and time.monotonic() >= deadline:
-            verified_through = window_start + offset
-            break
+    def read_verified(item_id: str) -> tuple[str, bytes]:
         item = manifest_items[item_id]
         declared = str(item.get("content_sha256") or "").strip().lower()
         raw_path = _safe_raw_path(str(item.get("raw_path") or ""))
-        try:
-            data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
-        except TimeoutError:
-            # A read that started inside the budget but was cut by the shared deadline
-            # discards only its own (never-accepted) bytes; already verified rows keep
-            # their progress and this row is re-read by the next pull's window.
-            if offset > 0 and deadline is not None and time.monotonic() >= deadline:
-                verified_through = window_start + offset
-                break
-            raise
+        data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
         actual = _sha256(data)
         if declared != actual:
             raise SourceEvidenceError(f"collector bundle raw hash mismatch for item {item_id}: declared={declared} actual={actual}")
         if "bytes" in item and int(item["bytes"]) != len(data):
             raise SourceEvidenceError(f"collector bundle raw size mismatch for item {item_id}")
-        raw_bytes[actual] = data
+        return actual, data
+
+    width = max(1, min(raw_read_concurrency, LATEST_CLOSE_RAW_READ_CONCURRENCY))
+    # A separate context per worker preserves the *same* operation deadline and
+    # egress policy. Never acknowledge out of order or discard a genuine failure
+    # from a later parallel read merely because an earlier read timed out.
+    with (ThreadPoolExecutor(max_workers=width) if width > 1 else nullcontext()) as readers:
+        for offset in range(0, len(wanted_ids), width):
+            if deadline is not None and offset > 0 and time.monotonic() >= deadline:
+                verified_through = window_start + offset
+                break
+            group = wanted_ids[offset:offset + width]
+            futures = ([readers.submit(copy_context().run, read_verified, item_id) for item_id in group]
+                       if readers is not None else [None])
+            outcomes: list[tuple[str, bytes] | TimeoutError] = []
+            for future in futures:
+                try:
+                    outcomes.append(future.result() if future is not None else read_verified(group[0]))
+                except TimeoutError as exc:
+                    outcomes.append(exc)
+            for index, outcome in enumerate(outcomes):
+                if isinstance(outcome, TimeoutError):
+                    # Only a contiguous verified prefix can survive a deadline cut.
+                    # The missing item and any later prefetched items replay next pull.
+                    if offset + index > 0 and deadline is not None and time.monotonic() >= deadline:
+                        verified_through = window_start + offset + index
+                        break
+                    raise outcome
+                actual, data = outcome
+                raw_bytes[actual] = data
+            if verified_through is not None:
+                break
 
     return VerifiedBundle(
         source_id=source_id,
@@ -701,6 +753,7 @@ class CollectorBundleAdapter:
         cursor: str | None = None,
         trace_id: str = "",
         max_records: int | None = None,
+        priority_symbols: Sequence[str] = (),
     ) -> CollectorPullResult:
         """Cursor-ordered pull; price-history sources deliver the newest trading day first.
 
@@ -711,7 +764,9 @@ class CollectorBundleAdapter:
         """
 
         with operation_deadline(self.read_budget_seconds):
-            return self._pull_bounded(cursor=cursor, trace_id=trace_id, max_records=max_records)
+            return self._pull_bounded(
+                cursor=cursor, trace_id=trace_id, max_records=max_records, priority_symbols=priority_symbols
+            )
 
     def _pull_bounded(
         self,
@@ -719,14 +774,15 @@ class CollectorBundleAdapter:
         cursor: str | None = None,
         trace_id: str = "",
         max_records: int | None = None,
+        priority_symbols: Sequence[str] = (),
     ) -> CollectorPullResult:
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         priority = self._pull_priority_latest(
-            cursor, trace_id=trace_id, total_cap=total_cap
+            cursor, trace_id=trace_id, total_cap=total_cap, held=_held_codes(priority_symbols)
         )
         if priority is None:
             return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)
-        records, key, paused, delivered, done = priority
+        records, key, paused, delivered, done, held = priority
         remaining = total_cap - len(records)
         op_deadline = _OP_DEADLINE.get()
         base = None
@@ -752,17 +808,26 @@ class CollectorBundleAdapter:
             next_cursor=base.next_cursor,
             bundle_count=base.bundle_count + 1,
             paused_reasons=(*paused, *base.paused_reasons),
-            observed=base.observed,
+            # Newest-session rows still undelivered: the controller may re-pull before the
+            # finished-source cadence. Only this pull's own acknowledged outcome carries it.
+            observed=({**base.observed, "continuation_pending": True} if not done and not paused else base.observed),
             feature_rejected=base.feature_rejected,
             complete=base.complete,
             no_new_data=not merged and not paused and base.no_new_data,
             priority_key=key,
             priority_delivered=delivered,
             priority_done=done,
+            priority_held=held,
         )
         if _DEFER_ACK.get():
-            result = replace(result, delivery=CollectorDelivery(
-                result.records, lambda: self.save_resume_cursor(result)))
+            def acknowledge() -> None:
+                # The ordered part may have verified a complete persisted
+                # boundary. Composing priority rows must retain its native ack;
+                # otherwise the next due pull rejects the consumed cursor.
+                if base.delivery is not None:
+                    base.delivery.acknowledge()
+                self.save_resume_cursor(result)
+            result = replace(result, delivery=CollectorDelivery(result.records, acknowledge))
         return result
 
     def _priority_latest_enabled(self) -> bool:
@@ -785,19 +850,21 @@ class CollectorBundleAdapter:
     def _priority_key_path(self) -> Path:
         return self._raw_root() / "state" / _slug(self.connector_id) / "latest_priority.json"
 
-    def _load_priority_state(self) -> tuple[str | None, int, bool]:
+    def _load_priority_state(self) -> tuple[str | None, int, bool, tuple[str, ...]]:
         path = self._priority_key_path()
         try:
             doc = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
         except (OSError, ValueError):
-            return None, 0, False
+            return None, 0, False, ()
         if isinstance(doc, dict) and doc.get("source_id") == self.source_id and doc.get("key"):
-            return str(doc["key"]), int(doc.get("delivered") or 0), bool(doc.get("done"))
-        return None, 0, False
+            held = doc.get("held")
+            return (str(doc["key"]), int(doc.get("delivered") or 0), bool(doc.get("done")),
+                    tuple(str(c) for c in held) if isinstance(held, list) else ())
+        return None, 0, False, ()
 
     def _pull_priority_latest(
-        self, cursor: str | None, *, trace_id: str, total_cap: int
-    ) -> tuple[list[SourceRecord], str, tuple[str, ...], int, bool] | None:
+        self, cursor: str | None, *, trace_id: str, total_cap: int, held: tuple[str, ...] = ()
+    ) -> tuple[list[SourceRecord], str, tuple[str, ...], int, bool, tuple[str, ...]] | None:
         if (
             not self._priority_latest_enabled()
             or self.source_type != "market"
@@ -828,25 +895,29 @@ class CollectorBundleAdapter:
         base_cursor, _ = _split_cursor(cursor)
         if base_cursor is not None and (key < base_cursor or (key == base_cursor and _PARTIAL_CURSOR_MARK not in str(cursor))):
             return None  # the sweep already consumed it
-        state_key, delivered, done = self._load_priority_state()
+        state_key, delivered, done, state_held = self._load_priority_state()
         if state_key is not None:
             if key < state_key or (key == state_key and done):
                 return None
-            if key > state_key:
+            if key > state_key or state_held != held:
+                # New session, or the held set changed so the persisted prefix no longer names
+                # the same rows: restart this session's order (idempotent replay, never a skip).
                 delivered = 0
         else:
             delivered = 0
         bundle = verify_bundle(
-            transport, expected_source_id=self.source_id, entry=newest, item_window=(delivered, delivered + total_cap)
+            transport, expected_source_id=self.source_id, entry=newest, item_window=(delivered, delivered + total_cap),
+            priority_codes=held,
+            raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY,
         )
         if bundle.status == "paused":
-            return [], key, (f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}",), delivered, False
+            return [], key, (f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}",), delivered, False, held
         stop = delivered + total_cap if bundle.verified_through is None else bundle.verified_through
         window = bundle.items[delivered:stop]
         rows = [self._record(bundle, row, trace_id=trace_id) for row in window]
         self._write_raw([(bundle, {})], rows)
         new_delivered = delivered + len(window)
-        return rows, key, (), new_delivered, new_delivered >= len(bundle.items)
+        return rows, key, (), new_delivered, new_delivered >= len(bundle.items), held
 
     def _pull_ordered(
         self,
@@ -1063,6 +1134,7 @@ class CollectorBundleAdapter:
                 json.dumps({
                     "source_id": self.source_id, "key": result.priority_key,
                     "delivered": result.priority_delivered, "done": result.priority_done,
+                    "held": list(result.priority_held),
                 }),
                 encoding="utf-8",
             )

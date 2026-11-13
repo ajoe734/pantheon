@@ -1470,6 +1470,28 @@ def registered_collector_connector_ids(actual: Mapping[str, Any], reconcile: Map
     return sorted(found)
 
 
+CONTINUATION_PAUSE_SECONDS = 1
+
+
+def _collector_continuation_pending(item: Mapping[str, Any], freshness: Mapping[str, Any]) -> bool:
+    """Newest-session delivery is partial: the last pull succeeded, persisted, and said more remains.
+
+    Only the latest persisted pull's outcome counts (a failed fetch or failed run replaces or
+    outranks it), so a failing source falls back to its normal cadence instead of retrying hot.
+    """
+
+    state = item.get("fetch_state") if isinstance(item.get("fetch_state"), Mapping) else {}
+    outcome = state.get("collector_outcome") if isinstance(state.get("collector_outcome"), Mapping) else {}
+    observed = outcome.get("observed") if isinstance(outcome.get("observed"), Mapping) else {}
+    latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), Mapping) else {}
+    return (
+        observed.get("continuation_pending") is True
+        and not state.get("last_error")
+        and latest_run.get("status") == "completed"
+        and freshness.get("status") not in {"degraded", "disabled", "unscheduled"}
+    )
+
+
 def select_collector_pull_connectors(
     actual: Mapping[str, Any], reconcile: Mapping[str, Any]
 ) -> list[str]:
@@ -1510,7 +1532,7 @@ def select_collector_pull_connectors(
         if schedule.get("enabled") is not True or int(schedule.get("interval_seconds") or 0) <= 0:
             continue
         freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
-        if freshness.get("is_due") is not True:
+        if freshness.get("is_due") is not True and not _collector_continuation_pending(item, freshness):
             continue
         selected.add(connector_id)
     return sorted(selected)
@@ -2205,8 +2227,21 @@ def run_controller_tick(
             actual_readback=accepted_actual,
         )
         store.save(state)
+        continuation_pending = False
+        if config.mode == COLLECTOR_STEADY_PULL_MODE and steady_pull_ids:
+            # A pull just persisted: if its newest session is still partial, the loop must not idle
+            # a full cadence interval before the next bounded read (30 minute whole-session bound).
+            continuation_pending = bool(
+                select_collector_pull_connectors(
+                    read_actual_state_with_fetch_bindings(
+                        api_url=config.api_url, timeout_seconds=config.timeout_seconds
+                    ),
+                    reconcile,
+                )
+            )
         return {
             "status": "ok",
+            "continuation_pending": continuation_pending,
             "controller_mode": config.mode,
             "provider_egress_attempted": provider_egress_attempted,
             "state_sequence_no": state.sequence_no,
@@ -2274,11 +2309,15 @@ def main() -> int:
     writer = build_loop_writer(dsn=config.database_url, state=state)
     tick = 0
     last_tick_failed = False
+    sleep_seconds = config.interval_seconds
     while True:
         tick += 1
+        sleep_seconds = config.interval_seconds
         try:
             result = run_controller_tick(config=config, state=state, store=store, writer=writer)
             last_tick_failed = False
+            if result.get("continuation_pending") is True:
+                sleep_seconds = min(config.interval_seconds, CONTINUATION_PAUSE_SECONDS)
             print(_canonical_json({"tick": tick, **result}), flush=True)
         except Exception as exc:
             last_tick_failed = True
@@ -2300,7 +2339,7 @@ def main() -> int:
             )
         if config.max_ticks and tick >= config.max_ticks:
             return 1 if last_tick_failed else 0
-        time.sleep(config.interval_seconds)
+        time.sleep(sleep_seconds)
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through compose and smoke tests.

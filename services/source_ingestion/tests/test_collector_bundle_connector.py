@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1318,3 +1319,216 @@ def test_real_http_body_within_budget_returns_exact_bytes(monkeypatch):
     monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
     with cb.operation_deadline(15.0):
         assert cb.HttpBundleTransport(host=HOST).read("raw/body", max_bytes=100000) == payload
+
+
+# COLLECTOR-CLOSE-CONTINUATION-20261113: held symbols beyond the first bounded prefix ----
+def _held_session(tmp_path, *, n_rows=600, held_pos=(531, 538), tamper=None):
+    """Newest-session bundle shaped like the captured manifest (``twse-price-history-<date>-<code>``)."""
+    source_id = "collector-tw-twse-price-history"
+    files, entries = _day_bundle(source_id, 3, n_rows)
+    base = f"bundles/{source_id}/{entries['date']}/{entries['run_id']}"
+    manifest = json.loads(files[f"{base}/manifest.json"])
+    rows = [json.loads(line) for line in files[f"{base}/items.jsonl"].decode().splitlines()]
+    codes = {pos: code for pos, code in zip(held_pos, ("2317", "2330"))}
+    for i, (m, r) in enumerate(zip(manifest["items"], rows)):
+        code = codes.get(i, f"{1000 + i}")
+        m["item_id"] = r["id"] = f"twse-price-history-{entries['date']}-{code}"
+        r["symbol"] = code
+    manifest["bundle_sha256"] = compute_bundle_sha256([m["content_sha256"] for m in manifest["items"]])
+    files[f"{base}/manifest.json"] = json.dumps(manifest).encode()
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    files["bundles/index.json"] = json.dumps({"bundles": [entries]}).encode()
+    if tamper:
+        sha = next(m["content_sha256"] for m in manifest["items"] if m["item_id"].endswith(tamper))
+        files[f"{base}/raw/{sha}.html"] = b"tampered"
+
+    def make():
+        return CollectorBundleAdapter(
+            connector_id="conn-held", raw_root=str(tmp_path / "store"), transport=FakeTransport(files), host=HOST,
+            source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+            max_records=55, cadence_seconds=1800,
+        )
+    return make
+
+
+def _symbols(result):
+    return [r.metadata["normalized_row"]["symbol"] for r in result.records]
+
+
+def test_close_reads_overlap_under_one_deadline_and_drain_before_return(tmp_path):
+    import threading
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    adapter = replace(_held_session(tmp_path, n_rows=8)(), max_records=8)
+    barrier = threading.Barrier(4, timeout=2)
+    lock = threading.Lock()
+    active, peak, deadlines = [0], [0], []
+
+    class OverlappingTransport(FakeTransport):
+        def read(self, relative_path, *, max_bytes):
+            if "/raw/" not in relative_path:
+                return super().read(relative_path, max_bytes=max_bytes)
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+                deadlines.append(cb._OP_DEADLINE.get())
+            try:
+                assert max_bytes == cb.MAX_RAW_BYTES
+                assert cb._DEFER_ACK.get() is True
+                barrier.wait()
+                return super().read(relative_path, max_bytes=max_bytes)
+            finally:
+                with lock:
+                    active[0] -= 1
+
+    adapter = replace(adapter, transport=OverlappingTransport(adapter.transport.files))
+    with cb.deferred_collector_acknowledgement():
+        result = adapter.pull()
+    assert result.priority_done and len(result.records) == 8
+    assert peak[0] == 4 and active[0] == 0
+    assert len(set(deadlines)) == 1 and deadlines[0] is not None
+    assert not adapter._priority_key_path().exists()
+    result.delivery.validate(result.records)
+    result.delivery.acknowledge()
+    assert adapter._load_priority_state()[1:3] == (8, True)
+
+
+@pytest.mark.parametrize("bad_hash", [False, True])
+def test_parallel_close_deadline_preserves_prefix_but_never_hides_bad_hash(tmp_path, monkeypatch, bad_hash):
+    import threading
+    import types
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    adapter = replace(_held_session(tmp_path, n_rows=8)(), max_records=8, read_budget_seconds=1)
+    paths = [p for p in adapter.transport.files if "/raw/" in p]
+    barrier = threading.Barrier(4, timeout=2)
+    clock = [0.0]
+    monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+
+    class CutTransport(FakeTransport):
+        def read(self, relative_path, *, max_bytes):
+            if "/raw/" in relative_path:
+                barrier.wait()
+                clock[0] = 2.0
+                if relative_path == paths[1]:
+                    raise TimeoutError("shared operation deadline")
+                if bad_hash and relative_path == paths[3]:
+                    return b"bad hash after the timeout gap"
+            return super().read(relative_path, max_bytes=max_bytes)
+
+    cut = replace(adapter, transport=CutTransport(adapter.transport.files))
+    with cb.deferred_collector_acknowledgement():
+        if bad_hash:
+            with pytest.raises(SourceEvidenceError, match="hash mismatch"):
+                cut.pull()
+            assert not cut._priority_key_path().exists()
+            return
+        result = cut.pull()
+    assert len(result.records) == 1 and result.priority_delivered == 1 and not result.priority_done
+    assert not cut._priority_key_path().exists()
+    result.delivery.validate(result.records)
+    result.delivery.acknowledge()
+    assert cut._load_priority_state()[1:3] == (1, False)
+    # Restart from durable prefix, re-reading both the hole and any later prefetch.
+    clock[0] = 0
+    with cb.deferred_collector_acknowledgement():
+        retry = adapter.pull(max_records=7)
+    assert len(retry.records) == 7 and retry.priority_done
+    assert {r.source_id for r in result.records}.isdisjoint(r.source_id for r in retry.records)
+    retry.delivery.validate(retry.records)
+    retry.delivery.acknowledge()
+    assert adapter._load_priority_state()[1:3] == (8, True)
+
+
+def test_held_symbols_beyond_first_prefix_are_delivered_in_the_first_bounded_pull(tmp_path):
+    make = _held_session(tmp_path)
+    # old behaviour: manifest order, 55 rows, held positions 531/538 wait ~10 pulls
+    plain = make().pull()
+    assert "2330" not in _symbols(plain) and "2317" not in _symbols(plain)
+    first = make().pull(priority_symbols=("2330.TWSE", "2317.TWSE"))
+    assert len(first.records) == 55 and not first.priority_done
+    assert _symbols(first)[:2] == ["2317", "2330"]  # held first, manifest order among them
+    assert first.priority_held == ("2317", "2330")
+    # selected hash/size and priority provenance are intact
+    close = first.records[0].metadata["collector_close"]
+    assert close["provisional"] is True and close["official"] is False
+
+
+def test_held_first_order_continues_across_ticks_without_gaps(tmp_path):
+    make = _held_session(tmp_path)
+    seen, done = [], False
+    for _ in range(20):
+        adapter = make()
+        result = adapter.pull(cursor=adapter.load_resume_cursor(), priority_symbols=("2330", "2317"))
+        seen.extend(r.source_id for r in result.records if r.metadata["trade_date"] == "2024-11-03")
+        adapter.save_resume_cursor(result)
+        if result.priority_done:
+            done = True
+            break
+    # every row arrives; leftover cap handed to the ordered sweep may replay already
+    # delivered rows (pre-existing idempotent replay), never a gap
+    assert done and len(set(seen)) == 600
+
+
+def test_held_set_change_restarts_the_session_order_instead_of_skipping_rows(tmp_path):
+    make = _held_session(tmp_path)
+    adapter = make()
+    first = adapter.pull(priority_symbols=("2330",))
+    adapter.save_resume_cursor(first)
+    adapter = make()
+    second = adapter.pull(cursor=adapter.load_resume_cursor(), priority_symbols=("2330", "2317"))
+    assert second.priority_delivered == 55 and "2317" in _symbols(second)
+
+
+def test_deferred_ack_does_not_persist_held_progress_before_persistence(tmp_path):
+    from services.source_ingestion.connectors.collector_bundle import deferred_collector_acknowledgement
+
+    make = _held_session(tmp_path)
+    adapter = make()
+    with deferred_collector_acknowledgement():
+        result = adapter.pull(priority_symbols=("2330",))
+    assert not adapter._priority_key_path().exists()
+    result.delivery.acknowledge()
+    assert json.loads(adapter._priority_key_path().read_text())["held"] == ["2330"]
+
+
+def test_tampered_held_raw_fails_truthfully_and_acknowledges_nothing(tmp_path):
+    make = _held_session(tmp_path, tamper="-2330")
+    adapter = make()
+    with pytest.raises(SourceEvidenceError):
+        adapter.pull(priority_symbols=("2330",))
+    assert not adapter._priority_key_path().exists()
+
+
+def test_provider_handler_uses_active_paper_symbol_environment(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import _collector_bundle
+
+    # Same configured-ingestion handler path; the adapter itself reads the existing env identity.
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TWSE,2317.TWSE")
+    result = _collector_bundle(_held_session(tmp_path)(), {"_effective_max_records": 55}, "trace")
+    assert {"2330", "2317"} <= set(_symbols(result))
+    monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS")
+    result = _collector_bundle(_held_session(tmp_path / "b")(), {"_effective_max_records": 55}, "trace")
+    assert "2330" not in _symbols(result)
+
+
+def test_provider_handler_forwards_request_priority_symbols_without_environment(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import _collector_bundle
+
+    monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", raising=False)
+    request = {"_effective_max_records": 55, "priority_symbols": ["2330.TWSE", "2317.TWSE"]}
+    result = _collector_bundle(_held_session(tmp_path)(), request, "trace")
+    assert {"2330", "2317"} <= set(_symbols(result))
+
+
+def test_partial_session_flags_continuation_and_finished_session_does_not(tmp_path):
+    make = _held_session(tmp_path)
+    first = make().pull(priority_symbols=("2330.TWSE",))
+    assert not first.priority_done and first.observed.get("continuation_pending") is True
+    result = first
+    for _ in range(60):
+        if result.priority_done:
+            break
+        make().save_resume_cursor(result)
+        result = make().pull(cursor=result.next_cursor, priority_symbols=("2330.TWSE",))
+    assert result.priority_done and "continuation_pending" not in result.observed
