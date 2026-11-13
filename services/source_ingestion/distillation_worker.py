@@ -60,6 +60,7 @@ from services.source_ingestion.hypothesis_compiler import (
 )
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeedStatus
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
+from services.source_ingestion.demand_priority import DemandPriority, ResearchDemandReader
 
 
 # Stable skip reason for market sources that materialize evidence/seed locally
@@ -67,6 +68,7 @@ from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 MARKET_SOURCE_SKIP_REASON: str = (
     "source_type=market does not produce Registry strategy drafts"
 )
+DEFER_TTL_SECONDS = 14 * 86400
 
 
 # Statuses where re-distillation is allowed (seed is still a mutable draft).
@@ -306,6 +308,9 @@ class DistillationJob:
     lease_expires_at: str | None = None
     next_attempt_at: str | None = None
     max_attempts: int = 3
+    deferred_since: str | None = None
+    priority_reason: str | None = None
+    demand_score: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         status = self.status.value if isinstance(self.status, DistillationJobStatus) else str(self.status)
@@ -332,6 +337,9 @@ class DistillationJob:
             "lease_expires_at": self.lease_expires_at,
             "next_attempt_at": self.next_attempt_at,
             "max_attempts": self.max_attempts,
+            "deferred_since": self.deferred_since,
+            "priority_reason": self.priority_reason,
+            "demand_score": self.demand_score,
         }
 
     @classmethod
@@ -364,6 +372,9 @@ class DistillationJob:
             lease_expires_at=data.get("lease_expires_at") or None,
             next_attempt_at=data.get("next_attempt_at") or None,
             max_attempts=max(1, int(data.get("max_attempts") or 3)),
+            deferred_since=data.get("deferred_since") or None,
+            priority_reason=data.get("priority_reason") or None,
+            demand_score=int(data.get("demand_score") or 0),
         )
 
     @property
@@ -395,6 +406,7 @@ class DistillationRunResult:
     registry_synced: int = 0
     retried: int = 0
     dead_lettered: int = 0
+    deferred: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -407,6 +419,7 @@ class DistillationRunResult:
             "registry_synced": self.registry_synced,
             "retried": self.retried,
             "dead_lettered": self.dead_lettered,
+            "deferred": self.deferred,
         }
 
 
@@ -584,6 +597,11 @@ class DistillationJobQueue:
             for col in ("strategy_id", "version", "checksum"):
                 if col not in cols:
                     connection.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+        cols = {row["name"] for row in connection.execute("PRAGMA table_info(distillation_outbox)")}
+        for name, kind in (("deferred_since", "REAL"), ("priority_reason", "TEXT"),
+                           ("demand_score", "INTEGER NOT NULL DEFAULT 0")):
+            if name not in cols:
+                connection.execute(f"ALTER TABLE distillation_outbox ADD COLUMN {name} {kind}")
 
     @staticmethod
     def _job_from_row(row: sqlite3.Row) -> DistillationJob:
@@ -611,6 +629,9 @@ class DistillationJobQueue:
             lease_expires_at=_timestamp_text(row["lease_expires_at"]),
             next_attempt_at=_timestamp_text(row["available_at"]),
             max_attempts=int(row["max_attempts"]),
+            deferred_since=_timestamp_text(row["deferred_since"]),
+            priority_reason=row["priority_reason"],
+            demand_score=int(row["demand_score"]),
         )
 
     def _select_job(self, connection: sqlite3.Connection, job_id: str) -> sqlite3.Row | None:
@@ -949,6 +970,20 @@ class DistillationJobQueue:
                 (now, str(row["event_id"])),
             )
 
+    def due_tenants(self, *, now: float, tenant_id: str | None = None) -> set[str]:
+        """Discover scopes before network reads, outside the claim transaction."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT DISTINCT json_extract(s.payload_json, '$.metadata.tenant_id') AS tenant
+                   FROM distillation_outbox o
+                   JOIN distillation_source_versions s USING (source_id, source_digest)
+                   WHERE ((o.status IN ('pending', 'retry_wait') AND o.available_at <= ?)
+                       OR (o.status = 'leased' AND o.lease_expires_at <= ?))""",
+                (now, now),
+            ).fetchall()
+        return {str(row["tenant"]) for row in rows if row["tenant"]
+                and (tenant_id is None or row["tenant"] == tenant_id)}
+
     def claim_due(
         self,
         *,
@@ -957,6 +992,7 @@ class DistillationJobQueue:
         now: str | datetime | float | None = None,
         limit: int = 100,
         tenant_id: str | None = None,
+        priority_by_tenant: Mapping[str, DemandPriority] | None = None,
     ) -> list[DistillationJob]:
         effective_now = _timestamp(now) if now is not None else self._now()
         tenant = str(tenant_id or "").strip() or None
@@ -970,7 +1006,7 @@ class DistillationJobQueue:
             try:
                 self._recover_expired(connection, now=effective_now)
                 tenant_clause = ""
-                params: tuple[Any, ...] = (effective_now, max(0, int(limit)))
+                params: tuple[Any, ...] = (effective_now,)
                 if tenant is not None:
                     tenant_clause = """
                        AND EXISTS (
@@ -981,20 +1017,35 @@ class DistillationJobQueue:
                               AND json_extract(source_version.payload_json, '$.metadata.tenant_id') = ?
                        )
                     """
-                    params = (effective_now, tenant, max(0, int(limit)))
+                    params = (effective_now, tenant)
                 rows = connection.execute(
                     f"""
-                    SELECT *
+                    SELECT distillation_outbox.*, source.payload_json
                       FROM distillation_outbox
+                      JOIN distillation_source_versions AS source USING (source_id, source_digest)
                      WHERE status IN ('pending', 'retry_wait')
                        AND available_at <= ?
                        {tenant_clause}
                      ORDER BY available_at, enqueued_at, job_id
-                     LIMIT ?
                     """,
                     params,
                 ).fetchall()
+                priorities = priority_by_tenant or {}
+                ranked = []
                 for row in rows:
+                    payload = json.loads(row["payload_json"])
+                    scope = (payload.get("metadata") or {}).get("tenant_id")
+                    priority = priorities.get(scope, DemandPriority(reason="demand_read_missing_tenant"))
+                    deferred = row["deferred_since"] is not None
+                    score = priority.score(payload) if deferred else 0
+                    # Deferred backlog precedes new work. Stable arrival ties;
+                    # hints never reorder new records or change tenant scope.
+                    key = (0 if deferred else 1, -score,
+                           row["enqueued_at"] if deferred else row["available_at"],
+                           row["enqueued_at"], row["job_id"])
+                    ranked.append((key, row, priority.reason, score))
+                ranked.sort(key=lambda item: item[0])
+                for _, row, priority_reason, score in ranked[:max(0, int(limit))]:
                     token = f"{worker_id}:{uuid.uuid4().hex}"
                     expires_at = effective_now + float(lease_seconds)
                     changed = connection.execute(
@@ -1006,6 +1057,7 @@ class DistillationJobQueue:
                                lease_token = ?,
                                lease_epoch = lease_epoch + 1,
                                lease_expires_at = ?,
+                               priority_reason = ?, demand_score = ?,
                                updated_at = ?
                          WHERE job_id = ?
                            AND status IN ('pending', 'retry_wait')
@@ -1015,6 +1067,8 @@ class DistillationJobQueue:
                             worker_id,
                             token,
                             expires_at,
+                            priority_reason,
+                            score,
                             effective_now,
                             str(row["job_id"]),
                             effective_now,
@@ -1061,6 +1115,36 @@ class DistillationJobQueue:
                 connection.execute("ROLLBACK")
                 raise
         return claimed
+
+    def defer_budget(self, job: DistillationJob, *, now: float) -> None:
+        """Return a fenced lease to next UTC cap window, without burning retries."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._select_job(connection, job.job_id)
+                if (row is None or row["status"] != "leased"
+                        or row["lease_token"] != job.lease_token
+                        or row["lease_expires_at"] <= now):
+                    raise DistillationError(f"stale or expired distillation deferral: {job.job_id}")
+                since = row["deferred_since"] if row["deferred_since"] is not None else now
+                available = min((int(now) // 86400 + 1) * 86400, since + DEFER_TTL_SECONDS)
+                connection.execute(
+                    """UPDATE distillation_outbox SET status = 'retry_wait', available_at = ?,
+                       deferred_since = ?, last_error = 'budget_exhausted',
+                       attempts = MAX(0, attempts - 1), lease_owner = NULL, lease_token = NULL,
+                       lease_expires_at = NULL, updated_at = ? WHERE job_id = ?""",
+                    (available, since, now, job.job_id),
+                )
+                connection.execute(
+                    """UPDATE distillation_inbox SET status = 'retry_wait',
+                       attempts = MAX(0, attempts - 1), lease_owner = NULL, lease_token = NULL,
+                       lease_expires_at = NULL, last_error = 'budget_exhausted', updated_at = ?
+                       WHERE job_id = ?""", (now, job.job_id),
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
 
     def _terminal_update(
         self,
@@ -1676,9 +1760,11 @@ class DistillationWorker:
         registry_sync: Callable[[RegistrySyncRequest], RegistrySyncResult] | None = None,
         hypothesis_extractor: HypothesisExtractor | None = None,
         hypothesis_compiler: HypothesisCompiler | None = None,
+        demand_reader: ResearchDemandReader | None = None,
     ) -> None:
         self._hypothesis_extractor = hypothesis_extractor
         self._hypothesis_compiler = hypothesis_compiler
+        self._demand_reader = demand_reader
         self._queue = job_queue or DistillationJobQueue()
         self._seed_store = seed_store or StrategySpecSeedStore()
         self._materializer = SeedMaterializationService(
@@ -1726,16 +1812,32 @@ class DistillationWorker:
         Returns:
             A DistillationRunResult summarising what happened.
         """
+        effective_now = _timestamp(now) if now is not None else self._queue._now()
+        priorities = {}
+        if self._hypothesis_extractor is not None and self._demand_reader is not None:
+            for tenant in self._queue.due_tenants(now=effective_now, tenant_id=tenant_id):
+                priorities[tenant] = self._demand_reader.read(tenant, now=effective_now)
         claimed = self._queue.claim_due(
             worker_id=self._worker_id,
             lease_seconds=self._lease_seconds,
             now=now,
             limit=limit,
             tenant_id=tenant_id,
+            priority_by_tenant=priorities,
         )
         processed = created = refreshed = skipped = failed = 0
         registry_synced = retried = dead_lettered = 0
+        deferred = 0
         for job in claimed:
+            if (job.deferred_since is not None
+                    and effective_now >= _timestamp(job.deferred_since) + DEFER_TTL_SECONDS):
+                self._queue.mark_skipped(
+                    job.job_id, reason="budget_deferral_expired: 14 days since first cap deferral",
+                    processed_at=now, claim_token=job.lease_token,
+                )
+                processed += 1
+                skipped += 1
+                continue
             if job.source_digest:
                 source = self._queue.source_for_job(job)
             else:
@@ -1764,6 +1866,8 @@ class DistillationWorker:
                 skipped += 1
             elif outcome == "failed":
                 failed += 1
+            elif outcome == "deferred":
+                deferred += 1
             if delivery == "registry_synced":
                 registry_synced += 1
             elif delivery == "retry_wait":
@@ -1779,6 +1883,7 @@ class DistillationWorker:
             registry_synced=registry_synced,
             retried=retried,
             dead_lettered=dead_lettered,
+            deferred=deferred,
         )
 
     def catch_up(
@@ -1837,6 +1942,7 @@ class DistillationWorker:
             registry_synced=run_result.registry_synced,
             retried=run_result.retried,
             dead_lettered=run_result.dead_lettered,
+            deferred=run_result.deferred,
         )
 
     def redispatch(self, source_id: str, source: SourceRecord) -> DistillationJob:
@@ -1915,8 +2021,12 @@ class DistillationWorker:
             if origin is not None or source.source_type in _EXTERNAL_TEXT_TYPES:
                 outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
                 if outcome.card is None:
+                    if outcome.status == "budget_exhausted":
+                        self._queue.defer_budget(
+                            job, now=_timestamp(now) if now is not None else self._queue._now(),
+                        )
+                        return "deferred", "budget_exhausted"
                     reason = {
-                        "budget_exhausted": "budget_exhausted",
                         "rejected": "hypothesis_rejected",
                     }.get(outcome.status, "no_hypothesis")
                     self._queue.mark_skipped(
@@ -2089,6 +2199,7 @@ def make_distillation_worker(
     registry_sync: Callable[[RegistrySyncRequest], RegistrySyncResult] | None = None,
     hypothesis_extractor: HypothesisExtractor | None = None,
     hypothesis_compiler: HypothesisCompiler | None = None,
+    demand_reader: ResearchDemandReader | None = None,
 ) -> DistillationWorker:
     """Factory for a default-configured DistillationWorker."""
     queue = job_queue if job_queue is not None else DistillationJobQueue(
@@ -2105,6 +2216,7 @@ def make_distillation_worker(
         retry_base_seconds=retry_base_seconds,
         registry_sync=registry_sync,
         hypothesis_compiler=hypothesis_compiler,
+        demand_reader=demand_reader if demand_reader is not None else ResearchDemandReader(),
         hypothesis_extractor=(
             hypothesis_extractor
             if hypothesis_extractor is not None

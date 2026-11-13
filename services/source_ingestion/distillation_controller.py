@@ -532,6 +532,7 @@ def run_controller_tick(
                 "created": run_result.created,
                 "refreshed": run_result.refreshed,
                 "skipped": run_result.skipped,
+                "deferred": run_result.deferred,
                 "failed": run_result.failed,
                 "enqueued": run_result.enqueued,
                 "registry_synced": run_result.registry_synced,
