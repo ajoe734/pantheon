@@ -301,22 +301,29 @@ class DeploymentService:
         return bool(requested_binding_ids.intersection(runtime_binding_ids))
 
     def deployment_runtime_binding(
-        self, plan: Dict[str, Any], *, inputs: Optional[_StageTruthInputs] = None,
+        self,
+        plan: Dict[str, Any],
+        *,
+        inputs: Optional[_StageTruthInputs] = None,
     ) -> Optional[Dict[str, Any]]:
         runtime_binding_id = str(plan.get("runtime_binding_id") or "").strip()
         if runtime_binding_id:
             binding = (
-                next((row for row in inputs.runtime_bindings if runtime_binding_id in {
-                    str(row.get(key) or "").strip()
-                    for key in ("binding_id", "id", "runtime_binding_id")
-                }), None)
+                next(
+                    (row for row in inputs.runtime_bindings if runtime_binding_id in {
+                        str(row.get(key) or "").strip()
+                        for key in ("binding_id", "id", "runtime_binding_id")
+                    }),
+                    None,
+                )
                 if inputs is not None
                 else self.queries.get_runtime_binding(runtime_binding_id)
             )
             if binding:
                 return binding
 
-        for binding in inputs.runtime_bindings if inputs is not None else self.queries.list_runtime_bindings():
+        bindings = inputs.runtime_bindings if inputs is not None else self.queries.list_runtime_bindings()
+        for binding in bindings:
             if self.runtime_binding_matches_deployment_plan(binding, plan):
                 return binding
         return None
@@ -326,11 +333,12 @@ class DeploymentService:
         sessions: Sequence[Dict[str, Any]], runtime_id: str, binding_id: str,
     ) -> Optional[Dict[str, Any]]:
         # Owner order wins across BOTH identifiers, just like the item query.
-        return next((session for session in sessions if (
-            binding_id and str(session.get("binding_id") or session.get("runtime_binding_id") or "").strip() == binding_id
-        ) or (
-            runtime_id and str(session.get("runtime_id") or "").strip() == runtime_id
-        )), None)
+        for session in sessions:
+            session_binding = str(session.get("binding_id") or session.get("runtime_binding_id") or "").strip()
+            session_runtime = str(session.get("runtime_id") or "").strip()
+            if (binding_id and session_binding == binding_id) or (runtime_id and session_runtime == runtime_id):
+                return session
+        return None
 
     @staticmethod
     def _runtime_identifiers(binding: Dict[str, Any]) -> tuple[str, str]:
@@ -340,7 +348,10 @@ class DeploymentService:
         )
 
     def runtime_fleet_stage_truth(
-        self, runtime_binding: Optional[Dict[str, Any]], *, inputs: Optional[_StageTruthInputs] = None,
+        self,
+        runtime_binding: Optional[Dict[str, Any]],
+        *,
+        inputs: Optional[_StageTruthInputs] = None,
     ) -> Dict[str, Any]:
         if not runtime_binding:
             return self.deployment_stage_entry(
@@ -354,18 +365,7 @@ class DeploymentService:
                 ),
             )
 
-        runtime_id = str(
-            runtime_binding.get("runtime_id")
-            or runtime_binding.get("id")
-            or runtime_binding.get("binding_id")
-            or ""
-        ).strip()
-        runtime_binding_id = str(
-            runtime_binding.get("runtime_binding_id")
-            or runtime_binding.get("binding_id")
-            or runtime_binding.get("id")
-            or ""
-        ).strip()
+        runtime_id, runtime_binding_id = self._runtime_identifiers(runtime_binding)
         deployment_stage = str(
             runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode") or ""
         ).strip().lower()
@@ -672,8 +672,11 @@ class DeploymentService:
         identifiers = [self._runtime_identifiers(binding) for binding in linked if binding]
         if any(runtime_id or binding_id for runtime_id, binding_id in identifiers):
             inputs.monitoring_sessions = self.queries.list_paper_runtime_monitoring_sessions()
-        if any(runtime_id and not self._monitoring_session(inputs.monitoring_sessions, runtime_id, binding_id)
-               for runtime_id, binding_id in identifiers):
+        needs_telemetry = any(
+            runtime_id and not self._monitoring_session(inputs.monitoring_sessions, runtime_id, binding_id)
+            for runtime_id, binding_id in identifiers
+        )
+        if needs_telemetry:
             inputs.telemetry_summaries = self.queries.list_telemetry_summaries()
         return [dict(plan, stage_truth=self.deployment_stage_truth(plan, inputs=inputs)) for plan in plans]
 

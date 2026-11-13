@@ -1157,8 +1157,12 @@ class ReadSurfacePorts:
             for item in records or []:
                 if not isinstance(item, dict):
                     continue
-                key = str(item.get("decision_id") or item.get("id") or (item.get("item_id") if queue else "") or "").strip()
-                for candidate in (key, key.removeprefix("review-")) if queue else (key,):
+                key = str(
+                    item.get("decision_id") or item.get("id")
+                    or (item.get("item_id") if queue else "") or ""
+                ).strip()
+                candidates = (key, key.removeprefix("review-")) if queue else (key,)
+                for candidate in candidates:
                     if candidate in pending:
                         found[candidate] = item
                         pending.remove(candidate)
