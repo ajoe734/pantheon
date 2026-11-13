@@ -2,7 +2,7 @@
   "task_id": "TRADE-LESSON-CANDIDATE-REGISTER-20261112",
   "verified": "local pytest, in-process apps (no hosted proof)",
   "commands": [
-    "pytest -q services/persona services/memory -> 336 passed, 2 skipped, 1 failed (test_lifecycle_approval_verifier compose-render KeyError 'persona', unrelated, untouched files)"
+    "PYTHONPATH=$PWD /tmp/memory-writeback-wiring-venv/bin/python -m pytest -q -c pytest.ini services/persona services/memory /tmp/test_trade_lesson_candidate_register_review.py -> all pass except 6 environmental failures in untouched areas (asyncpg missing, py3.11 f-string SyntaxError in services/capital/pg_store.py, compose-render KeyError 'persona')"
   ],
   "acceptance": {
     "1_register_once": "MemoryLessonRegistrar + write_owner register_lessons; duplicate -> already_registered (test_reflection_to_registered_candidate_...)",
@@ -13,8 +13,14 @@
     "6_integration": "services/memory/test_lesson_governance_api.py::test_reflection_to_registered_candidate_to_endorsement_to_merged_memory"
   },
   "limits": [
-    "Risk persona review is supplied in the request and checked for shape (risk role, approve, distinct persona); not verified against a persona service.",
+    "Risk persona is the verified token identity with a risk role and distinct from the candidate persona; not cross-checked against the persona registry.",
+    "Episode regimes are caller-supplied but only counted for episodes matching candidate ids/tenant/persona; not re-fetched from telemetry.",
     "Registration runs before reflection persistence; a lost pattern-review race can leave an orphan candidate.",
-    "No hosted PASS claimed; natural event, retrieval/retry and cross-persona denial hosted proof remain outstanding."
-  ]
+    "No hosted PASS claimed."
+  ],
+  "reopen_fixes": {
+    "unconfigured_registration": "write_owner.register_lessons now raises retryable 503 when PANTHEON_MEMORY_API_URL unset; persona docker-compose service sets PANTHEON_MEMORY_API_URL=http://memory:8086; test_unconfigured_memory_registration_fails_closed_and_persists_nothing",
+    "risk_review": "POST /trade-lessons/{id}/risk-review mints a durable review from verified risk-role identity (distinct from candidate persona); paper-endorse resolves review by id, bound to tenant/candidate/reflection_version; tests test_risk_review_is_bound_to_candidate_and_tenant",
+    "supporting_evidence": "check_evaluation_gates counts regimes only from episodes whose id is a candidate episode id with exact tenant/persona, deduped; test_pattern_gate_ignores_unrelated_episodes"
+  }
 }

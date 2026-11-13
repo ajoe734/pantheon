@@ -140,11 +140,14 @@ lesson state：`proposed → pending_review → endorsed → merged`，或 `quar
 
 - 每個已儲存 reflection 內的每個 `lesson_candidates` 項目，於 reflection 寫入前以其
   `lesson_candidate_id` 登記到 memory service lesson review（含 supporting episodes 與 expiry）；
-  重複登記視為已登記，不會產生第二筆。登記失敗回 503（retryable），不留下 reflection。
+  重複登記視為已登記，不會產生第二筆。登記失敗或 `PANTHEON_MEMORY_API_URL` 未設定（fail closed）一律回 503（retryable），不留下 reflection。
 - **Paper-scope 背書規則**：只影響 paper 行為的 lesson（非 policy/risk/capital/live、target_env=paper），
   在既有樣本數與跨 regime gate 通過、且已記錄一筆來自「非本 persona 的 risk persona」之 approve
   review 後，可經 `POST /api/memory/trade-lessons/{id}/paper-endorse` 背書並併入該 persona 的記憶。
-  review id 記入 endorsement receipt。
+  risk review 由 `POST /api/memory/trade-lessons/{id}/risk-review` 以 verified 身分（須具 risk role、非本 persona）
+  由 memory service 產生 review_id 並持久化，綁定 tenant、candidate、reflection_version；paper-endorse 只信任
+  review_id，並從 store 還原 review，偽造、他 candidate、他 tenant、版本過期者一律拒絕。支持證據的 regime 只計算
+  屬於該 candidate 的 episode id（且 tenant／persona 完全相符、id 去重）。review id 記入 endorsement receipt。
 - 涉及 risk、capital、policy、live 的 lesson，或 target_env 非 paper 者，維持 pending，需人工背書
   與既有 governance approval；expired、quarantined、rejected 的 candidate 一律不得背書或 merge。
 

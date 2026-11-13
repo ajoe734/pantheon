@@ -148,15 +148,25 @@ def check_evaluation_gates(candidate: Dict[str, Any], episodes: List[Dict[str, A
     # 1. Sample size gate (Pattern lessons require at least 3 supporting episodes)
     if scope in {"strategy", "regime", "pattern"}:
         min_sample = 3
-        actual_sample = len(candidate.get("trade_episode_ids", []))
+        actual_sample = len({str(i) for i in candidate.get("trade_episode_ids", [])})
         if actual_sample < min_sample:
             errors.append(f"Pattern lesson requires at least {min_sample} supporting episodes, got {actual_sample}")
 
-    # 2. Cross regime gate (Pattern lessons require at least 2 distinct market regimes)
+    # 2. Cross regime gate: only episodes that are the candidate's own (id, tenant, persona) count, once each
     if scope in {"strategy", "regime", "pattern"}:
+        own_ids = {str(i) for i in candidate.get("trade_episode_ids", [])}
+        seen: set[str] = set()
         regimes = set()
         for ep in episodes:
-            regime = ep.get("regime") or ep.get("market_regime") or ep.get("metadata", {}).get("regime")
+            ep_id = str(ep.get("trade_episode_id") or "")
+            if (
+                ep_id not in own_ids or ep_id in seen
+                or ep.get("tenant_id") != candidate.get("tenant_id")
+                or ep.get("persona_id") != candidate.get("persona_id")
+            ):
+                continue
+            seen.add(ep_id)
+            regime = ep.get("regime") or ep.get("market_regime") or (ep.get("metadata") or {}).get("regime")
             if regime:
                 regimes.add(str(regime).strip().lower())
         if len(regimes) < 2:
@@ -559,9 +569,12 @@ class LessonGovernanceService:
         if (
             not review_id or not reviewer or review.get("reviewer_role") != "risk"
             or str(review.get("verdict")).lower() != "approve" or reviewer == candidate["persona_id"]
+            or review.get("lesson_candidate_id") != lesson_candidate_id
+            or review.get("tenant_id") != candidate.get("tenant_id")
+            or review.get("reflection_version") != candidate.get("reflection_version")
         ):
             raise TradeLessonCandidateError(
-                "A recorded approving review from a distinct risk persona is required."
+                "A recorded approving review from a distinct risk persona bound to this candidate version is required."
             )
         if candidate["review_state"] == "proposed":
             self.submit_review(lesson_candidate_id)
@@ -574,3 +587,35 @@ class LessonGovernanceService:
             episodes=episodes,
         )
         return self.merge_to_memory(lesson_candidate_id, memory_store)
+
+
+class RiskReviewStore:
+    """Durable, server-minted risk persona reviews bound to tenant + candidate + reflection version."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._lock = threading.RLock()
+
+    def _read(self) -> Dict[str, Dict[str, Any]]:
+        if not self._path.exists():
+            return {}
+        text = self._path.read_text(encoding="utf-8")
+        return json.loads(text) if text.strip() else {}
+
+    def record(self, *, review_id: str, candidate: Dict[str, Any], reviewer_persona_id: str, verdict: str) -> Dict[str, Any]:
+        record = {
+            "review_id": review_id, "tenant_id": candidate["tenant_id"], "lesson_candidate_id": candidate["lesson_candidate_id"],
+            "reflection_version": candidate.get("reflection_version"), "reviewer_persona_id": reviewer_persona_id,
+            "reviewer_role": "risk", "verdict": verdict, "recorded_at": utc_now(),
+        }
+        with self._lock:
+            data = self._read()
+            data[review_id] = record
+            tmp = self._path.with_name(f".{self._path.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(tmp, self._path)
+        return record
+
+    def get(self, review_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            return self._read().get(review_id)

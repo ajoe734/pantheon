@@ -1815,7 +1815,7 @@ def create_app(
         """Register every lesson candidate of the reflection in memory review before it is persisted."""
         candidates = candidates_from_reflection(artifact, tenant_id)
         if not candidates: return {"status": "no_candidates"}
-        if not active_lesson_registrar.configured: return {"status": "skipped_unconfigured", "candidates": len(candidates)}
+        if not active_lesson_registrar.configured: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Lesson registration unavailable: PANTHEON_MEMORY_API_URL is not configured", "retryable": True}})
         try: return {"status": "registered", **active_lesson_registrar.register(candidates, authorization)}
         except Exception as exc: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Lesson registration failed: {exc}", "retryable": True}}) from exc
 
