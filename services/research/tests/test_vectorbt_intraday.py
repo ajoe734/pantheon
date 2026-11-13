@@ -513,7 +513,7 @@ def test_reused_replay_prefix_resolves_identical_pit_inputs_at_every_bar(mode):
         obs = new["tw_price_5m"]["close"]
         assert obs[-1] == old["tw_price_5m"]["close"][-1]
         assert len(obs) == i + 1 - (starts[i] if reset else 0)
-        assert all(o["event_time"] <= clock for o in obs)
+        assert all(o["bar_start"] <= prepared.dates_by_instrument["2330"][i] for o in obs)
         args = dict(decision_time=clock, bar_frequency="5m")
         try:
             expected = resolve_point_in_time_inputs(art["strategy_logic"], None, features=old, **args)
