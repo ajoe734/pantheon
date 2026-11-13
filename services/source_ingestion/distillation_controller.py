@@ -569,7 +569,7 @@ def run_controller_tick(
 
         if (
             run_result.failed
-            or queue_metrics["retry_wait"]
+            or queue_metrics["retry_wait"] - queue_metrics["deferred"]
             or queue_metrics["dead_letter"]
             or queue_metrics["failed"]
         ):

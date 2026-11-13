@@ -586,7 +586,15 @@ class DistillationJobQueue:
                 );
                 """
             )
-            self._migrate_schema(connection)
+            # Constructors can race across ingest/controller processes. Hold
+            # the writer lock through column inspection and additive migration.
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._migrate_schema(connection)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
 
     def _migrate_schema(self, connection: sqlite3.Connection) -> None:
         for table in ("distillation_outbox", "distillation_inbox"):
@@ -1035,7 +1043,9 @@ class DistillationJobQueue:
                 for row in rows:
                     payload = json.loads(row["payload_json"])
                     scope = (payload.get("metadata") or {}).get("tenant_id")
-                    priority = priorities.get(scope, DemandPriority(reason="demand_read_missing_tenant"))
+                    priority = priorities.get(scope, DemandPriority(
+                        reason="demand_read_missing_tenant" if not scope else "demand_reader_not_configured",
+                    ))
                     deferred = row["deferred_since"] is not None
                     score = priority.score(payload) if deferred else 0
                     # Deferred backlog precedes new work. Stable arrival ties;
@@ -1131,6 +1141,7 @@ class DistillationJobQueue:
                 connection.execute(
                     """UPDATE distillation_outbox SET status = 'retry_wait', available_at = ?,
                        deferred_since = ?, last_error = 'budget_exhausted',
+                       skip_reason = 'budget_exhausted: deferred to next cap window',
                        attempts = MAX(0, attempts - 1), lease_owner = NULL, lease_token = NULL,
                        lease_expires_at = NULL, updated_at = ? WHERE job_id = ?""",
                     (available, since, now, job.job_id),
@@ -1145,6 +1156,20 @@ class DistillationJobQueue:
             except Exception:
                 connection.execute("ROLLBACK")
                 raise
+
+    def clear_budget_deferral(self, job: DistillationJob, *, now: float) -> None:
+        """A produced card ends cap waiting; Registry retries have their own lifetime."""
+        if job.deferred_since is None:
+            return
+        with self._connect() as connection:
+            changed = connection.execute(
+                """UPDATE distillation_outbox SET deferred_since = NULL, skip_reason = NULL,
+                   last_error = NULL, updated_at = ? WHERE job_id = ? AND status = 'leased'
+                   AND lease_token = ? AND lease_expires_at > ?""",
+                (now, job.job_id, job.lease_token, now),
+            ).rowcount
+            if changed != 1:
+                raise DistillationError(f"stale or expired extraction completion: {job.job_id}")
 
     def _terminal_update(
         self,
@@ -1446,6 +1471,7 @@ class DistillationJobQueue:
                            registry_id = NULL, strategy_id = NULL,
                            version = NULL, checksum = NULL,
                            last_error = NULL, skip_reason = NULL,
+                           deferred_since = NULL, priority_reason = NULL, demand_score = 0,
                            lease_owner = NULL, lease_token = NULL,
                            lease_expires_at = NULL, updated_at = ?
                      WHERE job_id = ?
@@ -1584,6 +1610,7 @@ class DistillationJobQueue:
             "failed": 0,
             "dead_letter": 0,
             "skipped": 0,
+            "deferred": 0,
         }
         with self._connect() as connection:
             rows = connection.execute(
@@ -1593,6 +1620,10 @@ class DistillationJobQueue:
                  GROUP BY status
                 """
             ).fetchall()
+            metrics["deferred"] = int(connection.execute(
+                """SELECT COUNT(*) FROM distillation_outbox WHERE status = 'retry_wait'
+                   AND deferred_since IS NOT NULL AND last_error = 'budget_exhausted'""",
+            ).fetchone()[0])
         for row in rows:
             metrics[str(row["status"])] = int(row["count"])
         return metrics
@@ -2037,6 +2068,9 @@ class DistillationWorker:
                     )
                     return "skipped", reason
                 card = outcome.card
+                self._queue.clear_budget_deferral(
+                    job, now=_timestamp(now) if now is not None else self._queue._now(),
+                )
                 if self._hypothesis_compiler is not None:
                     compiled = self._hypothesis_compiler.compile(outcome.card)
                     if compiled.status == SKIPPED_COMPILE and str(compiled.reason).startswith("proposer_failed"):
