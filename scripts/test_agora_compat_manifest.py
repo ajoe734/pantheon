@@ -785,3 +785,97 @@ def test_handoff_blocking_reasons_rejects_malformed_source_file_entry(tmp_path: 
         frontend_dev_ref="HEAD",
     )
     assert "backend-source-files-invalid" in reasons
+
+
+def _gate_controller_checkout_ref(workflow_text: str) -> str:
+    yaml = pytest.importorskip("yaml")
+    doc = yaml.safe_load(workflow_text)
+    for job in doc["jobs"].values():
+        for step in job.get("steps", []):
+            if step.get("name") == "Checkout accepted Agora gate controller":
+                return step["with"]["ref"]
+    raise AssertionError("gate controller checkout step not found")
+
+
+def _admission_controller_guard(workflow_text: str) -> str:
+    start = workflow_text.index(
+        "Generate immutable exact-pair admission before any dev switch"
+    )
+    run = workflow_text.index("run: |\n", start) + len("run: |\n")
+    end = workflow_text.index("grep -Fxq", run)
+    return "\n".join(line[10:] for line in workflow_text[run:end].splitlines())
+
+
+def _commit(repo: Path, name: str) -> str:
+    (repo / "f.txt").write_text(name, encoding="utf-8")
+    _git(repo, "add", "f.txt")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@e", "commit", "-m", name)
+    return _git(repo, "rev-parse", "HEAD").strip()
+
+
+def _simulate_dev_race(tmp_path: Path, ref_template: str, explicit_input: bool = False):
+    """Mimic: payload checkout, dev advances A->B, then controller checkout."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-b", "dev")
+    sha_a = _commit(origin, "A")
+    # explicit: inputs.ref is a SHA; default: github.sha. Both are exact SHAs.
+    target_ref = sha_a
+    payload = tmp_path / "target"
+    _git(tmp_path, "clone", str(origin), str(payload))
+    _git(payload, "checkout", "--detach", target_ref)
+    target_sha = _git(payload, "rev-parse", "HEAD").strip()
+    _commit(origin, "B")  # dev advances between the two checkouts
+    ref = ref_template.replace("${{ env.TARGET_REF }}", target_ref)
+    controller = tmp_path / "controller"
+    _git(tmp_path, "clone", str(origin), str(controller))
+    _git(controller, "checkout", "--detach", ref if ref != "dev" else "origin/dev")
+    return controller, target_sha, sha_a
+
+
+def _run_guard(workflow_text: str, controller: Path, target_sha: str):
+    script = _admission_controller_guard(workflow_text).replace(
+        "${{ steps.target.outputs.sha }}", target_sha
+    )
+    return subprocess.run(
+        ["bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", script],
+        cwd=controller,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("explicit_sha", [True, False])
+def test_gate_controller_checkout_stays_on_requested_payload_when_dev_advances(
+    tmp_path: Path, explicit_sha: bool
+) -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    ref_template = _gate_controller_checkout_ref(workflow)
+    assert ref_template == "${{ env.TARGET_REF }}"
+    assert "TARGET_REF: ${{ inputs.ref || github.sha }}" in workflow
+
+    controller, target_sha, sha_a = _simulate_dev_race(tmp_path, ref_template, explicit_sha)
+    assert _git(controller, "rev-parse", "HEAD").strip() == sha_a == target_sha
+    result = _run_guard(workflow, controller, target_sha)
+    assert result.returncode == 0, result.stderr
+
+
+def test_gate_controller_checkout_old_floating_dev_fails_and_wrong_controller_rejected(
+    tmp_path: Path,
+) -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    # Witness: the old literal `ref: dev` lands on B and the guard rejects it.
+    controller, target_sha, sha_a = _simulate_dev_race(tmp_path / "old", "dev")
+    assert _git(controller, "rev-parse", "HEAD").strip() != sha_a
+    result = _run_guard(workflow, controller, target_sha)
+    assert result.returncode == 1
+    assert "exact backend release commit" in result.stderr
+    # The exact guard is not bypassed: a stale payload SHA is still rejected.
+    stale = "0" * 40
+    controller2, _, _ = _simulate_dev_race(
+        tmp_path / "new", "${{ env.TARGET_REF }}"
+    )
+    assert _run_guard(workflow, controller2, stale).returncode == 1
