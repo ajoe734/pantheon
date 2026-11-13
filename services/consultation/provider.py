@@ -217,7 +217,13 @@ class HttpContributionProvider:
         *,
         tenant_id: str,
         request: Mapping[str, Any],
+        participant_scope: str = "",
     ) -> QualifiedContribution:
+        """Fetch one contribution.
+
+        ``participant_scope`` distinguishes independent per-persona asks for the
+        same request so each gets its own provider idempotency key.
+        """
         if not self.endpoint:
             raise ContributionBlocked(
                 "CONSULTATION_PROVIDER_URL is not configured",
@@ -230,7 +236,9 @@ class HttpContributionProvider:
             )
         request_id = str(request.get("request_id") or "")
         idempotency_key = "consultation-provider:" + sha256(
-            f"{tenant_id}\0{request_id}".encode("utf-8")
+            f"{tenant_id}\0{request_id}\0{participant_scope}".encode("utf-8")
+            if participant_scope
+            else f"{tenant_id}\0{request_id}".encode("utf-8")
         ).hexdigest()
         payload = json.dumps(
             {

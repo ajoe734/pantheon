@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import subprocess
 import sys
+from threading import Event
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -44,6 +48,235 @@ class FakeStore:
 
     def get_session(self, workshop_id: str):
         return self.sessions.get(workshop_id)
+
+
+@pytest.fixture
+def smoke(monkeypatch):
+    """Run the deployed CLI entrypoint with isolated, real owner stores."""
+    helper = _load_helper()
+    workshops = FakeStore()
+    proposals = helper.ProposalStore(backend="memory")
+    datasets = helper.AgoraDatasetStore(backend="memory")
+    for name in (helper.WORKSHOP_BACKEND_ENV, helper.GOVERNANCE_BACKEND_ENV,
+                 helper.DATASET_BACKEND_ENV):
+        monkeypatch.setenv(name, "postgres")
+    monkeypatch.setattr(helper, "make_workshop_store", lambda: workshops)
+    monkeypatch.setattr(helper, "ProposalStore", lambda: proposals)
+    monkeypatch.setattr(helper, "AgoraDatasetStore", lambda: datasets)
+
+    def run(action):
+        return helper.main([action, "--workshop-id", "ws-race", "--tenant-id", "tenant",
+                            "--user-id", "viewer"])
+
+    assert run("seed") == 0
+    return helper, datasets, run
+
+
+def _natural_batch(store):
+    from agora.evidence.worker import run_extraction_batch
+    return run_extraction_batch(store, worker_id="natural-lifespan-batch")
+
+
+def _assert_single_effects(store, *, attempts=1):
+    scope = {"tenant_id": "tenant", "user_id": "viewer"}
+    entry = store.get_inbox_entry("evidence-ws-race", **scope)
+    record = store.get("evidence-ws-race", **scope)
+    handoffs = store.list_handoffs(**scope)
+    assert entry["status"] == "processed" and entry["attempt_count"] == attempts
+    assert len(store.list_by_dataset("observe", **scope)) == 1
+    assert len(handoffs) == 1
+    assert handoffs[0]["evidence_ids"] == [record.evidence_id]
+    assert handoffs[0]["dataset_version_id"] == record.dataset_version_id
+    assert _natural_batch(store) == {"processed": 0, "failed": 0, "handoffs_created": 0}
+
+
+def test_cli_accepts_natural_consumption_before_verify(smoke):
+    _, store, run = smoke
+    assert _natural_batch(store) == {"processed": 1, "failed": 0, "handoffs_created": 1}
+    assert store.get_backlog("tenant", "viewer") == []
+    assert run("verify") == 0
+    _assert_single_effects(store)
+
+
+def test_cli_accepts_already_acknowledged_durable_handoff(smoke):
+    _, store, run = smoke
+    assert _natural_batch(store)["processed"] == 1
+    handoff = store.list_handoffs(tenant_id="tenant", user_id="viewer")[0]
+    acknowledged, is_new = store.acknowledge_handoff(
+        handoff["handoff_id"], tenant_id="tenant", user_id="viewer",
+        acknowledgement_id="ack-local", dataset_version_id=handoff["dataset_version_id"],
+        downstream_ref="observe://local-fixture", acknowledged_by="local-consumer",
+        request_digest="local-ack-digest", acknowledged_at="2026-07-14T00:03:00Z",
+    )
+    assert is_new and acknowledged["ack_status"] == "acknowledged"
+    assert run("verify") == 0
+    _assert_single_effects(store)
+
+
+def test_cli_accepts_consumer_winning_pending_read_to_claim(smoke, monkeypatch):
+    _, store, run = smoke
+    claim = store.claim_inbox
+    competed = []
+
+    def compete(**kwargs):
+        if kwargs["worker_id"] == "restart-persistence-smoke" and not competed:
+            competed.append(_natural_batch(store))
+        return claim(**kwargs)
+
+    monkeypatch.setattr(store, "claim_inbox", compete)
+    assert run("verify") == 0
+    assert competed == [{"processed": 1, "failed": 0, "handoffs_created": 1}]
+    _assert_single_effects(store)
+
+
+def _controlled_clock(helper, monkeypatch, *, on_wait=lambda: None):
+    elapsed = [0.0]
+    waits = []
+
+    def wait(seconds):
+        assert 0 < seconds <= helper.EVIDENCE_POLL_SECONDS
+        waits.append(seconds)
+        on_wait()
+        elapsed[0] += seconds
+
+    monkeypatch.setattr(helper, "time", SimpleNamespace(
+        monotonic=lambda: elapsed[0], sleep=wait,
+    ))
+    return waits
+
+
+@pytest.mark.parametrize("start", ["before_verify", "before_claim"])
+def test_cli_waits_for_real_competing_processing_lease(smoke, monkeypatch, start):
+    helper, store, run = smoke
+    claimed, release = Event(), Event()
+    complete = store._complete_claim
+    claim = store.claim_inbox
+    competing = []
+
+    def hold(entry, **kwargs):
+        claimed.set()
+        assert release.wait(timeout=5), "verifier never observed competing processing lease"
+        return complete(entry, **kwargs)
+
+    monkeypatch.setattr(store, "_complete_claim", hold)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        def start_consumer():
+            competing.append(executor.submit(_natural_batch, store))
+            assert claimed.wait(timeout=5)
+
+        def compete(**kwargs):
+            if kwargs["worker_id"] == "restart-persistence-smoke" and not competing:
+                start_consumer()
+            return claim(**kwargs)
+
+        if start == "before_verify":
+            start_consumer()
+        else:
+            monkeypatch.setattr(store, "claim_inbox", compete)
+
+        def finish_consumer():
+            release.set()
+            assert competing[0].result(timeout=5) == {
+                "processed": 1, "failed": 0, "handoffs_created": 1,
+            }
+
+        waits = _controlled_clock(helper, monkeypatch, on_wait=finish_consumer)
+        try:
+            assert run("verify") == 0
+        finally:
+            release.set()
+            competing[0].result(timeout=5)
+    assert waits == [helper.EVIDENCE_POLL_SECONDS]
+    _assert_single_effects(store)
+
+
+@pytest.mark.parametrize("state", ["pending", "expired_processing"])
+def test_cli_recovers_legacy_claimable_seed_only(smoke, state):
+    helper, store, run = smoke
+    # Another same-scope item must not be consumed by this targeted verifier.
+    other = helper.evidence_for("unrelated")
+    store.add_to_inbox(other, "tenant", "viewer", "2026-07-14T00:01:00Z",
+                       idempotency_key="unrelated", request_digest=helper.evidence_request_digest(other))
+    if state == "expired_processing":
+        assert len(store.claim_inbox(
+            tenant_id="tenant", user_id="viewer", evidence_id="evidence-ws-race",
+            worker_id="pre-restart", now=datetime.now(timezone.utc) - timedelta(minutes=1),
+        )) == 1
+    assert run("verify") == 0
+    assert store.get_inbox_entry("evidence-unrelated", tenant_id="tenant", user_id="viewer")["status"] == "pending"
+    # Remove only the isolated unrelated fixture before asserting one effect.
+    del store._inbox[("tenant", "viewer", "evidence-unrelated")]
+    _assert_single_effects(store, attempts=2 if state == "expired_processing" else 1)
+
+
+@pytest.mark.parametrize("state", ["pending", "processing"])
+def test_cli_fails_closed_at_recovery_deadline(smoke, monkeypatch, state):
+    helper, store, run = smoke
+    if state == "processing":
+        assert len(store.claim_inbox(tenant_id="tenant", user_id="viewer",
+                                   worker_id="still-alive")) == 1
+    else:
+        # A zero recovery budget observes actual pending state without claiming.
+        monkeypatch.setattr(helper, "EVIDENCE_RECOVERY_SECONDS", 0)
+    waits = _controlled_clock(helper, monkeypatch)
+    with pytest.raises(RuntimeError, match=f"recovery deadline: status='{state}'"):
+        run("verify")
+    assert sum(waits) == helper.EVIDENCE_RECOVERY_SECONDS
+    assert store.get("evidence-ws-race", tenant_id="tenant", user_id="viewer") is None
+    assert store.list_handoffs(tenant_id="tenant", user_id="viewer") == []
+
+
+@pytest.mark.parametrize("natural_first", [False, True])
+def test_cli_rejects_real_failed_extraction(smoke, natural_first):
+    _, store, run = smoke
+    key = ("tenant", "viewer", "evidence-ws-race")
+    store._inbox[key]["consent_granted"] = False
+    if natural_first:
+        assert _natural_batch(store) == {"processed": 0, "failed": 1, "handoffs_created": 0}
+    with pytest.raises(RuntimeError, match="extraction status='failed'"):
+        run("verify")
+    assert store._inbox[key]["status"] == "failed"
+    assert store.get("evidence-ws-race", tenant_id="tenant", user_id="viewer") is None
+    assert store.list_handoffs(tenant_id="tenant", user_id="viewer") == []
+
+
+@pytest.mark.parametrize("damage", [
+    "inbox_missing", "inbox_tenant", "inbox_user", "inbox_receipt", "inbox_digest",
+    "record_missing", "record_tenant", "record_user", "record_evidence", "record_receipt", "record_status",
+    "record_content", "record_captured", "record_consent",
+    "handoff_missing", "handoff_tenant", "handoff_user", "handoff_evidence", "handoff_version",
+    "handoff_duplicate", "handoff_kind", "handoff_authority",
+])
+def test_cli_rejects_missing_or_mismatched_durable_proof(smoke, damage):
+    _, store, run = smoke
+    assert _natural_batch(store)["processed"] == 1
+    key = ("tenant", "viewer", "evidence-ws-race")
+    handoff = next(iter(store._handoffs.values()))
+    if damage == "inbox_missing":
+        del store._inbox[key]
+    elif damage.startswith("inbox_"):
+        field = {"tenant": "tenant_id", "user": "user_id", "receipt": "admission_receipt_id",
+                 "digest": "request_digest"}[damage.removeprefix("inbox_")]
+        store._inbox[key][field] = "wrong"
+    elif damage == "record_missing":
+        del store._records[key]
+    elif damage.startswith("record_"):
+        field = {"tenant": "tenant_id", "user": "user_id", "evidence": "evidence_id",
+                 "receipt": "admission_receipt_id", "status": "status", "content": "content",
+                 "captured": "captured_at", "consent": "consent_verified"}[damage.removeprefix("record_")]
+        wrong = {"text": "wrong"} if field == "content" else False if field == "consent_verified" else "wrong"
+        store._records[key] = store._records[key].model_copy(update={field: wrong})
+    elif damage == "handoff_missing":
+        store._handoffs.clear()
+    elif damage == "handoff_duplicate":
+        store._handoffs[("tenant", "viewer", "duplicate")] = {**handoff, "handoff_id": "duplicate"}
+    else:
+        field = {"tenant": "tenant_id", "user": "user_id", "evidence": "evidence_ids",
+                 "version": "dataset_version_id", "kind": "dataset_kind",
+                 "authority": "authority_limit"}[damage.removeprefix("handoff_")]
+        handoff[field] = ["wrong"] if field == "evidence_ids" else "wrong"
+    with pytest.raises(RuntimeError, match="inbox.*(not found|mismatch)|dataset record.*(not found|mismatch)|durable handoff mismatch"):
+        run("verify")
 
 
 def test_helper_seeds_and_verifies_workshop_proposal_and_outbox() -> None:

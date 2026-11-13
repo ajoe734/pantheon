@@ -2090,6 +2090,13 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
+      "file": "tests/test_bff_capital_paper_allocation.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Composes the real capital router/command adapter and Capital owner through the owner-HTTP harness plus the real persona evaluator; no main.py import"
+    },
+    {
       "file": "tests/test_capital_router.py",
       "layer": "router",
       "imports_main": false,

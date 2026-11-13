@@ -1,0 +1,336 @@
+{
+  "task_id": "SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "delivery_status": "source_ready_for_independent_review_with_three_reproduced_dev_baseline_failures",
+  "review_decision": "pending_independent_Claude_review",
+  "base_commit": "86ab46e44410a43af171285f9c876f868b267198",
+  "scope": {
+    "owned_layer": "Source registry/freshness receipt read projection",
+    "changed": [
+      "services/source_ingestion/runtime.py",
+      "services/source_ingestion/tests/test_registry_receipt_summary.py",
+      "services/source_ingestion/tests/test_scheduled_connector.py",
+      "services/source_ingestion/tests/fixtures/hosted_registry_20261112.json",
+      "docs/deployment/evidence/SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111/evidence.json"
+    ],
+    "unchanged": [
+      "BFF source and data-sources read budget",
+      "receipt persistence and full-receipt endpoint",
+      "market snapshot selection, writer and storage",
+      "catalog controller response sections, endpoints, caches and settings"
+    ]
+  },
+  "scope_correction": {
+    "authority": "Canonical Human/Ops reopen at 2026-11-12T20:52:40Z, generation 3, same task and PR #7200; read through governed AI_NAME=Codex show.",
+    "provenance": "/tmp/pantheon-goal-resume-20261111/goal-source7200-assistant-budget-gate-minimal-existing-scope-repair-readonly-20261112.json",
+    "engineering_erratum": "The total 150000-byte premise originated in this assistant task, not the original user product acceptance or runtime/deploy guard. It is withdrawn by the canonical reopen reason. No user approval of 200 KB, replacement byte cap, field deletion or API migration is inferred.",
+    "preserved_obligations": "AC1 and AC3-8 plus AC2 real seven-connector/96-snapshot shape and bounded growth remain. All connector identities, receipt status/times/counts/evidence bundle, static sections, full raw receipt/store bytes, readers, auth/tenant/secret boundaries and original hosted performance/UI/13-query parity remain required.",
+    "historical_failures": "At bf42eb38b06b8fec40dcda6849b7030470012762 the task-added four 150000-byte assertions FAILED (6 passed, 4 failed). That head is not relabelled PASS. Its entire evidence record is retained verbatim in Git and bound by historical_evidence_reference (commit, blob, SHA-256).",
+    "assertion_replacements": [
+      "Captured size test: exact response and all non-receipt fields still match the capture; every receipt is independently checked against a fixed field/count contract with no bulk bodies.",
+      "Captured growth test: 0/4/96/960 snapshots; full payload identical after normalizing only four counters; unchanged full raw endpoint and journal bytes at each size; original <=8-byte growth assertion retained.",
+      "Current-dev production-writer size test: independently checked receipt field/count contract, original before >700000 and after <before/4 assertions retained; current-dev static sections compared before/after.",
+      "Production-writer growth test: same full payload/counter/raw/store checks including snapshot store integrity; original <=8-byte growth assertion retained. Test clock pinned so elapsed time does not alter freshness age/generated_at."
+    ],
+    "current_dev_composition": "Normal non-force merge of current dev at 86ab46e44410a43af171285f9c876f868b267198; upstream bounded DLQ and all current source writers preserved. No BFF, auth, receipt endpoint/store, catalog controller or snapshot writer edits.",
+    "capture_replay_adjustment": "Current dev adds catalog entries after the 2026-11-12 capture. Test-only captured replay pins provider_examples and financial catalog to the original capture, just as connector non-receipt fields were already pinned. Original hash, byte-identical legacy response and complete non-receipt equality assertions remain. Separate real-writer fixture uses current-dev generators and checks static section preservation. No original product-semantic test is weakened or deleted."
+  },
+  "receipt_contract": {
+    "schema_version": "source_ingest_receipt_summary.v1",
+    "preserved": [
+      "ingest_run_id",
+      "connector_id",
+      "status",
+      "trigger_type",
+      "trace_id",
+      "started_at",
+      "finished_at",
+      "created_at",
+      "source_timestamp",
+      "source_timestamp_status",
+      "raw_count",
+      "normalized_count",
+      "rejected_count",
+      "watermark",
+      "evidence_refs.evidence_bundle_id"
+    ],
+    "counts": [
+      "evidence_refs.source_id_count",
+      "evidence_refs.evidence_item_id_count",
+      "evidence_refs.knowledge_object_id_count",
+      "evidence_refs.distillation_admission_count",
+      "evidence_refs.market_snapshots.accepted_record_count",
+      "evidence_refs.market_snapshots.updated_snapshot_count",
+      "evidence_refs.market_snapshots.snapshot_count"
+    ],
+    "omitted_from_summary": [
+      "evidence lists",
+      "distillation admission entries",
+      "market snapshot bodies",
+      "storage_refs",
+      "typed_failure"
+    ],
+    "failure_visibility": "Freshness last_failure_at and last_typed_failure remain unchanged; the full receipt endpoint retains typed_failure.",
+    "full_receipt": "GET /api/source-ingest/receipts/{ingest_run_id} returns the unchanged IngestReceipt.to_dict payload. Regression compares every field, including every snapshot, calendar and lineage, and verifies receipt journal and snapshot store bytes before/after registry/freshness/detail reads."
+  },
+  "reader_audit": [
+    {
+      "path": "scripts/deploy_nonprod_vm.sh",
+      "reader": "bounded refresh freshness checks and TAIFEX warm-cache admission",
+      "latest_receipt_fields": [
+        "ingest_run_id",
+        "source_timestamp",
+        "finished_at",
+        "created_at"
+      ],
+      "compatibility": "All fields preserved at their existing paths. No evidence lists read."
+    },
+    {
+      "path": "scripts/project_market_data_to_bff_agora_surfaces.py",
+      "reader": "project",
+      "latest_receipt_fields": [
+        "ingest_run_id",
+        "source_proof_receipt_id (fallback)",
+        "receipt_id (fallback)"
+      ],
+      "compatibility": "ingest_run_id preserved. The two fallback aliases were never emitted by IngestReceipt.to_dict and are not removed fields; existing record proof/run fallbacks are unchanged."
+    },
+    {
+      "path": "services/control-plane/bff/console_gap/datasources.py",
+      "reader": "_sanitize_legacy_projection_row",
+      "latest_receipt_fields": [],
+      "compatibility": "Pass-through/redaction of the connector row; no evidence-list or snapshot-body dependency."
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "reader": "_read_source_ingest_truth_locked and _source_truth_projection / _overlay_source_health_truth",
+      "latest_receipt_fields": [],
+      "compatibility": "Clones connector rows and freshness; health projection reads outer freshness scalars. Rich detail retains the now-bounded freshness projection without requiring full receipts."
+    },
+    {
+      "path": "services/source_ingestion/runtime.py",
+      "reader": "freshness and latest-record selection",
+      "latest_receipt_fields": [
+        "durable receipt status",
+        "durable receipt timestamps",
+        "durable receipt ingest_run_id"
+      ],
+      "compatibility": "Internal selection still receives the original durable IngestReceipt objects. Only emitted latest_receipt is projected."
+    },
+    {
+      "path": "scripts/test_dev_tw_market_refresh.py",
+      "reader": "local refresh harness",
+      "latest_receipt_fields": [
+        "ingest_run_id"
+      ],
+      "compatibility": "Harness fixtures preserve the same run-ID path; separate receipts endpoint remains full."
+    },
+    {
+      "path": "services/source_ingestion/tests/test_scheduled_connector.py",
+      "reader": "scheduled registry freshness assertion",
+      "latest_receipt_fields": [
+        "status"
+      ],
+      "compatibility": "Original assertions unchanged; adds summary schema/count checks plus full-receipt evidence-list readback."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py",
+      "reader": "rich vs compact persona projection tests",
+      "latest_receipt_fields": [
+        "synthetic payload used to test rich BFF clone behavior"
+      ],
+      "compatibility": "BFF source and these tests are unchanged; independent rich-projection behavior remains covered."
+    }
+  ],
+  "hosted_fixture": {
+    "path": "services/source_ingestion/tests/fixtures/hosted_registry_20261112.json",
+    "provenance": "Operator-authorized exact complete existing source-owner registry GET, captured with a real viewer session; copied unchanged. No hosted access, credentials, provider calls or deployment by this worker.",
+    "captured_at": "2026-11-12T00:24:00.183101+00:00",
+    "wire_bytes": 758698,
+    "sha256": "01104cfb18918d5ef95b394219507f2ae7b74c9b44b3782930bbbf8a67abb1e2",
+    "connector_ids": [
+      "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "dev-paper-us-equity-simulation",
+      "hosted-all12-h12-01a11-20261023-9aeb-conn",
+      "hosted-all12-h12-01a11-20261026-d834-conn",
+      "hosted-all12-h12-claude-20261027-4923-conn",
+      "tw-taifex-futures-options-chip",
+      "tw-twse-tpex-official-market"
+    ],
+    "owner_read_elapsed_ms": 663.394,
+    "source_ingest_image": "sha256:238782113a721db91a65486ad79652510e3857fa44ab4ad4375a714208b0d5ef",
+    "source_ingest_source_sha": null,
+    "bff_source_sha": "bee62bc2978618539984aff9db136b064adc14a0",
+    "bff_image": "sha256:3a54a97f00a974c26c89bcd838975f2ec15c41e9efdb421ebc4d018369c3af1b",
+    "bff_identity_stable_during_capture": true,
+    "logout_status": 200,
+    "acceptance_limitations": "Input provenance only. Capture occurred while root run 43123219914 was publishing; FE metadata still named d9c730ea4/acf3efa. This is not final paired product acceptance. Original sole publisher retains hosted verification; no second deployment flow or Pattern/Prod/frozen pair change."
+  },
+  "current_measurements": {
+    "HOSTED_REGISTRY_BENCHMARK": {
+      "before": {
+        "bytes": 758698,
+        "median_ms": 35.502482001902536,
+        "samples_ms": [
+          35.502482001902536,
+          33.424330002162606,
+          30.958805000409484,
+          38.41351400478743,
+          38.769617007346824
+        ]
+      },
+      "after": {
+        "bytes": 176588,
+        "median_ms": 30.11801600223407,
+        "samples_ms": [
+          28.478574997279793,
+          31.944882008247077,
+          30.431230989051983,
+          29.97250101179816,
+          30.11801600223407
+        ]
+      },
+      "after_section_value_bytes": {
+        "schema_version": 30,
+        "connectors": 44686,
+        "provider_examples": 36592,
+        "policy_registry": 11860,
+        "financial_data_source_catalog": 70428,
+        "active_universe_policy": 12860
+      }
+    },
+    "REGISTRY_BENCHMARK": {
+      "before": {
+        "bytes": 983570,
+        "median_ms": 14.469970017671585,
+        "samples_ms": [
+          13.550274015869945,
+          13.307646004250273,
+          14.469970017671585,
+          16.992099001072347,
+          14.819582022028044
+        ]
+      },
+      "after": {
+        "bytes": 172550,
+        "median_ms": 10.225710982922465,
+        "samples_ms": [
+          9.72221398842521,
+          9.686650009825826,
+          10.225710982922465,
+          10.647474991856143,
+          12.974776996998116
+        ]
+      }
+    },
+    "HOSTED_REGISTRY_SCALING": {
+      "snapshot_counts": [
+        0,
+        4,
+        96,
+        960
+      ],
+      "response_bytes": [
+        176583,
+        176583,
+        176587,
+        176591
+      ]
+    }
+  },
+  "measurement_limits": "Local TestClient only: exact captured historical static replay and separate current-dev seven-adapter real writer reconstruction. Timings include disk reads and test-only wrappers; no hosted latency, browser, private/raw parity, tenant/auth or final paired acceptance claim. Original hosted owner STRAT-DATASRC-HOSTED-ACCEPT-20261110 retains those obligations. No VM/SSH/provider/business/data/secret operation or publisher432880 intervention.",
+  "unchanged_bff_budget": {
+    "path": "services/control-plane/bff/main.py",
+    "current_dev_default_seconds": 2.5,
+    "stage_prod_default_seconds": 0.75,
+    "change": "none; constants verified from current dev, not increased by this task"
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Provisioned task-local interpreter and verified editable import mapping."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q -s services/source_ingestion/tests/test_registry_receipt_summary.py",
+      "exit_code": 0,
+      "result": "10 passed, 1 warning in 7.20s. Complete capture, current-dev writer, count-only growth, all seven raw receipts and journal/snapshot byte equality pass.",
+      "output": "/tmp/source-registry-projection-tests.log"
+    },
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_runtime_latest_source_record.py services/source_ingestion/tests/test_financial_source_catalog.py",
+      "exit_code": 0,
+      "result": "72 passed, 1 warning in 60.46s. Existing product-semantic assertions unchanged.",
+      "output": "/tmp/source-registry-source-tests.log"
+    },
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q scripts/test_project_market_data_to_bff_agora_surfaces.py scripts/test_source_ingest_deploy_diagnostics_contract.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py",
+      "exit_code": 1,
+      "result": "53 passed, 2 failed in 24.79s. Wrong-role projector mock does not reject viewer; workflow assertion omits existing FinMind connector. Both failures also occur on exact dev base; no test/auth/workflow changes.",
+      "output": "/tmp/source-registry-caller-tests.log"
+    },
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_management_data_sources_contract.py services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py",
+      "exit_code": 1,
+      "result": "15 passed, 1 failed in 29.96s. Human Inbox contributor thread-name assertion expects mgmt_human_inbox_contributor but sees bff-health-owner-read. Same failure occurs on exact dev base. Data-sources contract and environment timeout tests pass.",
+      "output": "/tmp/source-registry-bff-tests.log"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_project_market_data_to_bff_agora_surfaces.py::test_projector_wrong_role_fails_closed scripts/test_source_ingest_deploy_diagnostics_contract.py::test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py::test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals",
+      "cwd": "/tmp/source-registry-receipt-baseline-check-20261112",
+      "base_commit": "86ab46e44410a43af171285f9c876f868b267198",
+      "exit_code": 1,
+      "result": "3 failed in 24.84s, reproducing all three failures on an independent shared-object clone at the exact dev base, provisioned with its own editable venv. This checkout contains no receipt-summary implementation.",
+      "output": "/tmp/source-registry-base-failures.log"
+    },
+    {
+      "command": "git diff --check; JSON comparison of historical record against git show bf42eb38b:evidence.json; blob comparisons against dev",
+      "exit_code": 0,
+      "result": "Diff clean; historical evidence verified against its immutable Git record. Catalog/receipt routes, scheduler receipt serialization, snapshot store/writer, BFF budget and projector are byte-identical to dev."
+    },
+    {
+      "command": "timeout 420 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py",
+      "exit_code": 0,
+      "result": "71 passed in 352.98s. Bounded foreground batch completed and terminal output/exit status collected.",
+      "output": "/tmp/source-registry-deploy-reader-tests.log"
+    }
+  ],
+  "validation_diagnostics": [
+    "Initial current-dev replay run: 9 passed, 1 failed because current catalog additions changed legacy captured wire bytes. Fixed only the task-added replay hydration to pin historical static inputs; exact-byte assertion retained. Current-dev fixture remains live.",
+    "Next run: 9 passed, 1 failed in the added full-growth equality because real elapsed wall time changed freshness age/policy generated_at. Pinned test clock only for production-writer growth test; full-payload and original <=8-byte assertions retained.",
+    "Independent baseline worktree creation was denied by read-only shared git metadata. Used a separate shared-object clone with its own git metadata and editable venv; no shared metadata permissions or runtime guard changed."
+  ],
+  "validation_summary": "221 passed and 3 failed across task/source/caller/BFF/deploy-reader batches. All three failures independently reproduce on dev 86ab46e44410a43af171285f9c876f868b267198 (separate 3-failure baseline batch). No timeout counted as pass. Assigned Claude review, required GitHub CI and native supervisor integration are pending; no merge/done/hosted claim.",
+  "historical_evidence_reference": {
+    "commit": "bf42eb38b06b8fec40dcda6849b7030470012762",
+    "path": "docs/deployment/evidence/SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111/evidence.json",
+    "git_blob": "7e5916ddf90302c56bb01a3a443b5da32b3b6d07",
+    "sha256": "7d75dc725dd4887bca007dd6df84977a189d683931439b5b0ca048e1641b0e15",
+    "bytes": 20924,
+    "retrieve": "git show bf42eb38b06b8fec40dcda6849b7030470012762:docs/deployment/evidence/SOURCE-REGISTRY-RECEIPT-BOUNDED-20261111/evidence.json",
+    "result": "Historical pre-rescope record: 6 passed, 4 failed at the withdrawn 150000-byte limit. Retained verbatim in Git; not relabelled PASS."
+  },
+  "review_revision": {
+    "request": "Claude reopen 2026-11-12T21:12:31Z: summarize evidence under the 400-line diff budget and reference bulky history by digest.",
+    "change": "Replace duplicated historical evidence with an immutable Git reference and byte digest; retain current contract, measurements, reader audit, assertion explanations and baseline failures. No production code or tests changed in this revision.",
+    "composed_dev_commit": "452eb1a6a973863ef26492ab99efce0a36de79ab",
+    "validation": [
+      {
+        "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+        "exit_code": 0,
+        "result": "Production +41/-1; tests +448; evidence +318 at summary anchor. Final evidence remains below 400 lines."
+      },
+      {
+        "command": "git diff --check; historical reference byte/SHA-256/Git-blob/JSON comparison; current contract/reader/fixture/measurement equality against 766536c17",
+        "exit_code": 0,
+        "result": "All comparisons pass; historical record is exactly recoverable from the referenced Git object."
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_registry_receipt_summary.py",
+        "exit_code": 0,
+        "result": "10 passed, 1 existing Starlette deprecation warning in 6.52s after dev composition. Foreground terminal output and exit status collected."
+      }
+    ]
+  }
+}

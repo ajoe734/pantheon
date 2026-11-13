@@ -2469,12 +2469,12 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             "source_task_id": "ABC-001",
             "source_task_generation": 1,
             "unblock_task_id": supervisor.unblock_contract.task_id_from_identity({
-                "source_task_id": "ABC-001", "reason": "ci-red",
+                "source_task_id": "ABC-001", "reason": "dirty-repository-checkout",
                 "source_task_generation": 1,
                 "repository_slug": "ajoe734/pantheon", "pr": 44,
                 "head_sha": "a" * 40,
             }),
-            "reason": "ci-red",
+            "reason": "dirty-repository-checkout",
             "detail": "required CI is red",
             "repository_id": "pantheon",
             "repository_slug": "ajoe734/pantheon",
@@ -2493,7 +2493,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         path.write_bytes(encoded + b"\n")
         return path
 
-    def _task_id(self, reason: str = "ci-red", **changes: object) -> str:
+    def _task_id(self, reason: str = "dirty-repository-checkout", **changes: object) -> str:
         request = {
             "source_task_id": "ABC-001", "source_task_generation": 1,
             "repository_slug": "ajoe734/pantheon", "pr": 44,
@@ -2572,7 +2572,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         fe = self._make_execute_plans_source()
         reason = "ci-red"
         self.assertTrue(supervisor.unblock_contract.requires_repair_task(reason))
-        self.assertFalse(supervisor.unblock_contract.requires_source_reopen(reason))
+        self.assertTrue(supervisor.unblock_contract.requires_source_reopen(reason))
         self.assertTrue(
             supervisor.unblock_contract.requires_source_reopen(reason, "execute_plans")
         )
@@ -2646,13 +2646,33 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             self.assertFalse(contract.requires_source_reopen(reason, "execute_plans"), reason)
             self.assertFalse(contract.requires_repair_task(reason, "execute_plans"), reason)
 
-    def test_pantheon_ci_red_still_materializes_one_level_repair(self) -> None:
-        self.assertFalse(
-            supervisor.unblock_contract.requires_source_reopen("ci-red", "pantheon")
+    def test_pantheon_source_owned_ci_red_returns_to_same_source_without_child(self) -> None:
+        contract = supervisor.unblock_contract
+        for reason in contract.SOURCE_OWNED_REASONS:
+            self.assertTrue(contract.requires_source_reopen(reason, "pantheon"), reason)
+        for reason in contract.REASONS - contract.SOURCE_OWNED_REASONS:
+            if reason == contract.EXACT_HEAD_BEHIND_BASE_REASON:
+                continue
+            self.assertFalse(contract.requires_source_reopen(reason, "pantheon"), reason)
+        request = self._publish(
+            reason="ci-red", unblock_task_id=self._task_id("ci-red"),
         )
-        self._publish()
-        self.assertTrue(self._materialize())
-        self._assert_own_branch_wording(self._task_id())
+        calls: list[tuple[list[str], dict[str, str], str]] = []
+        with mock.patch.object(
+            supervisor.subprocess, "run",
+            side_effect=self._run_real_reopen_subprocess(calls),
+        ):
+            self.assertTrue(self._materialize())
+        self.assertFalse(request.exists())
+        self.assertEqual(len(calls), 1)
+        tasks = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )["state"]["tasks"]
+        self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+        self.assertEqual(tasks[0]["owner"], "Codex")
+        self.assertEqual(tasks[0]["reviewer"], "Claude")
+        self.assertEqual(tasks[0]["status"], "in_progress")
+        self.assertNotIn("scripts/git/auto_integrator.py", json.dumps(tasks))
 
     def test_queued_child_repair_is_rejected_without_mutating_source(self) -> None:
         for provenance in (
@@ -2682,7 +2702,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self._publish()
         self.assertTrue(self._materialize())
         before = supervisor.load_status(self.config)
-        request = self._publish(reason="final-ci-red", unblock_task_id=self._task_id("final-ci-red"))
+        request = self._publish(reason="head-branch-mismatch", unblock_task_id=self._task_id("head-branch-mismatch"))
         self.assertFalse(self._materialize())
         after = supervisor.load_status(self.config)
         self.assertEqual(before, after)
@@ -2753,13 +2773,13 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             command_runtime_sha="b" * 40,
         )
         first = auto_integrator.open_unblock_task(
-            candidate, "ci-red", "required CI is red", settings,
+            candidate, "dirty-repository-checkout", "required CI is red", settings,
             auto_integrator.CommandRunner(), root=self.status_root, execute=True,
         )
         self.assertTrue(self._materialize())
 
         second = auto_integrator.open_unblock_task(
-            candidate, "ci-red", "required CI is red", settings,
+            candidate, "dirty-repository-checkout", "required CI is red", settings,
             auto_integrator.CommandRunner(), root=self.status_root, execute=True,
         )
 
@@ -2784,7 +2804,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             command_runtime_sha="b" * 40,
         )
         first = auto_integrator.open_unblock_task(
-            candidate, "ci-red", "required CI is red", settings,
+            candidate, "dirty-repository-checkout", "required CI is red", settings,
             auto_integrator.CommandRunner(), root=self.status_root, execute=True,
         )
         self.assertIsNotNone(first)
@@ -2803,7 +2823,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertFalse(self._materialize())
 
         replay = auto_integrator.open_unblock_task(
-            candidate, "ci-red", "required CI is red", settings,
+            candidate, "dirty-repository-checkout", "required CI is red", settings,
             auto_integrator.CommandRunner(), root=self.status_root, execute=True,
         )
 
@@ -2920,10 +2940,10 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         )
 
     def test_write_failure_is_receipted_and_does_not_hide_later_valid_request(self) -> None:
-        first = self._publish(reason="ci-red")
+        first = self._publish(reason="dirty-repository-checkout")
         second = self._publish(
-            reason="smoke-failed",
-            unblock_task_id=self._task_id("smoke-failed"),
+            reason="head-branch-mismatch",
+            unblock_task_id=self._task_id("head-branch-mismatch"),
         )
         ordered = sorted((first, second))
         real_write = supervisor.write_status

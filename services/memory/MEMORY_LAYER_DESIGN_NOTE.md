@@ -158,6 +158,42 @@ outcome, reason, member, harness version and memo references survive in both
 structured payloads. This registration does not implement the separate pool,
 harness or consultation lifecycle controllers.
 
+### 4.1.2 Harness experience owner and review
+
+The Persona harness owner now emits `source_event_type=harness_experience`
+after its paper observation window. This is an experience event carried by the
+existing PersonaMemory `strategy_lesson` and InstitutionalMemory
+`cross_persona_observation` types, not a separate memory database. The persona
+service is the writer (`persona-svc`); an agent cannot write it directly.
+
+Each event retains the owning tenant/persona, patch and harness version, cue,
+lesson, measured outcome (`helped`, `hurt`, `no_effect`, `confounded`), evidence
+and confidence. Its body preserves the paired owner facts, trading dates,
+criterion and confounders. The event id is stable for tenant/persona/patch;
+the existing writeback adapter repairs partial persona/institutional delivery
+and preserves the same ids on replay. Source observation facts and pending
+delivery intents remain in the Persona aggregate for audit and recovery.
+
+The default observation window is ten distinct owner-reported trading days;
+the default component cooldown is seven calendar days after review or rollback.
+These are coordinator starting values, frozen in the owner policy rather than
+agent-selected thresholds. Unresolved facts leave an explicit failed observation
+check. A complete window with unavailable paired measurements or confounders
+records `confounded`; it does not claim improvement. Harm creates a rollback
+proposal, and the Persona proposal entry point reads and cites relevant prior
+experience source events for the changed components, including negative and
+confounded experiences. Memory remains the learning retrieval source for sessions;
+execution does not read these entries.
+
+Production uses the existing authenticated Learn-feedback endpoint and existing
+service credentials. Delivery failure is visible in the harness outbox and
+replayed by the owner on observation retry (`HarnessAdoption.deliver` is also
+the bounded owner recovery entry point). No new background dispatcher, session
+write authority, or credential is introduced. The observation consumer requires
+frozen paired book facts in `Observe.harness_observation`; it does not synthesize
+that feed when upstream data is unavailable. See
+`EVOLUTION_REVIEW_AND_THRESHOLDS.md` §9.3.1 for the paper adoption boundary.
+
 ### 4.2 Write-Back Sequence (Postmortem Example)
 
 ```

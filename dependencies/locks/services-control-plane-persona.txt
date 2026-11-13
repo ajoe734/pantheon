@@ -14,6 +14,10 @@ anyio==4.15.1
     #   httpx
     #   starlette
     #   watchfiles
+asyncpg==0.31.0
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   -r services/control-plane/persona/requirements.txt
 attrs==26.1.0
     # via
     #   jsonschema

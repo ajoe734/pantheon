@@ -12,14 +12,20 @@ from services.rankings.store import RankingReadStore
 try:
     from .allocation_policy import (
         _ALLOCATION_POLICY_VERSION,
+        _PAPER_FACTOR_FIELDS,
+        _PAPER_QUARTERLY_POLICY_VERSION,
         _PAPER_SIMULATION_POLICY_VERSION,
+        calculate_paper_competition_allocations,
         calculate_paper_simulation_allocations,
         calculate_target_allocations,
     )
 except ImportError:  # pragma: no cover - flat-module import path
     from allocation_policy import (  # type: ignore
         _ALLOCATION_POLICY_VERSION,
+        _PAPER_FACTOR_FIELDS,
+        _PAPER_QUARTERLY_POLICY_VERSION,
         _PAPER_SIMULATION_POLICY_VERSION,
+        calculate_paper_competition_allocations,
         calculate_paper_simulation_allocations,
         calculate_target_allocations,
     )
@@ -30,11 +36,14 @@ except ImportError:  # pragma: no cover - flat-module import path
     from allocation_store import allocation_line_digest, stable_payload_hash  # type: ignore
 
 PAPER_AUTHORITY_MODE = "governed_paper_simulation"
+PAPER_QUARTERLY_POLICY_VERSION = _PAPER_QUARTERLY_POLICY_VERSION
 # Caller-supplied context the snapshot cannot know; everything else must equal the snapshot item.
 _CONTEXT_FIELDS = frozenset({
     "current_weight", "capital_pool_id", "capital_sleeve_id", "capital_scope",
     "paper_ledger_id", "binding_id", "evidence_refs", "ranking_snapshot_id",
 })
+# Only the governed paper quarterly cycle may carry pool-health factors; real evaluation ignores them.
+_PAPER_QUARTERLY_CONTEXT_FIELDS = _CONTEXT_FIELDS | frozenset(_PAPER_FACTOR_FIELDS) | {"pool_health_factors"}
 
 
 class AllocationLineageError(ValueError):
@@ -78,7 +87,9 @@ def _load_snapshot(snapshot_id: str) -> Dict[str, Any]:
     return snapshot
 
 
-def _canonical_rows(snapshot: Dict[str, Any], rows: Any) -> List[Dict[str, Any]]:
+def _canonical_rows(
+    snapshot: Dict[str, Any], rows: Any, context_fields: frozenset = _CONTEXT_FIELDS
+) -> List[Dict[str, Any]]:
     if not isinstance(rows, list) or not rows:
         raise AllocationLineageError("rows must be a non-empty list")
     items = {str(item.get("persona_id") or ""): item for item in snapshot["items"]}
@@ -95,9 +106,9 @@ def _canonical_rows(snapshot: Dict[str, Any], rows: Any) -> List[Dict[str, Any]]
         if row.get("ranking_snapshot_id") != snapshot["ranking_snapshot_id"]:
             raise AllocationLineageError(f"rows[{index}].ranking_snapshot_id must match the snapshot")
         for field, value in row.items():
-            if field in item and field not in _CONTEXT_FIELDS and item[field] != value:
+            if field in item and field not in context_fields and item[field] != value:
                 raise AllocationLineageError(f"rows[{index}].{field} does not match the snapshot")
-        context = {field: row[field] for field in _CONTEXT_FIELDS if field in row}
+        context = {field: row[field] for field in context_fields if field in row}
         canonical.append({
             **item, **context,
             "ranking_snapshot_id": snapshot["ranking_snapshot_id"],
@@ -106,16 +117,29 @@ def _canonical_rows(snapshot: Dict[str, Any], rows: Any) -> List[Dict[str, Any]]
     return canonical
 
 
-def evaluate_allocation(payload: Dict[str, Any], *, paper: bool = False) -> Dict[str, Any]:
+def evaluate_allocation(
+    payload: Dict[str, Any], *, paper: bool = False, quarterly: bool = False
+) -> Dict[str, Any]:
+    """``quarterly`` selects the governed paper quarterly cycle policy (paper only, many personas)."""
+    if quarterly and not paper:
+        raise AllocationLineageError("the paper quarterly policy is paper only")
     snapshot = _load_snapshot(str(payload.get("ranking_snapshot_id") or "").strip())
-    policy_version = _PAPER_SIMULATION_POLICY_VERSION if paper else _ALLOCATION_POLICY_VERSION
+    policy_version = (
+        _PAPER_QUARTERLY_POLICY_VERSION if quarterly
+        else _PAPER_SIMULATION_POLICY_VERSION if paper else _ALLOCATION_POLICY_VERSION
+    )
     requested = str(payload.get("allocation_policy_version") or "").strip()
     if requested and requested != policy_version:
         raise AllocationLineageError(f"allocation_policy_version must be {policy_version!r}")
-    calculate = calculate_paper_simulation_allocations if paper else calculate_target_allocations
-    rows = _canonical_rows(snapshot, payload.get("rows"))
+    calculate = (
+        calculate_paper_competition_allocations if quarterly
+        else calculate_paper_simulation_allocations if paper else calculate_target_allocations
+    )
+    rows = _canonical_rows(
+        snapshot, payload.get("rows"), _PAPER_QUARTERLY_CONTEXT_FIELDS if quarterly else _CONTEXT_FIELDS)
     try:
-        raw_lines = calculate(rows)
+        raw_lines = (calculate(rows, retained_weight=payload.get("retained_weight", 0.0))
+                     if quarterly else calculate(rows))
     except (KeyError, TypeError, ValueError) as exc:
         raise AllocationLineageError(f"ranking snapshot cannot be evaluated: {exc}") from exc
     snapshot_id = snapshot["ranking_snapshot_id"]
@@ -144,17 +168,22 @@ def verify_rebalance_lineage(proposal: Dict[str, Any]) -> None:
     """Reject a proposal whose snapshot, evaluation id or any evaluated line field the owner cannot reproduce."""
     lines = proposal["lines"]
     paper = any(line.get("capital_scope") == "paper_ledger" for line in lines)
+    quarterly = proposal["allocation_policy_version"] == _PAPER_QUARTERLY_POLICY_VERSION
+    if quarterly and not all(line.get("capital_scope") == "paper_ledger" for line in lines):
+        raise AllocationLineageError("the paper quarterly policy cannot carry a non-paper line")
+    context_fields = _PAPER_QUARTERLY_CONTEXT_FIELDS if quarterly else _CONTEXT_FIELDS
     evaluated = evaluate_allocation({
         "ranking_snapshot_id": proposal["ranking_snapshot_id"],
         "allocation_policy_version": proposal["allocation_policy_version"],
+        "retained_weight": (proposal.get("simulation") or {}).get("retained_weight", 0.0) if quarterly else 0.0,
         "rows": [{"persona_id": line.get("persona_id"), "ranking_snapshot_id": proposal["ranking_snapshot_id"],
-                  **{field: line[field] for field in _CONTEXT_FIELDS if field in line}} for line in lines],
-    }, paper=paper)
+                  **{field: line[field] for field in context_fields if field in line}} for line in lines],
+    }, paper=paper, quarterly=quarterly)
     if evaluated["allocation_evaluation_id"] != proposal["allocation_evaluation_id"]:
         raise AllocationLineageError("allocation_evaluation_id does not match the owner evaluation of the snapshot")
     for line, expected in zip(lines, evaluated["lines"]):
         for field, value in expected.items():
-            if field in _CONTEXT_FIELDS:
+            if field in context_fields:
                 continue
             if line.get(field) != value and not _same_number(line.get(field), value):
                 raise AllocationLineageError(

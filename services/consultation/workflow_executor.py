@@ -200,6 +200,8 @@ class ExecutorConfig:
     worker_id: str
     state_path: str
     database_url: str = ""
+    memory_url: str = ""
+    evolution_url: str = ""
     lease_seconds: int = 60
     retry_after_seconds: int = 15
     max_blocked_attempts: int = 3
@@ -245,6 +247,16 @@ class ExecutorConfig:
                 or Path(data_dir) / "consult_workflow_state.sqlite3"
             ),
             database_url=str(os.getenv("DATABASE_URL") or ""),
+            memory_url=str(
+                os.getenv("PANTHEON_MEMORY_API_URL")
+                or os.getenv("MEMORY_SVC_URL")
+                or ""
+            ).rstrip("/"),
+            evolution_url=str(
+                os.getenv("PANTHEON_EVOLUTION_API_URL")
+                or os.getenv("EVOLUTION_URL")
+                or ""
+            ).rstrip("/"),
             lease_seconds=_env_int(
                 "CONSULTATION_WORKFLOW_LEASE_SECONDS", 60, minimum=1
             ),
@@ -429,6 +441,7 @@ def _dispatch_handoff(
     *,
     request: Mapping[str, Any],
     handoff: Mapping[str, Any],
+    extra: Mapping[str, Any] | None = None,
 ) -> str:
     handoff_id = str(handoff.get("handoff_id") or "")
     if not handoff_id:
@@ -456,6 +469,7 @@ def _dispatch_handoff(
             "tenant_id": config.tenant_id,
             "request_id": request.get("request_id"),
             "handoff": dict(handoff),
+            **(dict(extra) if extra else {}),
         },
     )
     if not isinstance(response, Mapping):
@@ -485,7 +499,13 @@ def execute_claim(
     if str(request.get("tenant_id") or "") != config.tenant_id:
         raise WorkflowBlocked("ConsultRequest tenant does not match worker tenant")
 
-    recovered = _existing_acknowledged_handoff(config, claim.request_id)
+    # A panel claim never short-circuits on an acknowledged handoff: the hold
+    # is persisted before the memory writeback, so the handoff alone does not
+    # prove the memory work finished. The panel path is fully idempotent.
+    is_panel = isinstance((request.get("metadata") or {}).get("panel"), Mapping)
+    recovered = (
+        None if is_panel else _existing_acknowledged_handoff(config, claim.request_id)
+    )
     if recovered is not None:
         memo_id, handoff_id = recovered
         state.complete(claim, memo_id=memo_id, handoff_id=handoff_id)
@@ -494,6 +514,18 @@ def execute_claim(
             "outcome": "completed",
             "detail": f"recovered acknowledged handoff={handoff_id}",
         }
+
+    panel = (request.get("metadata") or {}).get("panel")
+    if isinstance(panel, Mapping):
+        return _execute_panel_claim(
+            config=config,
+            state=state,
+            provider=provider,
+            claim=claim,
+            request=request,
+            panel=panel,
+            phase_hook=phase_hook,
+        )
 
     request_type = str(request.get("request_type") or "")
     role = _request_type_to_role(request_type)
@@ -684,9 +716,510 @@ def execute_claim(
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Persona panel (consult policy): each participant persona answers through its
+# own agent independently; one synthesis; no vote; risk veto -> operator.
+# ---------------------------------------------------------------------------
+
+PANEL_SOURCE_EVENT = "consultation_closed"
+PANEL_WRITE_AUTHORITY = "consultation-svc"
+
+
+def _persona_triggers() -> Any:
+    return importlib.import_module("services.persona.consult_triggers")
+
+
+def _validated_panel(
+    request: Mapping[str, Any], panel: Mapping[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Re-derive the policy requirement and refuse an under-staffed panel."""
+
+    triggers = _persona_triggers()
+    decision = panel.get("gated_decision")
+    if not isinstance(decision, Mapping):
+        raise WorkflowBlocked("panel.gated_decision is required")
+    if str(decision.get("type") or "") != str(request.get("target_type") or "") or str(
+        decision.get("id") or ""
+    ) != str(request.get("target_id") or ""):
+        raise WorkflowBlocked(
+            "panel gated_decision must match the request target_type/target_id"
+        )
+    initiator = str(panel.get("initiator_persona_id") or "")
+    if not initiator or initiator != str(request.get("from_persona_id") or ""):
+        raise WorkflowBlocked("panel initiator must be the requesting persona")
+    required = triggers.required_consultation(
+        str(decision.get("type") or ""),
+        str(decision.get("id") or ""),
+        initiator_persona_id=initiator,
+        touches=panel.get("touches") or (),
+    )
+    if required is None:
+        raise WorkflowBlocked("panel gated_decision type is not a gated decision")
+    declared = {
+        str(item.get("persona_id")): item
+        for item in panel.get("participants") or []
+        if isinstance(item, Mapping)
+    }
+    for item in required.participants:
+        if item.persona_id not in declared:
+            raise WorkflowBlocked(
+                f"panel is missing required participant {item.persona_id} ({item.role})"
+            )
+    participants = [
+        {
+            "persona_id": item.persona_id,
+            "role": item.role,
+            "may_veto": item.may_veto,
+        }
+        for item in required.participants
+    ]
+    return participants, dict(decision)
+
+
+def _panel_contribution(
+    *,
+    claim: WorkflowClaim,
+    state: WorkflowStateStore,
+    config: ExecutorConfig,
+    provider: HttpContributionProvider,
+    request: Mapping[str, Any],
+    participant: Mapping[str, Any],
+    gathered: dict[str, dict[str, Any]],
+) -> QualifiedContribution:
+    persona_id = str(participant["persona_id"])
+    if persona_id in gathered:
+        return QualifiedContribution.from_payload(
+            gathered[persona_id],
+            expected_tenant_id=config.tenant_id,
+            expected_request_id=claim.request_id,
+        )
+    # Independence: a participant sees the request and its own role only,
+    # never another participant's answer.
+    ask = dict(request)
+    ask["participant"] = {
+        "persona_id": persona_id,
+        "role": participant["role"],
+        "agent": "persona_own_agent",
+    }
+    contribution = provider.obtain(
+        tenant_id=config.tenant_id,
+        request=ask,
+        participant_scope=persona_id,
+    )
+    if contribution.participant_type != "persona" or (
+        contribution.participant_ref != persona_id
+    ):
+        raise ContributionProviderError(
+            f"provider answered as {contribution.participant_ref!r}, "
+            f"not the asked persona {persona_id!r}"
+        )
+    if any(
+        item.get("contribution_id") == contribution.contribution_id
+        for item in gathered.values()
+    ):
+        raise ContributionProviderError("provider reused a contribution_id")
+    gathered[persona_id] = contribution.to_dict()
+    state.save_progress(
+        claim,
+        phase="panel_contribution_received",
+        contribution={"panel_contributions": gathered},
+    )
+    return contribution
+
+
+def _synthesize(
+    participants: list[dict[str, Any]],
+    contributions: list[QualifiedContribution],
+) -> tuple[dict[str, Any], str, str, list[dict[str, Any]], float]:
+    triggers = _persona_triggers()
+    by_persona = {item.participant_ref: item for item in contributions}
+    gate = triggers.evaluate_gate(
+        participants,
+        {pid: item.recommendation for pid, item in by_persona.items()},
+    )
+    lines = [
+        f"{pid} ({next(p['role'] for p in participants if p['persona_id'] == pid)})"
+        f" -> {item.recommendation}: {item.summary}"
+        for pid, item in by_persona.items()
+    ]
+    summary = "Panel synthesis (no vote). " + " | ".join(lines)
+    if gate.agreements:
+        summary += " Agreements: " + "; ".join(gate.agreements) + "."
+    if gate.disagreements:
+        summary += " Disagreements: " + "; ".join(gate.disagreements) + "."
+    summary += (
+        " Gate: " + gate.outcome + " - " + "; ".join(gate.reasons) + "."
+    )
+    findings: list[dict[str, Any]] = []
+    for text in gate.disagreements:
+        findings.append(
+            {
+                "severity": "medium",
+                "category": "panel_disagreement",
+                "claim": "Participants disagree - " + text,
+                "evidence_refs": [by_persona[next(iter(by_persona))].evidence[0]["id"]],
+                "recommendation": "Operator reads each persona answer before deciding.",
+            }
+        )
+    if gate.vetoed_by:
+        risk = by_persona[gate.vetoed_by]
+        findings.append(
+            {
+                "severity": "high",
+                "category": "risk_veto",
+                "claim": f"Risk persona {gate.vetoed_by} opposed ({risk.recommendation}).",
+                "evidence_refs": [risk.evidence[0]["id"]],
+                "recommendation": "Do not auto-adopt; route to an operator decision.",
+            }
+        )
+    elif gate.operator_decision_required:
+        findings.append(
+            {
+                "severity": "high",
+                "category": "operator_decision",
+                "claim": "; ".join(gate.reasons),
+                "evidence_refs": [contributions[0].evidence[0]["id"]],
+                "recommendation": "Route to an operator decision.",
+            }
+        )
+    if gate.operator_decision_required:
+        recommendation = "escalate"
+    elif all(item.recommendation == "approve" for item in contributions):
+        recommendation = "approve"
+    else:
+        recommendation = "approve_with_conditions"
+    confidence = min(item.confidence for item in contributions)
+    return gate.to_dict(), summary, recommendation, findings, confidence
+
+
+def _memory_headers() -> dict[str, str]:
+    from services.runtime_auth import resolve_runtime_manager_auth
+
+    return {
+        "Accept": "application/json",
+        **resolve_runtime_manager_auth(
+            token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
+            token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+            default_token="",
+        ).headers(),
+    }
+
+
+def _write_panel_memory(
+    config: ExecutorConfig,
+    *,
+    request: Mapping[str, Any],
+    panel: Mapping[str, Any],
+    decision: Mapping[str, Any],
+    participants: list[dict[str, Any]],
+    gate: Mapping[str, Any],
+    memo_id: str,
+    summary: str,
+    confidence: float,
+    evidence_ids: list[str],
+) -> Mapping[str, Any]:
+    """Write initiator-memory outcome + institutional cross-persona observation.
+
+    One idempotent Learn-feedback writeback: the source event id is the
+    consultation request, so a retry replays instead of duplicating.
+    """
+
+    if not config.memory_url:
+        raise WorkflowBlocked(
+            "PANTHEON_MEMORY_API_URL is not configured; "
+            "consultation outcome memory writeback is required"
+        )
+    initiator = str(panel["initiator_persona_id"])
+    others = [p["persona_id"] for p in participants if p["persona_id"] != initiator]
+    outcome = (
+        "operator decision required" if gate.get("operator_decision_required")
+        else "adopt eligible"
+    )
+    payload = {
+        "tenant_id": config.tenant_id,
+        "source_event_type": PANEL_SOURCE_EVENT,
+        "source_event_id": f"consultation:{request.get('request_id')}",
+        "write_authority": PANEL_WRITE_AUTHORITY,
+        "sponsor_persona_id": initiator,
+        "contributing_persona_ids": [initiator],
+        "summary": (
+            f"Consultation on {decision.get('type')} {decision.get('id')}: "
+            f"{outcome}. Panel: {', '.join([initiator, *others])}."
+        ),
+        "headline": f"Consultation outcome: {decision.get('type')} {decision.get('id')}",
+        "body": summary,
+        "memo_id": memo_id,
+        "outcome": gate.get("outcome"),
+        "evidence_refs": [f"consultation://memos/{memo_id}", *evidence_ids],
+        "confidence": confidence,
+        "trace_id": str(request.get("trace_id") or ""),
+        "tags": ["consult_panel", str(decision.get("type")), *[f"panel:{p}" for p in others]],
+    }
+    response = _json_request(
+        config.memory_url + "/api/memory/writebacks/learn-feedback",
+        method="POST",
+        timeout_seconds=config.timeout_seconds,
+        headers=_memory_headers(),
+        payload=payload,
+    )
+    if not isinstance(response, Mapping):
+        raise WorkflowBlocked("memory writeback response must be a JSON object")
+    return response
+
+
+def _probe(config: ExecutorConfig, base: str, label: str) -> None:
+    try:
+        _json_request(
+            base + "/health",
+            method="GET",
+            timeout_seconds=config.timeout_seconds,
+            headers={"Accept": "application/json"},
+        )
+    except Exception as exc:
+        raise WorkflowBlocked(f"{label} address is not reachable: {_error_detail(exc)}") from exc
+
+
+def _execute_panel_claim(
+    *,
+    config: ExecutorConfig,
+    state: WorkflowStateStore,
+    provider: HttpContributionProvider,
+    claim: WorkflowClaim,
+    request: Mapping[str, Any],
+    panel: Mapping[str, Any],
+    phase_hook: Callable[[str], None] | None,
+) -> dict[str, str]:
+    participants, decision = _validated_panel(request, panel)
+    trace_id = str(
+        request.get("trace_id") or _stable_id("trace", config.tenant_id, claim.request_id)
+    )
+    if decision.get("type") == "harness_patch":
+        if not config.evolution_url:
+            raise WorkflowBlocked(
+                "PANTHEON_EVOLUTION_API_URL is not configured for a harness patch panel"
+            )
+        _probe(config, config.evolution_url, "evolution")
+
+    gathered: dict[str, dict[str, Any]] = {}
+    if isinstance(claim.contribution, Mapping):
+        gathered = {
+            str(k): dict(v)
+            for k, v in (claim.contribution.get("panel_contributions") or {}).items()
+        }
+    contributions: list[QualifiedContribution] = []
+    for participant in participants:
+        claim = _renew(state, claim, config)
+        contributions.append(
+            _panel_contribution(
+                claim=claim,
+                state=state,
+                config=config,
+                provider=provider,
+                request=request,
+                participant=participant,
+                gathered=gathered,
+            )
+        )
+    _phase_hook(phase_hook, "panel_contributions_received")
+
+    service_actor = {"actor_type": "service", "actor_id": CONSUMER_NAME}
+    all_evidence: list[str] = []
+    for participant, contribution in zip(participants, contributions):
+        claim = _renew(state, claim, config)
+        base = contribution.contribution_id
+        assigned = _api_post(
+            config,
+            f"/api/consult/requests/{claim.request_id}/participants",
+            {
+                "participant_type": "persona",
+                "participant_ref": contribution.participant_ref,
+                "role": participant["role"],
+                "trace_id": trace_id,
+                "initiated_by": service_actor,
+                "idempotency_key": base + ":participant",
+            },
+        )
+        if not isinstance(assigned, Mapping) or not assigned.get("participant_id"):
+            raise WorkflowBlocked("panel participant assignment was not acknowledged")
+        actor = {
+            "actor_type": "persona",
+            "actor_id": contribution.participant_ref,
+        }
+        event = _api_post(
+            config,
+            f"/api/consult/requests/{claim.request_id}/events",
+            {
+                "request_id": claim.request_id,
+                "event_type": contribution.event_type,
+                "actor": actor,
+                "content": {
+                    **contribution.event_content,
+                    "recommendation": contribution.recommendation,
+                    "role": participant["role"],
+                },
+                "evidence_refs": [str(i["id"]) for i in contribution.evidence],
+                "idempotency_key": base + ":event",
+            },
+        )
+        if not isinstance(event, Mapping) or not event.get("event_id"):
+            raise WorkflowBlocked("panel transcript event was not acknowledged")
+        for evidence in contribution.evidence:
+            attachment = _api_post(
+                config,
+                f"/api/consult/requests/{claim.request_id}/evidence",
+                {
+                    "evidence_ref": dict(evidence),
+                    "attached_by": actor,
+                    "trace_id": trace_id,
+                    "idempotency_key": base + ":evidence:" + str(evidence["id"]),
+                },
+            )
+            if not isinstance(attachment, Mapping) or not attachment.get("attachment_id"):
+                raise WorkflowBlocked("panel evidence was not acknowledged")
+            all_evidence.append(str(evidence["id"]))
+    state.save_progress(claim, phase="panel_recorded")
+    _phase_hook(phase_hook, "panel_recorded")
+
+    gate, summary, recommendation, findings, confidence = _synthesize(
+        participants, contributions
+    )
+    synth_ref = f"consult-panel:{claim.request_id}"
+    synth_key = _stable_id("panel-synthesis", config.tenant_id, claim.request_id)
+    claim = _renew(state, claim, config)
+    assigned = _api_post(
+        config,
+        f"/api/consult/requests/{claim.request_id}/participants",
+        {
+            "participant_type": "committee",
+            "participant_ref": synth_ref,
+            "role": "observer",
+            "trace_id": trace_id,
+            "initiated_by": service_actor,
+            "idempotency_key": synth_key + ":participant",
+        },
+    )
+    if not isinstance(assigned, Mapping) or not assigned.get("participant_id"):
+        raise WorkflowBlocked("panel synthesis participant was not acknowledged")
+    synth_event = _api_post(
+        config,
+        f"/api/consult/requests/{claim.request_id}/events",
+        {
+            "request_id": claim.request_id,
+            "event_type": "panel_synthesis",
+            "actor": {"actor_type": "committee", "actor_id": synth_ref},
+            "content": {"voting": False, "gate": gate, "gated_decision": decision},
+            "evidence_refs": all_evidence,
+            "idempotency_key": synth_key + ":event",
+        },
+    )
+    if not isinstance(synth_event, Mapping) or not synth_event.get("event_id"):
+        raise WorkflowBlocked("panel synthesis event was not acknowledged")
+    memo = _api_post(
+        config,
+        "/api/consult/memos",
+        {
+            "request_id": claim.request_id,
+            "memo_type": "committee_summary",
+            "author_type": "committee",
+            "author_ref": synth_ref,
+            "summary": summary,
+            "findings": findings,
+            "recommendation": recommendation,
+            "confidence": confidence,
+            "trace_id": trace_id,
+            "idempotency_key": synth_key + ":memo",
+        },
+    )
+    if not isinstance(memo, Mapping) or not memo.get("memo_id"):
+        raise WorkflowBlocked("panel synthesis memo was not acknowledged")
+    memo_id = str(memo["memo_id"])
+    state.save_progress(claim, phase="memo_submitted", memo_id=memo_id)
+    claim = _renew(state, claim, config)
+    published = _api_post(config, f"/api/consult/memos/{memo_id}/publish", {})
+    if not isinstance(published, Mapping) or published.get("status") != "published":
+        raise WorkflowBlocked("panel synthesis memo publish was not acknowledged")
+    state.save_progress(claim, phase="memo_published", memo_id=memo_id)
+    _phase_hook(phase_hook, "memo_published")
+
+    # Fail-closed hold first: persist and dispatch the gate handoff (which
+    # installs the operator-decision hold at the decision owner) before any
+    # asynchronous memory write, so a memory outage cannot leave a published
+    # veto without a hold.
+    claim = _renew(state, claim, config)
+    memo_ref = f"consultation://memos/{memo_id}"
+    handoff = _api_post(
+        config,
+        "/api/consult/handoffs",
+        {
+            "request_id": claim.request_id,
+            "target_gate": f"consultation.panel.{decision['type']}.reviewed",
+            "memo_ids": [memo_id],
+            "evidence_refs": [memo_ref, *all_evidence],
+            "trace_id": trace_id,
+            "initiated_by": service_actor,
+            "idempotency_key": synth_key + ":handoff",
+        },
+    )
+    if not isinstance(handoff, Mapping) or not handoff.get("handoff_id"):
+        raise WorkflowBlocked("panel gate handoff was not durably acknowledged")
+    handoff_id = str(handoff["handoff_id"])
+    state.save_progress(
+        claim, phase="handoff_persisted", memo_id=memo_id, handoff_id=handoff_id
+    )
+    claim = _renew(state, claim, config)
+    consumer_ref = _dispatch_handoff(
+        config,
+        request=request,
+        handoff=handoff,
+        extra={
+            "gated_decision": decision,
+            "gate": gate,
+            "memo_evidence_ref": memo_ref,
+        },
+    )
+    acknowledged = _api_post(
+        config,
+        f"/api/consult/handoffs/{handoff_id}/acknowledge",
+        {"consumer_ref": consumer_ref},
+    )
+    if not isinstance(acknowledged, Mapping) or acknowledged.get("status") != "acknowledged":
+        raise WorkflowBlocked("panel handoff acknowledgement was not persisted")
+    state.save_progress(
+        claim, phase="handoff_acknowledged", memo_id=memo_id, handoff_id=handoff_id
+    )
+    _phase_hook(phase_hook, "handoff_acknowledged")
+
+    claim = _renew(state, claim, config)
+    _write_panel_memory(
+        config,
+        request=request,
+        panel=panel,
+        decision=decision,
+        participants=participants,
+        gate=gate,
+        memo_id=memo_id,
+        summary=summary,
+        confidence=confidence,
+        evidence_ids=all_evidence,
+    )
+    state.save_progress(claim, phase="memory_written", memo_id=memo_id)
+    _phase_hook(phase_hook, "memory_written")
+
+    state.complete(claim, memo_id=memo_id, handoff_id=handoff_id)
+    return {
+        "request_id": claim.request_id,
+        "outcome": "completed",
+        "detail": (
+            f"memo={memo_id} handoff={handoff_id} acknowledged_by={consumer_ref} "
+            f"gate={gate['outcome']}"
+        ),
+    }
+
+
 def _error_detail(exc: Exception) -> str:
     if isinstance(exc, urllib.error.HTTPError):
-        return f"http_error={exc.code} {exc.reason}"
+        return f"http_error={exc.code} {exc.reason} url={exc.url}"
     return str(exc)
 
 

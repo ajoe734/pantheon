@@ -408,12 +408,13 @@ By local operator decision (2026-10-06), existing governance approval semantics 
 ### 1. Current Approval Policy Scope
 
 - **Proposer self-decision blocking**:
-  Proposer self-decision (`decider must not be the proposer`, verified by comparing the effective actor ID against `owner_user_id` in `approval_decision.py` ~406-408) is enforced **only** for the 5 listed action targets in `services/governance/approval_targets.py` (`SUBJECT_FIELDS`):
+  Proposer self-decision (`decider must not be the proposer`, verified by comparing the effective actor ID against `owner_user_id` in `approval_decision.py` ~406-408) is enforced **only** for the 6 listed subject-bound targets in `services/governance/approval_targets.py` (`SUBJECT_FIELDS`):
   1. `rebalance_apply`
   2. `capital_pool_activation`
   3. `capital_binding_activation`
   4. `persona_lifecycle_transition`
   5. `evolution_execute`
+  6. `paper_canary_candidacy` (record-only nomination added 2026-11-12)
   Non-action target types (such as general artifacts, registry entries, or review objects) do not enforce proposer self-decision blocking at the governance decision layer.
 
 - **Multi-decider requirements**:
@@ -441,3 +442,23 @@ By local operator decision (2026-10-06), existing governance approval semantics 
 - **Revoke route namespace mismatch**:
   BFF's governance command adapter (`services/control_plane/bff/command_adapters/governance_adapter.py` ~167) forwards revoke commands by sending `POST` to `/api/governance/human-gates/{target_gate_id}/revoke` (under the deprecated `human-gates` namespace). The canonical governance approval revoke route hosted by the Governance service is `POST /api/governance/approvals/{decision_id}/revoke` (`services/governance/main.py` ~1588).
 
+
+## Paper → canary candidacy (PAPER-CANARY-PROMOTION-PROPOSAL-20261112)
+
+`paper_canary_candidacy` is a record-only target. The evaluator proposes it at
+quarter close; the existing Human Inbox shows a pending approval and
+`POST /bff/approvals/{decision_id}/decide` records the human decision. It needs
+one authorized decider distinct from the proposer. The subject binds
+`persona_id`, `from_stage=paper`, `to_stage=canary_candidate`, `quarter`,
+`ranking_snapshot_id`, and `proposal_content_digest` (SHA256), with the factual
+rule summary and optional agent rationale. Target ID, target version and digest
+must match the subject even at proposal admission.
+
+The producer persists its full request before submission. Decision identity and
+idempotency key bind tenant + quarter, independent of agent text or a later
+snapshot, so retry, catch-up, rejection and restart cannot create a second
+proposal for that quarter. Content drift on replay fails closed.
+
+No lifecycle, Capital, rebalance or runtime consumer accepts this target.
+Approval grants candidacy only and rejection records the refusal. Real-capital
+canary entry remains a separate future delivery after production opens.

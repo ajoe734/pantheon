@@ -234,7 +234,7 @@ Agora 清理依賴是為了先完成同區域的刪除，避免並行改寫；�
 
 - 排名建議與 promotion review 的狀態唯一來源是 evaluator 已存的 `governance_request.decision_id` 對應的 Governance `ApprovalDecision`（`personas/service.py::_lifecycle_owner_review_state`）。BFF 不建立、不投票、不翻譯任何第二份核准紀錄。
 - 已刪除舊的 `submit_quarterly_ranking_recommendation` 服務分支；`POST …/recommendations/{id}/submit` 只回 410（`ACTION_RETIRED`），不產生 command。
-- 狀態集合：`advisory_report`（無提案，不可執行）、`pending_human_gate`（owner 提案存在，尚未 decided，含首票）、`decision_accepted`（owner 已 decided）、`decision_revoked`／`decision_superseded`（owner 終態；`decision_status` 為 `revoked`／`superseded`，保留 owner readback，`links.human_inbox` 為 null）、`owner_unavailable`（owner 讀不到，或 tenant／persona／proposal_id／target_type／subject（persona、from_state、to_state）／proposal_content_digest 與已存提案不符；ranking 與 review 的 `links.human_inbox` 此時皆為 null）。`recommended_not_submitted` 不再出現。
+- 狀態集合：`advisory_report`（無提案，不可執行）、`pending_human_gate`（owner 提案存在，尚未 decided，含首票）、`decision_accepted`（owner 已核准）、`decision_rejected`（owner 已退回）、`decision_revoked`／`decision_superseded`（owner 終態；`decision_status` 為 `revoked`／`superseded`，保留 owner readback，`links.human_inbox` 為 null）、`owner_unavailable`（owner 讀不到，或 tenant／persona／proposal_id／target_type／subject（persona、from_state、to_state）／proposal_content_digest 與已存提案不符；ranking 與 review 的 `links.human_inbox` 此時皆為 null）。`recommended_not_submitted` 不再出現。
 - `POST /bff/management/promotion-reviews/{id}/decisions` 已退役，只回 410（`ACTION_RETIRED`，replacement `/bff/approvals/{decision_id}/decide`），不產生 command；review item 不再提供 `links.decisions`／`allowed_decisions`。收件匣不再有 `promotion_review` 來源（舊 command-log 的 `QuarterlyRankingRecommendationSubmit`／`HumanGate*` 列不再投影），待決提案只以 `approval:{decision_id}` 出現。
 - Human Inbox：owner 提案尚未 decided 時 `links.human_inbox`／`human_inbox_id` 指向既有 `approval:{decision_id}` 項目（`source_type=approval`）；decided 後該項目已離開 approval queue，故兩者為 null，改以 `links.owner_decision`（`/api/v1/approval-decisions/{decision_id}`）作最終決議讀回。owner subject 讀自 `ApprovalDecision.metadata.subject`。
 
@@ -248,3 +248,38 @@ resolves saved recommendations against that durable snapshot; missing/unavailabl
 saved snapshots return 503. Replay retains creation time and rejects content or
 evidence-assertion divergence. No new service, store or scheduler is introduced;
 Persona tenant visibility and the single Governance decision consumer are unchanged.
+
+
+### 季末 paper → canary 候選提案（PAPER-CANARY-PROMOTION-PROPOSAL-20261112）
+
+既有 evaluator 排程在 paper allocation cycle 的同一輪讀取同一個已結束季度的
+最後 admitted snapshot。即使 AI 不可用，snapshot admission 仍保留，季末固定規則
+仍執行。每 tenant／季度至多提名一位：paper 排名第一、沒有 exclusion codes、
+eligible 為 true，且已知的季度排名指標完整；第一名同分（含不同 rank 但同分）、
+未知公式／指標、樣本不足均不提名，也不改提第二名。Persona owner 身分與 tenant
+必須可確認，release／acceptance probe 一律排除。
+
+預設門檻為 30 個有 owner quarter-equity 觀測的不同 UTC 日期，以及 20 張在季度內
+送出且有正成交數量的不同訂單；觀測日以 retained quarter-equity evidence 的實際
+observed_at 計數，不把季度經過天數當樣本；訂單依 runtime／binding／order identity
+去重，partial fills 算一張，累積 fill count 不當訂單數。此樣本是觀測覆蓋門檻，
+不宣稱完整交易所日曆或完整日內歷史。可設定
+`PERSONA_EVALUATOR_PROMOTION_MIN_TRADING_DAYS` 與
+`PERSONA_EVALUATOR_PROMOTION_MIN_FILLED_ORDERS`；缺少季度 observation／order facts
+或無效設定時 fail closed。原因、snapshot id、rule summary 保存在 evaluator state，
+可從既有 `/api/persona-evaluator/recommendations` 的 `last_promotion` 和
+`result.promotion_nomination` 讀取。
+
+AI 不能再從 ACTIONS 選 `promote_to_canary_candidate`；提名先由規則確定，AI 只能
+補理由文字。AI 不可用仍以 factual rule summary 送出 `paper_canary_candidacy`。
+subject 綁定 persona、paper→canary_candidate、quarter、ranking snapshot 與 content digest。
+完整 request 在 POST 前保存；decision id 與 idempotency key 綁定 tenant＋季度，
+rerun／catch-up／HTTP 結果未知的重試均沿用同一筆，退回後也不自動另提。
+
+Human Inbox 沿用 `approval:{decision_id}`，由既有 approvals decide 路由核准／退回；
+promotion review 只讀 Governance owner，依結果顯示 `pending_human_gate` →
+`decision_accepted`／`decision_rejected`，終態以 owner decision 連結讀回。
+freeze／retire 仍使用 `persona_lifecycle_transition`。
+候選核准只留決議，不改 Persona lifecycle、不建立 binding／allocation／rebalance、
+不動 runtime；沒有 consumer 執行新 target。真實資金 canary allocation 必須等正式
+環境開放後另案處理，本任務不授予 L1 canary deployment 權限。

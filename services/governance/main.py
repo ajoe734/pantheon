@@ -323,6 +323,53 @@ def _utc_now() -> str:
 # Routes — Consultation advisory handoff intake
 # ---------------------------------------------------------------------------
 
+def _validated_panel_gate(body: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist the gated decision and gate a panel handoff carries.
+
+    A risk-persona veto yields a pending operator decision at the owning gate;
+    adoption of that decision through the approval ``decide`` command is then
+    refused unless a human operator decides (see ``_consultation_veto_block``).
+    """
+
+    decision = body.get("gated_decision")
+    gate = body.get("gate")
+    if not isinstance(decision, dict) or not isinstance(gate, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="panel handoff requires gated_decision and gate",
+        )
+    decision_type = _required_string(decision.get("type"), "gated_decision.type")
+    decision_id = _required_string(decision.get("id"), "gated_decision.id")
+    outcome = _required_string(gate.get("outcome"), "gate.outcome")
+    operator_required = gate.get("operator_decision_required")
+    if not isinstance(operator_required, bool):
+        raise HTTPException(
+            status_code=422,
+            detail="gate.operator_decision_required must be a boolean",
+        )
+    if operator_required != (outcome == "operator_decision"):
+        raise HTTPException(status_code=422, detail="gate outcome is inconsistent")
+    gated: Dict[str, Any] = {"type": decision_type, "id": decision_id}
+    for key in ("target_version", "candidate_digest"):
+        raw = decision.get(key)
+        if raw is None or raw == "":
+            continue
+        if not isinstance(raw, str) or not raw.strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"gated_decision.{key} must be a non-empty string",
+            )
+        gated[key] = raw.strip()
+    return {
+        "gated_decision": gated,
+        "gate": dict(gate),
+        "operator_decision": {
+            "status": "pending" if operator_required else "not_required",
+            "vetoed_by": gate.get("vetoed_by"),
+        },
+    }
+
+
 @app.post(
     "/api/governance/consultation-handoffs",
     response_model=Dict[str, Any],
@@ -383,6 +430,9 @@ def accept_consultation_handoff(
             detail="Consultation handoff idempotency key is invalid",
         )
 
+    panel_gate: Optional[Dict[str, Any]] = None
+    if target_gate.startswith("consultation.panel."):
+        panel_gate = _validated_panel_gate(body)
     request_digest = hashlib.sha256(
         json.dumps(
             body,
@@ -392,6 +442,7 @@ def accept_consultation_handoff(
         ).encode("utf-8")
     ).hexdigest()
     record = {
+        **(panel_gate or {}),
         "handoff_id": handoff_id,
         "tenant_id": tenant_id,
         "request_id": request_id,
@@ -1365,6 +1416,64 @@ def _tenant_approval(decision_id: str, ctx: AuthContext) -> ApprovalDecision:
     return decision
 
 
+# Explicit owner mapping: which approval target types are the adoption path of
+# each consult-gated decision type. A veto is only ever matched or consumed by
+# an approval of a mapped target type with the same id (and, when the panel
+# bound one, the same version/candidate digest).
+CONSULT_GATED_APPROVAL_TARGETS: Dict[str, frozenset] = {
+    "trial_admission": frozenset({"registry_entry", "paper_canary_candidacy"}),
+    "envelope_publication": frozenset({"allocation_policy", "registry_entry"}),
+    "harness_patch": frozenset(
+        {"persona_training_target", "evolution_proposal", "evolution_execute"}
+    ),
+}
+
+
+def _consultation_veto_block(
+    tenant_id: str, target_id: str, target_type: str = "",
+    target_version: str = "", candidate_digest: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Return a pending vetoed panel handoff bound to this exact approval."""
+
+    for item in consultation_handoff_store.list_all():
+        gate = item.get("gate") or {}
+        op = item.get("operator_decision") or {}
+        gated = item.get("gated_decision") or {}
+        mapped = CONSULT_GATED_APPROVAL_TARGETS.get(str(gated.get("type") or ""), frozenset())
+        bound_version = str(gated.get("target_version") or "")
+        bound_digest = str(gated.get("candidate_digest") or "")
+        if (
+            item.get("tenant_id") == tenant_id
+            and gated.get("id") == target_id
+            and str(target_type) in mapped
+            and (not bound_version or bound_version == str(target_version or ""))
+            and (not bound_digest or bound_digest == str(candidate_digest or ""))
+            and gate.get("operator_decision_required")
+            and op.get("status") == "pending"
+        ):
+            return item
+    return None
+
+
+def _resolve_consultation_veto(
+    handoff: Dict[str, Any], *, actor_id: str, decision_id: str, outcome: str
+) -> None:
+    """Durably record the human operator decision on a vetoed panel handoff."""
+
+    resolved = {
+        **handoff,
+        "operator_decision": {
+            **(handoff.get("operator_decision") or {}),
+            "status": "decided",
+            "decided_by": actor_id,
+            "approval_decision_id": decision_id,
+            "outcome": outcome,
+            "decided_at": _utc_now(),
+        },
+    }
+    consultation_handoff_store.compare_and_set(handoff, resolved)
+
+
 def _approval_command(operation, decision_id, body, authorization, idempotency_key):
     from services.governance.pg_store import ApprovalCommandConflict, ApprovalCommandNotFound
     ctx = _approval_principal(authorization)
@@ -1403,6 +1512,8 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
         # The owner-stamped scope is part of the command identity, so a replay
         # under a different scope can never match the original receipt.
         command['authorization_scope'] = grant.authorization_scope
+    vetoed_handoff: List[Dict[str, Any]] = []
+
     def mutate(decision):
         if operation == 'propose':
             if decision is not None:
@@ -1429,6 +1540,20 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             if operation == 'decide':
                 validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
             verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())
+        if operation == 'decide' and str(getattr(body.outcome, 'value', body.outcome)) in (
+                'approved', 'approved_with_conditions'):
+            veto_block = _consultation_veto_block(
+                ctx.claims['tenant_id'], decision.target_id,
+                str(getattr(decision.target_type, 'value', decision.target_type)),
+                str(getattr(decision, 'target_version', '') or ''),
+                str(getattr(decision, 'candidate_digest', '') or ''))
+            if veto_block is not None:
+                if role == 'automated_gate' or 'operator' not in ctx.roles:
+                    raise ApprovalCommandConflict(
+                        'risk persona opposed in consultation panel '
+                        + str(veto_block.get('handoff_id'))
+                        + '; adoption refused, human operator decision required')
+                vetoed_handoff.append(veto_block)
         if operation == 'decide' and decision.decision_state == DecisionState.PROPOSED:
             decision.accept_review(actor_role=role, actor_id=ctx.actor_id)
         if operation == 'review':
@@ -1446,7 +1571,12 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
     if not hasattr(store, 'execute_command'):
         raise HTTPException(503, 'Approval commands require PostgreSQL decision and audit stores')
     try:
-        return ApprovalDecisionResponse(**store.execute_command(command=command, mutate=mutate, audit_store=audit_store))
+        result = store.execute_command(command=command, mutate=mutate, audit_store=audit_store)
+        if vetoed_handoff:
+            _resolve_consultation_veto(
+                vetoed_handoff[-1], actor_id=ctx.actor_id, decision_id=decision_id,
+                outcome=str(getattr(body.outcome, 'value', body.outcome)))
+        return ApprovalDecisionResponse(**result)
     except ApprovalCommandNotFound as exc:
         raise HTTPException(404, str(exc)) from exc
     except ApprovalCommandConflict as exc:
