@@ -2,7 +2,7 @@
   "task_id": "SOURCE-SCHEDULE-JOURNAL-INCREMENTAL-20261113",
   "owner": "Codex",
   "reviewer": "Codex2",
-  "delivery_status": "source_validation_in_progress",
+  "delivery_status": "source_ready_for_independent_review",
   "review_decision": "pending_independent_Codex2_review",
   "base_commit": "3ed0ea555b07ed8569ea005bc2a27716a31c9371",
   "scope": {
@@ -30,7 +30,7 @@
     "AC1": "Instrumented Path.open/readline/seek verifies exact external tail bytes and zero journal reads after own writes and unchanged no-op polls.",
     "AC2": "Two independent stores alternate run, large/ordinary receipt, watermark and queued/running/done frontier appends. Every round compares all four serialized maps against each other and a fresh full replay.",
     "AC3": "Separate parameterized replacement, same-inode shrink, same-size rewrite and deletion cases assert full reset at offset zero; startup and existing-reader partial UTF-8 tests preserve the complete prefix until the final newline arrives.",
-    "AC4": "Startup recovery remains durable and idempotent, ordinary catch-up leaves processing receipts alone. A spawned process is blocked by the existing file lock and claims the frontier exactly once.",
+    "AC4": "Startup recovery remains durable and idempotent, ordinary catch-up leaves processing receipts alone. A spawned process is blocked by the existing file lock and claims the frontier exactly once. Complete source-ingestion suite: 1896 passed, 14 skipped, no failures.",
     "AC5": "46.43 MB realistic journal, 22 registered connectors, actual local HTTP GET /api/source-ingest/registry after every 594529-byte external append; five samples with two-second pauses. Registry p50 30.95 ms versus baseline 1017.49 ms.",
     "AC6": "Only scheduler.py changes production code; no BFF, receipt format, endpoint, cache layer or new setting changes.",
     "AC7": "No existing test file was changed or deleted. New-test development corrected an expected seek count from 10 to 5 because only the reader needs to catch up the writer, and extended the partial-line test to a nonempty consumed prefix."
@@ -216,11 +216,53 @@
       "exit_code": 0,
       "result": "Both variants completed; five timed registry reads and five idle polls each; after p50 <300 ms.",
       "output": "/tmp/source-schedule-benchmark-results.json"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pip install 'pyarrow>=15,<30'",
+      "exit_code": 0,
+      "result": "Installed declared source-ingestion dependency pyarrow 26.0.1 only into this checkout-scoped venv; shared interpreter, dependency declarations and repo files unchanged."
+    },
+    {
+      "command": "timeout --signal=INT 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_scheduler.py services/source_ingestion/tests/test_ingest_schedule_incremental_replay.py --tb=short",
+      "exit_code": 0,
+      "result": "30 passed, 1 existing Starlette deprecation warning in 12.74s after dependency provisioning.",
+      "output": "/tmp/source-schedule-targeted-provisioned.log"
+    },
+    {
+      "command": "timeout --signal=INT 720 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion --tb=short",
+      "exit_code": 0,
+      "result": "1896 passed, 14 skipped, 15 existing deprecation warnings in 662.03s (0:11:02). Includes all existing scheduler/source-ingestion cases and the new replay tests; terminal output collected.",
+      "output": "/tmp/source-schedule-suite-provisioned.log"
+    },
+    {
+      "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --head HEAD; JSON parse and changed-path scope inspection",
+      "exit_code": 0,
+      "result": "Clean diff; only the three declared artifacts changed; evidence remains below 400 added lines. Production +78/-54, tests +358/-0; no original tests changed."
     }
   ],
   "hosted_acceptance": {
     "status": "not_performed_in_this_source_task",
     "owner_task": "STRAT-DATASRC-HOSTED-ACCEPT-20261110",
     "boundary": "No VM, SSH, operator key, provider or hosted endpoint access. No deployment or hosted readiness claim."
-  }
+  },
+  "validation_diagnostics": [
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion",
+      "exit_code": 124,
+      "result": "Timeout after 240 seconds; incomplete, not passed. Nine failures observed before timeout; isolated below.",
+      "output": "/tmp/source-schedule-suite.log"
+    },
+    {
+      "command": "timeout --signal=INT 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py --tb=short",
+      "exit_code": 1,
+      "result": "9 failed, 8 passed in 1.63s; all nine caused by missing declared pyarrow dependency. No scheduler/test source change made to address these.",
+      "output": "/tmp/source-schedule-failures.log"
+    },
+    {
+      "command": "timeout --signal=INT 720 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion --tb=short",
+      "exit_code": 2,
+      "result": "Explicitly interrupted task-owned pytest before installing missing dependency: 50 passed, 9 skipped in 42.77s; incomplete, not passed.",
+      "output": "/tmp/source-schedule-suite-complete.log"
+    }
+  ]
 }
