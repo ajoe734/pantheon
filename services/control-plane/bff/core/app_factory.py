@@ -1644,6 +1644,11 @@ def mount_bff_routers(
         get_journal_write_owner=get_journal_write_owner,
     )
     app.include_router(agora_router)
+    mount_agora_review_routers(
+        app, extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_write_role=_dep("_require_operator_role"), utc_now=_dep("utc_now"),
+    )
 
     from ..agora.persona_lab.router import create_persona_lab_router
     app.include_router(create_persona_lab_router(
@@ -1696,6 +1701,18 @@ def mount_bff_routers(
     app.state.auth_handlers = auth_handlers
     app.state.auth_facade_service = auth_facade_service
     app.state.core_handlers = core_handlers
+
+
+def mount_agora_review_routers(app: FastAPI, *, extract_identity, require_read_role, require_write_role, utc_now):
+    """Production mounting entry point shared by assembly and owner HTTP tests."""
+    from ..agora.committee.router import create_committee_router
+    from ..agora.memory_review.router import create_memory_review_router
+
+    for router_factory in (create_committee_router, create_memory_review_router):
+        app.include_router(router_factory(
+            extract_identity=extract_identity, require_read_role=require_read_role,
+            require_write_role=require_write_role, utc_now=utc_now,
+        ))
 
 
 def compose_bff_app(
