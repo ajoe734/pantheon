@@ -220,11 +220,27 @@ Worked outcomes with `Date=20261106` data, equity 100,000, budget 2.0× (max gro
 
 The replay table of the design document §8 (E1–E3) remains the loss reference per instrument.
 
-#### Portfolio target positions (operator approval 2026-11-13)
+#### Portfolio target positions (engineering proposal, 2026-11-13)
 
-The operator approved the three portfolio corrections on 2026-11-13
-(`PERSONA-POOL-TARGET-POSITIONS-20261113`). Strategy weights belong to immutable
-member strategies, not symbols. Daily screened picks are recomputed and recorded
+`PERSONA-POOL-TARGET-POSITIONS-20261113`, PR #7303, implements the following
+engineering proposal. The earlier assertion of explicit operator approval on
+2026-11-13 is withdrawn: its citations led back to the task brief rather than
+an independently verified direct decision. The bounded source lookup does not
+prove that no approval exists in another context. The original coordinator may
+supply the pre-existing decision reference; this is not a request for the
+operator to approve again.
+
+The original pool SD §4.2/§4.3 already requires combined net views and daily
+strategy-selected picks, but §4.2 also assumes the expression layer is unchanged.
+The allocation formula and target-position reconciliation below are a substantive
+proposed amendment to that assumption. Their implementation and technical review
+are preserved; policy acceptance, integration and activation remain unresolved
+under the current provenance rework. This section does not establish deployment
+or permission to activate the proposal. See the task's committed evidence manifest
+for the scope split and historical review binding.
+
+In the proposal, strategy weights belong to immutable member strategies, not
+symbols. Daily screened picks are recomputed and recorded
 with each member's candidate-pool digest; changing picks does not publish a new
 pool version. Fixed-member symbols, current screened picks and held underlyings
 form the decision universe.
@@ -250,7 +266,9 @@ reduce held legs or add the delta through the existing candidate scoring and
 integer reductions round down and never exceed held units. Additions are
 bounded by the allocated delta so rounding cannot spend another symbol's budget.
 The starting `rebalance_band_fraction=0.2` is a coordinator proposal, **not an
-operator-selected number**. The band and parameter digest ride on each decision.
+operator-selected number**. It is already a default in the proposed envelope
+builder and target policy/replay code, not merely a documentation example.
+The band and parameter digest ride on each decision.
 
 Each factor member reconstructs its own state from its view history; screened
 members replay their own membership and position history through the standalone

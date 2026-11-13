@@ -3,13 +3,65 @@
   "owner": "Codex",
   "reviewer": "Claude",
   "recorded_at": "2026-11-13",
-  "source_status": "implemented_pending_independent_review",
-  "review_decision": "pending_assigned_reviewer",
+  "source_status": "implemented_engineering_proposal_provenance_rework",
+  "review_decision": "historical_technical_approval_preserved_new_head_not_approved",
   "integration_base": "bc8807e042d3e85f611ffe8a5564db2d60158353",
   "authorization": {
-    "operator": "2026-11-13 approval of the three portfolio corrections, as recorded in the task brief",
+    "operator": "Explicit 2026-11-13 policy approval is unverified; the prior task-brief-based attribution is withdrawn",
+    "classification": "Engineering proposal interpreting the original dynamic-picks and combined-net-view goals; a substantive expression-policy amendment, not an operator-approved amendment",
+    "direct_decision_reference": null,
     "rebalance_band_fraction": 0.2,
-    "numeric_authority": "Coordinator starting proposal, not an operator numerical decision"
+    "numeric_authority": "Coordinator starting proposal already implemented as a source default, not an operator numerical decision"
+  },
+  "scope_and_provenance": {
+    "rework_basis": "Canonical Human/Ops reopen of 2026-11-13T08:18:20Z for truthful scope and authority attribution; preserve PR7303 source and technical evidence, do not infer new strategy-policy consent from continued work",
+    "original_obligations": [
+      "SD pool autonomy section 4.2 P-1: combine strategy views into one net view per underlying and maintain separate member virtual books",
+      "SD pool autonomy section 4.3 P-5: strategies select daily candidate underlyings from the governed persona universe"
+    ],
+    "original_assumption": "At integration base bc8807e042d3e85f611ffe8a5564db2d60158353, SD section 4.2 explicitly says the expression layer, risk gate and ledger are unchanged",
+    "proposed_semantic_amendment": [
+      "target_position_v1 for non-passthrough envelopes changes strategy/schema/execution/replay/backtest semantics",
+      "Freeze the bar book and budget, compute all net views, then allocate from the absolute gross budget using one common scale",
+      "Reconcile marked holdings to targets with flat closes, partial reductions, delta additions and close-before-reverse behavior",
+      "Use a rebalance band with a coordinator-proposed fraction of 0.2"
+    ],
+    "numeric_default_locations": [
+      "services/registry/portfolio_envelope.py: envelope expression_policy parameters",
+      "services/execution/lean_runtime/expression_policy.py: target policy and replay parameter defaults"
+    ],
+    "unsupported_attribution_chain": "Task creation/brief -> this evidence -> amended design; none independently establishes a direct operator decision",
+    "bounded_lookup": {
+      "result": "No independently verified matching direct policy decision in the inspected source windows",
+      "limit": "Not exhaustive across other contexts, times or structured replies; does not prove approval absent or fabricated",
+      "audit_references": [
+        {
+          "path": "/tmp/pantheon-goal-resume-20261111/goal-two-new-policy-operator-attribution-vs-primary-decision-provenance-readonly-20261113.json",
+          "sha256": "6df3d32eab40f371c00df0263e2c33b8d099d5ba6a4a4295c680fb2610a47117"
+        },
+        {
+          "path": "/tmp/pantheon-goal-resume-20261111/goal-target7303-approval-recursion-and-bounded-primary-lookup-20261113.json",
+          "sha256": "348978a8a02a9537b4214b2c921910074943c9b3239f56a423e77d934c52e17f"
+        }
+      ]
+    },
+    "canonical_metadata_correction_needed": "The canonical summary still asserts operator agreement on 11/13 and AC12 still requires citing that approval. The latest reopen instruction overrides those unsupported attributions. Original coordinator must reconcile those fields through existing governed task maintenance; no hand-edited task JSON or new task is proposed",
+    "integration_and_activation": "Unresolved substantive design amendment; retain as reviewable engineering proposal. No integration, deployment or activation is claimed or authorized by this evidence",
+    "next_actor_action": "Original coordinator identifies the pre-existing direct decision reference if available, or reconciles the same task's summary/AC12 and amendment disposition with the engineering-proposal attribution. Do not ask the operator to approve again or substitute technical review, green CI, task creation or automatic tool approval for user consent",
+    "this_rework": "Documentation and evidence only; existing source, tests, historical commits and real paper/live boundaries preserved"
+  },
+  "historical_technical_review": {
+    "reviewer": "Claude",
+    "head_sha": "a0598ddbca4f2b9575123c2958a6010aa34f7f81",
+    "decision": "review_approved",
+    "recorded_at": "2026-11-13T07:50:35Z",
+    "github_review_id": 5887781241,
+    "review_summary": "Independent 13-file run: 489 passed with 3 failures attributed to missing numpy; numpy-venv parity/adapter/pool_admission run: 64 passed; diff-budget check exit 0",
+    "snapshot_reference": {
+      "path": "/tmp/pantheon-goal-resume-20261111/Target7303-before-existing-native-provenance-rework-20261113.json",
+      "sha256": "8e65845bd6ec0abe9afc569e8f6cba7e86e812677f718feeb749c40ab94dfff8"
+    },
+    "current_authority": "Historical technical evidence only. Human/Ops reopened the task for provenance rework; this is not approval of the amended head or evidence of operator policy consent"
   },
   "acceptance": [
     {
@@ -108,7 +160,8 @@
     },
     {
       "id": 12,
-      "evidence": "DEV_PLAN section 4.4 and SD pool autonomy sections 4.2/4.3 now cite the 2026-11-13 operator approval, strategy weights, unpinned picks, allocation and reconciliation semantics."
+      "status": "proposal_documented_operator_attribution_unverified",
+      "evidence": "DEV_PLAN section 4.4 and SD pool autonomy sections 4.2/4.3 now distinguish the original dynamic-picks/netting obligations from the substantive proposed expression-policy amendment. Unsupported explicit operator-approval wording is withdrawn. AC12's demand for that citation remains unresolved in canonical metadata; no approval reference is invented."
     }
   ],
   "recorded_market": {
@@ -160,11 +213,22 @@
     "method": "Load baseline paper_signal_producer.py from git into a separate module; serialize complete old/new decisions including evaluated expression records on identical standalone/singleton inputs, for bullish/bearish/zero-momentum bars.",
     "probe_source": "import importlib.util\nimport json\nfrom pathlib import Path\nimport subprocess\nimport sys\n\nfrom services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy\nfrom services.execution.lean_runtime.test_portfolio_target_positions import cash_candidates, BUDGET\nfrom services.execution.lean_runtime.test_current_artifact_signal import _binding\nfrom services.registry.test_strategy_artifact import _artifact_with_expression_policy\nfrom services.registry.test_portfolio_envelope import envelope, member_artifact\n\nbaseline = subprocess.check_output([\"git\", \"rev-parse\", \"origin/dev\"], text=True).strip()\nold = Path(\"/tmp/persona-target-baseline-producer.py\")\nold.write_bytes(subprocess.check_output([\"git\", \"show\", baseline + \":services/execution/lean_runtime/paper_signal_producer.py\"]))\nspec = importlib.util.spec_from_file_location(\"persona_target_baseline_producer\", old)\nmodule = importlib.util.module_from_spec(spec)\nsys.modules[spec.name] = module\nspec.loader.exec_module(module)\n\ndef result(strategy, binding):\n    out = strategy(binding, \"2026-11-13T06:00:00Z\")\n    expression = out.pop(\"expression\", None)\n    if expression:\n        out[\"evaluated_expression\"] = expression[\"evaluate\"]()\n        out[\"expression_view\"] = expression[\"view\"]\n    return json.dumps(out, sort_keys=True, separators=(\",\", \":\"), allow_nan=False)\n\ncount = 0\nfor art in (member_artifact(), _artifact_with_expression_policy()):\n    art[\"parameters\"][\"symbols\"] = [\"2330.TW\"]\n    for singleton in (False, True):\n        artifact = envelope([{\"member_id\": \"one\", \"artifact\": art, \"risk_weight\": 1}]) if singleton else art\n        for closes in ([100, 102], [102, 100], [100, 100]):\n            binding = _binding(artifact, binding_id=\"legacy-check\", include_market_input=False)\n            binding[\"market_input\"] = {\"symbol\": \"2330.TW\", \"closes\": closes,\n                \"event_time\": \"2026-11-13T05:30:00Z\", \"observed_at\": \"2026-11-13T06:00:00Z\",\n                \"source_ref\": \"verification:unchanged-input\"}\n            kwargs = dict(expression_layer=True, candidates_builder=cash_candidates,\n                          expression_inputs=lambda _: {\"persona_book\": {}, \"risk_budget\": BUDGET})\n            assert result(CurrentArtifactStrategy(**kwargs), binding) == result(module.CurrentArtifactStrategy(**kwargs), binding)\n            count += 1\nprint(json.dumps({\"baseline\": baseline, \"byte_identical_decision_cases\": count}))\n"
   },
+  "provenance_rework_validation": {
+    "commands": [
+      "python3 -m json.tool docs/deployment/evidence/PERSONA-POOL-TARGET-POSITIONS-20261113/evidence.json >/dev/null",
+      "git diff --check",
+      "git diff --exit-code a0598ddbca4f2b9575123c2958a6010aa34f7f81 -- services"
+    ],
+    "exit_status": 0,
+    "result": "Valid JSON; clean whitespace; source and test trees identical to the historically reviewed head. Earlier runtime suites are preserved as historical results, not rerun or claimed as approval of the amended head"
+  },
   "delivery": {
     "repository": "ajoe734/pantheon",
     "branch": "task/PERSONA-POOL-TARGET-POSITIONS-20261113",
     "target": "dev",
     "review_file": "docs/deployment/evidence/PERSONA-POOL-TARGET-POSITIONS-20261113/evidence.json",
-    "state": "ready_for_exact_head_handoff_to_assigned_reviewer"
+    "state": "provenance_rework_preserved_pending_coordinator_disposition",
+    "pr": 7303,
+    "integration": "not_merged_no_new_head_review_or_policy_acceptance_claimed"
   }
 }
