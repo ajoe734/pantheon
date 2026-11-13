@@ -19,9 +19,13 @@
       ]
     },
     "tests": {
-      "status": "final_suite_pending",
+      "status": "passed",
+      "command": "OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMBA_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1 timeout --foreground --kill-after=10s 300s /tmp/codex-replication-review-20261111/bin/python -B -m pytest -p no:cacheprovider services/research/tests/test_vectorbt_intraday.py services/research/replication/tests/test_gate_intraday.py services/research/replication/test_gate.py services/research/replication/tests/test_gate_mechanism.py services/research/replication/tests/test_gate_screen_contribution.py services/research/tests/test_backtest_owner_readback.py services/research/alpha_replication/test_admission.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_retrain_oos_gate.py -q --disable-warnings",
+      "terminal": {"exit_code": 0, "result": "170 passed, 4611 warnings in 197.82s", "deadline_seconds": 300},
+      "suite_source_head": "06b013c4e",
+      "environment": {"python": "3.12.3", "vectorbt": "1.1.1", "numpy": "2.5.4", "pandas": "3.1.1", "pytest": "9.2.0"},
       "corrected_engine_controls": "9 passed in9.78s: exact per-bar PIT environments (reset/cross-session/lag/alias/crossing clock), all malformed old observations fail closed, exact actions/close intents/orders/cash/assets/value/costs for dual instruments and declared short/overnight, including identical genuine mandatory-liquidation failure. Controls use the SAME corrected engine with reuse disabled; no replacement backtester.",
-      "intermediate_suite": "78 passed in75.13s before the final crossing-clock assertion was corrected and the final9 controls rerun; not the final fixture suite."
+      "scope": "Final one-minute fixtures and negative/explicitly injected positive gate cases, real intraday engine regressions, daily gate/mechanism/screen and owner-readback/admission/evolution/retrain consumers. Existing upstream/deprecation warnings are retained. Qualified gate/adapter Git blobs are unchanged after composition with current dev."
     },
     "merged": {
       "status": "not_yet_merged",
