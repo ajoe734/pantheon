@@ -11,6 +11,7 @@ from services.persona.lesson_governance import (
     LessonGovernanceService,
     TradeLessonCandidateError,
     TradeLessonCandidateStore,
+    is_paper_only_eligible,
     is_sensitive_change,
     check_evaluation_gates,
     utc_now,
@@ -49,7 +50,7 @@ def make_valid_candidate(overrides: dict | None = None) -> dict:
         "review_state": "proposed",
         "created_at": utc_now(),
         "updated_at": utc_now(),
-        "expiry": utc_now(),
+        "expiry": "2099-01-01T00:00:00Z",
         "reflection_version": "v1",
     }
     if overrides:
@@ -118,13 +119,13 @@ def test_gate_check_pattern_sample_size() -> None:
 
 def test_gate_check_pattern_cross_regime() -> None:
     episodes = [
-        {"trade_episode_id": "ep1", "regime": "bull_market"},
-        {"trade_episode_id": "ep2", "regime": "bull_market"},
-        {"trade_episode_id": "ep3", "regime": "bull_market"},
+        {"trade_episode_id": "ep1", "persona_id": "persona-macro", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "persona_id": "persona-macro", "regime": "bull_market"},
+        {"trade_episode_id": "ep3", "persona_id": "persona-macro", "regime": "bull_market"},
     ]
     candidate = make_valid_candidate({
         "scope": "strategy",
-        "trade_episode_ids": [str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())],
+        "trade_episode_ids": ["ep1", "ep2", "ep3"],
     })
     errors = check_evaluation_gates(candidate, episodes)
     assert any("at least 2 distinct market regimes" in e for e in errors)
@@ -193,9 +194,9 @@ def test_successful_endorse_and_merge(
     memory_store: PersonaMemoryStore,
 ) -> None:
     episodes = [
-        {"trade_episode_id": "ep1", "regime": "bull_market"},
-        {"trade_episode_id": "ep2", "regime": "bear_market"},
-        {"trade_episode_id": "ep3", "regime": "bull_market"},
+        {"trade_episode_id": "ep1", "persona_id": "persona-macro", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "persona_id": "persona-macro", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "persona_id": "persona-macro", "regime": "bull_market"},
     ]
     candidate = make_valid_candidate({
         "scope": "strategy",
@@ -248,9 +249,9 @@ def test_lineage_version_regex_validation(governance_service: LessonGovernanceSe
 def test_promotion_gates_fail_closed(governance_service: LessonGovernanceService) -> None:
     # Set up episodes
     episodes = [
-        {"trade_episode_id": "ep1", "regime": "bull_market"},
-        {"trade_episode_id": "ep2", "regime": "bear_market"},
-        {"trade_episode_id": "ep3", "regime": "bull_market"},
+        {"trade_episode_id": "ep1", "persona_id": "persona-macro", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "persona_id": "persona-macro", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "persona_id": "persona-macro", "regime": "bull_market"},
     ]
     candidate = make_valid_candidate({
         "scope": "strategy",
@@ -302,9 +303,9 @@ def test_promotion_gates_fail_closed(governance_service: LessonGovernanceService
 def test_promotion_stage_governance_bypass_repro(governance_service: LessonGovernanceService) -> None:
     # Repro/Regression test for promotion_stage bypass vulnerability
     episodes = [
-        {"trade_episode_id": "ep1", "regime": "bull_market"},
-        {"trade_episode_id": "ep2", "regime": "bear_market"},
-        {"trade_episode_id": "ep3", "regime": "bull_market"},
+        {"trade_episode_id": "ep1", "persona_id": "persona-macro", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "persona_id": "persona-macro", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "persona_id": "persona-macro", "regime": "bull_market"},
     ]
     candidate = make_valid_candidate({
         "scope": "strategy",
@@ -363,3 +364,52 @@ def test_create_candidate_fail_closed_canary_live(candidate_store: TradeLessonCa
     invalid_stage = make_valid_candidate({"promotion_stage": "canary_approved"})
     with pytest.raises(TradeLessonCandidateError, match="Cannot create candidate with promotion_stage 'canary_approved'"):
         candidate_store.create(invalid_stage)
+
+
+def test_unconfigured_memory_registration_fails_closed_and_persists_nothing(tmp_path, monkeypatch) -> None:
+    from services.persona import test_trade_reflection_owner as reflection_tests
+
+    monkeypatch.delenv("PANTHEON_MEMORY_API_URL", raising=False)
+    client, owner, _ = reflection_tests._setup_app(str(tmp_path), monkeypatch, provider=_LessonCandidateProvider())
+    response = client.post(
+        "/api/personas/p-alpha/trade-reflections/ep-1:retry",
+        json={"reason": "no memory"},
+        headers={**reflection_tests._auth_header("tenant-1"), "Idempotency-Key": "k-unconfigured"},
+    )
+    assert response.status_code == 503
+    assert not (owner.get("p-alpha").metadata or {}).get("trade_reflections")
+
+
+class _LessonCandidateProvider:
+    name = "mock"
+    model = "mock-v1"
+
+    def reflect(self, *, facts, trigger):
+        return {
+            "expected_vs_actual": {"thesis": "supported", "entry_quality": "good"}, "attribution": "process",
+            "counterfactuals": [{"alternative_action": "wait", "estimated_impact": "higher", "assumptions": "same"}],
+            "lesson_candidates": [{"scope": "execution", "proposed_change": "enter on pullbacks", "confidence": 0.8}],
+            "mistakes": [], "what_worked": [], "unknowns": [], "followups": [],
+        }
+
+
+@pytest.mark.parametrize(
+    "scope,change",
+    [
+        ("capital allocation", "Increase position size from 1% to 10% of account equity"),
+        ("strategy", "Increase position size from 1% to 10% of account equity"),
+        ("strategy/capital", "enter on pullbacks"),
+        ("unknown_scope", "enter on pullbacks"),
+        ("", "enter on pullbacks"),
+        ("Risk", "enter on pullbacks"),
+    ],
+)
+def test_paper_shortcut_fails_closed_for_capital_and_unknown_scope(scope: str, change: str) -> None:
+    candidate = make_valid_candidate({"scope": scope, "proposed_change": change})
+    assert not is_paper_only_eligible(candidate)
+    assert is_sensitive_change(candidate)
+
+
+def test_paper_shortcut_allows_explicit_paper_only_scope() -> None:
+    candidate = make_valid_candidate({"scope": " Strategy ", "proposed_change": "enter on pullbacks"})
+    assert is_paper_only_eligible(candidate)

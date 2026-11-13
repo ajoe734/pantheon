@@ -69,6 +69,48 @@ class AgoraEvidenceStore:
             if item["persona_id"] == persona_id
         ]
 
+    def cycle_references(self, *, tenant_id: str, persona_id: str, since: Any = None,
+                         after_id: str = "") -> List[Dict[str, Any]]:
+        """Purpose-bound worker read of consented teaching references only.
+
+        The Persona owner supplies canonical tenant/persona identity. Private
+        content and user identities never leave this owner through this port;
+        human-facing reads retain their tenant+user predicate. This is the
+        same learning consent used by the existing extraction consumer.
+        """
+        from datetime import datetime, timedelta, timezone
+        if not tenant_id or not persona_id:
+            raise ValueError("canonical persona scope is required")
+        now = datetime.now(timezone.utc)
+        if self.inbox.backend == "memory":
+            with self.inbox._lock:
+                rows = [dict(r) for r in self.inbox._inbox.values()
+                        if r["tenant_id"] == tenant_id and r["persona_id"] == persona_id
+                        and "agora_human_evidence" in r.get("content", {})]
+        else:
+            with self.inbox._connect() as conn:
+                found = conn.execute(
+                    f"SELECT evidence_id, created_at, consent_granted, learning_eligible, purpose, retention_days "
+                    f"FROM {self.inbox._inbox_table} WHERE tenant_id = %s AND persona_id = %s "
+                    "AND content ? 'agora_human_evidence' AND consent_granted = true "
+                    "AND learning_eligible = true AND purpose = 'policy_learning' "
+                    "AND (created_at, evidence_id) > (%s, %s) AND "
+                    "created_at::timestamptz + retention_days * interval '1 day' > %s "
+                    "ORDER BY created_at, evidence_id LIMIT 101",
+                    (tenant_id, persona_id, since or datetime.min.replace(tzinfo=timezone.utc), after_id, now),
+                ).fetchall()
+            rows = [dict(zip(("evidence_id", "created_at", "consent_granted", "learning_eligible", "purpose", "retention_days"), r))
+                    for r in found]
+        refs = []
+        for row in rows:
+            created = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00"))
+            if (row.get("consent_granted") and row.get("learning_eligible")
+                    and row.get("purpose") == "policy_learning"
+                    and created + timedelta(days=row["retention_days"]) > now
+                    and (since is None or (created, row["evidence_id"]) > (since, after_id))):
+                refs.append({"evidence_id": row["evidence_id"], "created_at": created.isoformat()})
+        return sorted(refs, key=lambda r: (r["created_at"], r["evidence_id"]))[:101]
+
     def pending_scopes(self, limit: int = 25) -> List[Any]:
         """Discover bounded durable work after restart, including expired leases."""
         if self.inbox.backend == "memory":

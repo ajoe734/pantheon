@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 import json
 from pathlib import Path
 import urllib.error
@@ -37,6 +38,7 @@ from services.persona.lesson_governance import (
     LessonGovernanceService,
     TradeLessonCandidateError,
     is_sensitive_change,
+    RiskReviewStore,
 )
 
 
@@ -957,6 +959,54 @@ async def decide_trade_lesson(candidate_id: str, payload: DecidePayload, x_actor
         if "IDEMPOTENCY_CONFLICT" in msg:
             raise HTTPException(status_code=409, detail={"error": "IDEMPOTENCY_CONFLICT", "message": "different request", "retryable": False})
         raise HTTPException(status_code=422, detail={"error": "decision_failed", "message": msg}) from exc
+
+
+def _risk_review_store() -> RiskReviewStore:
+    path = _candidate_store_path().with_name("trade_lesson_risk_reviews.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return RiskReviewStore(path)
+
+
+class RiskReviewPayload(BaseModel):
+    verdict: str
+
+
+@app.post("/api/memory/trade-lessons/{candidate_id}/risk-review", status_code=201)
+async def record_trade_lesson_risk_review(candidate_id: str, payload: RiskReviewPayload, authorization: Optional[str] = Header(None, alias="Authorization")):
+    """Record a risk persona review. The reviewer is the verified caller identity and must hold the risk role."""
+    ctx, tenant_id = _lesson_identity(authorization, write=True)
+    if "risk" not in {str(r).lower() for r in ctx.roles}:
+        raise HTTPException(status_code=403, detail="Risk persona review requires a verified risk role")
+    candidate = _owned_lesson(candidate_id, tenant_id)
+    if ctx.actor_id == candidate["persona_id"]:
+        raise HTTPException(status_code=403, detail="A persona cannot review its own lesson")
+    verdict = payload.verdict.strip().lower()
+    if verdict not in {"approve", "reject"}:
+        raise HTTPException(status_code=422, detail="verdict must be approve or reject")
+    return _risk_review_store().record(review_id=str(uuid.uuid4()), candidate=candidate, reviewer_persona_id=ctx.actor_id, verdict=verdict)
+
+
+class PaperEndorsePayload(BaseModel):
+    risk_review: Dict[str, Any]
+    episodes: List[Dict[str, Any]] = []
+
+
+@app.post("/api/memory/trade-lessons/{candidate_id}/paper-endorse")
+async def paper_endorse_trade_lesson(candidate_id: str, payload: PaperEndorsePayload, authorization: Optional[str] = Header(None, alias="Authorization")):
+    """Paper-scope endorsement: gates + recorded risk persona review, then merge. Sensitive lessons are refused."""
+    ctx, tenant_id = _lesson_identity(authorization, write=True)
+    _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.decide")
+    _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.merge")
+    _owned_lesson(candidate_id, tenant_id)
+    # Only the review_id is trusted from the caller; the review itself is resolved from the durable store.
+    recorded = _risk_review_store().get(str(payload.risk_review.get("review_id") or "")) or {}
+    try:
+        return _governance_service().paper_endorse_and_merge(
+            candidate_id, operator_id=ctx.actor_id, risk_review=recorded,
+            episodes=payload.episodes, memory_store=_persona_store(),
+        )
+    except TradeLessonCandidateError as exc:
+        raise HTTPException(status_code=422, detail={"error": "paper_endorse_failed", "message": str(exc)}) from exc
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/merge")

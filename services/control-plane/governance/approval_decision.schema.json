@@ -34,6 +34,7 @@
         "capital_binding_activation",
         "capital_pool_activation",
         "persona_lifecycle_transition",
+        "paper_canary_candidacy",
         "evolution_execute",
         "persona_training_target"
       ],

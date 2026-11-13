@@ -84,6 +84,9 @@ ScheduleRemover = Callable[[str], Mapping[str, Any]]
 RuntimeBindingReader = Callable[[str, str], "list[Mapping[str, Any]]"]
 # persona_id -> authoritative Persona readback after archiving (None if absent).
 PersonaArchiver = Callable[[str], "Mapping[str, Any] | None"]
+# persona_id -> OpenClaw agent projection (own agent, SOUL, memory). Best effort:
+# a failure is recorded as a readable degraded state and never blocks paper.
+AgentProvisioner = Callable[[str], Mapping[str, Any]]
 
 # RuntimeBinding statuses after which a binding no longer runs. This
 # coordinator drives RuntimeBinding retirement; read projections import this
@@ -92,6 +95,30 @@ TERMINAL_RUNTIME_BINDING_STATUSES = frozenset({"retired", "failed", "failed_inac
 
 
 CHAIN_CAPITAL_LABEL_KEYS = frozenset({"chain_id", "task_id", "fixture", "paper_only"})
+
+
+def default_agent_provisioner(persona_id: str) -> Mapping[str, Any]:
+    """Production provisioner: Persona owner record -> adapter trading-agent route.
+
+    Imports are lazy so the coordinator stays importable without the BFF service
+    and so tests can substitute the persona owner / adapter HTTP.
+    """
+
+    from integrations.openclaw.persona_agent_client import TradingPersonaAgentClient
+
+    from .personas.service import _get_active_write_owner
+
+    writer = _get_active_write_owner()
+    getter = getattr(writer, "get_persona", None) if writer else None
+    if not callable(getter):
+        raise RuntimeError("persona_owner_unavailable_for_agent_provisioning")
+    persona = getter(persona_id)
+    if not isinstance(persona, Mapping):
+        raise RuntimeError("persona_record_missing_for_agent_provisioning")
+    client = TradingPersonaAgentClient()
+    if not client.configured:
+        raise RuntimeError("openclaw_adapter_unconfigured")
+    return client.ensure_trading_persona_agent(dict(persona))
 
 
 class PoolDispatchUncertain(Exception):
@@ -246,6 +273,7 @@ class PersonaProvisioningCoordinator:
         schedule_remover: ScheduleRemover | None = None,
         runtime_binding_reader: RuntimeBindingReader | None = None,
         persona_archiver: PersonaArchiver | None = None,
+        agent_provisioner: AgentProvisioner | None = None,
     ) -> None:
         """``governance_actor_id`` is the verified subject of the separately
         issued Governance approval principal.  Strict Governance requires a
@@ -271,6 +299,7 @@ class PersonaProvisioningCoordinator:
         self.schedule_remover = schedule_remover
         self.runtime_binding_reader = runtime_binding_reader
         self.persona_archiver = persona_archiver
+        self.agent_provisioner = agent_provisioner or default_agent_provisioner
         self.lease_owner = lease_owner
         self.lease_seconds = lease_seconds
         self.actor_id = actor_id
@@ -537,6 +566,33 @@ class PersonaProvisioningCoordinator:
             lease_owner=self.lease_owner,
             lease_seconds=self.lease_seconds,
         )
+
+    def provision_persona_agent(self, persona_id: str) -> dict[str, Any]:
+        """Create/update the persona's own OpenClaw agent without gating paper.
+
+        Callers invoke this only after the Persona owner record is persisted
+        and the schedule is admitted, so no outcome here can fail or
+        compensate the paper admission. Any problem becomes a readable degraded
+        state carrying its reason; success carries the agent projection.
+        """
+
+        try:
+            agent = dict(self.agent_provisioner(persona_id))
+            memory = agent.get("memory") if isinstance(agent.get("memory"), Mapping) else {}
+            degraded = memory.get("status") == "degraded"
+            return {
+                "status": "degraded" if degraded else "ready",
+                "agent_id": agent.get("agent_id"),
+                "agent_status": agent.get("status"),
+                "model": agent.get("model"),
+                "memory": dict(memory),
+                **({"reason": str(memory.get("reason") or "memory_degraded")[:300]} if degraded else {}),
+            }
+        except Exception as exc:  # noqa: BLE001 - agent provisioning never blocks paper
+            return {
+                "status": "degraded",
+                "reason": f"{exc.__class__.__name__}: {exc}"[:300],
+            }
 
     def _resume_failure_compensation(
         self,

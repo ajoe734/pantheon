@@ -334,6 +334,7 @@ def test_parallel_activation_has_exactly_one_experiment(system):
 
 
 def test_versions_remain_append_only_after_rollback(system):
+    from datetime import timedelta
     initialize(system)
     client = system[0]
     submit(system)
@@ -342,6 +343,9 @@ def test_versions_remain_append_only_after_rollback(system):
     assert client.post(ROOT + "/rollback", headers=headers(), json={"patch_id": "patch-1", "reason": "Reject candidate"}).status_code == 200
     submit(system, patch_id="patch-2")
     client.post(ROOT + "/patches/patch-2/precheck", headers=headers())
+    assert client.post(ROOT + "/patches/patch-2/activate", headers=headers(), json=receipt(system, "patch-2")).status_code == 422
+    after_cooldown = system[2].adoption.now() + timedelta(days=8)
+    system[2].adoption.now = lambda: after_cooldown
     assert client.post(ROOT + "/patches/patch-2/activate", headers=headers(), json=receipt(system, "patch-2")).status_code == 200
     state = system[2].read("p-alpha")
     assert [row["version"] for row in state["versions"]] == [1, 2, 3]

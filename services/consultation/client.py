@@ -103,6 +103,53 @@ class ConsultationServiceClient:
         kwargs = {"tenant_id": target_tenant} if target_tenant is not None else {}
         return self._request_json("POST", "/api/consult/requests", payload, **kwargs)
 
+    def open_persona_panel(
+        self,
+        requirement: Any,
+        *,
+        persona_id: str,
+        trace_id: str,
+        task: Optional[str] = None,
+        evidence_refs: Optional[List[str]] = None,
+        request_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Open and submit a consult-policy panel as ``persona:<persona_id>``.
+
+        ``requirement`` is a ``services.persona.consult_triggers.ConsultRequirement``.
+        The call is made as a service caller carrying the persona id; the
+        service refuses a mismatch or a panel that omits a policy-required
+        participant.
+        """
+
+        if requirement.initiator_persona_id != persona_id:
+            raise ConsultationClientError("persona may only open its own panel")
+        payload: Dict[str, Any] = {
+            "request_type": "persona_policy",
+            "requested_by": {"actor_type": "persona", "actor_id": persona_id},
+            "from_persona_id": persona_id,
+            "target_type": requirement.decision_type,
+            "target_id": requirement.decision_id,
+            "task": task,
+            "consultation_type": "persona_panel",
+            "evidence_refs": list(evidence_refs or []),
+            "policy_id": requirement.policy_id,
+            "metadata": {"panel": requirement.to_panel_metadata()},
+            "trace_id": trace_id,
+        }
+        if request_id:
+            payload["request_id"] = request_id
+        if tenant_id:
+            payload["tenant_id"] = tenant_id
+        kwargs: Dict[str, Any] = {"service_actor": f"persona:{persona_id}"}
+        if tenant_id:
+            kwargs["tenant_id"] = tenant_id
+        created = self._request_json("POST", "/api/consult/requests", payload, **kwargs)
+        self._request_json(
+            "POST", f"/api/consult/requests/{created['request_id']}/submit", **kwargs
+        )
+        return created
+
     def intake_policy_learning_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request_json("POST", "/api/consult/intake/policy-learning-candidate", payload)
 

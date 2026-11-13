@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import os
 import uuid
+import asyncio
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
@@ -51,7 +53,25 @@ from services.persona.write_owner import (
     resolve_persona_tenant_scope,
 )
 
-app = FastAPI(title="Pantheon Persona Agent", version="0.2.0")
+@asynccontextmanager
+async def persona_lifespan(app):
+    stop = asyncio.Event()
+    worker = None
+    if os.getenv("PERSONA_DAILY_CYCLE_ENABLED", "false").lower() == "true":
+        from services.persona.persona_cycle_controller import CycleOwners, PersonaCycleController, run_controller
+        from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
+        controller = PersonaCycleController(
+            PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()))
+        worker = asyncio.create_task(run_controller(controller, stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        if worker is not None:
+            await worker
+
+
+app = FastAPI(title="Pantheon Persona Agent", version="0.2.0", lifespan=persona_lifespan)
 
 LLM_BACKEND = os.getenv("LLM_BACKEND", "openclaw")
 DEFAULT_PERSONA_ID = os.getenv("PERSONA_ID", "persona-default")

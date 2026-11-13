@@ -16,6 +16,7 @@ from typing import Any, Mapping
 from services.external_egress import is_internal_host, open_external_url
 
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
+from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorPullResult
 from .external_sources import validate_external_source_connector, validate_external_source_record
 from .provider_adapters import execute_provider_owned_adapter, validate_provider_adapter_token
 from .process_lock import exclusive_file_lock
@@ -300,12 +301,17 @@ class JsonlConfiguredConnectorStore:
             )
         )
 
-    def record_fetch_attempt(self, connector_id: str, *, success: bool, error: str | None = None) -> dict[str, Any]:
+    def record_fetch_attempt(
+        self, connector_id: str, *, success: bool, error: str | None = None,
+        collector_outcome: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()
             state = self._fetch_state_unlocked(connector_id)
             state["connector_id"] = connector_id
             state["attempts"] = int(state.get("attempts") or 0) + 1
+            if collector_outcome is not None:
+                state["collector_outcome"] = dict(collector_outcome)
             if success:
                 state["successful_attempts"] = int(state.get("successful_attempts") or 0) + 1
                 state["last_error"] = None
@@ -464,6 +470,8 @@ class ConfiguredConnectorFetcher:
             self.store.record_fetch_attempt(connector_id, success=False, error=reason)
             raise SourceEvidenceError(reason)
 
+        collector_outcome = None
+        collector_result = None
         try:
             if config.fetch.get("mode") == "external_feed":
                 payload = self._fetch_external_payload(config.fetch)
@@ -484,13 +492,39 @@ class ConfiguredConnectorFetcher:
                     for payload in record_payloads
                 )
             elif config.fetch.get("mode") == "provider_owned_adapter":
-                records = execute_provider_owned_adapter(
+                fetch = config.fetch
+                if fetch.get("adapter") == COLLECTOR_BUNDLE_ADAPTER_TOKEN:
+                    request = dict(fetch.get("request") or {})
+                    request.setdefault("watermark", watermark)
+                    fetch = {**fetch, "request": request}
+                result = execute_provider_owned_adapter(
                     connector=config.connector,
-                    fetch=config.fetch,
+                    fetch=fetch,
                     trace_id=trace_id,
                     job_parameters=job_parameters,
+                    preserve_collector_outcome=True,
                 )
-                next_watermark = config.fetch.get("next_watermark")
+                if isinstance(result, CollectorPullResult):
+                    collector_result = result
+                    records = result.records
+                    next_watermark = result.next_cursor
+                    collector_outcome = {
+                        "observed": dict(result.observed), "paused_reasons": list(result.paused_reasons),
+                        "complete": result.complete, "no_new_data": result.no_new_data,
+                        "bundle_count": result.bundle_count, "next_cursor": result.next_cursor,
+                        "feature_rejected": list(result.feature_rejected),
+                    }
+                    if not records and not result.no_new_data:
+                        reasons = [*result.paused_reasons, *result.observed.get("reasons", ())]
+                        collector_outcome["observed"] = {
+                            **result.observed, "health_state": "degraded",
+                            "reasons": [*result.observed.get("reasons", ()), "collector_empty_unproven"],
+                        }
+                        raise SourceEvidenceError("collector empty outcome is not verified no-new-data: "
+                                                  + "; ".join(reasons or ["no complete consumed bundle evidence"]))
+                else:
+                    records = result
+                    next_watermark = config.fetch.get("next_watermark")
             else:
                 record_payloads = config.fetch.get("records", [])
                 next_watermark = config.fetch.get("next_watermark")
@@ -504,17 +538,33 @@ class ConfiguredConnectorFetcher:
                     for payload in record_payloads
                 )
         except Exception as exc:
-            self.store.record_fetch_attempt(connector_id, success=False, error=str(exc))
+            if (config.fetch.get("mode") == "provider_owned_adapter"
+                    and config.fetch.get("adapter") == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+                    and collector_outcome is None):
+                # Verification/transport failures must not leave a prior healthy empty
+                # outcome looking current in the persisted fetch-state readback.
+                collector_outcome = {
+                    "observed": {"health_state": "degraded", "reasons": ["collector_pull_failed"]},
+                    "complete": False, "no_new_data": False,
+                }
+            self.store.record_fetch_attempt(connector_id, success=False, error=str(exc),
+                                           collector_outcome=collector_outcome)
             raise
-        self.store.record_fetch_attempt(connector_id, success=True)
+        self.store.record_fetch_attempt(connector_id, success=True, collector_outcome=collector_outcome)
+        empty_ok = bool(config.fetch.get("allow_empty", False))
+        empty_reason = str(config.fetch.get("empty_reason") or "") or None
+        if collector_result is not None:
+            empty_ok = collector_result.no_new_data
+            empty_reason = "verified collector consumed cursor; no new data" if empty_ok else None
         return IngestBatch(
             records=records,
             next_watermark=next_watermark,
-            empty_ok=bool(config.fetch.get("allow_empty", False)),
-            empty_reason=str(config.fetch.get("empty_reason") or "") or None,
+            empty_ok=empty_ok,
+            empty_reason=empty_reason,
             metadata={
                 "fetch_mode": config.fetch.get("mode"),
                 "job_parameters": dict(job_parameters or {}),
+                **({"collector_outcome": collector_outcome} if collector_outcome is not None else {}),
             },
         )
 

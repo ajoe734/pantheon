@@ -137,6 +137,15 @@ services:
       CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-pantheon-local-consultation-handoff-token}
       CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: ${CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE:-/data/health/workflow-health.json}
       CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS:-15}
+      # Consult-policy persona panels: outcome memory writeback (memory) and
+      # the harness-patch decision owner (evolution). Governance is the
+      # handoff sink above. A panel blocks, never silently skips, if absent.
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      # No depends_on for evolution: it transitively depends on this service
+      # (via runtime-manager). A harness-patch panel probes it and blocks.
+      PANTHEON_EVOLUTION_API_URL: http://evolution:8093
     volumes:
       - consultation-data:/data/consultation
       - worker-health-data:/data/health
@@ -149,6 +158,8 @@ services:
         condition: service_healthy
         required: false
       governance:
+        condition: service_healthy
+      memory:
         condition: service_healthy
     healthcheck:
       test:
@@ -937,6 +948,12 @@ services:
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
       CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
       CONSULTATION_PROVIDER_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
+      # Committee-visible memory reader (tenant-filtered in the provider).
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-consultation-provider}
+      PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-operator}
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
@@ -1784,6 +1801,15 @@ services:
       dockerfile: services/control-plane/persona/Dockerfile
     restart: unless-stopped
     environment:
+      PERSONA_DAILY_CYCLE_ENABLED: ${PERSONA_DAILY_CYCLE_ENABLED:-true}
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
+      PERSONA_REGISTRY_BASE_URL: ${PERSONA_REGISTRY_BASE_URL:-http://registry:8087}
+      PERSONA_REGISTRY_SERVICE_TOKEN: ${PERSONA_REGISTRY_SERVICE_TOKEN:-}
+      PERSONA_REGISTRY_SERVICE_TOKEN_FILE: ${PERSONA_REGISTRY_SERVICE_TOKEN_FILE:-}
+      PANTHEON_BFF_OODA_PACKET_STORE: ${PANTHEON_BFF_OODA_PACKET_STORE:-/data/bff/ooda_packets.json}
+      OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL: ${PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL:-http://governance:8082}
       PERSONA_GOVERNANCE_SERVICE_TOKEN: ${PERSONA_GOVERNANCE_SERVICE_TOKEN:-}
       PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE: ${PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE:-}
@@ -1804,6 +1830,8 @@ services:
       PERSONA_JWT_AUDIENCE: ${PERSONA_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-}}
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
+      # Trade lesson candidates are registered in memory review before a reflection is persisted (fail closed).
+      PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
@@ -1811,6 +1839,7 @@ services:
       PANTHEON_REGISTRY_URL: http://registry:8087
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
+      - bff-data:/data/bff
       - dev-paper-persona-tokens:/run/pantheon-principals:ro
     depends_on:
       postgres:
@@ -3118,6 +3147,17 @@ services:
       PERSONA_EVALUATOR_PERSONA_URL: http://persona:8002
       PERSONA_EVALUATOR_PERSONA_TOKEN: ${PERSONA_EVALUATOR_PERSONA_TOKEN:-${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}}
       PERSONA_EVALUATOR_PERSONA_TOKEN_FILE: ${PERSONA_EVALUATOR_PERSONA_TOKEN_FILE:-}
+      # Existing owner credentials only; missing credentials leave recorded routing holds.
+      PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
+      CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
+      AUTO_CONSUMER_CAPITAL_URL: http://capital:8092
+      AUTO_CONSUMER_CAPITAL_TOKEN: ${AUTO_CONSUMER_CAPITAL_TOKEN:-}
+      AUTO_CONSUMER_TELEMETRY_URL: http://telemetry:8083
+      AUTO_CONSUMER_TELEMETRY_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      AUTO_CONSUMER_REGISTRY_URL: http://registry:8087
+      AUTO_CONSUMER_REGISTRY_TOKEN: ${AUTO_CONSUMER_REGISTRY_TOKEN:-}
+      AUTO_CONSUMER_EVOLUTION_URL: http://evolution:8093
+      AUTO_CONSUMER_EVOLUTION_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
