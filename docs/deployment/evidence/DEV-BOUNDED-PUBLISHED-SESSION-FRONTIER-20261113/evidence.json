@@ -10,7 +10,7 @@
     "controller_worker.py: terminal backlog eligibility is evaluated at min(observed now, SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT) so a Nov12 refresh crossing 13:30 (TAIFEX) or 18:00 (FinMind) keeps later queued Nov13 work deferred; deploy_nonprod_vm.sh passes refresh_started_at into the bounded controller container; requested-session/attempted/errored items still fail; observation clocks unchanged"
   ],
   "tests": {
-    "services/source_ingestion/tests/test_controller_worker.py": "190 passed (adds cross-cutoff selected_at binding for TAIFEX through real _validate_terminal_readback, FinMind 18:00 eligibility case)",
+    "services/source_ingestion/tests/test_controller_worker.py": "190 passed after aligning _queued_actual provenance.available_time with the injected clock so fixtures no longer depend on wall-clock (adds cross-cutoff selected_at binding for TAIFEX through real _validate_terminal_readback, FinMind 18:00 eligibility case)",
     "scripts/test_dev_tw_market_refresh.py": "-k bounded/session/controller 57 passed (197s); full-file run exceeds 2 min bounded batch and is not counted as passed",
     "checks": "bash -n and git diff --check clean"
   },

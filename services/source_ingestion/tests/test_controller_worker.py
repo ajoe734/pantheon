@@ -3325,7 +3325,9 @@ def _queued_item(run_date: str, **overrides: Any) -> dict[str, Any]:
 
 def _queued_actual(run_date: str, now: datetime, count: int = 1) -> dict[str, Any]:
     actual = _actual_readback()
-    actual["captured_at"] = now.isoformat().replace("+00:00", "Z")
+    stamp = now.isoformat().replace("+00:00", "Z")
+    actual["captured_at"] = stamp
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = stamp
     actual["frontier_backlog"] = count
     actual["frontier_backlog_by_connector"] = {CONNECTOR_ID: count}
     return actual
