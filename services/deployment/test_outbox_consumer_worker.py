@@ -1519,6 +1519,36 @@ class TestRunPoll:
         assert call_kwargs["allowed_target_stages"] == ("canary",)
         assert call_kwargs["allowed_registry_deployment_stages"] == ("paper",)
 
+    def test_paper_forward_replace_authority_stays_paper_scoped(self, worker):
+        worker.verify_deploy_authorities.reset_mock()
+        saga = _binding_saga(
+            current_stage="paper",
+            target_stage="paper",
+            runtime_action="replace_binding",
+        )
+        plan = _binding_plan(
+            current_stage="paper",
+            target_stage="paper",
+            runtime_action="replace_binding",
+            binding_id="rb-paper-001",
+        )
+
+        worker.verify_binding_deploy_authorities(
+            saga=saga,
+            plan=plan,
+            persona_capital_binding_id="pcb-001",
+            persona_capital_binding_status="active",
+            allowed_deployment_scope="paper",
+            deployment_base_url="http://deployment:8095",
+            timeout_seconds=10.0,
+        )
+
+        call_kwargs = worker.verify_deploy_authorities.call_args.kwargs
+        # Same-stage replacement never widens scope beyond paper and keeps the
+        # new envelope's registry stage at none/paper.
+        assert call_kwargs["allowed_target_stages"] == ("paper",)
+        assert call_kwargs["allowed_registry_deployment_stages"] == ("none", "paper")
+
     def test_sequence_block_never_mutates_or_burns_retry_budget(self, worker):
         record = _outbox_record("evt-comp-blocked", sequence_no=3)
         record["event"].update(
@@ -3559,3 +3589,159 @@ def test_one_shot_aggregate_run_writes_no_controller_record(worker, monkeypatch)
 def test_loop_writer_disabled_without_database_url(worker, monkeypatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert worker.build_loop_writer(consumer_name="deployment-outbox-consumer") is None
+
+
+def test_binding_created_before_inbox_receipt_replay_does_not_compensate(worker):
+    """Real run_poll + real dispatch adapter; only owner IO is mocked."""
+    sys.path[:0] = [str(Path(__file__).resolve().parent)]
+    from runtime_manager_dispatch_adapter import dispatch_to_runtime_manager
+    from services.deployment.test_runtime_manager_dispatch_adapter import (
+        _binding_created_replay_fixture,
+    )
+
+    saga, context, client = _binding_created_replay_fixture()
+    report = context["metadata"]["authoritative_loader_attestation"]
+    plan = {
+        **saga,
+        "binding_id": "rb-new",
+        "status": "executing",
+        "sponsor_persona_id": "persona-001",
+        "metadata": {
+            "tenant_id": "tenant-deployment-test",
+            "persona_capital_binding_id": "pcb-001",
+            "runtime_lifecycle": {"binding_id": "rb-new", "runtime_id": "rt-001"},
+        },
+    }
+    event = _outbox_record("evt-replay")
+    event["event"].update(
+        event_type="runtime.binding.requested", aggregate_id=saga["saga_id"]
+    )
+    compat = {
+        "ok": True,
+        "persona_binding_id": "pcb-001",
+        "persona_scope_ok": True,
+        "allowed_deployment_scope": "paper",
+    }
+    with (
+        patch.object(worker, "fetch_pending_outbox", return_value=[event]),
+        patch.object(worker, "fetch_saga", return_value=saga),
+        patch.object(worker, "fetch_plan", return_value=plan),
+        patch.object(worker, "run_compatibility_check", return_value=compat),
+        patch.object(worker, "verify_deploy_authorities", return_value=report),
+        patch.object(worker, "RuntimeManagerClient", return_value=client),
+        patch.object(
+            worker, "dispatch_to_runtime_manager", side_effect=dispatch_to_runtime_manager
+        ),
+        patch.object(worker, "consume_event", return_value=_inbox_receipt("evt-replay")),
+        patch.object(worker, "record_binding_created") as record,
+        patch.object(worker, "_trigger_delivery_compensation") as compensation,
+        patch.object(worker, "record_delivery_failure", return_value={}),
+    ):
+        result = worker.run_poll(api_url="http://127.0.0.1:1", consumer_name="test-consumer")
+    assert result["errors"] == []
+    assert result["consumed"] == 1
+    compensation.assert_not_called()
+    client.replace.assert_not_called()
+    client.deploy.assert_not_called()
+
+
+def _run_forward_replace_runtime_load(worker, mutate=None):
+    from services.deployment.test_runtime_manager_dispatch_adapter import (
+        _binding_created_replay_fixture,
+    )
+
+    saga, _context, client = _binding_created_replay_fixture()
+    if mutate:
+        mutate(client)
+    binding = client.get("rb-new")
+    saga["runtime_id"] = binding["runtime_id"]
+    event = _outbox_record("evt-paper-replace-load")
+    event["event"].update(
+        event_type="runtime.load.requested",
+        aggregate_id=saga["saga_id"],
+        payload={"binding_id": "rb-new"},
+    )
+    with (
+        patch.object(worker, "fetch_pending_outbox", return_value=[event]),
+        patch.object(worker, "fetch_saga", side_effect=[saga, _completed_saga(saga)]),
+        patch.object(worker, "RuntimeManagerClient", return_value=client),
+        patch.object(
+            worker, "consume_event", return_value=_inbox_receipt("evt-paper-replace-load")
+        ),
+        patch.object(worker, "record_runtime_active") as active,
+        patch.object(
+            worker, "fetch_projection", return_value=_success_projection(saga, binding)
+        ),
+        patch.object(worker, "_trigger_delivery_compensation") as compensation,
+        patch.object(worker, "record_delivery_failure", return_value={}),
+    ):
+        result = worker.run_poll(
+            api_url="http://127.0.0.1:1", consumer_name="test-consumer"
+        )
+    return result, active, compensation
+
+
+def test_forward_replace_runtime_load_reaches_completed_projection(worker):
+    result, active, compensation = _run_forward_replace_runtime_load(worker)
+    compensation.assert_not_called()
+    active.assert_called_once()
+    assert result["errors"] == []
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "parent_runtime",
+        "parent_mode",
+        "parent_pool",
+        "child_lineage",
+        "parent_missing",
+        "child_parent_absent",
+        "child_parent_null",
+        "child_parent_empty",
+        "child_parent_self",
+    ],
+)
+def test_forward_replace_runtime_load_rejects_tampered_parent(worker, tamper):
+    def mutate(client):
+        real_get = client.get
+
+        def get(binding_id):
+            b = real_get(binding_id)
+            if b is None:
+                return None
+            b = dict(b)
+            if binding_id == "rb-old":
+                if tamper == "parent_missing":
+                    return None
+                if tamper == "parent_runtime":
+                    b["runtime_id"] = "rt-other"
+                if tamper == "parent_mode":
+                    b["deployment_mode"] = "live"
+                if tamper == "parent_pool":
+                    b["capital_pool_id"] = "pool-other"
+            elif tamper == "child_lineage":
+                b["metadata"] = {
+                    **b["metadata"],
+                    "replacement_parent_binding_id": "rb-forged",
+                }
+            elif tamper.startswith("child_parent_"):
+                md = dict(b["metadata"])
+                kind = tamper.removeprefix("child_parent_")
+                if kind == "absent":
+                    md.pop("replacement_parent_binding_id", None)
+                else:
+                    md["replacement_parent_binding_id"] = {
+                        "null": None,
+                        "empty": "",
+                        "self": binding_id,
+                    }[kind]
+                b["metadata"] = md
+            return b
+
+        client.get = get
+
+    result, active, compensation = _run_forward_replace_runtime_load(worker, mutate)
+    active.assert_not_called()
+    compensation.assert_called_once()
+    assert result["errors"]

@@ -1,0 +1,38 @@
+[
+  {
+    "name": "青禾 R3",
+    "runtime_id": "rt-ad81501b",
+    "pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+    "path": "/data/runtime/paper-performance/rb-3823397e125e4579ba5f4174067087ed-b09a7ac3ccd8.json",
+    "sha256": "12de92745040c130e135bb86cd230c1ca31a5ac91acc657801d37cb95544b9aa",
+    "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+    "initial_cash": 100000.0,
+    "ledger_started_at": "2026-11-08T12:20:00Z",
+    "fill_count": 1,
+    "last_fill_at": "2026-11-10T07:01:47Z"
+  },
+  {
+    "name": "衡岳 R2",
+    "runtime_id": "rt-3b65a843",
+    "pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+    "path": "/data/runtime/paper-performance/rb-3516fc86e6f84649a499fc89f3c562b3-a3df8cf03609.json",
+    "sha256": "953a92fce8bf7745aeb20702af7f453204954a266cfaf9e766335173e75a95ca",
+    "binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+    "initial_cash": 100000.0,
+    "ledger_started_at": "2026-11-08T18:10:15Z",
+    "fill_count": 1,
+    "last_fill_at": "2026-11-10T07:01:46Z"
+  },
+  {
+    "name": "澄川 R2",
+    "runtime_id": "rt-3252fa75",
+    "pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+    "path": "/data/runtime/paper-performance/rb-7f3c1be55a224fdaa36bbdd7a7532b4b-70a6dbdbe937.json",
+    "sha256": "154ebc75bd688af69d9f52210c9073d117aca217b25400830d7b7eb45198b834",
+    "binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+    "initial_cash": 100000.0,
+    "ledger_started_at": "2026-11-08T18:11:17Z",
+    "fill_count": 1,
+    "last_fill_at": "2026-11-10T07:01:48Z"
+  }
+]

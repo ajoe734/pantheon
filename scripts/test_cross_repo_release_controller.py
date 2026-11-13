@@ -990,8 +990,16 @@ def test_nonprod_workflow_outputs_candidate_auto_binding_contract() -> None:
     assert "profile:" in coordinate_job
     assert "source_mode:" in coordinate_job
     assert "expires_at:" in coordinate_job
-    assert "--pair-id" not in coordinate_job
-    assert "PAIR_ID:" not in coordinate_job
+    # The release-controller invocation must not auto-bind a caller-supplied pair id.
+    # The post-switch readonly QA caller legitimately passes the controller-bound
+    # pair id (steps.frontend_release.outputs.pair_id) to run_dev_paired_readonly_qa.py.
+    controller_start = coordinate_job.index("cross_repo_release_controller.py")
+    controller_end = coordinate_job.find("\n      - name:", controller_start)
+    controller_step = coordinate_job[
+        controller_start : controller_end if controller_end != -1 else len(coordinate_job)
+    ]
+    assert "--pair-id" not in controller_step
+    assert "PAIR_ID:" not in controller_step
     assert "--candidate-out" in coordinate_job
     assert '--fe-base-url "${DEV_FE_URL}"' in coordinate_job
 

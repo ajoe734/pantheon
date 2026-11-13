@@ -35,7 +35,7 @@ def _decision(**kw):
 class Scope:
     def __init__(self, result="default", exc=None):
         self.result = ({"tenant_id": "t1", "persona_id": "per-1", "artifact_id": "art-1", "stage": "paper",
-                        "strategy_kind": "factor_rule_v1", "persona_lifecycle_state": "paper_owner"}
+                        "strategy_kind": "factor_rule_v1", "persona_lifecycle_state": "paper_owner", "pool_member": {"artifact_ref": "art-1"}}
                        if result == "default" else result)
         self.exc = exc
 
@@ -94,6 +94,19 @@ class Personas:
         return target
 
 
+class PoolActions:
+    def __init__(self):
+        self.done = False
+        self.down = False
+
+    def retire(self, decision, scope):
+        if self.down:
+            raise ConnectionError("pool owner down")
+        receipt = {"status": "published", "already_removed": self.done, "removed": scope["pool_member"]}
+        self.done = True
+        return receipt
+
+
 class ExecApprovals:
     """Stands in for the Governance port: returns the deterministic real-request id, or fails."""
 
@@ -111,7 +124,7 @@ def _consumer(items, scope=None, personas=None, approvals="default"):
     sink = ac.ListEvidenceSink()
     port = ExecApprovals() if approvals == "default" else approvals
     consumer = ac.AutoConsumer(decisions=Decisions(items), scope=scope or Scope(), evidence=sink,
-                               personas=personas, execution_approvals=port)
+                               personas=personas, pool_actions=PoolActions(), execution_approvals=port)
     return consumer, sink
 
 
@@ -130,23 +143,15 @@ def test_discovery_artifact_actions_are_reviewed_and_approved_with_evidence(acti
     assert "discovery_persona_artifact_auto_action" in calls[0][2]["note"]
 
 
-def test_discovery_paper_retire_is_approved_and_persona_retired_through_governed_path():
+def test_automatic_retire_removes_member_and_never_touches_persona_lifecycle():
     personas = Personas("paper_owner")
-    consumer, sink = _consumer(
-        [_decision(action_type="retire", metadata={"discovery_auto_scope": True})], personas=personas)
+    consumer, sink = _consumer([_decision(action_type="retire", metadata={"discovery_auto_scope": True})],
+                                personas=personas)
     report = consumer.tick()
     assert report.approved == report.retired == ["evo-auto-1"]
-    assert [(t, g) for _p, t, g in personas.log] == [("frozen", "auto-gate-evo-auto-1"), ("retired", "auto-gate-evo-auto-1")]
-    retired = [e for e in sink.entries if e["event"] == "persona_retired"][0]
-    assert retired["final_state"] == "retired" and retired["transitions"] == ["frozen", "retired"]
-
-
-def test_retire_is_idempotent_for_already_frozen_or_retired_persona():
-    for state, expected in (("frozen", ["retired"]), ("retired", [])):
-        personas = Personas(state)
-        consumer, _ = _consumer([_decision(action_type="retire", metadata={"discovery_auto_scope": True})], personas=personas)
-        consumer.tick()
-        assert [t for _p, t, _g in personas.log] == expected
+    assert personas.state == "paper_owner" and not personas.log
+    assert any(e["event"] == "pool_member_removed" for e in sink.entries)
+    assert not consumer.tick().retired
 
 
 def _frozen_scope(last_id=""):
@@ -165,28 +170,20 @@ def test_fresh_proposal_on_externally_frozen_persona_is_operator_owned(action):
     assert not report.approved and not report.retired and not personas.log
 
 
-def test_partial_paper_retire_resume_requires_own_freeze_proof():
+def test_frozen_resume_is_operator_owned_even_with_legacy_own_freeze_proof():
     from services.evolution.governed_persona_lifecycle import transition_approval_id
-
     own = transition_approval_id("evo-auto-1", "per-1", "paper_owner", "frozen")
-    bound = {"decision_state": "reviewed", "approval_decision_id": "auto-gate-evo-auto-1",
-             "action_type": "retire", "metadata": {"discovery_auto_scope": True}}
-    personas = Personas("frozen")
-    consumer, _ = _consumer([_decision(**bound)], scope=_frozen_scope(own), personas=personas)
+    consumer, _ = _consumer([_decision(decision_state="approved", approval_decision_id="auto-gate-evo-auto-1",
+        action_type="retire", metadata={"discovery_auto_scope": True})], scope=_frozen_scope(own))
     report = consumer.tick()
-    assert report.retired == ["evo-auto-1"] and [t for _p, t, _g in personas.log] == ["retired"]
-    # same resume with a foreign freeze id is refused
-    personas = Personas("frozen")
-    consumer, _ = _consumer([_decision(**bound)], scope=_frozen_scope("other"), personas=personas)
-    report = consumer.tick()
-    assert not report.retired and not personas.log
+    assert not report.retired and report.left_for_operator["evo-auto-1"] == "artifact_not_paper_only"
 
 
-def test_live_persona_is_not_retired_automatically():
-    consumer, _ = _consumer([_decision(action_type="retire", metadata={"discovery_auto_scope": True})],
-                            personas=Personas("live_owner"))
-    report = consumer.tick()
-    assert "evo-auto-1" in report.errors and not report.retired
+def test_non_pool_retire_is_left_for_operator():
+    scope = Scope()
+    scope.result.pop("pool_member")
+    consumer, _ = _consumer([_decision(action_type="retire", metadata={"discovery_auto_scope": True})], scope=scope)
+    assert consumer.tick().left_for_operator == {"evo-auto-1": "retire_requires_pool_member"}
 
 
 @pytest.mark.parametrize("override,reason", [
@@ -308,13 +305,13 @@ def test_decayed_strategy_is_retired_end_to_end_through_the_real_evolution_servi
     class RealScope:
         def resolve(self, d):
             return {"tenant_id": d["tenant_id"], "persona_id": "per-e2e", "artifact_id": d["target_id"],
-                    "stage": "paper", "strategy_kind": "factor_rule_v1"}
+                    "stage": "paper", "strategy_kind": "factor_rule_v1", "pool_member": {"artifact_ref": d["target_id"]}}
 
     sink = ac.ListEvidenceSink()
-    report = ac.AutoConsumer(decisions=Http(), scope=RealScope(), evidence=sink, personas=personas).tick()
+    report = ac.AutoConsumer(decisions=Http(), scope=RealScope(), evidence=sink, personas=personas, pool_actions=PoolActions()).tick()
     assert report.approved == ["evo-e2e-retire"], report
     assert report.left_for_operator.get("evo-e2e-plain") == "risk_requires_operator"
-    assert personas.state == "retired"
+    assert personas.state == "paper_owner" and not personas.log
     final = client.get("/api/evolution/proposals/evo-e2e-retire").json()
     assert final["decision_state"] == "approved"
     roles = [s["actor_role"] for s in final["review_chain"]]
@@ -338,27 +335,14 @@ def test_review_success_then_approve_failure_is_resumed_next_tick():
     assert bound == consumer.decisions.calls[0][2]["approval_decision_id"]  # same real id both steps
 
 
-def test_approve_success_then_persona_outage_is_retired_next_tick_with_original_binding():
-    class Flaky(Personas):
-        down = True
-
-        def get_state(self, pid, tenant):
-            if self.down:
-                raise ConnectionError("persona owner down")
-            return super().get_state(pid, tenant)
-
-    personas = Flaky()
-    consumer, sink = _consumer(
-        [_decision(action_type="retire", metadata={ac.DISCOVERY_AUTO_SCOPE_KEY: True})], personas=personas
-    )
+def test_approved_member_removal_retries_owner_outage_with_original_binding():
+    consumer, _ = _consumer([_decision(action_type="retire", metadata={ac.DISCOVERY_AUTO_SCOPE_KEY: True})])
+    consumer.pool_actions.down = True
     first = consumer.tick()
-    assert first.errors and consumer.decisions.items[0]["decision_state"] == "approved" and not personas.log
-    personas.down = False
-    second = consumer.tick()
-    assert second.retired == ["evo-auto-1"] and personas.state == "retired"
-    assert {g for _, _, g in personas.log} == {"auto-gate-evo-auto-1"}
-    third = consumer.tick()  # nothing more to do, nothing re-recorded
-    assert not third.retired and len([e for e in sink.entries if e["event"] == "persona_retired"]) == 1
+    assert first.errors and consumer.decisions.items[0]["decision_state"] == "approved"
+    consumer.pool_actions.down = False
+    assert consumer.tick().retired == ["evo-auto-1"]
+    assert not consumer.tick().retired
 
 
 def test_reviewed_or_approved_decisions_without_the_auto_binding_stay_with_the_operator():
@@ -396,16 +380,8 @@ def test_reviewed_research_decision_with_synthetic_binding_stays_with_the_operat
     assert not consumer.tick().approved and not consumer.decisions.calls
 
 
-def test_external_freeze_between_reads_is_not_retired_without_own_proof():
-    personas = Personas("paper_owner")
-    personas.own_freeze = False  # the freeze that appears is not this decision's
-
-    def external_freeze(p):
-        p.before_advance = None
-        p.state = "frozen"
-
-    personas.before_advance = external_freeze
-    consumer, sink = _consumer([_decision(action_type="retire", metadata={"discovery_auto_scope": True})], personas=personas)
-    report = consumer.tick()
-    assert not report.retired and "evo-auto-1" in report.errors
-    assert personas.log == [] and personas.state == "frozen"
+def test_automatic_retire_never_uses_a_configured_lifecycle_port():
+    personas = Personas("live_owner")
+    consumer, _ = _consumer([_decision(action_type="retire", metadata={"discovery_auto_scope": True})], personas=personas)
+    consumer.tick()
+    assert personas.state == "live_owner" and not personas.log

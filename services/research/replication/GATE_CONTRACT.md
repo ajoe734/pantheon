@@ -110,6 +110,94 @@ class ReplicationResponse:
 
 ---
 
+## 3a. Screen Contribution Test (SD_STRATEGY_SCREEN_ENTRY_EXIT §4)
+
+Applies only to a candidate whose `strategy_logic` has a `screen` (or whose evaluation
+carries `candidate_pool_snapshots`). Candidates without a screen take the unchanged
+primary path.
+
+* **Inputs**: the exact `strategy_artifact` and `backtest_dataset` (with
+  `candidate_pool_market`) in `research_handoff`/`proposed_strategy_spec`. Absent inputs
+  fail closed (`screen_contribution_inputs_missing`); nothing is synthesized.
+* **Control**: the same artifact with only `screen` removed and `parameters.symbols` set to
+  every symbol of the governed market, run through the same protocol, costs and split.
+  The control run is persisted in the backtest run store.
+* **Decision**: the screened candidate is admissible only if its out-of-sample after-cost
+  Sharpe exceeds the control's by more than `min_screen_oos_sharpe_improvement` (default
+  0). If either Sharpe is non-finite (zero-variance window) the comparison falls back to
+  out-of-sample after-cost total return, strictly greater; `comparison_metric` records which.
+* **Control definition**: the candidate's own entry/exit rules with every selection step
+  removed. The governed daily boundary exclusions (suspension, liquidity, history, stale
+  data) stay in force: the control keeps the screen's eligibility block and `min_size` with
+  a single pass-everything filter, so it trades exactly the eligible boundary.
+* **Screen adds nothing**: status `screen_dropped`; criterion fails; `re_registration`
+  carries the entry-only artifact, checksum, control run id and the reason. The
+  revalidation worker consumes it and durably registers the entry-only candidate in
+  `entry_only_registrations.json` (idempotent on tenant + parent spec + entry-only
+  checksum; record holds reason and lineage to the screened parent and both runs;
+  readable via `list_entry_only_registrations`). The run metadata carries the
+  `registration_id`.
+* **Resubmitting an entry-only registration**: the gate recognises the registered artifact
+  structurally, never from a caller flag: its screen must be the fixed point of the
+  whole-boundary control construction (eligibility block, `min_size`, single
+  pass-everything filter, no selection step). Such a candidate skips only the
+  screen-contribution comparison (one trial, no `screen_contribution` block); every primary
+  admission check still runs. Any artifact with a selection step stays a screened candidate.
+* **Control cannot run**: status `control_unavailable`; fails closed.
+* **Trials**: the screened evaluation (screen variant) and the control (entry variant) each
+  increment the family counter; `trial_accounting` records both.
+* **Survivorship**: a backtest with status `survivorship_limited` is never admitted; the
+  criterion fails with `status: survivorship_limited` and the reason, which is echoed in
+  the response summary.
+* **Record**: `real_backtest_validation.details.screen_contribution` (also in
+  `metadata.backtest_summary`) states the measured contribution.
+
+## 3b. Mechanism Stage (SD_DISCOVERY_DEMAND §3.2, operator decision O-15 = b)
+
+Runs first in `evaluate_candidate`, before every criterion and so before the backtest that
+produces the out-of-sample window. Implementation: `mechanism_tests.py`.
+
+* **Inputs** (handoff or spec): `hypothesis_predictions` (the card's `predictions[]`, or
+  `hypothesis_card.predictions`), `backtest_dataset` (governed prices, `records` or
+  `candidate_pool_market`), `mechanism_inputs` (`{dataset: [rows]}` with `symbol`,
+  `event_time`/`available_time` and the observable field). Nothing is generated: a
+  prediction whose data is absent, too thin, malformed or `needs_data:*` is recorded
+  `inconclusive` with `testable: false` and a reason, and never counts as support.
+* **In-sample only**: the window is the backtest protocol's own: `split_idx =
+  int(min target-instrument bar count * in_sample_ratio)` and EVERY instrument (targets,
+  benchmark, others) keeps only its first `split_idx` sessions, whatever its length or start
+  date. The cut happens before any price is converted to a number; events and forward windows
+  reaching past an instrument's last in-sample session are dropped. `in_sample_cutoff` reports
+  the latest in-sample session. The stage never calls the backtest.
+* **Fixed test per `test_kind`**: `event_window` (abnormal window return vs the symbol's
+  in-sample mean, one-sample t across events), `regime_split` (sign must hold in every
+  regime with enough days; 0050 above/below its prior-200-session mean, or point-in-time
+  bands from `mechanism_inputs`), `dose_response` (Spearman of value vs forward return),
+  `lead_lag` (input leads returns, and the reverse direction must not be stronger),
+  `cross_symbol_sign` (one-sided binomial over per-symbol Spearman signs).
+* **Holm correction** over the testable predictions of the card, `mechanism_alpha`
+  (default 0.05). Adjusted p <= alpha in the expected direction: `supported`; in the
+  opposite direction (or any significant effect for expected sign `0`): `contradicted`;
+  otherwise `inconclusive`. Each record carries the statistic, `p_value`, `holm_p_value`.
+* **Admission**: the primary rule (§3, §3a) is unchanged. Additionally, any
+  `contradicted` prediction refuses admission (`rejected`, reason in the summary and in the
+  `mechanism_stage` result; the primary criteria still run and are recorded).
+* **Record**: `metadata.mechanism_status` (`contradicted` | `mechanism_untested` | `tested`),
+  `metadata.mechanism_support` = supported / testable (null when nothing was testable),
+  `metadata.mechanism` (all predictions), the `mechanism_stage` result, and, on admission,
+  `registry_entry.mechanism_support|mechanism_status` and `replication_proof.mechanism`.
+* **Untested**: no testable prediction (including no predictions, e.g. template-derived
+  candidates) is admitted as `mechanism_untested` when the primary checks pass.
+* **Ranking**: `persona_strategy_match` adds `3 * mechanism_support` to the existing
+  `evidence_quality` factor; untested adds nothing, so it ranks below an otherwise equal
+  supported candidate; a `contradicted` record is the hard blocker `mechanism_contradicted`.
+* **Known limits**: tests are in-sample on short real histories and overlapping forward
+  windows are not de-overlapped, so a card needs enough events/observations
+  (`mechanism_min_*`) or it is `inconclusive`. Carrying `predictions[]` from the compiled
+  spec into `hypothesis_predictions` is the spec producer's job; the revalidation worker
+  forwards `raw_spec.hypothesis_predictions` / `hypothesis_card.predictions` /
+  `mechanism_inputs` and the approved run's dataset.
+
 ## 4. Admission Decisions
 
 ### ADMITTED

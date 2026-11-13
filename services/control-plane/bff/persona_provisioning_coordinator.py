@@ -23,6 +23,7 @@ from services.registry.strategy_artifact import (
     classify_market_token,
     create_market_transition_revision,
     dataset_for_bar_frequency,
+    strategy_artifact_checksum as _artifact_checksum,
 )
 
 from .persona_provisioning import (
@@ -93,8 +94,26 @@ TERMINAL_RUNTIME_BINDING_STATUSES = frozenset({"retired", "failed", "failed_inac
 CHAIN_CAPITAL_LABEL_KEYS = frozenset({"chain_id", "task_id", "fixture", "paper_only"})
 
 
+class PoolDispatchUncertain(Exception):
+    """Pool envelope dispatch outcome could not be confirmed by readback."""
+
+    def __init__(
+        self, reason: str, receipt: dict[str, Any], *, terminal_rejection: bool = False
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.receipt = receipt
+        # True only when an authoritative saga readback shows a terminal
+        # failure/abort, which excludes pending execution of the dispatch.
+        self.terminal_rejection = terminal_rejection
+
+
 class PersonaProvisioningCoordinationError(RuntimeError):
     """An owner receipt could not prove the requested provisioning step."""
+
+
+class _TerminalSagaRejection(PersonaProvisioningCoordinationError):
+    """Saga readback proves terminal rejection of the dispatched plan."""
 
 
 @dataclass(frozen=True)
@@ -3338,6 +3357,472 @@ class PersonaProvisioningCoordinator:
             key="first_evaluation_schedule",
             receipt=receipt,
         )
+
+    # ------------------------------------------------------------------
+    # Pool envelope publication (R6): same owner paths, paper scope only.
+    # ------------------------------------------------------------------
+    def publish_pool_envelope(self, publication: Mapping[str, Any]) -> dict[str, Any]:
+        """Admit one immutable pool-envelope artifact and move the binding.
+
+        Every owner write is GET-first with authoritative readback, so a
+        retry after response loss, or a duplicate publish, replays instead of
+        duplicating.  Approval is the same automated paper-scope Governance
+        decision used for admission; nothing beyond paper is accepted.  The
+        runtime moves through the Deployment saga (Deployment calls the
+        runtime-manager ``replace`` owner route); this method never calls
+        RuntimeManager.  Any mismatch raises
+        ``PersonaProvisioningCoordinationError`` before the binding moves, so
+        the previous envelope keeps running.
+        """
+
+        pub = dict(publication)
+        tenant_id = str(pub["tenant_id"])
+        persona_id = str(pub["persona_id"])
+        pool_version = int(pub["pool_version"])
+        envelope = _mapping(pub["envelope"], label="envelope artifact")
+        if str(pub.get("stage") or "paper") != "paper":
+            raise PersonaProvisioningCoordinationError(
+                "pool envelope publication is limited to paper scope"
+            )
+        record = ProvisioningRecord(
+            tenant_id=tenant_id,
+            idempotency_key=f"pool-publish:{persona_id}:{pool_version}",
+            request_hash=str(pub["request_hash"]),
+            normalized_name="",
+            persona_id=persona_id,
+            request_payload={},
+        )
+        ids = deterministic_provisioning_ids(record)
+        label = f"pool-{ids.token}-v{pool_version}"
+        artifact_id = str(envelope["artifact_id"])
+        version = str(envelope["version"])
+        decision_id = f"apv-persona-{label}"
+        plan_id = f"plan-persona-{label}"
+        saga_id = f"deployment-saga-{plan_id}"
+        previous = _mapping(pub["previous"], label="previous envelope")
+        previous_id = str(previous["artifact_id"])
+        previous_version = str(previous["version"])
+        market = str(pub.get("market") or "") or None
+
+        # 1. The binding being replaced must be the verified current one.
+        if self.runtime_binding_reader is None:
+            raise PersonaProvisioningCoordinationError(
+                "runtime binding readback is required to publish a pool envelope"
+            )
+        bindings = [
+            b
+            for b in self.runtime_binding_reader(
+                str(previous.get("plan_id") or ids.deployment_plan_id),
+                ids.capital_pool_id,
+            )
+            if str(b.get("status") or "") not in TERMINAL_RUNTIME_BINDING_STATUSES
+        ]
+        current = [
+            b
+            for b in bindings
+            if b.get("capital_pool_id") == ids.capital_pool_id
+            and b.get("persona_capital_binding_id") == ids.persona_capital_binding_id
+        ]
+        if len(current) != 1:
+            raise PersonaProvisioningCoordinationError(
+                f"expected exactly one live RuntimeBinding for the persona pool, got {len(current)}"
+            )
+        binding = current[0]
+        already_moved = (binding.get("artifact_id"), binding.get("artifact_version")) == (
+            artifact_id,
+            version,
+        )
+        if not already_moved and (
+            binding.get("artifact_id") != previous_id
+            or binding.get("artifact_version") != previous_version
+            or binding.get("deployment_mode") != "paper"
+            or binding.get("status") != "active"
+        ):
+            raise PersonaProvisioningCoordinationError(
+                "current RuntimeBinding does not run the previous envelope in active paper"
+            )
+
+        # 2. Candidate envelope in Registry.
+        get_path = f"/api/registry/strategy-artifacts/{_path_id(artifact_id)}"
+        metadata = {
+            "tenant_id": tenant_id,
+            "persona_id": persona_id,
+            "capital_pool_id": ids.capital_pool_id,
+            "persona_capital_binding_id": ids.persona_capital_binding_id,
+            "execution_context": "paper",
+            "capital_scale_pct": 0.0,
+            "requested_by": pub.get("requested_by"),
+            "pool_version": pool_version,
+            "pool_digest": pub["pool_digest"],
+            "previous_envelope_id": previous_id,
+            "previous_envelope_version": previous_version,
+            "rollback_target_registry_id": previous_id,
+            **({"market": market} if market is not None else {}),
+        }
+
+        def validate_registry(receipt: Mapping[str, Any], *, state: str | None = None) -> None:
+            entry = _registry_entry(receipt)
+            if (
+                entry.get("registry_id") != artifact_id
+                or entry.get("version") != version
+                or entry.get("strategy_id") != ids.strategy_id
+                or entry.get("artifact_type") != "execution_bundle"
+                or (state is not None and entry.get("artifact_state") != state)
+                or entry.get("artifact_state") not in {"candidate", "approved"}
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "envelope RegistryEntry readback does not match the published pool version"
+                )
+            body = (entry.get("metadata") or {}).get("strategy_artifact")
+            if not isinstance(body, Mapping) or _artifact_checksum(
+                body
+            ) != _artifact_checksum(envelope):
+                raise PersonaProvisioningCoordinationError(
+                    "envelope RegistryEntry artifact differs from the pinned pool snapshot"
+                )
+            if (entry.get("metadata") or {}).get("pool_version") != pool_version:
+                raise PersonaProvisioningCoordinationError(
+                    "envelope RegistryEntry is bound to a different pool version"
+                )
+
+        self._create_then_get(
+            owner="registry",
+            get_path=get_path,
+            post_path="/api/registry/strategy-artifacts",
+            payload={
+                "registry_id": artifact_id,
+                "artifact_state": "candidate",
+                "strategy_artifact": dict(envelope),
+                "producer_run_id": f"persona-pool-publish-{label}",
+                "evaluation_summary": {
+                    "admission": "persona_pool_envelope",
+                    "risk_level": "low",
+                    "execution_context": "paper",
+                    "capital_scale_pct": 0.0,
+                    "pool_version": pool_version,
+                },
+                "rollback_target": previous_id,
+                "metadata": metadata,
+            },
+            validate=validate_registry,
+        )
+
+        # 3. Automated paper-scope approval bound to the exact checksum.
+        candidate = _registry_entry(self._owner_get("registry", get_path) or {})
+        candidate_digest = _owner_digest(
+            candidate.get("checksum"), label=f"RegistryEntry {artifact_id} readback"
+        )
+        expires_at = _approval_expiry(
+            candidate.get("created_at"), label=f"RegistryEntry {artifact_id} created_at"
+        )
+        approval_path = f"/api/governance/approvals/{_path_id(decision_id)}"
+
+        def validate_approval(receipt: Mapping[str, Any]) -> None:
+            self._validate_approval_identity(
+                receipt,
+                record,
+                ids,
+                registry_id=artifact_id,
+                decision_id=decision_id,
+                version=version,
+                candidate_digest=candidate_digest,
+                expires_at=expires_at,
+            )
+
+        self._create_then_get(
+            owner="governance",
+            get_path=approval_path,
+            post_path="/api/governance/approvals",
+            payload={
+                "decision_id": decision_id,
+                "expected_version": 0,
+                "target_type": "registry_entry",
+                "target_id": artifact_id,
+                "target_version": version,
+                "risk_level": "low",
+                "capital_pool_id": ids.capital_pool_id,
+                "persona_id": persona_id,
+                "tenant_id": tenant_id,
+                "owner_user_id": self.governance_actor_id,
+                "proposal_id": f"persona-pool-publish-{label}",
+                "proposal_revision": 1,
+                "proposal_content_digest": str(pub["request_hash"]),
+                "validation_result_digest": _stable_hash(
+                    {
+                        "registry_id": artifact_id,
+                        "risk_level": "low",
+                        "candidate_digest": candidate_digest,
+                    }
+                ),
+                "candidate_digest": candidate_digest,
+                "expires_at": expires_at,
+            },
+            validate=validate_approval,
+        )
+
+        def decision_ready(receipt: Mapping[str, Any]) -> bool:
+            return receipt.get("decision_state") == "decided" and receipt.get("decision") == "approved"
+
+        def review_ready(receipt: Mapping[str, Any]) -> bool:
+            return receipt.get("decision_state") in {"under_review", "decided"}
+
+        def cas(current: Mapping[str, Any] | None, extra: Mapping[str, Any]) -> Mapping[str, Any]:
+            if current is None:
+                raise PersonaProvisioningCoordinationError("ApprovalDecision has no readback")
+            validate_approval(current)
+            return {
+                "actor_role": "automated_gate",
+                "actor_id": self.governance_actor_id,
+                "expected_version": int(current.get("version") or 0),
+                **extra,
+            }
+
+        self._transition_then_get(
+            owner="governance",
+            get_path=approval_path,
+            post_path=f"{approval_path}/review",
+            payload=lambda current: cas(current, {}),
+            ready=review_ready,
+            validate=lambda r: (validate_approval(r), review_ready(r) or (_ for _ in ()).throw(
+                PersonaProvisioningCoordinationError("ApprovalDecision was not accepted for review")
+            )),
+        )
+
+        def decide_valid(receipt: Mapping[str, Any]) -> None:
+            validate_approval(receipt)
+            if not decision_ready(receipt):
+                raise PersonaProvisioningCoordinationError(
+                    "ApprovalDecision readback is not decided/approved"
+                )
+            expiry = _parse_owner_time(receipt.get("expires_at"), label="approval expires_at")
+            if expiry <= datetime.now(timezone.utc):
+                raise PersonaProvisioningCoordinationError(
+                    f"ApprovalDecision {decision_id} expired; it is not renewed"
+                )
+
+        self._transition_then_get(
+            owner="governance",
+            get_path=approval_path,
+            post_path=f"{approval_path}/decide",
+            payload=lambda current: cas(
+                current,
+                {
+                    "outcome": "approved",
+                    "rationale": "Low-risk internal paper pool envelope",
+                    "evidence_refs": [{"ref_type": "registry_entry", "ref_id": artifact_id}],
+                    "candidate_digest": candidate_digest,
+                    "expires_at": expires_at,
+                },
+            ),
+            ready=decision_ready,
+            validate=decide_valid,
+        )
+
+        def approved_ready(receipt: Mapping[str, Any]) -> bool:
+            entry = _registry_entry(receipt)
+            return (
+                entry.get("artifact_state") == "approved"
+                and entry.get("approval_decision_id") == decision_id
+            )
+
+        def advance_payload(current: Mapping[str, Any] | None) -> Mapping[str, Any]:
+            if current is None:
+                raise PersonaProvisioningCoordinationError("envelope candidate has no readback")
+            validate_registry(current, state="candidate")
+            entry = _registry_entry(current)
+            base = {
+                "approval_decision_id": decision_id,
+                "expected_artifact_state": "candidate",
+                "expected_version": str(entry["version"]),
+                "expected_updated_at": entry.get("updated_at"),
+            }
+            return {
+                "target_state": "approved",
+                "command_key": (
+                    f"persona-pool-publish:{ids.token}:advance:{artifact_id}:approved:"
+                    f"{_stable_hash(base)[:16]}"
+                ),
+                **base,
+            }
+
+        self._transition_then_get(
+            owner="registry",
+            get_path=get_path,
+            post_path=f"{get_path}/advance",
+            payload=advance_payload,
+            ready=approved_ready,
+            validate=lambda r: (
+                validate_registry(r, state="approved"),
+                approved_ready(r) or (_ for _ in ()).throw(
+                    PersonaProvisioningCoordinationError(
+                        "envelope RegistryEntry does not cite the canonical ApprovalDecision"
+                    )
+                ),
+            ),
+        )
+
+        # 4. DeploymentPlan identifies the verified current binding.
+        plan_path = f"/api/deployment/plans/{_path_id(plan_id)}"
+
+        def validate_plan(receipt: Mapping[str, Any]) -> None:
+            plan_meta = receipt.get("metadata")
+            plan_meta = plan_meta if isinstance(plan_meta, Mapping) else {}
+            if (
+                receipt.get("plan_id") != plan_id
+                or receipt.get("approval_decision_id") != decision_id
+                or receipt.get("artifact_id") != artifact_id
+                or receipt.get("artifact_version") != version
+                or receipt.get("capital_pool_id") != ids.capital_pool_id
+                or receipt.get("target_stage") != "paper"
+                or receipt.get("current_stage") != "paper"
+                or receipt.get("runtime_action") != "replace_binding"
+                or receipt.get("status") not in {"approved", "executing", "executed"}
+                or plan_meta.get("persona_capital_binding_id") != ids.persona_capital_binding_id
+                or plan_meta.get("pool_version") != pool_version
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "DeploymentPlan readback does not match the published pool envelope"
+                )
+
+        self._create_then_get(
+            owner="deployment",
+            get_path=plan_path,
+            post_path="/api/deployment/plans",
+            payload={
+                "plan_id": plan_id,
+                "approval_decision_id": decision_id,
+                "capital_pool_id": ids.capital_pool_id,
+                "target_stage": "paper",
+                "current_stage": "paper",
+                "registry_id": artifact_id,
+                "binding_id": binding["binding_id"],
+                "created_by": self.actor_id,
+                "sponsor_persona_id": persona_id,
+                "scale": {"capital_scale_pct": 0.0, "gross_scale_pct": 100.0},
+                "rollback": {
+                    "target_artifact_id": previous_id,
+                    "target_version": previous_version,
+                    "action_type": "pause_then_replace",
+                    "reason": "Fail closed to the previous approved envelope",
+                },
+                "pre_checks": [
+                    "registry_entry_approved",
+                    "approval_decision_approved",
+                    "persona_capital_binding_active",
+                ],
+                "post_checks": ["deployment_saga_admitted"],
+                "status": "approved",
+                "metadata": {
+                    "tenant_id": tenant_id,
+                    "persona_id": persona_id,
+                    "persona_capital_binding_id": ids.persona_capital_binding_id,
+                    "execution_context": "paper",
+                    "pool_version": pool_version,
+                    "strategy_artifact_id": artifact_id,
+                    "requested_by": pub.get("requested_by"),
+                    **({"market": market} if market is not None else {}),
+                },
+            },
+            validate=validate_plan,
+        )
+
+        # 5. Dispatch through Deployment; it replaces the binding.
+        saga_path = f"/api/deployment/sagas/{_path_id(saga_id)}"
+
+        def saga_ready(receipt: Mapping[str, Any]) -> bool:
+            return (
+                receipt.get("saga_id") == saga_id
+                and receipt.get("plan_id") == plan_id
+                and str(receipt.get("status") or "") not in {"failed", "aborted", "compensating"}
+            )
+
+        def validate_saga(receipt: Mapping[str, Any]) -> None:
+            if saga_ready(receipt):
+                return
+            if (
+                receipt.get("saga_id") == saga_id
+                and receipt.get("plan_id") == plan_id
+                and str(receipt.get("status") or "") in {"failed", "aborted"}
+            ):
+                raise _TerminalSagaRejection(
+                    "Deployment saga reached a terminal failure for the envelope dispatch"
+                )
+            raise PersonaProvisioningCoordinationError(
+                "Deployment saga readback does not prove the envelope dispatch"
+            )
+
+        def _receipt(saga_status: Any) -> dict[str, Any]:
+            return {
+                "persona_id": persona_id,
+                "pool_version": pool_version,
+                "envelope_artifact_id": artifact_id,
+                "envelope_version": version,
+                "approval_decision_id": decision_id,
+                "deployment_plan_id": plan_id,
+                "deployment_saga_id": saga_id,
+                "previous_envelope_id": previous_id,
+                "source_binding_id": binding["binding_id"],
+                "runtime_id": binding.get("runtime_id"),
+                "capital_pool_id": ids.capital_pool_id,
+                "persona_capital_binding_id": ids.persona_capital_binding_id,
+                "saga_status": saga_status,
+                "binding_already_moved": already_moved,
+            }
+
+        dispatch_attempted = False
+
+        def dispatch_payload(_receipt_in: Mapping[str, Any] | None) -> Mapping[str, Any]:
+            # Called only immediately before the dispatch POST is sent.
+            nonlocal dispatch_attempted
+            dispatch_attempted = True
+            return dispatch_body
+
+        dispatch_body = {
+                    "trace_id": f"persona-pool-publish:{ids.token}:{pool_version}",
+                    "correlation_id": record.idempotency_key,
+                    "idempotency_key": f"{record.idempotency_key}:deployment-dispatch",
+                    "actor_id": self.actor_id,
+                    "saga_id": saga_id,
+                    "source_task_id": f"persona-pool-publish-{label}",
+                    "metadata": {
+                        "tenant_id": tenant_id,
+                        "persona_id": persona_id,
+                        "capital_pool_id": ids.capital_pool_id,
+                        "persona_capital_binding_id": ids.persona_capital_binding_id,
+                        "execution_context": "paper",
+                        "pool_version": pool_version,
+                    },
+                }
+        try:
+            saga = self._transition_then_get(
+                owner="deployment",
+                get_path=saga_path,
+                post_path=f"/api/deployment/plans/{_path_id(plan_id)}/dispatch",
+                payload=dispatch_payload,
+                ready=saga_ready,
+                validate=validate_saga,
+            )
+        except Exception as exc:
+            if not dispatch_attempted:
+                # Failed before any dispatch POST (e.g. initial saga GET):
+                # nothing was admitted, so surface the raw error and let the
+                # caller fail closed with the previous binding unchanged.
+                raise
+            terminal = False
+            cause: BaseException | None = exc
+            while cause is not None:
+                if isinstance(cause, _TerminalSagaRejection):
+                    terminal = True
+                    break
+                cause = cause.__cause__
+            if terminal:
+                raise PoolDispatchUncertain(
+                    str(exc), _receipt(None), terminal_rejection=True
+                ) from exc
+            # Dispatch may have been admitted: the owners, not this exception,
+            # say whether the binding moved.  Never claim the previous kept.
+            raise PoolDispatchUncertain(str(exc), _receipt(None)) from exc
+        return _receipt(saga.get("status"))
 
     def _record_failure(
         self,

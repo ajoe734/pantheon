@@ -1,0 +1,136 @@
+{
+  "schema_version": "task_review_evidence.v1",
+  "task_id": "POOL-ENVELOPE-PUBLISH-20261112",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "review": {
+    "status": "pending_independent_review",
+    "previous": "REQUEST CHANGES at 25609bcef: persona_pool_publisher treated PoolDispatchUncertain as definitive refusal whenever the previous binding was still active, though accepted dispatch is asynchronous",
+    "fix": "PoolDispatchUncertain carries terminal_rejection, set only when saga readback shows failed/aborted for the matching saga/plan; publisher refuses only with that evidence plus previous binding live, otherwise records a dispatched receipt. Mounted-route regression test_queued_dispatch_with_lost_readback_is_not_refused_when_binding_later_moves covers queued acceptance + lost saga readback + later binding move; test_dispatch_failure_records_reason_and_old_envelope_keeps_running retains terminal failure coverage.",
+    "previous_2": "REQUEST CHANGES at 4166d8f40: runtime.load.requested path called validate_authoritative_readback without expected_source_binding_id, so every valid forward child failed activation and compensated",
+    "fix_2": "Shared verify_forward_replace_parent helper (adapter) independently verifies the immutable admitted parent in both the binding-created replay and the runtime.load.requested path; tampered/missing parent fails closed to compensation",
+    "previous_3": "REQUEST CHANGES at 09322a0ca: absent/null forward-replace child replacement_parent_binding_id activated runtime without an independently verified parent",
+    "fix_3": "verify_forward_replace_parent(require_parent=True) in the runtime.load.requested path fails closed (BINDING_READBACK_MISMATCH -> compensation, no record_runtime_active) for absent/null/empty/self parent; real run_poll regressions added in test_outbox_consumer_worker.py; valid forward replace and replay unchanged",
+    "previous_4": "REQUEST CHANGES at 2bb75f8ac: lifecycle.py wired raw _get_json into OwnerPoolReader; owner 404/503/URLError propagated as plain HTTP 500 and no refusal was recorded",
+    "fix_4": "Owner fetch in _pool_publisher maps HTTP 404 -> None (PoolNotFound 404) and other HTTPError/URLError/OSError -> PoolPublishRefused 503 owner_unavailable; PersonaPoolPublisher.publish records the refusal (previous envelope kept) for PoolError, PoolPublishRefused and unexpected reader errors; parametrized regression through the real _pool_publisher factory and mounted route (404/503/500/URLError).",
+    "previous_5": "REQUEST CHANGES at 84e83e654: P1 member embedded strategy_artifact checksum/identity/version never validated against entry; P2 post-dispatch saga readback failure misreported as previous-envelope-keeps-running",
+    "fix_5": "P1: PersonaPoolPublisher._member_entry independently recomputes strategy_artifact_checksum(embedded body) and requires it equal the pool pin, plus body artifact_id/version equal the ref/entry version, before building or any owner write; mismatch records a member refusal. P2: coordinator wraps the dispatch step and raises PoolDispatchUncertain (with receipt); the publisher refuses with previous-kept only when owner binding readback proves the previous envelope still active, otherwise records status dispatched/published with an unconfirmed-dispatch note and no refusal. Regressions via mounted route: tampered embedded body, identity/version mismatch, saga readback loss after replace.",
+    "previous_latest": "REQUEST CHANGES at dd2afccb3: initial saga GET OSError inside PoolDispatchUncertain handling returned 200/dispatched with no dispatch POST and no refusal",
+    "fix_retry": "PersonaPoolPublisher keeps the persisted dispatched record authoritative: a retry whose owner read fails (initial saga GET) while an earlier accepted dispatch is recorded no longer refuses 503; it returns dispatched with an unconfirmed note and no refusal, previous envelope keeps running until the queued work drains. Mounted-route regression test_retry_while_queued_and_saga_get_unavailable_preserves_uncertainty (first POST 200/dispatched, retry 200/dispatched, no refusals, drain -> deploy,replace and new envelope active). Verified: route/publisher/coordinator/registry/adapter/outbox batch 289 passed + 7 subtests.",
+    "fix_latest": "Coordinator marks dispatch attempted only when the dispatch POST payload is resolved; a failure before that re-raises so the publisher refuses 503 owner_unavailable with reason recorded and previous binding unchanged. Mounted-route regression test_initial_saga_get_failure_before_dispatch_fails_closed_503 asserts 503, zero dispatch POSTs, runtime calls ['deploy'], recorded refusal; queued/lost-readback regressions preserved. Verified: route+publisher 26 passed; coordinator+registry 79 passed.",
+    "previous_7": "REQUEST CHANGES at 25afe022b: dispatch uncertainty lost on retry before coordinator entry because pre-dispatch owner reads recorded a refusal and 503 even when history already held status=dispatched",
+    "fix_7": "publisher keeps a dispatched receipt (no refusal, no previous-kept claim) when binding/registry/member/pool owner reads fail while an earlier dispatch is recorded; fresh never-dispatched owner failures stay fail-closed 503. Mounted-route regression test_retry_preserves_dispatch_uncertainty_across_earlier_owner_read_failures covers binding, registry, member(registry), pool."
+  },
+  "scope": "Source-only. Pool version -> immutable envelope -> automated paper approval -> DeploymentPlan -> same-stage replace of the existing RuntimeBinding through the existing Deployment owner path. No hosted/live claim.",
+  "implementation": {
+    "deployment": "runtime_manager_dispatch_adapter: paper->paper replace_binding verifies the active source binding and calls the existing RuntimeManagerClient.replace (never deploy); readback requires forward-replacement lineage.",
+    "registry": "portfolio_envelope.build_portfolio_envelope pins pool_version/pool_digest as immutable parameters and the previous envelope in lineage.",
+    "bff": "PersonaProvisioningCoordinator.publish_pool_envelope (GET-first owner chain), PersonaPoolPublisher, POST /bff/personas/{id}/strategy-pool/publish."
+  },
+  "validation": [
+    {
+      "command": "python -m pytest services/control-plane/bff/tests/test_persona_pool_publish_route.py -q",
+      "exit_code": 0,
+      "result": "10 passed"
+    },
+    {
+      "command": "python -m pytest services/control-plane/bff/test_persona_pool_publisher.py -q",
+      "exit_code": 0,
+      "result": "4 passed"
+    },
+    {
+      "command": "python -m pytest services/deployment/test_runtime_manager_dispatch_adapter.py services/deployment/test_outbox_consumer_worker.py services/control-plane/bff/tests/test_persona_lifecycle_forward.py services/control-plane/bff/tests/test_ppl_alloc_009_paper_eligibility_proof.py -q",
+      "exit_code": 0,
+      "result": "399 passed"
+    },
+    {
+      "command": "python -m pytest services/control-plane/bff/test_persona_provisioning_coordinator.py -q",
+      "exit_code": 0,
+      "result": "69 passed"
+    },
+    {
+      "command": "python -m pytest services/registry/test_portfolio_envelope.py services/research/tests/test_portfolio_envelope_parity.py -q",
+      "exit_code": 0,
+      "result": "13 passed"
+    },
+    {
+      "command": "python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_bff_route_diff.py services/control-plane/bff/tests/test_bff_path_dedupe.py services/control-plane/bff/tests/test_bff_main_composition.py -q",
+      "exit_code": 0,
+      "result": "architecture 39 passed; route/path/composition 68 passed"
+    },
+    {
+      "command": "mutation check: force _is_paper_forward_replace -> False",
+      "exit_code": 1,
+      "result": "second-version publish fails (deploy path), proving the integration test exercises replace"
+    },
+    {
+      "command": "python -m pytest services/deployment -q",
+      "exit_code": 0,
+      "result": "246 passed; 1 error only for missing asyncpg in the local venv (test_l12_dep_001_dispatcher), unrelated to this change"
+    },
+    {
+      "command": "python -m pytest services/deployment/test_runtime_manager_dispatch_adapter.py services/deployment/test_outbox_consumer_worker.py -q",
+      "exit_code": 0,
+      "result": "173 passed incl. binding-created-before-inbox-receipt regressions (adapter replay, parent-lineage negatives, real run_poll + real adapter with no compensation and no duplicate replace)"
+    },
+    {
+      "command": "python -m pytest services/deployment/test_outbox_consumer_worker.py services/deployment/test_runtime_manager_dispatch_adapter.py -q",
+      "exit_code": 0,
+      "result": "179 passed incl. real run_poll runtime.load.requested success to completed projection and 5 tampered-parent negatives"
+    },
+    {
+      "command": "python -m pytest services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/bff/test_persona_pool_publisher.py -q",
+      "exit_code": 0,
+      "result": "18 passed (includes 4 new owner-error regressions)"
+    },
+    {
+      "command": "python -m pytest services/control-plane/bff/test_persona_provisioning_coordinator.py + architecture tests -q",
+      "exit_code": 0,
+      "result": "108 passed"
+    },
+    {
+      "command": "python -m pytest route/publisher/coordinator/adapter/outbox/envelope tests",
+      "exit_code": 0,
+      "result": "287 passed"
+    },
+    {
+      "command": "python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "39 passed"
+    }
+  ],
+  "acceptance": {
+    "1": [
+      "test_two_pool_versions_move_binding_with_replace_not_deploy (member version/checksum/weight, pool_version, lineage)"
+    ],
+    "2": [
+      "test_two_pool_versions_move_binding_with_replace_not_deploy (automated_gate approval, plan, binding)"
+    ],
+    "3": [
+      "test_two_pool_versions_move_binding_with_replace_not_deploy (same runtime/capital pool/pcb, positions and ledger unchanged, one active binding)"
+    ],
+    "4": [
+      "test_member_checksum_mismatch_refused_previous_keeps_running",
+      "test_member_not_approved_refused",
+      "test_wrong_tenant_member_refused",
+      "test_wrong_current_binding_refused",
+      "test_unapproved_envelope_never_reaches_deployment",
+      "test_dispatch_failure_records_reason_and_old_envelope_keeps_running",
+      "test_older_pool_version_refused_after_newer_published",
+      "test_pre_dispatch_owner_read_failure_is_503_and_recorded[runtime_bindings,envelope_registry,member_registry]"
+    ],
+    "5": [
+      "test_duplicate_publish_is_idempotent",
+      "test_beyond_paper_refused",
+      "test_beyond_paper_refused_before_any_owner_read"
+    ],
+    "6": [
+      "test_two_pool_versions_move_binding_with_replace_not_deploy (real route + coordinator + real dispatch adapter; only owner HTTP faked)"
+    ]
+  },
+  "known_limits": [
+    "The publish history store defaults to in-process memory (refusal reasons are lost on BFF restart); authoritative ordering/idempotency read owner state (RuntimeBinding + Registry), not this record.",
+    "RuntimeManager is faked with the real single-runtime and forward-replace continuity rules; the runtime-manager /replace MFA decorator is unchanged and its auth behaviour for the Deployment caller is not exercised or claimed here.",
+    "No hosted deployment or live evidence; source-only."
+  ]
+}

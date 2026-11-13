@@ -1656,6 +1656,16 @@ def mount_bff_routers(
     app.state.proposal_store = agora_router.proposal_store
     app.state.research_store = getattr(agora_router, "research_store", None)
     app.state.dataset_store = getattr(agora_router, "dataset_store", None)
+    from ..agora.evidence.router import create_human_evidence_router
+    from ..agora.evidence.worker import install_evidence_worker
+    app.include_router(create_human_evidence_router(
+        dataset_store=app.state.dataset_store,
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_write_role=_dep("_require_operator_role"),
+        utc_now=_dep("utc_now"),
+    ))
+    install_evidence_worker(app, app.state.dataset_store)
     app.state.assistant_session_store = asst_session_store
     app.state.assistant_transcript_store = asst_transcript_store
     app.state.assistant_control_mode_store = asst_control_mode_store

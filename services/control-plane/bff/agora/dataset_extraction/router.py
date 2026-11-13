@@ -252,6 +252,14 @@ def create_dataset_extraction_router(
         require_write_role(identity)
         scope = _scope(identity, x_tenant_id or x_pantheon_tenant)
         resolved_key = _require_idempotency_key(idempotency_key)
+        # Only the Agora human-evidence owner may stamp authenticated teaching
+        # provenance. The generic evidence endpoint must not impersonate it.
+        if "agora_human_evidence" in body.content:
+            raise bff_error(
+                422, _error_code().VALIDATION_FAILED,
+                "Human evidence provenance is assigned by the Agora write owner",
+                "AGORA_HUMAN_EVIDENCE_OWNER_REQUIRED",
+            )
         digest = evidence_request_digest(body)
         try:
             entry, is_new = admit_evidence(

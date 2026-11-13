@@ -56,6 +56,8 @@ class PersonaSourceEventType(str, Enum):
     POSTMORTEM_PUBLISHED = "postmortem_published"
     EVOLUTION_DECISION_APPROVED = "evolution_decision_approved"
     CONSULTATION_CLOSED = "consultation_closed"
+    POOL_OUTCOME = "pool_outcome"
+    HARNESS_EXPERIENCE = "harness_experience"
     TRAINER_EPOCH_COMPLETE = "trainer_epoch_complete"
     OPERATOR_FEEDBACK = "operator_feedback"
     RESEARCH_TASK_COMPLETED = "research_task_completed"
@@ -70,6 +72,7 @@ class PersonaWriteAuthority(str, Enum):
     TRAINER_SVC = "trainer-svc"
     CONSULTATION_SVC = "consultation-svc"
     RESEARCH_SVC = "research-svc"
+    PERSONA_SVC = "persona-svc"
 
 
 class PersonaRelevanceScope(str, Enum):
@@ -78,6 +81,10 @@ class PersonaRelevanceScope(str, Enum):
 
 
 _WRITEBACK_RULES: dict[str, set[tuple[str, str]]] = {
+    PersonaWriteAuthority.PERSONA_SVC.value: {
+        (PersonaSourceEventType.POOL_OUTCOME.value, PersonaMemoryType.STRATEGY_LESSON.value),
+        (PersonaSourceEventType.HARNESS_EXPERIENCE.value, PersonaMemoryType.STRATEGY_LESSON.value),
+    },
     PersonaWriteAuthority.TELEMETRY_SVC.value: {
         (
             PersonaSourceEventType.RUNTIME_TELEMETRY_OUTCOME.value,

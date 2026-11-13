@@ -41,7 +41,10 @@ _NUMERIC_TYPES = (int, float, Decimal)
 from services.execution.lean_runtime.performance_telemetry import (
     is_portfolio_mark_fresh,
 )
-from services.rankings.snapshots import FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION
+from services.rankings.snapshots import (
+    FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION,
+    SUPPORTED_FORMULA_VERSIONS,
+)
 _PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS = 3600
 _PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS = 86400 * 7
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
@@ -266,7 +269,7 @@ def _pm12_allocation_snapshot_record(
         )
     if (
         str(snapshot.get("surface") or "") != "quarterly"
-        or str(snapshot.get("formula_version") or "") != _PM12_LEAGUE_FORMULA_VERSION
+        or str(snapshot.get("formula_version") or "") not in SUPPORTED_FORMULA_VERSIONS
     ):
         raise err(
             422,

@@ -16,6 +16,7 @@ from services.execution.lean_runtime.performance_telemetry import (
     RollingDrawdownTracker,
     SourceIngestMarkProvider,
     value_portfolio,
+    quarter_equity_observation,
 )
 from services.execution.market_snapshot_admission import (
     TW_GOVERNED_CALENDAR_PINS,
@@ -26,6 +27,22 @@ from services.execution.market_snapshot_admission import (
 
 _NOW = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
 _UNSET = object()
+
+
+def test_quarter_observation_requires_owner_marks_and_fixed_funding():
+    metrics = {"pnl": 100.0, "portfolio_value": 1100.0, "initial_cash": 1000.0,
+               "cash": 0.0, "fill_count": 1, "valuation_mark_count": 1,
+               "pnl_period_start_at": "2026-10-01T00:00:00Z"}
+    metadata = {"valuation_method": "fill_cash_ledger_mark_to_market", "mark_refs": [
+        {"symbol": "TEST.US", "price": 110.0, "as_of": "2026-11-01T00:00:00Z", "source_ref": "test-owner-quote"}
+    ]}
+    known = quarter_equity_observation(metrics, metadata, as_of="2026-11-01T08:00:00+08:00")
+    assert known["status"] == "known" and known["equity"] == 1100.0
+    for invalid in ({**metrics, "pnl": True}, {**metrics, "portfolio_value": 1200.0},
+                    {**metrics, "initial_cash": 0}, {**metrics, "pnl_period_start_at": "2026-10-01"}):
+        assert quarter_equity_observation(invalid, metadata, as_of="2026-11-01T00:00:00Z")["status"] == "unknown"
+    assert quarter_equity_observation(metrics, {}, as_of="2026-11-01T00:00:00Z")["reason"] == "missing_owner_valuation"
+    assert quarter_equity_observation(metrics, {**metadata, "mark_refs": []}, as_of="2026-11-01T00:00:00Z")["reason"] == "missing_marks"
 
 _RECORDED_2330_CALENDAR_EVIDENCE = {
     "authority": "Taiwan Stock Exchange 115 年10月23日休市公告 (2026-10-22)",

@@ -29,6 +29,7 @@ import math
 import os
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Protocol
+from typing import Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request as UrllibRequest, urlopen
@@ -124,6 +125,36 @@ class AppendPoolVersionRequest(BaseModel):
     members: list[PoolMember]
     change_reason: str = Field(min_length=1)
     actor_id: str | None = None
+
+
+class PoolCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    artifact_ref: str = Field(min_length=1)
+    checksum: str = Field(min_length=1)
+    demand_ref: str | None = None
+    parent_ref: str | None = None
+
+
+class PoolDecisionRequest(BaseModel):
+    """Authenticated paper owner supplies observed books and governed backtest inputs.
+
+    Gate verdicts, calculated metrics, trial counters and thresholds are never
+    accepted from the caller. Repeated attempts accumulate in pool history.
+    """
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
+    execution_context: Literal["paper"]
+    action: Literal["admit", "reweight", "evolution_trial", "evolution_compete"]
+    candidate: PoolCandidate | None = None
+    books: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
+    dataset: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _candidate_required(self):
+        if self.action not in {"admit", "evolution_trial", "evolution_compete"} and self.candidate is not None:
+            raise ValueError("only admission accepts a candidate")
+        return self
 
 
 class RegistryEntryReader(Protocol):
@@ -327,6 +358,7 @@ class PersonaStrategyPoolStore:
         request: AppendPoolVersionRequest,
         *,
         actor_id: str,
+        decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         existing = self._records.get(persona_id)
         if existing is not None and existing.get("tenant_id") != tenant_id:
@@ -340,7 +372,8 @@ class PersonaStrategyPoolStore:
             )
         previous = versions[-1] if versions else None
         try:
-            self._validate_membership(previous, request.members, tenant_id)
+            self._validate_membership(previous, request.members, tenant_id,
+                policy_authorized=bool(decision and decision.get("status") == "applied"))
         except PoolMemberRefused as exc:
             self._record_refusal(persona_id, tenant_id, request, actor_id, exc)
             raise
@@ -354,6 +387,7 @@ class PersonaStrategyPoolStore:
             "created_at": self._now(),
             "created_by": actor_id,
             "previous_digest": previous["digest"] if previous else None,
+            "decision": decision,
         }
         body["digest"] = canonical_digest(body)
         for _ in range(8):
@@ -377,8 +411,14 @@ class PersonaStrategyPoolStore:
         return dict(body)
 
     def _validate_membership(
-        self, previous: Mapping[str, Any] | None, members: list[PoolMember], tenant_id: str
+        self, previous: Mapping[str, Any] | None, members: list[PoolMember], tenant_id: str,
+        *, policy_authorized: bool = False,
     ) -> None:
+        from pool_policy import load_policy
+
+        policy = load_policy()
+        if sum(m.stage != "removed" for m in members) > policy.member_ceiling:
+            raise PoolMemberRefused("pool member safety ceiling exceeded")
         refs = [m.artifact_ref for m in members]
         if len(set(refs)) != len(refs):
             raise PoolMemberRefused("duplicate artifact_ref in membership")
@@ -406,8 +446,209 @@ class PersonaStrategyPoolStore:
                 continue
             total += member.risk_weight
             _verify_member(member, tenant_id, self._reader)
+            if not policy_authorized:
+                # The record API remains available for bootstrap, risk
+                # reductions and removals. It cannot bypass automated policy
+                # by inserting a member or increasing an allocation directly.
+                if previous and (before is None or member.risk_weight > before["risk_weight"] + _WEIGHT_EPSILON
+                                 or (before["stage"] == "trial" and member.stage == "active")):
+                    raise PoolMemberRefused("admission or increased risk requires a paper pool policy decision",
+                                            artifact_ref=member.artifact_ref)
+                if member.stage == "trial" and member.risk_weight > policy.trial_risk_cap + _WEIGHT_EPSILON:
+                    # An unchanged matured trial is already policy-attested.
+                    if before is None or member.risk_weight != before["risk_weight"]:
+                        raise PoolMemberRefused("unproven trial allocation exceeds policy cap", artifact_ref=member.artifact_ref)
         if total > 1.0 + _WEIGHT_EPSILON:
             raise PoolMemberRefused(f"risk weights of live members sum to {total:.6f}, above 1.0")
+
+    def health(self, persona_id, tenant_id, books, observations):
+        from pool_policy import load_policy, pool_health
+
+        current = self.current(persona_id, tenant_id)
+        return {"pool_version": current["pool_version"],
+                **pool_health(current["members"], books, observations, load_policy())}
+
+    def decide(self, persona_id, tenant_id, request: PoolDecisionRequest, *, actor_id):
+        """Append even a refused decision, preserving membership and unused budget.
+
+        This never publishes or applies an envelope: R6 still requires registry,
+        Governance, DeploymentPlan and RuntimeBinding for execution of a version.
+        """
+        from pool_policy import load_policy, member_statistics, pool_health, reweight
+        from services.evolution.approved_baselines import resolve_member_baseline
+        from services.research.pool_admission import evaluate_admission
+
+        current = self.current(persona_id, tenant_id)
+        if current["pool_version"] != request.expected_version:
+            raise PoolVersionConflict("pool changed; re-read before deciding")
+        policy = load_policy()
+        members = [dict(m) for m in current["members"]]
+        count = max((int((v.get("decision") or {}).get("persona_trial_count", 0))
+                     for v in self.versions(persona_id, tenant_id)), default=0)
+        if request.action in {"admit", "evolution_trial"} and request.candidate is not None:
+            count += 1
+        decision = {"action": request.action, "status": "refused", "reasons": [],
+                    "persona_trial_count": count, "policy": policy.model_dump(),
+                    "candidate": request.candidate.model_dump() if request.candidate else None,
+                    "policy_digest": canonical_digest(policy.model_dump()),
+                    "health": pool_health(members, request.books, request.observations, policy),
+                    "input_digest": canonical_digest({"books": request.books, "observations": request.observations,
+                                                      "dataset": request.dataset}),
+                    "book_sources": {ref: {key: book.get(key) for key in ("checksum", "source_ref", "basis", "dates")}
+                                     for ref, book in request.books.items()},
+                    "execution_context": "paper", "execution_status": "requires_approved_envelope"}
+        now = self._now()
+        try:
+            if request.action in {"evolution_trial", "evolution_compete"}:
+                candidate = request.candidate
+                if candidate is None or not candidate.parent_ref:
+                    raise ValueError("evolution_parent_required")
+                parent = next((m for m in members if m["artifact_ref"] == candidate.parent_ref and m["stage"] == "active"), None)
+                if parent is None:
+                    raise ValueError("evolution_parent_not_active")
+                entry = self._reader(candidate.artifact_ref, tenant_id)
+                child_baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=persona_id,
+                    artifact_ref=candidate.artifact_ref, checksum=candidate.checksum, entry=entry)
+                if child_baseline["status"] != "approved":
+                    raise ValueError("evolution_child_original_oos_not_approved:" + child_baseline["reason"])
+                artifact = (entry.get("metadata") or {}).get("strategy_artifact") or {}
+                if candidate.parent_ref not in (artifact.get("lineage") or {}).get("parent_registry_ids", []):
+                    raise ValueError("evolution_child_lineage_mismatch")
+                parent_entry = self._reader(parent["artifact_ref"], tenant_id)
+                parent_baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=persona_id,
+                    artifact_ref=parent["artifact_ref"], checksum=parent["checksum"], entry=parent_entry)
+                if parent_baseline["status"] != "approved":
+                    raise ValueError("evolution_parent_baseline_missing")
+                if not set(child_baseline["validated_universe"]) <= set(parent_baseline["validated_universe"]):
+                    raise ValueError("evolution_child_universe_widened")
+                if request.action == "evolution_trial":
+                    if any(m["artifact_ref"] == candidate.artifact_ref for m in members):
+                        raise ValueError("candidate_already_in_pool_history")
+                    members.append(PoolMember(artifact_ref=candidate.artifact_ref, checksum=candidate.checksum,
+                        parent_ref=parent["artifact_ref"], stage="trial", risk_weight=0,
+                        joined_at=now, baseline_ref=entry.get("approval_decision_id")).model_dump())
+                else:
+                    from services.evolution.pool_evolution_scheduler import member_days
+                    from pool_policy import dated_series, sharpe
+                    child = next((m for m in members if m["artifact_ref"] == candidate.artifact_ref
+                                  and m["stage"] == "trial" and m.get("parent_ref") == parent["artifact_ref"]
+                                  and m["checksum"] == candidate.checksum), None)
+                    if child is None:
+                        raise ValueError("evolution_child_not_trial")
+                    child_book = request.books.get(child["artifact_ref"], {})
+                    parent_book = request.books.get(parent["artifact_ref"], {})
+                    days = member_days(child, child_book)
+                    if len(days) < 60:
+                        raise ValueError("evolution_child_needs_60_new_trading_days")
+                    child_series = dated_series(child_book, child["checksum"])
+                    parent_series = dated_series(parent_book, parent["checksum"])
+                    if not set(days) <= parent_series.keys() or not set(days) <= child_series.keys():
+                        raise ValueError("evolution_comparison_window_incomplete")
+                    from services.evolution.approved_baselines import compare_member_book
+                    from services.evolution.auto_consumer import DecayPolicy
+                    comparison = compare_member_book(child_baseline, child_book)
+                    if comparison["status"] != "compared":
+                        raise ValueError("evolution_child_fresh_metrics_unavailable")
+                    if any(day <= child["joined_at"][:10] for day in child_book["dates"]):
+                        raise ValueError("evolution_child_metrics_include_pre_admission_data")
+                    metric = next(b for b in (child_book, child_book.get("gate_basis", {}),
+                        child_book.get("net_of_costs", {})) if b.get("basis") == child_baseline["return_basis"])
+                    decay_policy = DecayPolicy()
+                    fresh_passed = (metric["sharpe_ratio"] >= child_baseline["oos_sharpe"] * decay_policy.min_sharpe_ratio_of_baseline
+                        and metric["max_drawdown"] <= child_baseline["oos_max_drawdown"] * decay_policy.max_drawdown_multiple)
+                    child_wins = fresh_passed and sharpe([child_series[d] for d in days], policy.periods_per_year) > sharpe(
+                        [parent_series[d] for d in days], policy.periods_per_year)
+                    decision["child_fresh_window_passed"] = fresh_passed
+                    loser = parent if child_wins else child
+                    if child_wins:
+                        child.update(stage="active", risk_weight=parent["risk_weight"])
+                    loser.update(stage="removed", risk_weight=0, removed_at=now,
+                                 removal_reason="evolution_competition")
+                    decision.update(removed_artifact_ref=loser["artifact_ref"], post_admission_trading_days=len(days))
+                decision["status"] = "applied"
+            elif request.action == "reweight":
+                previous_stats = next(((v.get("decision") or {})["member_statistics"]
+                    for v in reversed(self.versions(persona_id, tenant_id))
+                    if "member_statistics" in (v.get("decision") or {})), {})
+                members, stats = reweight(members, request.books, policy, now, previous_stats)
+                decision.update(status="applied", member_statistics=stats)
+            else:
+                candidate = request.candidate
+                if candidate is None:
+                    raise ValueError("no_qualifying_candidate_budget_left_unused")
+                live = [m for m in members if m["stage"] != "removed"]
+                if candidate.artifact_ref in {m["artifact_ref"] for m in members}:
+                    raise ValueError("candidate_already_in_pool_history")
+                entries, baselines = {}, {}
+                for ref, checksum in [(m["artifact_ref"], m["checksum"]) for m in live] + [(candidate.artifact_ref, candidate.checksum)]:
+                    entries[ref] = self._reader(ref, tenant_id)
+                    baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=persona_id,
+                        artifact_ref=ref, checksum=checksum, entry=entries[ref])
+                    if baseline["status"] != "approved":
+                        raise ValueError(f"{ref}: {baseline['reason']}")
+                    baselines[ref] = baseline
+                # Until a separate permitted-universe owner is available, do
+                # not infer authority to widen P: use the pool's approved universe.
+                symbols = {s.split(".")[0] for m in live for s in baselines[m["artifact_ref"]]["validated_universe"]}
+                if not {s.split(".")[0] for s in baselines[candidate.artifact_ref]["validated_universe"]} <= symbols:
+                    raise ValueError("candidate_outside_pool_approved_universe")
+                trial = PoolMember(artifact_ref=candidate.artifact_ref, checksum=candidate.checksum,
+                    stage="trial", risk_weight=0, baseline_ref=entries[candidate.artifact_ref].get("approval_decision_id"),
+                    joined_at=now, demand_ref=candidate.demand_ref).model_dump()
+                if not trial["baseline_ref"]:
+                    raise ValueError("candidate_gate_baseline_reference_missing")
+                stats = {m["artifact_ref"]: member_statistics(m, request.books.get(m["artifact_ref"]), policy)
+                         for m in live}
+                candidate_stat = member_statistics(trial, request.books.get(candidate.artifact_ref), policy)
+                if candidate_stat["drawdown"] + 1e-12 >= policy.remove_drawdown:
+                    raise ValueError("candidate_virtual_book_drawdown_exceeds_removal_policy")
+                # Risk-parity start from observed member volatility; caps
+                # leave unused risk budget idle.
+                inv = {ref: 1 / stat["volatility"] for ref, stat in {**stats, candidate.artifact_ref: candidate_stat}.items()}
+                trial["risk_weight"] = min(policy.trial_risk_cap, inv[candidate.artifact_ref] / sum(inv.values()))
+                health = decision["health"]
+                if any(health[key]["status"] != "known" for key in ("gross_utilisation", "drawdown_utilisation")):
+                    raise ValueError("risk_budget_observations_missing")
+                last = request.observations[-1]
+                full = max(sum(m["risk_weight"] for m in live),
+                           health["gross_utilisation"]["value"], health["drawdown_utilisation"]["value"],
+                           last["gross_notional"] / last["gross_limit"], last["drawdown"] / last["drawdown_limit"]) >= policy.budget_full - _WEIGHT_EPSILON
+                proposed = [dict(m) for m in members]
+                if full:
+                    if not live:
+                        raise ValueError("no_member_available_to_replace")
+                    weakest = min(live, key=lambda m: stats[m["artifact_ref"]]["sharpe"])
+                    if candidate_stat["sharpe"] <= stats[weakest["artifact_ref"]]["sharpe"]:
+                        raise ValueError("full_budget_candidate_not_stronger_than_weakest")
+                    for m in proposed:
+                        if m["artifact_ref"] == weakest["artifact_ref"]:
+                            trial["risk_weight"] = min(trial["risk_weight"], m["risk_weight"])
+                            m.update(stage="removed", risk_weight=0, removed_at=now, removal_reason="replaced_by_stronger_trial")
+                    decision["replaced_artifact_ref"] = weakest["artifact_ref"]
+                elif len(live) >= policy.member_ceiling:
+                    raise ValueError("pool_member_safety_ceiling")
+                else:
+                    trial["risk_weight"] = min(trial["risk_weight"], max(0, 1 - sum(m["risk_weight"] for m in live)))
+                proposed.append(trial)
+                evaluation = evaluate_admission(dataset=request.dataset, current=members, proposed=proposed,
+                    candidate=trial, entries=entries, trial_count=count, policy=policy)
+                decision["backtest"] = evaluation
+                if not evaluation["admitted"]:
+                    raise ValueError("; ".join(evaluation["reasons"]))
+                members = proposed
+                decision["status"] = "applied"
+        except RegistryUnavailable:
+            raise
+        except ValueError as exc:
+            decision["reasons"] = [str(exc)]
+            members = [dict(m) for m in current["members"]]
+        # Registry unavailability is 503, not a market verdict. A refused
+        # policy decision with unchanged members still passes normal CAS and
+        # registry integrity checks in the existing append implementation.
+        return self.append(persona_id, tenant_id, AppendPoolVersionRequest(
+            expected_version=request.expected_version, members=[PoolMember.model_validate(m) for m in members],
+            change_reason=f"paper pool {request.action}: {decision['status']}; " + "; ".join(decision["reasons"])),
+            actor_id=actor_id, decision=decision)
 
     def _record_refusal(
         self,

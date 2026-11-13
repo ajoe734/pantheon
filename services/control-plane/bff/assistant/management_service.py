@@ -1910,7 +1910,7 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
             "deactivate persona", "disable persona", "stop persona",
             "啟用 persona", "啟動 persona", "上線 persona", "部署 persona", "停用 persona",
         ],
-        "Use POST /bff/personas/{id}/actions with a confirm-token for persona lifecycle changes.",
+        "Use POST /bff/personas/{id}/actions/AdvanceLifecycle with a confirm-token for persona lifecycle changes.",
     ),
     (
         "runtime_control",

@@ -623,12 +623,19 @@ def test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless(tmp_pa
                     )
                 )
             )
-        for _ in range(4):
-            with monitor._store._connect() as conn:
-                conn.execute(
-                    "UPDATE delivery_outbox SET next_attempt_at=0 WHERE channel='incident_resolve'"
-                )
-            monitor._deliver_due_sync()
+        # Incident channel now retries network errors for >=900s (60s cap), so the
+        # historical 5/5 dead-letter state is seeded directly instead of by
+        # exhausting a short fake backoff; the 900s policy is not weakened.
+        with monitor._store._connect() as conn:
+            conn.execute(
+                """
+                UPDATE delivery_outbox
+                   SET status='dead_letter', attempt_count=5, max_attempts=5,
+                       last_error='network_error', next_attempt_at=0,
+                       claim_owner=NULL, claim_token=NULL, claim_until=NULL
+                 WHERE channel='incident_resolve'
+                """
+            )
 
     # Verify all 7 are now in the exact hosted stuck state before the fix:
     # incident_mappings.status='resolving', probe ok=1 consecutive_failures=0,

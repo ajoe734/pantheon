@@ -157,6 +157,9 @@
                 "additionalProperties": false
               }
             },
+            "screen": {
+              "$ref": "#/$defs/candidate_screen"
+            },
             "signal": {
               "$ref": "#/$defs/factor_expression"
             },
@@ -227,7 +230,7 @@
             },
             "members": {
               "type": "array",
-              "minItems": 1,
+              "minItems": 0,
               "maxItems": 20,
               "items": {
                 "type": "object",
@@ -571,6 +574,48 @@
     }
   },
   "$defs": {
+    "candidate_screen": {
+      "type": "object",
+      "required": ["version", "min_size", "eligibility", "steps"],
+      "properties": {
+        "version": {"const": "candidate_screen.v1"},
+        "min_size": {"$ref": "#/$defs/const_param_ref"},
+        "eligibility": {
+          "type": "object",
+          "required": ["min_history_bars", "liquidity_window", "min_median_traded_value"],
+          "properties": {
+            "min_history_bars": {"$ref": "#/$defs/const_param_ref"},
+            "liquidity_window": {"$ref": "#/$defs/const_param_ref"},
+            "min_median_traded_value": {"$ref": "#/$defs/const_param_ref"}
+          },
+          "additionalProperties": false
+        },
+        "steps": {
+          "type": "array", "minItems": 1, "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["kind", "expression", "refresh"],
+            "properties": {
+              "kind": {"enum": ["filter", "rank"]},
+              "expression": {"$ref": "#/$defs/factor_expression"},
+              "refresh": {"enum": ["daily", "weekly", "monthly", "quarterly"]},
+              "side": {"enum": ["top", "bottom"]},
+              "count": {"$ref": "#/$defs/const_param_ref"},
+              "group_by": {
+                "type": "object", "required": ["industry_input"],
+                "properties": {"industry_input": {"type": "string", "minLength": 1}},
+                "additionalProperties": false
+              }
+            },
+            "allOf": [{"if": {"properties": {"kind": {"const": "rank"}}},
+                       "then": {"required": ["side", "count"]},
+                       "else": {"not": {"anyOf": [{"required": ["side"]}, {"required": ["count"]}]}}}],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "const_param_ref": {
       "type": "object",
       "required": ["const_param"],
@@ -630,6 +675,7 @@
                 "abs",
                 "sign",
                 "clip01",
+                "industry_neutralize",
                 "log",
                 "signed_power",
                 "max2",

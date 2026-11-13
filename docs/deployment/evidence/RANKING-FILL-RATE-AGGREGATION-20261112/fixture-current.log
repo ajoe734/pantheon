@@ -1,0 +1,146 @@
+FF.F.                                                                    [100%]
+=================================== FAILURES ===================================
+____ test_b6_security_hardening_fixture_seeds_a_genuinely_eligible_persona _____
+
+    def test_b6_security_hardening_fixture_seeds_a_genuinely_eligible_persona() -> None:
+        """BFF-PM12-FIXTURE-CLOSURE-001: `test_bff_b6_001_security_hardening.py`
+        used to seed no personas at all. Its `_seeded_client()` now reuses this
+        file's canonical builder to seed a tenant-alpha persona-alpha and a
+        tenant-beta persona-beta; prove both actually clear the real PM12
+        league/eligibility/score gates end to end, using the exact real seeded
+        store the security-hardening suite's own tests run against (not a
+        parallel/duplicate fixture)."""
+        from services.control_plane.bff.tests.test_bff_b6_001_security_hardening import (
+            _seeded_client,
+        )
+
+        class _Monkeypatch:
+            def setenv(self, *_args, **_kwargs) -> None:
+                return None
+
+            def delenv(self, *_args, **_kwargs) -> None:
+                return None
+
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with _seeded_client(Path(tmp_dir), _Monkeypatch()):
+                alpha_items = {
+                    item.get("persona_id"): item
+                    for item in _run_league_rows_and_ranking("tenant-alpha")
+                }
+                beta_items = {
+                    item.get("persona_id"): item
+                    for item in _run_league_rows_and_ranking("tenant-beta")
+                }
+
+        alpha = alpha_items["persona-alpha"]
+>       assert alpha["eligible"] is True, alpha["exclusion_reasons"]
+E       AssertionError: ['Submitted order quantity or matching fill period is unknown']
+E       assert False is True
+
+services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py:124: AssertionError
+_ test_management_nl_assistant_provider_fixture_seeds_a_genuinely_eligible_persona _
+
+    def test_management_nl_assistant_provider_fixture_seeds_a_genuinely_eligible_persona() -> None:
+        """BFF-PM12-FIXTURE-CLOSURE-001: `test_management_nl_assistant_provider.py`
+        used to hand-seed persona-alpha/persona-beta with inert fields (no
+        resolved runtime/session/telemetry) and never called the canonical
+        builder. Its `_seeded_client()` now does; prove both seeded personas
+        actually clear the real PM12 league/eligibility/score gates end to end,
+        using the exact real seeded store the provider suite's own tests run
+        against."""
+        from services.control_plane.bff.tests.test_management_nl_assistant_provider import (
+            _seeded_client,
+        )
+
+        class _Monkeypatch:
+            def setenv(self, *_args, **_kwargs) -> None:
+                return None
+
+            def delenv(self, *_args, **_kwargs) -> None:
+                return None
+
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            _seeded_client(Path(tmp_dir), _Monkeypatch())
+            alpha_items = {
+                item.get("persona_id"): item
+                for item in _run_league_rows_and_ranking("tenant-alpha")
+            }
+            beta_items = {
+                item.get("persona_id"): item
+                for item in _run_league_rows_and_ranking("tenant-beta")
+            }
+
+        alpha = alpha_items["persona-alpha"]
+>       assert alpha["eligible"] is True, alpha["exclusion_reasons"]
+E       AssertionError: ['Submitted order quantity or matching fill period is unknown']
+E       assert False is True
+
+services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py:170: AssertionError
+____ test_builder_output_is_pm12_league_eligible_with_no_exclusion_reasons _____
+
+    def test_builder_output_is_pm12_league_eligible_with_no_exclusion_reasons() -> None:
+        """Gate 2: the real league-row pipeline
+        (`_pm12_persona_league_rows` -> `_project_persona_league_row` ->
+        `_enrich_persona_item_with_bindings` -> `_pm12_quarterly_ranking_items` ->
+        `_pm12_persona_league_ranking_item`) must mark the builder's persona
+        `eligible: True` with an empty `exclusion_reasons` list -- i.e. its
+        lifecycle_state, RuntimeBinding, session, and telemetry coverage are all
+        resolved, not just present as inert fields. Drives the real production
+        pipeline (the same one `/bff/management/promotion-reviews` uses) end to
+        end via `PromotionReviewTestReadPorts`, which seeds itself entirely
+        through the canonical builder -- no hand-rolled stub read store."""
+        ports = gov_test.PromotionReviewTestReadPorts(allow_fallback=True)
+
+        token = persona_service_module._current_persona_service.set(None)
+        persona_service_module._current_persona_service.reset(token)
+
+        import contextvars
+
+        ctx = contextvars.copy_context()
+
+        def _run():
+            # `_get_active_read_store()` falls back to the composed PersonaService
+            # when no PersonaService request context is active (matches how
+            # `_bff_management_promotion_reviews`-adjacent unit paths resolve
+            # reads outside a live request).
+            previous = persona_service_module._composed_persona_service
+            persona_service_module._composed_persona_service = make_composed_persona_service(read_store=ports)
+            try:
+                rows = persona_service_module._pm12_persona_league_rows(tenant_id=_TENANT_ID)
+                quarter_window = persona_service_module._pm12_quarter_window("2026-Q1", "2026-01-15T00:00:00Z")
+                return persona_service_module._pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+            finally:
+                persona_service_module._composed_persona_service = previous
+
+        ranked_items = ctx.run(_run)
+
+        by_persona = {item.get("persona_id"): item for item in ranked_items}
+        for persona_id in ("persona-us-equity", "persona-crypto-perp"):
+            ranking_item = by_persona[persona_id]
+>           assert ranking_item["eligible"] is True, ranking_item["exclusion_reasons"]
+E           AssertionError: ['Submitted order quantity or matching fill period is unknown']
+E           assert False is True
+
+services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py:243: AssertionError
+=============================== warnings summary ===============================
+services/research/strategy_spec/normalizer.py:21
+services/research/strategy_spec/normalizer.py:21
+  /tmp/pantheon-worker-worktrees/pantheon/ranking-fill-rate-aggregation-20261112/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py::test_b6_security_hardening_fixture_seeds_a_genuinely_eligible_persona
+FAILED services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py::test_management_nl_assistant_provider_fixture_seeds_a_genuinely_eligible_persona
+FAILED services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py::test_builder_output_is_pm12_league_eligible_with_no_exclusion_reasons
+3 failed, 2 passed, 3 warnings in 7.75s

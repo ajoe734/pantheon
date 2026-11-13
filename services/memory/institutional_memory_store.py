@@ -66,6 +66,8 @@ class SourceEventType(str, Enum):
     GOVERNANCE_REVIEW_CLOSED = "governance_review_closed"
     COMMITTEE_RESOLUTION_PUBLISHED = "committee_resolution_published"
     CONSULTATION_CLOSED = "consultation_closed"
+    POOL_OUTCOME = "pool_outcome"
+    HARNESS_EXPERIENCE = "harness_experience"
 
 
 class WriteAuthority(str, Enum):
@@ -73,6 +75,7 @@ class WriteAuthority(str, Enum):
     INCIDENT_SVC = "incident-svc"
     EVOLUTION_SVC = "evolution-svc"
     RESEARCH_SVC = "research-svc"
+    PERSONA_SVC = "persona-svc"
     GOVERNANCE_SVC = "governance-svc"
     CONSULTATION_SVC = "consultation-svc"
 

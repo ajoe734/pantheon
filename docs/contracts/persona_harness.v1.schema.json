@@ -1,0 +1,297 @@
+{
+  "$defs": {
+    "ConsultTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "required_roles": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Required Roles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "action",
+        "required_roles"
+      ],
+      "title": "ConsultTrigger",
+      "type": "object"
+    },
+    "CycleThresholds": {
+      "additionalProperties": false,
+      "properties": {
+        "minimum_evidence_count": {
+          "minimum": 1,
+          "title": "Minimum Evidence Count",
+          "type": "integer"
+        },
+        "minimum_confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Minimum Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "minimum_evidence_count",
+        "minimum_confidence"
+      ],
+      "title": "CycleThresholds",
+      "type": "object"
+    },
+    "Guardrails": {
+      "additionalProperties": false,
+      "properties": {
+        "forbidden_solo_actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Forbidden Solo Actions",
+          "type": "array"
+        },
+        "allowed_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "forbidden_solo_actions",
+        "allowed_tools"
+      ],
+      "title": "Guardrails",
+      "type": "object"
+    },
+    "HarnessSurface": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_inputs": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Identity Inputs",
+          "type": "array"
+        },
+        "guardrails": {
+          "$ref": "#/$defs/Guardrails"
+        },
+        "consult_policy": {
+          "items": {
+            "$ref": "#/$defs/ConsultTrigger"
+          },
+          "title": "Consult Policy",
+          "type": "array"
+        },
+        "tool_guidance": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Tool Guidance",
+          "type": "object"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/Skill"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "workflow": {
+          "$ref": "#/$defs/Workflow"
+        },
+        "cycle_thresholds": {
+          "$ref": "#/$defs/CycleThresholds"
+        },
+        "memory_retrieval_policy": {
+          "$ref": "#/$defs/RetrievalPolicy"
+        }
+      },
+      "required": [
+        "identity_inputs",
+        "guardrails",
+        "consult_policy",
+        "tool_guidance",
+        "skills",
+        "workflow",
+        "cycle_thresholds",
+        "memory_retrieval_policy"
+      ],
+      "title": "HarnessSurface",
+      "type": "object"
+    },
+    "RetrievalPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "scopes": {
+          "items": {
+            "enum": [
+              "own_private",
+              "institutional"
+            ],
+            "type": "string"
+          },
+          "title": "Scopes",
+          "type": "array"
+        },
+        "max_items": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Items",
+          "type": "integer"
+        },
+        "minimum_confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Minimum Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "scopes",
+        "max_items",
+        "minimum_confidence"
+      ],
+      "title": "RetrievalPolicy",
+      "type": "object"
+    },
+    "Skill": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "trigger": {
+          "minLength": 1,
+          "title": "Trigger",
+          "type": "string"
+        },
+        "scripts": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Scripts",
+          "type": "array"
+        },
+        "guidance": {
+          "title": "Guidance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "trigger",
+        "scripts",
+        "guidance"
+      ],
+      "title": "Skill",
+      "type": "object"
+    },
+    "Workflow": {
+      "additionalProperties": false,
+      "properties": {
+        "cadence_seconds": {
+          "minimum": 1,
+          "title": "Cadence Seconds",
+          "type": "integer"
+        },
+        "steps": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "cadence_seconds",
+        "steps"
+      ],
+      "title": "Workflow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "persona_harness.v1",
+      "default": "persona_harness.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "persona_id": {
+      "minLength": 1,
+      "title": "Persona Id",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "parent_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Parent Version"
+    },
+    "patch_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Patch Id"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "created_by": {
+      "title": "Created By",
+      "type": "string"
+    },
+    "content_digest": {
+      "title": "Content Digest",
+      "type": "string"
+    },
+    "surface": {
+      "$ref": "#/$defs/HarnessSurface"
+    }
+  },
+  "required": [
+    "persona_id",
+    "version",
+    "parent_version",
+    "patch_id",
+    "created_at",
+    "created_by",
+    "content_digest",
+    "surface"
+  ],
+  "title": "HarnessVersion",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/contracts/persona_harness.v1.schema.json"
+}

@@ -73,6 +73,7 @@ _MEMORY_WRITE_ROLES = (
     "trainer-svc",
     "consultation-svc",
     "research-svc",
+    "persona-svc",
 )
 _REQUIRED_JWT_CLAIMS = ("sub", "exp")
 _TENANT_CLAIM_NAMES = ("tenant", "tenant_id")
@@ -513,7 +514,16 @@ async def writeback_learn_feedback(
     response: Response,
     authorization: Optional[str] = Header(default=None),
 ):
-    _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
+    if ctx is not None:
+        authority = str(payload.get("write_authority") or "")
+        if not ({authority, "operator", "admin", "system", "memory-writer"} & set(ctx.roles)):
+            raise HTTPException(status_code=403, detail="Verified caller cannot represent this memory writer")
+        tenant = ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default"
+        if tenant != "*":
+            if payload.get("tenant_id") and payload["tenant_id"] != tenant:
+                raise HTTPException(status_code=403, detail="Memory writeback tenant differs from verified tenant")
+            payload["tenant_id"] = tenant
     try:
         result = write_learn_feedback(
             payload,

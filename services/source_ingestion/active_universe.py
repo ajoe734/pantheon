@@ -153,6 +153,21 @@ class SourceUpdateRule:
 DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
     SourceUpdateRule(
         connector_id="tw-twse-tpex-official-market",
+        dataset="tw_industry_classification",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="daily_after_close",
+        priority=6,
+        reason="Prospectively accumulate official OpenAPI industry observations through the normal refresh path",
+        metadata={
+            "source_role": "official_reference",
+            "normalized_target": "tw_industry_classification",
+            "storage_targets": ["normalized/tw_industry_classification"],
+            "archive_behavior": "skip",
+            "backfill": False,
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="tw-twse-tpex-official-market",
         dataset="tw_price_daily",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
         cadence="daily_after_close",
