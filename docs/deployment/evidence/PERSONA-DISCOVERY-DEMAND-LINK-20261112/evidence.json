@@ -19,6 +19,7 @@
     "6": "services/persona/test_persona_demand_discovery.py drives PoolAutonomyCycle.run -> demand -> discovery -> research ticket"
   },
   "limitations": [
+    "PERSONA_SOURCE_INGEST_SERVICE_TOKEN(_FILE) must be provisioned for the persona service by deployment config (docker-compose.yml is outside this task's artifact contract); unprovisioned fails closed as discovery_unavailable.",
     "Seed promotion, rapid eval and data backfill are requested through research tickets; the seed reviewer, training session and data owners still gate execution.",
     "Registry spec candidates are built from registry entry metadata (no spec body read).",
     "hosted_behavior_claimed: false"
