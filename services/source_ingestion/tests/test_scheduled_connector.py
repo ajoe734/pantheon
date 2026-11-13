@@ -1722,6 +1722,7 @@ def _steady_collector_config(connector_id: str, *, definition_id: str = _STEADY_
 @pytest.fixture()
 def steady_stack(client, monkeypatch: pytest.MonkeyPatch):
     from services.source_ingestion import controller_worker
+    from services.source_ingestion.connectors import collector_bundle
     from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
     from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport, make_bundle
 
@@ -1730,6 +1731,12 @@ def steady_stack(client, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tempdir / "market"))
     files, entry, _ = make_bundle(source_id=_STEADY_COLLECTOR_ID)
     files["bundles/index.json"] = __import__("json").dumps({"bundles": [entry]}).encode()
+    files["status.json"] = __import__("json").dumps({"sources": {_STEADY_COLLECTOR_ID: {
+        "status": "ok", "last_run_at": entry["finished_at"],
+    }}}).encode()
+    observed = collector_bundle.observed_from_collector_status
+    monkeypatch.setattr(collector_bundle, "observed_from_collector_status", lambda *a, **kw: observed(
+        *a, **{**kw, "now": datetime(2026, 11, 10, 3, tzinfo=timezone.utc)}))
     reads: list[str] = []
 
     class RecordingTransport(FakeTransport):
@@ -1820,6 +1827,65 @@ def test_steady_controller_calls_drive_real_scheduler_and_collector_adapter(stea
     assert selected == [cid]
     assert schedule["summary"]["total_failed"] == 0
     assert len(reads) > pulled_after_first
+    assert schedule["ran"][0]["run"]["raw_count"] == 0
+    assert schedule["ran"][0]["receipt"]["normalized_count"] == 0
+    final = test_client.get("/api/source-ingest/controller/readback").json()
+    item = next(c for c in final["connectors"] if c["connector_id"] == cid)
+    assert item["latest_source_record"] == record
+    assert item["fetch_state"]["collector_outcome"]["no_new_data"] is True
+    assert final["source_record_count"] == 2
+
+
+def test_collector_empty_then_paused_preserves_source_records_freshness_and_health(client, monkeypatch):
+    import json
+    from services.source_ingestion.tests.test_collector_outcome_truth import CURSOR, SOURCE, setup_path
+
+    http, data_dir, module = client
+    files, _, _, store, _ = setup_path(data_dir, monkeypatch)
+    config = store.get_config("conn-truth")
+    connector = config.connector.to_dict()
+    connector.pop("schema_version")
+    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a"}
+    response = http.post("/api/source-ingest/connectors", json={"connector": connector, "fetch": config.fetch})
+    assert response.status_code == 201, response.text
+    assert http.put("/api/source-ingest/connectors/conn-truth/schedule",
+                    json={"interval_seconds": 86400, "enabled": True}).status_code == 200
+
+    def tick():
+        response = http.post("/api/source-ingest/run-scheduled", json={"force_connector_ids": ["conn-truth"]})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    first = tick()
+    assert first["ran"][0]["receipt"]["normalized_count"] == 2
+    before = [r.to_dict() for r in module.runtime.evidence_repository.list_source_records()]
+    second = tick()
+    receipt = second["ran"][0]["receipt"]
+    assert receipt["raw_count"] == receipt["normalized_count"] == 0
+    assert receipt["source_timestamp"] is None
+    assert [r.to_dict() for r in module.runtime.evidence_repository.list_source_records()] == before
+    readback = http.get("/api/source-ingest/controller/readback").json()
+    item = next(c for c in readback["connectors"] if c["connector_id"] == "conn-truth")
+    assert item["fetch_state"]["collector_outcome"]["no_new_data"] is True
+    assert item["freshness"]["stale"] is True
+    assert item["source_health"]["row_count_last_run"] == 0
+    assert item["source_health"]["latest_watermark"] == CURSOR
+    latest = item["latest_source_record"]
+
+    files["status.json"] = json.dumps({"sources": {SOURCE: {
+        "status": "paused", "last_run_at": "2026-11-10T02:05:00Z", "paused_reason": "login_required",
+    }}}).encode()
+    failed = tick()
+    assert failed["summary"]["total_failed"] == 1 and failed["summary"]["total_ran"] == 0
+    assert failed["failed"][0]["receipt"]["normalized_count"] == 0
+    assert [r.to_dict() for r in module.runtime.evidence_repository.list_source_records()] == before
+    item = next(c for c in http.get("/api/source-ingest/controller/readback").json()["connectors"]
+                if c["connector_id"] == "conn-truth")
+    assert item["latest_source_record"] == latest
+    assert item["source_health"]["status"] == "failed"
+    assert "login_required" in item["source_health"]["metadata"]["source_error"]
+    assert item["source_health"]["latest_watermark"] == CURSOR
+    assert item["fetch_state"]["collector_outcome"]["observed"]["health_state"] == "degraded"
 
 
 def test_steady_controller_calls_exclude_disabled_collector(steady_stack) -> None:
