@@ -2269,41 +2269,43 @@ _CLOSE_READ_SECONDS = 0.27  # finite per-read latency: the 15s whole-request bud
 
 
 def _close_files(*, tamper_code: str | None = None, wrong_date_code: str | None = None,
-                 n_rows: int = _CLOSE_ROWS, source: str = _CLOSE_SOURCE, exchange: str = "TWSE"):
+                 n_rows: int = _CLOSE_ROWS, source: str = _CLOSE_SOURCE, exchange: str = "TWSE",
+                 session_date: str = _CLOSE_DATE, held_positions: dict[int, str] | None = None):
     import hashlib
     import json
 
     from services.source_ingestion.connectors.collector_bundle import compute_bundle_sha256
 
-    run_id, finished = f"close-{_CLOSE_DATE}", "2026-11-13T07:30:00Z"
-    base = f"bundles/{source}/{_CLOSE_DATE}/{run_id}"
+    run_id, finished = f"close-{session_date}", f"{session_date}T07:30:00Z"
+    base = f"bundles/{source}/{session_date}/{run_id}"
     endpoint = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if exchange == "TWSE"
                 else "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes")
     items, rows, files = [], [], {}
     for n in range(n_rows):
-        code = _CLOSE_HELD.get(n, f"{(1000 if n_rows == _CLOSE_ROWS else 10000) + n}")
-        item_id = f"{exchange.lower()}-price-history-{_CLOSE_DATE}-{code}"
-        body = f"<r>{_CLOSE_DATE}-{code}</r>".encode()
+        held = _CLOSE_HELD if held_positions is None else held_positions
+        code = held.get(n, f"{(1000 if n_rows == _CLOSE_ROWS else 10000) + n}")
+        item_id = f"{exchange.lower()}-price-history-{session_date}-{code}"
+        body = f"<r>{session_date}-{code}</r>".encode()
         sha = hashlib.sha256(body).hexdigest()
         items.append({"item_id": item_id, "url": endpoint, "http_status": 200,
                       "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
         rows.append({
-            "id": item_id, "url": endpoint, "fetched_at": "2026-11-13T07:00:00Z",
+            "id": item_id, "url": endpoint, "fetched_at": f"{session_date}T07:00:00Z",
             "symbol": code, "security_name": f"name {code}", "exchange": exchange, "dataset": "tw_price_daily",
-            "trade_date": "2026-11-12" if code == wrong_date_code else _CLOSE_DATE,
+            "trade_date": "2026-11-12" if code == wrong_date_code else session_date,
             "open": 940.0, "high": 955.0, "low": 938.0, "close": 950.0 + n, "volume_shares": 1000, "transactions": 10,
         })
         files[f"{base}/raw/{sha}.html"] = b"tampered" if code == tamper_code else body
     manifest = {
         "schema_version": "collector_bundle.v1", "source_id": source, "run_id": run_id, "collector_version": "1.0.0",
-        "started_at": "2026-11-13T07:00:00Z", "finished_at": finished, "fetch_policy_hash": "fph",
+        "started_at": f"{session_date}T07:00:00Z", "finished_at": finished, "fetch_policy_hash": "fph",
         "robots_decision": "allowed", "terms_ref": "https://example.test/terms", "attribution": "TWSE", "items": items,
         "status": "complete", "bundle_sha256": compute_bundle_sha256([m["content_sha256"] for m in items]),
     }
     files[f"{base}/manifest.json"] = json.dumps(manifest).encode()
     files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
     files["bundles/index.json"] = json.dumps({"bundles": [
-        {"source_id": source, "date": _CLOSE_DATE, "run_id": run_id, "finished_at": finished}]}).encode()
+        {"source_id": source, "date": session_date, "run_id": run_id, "finished_at": finished}]}).encode()
     files["status.json"] = json.dumps({"sources": {source: {"status": "ok", "last_run_at": finished}}}).encode()
     return files
 
@@ -2462,6 +2464,52 @@ def test_completed_close_keeps_native_boundary_ack_and_replays_as_empty(steady_s
     assert [r.source_id for r in module.runtime.evidence_repository.list_source_records()] == before
 
 
+def test_native_close_rollover_keeps_new_item_evidence_and_held_snapshots(steady_stack, monkeypatch, tmp_path):
+    from dataclasses import replace
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests import test_controller_worker as tcw
+    from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
+
+    http, module, _ = steady_stack
+    monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", raising=False)
+    transport = FakeTransport(_close_files(n_rows=8, session_date="2026-11-12", held_positions={0: "2317", 1: "2330"}))
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: transport)
+    personas = ({"persona_id": "rollover-persona", "required_data_sources": [{
+        "dataset": "tw_price_daily", "market": "TW", "cadence": "daily", "source_class": "live_pull",
+        "connector_candidates": [_CLOSE_SOURCE], "policy_gates": [],
+    }]},)
+    metadata = {**tcw._desired_meta(), "sha256": module.runtime._desired_state_digest(list(personas))}
+    config = replace(tcw._config(tmp_path, mode=cw.COLLECTOR_STEADY_PULL_MODE),
+                     state_path=module.runtime.CONTROLLER_STATE_PATH, max_concurrency=1)
+    cw.ControllerStateStore(config.state_path).save(tcw._state())
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kwargs: (personas, metadata))
+    cw.reconcile_desired_state(api_url=config.api_url, personas=personas, desired_state_sha256=metadata["sha256"],
+                               controller_token=config.controller_token)
+    previous = cw.run_schedule_tick(api_url=config.api_url, max_concurrency=1,
+                                    force_connector_ids=[_CLOSE_SOURCE], exclusive_connector_ids=[_CLOSE_SOURCE],
+                                    controller_token=config.controller_token)
+    assert previous["summary"]["total_failed"] == 0, __import__("json").dumps(previous["failed"], indent=2)
+    assert _snapshot_date(module, "2330.TWSE") == "2026-11-12"
+    # Simulate one source interval passing in this local fixture. Keep its real
+    # persistence receipt and run identity, changing only the fixture clock age.
+    receipt = module.runtime.store.get_receipt(previous["ran"][0]["run"]["ingest_run_id"])
+    module.runtime.store.upsert_receipt(replace(
+        receipt, finished_at=(datetime.now(timezone.utc) - timedelta(seconds=601)).isoformat(),
+    ))
+    __import__("time").sleep(1.05)  # distinct real run timestamps for terminal readback
+    transport.files = _close_files(n_rows=8, held_positions={0: "2317", 1: "2330"})
+    result = cw.run_controller_tick(config=config, state=tcw._state(),
+                                    store=cw.ControllerStateStore(config.state_path), writer=tcw.RecordingWriter([]))
+    assert result["status"] == "ok" and result["provider_egress_attempted"] is True
+    assert _snapshot_date(module, "2330.TWSE") == _CLOSE_DATE
+    assert _snapshot_date(module, "2317.TWSE") == _CLOSE_DATE
+    # Same original exchange URL across sessions must not freeze source evidence on Nov 12.
+    records = list(module.runtime.evidence_repository.list_source_records())
+    assert len(records) == 16
+    assert {r.metadata["collector_close"]["trade_date"] for r in records} == {"2026-11-12", _CLOSE_DATE}
+
+
 def test_full_size_close_through_controller_main_with_persistence(
     steady_stack, monkeypatch, tmp_path, capsys,
 ) -> None:
@@ -2592,7 +2640,7 @@ def test_full_size_close_through_controller_main_with_persistence(
     records = list(module.runtime.evidence_repository.list_source_records())
     assert len(records) == 7467 and len({r.source_id for r in records}) == 7467
     for record in records:
-        assert record.tenant_id is None  # native public-source definition; no tenant rewrite
+        assert record.tenant_id == "tenant-test"  # native controller tenant is retained
         expected_url = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if "twse" in record.connector_id
                         else "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes")
         assert record.content_ref == expected_url
