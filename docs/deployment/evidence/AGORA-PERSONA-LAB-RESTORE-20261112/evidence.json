@@ -1,0 +1,59 @@
+{
+  "task_id": "AGORA-PERSONA-LAB-RESTORE-20261112",
+  "kind": "source_implementation_evidence",
+  "owner": "Claude",
+  "assigned_reviewer": "Codex",
+  "independent_review": "pending",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md#67-restored-agora-learning-surfaces-c7",
+  "hosted_behavior_claimed": false,
+  "acceptance_evidence": {
+    "1_lab_draft_shadow_submit": [
+      "services/control-plane/bff/tests/test_agora_persona_lab_shadow_transport.py::test_default_transport_waits_for_long_shadow_run (production default transport, real owner over HTTP, 3 bundles x 0.6s replay > 3s read timeout; shadow uses PANTHEON_PERSONA_SHADOW_TIMEOUT_SECONDS default 120s, ordinary reads keep short timeout)",
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_draft_shadow_comparison_evaluation_and_submit_through_real_owner",
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_outside_paper_submit_resolves_governance_review_and_confirms_delivery (governance ref resolved before precheck; owner outbox delivery confirmed; 502 when not delivered)"
+    ],
+    "2_skill_coaching": [
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_skill_coaching_uses_the_same_owner_pipeline"
+    ],
+    "3_evaluation_lists": [
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_draft_shadow_comparison_evaluation_and_submit_through_real_owner (runs/suites list persisted owner comparison)"
+    ],
+    "4_change_log": [
+      "test_change_log_lists_versions_with_evidence_and_actions",
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_draft_shadow_comparison_evaluation_and_submit_through_real_owner (undo rollback)",
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_never_again_writes_owner_negative_experience_consumed_by_next_proposal",
+      "test_tell_why_creates_memory_candidate"
+    ],
+    "5_shadow_view": [
+      "test_evaluation_suites_runs_and_shadow_view (base and candidate arms per frozen decision packet)"
+    ],
+    "6_forward_only": [
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py (every mutating route driven against the real persona owner app)",
+      "test_routes_are_mounted_in_app_factory_and_hold_no_store",
+      "test_unconfigured_owner_and_owner_refusal_fail_closed"
+    ]
+  },
+  "known_limits": [
+    "The shadow runner uses a deny-all replay provider from PANTHEON_SHADOW_REPLAY_AGENT_ID + PANTHEON_SHADOW_REPLAY_POLICY_URL; unset, the owner persists an incomplete record (provider_unavailable), never a pass. Tests use scripted replay answers.",
+    "Governance/memory delivery receipts in the integration tests are fixtures; the downstream Evolution/Memory owners are covered by services/persona/test_harness_adoption.py.",
+    "No in-repo consumer reads the literal trainer_feedback_to_persona_update kind; handoff resolves to the owner's governance proposal or an approved panel adoption.",
+    "tell-why remains a Memory-owner lesson candidate (review_state=proposed)."
+  ],
+  "owner_changes": [
+    "services/persona/harness.py: POST .../patches/{id}/shadow (runs run_shadow_comparison, persists the record), POST .../patches/{id}/negative-experience (owner-written never_again stored as row.operator_feedback, separate from the measured row.experience; both consumed via relevant_experiences/experience_refs), POST .../harness/deliver (outbox replay)"
+  ],
+  "conflict_resolution": {
+    "merged": "origin/dev",
+    "conflict_file": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "resolution": "regenerated from live app via scripts/bff_route_manifest_backend.py (640 routes); committee-memory (PR7286) and persona lab routes both present; --check passed",
+    "validation": "BFF committee-memory + persona lab suites 31 passed; persona harness suites 82 passed"
+  },
+  "operator_to_owner_transport": {
+    "design": "BFF write-role gate + exact tenant scope first; then persona-owner mutations use the owner's existing PANTHEON_PERSONA_SERVICE_TOKEN principal (persona.admin, tenant from X-Tenant-Id); owner still enforces persona.tenant_id == tenant. Missing token fails closed 503. Reads and memory-owner calls keep the operator bearer.",
+    "tests": [
+      "test_agora_persona_lab_owner_integration.py (real signed operator JWT without persona.admin, real forwarded headers)::test_operator_bearer_alone_is_refused_and_missing_principal_fails_closed",
+      "...::test_owner_tenant_gate_still_enforced_with_service_principal",
+      "test_agora_persona_lab.py::test_persona_writes_use_owner_principal_reads_and_memory_keep_operator_bearer"
+    ]
+  }
+}
