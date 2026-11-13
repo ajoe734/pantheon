@@ -140,3 +140,59 @@ def test_persona_cycle_real_research_http_entry_produces_read_only_weekly_task(t
     module.query_plan_store._now = lambda: NOW + timedelta(days=7)
     cycle.run(persona, {"pool": pool(), "pool_health": LOW, "unavailable": []}, "cycle-3")
     assert len(client.get("/api/research-orchestrator/tasks").json()) == 2
+
+
+def test_final_demand_satisfied_or_expired_withdraws_proposal_and_keeps_history(tmp_path):
+    clock = [NOW]
+    path = tmp_path / "plans.json"
+    s = QueryPlanStore(path, now=lambda: clock[0])
+    other = s.refresh("other", [dict(demand(), tenant_id="other", demand_id="o1")])
+    a = s.refresh("t1", [demand()])
+    assert a["status"] == "proposed" and a["query_plan"]["fetch_policy_diff"]
+    for rows in ([], [dict(demand(), status="satisfied")], [dict(demand(), expires_at=NOW.isoformat())]):
+        s2 = QueryPlanStore(path, now=lambda: clock[0])
+        w = s2.refresh("t1", rows)
+        assert w["task_id"] == a["task_id"] and w["status"] == "no_change"
+        plan = w["query_plan"]
+        assert plan["demand_ids"] == [] and plan["json_patch"] == [] and plan["fetch_policy_diff"] == "" and plan["changes"] == {}
+        assert w["source_refs"] == [] and plan["revision"] == 2
+        assert w["history"][0]["demand_ids"] == ["d1"] and w["history"][0]["fetch_policy_diff"]
+        # idempotent across restart
+        assert QueryPlanStore(path, now=lambda: clock[0]).refresh("t1", rows) == w
+    assert s.get_task(other["task_id"]) == other  # tenant isolation
+    # a new demand re-proposes in the same week
+    c = s.refresh("t1", [demand()])
+    assert c["status"] == "proposed" and c["query_plan"]["revision"] == 3
+
+
+@pytest.mark.parametrize("how", ["satisfied", "expired"])
+def test_http_final_demand_closure_withdraws_task_readback(tmp_path, monkeypatch, how):
+    from services.research.tests.test_research_demand import BODY
+    from services.research.tests.test_backtest_owner_readback import _bearer, SECRET
+    monkeypatch.setenv("PANTHEON_RESEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", SECRET)
+    module = _load_service_module(data_dir=str(tmp_path))
+    clock = [NOW]
+    module.research_demand_store = ResearchDemandStore(tmp_path / "demands.json", now=lambda: clock[0])
+    module.query_plan_store = QueryPlanStore(tmp_path / "plans.json", now=lambda: clock[0])
+    client = TestClient(module.app)
+    headers = _bearer("t1", ["operator"])
+    body = dict(BODY, mandate="Taiwan momentum", missing_datasets=["tw-margin-balance"])
+    created = client.post("/api/research/persona-demands", headers=headers, json=body)
+    assert created.status_code == 201, created.text
+    task = client.get("/api/research-orchestrator/tasks").json()[0]
+    assert task["status"] == "proposed" and task["query_plan"]["fetch_policy_diff"]
+    if how == "satisfied":
+        clock[0] = NOW + timedelta(days=1)
+        r = client.post("/api/research/persona-demands/reconcile", headers=headers, json={
+            "persona_id": "p1", "members": [{"artifact_ref": "a1", "joined_at": (NOW + timedelta(hours=1)).isoformat()}]})
+        assert r.status_code == 200, r.text
+    else:
+        clock[0] = NOW + timedelta(days=60)  # no write event: read-time expiry
+    for _ in range(2):  # idempotent
+        got = client.get(f"/api/research-orchestrator/tasks/{task['task_id']}").json()
+        assert got["status"] == "no_change" and got["query_plan"]["demand_ids"] == []
+        assert got["query_plan"]["fetch_policy_diff"] == "" and got["query_plan"]["json_patch"] == []
+        assert got["history"][0]["demand_ids"] == task["query_plan"]["demand_ids"]
+        assert got["query_plan"]["revision"] == 2
+    assert len(client.get("/api/research-orchestrator/tasks").json()) == 1

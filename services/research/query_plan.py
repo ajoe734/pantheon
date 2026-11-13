@@ -100,6 +100,13 @@ def build_proposal(tenant_id: str, demands: list[Mapping[str, Any]], *, now: dat
     }
 
 
+def _history_entry(old: Mapping[str, Any]) -> dict[str, Any]:
+    plan = old["query_plan"]
+    return {"revision": plan["revision"], "status": plan["status"], "demand_ids": plan["demand_ids"],
+            "changes": plan["changes"], "fetch_policy_diff": plan["fetch_policy_diff"],
+            "content_sha256": plan["content_sha256"], "updated_at": old["updated_at"]}
+
+
 class QueryPlanStore:
     """One durable proposal per tenant/ISO week; refresh as that week's demands change.
 
@@ -119,7 +126,7 @@ class QueryPlanStore:
         now = self._now()
         proposal = build_proposal(tenant_id, demands, now=now)
         if proposal is None:
-            return None
+            return self._withdraw(tenant_id, now)
         digest = hashlib.sha256(json.dumps(proposal, sort_keys=True).encode()).hexdigest()
         task_id = "collector-query-plan-" + hashlib.sha256(tenant_id.encode()).hexdigest()[:20] + "-" + proposal["week"]
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,18 +147,56 @@ class QueryPlanStore:
                 "source_refs": [{"type": "research_demand", "id": did} for did in proposal["demand_ids"]],
                 "query_plan": proposal,
             }
+            if old:
+                task["history"] = [*old.get("history", []), _history_entry(old)]
             records[task_id] = task
-            fd, temporary = tempfile.mkstemp(dir=self.path.parent)
-            try:
-                with os.fdopen(fd, "w") as handle:
-                    json.dump(records, handle, ensure_ascii=False, indent=2)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temporary, self.path)
-            finally:
-                if os.path.exists(temporary):
-                    os.unlink(temporary)
+            self._write(records)
             return task
+
+    def _write(self, records):
+        fd, temporary = tempfile.mkstemp(dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w") as handle:
+                json.dump(records, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def _withdraw(self, tenant_id: str, now: datetime) -> dict[str, Any] | None:
+        """No open demand remains: publish a no-change revision with no demand-derived patch.
+
+        Applies to every still-active proposal of the tenant (any ISO week); the previous
+        revision (demand ids, diff) is kept under ``history`` as evidence.
+        """
+        if not self.path.exists():
+            return None
+        with self.path.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            records = self._load()
+            latest, changed = None, False
+            for task_id, old in records.items():
+                if old["tenant_id"] != tenant_id:
+                    continue
+                latest = old
+                if not old["query_plan"]["demand_ids"]:
+                    continue
+                plan = dict(old["query_plan"], demand_ids=[], matched_terms={}, changes={}, json_patch=[], fetch_policy_diff="",
+                            status="no_change", revision=old["query_plan"]["revision"] + 1,
+                            withdrawn_reason="no open persona demand remains (satisfied or expired)")
+                plan.pop("content_sha256", None)
+                plan["content_sha256"] = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+                latest = records[task_id] = dict(old, status="no_change", updated_at=now.isoformat(), source_refs=[], query_plan=plan,
+                                                 history=[*old.get("history", []), _history_entry(old)])
+                changed = True
+            if changed:
+                self._write(records)
+            return latest
+
+    def tenants(self) -> list[str]:
+        return sorted({t["tenant_id"] for t in self._load().values()})
 
     def list_tasks(self):
         return list(self._load().values())

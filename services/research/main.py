@@ -1146,6 +1146,7 @@ def list_alpha_replication_entries(
 
 @app.get("/api/research-orchestrator/tasks")
 def list_tasks(status: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+    _expire_collector_query_plans()
     tasks = store.list_tasks() + query_plan_store.list_tasks()
     return [task for task in tasks if str(task.get("status") or "").lower() == status.lower()] if status else tasks
 
@@ -1176,6 +1177,7 @@ def create_task(body: CreateTaskBody) -> Dict[str, Any]:
 
 @app.get("/api/research-orchestrator/tasks/{task_id}")
 def get_task(task_id: str) -> Dict[str, Any]:
+    _expire_collector_query_plans()
     task = store.get_task(task_id) or query_plan_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="research task not found")
@@ -2691,6 +2693,15 @@ def _refresh_collector_query_plan(tenant_id: str) -> None:
         query_plan_store.refresh(tenant_id, research_demand_store.list(tenant_id, status="open"))
     except QueryPlanError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _expire_collector_query_plans() -> None:
+    # Demand expiry is time-based and has no write event: re-evaluate on read.
+    for tenant_id in query_plan_store.tenants():
+        try:
+            _refresh_collector_query_plan(tenant_id)
+        except HTTPException:
+            pass
 
 
 @app.post("/api/research/persona-demands", status_code=201)
