@@ -86,6 +86,7 @@ class PersonaPoolViewsPort:
                 selected_tenant.reset(token)
             return [p for p in packets if p.get("tenant_id") == tenant_id
                     and persona_id in p.get("persona_ids", [])
+                    and p.get("environment") == "paper"
                     and isinstance(p.get("persona_cycle"), dict)][:20]
 
         records = section("autonomy_cycles", "persona_cycle_owner", cycles)
@@ -127,12 +128,17 @@ class PersonaPoolViewsPort:
             for member in current["members"]:
                 ref = member["artifact_ref"]
                 book = owned_books.get(ref)
-                available = isinstance(book, dict) and book.get("checksum") == member["checksum"]
+                available = (isinstance(book, dict) and book.get("checksum") == member["checksum"]
+                             and book.get("member_id") == ref and bool(book.get("source_ref"))
+                             and book.get("marks_complete") is True
+                             and isinstance(book.get("net_of_costs"), dict)
+                             and all(k in book["net_of_costs"] for k in
+                                     ("total_return", "sharpe_ratio", "max_drawdown", "observation_count", "basis")))
                 rows.append({"artifact_ref": ref, "checksum": member["checksum"],
                              "stage": member["stage"], "risk_weight": member["risk_weight"],
                              "baseline_ref": member["baseline_ref"],
                              "status": "ok" if available else "unavailable",
-                             "reason": None if available else "member_book_missing_or_checksum_mismatch",
+                             "reason": None if available else "member_book_missing_incomplete_or_mismatched",
                              "book": deepcopy(book) if available else None})
             return rows
 
@@ -163,7 +169,7 @@ class PersonaPoolViewsPort:
              "phase": p["persona_cycle"].get("phase"),
              "failure_reason": p["persona_cycle"].get("failure_reason"),
              "decisions": deepcopy(p["persona_cycle"].get("decisions")),
-             "pool_cycle": deepcopy(p["persona_cycle"].get("pool_cycle"))}
+             "pool_autonomy": deepcopy(p.get("pool_autonomy"))}
             for p in records]
         return {"current": current, "versions": versions, "memberVirtualBooks": member_books,
                 "health": pool_health, "cycles": cycle_rows, "openDemands": open_demands}, surfaces
