@@ -165,6 +165,7 @@ def _project_task_item(
         "source_refs": list(task.get("source_refs") or []),
         "run_count": len(ordered_runs),
         "latest_run": latest_run,
+        **({"query_plan": task["query_plan"]} if task.get("task_type") == "collector_query_plan" else {}),
     }
 
 

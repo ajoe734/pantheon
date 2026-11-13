@@ -15,7 +15,7 @@ from urllib.parse import quote, urlencode
 from typing import Any, Mapping, Sequence
 
 from .bundle import CollectedItem, utc_iso
-from .config import DISABLED_BY_BUILD_TOKENS, CollectorConfigError, SourceFetchPolicy
+from .config import DISABLED_BY_BUILD_TOKENS, CollectorConfigError, SourceFetchPolicy, validate_query_terms
 from .fetchers import (
     DoclingBookAdapter,
     FetchTransport,
@@ -24,6 +24,20 @@ from .fetchers import (
 )
 from .privacy import AuthorHasher, scrub_raw_html_or_json
 from .state import CollectorStateStore
+
+
+def _policy_query(policy: SourceFetchPolicy, *, arxiv: bool = False) -> str:
+    terms = validate_query_terms(policy.source_id, policy.raw_config.get("query_terms"))
+    expression = " OR ".join(f'all:"{term}"' if arxiv else f'"{term}"' for term in terms)
+    if arxiv:
+        return f"(cat:q-fin.* OR cat:stat.ML) AND ({expression})"
+    return f"({expression})" if len(terms) > 1 else expression
+
+
+def _configured_url(override: str | None, configured: str) -> str:
+    if override is not None and override != configured:
+        raise CollectorConfigError("query URL must match committed fetch-policy query_terms")
+    return configured
 
 
 def read_secret(env_name: str) -> str | None:
@@ -401,7 +415,7 @@ class GdeltDocPoller:
     def collect(
         self,
         *,
-        query: str = "Taiwan semiconductor",
+        query: str | None = None,
         max_records: int = 250,
         timespan: str = "3months",
         url: str | None = None,
@@ -411,12 +425,14 @@ class GdeltDocPoller:
             raise CollectorConfigError(
                 f"GDELT DOC 2.0 max_records must be between 1 and {self.MAX_RECORDS_PER_CALL}, got {max_records}"
             )
-        target_url = (
-            url
-            or "https://api.gdeltproject.org/api/v2/doc/doc?"
+        configured_query = _policy_query(self.policy)
+        if query is not None and query != configured_query:
+            raise CollectorConfigError("query must match committed fetch-policy query_terms")
+        target_url = _configured_url(url,
+            "https://api.gdeltproject.org/api/v2/doc/doc?"
             + urlencode(
                 {
-                    "query": query,
+                    "query": configured_query,
                     "mode": "ArtList",
                     "maxrecords": max_records,
                     "timespan": timespan,
@@ -607,11 +623,14 @@ class ArxivPaperPoller:
     def collect(
         self,
         *,
-        url: str = "https://export.arxiv.org/api/query?search_query=cat:q-fin.*+OR+cat:stat.ML&max_results=10",
+        url: str | None = None,
         fetched_at: datetime | str | None = None,
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
-        response = self.fetcher.fetch(url)
+        target_url = _configured_url(url, "https://export.arxiv.org/api/query?" + urlencode({
+            "search_query": _policy_query(self.policy, arxiv=True), "max_results": 10,
+        }))
+        response = self.fetcher.fetch(target_url)
         root = ET.fromstring(response.text)
         items: list[CollectedItem] = []
 
@@ -645,7 +664,7 @@ class ArxivPaperPoller:
             items.append(
                 CollectedItem(
                     item_id=f"arxiv-{arxiv_id}",
-                    url=raw_id or url,
+                    url=raw_id or target_url,
                     fetched_at=fetched_iso,
                     published_at=published,
                     text=f"{title}\n\n{summary}",
@@ -699,11 +718,14 @@ class OpenAlexPaperPoller:
     def collect(
         self,
         *,
-        url: str = "https://api.openalex.org/works?filter=concepts.id:C106159729&per-page=10",
+        url: str | None = None,
         fetched_at: datetime | str | None = None,
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
-        response = self.fetcher.fetch(url)
+        target_url = _configured_url(url, "https://api.openalex.org/works?" + urlencode({
+            "search": _policy_query(self.policy), "per-page": 10,
+        }))
+        response = self.fetcher.fetch(target_url)
         payload = json.loads(response.text)
         works = payload.get("results") or []
         items: list[CollectedItem] = []
@@ -726,7 +748,7 @@ class OpenAlexPaperPoller:
             items.append(
                 CollectedItem(
                     item_id=f"openalex-{work_id.lower()}",
-                    url=str(work.get("id") or url),
+                    url=str(work.get("id") or target_url),
                     fetched_at=fetched_iso,
                     published_at=pub_iso,
                     text=f"{title}\n\n{abstract}".strip(),

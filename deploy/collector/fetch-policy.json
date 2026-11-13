@@ -217,7 +217,11 @@
       "attribution": "The GDELT Project (https://www.gdeltproject.org/)",
       "logged_in": false,
       "enabled": true,
-      "rate_limit_note": "GDELT asks for at most one request every 5 seconds (429 observed at 2s on 2026-11-10)"
+      "rate_limit_note": "GDELT asks for at most one request every 5 seconds (429 observed at 2s on 2026-11-10)",
+      "query_terms": [
+        "Taiwan",
+        "semiconductor"
+      ]
     },
     "collector-macro-dbnomics": {
       "source_id": "collector-macro-dbnomics",
@@ -293,7 +297,11 @@
       "attribution_required": false,
       "attribution": "arXiv.org metadata (CC0 1.0); full-text PDFs stored for internal extraction only and never re-served",
       "logged_in": false,
-      "enabled": true
+      "enabled": true,
+      "query_terms": [
+        "quantitative finance",
+        "machine learning"
+      ]
     },
     "collector-paper-openalex": {
       "source_id": "collector-paper-openalex",
@@ -313,7 +321,10 @@
       "attribution_required": false,
       "attribution": "OpenAlex (CC0 1.0 Universal)",
       "logged_in": false,
-      "enabled": true
+      "enabled": true,
+      "query_terms": [
+        "asset pricing"
+      ]
     },
     "collector-paper-nber-rss": {
       "source_id": "collector-paper-nber-rss",
