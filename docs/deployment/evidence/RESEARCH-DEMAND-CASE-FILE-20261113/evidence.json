@@ -1,0 +1,68 @@
+{
+  "task_id": "RESEARCH-DEMAND-CASE-FILE-20261113",
+  "owner": "Codex2",
+  "reviewer": "Claude2",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_KNOWLEDGE_INTEGRATION_2026-11-13.md M4 (demand slice)",
+  "implementation_commits": [
+    "ed80fb380041f0e15e3fd5277c8ca72b7b70bb33",
+    "5bd69d0956ddc254b29aaee4a607e246591bfba6"
+  ],
+  "delivered": [
+    "services/research/research_demand.py",
+    "services/research/retrieval_influence.py",
+    "services/research/main.py",
+    "services/research/tests/test_research_demand.py",
+    "services/research/tests/test_retrieval_influence_case_file.py",
+    "docs/contracts/research_demand.v1.schema.json",
+    "services/knowledge/case_file.py",
+    "services/knowledge/case_file.schema.json"
+  ],
+  "scope_notes": [
+    "The production demand-store constructor shares the existing retrieval influence store. No new route is added.",
+    "Additive demand-schema fields store the complete case file, its id/digest, the influence snapshot and unavailability reasons. Existing demands remain readable and reconcilable.",
+    "The shared composer gains optional strategy_families and missing_datasets. All families are queried for retired history; memory/search queries include every family and missing dataset. Single-family callers retain their existing output shape.",
+    "Institutional negative history ignores persona-memory hits, including private entries carrying matching negative-memory tags."
+  ],
+  "acceptance": {
+    "case_file_stored_for_families_and_missing_datasets": "test_next_demand_cites_prior_failure_through_real_route checks the schema, both family owner requests, dataset/family query filters, id/digest and persistence after store reconstruction.",
+    "automatic_influence": "The same real authenticated POST creates the influence snapshot and index record without a manual retrieval-influence POST. All bounded attached items are recorded in metadata.cited_item_ids; selected_memory_refs and selected_evidence_refs retain canonical source ids.",
+    "citation_integrity": "test_influence_refuses_unknown_or_duplicate_citations, test_influence_refuses_foreign_subject and test_influence_refuses_tampered_case_file reject unknown ids, duplicate ids, tenant/persona mismatch and digest alteration.",
+    "unavailable_is_explicit": "Missing families/caller configuration yields a persisted open demand with null case-file references and a reason. Denied reads retain source-level reasons and cite no memory. Malformed owner responses record composition failure. Index-write failure retains the canonical influence snapshot on the demand with a secondary-index failure reason.",
+    "prior_failure_cited_by_next_demand": "test_next_demand_cites_prior_failure_through_real_route opens two distinct shortfall demands through the production route; the next demand cites lessons:memory_institutional:prior-failure and its negative-history counterpart.",
+    "unchanged_demand_lifecycle": "Duplicate POSTs retain their first context and perform no second owner retrieval; legacy demand rows still reconcile. Existing tenant/principal auth, query plan, template search and persona-cycle tests are included in validation."
+  },
+  "verification": {
+    "provision": "python3 scripts/dev/provision_python_distribution.py; exit 0; checkout-scoped Python 3.12.3 using the supervisor-provided dependency interpreter",
+    "integration_scope": "Production Research FastAPI demand route with real JWT verification, stores and shared composer, plus controlled owner HTTP fixtures. Shared composer regression also exercises the real Memory FastAPI service with local governance authorization. No hosted claims.",
+    "batches": [
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_retrieval_influence_case_file.py services/research/tests/test_research_demand.py services/research/tests/test_reviewed_memory_writeback.py services/research/alpha_replication/test_evolution_executor_case_file.py",
+        "exit_code": 0,
+        "result": "43 passed, 333 warnings in 33.80s"
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_persona_demand_routes_auth.py services/research/tests/test_query_plan.py services/research/tests/test_template_demand_search.py",
+        "exit_code": 0,
+        "result": "71 passed, 575 warnings in 61.96s"
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -vv --disable-warnings services/research/tests/test_persona_cycle_demand_integration.py services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py",
+        "exit_code": 0,
+        "result": "17 passed, 253 warnings in 149.07s"
+      }
+    ],
+    "incomplete_batch": {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_retrieval_influence_case_file.py services/research/tests/test_research_demand.py services/research/tests/test_persona_demand_routes_auth.py services/research/tests/test_query_plan.py services/research/tests/test_template_demand_search.py services/research/tests/test_persona_cycle_demand_integration.py services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py",
+      "exit_code": 124,
+      "result": "Timed out; NOT counted as passed. Replaced by smaller bounded batches whose terminal results are recorded above."
+    }
+  },
+  "known_limits": [
+    "Source-only evidence; hosted acceptance remains with MEMORY-KNOWLEDGE-HOSTED-ACCEPTANCE-20261113.",
+    "Deployment must provide RESEARCH_CASE_FILE_ACTOR_ID/RESEARCH_CASE_FILE_ACTOR_ROLES and fixed owner endpoints/tokens. Roles and persona identity cannot be supplied by demand bodies. The service caller reads institutional and committee-visible context, never persona-private memory.",
+    "An empty tried_families list records case_file_strategy_families_missing rather than inventing a family from free-form mandate text.",
+    "Context attachment is recorded as influence_unknown with null weight; no causal outcome, profitable effect or ranker score is invented.",
+    "The demand id occupies the legacy influence record's task_id/run_id slots with metadata.decision_type=research_demand; no Research task or run is fabricated.",
+    "The influence snapshot on the demand is retained if the existing secondary influence index is unavailable; the reason is explicit."
+  ]
+}
