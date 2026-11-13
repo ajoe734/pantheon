@@ -28,7 +28,7 @@ def test_default_transport_waits_for_long_shadow_run(system, tmp_path, monkeypat
             pass
         def do_POST(self):
             payload = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
-            response = owner_client.post(self.path, json=payload, headers=headers())
+            response = owner_client.post(self.path, json=payload, headers={k: v for k, v in self.headers.items() if k.lower() in ('authorization', 'x-tenant-id')})
             self.send_response(response.status_code)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -40,6 +40,7 @@ def test_default_transport_waits_for_long_shadow_run(system, tmp_path, monkeypat
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
     monkeypatch.setenv('PANTHEON_PERSONA_API_URL', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('PANTHEON_PERSONA_SERVICE_TOKEN', 'bff-owner-principal')
     monkeypatch.delenv('RESEARCH_ORCHESTRATOR_TIMEOUT_SECONDS', raising=False)
     monkeypatch.delenv('PANTHEON_PERSONA_SHADOW_TIMEOUT_SECONDS', raising=False)
     app = FastAPI()

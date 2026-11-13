@@ -18,7 +18,7 @@ from services.persona.test_harness_adoption import delivery_receipt
 from services.persona.test_harness_shadow_eval import REPLAY_AGENT, DENY_ALL_POLICY, remove, seed, turn
 
 P = "/bff/agora/persona-lab/p-alpha"
-H = {"Authorization": "Bearer t", "X-Tenant-Id": "tenant-a"}
+H = headers(roles=["operator"])  # real signed operator JWT: no persona.admin
 THRESHOLD = {"cycle_thresholds": {"minimum_evidence_count": 3, "minimum_confidence": 0.8}}
 
 
@@ -35,10 +35,11 @@ def lab(system, tmp_path, monkeypatch):  # noqa: F811
     harness.adoption.sender = lambda kind, payload: deliveries.append((kind, payload)) or delivery_receipt(kind, payload)
     monkeypatch.setenv("PANTHEON_PERSONA_API_URL", "http://owner")
     monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory")
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", "bff-owner-principal")
 
     def transport(method, url, payload, hdrs):
         assert url.startswith("http://owner"), url
-        response = owner_client.request(method, url[len("http://owner"):], json=payload, headers=headers())
+        response = owner_client.request(method, url[len("http://owner"):], json=payload, headers=hdrs)  # real forwarded headers
         try:
             return response.status_code, response.json()
         except ValueError:
@@ -135,3 +136,21 @@ def test_never_again_writes_owner_negative_experience_consumed_by_next_proposal(
     refs = system[2].read("p-alpha")["patches"]["p-new"]["experience_refs"]
     assert [e["source_event_id"] for e in refs] == [experience["source_event_id"]]
     assert client.post(P + "/change-log/p-old/never-again", headers=H, json={}).status_code == 422
+
+
+def test_operator_bearer_alone_is_refused_and_missing_principal_fails_closed(lab, monkeypatch):
+    client, system, _ = lab
+    # Forwarded headers are real: the operator bearer never reaches the owner on writes.
+    assert draft(client, evidence=system[-1]).status_code == 201
+    monkeypatch.delenv("PANTHEON_PERSONA_SERVICE_TOKEN")
+    monkeypatch.delenv("PERSONA_SERVICE_TOKEN", raising=False)
+    res = draft(client, patch_id="patch-2", evidence=system[-1])
+    assert res.status_code == 503 and res.json()["detail"]["reason"] == "persona_owner_service_token_unconfigured"
+    assert client.post(P + "/patches/patch-1/shadow-runs", headers=H).status_code == 503
+    assert client.post(P + "/change-log/patch-1/never-again", headers=H, json={"reason": "x"}).status_code == 503
+
+
+def test_owner_tenant_gate_still_enforced_with_service_principal(lab):
+    client, system, _ = lab
+    res = client.post(P + "/patches", headers={**H, "X-Tenant-Id": "tenant-b"}, json={"patch_id": "x"})
+    assert res.status_code == 403, res.text

@@ -32,6 +32,7 @@ HARNESS = {
 def lab(monkeypatch):
     for name in ("PANTHEON_PERSONA_API_URL", "PANTHEON_MEMORY_API_URL"):
         monkeypatch.setenv(name, "http://owner")
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", "svc-secret")
     calls = []
     responses = {}
 
@@ -128,3 +129,11 @@ def test_routes_are_mounted_in_app_factory_and_hold_no_store():
     from services.control_plane.bff.agora.persona_lab import router as lab_router
     assert "create_persona_lab_router(" in inspect.getsource(app_factory)
     assert "Store(" not in inspect.getsource(lab_router)
+
+
+def test_persona_writes_use_owner_principal_reads_and_memory_keep_operator_bearer(lab):
+    client, calls, _ = lab
+    client.post(P + "/patches", json={"patch_type": "threshold"}, headers=H)
+    assert calls[-1][3]["Authorization"] == "Bearer svc-secret" and calls[-1][3]["X-Tenant-Id"] == "tenant-1"
+    client.get(P + "/harness", headers=H)
+    assert calls[-1][3]["Authorization"] == H["Authorization"]

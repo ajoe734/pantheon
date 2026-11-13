@@ -47,5 +47,13 @@
     "conflict_file": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
     "resolution": "regenerated from live app via scripts/bff_route_manifest_backend.py (640 routes); committee-memory (PR7286) and persona lab routes both present; --check passed",
     "validation": "BFF committee-memory + persona lab suites 31 passed; persona harness suites 82 passed"
+  },
+  "operator_to_owner_transport": {
+    "design": "BFF write-role gate + exact tenant scope first; then persona-owner mutations use the owner's existing PANTHEON_PERSONA_SERVICE_TOKEN principal (persona.admin, tenant from X-Tenant-Id); owner still enforces persona.tenant_id == tenant. Missing token fails closed 503. Reads and memory-owner calls keep the operator bearer.",
+    "tests": [
+      "test_agora_persona_lab_owner_integration.py (real signed operator JWT without persona.admin, real forwarded headers)::test_operator_bearer_alone_is_refused_and_missing_principal_fails_closed",
+      "...::test_owner_tenant_gate_still_enforced_with_service_principal",
+      "test_agora_persona_lab.py::test_persona_writes_use_owner_principal_reads_and_memory_keep_operator_bearer"
+    ]
   }
 }

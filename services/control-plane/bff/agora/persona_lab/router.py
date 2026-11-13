@@ -96,6 +96,15 @@ def create_persona_lab_router(
 
     def _owner(kind: str, method: str, path: str, scope, authorization, payload=None, transport=None) -> Any:
         headers = {"Authorization": authorization or "", "X-Tenant-Id": scope.tenant_id}
+        if kind == "persona" and method != "GET":
+            # Owner mutations require persona.admin, which operators do not carry. Only after the
+            # BFF operator write-role gate and exact tenant resolution, use the owner's existing
+            # narrowly scoped BFF service principal; the owner still enforces the persona tenant.
+            token = (os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN") or os.getenv("PERSONA_SERVICE_TOKEN") or "").strip()
+            if not token:
+                raise bff_error(503, "OWNER_UNAVAILABLE", "persona owner service principal is not configured",
+                                "persona_owner_service_token_unconfigured")
+            headers["Authorization"] = "Bearer " + token
         code, body = (transport or send)(method, _base(kind) + path, payload, headers)
         if code not in (200, 201):
             reason = body.get("detail") if isinstance(body, dict) else None
