@@ -550,6 +550,18 @@ POST /api/v1/personas/{persona_id}/strategy-matches/{match_id}/actions
 
 BFF must be read/composition-oriented and route writes through command/admission surfaces.
 
+### 6.6 Research-demand driven discovery (2026-11-13)
+
+Discovery is no longer operator-triggered only. The persona's daily pool cycle (`services/persona/pool_autonomy_cycle.py`) runs the scorer of 6.3 for every open `research_demand.v1` of that persona. There is no second scorer and no second demand store.
+
+- **Entry:** `discover_for_demand` in `services/control-plane/persona/persona_strategy_discovery.py` pre-filters candidates, then calls the unchanged `PersonaStrategyDiscoveryService.match_candidates`. Exclusions, each recorded with its reason: the candidate's family is in the demand's `tried_families` (`tried_family`); the seed store marked it as matching rejected or retired work at `warning` or `blocking` level (`negative_memory`); the demand lists missing datasets and the candidate requires none of them (`missing_datasets_not_required`). Ignored matches are dropped; at most three are kept.
+- **Actions through existing owners:** every supported action is admitted by the research owner as a durable ticket with a deterministic id (never posted twice): `create_research_ticket`; `promote_seed_candidate` (`review_requested`, the seed reviewer still decides); `run_rapid_eval` (`eval_requested`, the governed training session and dataset still gate it); `request_data_backfill` (`backfill_requested`, with its datasets). An unsupported action is recorded `refused`. A failed action is retried on the next cycle; its failed attempt stays in `attempts` and the later success receipt replaces it. An action that already succeeded is never executed again.
+- **Record:** the research owner stores the receipts on the demand (`discovery.actions`, `discovery.last_run`, `POST /api/research/persona-demands/{id}/actions`). A recorded non-failed action is never repeated or overwritten on later days.
+- **No match:** `last_run.reason` says why (`no_candidates_available`, `all_candidates_excluded:...`, `no_candidate_fits_persona`); when nothing matched, the demand's missing datasets are recorded as a data backfill request. Unreadable sources fail closed (`discovery_unavailable:...`); nothing is synthesised.
+- **Sources:** the background cycle reads seeds from the source-ingest owner with the persona service's own credential (`PERSONA_SOURCE_INGEST_SERVICE_TOKEN`) and the persona's tenant bound for that read only; StrategySpec candidates come from the registry owner's tenant-scoped `strategy-specs` read. Missing credential fails closed.
+- **Unchanged:** the operator routes `POST /api/v1/personas/{id}/strategy-discovery` and the strategy-match actions keep their behaviour.
+- Paper and research only; no model call; no privileged route.
+
 ## 7. LLM Source Proposal Governance
 
 ### 7.1 Purpose
