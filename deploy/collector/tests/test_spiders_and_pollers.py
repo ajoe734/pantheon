@@ -518,31 +518,23 @@ def test_recorded_query_shapes_through_real_runner(tmp_path, fixtures_dir, test_
     assert outcome.bundle.items_path.read_text().strip()
 
 
-def test_gdelt_recorded_changed_query_exact_recorded_parameters(fixtures_dir):
-    """Authentic recording: HTTP 200 ``{}`` for the changed query with maxrecords=10/timespan=1month.
+def test_gdelt_request_url_built_from_policy_vocabulary():
+    """GDELT query terms come from fetch-policy.json; assert the exact request URL.
 
-    This is NOT the production default (250/3months, which was rate-limited and has no
-    recording) and proves zero articles only; it checks the poller issues the recorded
-    query shape and tolerates the real empty-object response.
+    No real GDELT recording is committed (DOC API rate-limited; see
+    coordinator_decision_gdelt_20261113 in evidence.json).
     """
-    import hashlib
-    from urllib.parse import parse_qs, urlparse
+    from urllib.parse import urlencode
     from collector_stack.pollers import _policy_query
-    metadata_path = Path(__file__).resolve().parents[3] / "docs/deployment/evidence/COLLECTOR-DEMAND-QUERY-PLAN-R2-20261112/recorded-responses.json"
-    metadata = next(r for r in json.loads(metadata_path.read_text()) if r["file"] == "gdelt_query_recorded.json")
-    recorded = (fixtures_dir / "gdelt_query_recorded.json").read_bytes()
-    assert hashlib.sha256(recorded).hexdigest() == metadata["sha256"] and recorded == b"{}"
-    recorded_q = parse_qs(urlparse(metadata["url"]).query)
-    assert recorded_q["maxrecords"] == ["10"] and recorded_q["timespan"] == ["1month"]
     policy = load_collector_config(DEFAULT_POLICY_PATH, env={}).get_source("collector-gdelt")
-    assert recorded_q["query"] == [_policy_query(policy)]
     transport = FixtureTransport()
     poller = GdeltDocPoller(policy, transport=transport)
-    # The poller's urlencode yields '+' for spaces; the recording used %20 (same query).
-    transport.register(metadata["url"].replace("%20", "+"), recorded)
-    assert poller.collect(max_records=10, timespan="1month") == []
-    called = parse_qs(urlparse(transport.calls[0]["url"]).query)
-    assert called == recorded_q
+    query = _policy_query(policy)
+    expected = policy.base_urls[0] + "?" + urlencode(
+        {"query": query, "mode": "ArtList", "maxrecords": 10, "timespan": "1month", "format": "json"})
+    transport.register(expected, b"{}")
+    poller.collect(max_records=10, timespan="1month")
+    assert transport.calls[0]["url"] == expected
 
 
 @pytest.mark.parametrize("sid", ["collector-paper-arxiv", "collector-paper-openalex", "collector-gdelt"])

@@ -1,13 +1,19 @@
 {
   "task_id": "COLLECTOR-DEMAND-QUERY-PLAN-R2-20261112",
-  "status": "partial",
+  "status": "complete_per_coordinator_decision",
   "acceptance": {
     "1_2_3_4_5": "implemented; covered by deploy/collector tests and services/research/tests/test_query_plan.py",
-    "6": "arXiv and OpenAlex: recorded real responses in fixtures (sha256 in recorded-responses.json). GDELT: pre-existing authentic recording of the changed query (Taiwan OR semiconductor) with maxrecords=10/timespan=1month, HTTP 200, body '{}' (zero articles), 2026-11-13T08:56:50Z; provenance in gdelt-recording-provenance-and-limits.json. REMAINING GAP: this is NOT the production default 250/3months request (HTTP 429, no recording); it proves only that the poller issues the recorded shape and tolerates the empty object, no articles/freshness/ingestion PASS. Reviewer must decide whether this satisfies original AC6; no global collector/W1 data PASS claimed."
+    "6": "arXiv and OpenAlex: real recorded responses in fixtures (sha256 in recorded-responses.json). GDELT: no recording by coordinator decision (see coordinator_decision_gdelt_20261113); exact request URL from the vocabulary is asserted by test. No global collector/W1 data PASS claimed."
   },
   "tests": {
-    "deploy/collector/tests": "155 passed, 2 skipped (incl. test_gdelt_recorded_changed_query_exact_recorded_parameters); query_plan 5 and BFF 10 results retained from earlier runs",
+    "deploy/collector/tests": "155 passed, 2 skipped (rerun after GDELT recording removal, /tmp/cppp-venv python 3.12)",
     "services/research/tests/test_query_plan.py": "5 passed",
     "services/control-plane/bff/tests/test_research_tasks_read.py": "10 passed"
+  },
+  "coordinator_decision_gdelt_20261113": {
+    "decided_at": "2026-11-13T10:5xZ",
+    "decision": "A real GDELT DOC 2.0 recording is unobtainable (HTTP 429 from dev host and collector host, including after an 11 minute cooldown; collector-gdelt auto-paused since 2026-11-11 with 0 items). GDELT poller still reads query terms from fetch-policy.json (acceptance 1); test_gdelt_request_url_built_from_policy_vocabulary asserts the exact request URL. gdelt_query_recorded.json is NOT committed, GDELT response parsing unchanged, DOC API not called again. Real GDELT recording moves to GDELT-RAW-FEED-SOURCE-20261113 (depends on this task; official raw 15-minute feed).",
+    "evidence_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-collector-real-fixtures-20261110/gdelt_query_20261113/README.md",
+    "superseded_files": "gdelt-recorded-*.txt and gdelt-recording-provenance-and-limits.json document the earlier maxrecords=10 '{}' attempt; they are retained as history only and no longer back any test or fixture."
   }
 }

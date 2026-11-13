@@ -16,15 +16,5 @@
   "bytes": 221361,
   "sha256": "2542a65937d9c943c2dda483637eb0aa30e063c285195e4ef034dc8990d09a46",
   "recorded_at": "2026-11-13T08:54:41.227519+00:00"
- },
- {
-  "file": "gdelt_query_recorded.json",
-  "url": "https://api.gdeltproject.org/api/v2/doc/doc?query=%28%22Taiwan%22%20OR%20%22semiconductor%22%29&mode=ArtList&maxrecords=10&timespan=1month&format=json",
-  "http_status": 200,
-  "content_type": "application/json; charset=utf-8",
-  "bytes": 2,
-  "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-  "recorded_at": "2026-11-13T08:56:50Z",
-  "note": "Pre-existing authentic recording (Codex log 20261113T085049776210Z-codex-codex2_2-2c523f.log lines 9772-9774/9841-9852). Body is {} (zero articles). Parameters maxrecords=10/timespan=1month, NOT the production default 250/3months, which returned HTTP 429 and has no recording. URL spaces were %20 in the original request; the poller emits '+' (equivalent query)."
  }
 ]
