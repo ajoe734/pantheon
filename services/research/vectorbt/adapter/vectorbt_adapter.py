@@ -17,6 +17,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 from typing import Any, Mapping, Protocol, Sequence
 
 VECTORBT_VERSION_PIN = "1.1.1"
@@ -1214,9 +1215,10 @@ def _bar_features_for_index(
     dataset: PreparedVectorbtDataset,
     instrument: str,
     index: int,
+    *, replay_features: Mapping[str, Any] | None = None, session_start: int = 0,
 ) -> tuple[dict[str, Any], str | None]:
     """Build the point-in-time feature snapshot and decision_time for bar ``index``."""
-    bars_slice = dataset.ohlcv_by_instrument[instrument][: index + 1]
+    bars_slice = dataset.ohlcv_by_instrument[instrument][: index + 1] if replay_features is None else ()
     total_len = len(dataset.ohlcv_by_instrument[instrument])
     bar_features: dict[str, Any] = {
         "open": [b[0] for b in bars_slice],
@@ -1225,6 +1227,8 @@ def _bar_features_for_index(
         "close": [b[3] for b in bars_slice],
         "volume": [b[4] for b in bars_slice],
     }
+    if replay_features is not None:
+        bar_features = {name: list(replay_features[name][:index + 1]) for name in REQUIRED_OHLCV_FIELDS}
     inst_features = dataset.features_by_instrument.get(instrument) or {}
     for fk, fv in inst_features.items():
         if fk in {"open", "high", "low", "close", "volume"}:
@@ -1236,7 +1240,14 @@ def _bar_features_for_index(
         clocks = (getattr(dataset, "decision_clock_by_instrument", None) or {}).get(instrument)
         if not clocks or index >= len(clocks):
             raise IntradayDataUnavailable("missing_replay_clock", f"{instrument} bar {index}")
-        _attach_replay_minute_observations(dataset, instrument, index, bar_features)
+        if replay_features is None:
+            _attach_replay_minute_observations(dataset, instrument, index, bar_features)
+        else:
+            ds_name = INTRADAY_DATASETS[dataset.data_frequency]
+            bar_features[ds_name] = {
+                name: values[session_start:index + 1]
+                for name, values in replay_features[ds_name].items()
+            }
         return bar_features, clocks[index]
     dates = dataset.dates_by_instrument.get(instrument)
     decision_time = dates[index] if dates and index < len(dates) else None
@@ -1283,6 +1294,60 @@ def _attach_replay_minute_observations(
     bar_features[ds_name] = observations
 
 
+def _prepared_replay_features(
+    dataset: PreparedVectorbtDataset, instrument: str, artifact: Mapping[str, Any],
+) -> tuple[Mapping[str, Any] | None, bool]:
+    """Build immutable columns once per instrument/window; keep Registry PIT checks per bar.
+
+    Only zero-lag, catalogue session-reset OHLCV inputs can use a session prefix. Their
+    generated event/availability clocks equal bar_end, so older sessions cannot survive
+    Registry filtering. Validate the complete referenced columns first, including old
+    sessions, to retain fail-closed malformed-observation behavior. Aliases, lags, other
+    inputs and cross-session declarations keep the complete visible prefix.
+    """
+    if not _is_intraday(dataset):
+        return None, False
+    from services.registry.factor_rule import (
+        FactorRuleValidationError, _require_minute_observations, get_feature_definition,
+    )
+
+    features, _ = _bar_features_for_index(dataset, instrument, len(dataset.ohlcv_by_instrument[instrument]) - 1)
+    ds_name = INTRADAY_DATASETS[dataset.data_frequency]
+    columns = {name: tuple(features[name]) for name in REQUIRED_OHLCV_FIELDS}
+    columns[ds_name] = MappingProxyType({
+        name: tuple(MappingProxyType(obs) for obs in values)
+        for name, values in features[ds_name].items()
+    })
+    logic = artifact.get("strategy_logic") or {}
+    session_prefix = logic.get("kind") == "factor_rule_v1" and not _artifact_cross_session(artifact)
+    inputs = logic.get("inputs") or ()
+    session_prefix = session_prefix and bool(inputs)
+    session_prefix = session_prefix and all(
+        _session_of(start) == _session_of(clock)
+        for start, clock in zip(dataset.dates_by_instrument[instrument], dataset.decision_clock_by_instrument[instrument])
+    )
+    for item in inputs:
+        name, source, field = item["name"], item["dataset"], item["field"]
+        definition = get_feature_definition(source, field)
+        aliases = (name, f"{source}.{field}", f"{source}:{field}")
+        if (
+            source != ds_name or field not in REQUIRED_OHLCV_FIELDS
+            or any(features.get(alias) is not None for alias in aliases)
+            or definition is None or definition.cross_session
+            or definition.availability_lag_unit != "minutes"
+            or definition.min_availability_lag
+            or item.get("availability_lag_minutes", 0) or item.get("availability_lag_days", 0)
+        ):
+            session_prefix = False
+    if session_prefix:
+        try:
+            for item in inputs:
+                _require_minute_observations(columns, name=item["name"], dataset=ds_name, field=item["field"])
+        except FactorRuleValidationError as exc:
+            raise VectorbtWorkflowError(f"strategy artifact evaluation failed: {exc}") from exc
+    return MappingProxyType(columns), session_prefix
+
+
 def _artifact_cross_session(artifact: Mapping[str, Any]) -> bool:
     """True only when the recipe/feature definitions declare ``cross_session`` (default: session reset)."""
     if (artifact.get("parameters") or {}).get("cross_session") is True:
@@ -1307,14 +1372,21 @@ def _artifact_holding(artifact: Mapping[str, Any], config_params: Mapping[str, A
 
 
 def _closes_window(
-    dataset: PreparedVectorbtDataset, instrument: str, index: int, cross_session: bool
+    dataset: PreparedVectorbtDataset, instrument: str, index: int, cross_session: bool,
+    *, closes: Sequence[float] | None = None, session_starts: Sequence[int] | None = None,
 ) -> list[float]:
-    """Closes visible at bar ``index``; intraday lookbacks reset at the session open unless cross_session."""
-    closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
+    """Closes visible at bar ``index``; intraday lookbacks reset at the session open unless cross_session.
+
+    ``closes`` / ``session_starts`` let a per-bar caller reuse the already-built full-series values
+    instead of rebuilding them for every bar; the result is identical to the default path.
+    """
+    if closes is None:
+        closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
     if _is_intraday(dataset) and not cross_session:
-        lo = _session_start_indexes(dataset.dates_by_instrument[instrument])[index]
-        return closes[lo : index + 1]
-    return closes[: index + 1]
+        if session_starts is None:
+            session_starts = _session_start_indexes(dataset.dates_by_instrument[instrument])
+        return list(closes[session_starts[index] : index + 1])
+    return list(closes[: index + 1])
 
 
 def _canonical_frequency(value: Any) -> str:
@@ -1450,16 +1522,21 @@ def _artifact_action_sequence(
         session_starts = (
             _session_start_indexes(dataset.dates_by_instrument[instrument]) if _is_intraday(dataset) else None
         )
+        replay_features, session_prefix = _prepared_replay_features(dataset, instrument, artifact)
         for index in range(start_index, len(closes)):
             if session_starts is not None and not cross_session and index - session_starts[index] < start_index:
                 continue  # lookback window resets at the session open: not enough in-session history yet
-            bar_features, decision_time = _bar_features_for_index(dataset, instrument, index)
+            bar_features, decision_time = _bar_features_for_index(
+                dataset, instrument, index, replay_features=replay_features,
+                session_start=session_starts[index] if session_prefix else 0,
+            )
             try:
                 if close_actions is not None and _is_intraday(dataset) and kind == "factor_rule_v1":
                     # The existing Registry view exposes post-decision state. Its
                     # BUY/SELL direction alone cannot distinguish entry from close.
                     view = evaluate_factor_rule_view(
-                        artifact, _closes_window(dataset, instrument, index, cross_session),
+                        artifact, _closes_window(
+                            dataset, instrument, index, cross_session, closes=closes, session_starts=session_starts),
                         features=bar_features, decision_time=decision_time,
                         symbol=instrument, include_position_state=True,
                     )
@@ -1469,7 +1546,8 @@ def _artifact_action_sequence(
                 else:
                     action = evaluate_strategy_action(
                         artifact,
-                        _closes_window(dataset, instrument, index, cross_session),
+                        _closes_window(
+                            dataset, instrument, index, cross_session, closes=closes, session_starts=session_starts),
                         features=bar_features,
                         decision_time=decision_time,
                         symbol=instrument,
@@ -1663,14 +1741,19 @@ def _artifact_view_strength(
         session_starts = (
             _session_start_indexes(dataset.dates_by_instrument[instrument]) if _is_intraday(dataset) else None
         )
+        replay_features, session_prefix = _prepared_replay_features(dataset, instrument, artifact)
         for index in range(start_index, len(closes)):
             if session_starts is not None and not cross_session and index - session_starts[index] < start_index:
                 continue
-            bar_features, decision_time = _bar_features_for_index(dataset, instrument, index)
+            bar_features, decision_time = _bar_features_for_index(
+                dataset, instrument, index, replay_features=replay_features,
+                session_start=session_starts[index] if session_prefix else 0,
+            )
             try:
                 view = evaluate_strategy_view(
                     artifact,
-                    _closes_window(dataset, instrument, index, cross_session),
+                    _closes_window(
+                            dataset, instrument, index, cross_session, closes=closes, session_starts=session_starts),
                     features=bar_features,
                     decision_time=decision_time,
                     symbol=instrument,
