@@ -1858,8 +1858,10 @@ def _admit_evolution_child(params, child_id):
 
 
 @app.get("/api/research/evolution/families/{family_id}")
-def evolution_family_state(family_id: str, tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
+def evolution_family_state(family_id: str, bar_frequency: Optional[str] = None,
+                           tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
     from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
+    from services.research.replication.gate import family_trial_key
     # The same family counter used by the real gate is durable across workers.
     views = _retrain_call(step="family_state", service="registry", method="GET",
         token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
@@ -1867,8 +1869,14 @@ def evolution_family_state(family_id: str, tenant_id: str = Depends(_authenticat
             "/api/registry/strategies/" + urllib.parse.quote(family_id, safe="") + "/strategy-artifacts")
     if not any(((v or {}).get("entry") or {}).get("owner_tenant") == tenant_id for v in views or []):
         raise HTTPException(status_code=404, detail="family not found")
-    trials = SharedFamilyTrialCounterStore(_retrain_trial_counter_path()).get(family_id)
-    return {"family_id": family_id, "trials": trials, "status": "tried" if trials >= 500 else "available"}
+    # Frequency-scoped key (SD §9 K8); omitted/daily keeps the legacy bare family key.
+    # `trials` stays frequency-isolated; the O-17 lifetime cap (500) is enforced on the
+    # aggregate family total across every frequency bucket.
+    store = SharedFamilyTrialCounterStore(_retrain_trial_counter_path())
+    trials = store.get(family_trial_key(family_id, bar_frequency))
+    total = store.family_total(family_id)
+    return {"family_id": family_id, "bar_frequency": (bar_frequency or "").strip().lower() or None, "trials": trials,
+            "family_total_trials": total, "status": "tried" if total >= 500 else "available"}
 
 
 def _retrain_trial_counter_path() -> Path:
@@ -1923,7 +1931,7 @@ def _retrain_search_update(
         raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
     budget = 50 if params.get("pool_member") else int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
     family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
-    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).get(family_id) >= 500:
+    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).family_total(family_id) >= 500:
         raise _RetrainFinished("no_candidate", "family_tried")
     from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
 
@@ -2379,6 +2387,11 @@ class _ProofCapturingGate:
     def get_family_trial_count(self, family_id: str) -> int:
         return self._gate.get_family_trial_count(family_id)
 
+    def get_family_total_trial_count(self, family_id: str) -> int:
+        # The real gate always provides the aggregate; minimal gate doubles fall back to the bare key.
+        total = getattr(self._gate, "get_family_total_trial_count", None)
+        return total(family_id) if callable(total) else self._gate.get_family_trial_count(family_id)
+
     def record_family_trial(self, family_id: str) -> int:
         record = getattr(self._gate, "record_family_trial", None)
         return record(family_id) if callable(record) else self._gate.get_family_trial_count(family_id)
@@ -2463,6 +2476,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     """
     from services.registry.strategy_artifact import strategy_artifact_checksum
     from services.research.alpha_replication import evolution_executor as executor
+    from services.research.alpha_replication import evolution_search as search
 
     action = _evolution_action(params)
     decision_id = str(params["decision_id"])
@@ -2602,7 +2616,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     _retrain_record(
         run_id, evolution_result=result.get("detail") or result.get("verdict"),
         parent_artifact_checksum=strategy_artifact_checksum(parent),
-        family_trial_count=gate.get_family_trial_count(family_id),
+        family_trial_count=gate.get_family_trial_count(search.artifact_trial_key(family_id, parent)),
     )
     raise _RetrainFinished(result["outcome"], result["reason"])
 
@@ -2701,6 +2715,18 @@ def reconcile_persona_research_demands(
         raise HTTPException(status_code=422, detail="persona_id is required")
     rows = research_demand_store.reconcile(tenant_id, persona_id, list(body.get("members") or []))
     return {"demands": rows, "count": len(rows)}
+
+
+@app.post("/api/research/persona-demands/{demand_id}/actions")
+def record_persona_research_demand_discovery(
+    demand_id: str,
+    body: Dict[str, Any] = Body(...),
+    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
+) -> Dict[str, Any]:
+    try:
+        return research_demand_store.record_discovery(tenant_id, demand_id, body)
+    except DemandError as exc:
+        raise HTTPException(status_code=404 if "not found" in str(exc) else 409, detail=str(exc)) from exc
 
 
 @app.on_event("startup")

@@ -1,0 +1,30 @@
+{
+  "task_id": "PERSONA-DISCOVERY-DEMAND-LINK-20261112",
+  "owner": "Claude2",
+  "reviewer": "Codex2",
+  "scope": "Open research demands drive the existing persona strategy discovery scorer inside the daily pool cycle; matches' actions are executed through existing owners and recorded on the demand.",
+  "changes": {
+    "scorer_entry": "services/control-plane/persona/persona_strategy_discovery.py: discover_for_demand filters candidates (tried family, negative memory warning/blocking, missing datasets) then calls the unchanged PersonaStrategyDiscoveryService.match_candidates.",
+    "cycle": "services/persona/pool_autonomy_cycle.py: PoolAutonomyCycle._discover after Act; HttpPoolCyclePorts.discover_for_demand / execute_match_action / record_discovery; governed_discovery_loader.",
+    "demand_store": "services/research/research_demand.py record_discovery + POST /api/research/persona-demands/{id}/actions; schema gains optional discovery object.",
+    "wiring": "services/control-plane/persona/main.py: background-safe seed reader binds persona tenant + PERSONA_SOURCE_INGEST_SERVICE_TOKEN (configured_service_token) for the read; specs come from HttpPoolCyclePorts.read_strategy_specs (registry owner).",
+    "actions": "HttpPoolCyclePorts.execute_match_action admits every supported action as a research-owner ticket (created/review_requested/eval_requested/backfill_requested) or records refused; ResearchDemandStore.record_discovery keeps attempt history, replaces a failed action by a later success, never rewrites a succeeded one; cycle skips already-succeeded actions.",
+    "review_p2_policy_identity": "services/control-plane/persona/main.py: referenced route policy is resolved by its own policy_id/id from the owner catalog (ReadSurfacePorts.list_route_policies), never via the persona-scoped lookup; missing or mismatched policy raises route_policy_unavailable (fail closed). Regressions use the real ReadSurfacePorts over an in-memory catalog: shared policy by policy_id, stale persona-scoped row ignored, mismatch fails closed (test_persona_demand_discovery.py, 18 passed; with controller + pool cycle 55 passed).",
+    "review_p1_policy_resolution": "services/control-plane/persona/main.py: daily loader resolves route policy (via persona route_policy_id) and capability snapshot through the BFF ReadSurfacePorts owner reads bound to the persona tenant; a referenced policy/snapshot that is unreadable raises (fail closed) instead of substituting {}."
+  },
+  "acceptance": {
+    "1": "test_cycle_demand_to_discovery_match_to_research_ticket, test_tried_families_and_negative_memory_are_excluded, test_lifespan_seed_reader_binds_persona_tenant_and_service_credential (actual lifespan wiring, no injected loader)",
+    "2": "test_research_ticket_created_..., test_failed_action_is_retried_and_the_success_receipt_replaces_it_with_history, test_spec_match_requests_rapid_eval_from_registry_owner_specs, promotion and backfill tickets in the cycle tests",
+    "3": "test_no_match_records_reason_and_requests_backfill_when_data_is_missing, test_unavailable_sources_fail_closed_with_recorded_reason",
+    "4": "operator route untouched; test_persona_strategy_discovery.py and test_datastrat_persona_strategy_discovery_bff.py pass",
+    "5": "no new scorer or demand store; existing guard test_http_routes_require_tenant_auth_and_serve_records still passes",
+    "6": "services/persona/test_persona_demand_discovery.py drives PoolAutonomyCycle.run -> demand -> discovery -> research ticket"
+  },
+  "limitations": [
+    "PERSONA_SOURCE_INGEST_SERVICE_TOKEN(_FILE) must be provisioned for the persona service by deployment config (docker-compose.yml is outside this task's artifact contract); unprovisioned fails closed as discovery_unavailable.",
+    "Seed promotion, rapid eval and data backfill are requested through research tickets; the seed reviewer, training session and data owners still gate execution.",
+    "Registry spec candidates are materialized from the canonical StrategySpec the registry stores at entry.metadata.strategy_spec, with lifecycle/mechanism/negative-memory metadata preserved; ticket-lookup errors other than 404 fail closed so an existing deterministic ticket is never overwritten.",
+    "hosted_behavior_claimed: false"
+  ],
+  "verification": ".venv-pantheon python -m pytest: persona demand discovery, pool cycle, research demand + cycle integration, discovery scorer, cycle controller, persona main; plus registry-shaped cycle test (dataset + tried-family filters, rapid-eval ticket) and transient-read/lost-receipt regression: persona demand discovery 12 passed"
+}
