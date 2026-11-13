@@ -79,7 +79,7 @@ def _sid(label="snap-1"):
 
 
 @pytest.fixture(autouse=True)
-def ranking_owner(monkeypatch, request):
+def ranking_owner(monkeypatch):
     monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", "http://consult")
     monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "test-panel-token")
     real_dsn = os.getenv("PANTHEON_PM12_TEST_POSTGRES_DSN")
@@ -87,6 +87,7 @@ def ranking_owner(monkeypatch, request):
         import uuid
         monkeypatch.setenv("RANKING_STORE_DSN", real_dsn)
         monkeypatch.setenv("RANKING_STORE_TABLE", "rankings.pm12_" + uuid.uuid4().hex[:12])
+        monkeypatch.setenv("RANKING_STORE_BOOTSTRAP", "1")
         return
     from services.rankings.test_store import _FakeConnection, _fake_psycopg
     from services.rankings.store import RankingWriteStore
@@ -827,6 +828,34 @@ def test_candidacy_panel_policy_includes_risk_and_red_team():
                                        touches=[pea.PROMOTION_TARGET], target_version="snapshot")
     assert {p.persona_id for p in requirement.participants} == {"p1", RISK_PERSONA_ID, RED_TEAM_PERSONA_ID}
     assert requirement.to_panel_metadata()["gated_decision"]["target_version"] == "snapshot"
+
+
+def test_harness_unknown_outcome_replays_original_request_after_base_moves(tmp_path):
+    base_fetch, _ = _fetch([{**_item("p1", score=75), "session_id": "recorded-session"}], [])
+    bodies, reads = [], []
+    active = 1
+
+    def fetch(url, data=None, headers=None, timeout=20):
+        if url.endswith("/harness"):
+            reads.append(active)
+            return {"active_version": active, "versions": [{"version": active, "surface": {
+                "tool_guidance": {"research.read": "Existing guidance"}}}]}
+        if url.endswith("/harness/patches"):
+            bodies.append(data)
+            if active == 1:
+                raise TimeoutError("owner accepted but response was lost")
+            return {"proposal": data, "status": "draft"}
+        return base_fetch(url, data=data, headers=headers, timeout=timeout)
+
+    kwargs = dict(store=pea.Store(tmp_path / "state.json"), bff_url="http://bff", bff_headers={}, adapter_url="http://ad",
+                  adapter_token="t", governance_url="http://gov", governance_token="g", tenant="t1", actor="evaluator",
+                  persona_url="http://persona", persona_token="private-test-credential", fetch=fetch, now=lambda: NOW)
+    assert pea.run_once(**kwargs)["routing_failures"] == 2
+    active = 2
+    assert pea.run_once(**kwargs)["routing_failures"] == 0
+    assert bodies[:2] == bodies[2:] and reads == [1, 1]
+    assert all(body["base_version"] == 1 for body in bodies)
+    assert "private-test-credential" not in kwargs["store"].path.read_text()
 
 
 @pytest.mark.skipif(not os.getenv("PANTHEON_PM12_TEST_POSTGRES_DSN"), reason="requires isolated real Rankings PostgreSQL")
