@@ -3,9 +3,9 @@
   "task_id": "COLLECTOR-GOVERNED-FEATURE-HANDOFF-20261113",
   "owner": "Codex2",
   "assigned_reviewer": "Claude",
-  "status": "reproduced_awaiting_native_artifact_extension",
-  "implementation_base": "8472268bb82c9eddad0f12db3b583be3154dacbb",
-  "scope": "Repository/local contract-fixture reproduction only; no product implementation or hosted acceptance yet.",
+  "status": "source_ready_for_assigned_independent_review",
+  "implementation_base": "48e4d4eff061915c5ed6cdfc1d9f1e6131d99a20",
+  "scope": "Repository/local Collector configured scheduled-ingest repair through the existing pipeline and storage writer; hosted acceptance belongs to the existing hosted owner.",
   "source_facts": {
     "file": "/tmp/pantheon-root01a15322-resume-20261111/COLLECTOR-GOVERNED-FEATURE-HANDOFF-20261113-sanitized-source-facts.json",
     "sha256": "9b52c163f1051f3cca5180d58cd542953f8b47dee27432fee59e6582576d0e9b",
@@ -14,7 +14,10 @@
   "retained_readonly_proof": {
     "file": "/tmp/pantheon-root01a15322-resume-20261111/actual-W1-governed-receipt-calendar-readonly-20261113T043111.json",
     "sha256": "fb3d35c700cdf0e015b422fd7f265f803c1be1c162d01f17435708f85744edb9",
-    "runs": ["ingest-47d79b6ad6b8", "ingest-c3ee8f91be30"],
+    "runs": [
+      "ingest-47d79b6ad6b8",
+      "ingest-c3ee8f91be30"
+    ],
     "failure": "fetched record source_type must match job connector",
     "payload_limitation": "Readonly proof contains receipt metadata, not recorded raw provider payloads. Tests use existing local make_bundle contract fixtures with catalogued NDC fields and an admitted PTT symbol; they do not claim a byte-for-byte hosted payload replay."
   },
@@ -29,9 +32,9 @@
     "path": "services/source_ingestion/pipeline.py",
     "reason": "The existing owner of storage/evidence/receipt persistence must confirm Collector feature emission and scheduler cursor only after those writes succeed. This call site is outside the current artifact contract.",
     "proposed_boundary": "Keep the existing pipeline, storage writer, raw connector identities and strict raw validation. Carry an explicitly validated Collector-derived batch channel and deferred acknowledgement through scoped collector/configured/scheduler changes; invoke acknowledgement from existing pipeline persistence success, retaining failure receipts and previous cursor on errors.",
-    "authorization": "requested; not granted in this work session",
-    "product_files_edited": false,
-    "canonical_change_required": "Human/Ops artifact-contract add for this exact path before resuming implementation; never hand-edit canonical state."
+    "authorization": "Granted canonically by Human/Ops at 2026-11-13T04:44:06Z; pipeline.py is included in artifacts.",
+    "product_files_edited": true,
+    "canonical_change_required": "Satisfied by the existing canonical artifact-contract command; no canonical JSON was hand edited."
   },
   "validation": [
     {
@@ -48,10 +51,56 @@
       "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py -k 'not governed_features_persist'",
       "exit_code": 0,
       "result": "33 passed, 2 deselected; existing outcome truth remains passing."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_feature_catalogue.py",
+      "exit_code": 0,
+      "result": "150 passed in 27.82s",
+      "terminal_log": "/tmp/collector-handoff-focused.log"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_scheduler.py services/source_ingestion/tests/test_pipeline_snapshot_dataset_isolation.py services/source_ingestion/tests/test_market_data_foundation.py services/source_ingestion/tests/test_taiwan_market_connectors.py services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py",
+      "exit_code": 0,
+      "result": "78 passed, 3 dependency deprecation warnings in 65.74s",
+      "terminal_log": "/tmp/collector-handoff-regression.log",
+      "qualification": "Run after current-dev rebase; subsequent narrow license propagation change is covered by the final focused batch, and preserves existing default license behavior."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors."
     }
   ],
-  "independent_review": "not requested for incomplete implementation; assigned Claude review still required on a future finished exact head",
-  "delivery": "Anchor/reproduction only. No merge or DONE claim. Original CI, independent review and canonical integration remain required.",
+  "independent_review": "Pending assigned reviewer Claude on the handoff-frozen PR/head/manifest. This manifest is owner evidence, not reviewer approval.",
+  "delivery": "PR #7295 targets dev; auto-merge remains off. Only the canonical supervisor integrator may merge after assigned independent exact-head approval and required CI. No DONE or merge claim.",
   "hosted_followup": "Existing hosted owner later validates natural ingestion and retained source hashes through the original dev release/data entry. No VM, SSH, provider, model, Collector-host, secret, business-data, service, deployment or workflow-dispatch operation was performed here.",
-  "unchanged_open_scope": "Original W1 three real governed days and full financial/Persona/Loops scope remain open. Pattern/original9aeb/all49 CLOSED and separate StageProd unchanged."
+  "unchanged_open_scope": "Original W1 three real governed days and full financial/Persona/Loops scope remain open. Pattern/original9aeb/all49 CLOSED and separate StageProd unchanged.",
+  "implementation": [
+    "Configured provider calls use an isolated ContextVar scope so the maintained provider handler neither acknowledges feature rows nor writes resume progress during fetch. Existing tuple consumers retain their contract.",
+    "A native in-process CollectorDelivery snapshots verified records before provider metadata/tenant decoration. IngestBatch carries a separate derived_records channel. Scheduler retains raw connector/type guards and verifies complete immutable identity, hash, PIT, schema and ACL coverage plus expected macro/community dataset before composing records for the existing writer.",
+    "Raw macro/social rows retain raw dataset classification even when the adapter declares a governed target. Derived market records retain governed schemas, restricted research scope, adapter license scope, own content hash and source hash/raw URI provenance. The existing writer and evidence repository persist both in the same receipt with total record counts and per-dataset storage references.",
+    "Only verified raw windows contribute to capped features. Raw bytes are cached before feature-only delivery so provenance resolves immediately. Native configured ingestion emits only unacknowledged revisions; community knowledge times retain actual microseconds to preserve distinct same-second arrivals.",
+    "The existing pipeline defers schedule watermark writes until storage, evidence, health/usage and final receipt persistence succeed; only then does it acknowledge native feature markers/ledger and cursor. A failed receipt records the previous committed watermark.",
+    "Native committed markers and ledger entries carry persisted=true. Configured ingestion ignores legacy eager markers, ledger entries and adapter resume cursors that cannot prove successful storage, rebuilding from the canonical schedule cursor. No shared data migration or new ingestion service was added."
+  ],
+  "acceptance_evidence": {
+    "1": "Original retained NDC/PTT failure reproduction remains recorded below; fixtures are local contract bundles rather than byte-for-byte hosted provider recordings.",
+    "2": "test_governed_features_persist_through_configured_pipeline covers macro/social and raw/governed adapter dataset declarations with a restricted license.",
+    "3": "test_actual_scheduled_frontier_persists_capped_features_and_restarts exercises the actual scheduled entry, store reconstruction, caps 1/2, all macro fields and both social posts, provenance hashes, restricted ACL, independent dataset refs and consumed-cursor no-new-data. Persistence fault injection covers storage/evidence/final receipt at caps 2/100.",
+    "4": "Mutated raw/derived connector/type/hash/PIT/schema/ACL, forged delivery metadata, missing coverage and in-place nested mutation fail closed. A corrupt second raw hash remains pending until its verified window; legacy failed pull markers cannot suppress uncommitted features. Existing outcome truth and full admitted-source steady tick pass.",
+    "5": "Clean task worktree, task-scoped anchor/final commits, current-dev refresh, frozen evidence and PR #7295; independent Claude exact-head review and canonical integration remain pending.",
+    "6": "Only local repository/git/GitHub review-delivery operations performed; no hosted/provider/service/deployment/workflow-dispatch acceptance claimed."
+  },
+  "validation_log_sha256": {
+    "/tmp/collector-handoff-focused.log": "29c54a43b3a096701be5abf4b19942536af9fc29c7df1f8532812228d5a35911",
+    "/tmp/collector-handoff-regression.log": "c84540fd833f127e0118eb896d492a2ca3122dd110b62e4e0f4c921abcf6b24a"
+  },
+  "reviewed_source_sha256": {
+    "services/source_ingestion/connectors/collector_bundle.py": "42e71af1aa4676af0dfd9f4d419a2a48b9027bac3f34ca989726f610d4fc879c",
+    "services/source_ingestion/configured.py": "d87df593780df0797a08780e6defec8735c6bff08a9766a9341dfd48dc65c22c",
+    "services/source_ingestion/scheduler.py": "9ad4892ef61b1606bce37879f9ea6ea42dcb011b68e5de851c95b48eb90852fc",
+    "services/source_ingestion/pipeline.py": "1fb079c95d4b6ffd516876dddb571a02ffaf1a5868fd45e294112cb96554b123",
+    "services/source_ingestion/tests/test_collector_outcome_truth.py": "8efe83b7acde34ff0026fc1531ab3159e66d306c8dfb27c8164f297318f2a871"
+  },
+  "git_publication": "Initial published reproduction anchor 01043a10b8a713a66cc17ed6d6bba0a17b056668 has identical task artifact contents to rebased reproduction 5cd365625. Preserve that published ancestry in the current-dev delivery before normal non-force push; no published work is discarded."
 }

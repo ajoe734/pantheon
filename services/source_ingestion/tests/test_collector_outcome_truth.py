@@ -281,7 +281,7 @@ def test_real_http_reader_denial_never_reuses_prior_no_new_data(tmp_path, monkey
     assert state["collector_outcome"]["observed"]["health_state"] == "degraded"
 
 
-def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100):
+def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100, governed_route=False):
     from services.source_ingestion.runtime import create_runtime
 
     source = "collector-tw-macro-ndc" if kind == "macro" else SOURCE
@@ -308,7 +308,8 @@ def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100):
     runtime = create_runtime(data_dir=tmp_path)
     adapter = CollectorBundleAdapter(connector_id="conn-features", source_id=source,
         source_type=kind, platform="ndc" if kind == "macro" else "ptt", host=HOST,
-        raw_root=str(tmp_path / "market_data_store"))
+        raw_root=str(tmp_path / "market_data_store"),
+        dataset=dataset if governed_route else "collector_bundle_items", license_scope="collector_restricted")
     connector_data = adapter.connector().to_dict()
     connector_data["metadata"]["tenant_id"] = "tenant-a"
     from services.source_ingestion.connectors import SourceConnector
@@ -317,21 +318,23 @@ def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100):
     runtime.connector_store.upsert_config(connector, {
         "mode": "provider_owned_adapter", "adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN,
         "adapter_config": {"source_id": source, "source_type": kind,
-            "platform": adapter.platform, "host": HOST, "raw_root": adapter.raw_root},
+            "platform": adapter.platform, "host": HOST, "raw_root": adapter.raw_root,
+            "dataset": adapter.dataset, "license_scope": adapter.license_scope},
         "max_records": cap,
     })
     return runtime, connector, files
 
 
 @pytest.mark.parametrize("kind", ["macro", "social"])
-def test_governed_features_persist_through_configured_pipeline(tmp_path, monkeypatch, kind):
+@pytest.mark.parametrize("governed_route", [False, True])
+def test_governed_features_persist_through_configured_pipeline(tmp_path, monkeypatch, kind, governed_route):
     """Regression for the retained NDC/PTT type failures, using local bundle fixtures.
 
     The read-only hosted proof records failed receipts, not raw provider payloads.
     Bundle bytes here are the existing local contract fixtures; no hosted data is
     fetched and no local result is claimed as hosted acceptance.
     """
-    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind)
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind, governed_route=governed_route)
     dataset = "tw_macro_series" if kind == "macro" else "tw_community_daily"
     result, refs, _ = runtime.pipeline.run_job(connector=connector, trace_id="trace-features",
         trigger_type="scheduled", fetch_batch=runtime.pipeline.configured_fetch(
@@ -343,6 +346,7 @@ def test_governed_features_persist_through_configured_pipeline(tmp_path, monkeyp
     assert len(features) == (6 if kind == "macro" else 1)
     assert all(r.metadata["dataset"] == "collector_bundle_items" for r in raw)
     assert all(r.metadata["dataset"] == dataset for r in features)
+    assert all(r.metadata["license_scope"] == "collector_restricted" for r in result.records)
     assert {r.metadata["dataset"] for r in result.records} == {
         ref["dataset"] for ref in refs["storage_refs"]["normalized_refs"]}
     receipt = runtime.store.get_receipt(result.run.ingest_run_id)

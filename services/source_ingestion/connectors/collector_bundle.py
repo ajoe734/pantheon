@@ -777,7 +777,8 @@ class CollectorBundleAdapter:
         limit = max(total_cap - len(records), 0)
         selected = self._select_feature_rows(plan, limit)
         if _DEFER_ACK.get():
-            feature_records = feature_rows_to_records(selected, connector_id=self.connector_id, trace_id=trace_id)
+            feature_records = feature_rows_to_records(selected, connector_id=self.connector_id,
+                                                     trace_id=trace_id, license_scope=self.license_scope)
             feature_rejected = plan.rejected
         else:
             feature_records, feature_rejected = self._commit_governed_features(plan, limit=limit, trace_id=trace_id)
@@ -1214,7 +1215,8 @@ class CollectorBundleAdapter:
                 for m in new_markers:
                     handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2],
                                              "persisted": persisted}) + "\n")
-        return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), plan.rejected
+        return feature_rows_to_records(rows, connector_id=self.connector_id,
+                                       trace_id=trace_id, license_scope=self.license_scope), plan.rejected
 
     @staticmethod
     def _select_feature_rows(plan: "_FeaturePlan", limit: int | None) -> tuple:
@@ -1729,6 +1731,7 @@ def feature_rows_to_records(
     *,
     connector_id: str,
     trace_id: str = "",
+    license_scope: str = "collector_public_web",
 ) -> tuple[SourceRecord, ...]:
     """Wrap governed macro/community feature rows so the storage writer can persist them."""
     out: list[SourceRecord] = []
@@ -1762,7 +1765,7 @@ def feature_rows_to_records(
                     "entitlement_tags": ["collector-research"],
                     "direct_execution_allowed": False,
                     "redistribution_allowed": False,
-                    "license_scope": "collector_public_web",
+                    "license_scope": license_scope,
                     "schema_hash": f"{dataset}.v1",
                 },
                 trace_id=trace_id,
