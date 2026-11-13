@@ -390,9 +390,9 @@ def test_all_third_party_actions_are_full_sha_pinned() -> None:
     import yaml
 
     # Action implementation pins are independent of checkout's repository with.ref.
-    actions = [step["uses"] for job in yaml.safe_load(_workflow())["jobs"].values()
-               for step in job.get("steps", []) if "uses" in step
-               and not step["uses"].startswith(("./", "docker://"))]
+    actions = [entry["uses"] for job in yaml.safe_load(_workflow())["jobs"].values()
+               for entry in (job, *job.get("steps", [])) if "uses" in entry
+               and not entry["uses"].startswith("./")]
     assert actions
     assert f"actions/checkout@{CHECKOUT_SHA}" in actions
     assert f"google-github-actions/auth@{AUTH_SHA}" in actions
@@ -1535,7 +1535,7 @@ def _extract_deploy_compensation_condition() -> str:
             SAMPLE_BACKEND_SHA,
             "success",
             "failure",
-            "skipped",
+            "success",
             True,
             "Root paper bootstrap failure must trigger rollback compensation",
         ),
@@ -1596,7 +1596,7 @@ def _extract_deploy_compensation_condition() -> str:
             SAMPLE_BACKEND_SHA,
             "success",
             "failure",
-            "skipped",
+            "success",
             True,
             "Auto paper bootstrap failure must trigger rollback compensation",
         ),
