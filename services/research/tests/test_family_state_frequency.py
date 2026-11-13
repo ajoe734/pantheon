@@ -38,3 +38,46 @@ def test_family_state_isolated_by_frequency(state, seeded, freq, trials, total, 
         seed(key, n)
     out = call(bar_frequency=freq)
     assert (out["trials"], out["family_total_trials"], out["status"]) == (trials, total, status)
+
+
+# --- real-gate admission: deflation counts every frequency (SD_INTRADAY_MINUTE_BARS) ---
+import json as _json  # noqa: E402
+
+from services.research.replication.gate import ReplicationGate  # noqa: E402
+from services.research.replication.gate_config import GateConfig  # noqa: E402
+from services.research.replication.tests import test_gate_intraday as _gi  # noqa: E402
+
+
+def _gate_eval(tmp_path, prior, oos_sharpe):
+    counter = tmp_path / "trials.json"
+    counter.write_text(_json.dumps(prior))
+    ev = _gi.inject_passing_performance(_gi.load(_gi.FIXTURE_NAMES[0]))
+    ev["out_of_sample"]["sharpe_ratio"] = oos_sharpe
+    gate = ReplicationGate(config=GateConfig(), trial_counter_path=counter)
+    gate.backtest_run_store.record(ev)
+    request = _gi.request_for(ev)
+    request.research_handoff["family_id"] = "fam"
+    response = gate.evaluate_candidate(request)
+    result = next(r for r in response.results if r.criterion_id == "real_backtest_validation")
+    return gate, result
+
+
+def test_gate_deflation_uses_aggregate_family_trials_across_frequencies(tmp_path):
+    gate, result = _gate_eval(tmp_path, {"fam": 400}, 0.9)
+    d = result.details
+    assert d["frequency_trial_count"] == 1 and d["family_total_trial_count"] == 401
+    assert d["trial_count"] == 401
+    assert d["deflated_sharpe_threshold"] == pytest.approx(1.365589, abs=1e-5)
+    # marginal candidate (0.9 > per-frequency 0.5 but < aggregate threshold) is rejected
+    assert not result.passed
+    assert "oos_sharpe_exceeds_deflated_threshold" in d["failed_checks"]
+    assert gate.get_family_total_trial_count("fam") == 401
+    assert gate.get_family_trial_count("fam", "1m") == 1  # isolated accounting kept
+    assert gate.get_family_trial_count("fam") == 400  # daily bucket untouched
+
+
+def test_gate_fresh_family_threshold_unchanged_and_strong_candidate_passes(tmp_path):
+    _, result = _gate_eval(tmp_path, {}, 3.0)
+    assert result.details["family_total_trial_count"] == result.details["frequency_trial_count"] == 1
+    assert result.details["deflated_sharpe_threshold"] == pytest.approx(0.5)
+    assert result.passed, result.evidence

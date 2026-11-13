@@ -1605,7 +1605,14 @@ class ReplicationGate:
                         "screen_contribution": screen_contribution,
                     },
                 )
-        deflation = self.config.compute_deflated_sharpe_threshold(trial_count)
+        # Frequency-scoped count stays as isolated accounting; the multiple-testing
+        # penalty counts every frequency/wrapper variant of the family (SD K8).
+        frequency_trial_count = trial_count
+        family_total_trials = max(
+            self._trial_counter_store.family_total(family_id), frequency_trial_count
+        )
+        trial_count = family_total_trials
+        deflation = self.config.compute_deflated_sharpe_threshold(family_total_trials)
         deflated_sharpe_threshold = float(deflation["deflated_sharpe_threshold"])
         sharpe_haircut = float(deflation["sharpe_haircut"])
 
@@ -1670,6 +1677,9 @@ class ReplicationGate:
             },
             "family_id": family_id,
             "trial_count": trial_count,
+            "family_total_trial_count": family_total_trials,
+            "frequency_trial_count": frequency_trial_count,
+            "trial_frequency": trial_frequency,
             "base_sharpe_threshold": float(deflation["base_sharpe_threshold"]),
             "sharpe_haircut": sharpe_haircut,
             "deflated_sharpe_threshold": deflated_sharpe_threshold,
