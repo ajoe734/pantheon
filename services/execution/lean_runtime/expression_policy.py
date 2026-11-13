@@ -581,3 +581,15 @@ def decide_for_policy(kind, view, candidates, book, budget, parameters):
     if kind != POLICY_KIND:
         return budget_unavailable_no_trade(view, "policy_kind", str(kind))
     return decide_validated(view, candidates, book, budget, parameters)
+
+
+def target_inputs_unavailable_no_trade(view, missing, detail, parameters):
+    """A target decision still records its policy when inputs cannot be read."""
+    params = {**_resolved_parameters(parameters)}
+    params.setdefault("rebalance_band_fraction", 0.2)
+    target = view.get("target_notional")
+    return {**budget_unavailable_no_trade(view, missing, detail),
+            "policy_kind": TARGET_POLICY_KIND, "policy_version": POLICY_VERSION,
+            "policy_parameters_digest": policy_parameters_digest(params),
+            "target_notional": target if target is not None and target >= 0 else None,
+            "rebalance_band": None}  # no held mark/budget from which to compute it

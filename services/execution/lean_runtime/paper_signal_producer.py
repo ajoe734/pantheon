@@ -550,9 +550,11 @@ class CurrentArtifactStrategy:
         if unavailable is not None:
             # The limits or the book could not be read: a real NoTrade naming
             # the missing input, never a misleading gross_limit binding.
-            record = expression_policy.budget_unavailable_no_trade(
-                decision_view, unavailable.missing, unavailable.detail
-            )
+            record = (expression_policy.target_inputs_unavailable_no_trade(
+                decision_view, unavailable.missing, unavailable.detail, params)
+                if policy_kind == expression_policy.TARGET_POLICY_KIND else
+                expression_policy.budget_unavailable_no_trade(
+                    decision_view, unavailable.missing, unavailable.detail))
         elif policy_kind == expression_policy.TARGET_POLICY_KIND:
             record = expression_policy.decide_for_policy(
                 policy_kind, decision_view, candidates, book, budget, params)
@@ -602,7 +604,7 @@ class CurrentArtifactStrategy:
     def _target_portfolio(self, artifact, binding, metadata, now_iso):
         """Freeze a bar's book/budget, net every underlying, then size deltas."""
         from services.registry.candidate_pool import MARKET_FEATURE_KEY, canonical_symbol
-        from services.registry.portfolio_envelope import evaluate_portfolio_bar
+        from services.registry.portfolio_envelope import evaluate_portfolio_bar, uses_target_positions
         from services.execution.lean_runtime.expression_policy import allocate_targets
         from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
 
@@ -638,9 +640,10 @@ class CurrentArtifactStrategy:
             results = evaluate_portfolio_bar(
                 artifact, keyed, market=features.get(MARKET_FEATURE_KEY), held_symbols=held)
             views = {symbol: result["view"] for symbol, result in results.items()}
+            target_policy = uses_target_positions(artifact)
             try:
                 allocation = allocate_targets(views, inputs.get("risk_budget", {}),
-                                              artifact["expression_policy"]["parameters"])
+                                              artifact.get("expression_policy", {}).get("parameters", {}))
             except (ValueError, ArithmeticError) as exc:
                 allocation = {"targets": {}, "unavailable_reason": str(exc), "views": views}
             decisions = []
@@ -649,7 +652,7 @@ class CurrentArtifactStrategy:
                              and int(p.get("units") or 0) > 0]
                 target = allocation["targets"].get(symbol, -1)
                 held_notional = sum(float(p.get("notional") or 0) for p in held_legs)
-                closing = (result["view"]["direction"] == "FLAT"
+                closing = target_policy and (result["view"]["direction"] == "FLAT"
                            or any(p["direction"] != result["view"]["direction"] for p in held_legs)
                            or (target >= 0 and held_notional > target))
                 selectors = sorted({p["instrument_id"] for p in held_legs}) if closing and len(held_legs) > 1 else [None]
@@ -657,7 +660,7 @@ class CurrentArtifactStrategy:
                     row_binding = {**binding, "symbol": symbol, "features": features,
                                    "market_input": {**keyed[symbol], "symbol": symbol}}
                     out = self(row_binding, now_iso, _portfolio_symbol=symbol,
-                               _portfolio_result=result, _allocation=allocation,
+                               _portfolio_result=result, _allocation=allocation if target_policy else None,
                                _frozen_inputs=inputs, _reconcile_instrument_id=selector)
                     decisions.append(out)
             return {"portfolio_decisions": decisions}
@@ -805,8 +808,11 @@ class CurrentArtifactStrategy:
                 validate_strategy_artifact(strategy_artifact)
             except (StrategyArtifactValidationError, ValueError, TypeError) as exc:
                 raise SignalDecisionUnavailable("artifact_payload_invalid", str(exc)) from exc
-            from services.registry.portfolio_envelope import uses_target_positions
-            if uses_target_positions(strategy_artifact) and _portfolio_symbol is None:
+            from services.registry.portfolio_envelope import uses_target_positions, is_screened
+            if _portfolio_symbol is None and (
+                uses_target_positions(strategy_artifact)
+                or any(is_screened(m["artifact"]) for m in strategy_logic["members"])
+            ):
                 return self._target_portfolio(strategy_artifact, b_dict, metadata, now_iso)
             symbols = strategy_artifact["parameters"]["symbols"]
             if len(symbols) > 1 and _portfolio_symbol is None:
@@ -1058,11 +1064,12 @@ class CurrentArtifactStrategy:
                 for member in strategy_logic["members"]
                 if member["member_id"] in portfolio_result["member_views"]
             }
+            if _portfolio_result is not None:
+                out["metadata"]["member_candidate_pool_digests"] = portfolio_result["member_candidate_pool_digests"]
+                out["metadata"]["member_candidate_pool_snapshots"] = portfolio_result["member_candidate_pool_snapshots"]
             if _allocation is not None:
                 out["metadata"]["bar_allocation"] = _allocation
                 out["metadata"]["target_expression_required"] = True
-                out["metadata"]["member_candidate_pool_digests"] = portfolio_result["member_candidate_pool_digests"]
-                out["metadata"]["member_candidate_pool_snapshots"] = portfolio_result["member_candidate_pool_snapshots"]
             out["metadata"]["portfolio_net_view"] = dict(portfolio_result["view"])
             out["metadata"]["portfolio_bar_frequency"] = parameters["bar_frequency"]
         if screened:
@@ -1700,8 +1707,10 @@ def _strategy_symbol(
 
     # 2. Raw symbol membership check against approved artifact parameters.symbols
     screened = "screen" in (strategy_artifact.get("strategy_logic") or {})
-    from services.registry.portfolio_envelope import uses_target_positions
-    if not screened and not uses_target_positions(strategy_artifact) and isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+    from services.registry.portfolio_envelope import uses_target_positions, is_portfolio, is_screened
+    screened_portfolio = is_portfolio(strategy_artifact) and any(
+        is_screened(m["artifact"]) for m in strategy_artifact["strategy_logic"]["members"])
+    if not screened and not screened_portfolio and not uses_target_positions(strategy_artifact) and isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
         if symbol not in symbols:
             raise SignalDecisionUnavailable(
                 "market_input_invalid",

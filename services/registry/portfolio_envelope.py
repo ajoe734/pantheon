@@ -25,7 +25,7 @@ def is_screened(artifact):
 def singleton_passthrough(artifact):
     """Trials do not change the one execution member's legacy decision path."""
     members = artifact["strategy_logic"]["members"]
-    active = [m for m in members if not m["virtual_only"]]
+    active = [m for m in members if not m["virtual_only"] and m["risk_weight"] > 0]
     return (len(active) == 1 and active[0]["risk_weight"] == 1
             and not is_screened(active[0]["artifact"])
             and artifact["strategy_logic"]["risk_limits"]["max_net_strength"] == 1)
@@ -147,6 +147,11 @@ def evaluate_portfolio_envelope(artifact, closes, *, features=None,
     weighted = []
     for member in artifact["strategy_logic"]["members"]:
         child = member["artifact"]
+        if member_views is None and is_screened(child) and member["risk_weight"] == 0:
+            # Direct single-underlying interpreters need no zero-weight screen
+            # to reproduce execution. The bar entry point evaluates its full
+            # governed market and records virtual views separately.
+            continue
         if member_views is not None:
             if member["member_id"] not in member_views:
                 continue
@@ -176,7 +181,7 @@ def evaluate_portfolio_envelope(artifact, closes, *, features=None,
             "strength": abs(net), "momentum": net}
     members = artifact["strategy_logic"]["members"]
     if singleton_passthrough(artifact):
-        active = next(m for m in members if not m["virtual_only"])
+        active = next(m for m in members if not m["virtual_only"] and m["risk_weight"] > 0)
         if active["member_id"] in views:
             view = dict(views[active["member_id"]])
     return {"view": view, "member_views": views}
@@ -195,7 +200,7 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
 
     if not members and (not empty_template or not pool_snapshot or not parent_envelope_id):
         raise ValueError("empty portfolio requires a prior envelope and pinned pool snapshot")
-    execution = [m for m in members if not m.get("virtual_only", False)]
+    execution = [m for m in members if not m.get("virtual_only", False) and m["risk_weight"] > 0]
     passthrough = (len(execution) == 1 and execution[0]["risk_weight"] == 1
                    and not is_screened(execution[0]["artifact"]) and max_net_strength == 1)
     source = execution[0]["artifact"] if passthrough else members[0]["artifact"] if members else empty_template
@@ -329,7 +334,14 @@ def evaluate_portfolio_bar(artifact, snapshots, *, market=None, held_symbols=())
                 if symbol not in keyed:
                     raise ValueError("portfolio snapshot missing for " + symbol)
                 row = keyed[symbol]
-                if child["strategy_logic"]["kind"] == "factor_rule_v1":
+                if singleton_passthrough(artifact) and not member["virtual_only"] and member["risk_weight"] == 1:
+                    # A screened virtual trial must not change the active
+                    # singleton's legacy view/exit interpretation.
+                    view = evaluate_strategy_view(child, row["closes"],
+                        features=row.get("features"), decision_time=at, symbol=symbol,
+                        current_direction=row.get("current_direction"),
+                        holding_bars=row.get("holding_bars"))
+                elif child["strategy_logic"]["kind"] == "factor_rule_v1":
                     view = evaluate_factor_rule_view(
                         child, row["closes"], features=row.get("features"), decision_time=at,
                         include_position_state=True)

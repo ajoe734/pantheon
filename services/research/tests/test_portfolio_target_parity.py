@@ -105,3 +105,39 @@ def test_missing_complete_market_and_budget_fail_closed():
     strategy = CurrentArtifactStrategy(expression_layer=True, candidates_builder=cash_candidates)
     outputs = strategy(binding, "2026-09-02T12:00:00Z")["portfolio_decisions"]
     assert all(o["expression"]["evaluate"]()["decision"]["reason_code"] == "candidates_unavailable" for o in outputs)
+
+
+def test_screened_zero_weight_trial_preserves_active_singleton_policy_and_view():
+    from services.registry.test_strategy_artifact import _artifact_with_expression_policy
+    from services.registry.strategy_artifact import evaluate_strategy_view
+    active, trial = _artifact_with_expression_policy(), screen_artifact()
+    active["parameters"].update(symbols=["2330.TW"], market="TW",
+                                data_source=trial["parameters"]["data_source"])
+    active["mutation_surface"]["immutable_parameters"].append("market")
+    artifact = build_portfolio_envelope(artifact_id="trial-screen", strategy_id="trial-screen",
+        version="1.0.0", members=[
+            {"member_id": "trial", "artifact": trial, "risk_weight": 0, "virtual_only": True},
+            {"member_id": "active", "artifact": active, "risk_weight": 1}])
+    assert artifact["expression_policy"] == active["expression_policy"]
+    assert artifact["expression_policy"]["kind"] == "notional_target_v1"
+    binding = paper_binding(artifact, recorded_market(), "2026-09-02")
+    strategy = CurrentArtifactStrategy(expression_layer=True, candidates_builder=cash_candidates,
+        expression_inputs=lambda _: {"persona_book": {}, "risk_budget": {
+            "gross_limit": 100000, "available_cash": 100000, "gross_used": 0}})
+    outputs = strategy(binding, "2026-09-02T12:00:00Z")["portfolio_decisions"]
+    out = next(o for o in outputs if o["symbol"] == "2330.TW")
+    expected = evaluate_strategy_view(active, binding["market_inputs"]["2330.TW"]["closes"])
+    assert out["metadata"]["portfolio_net_view"] == expected
+    assert out["metadata"]["member_candidate_pool_digests"]["trial"]
+    assert all(o["action"] == "HOLD" for o in outputs if o["symbol"] != "2330.TW")
+    out["expression"]["evaluate"]()
+
+
+def test_pool_admission_replays_screened_candidate_and_combined_targets():
+    from services.research.pool_admission import _replay
+    prepared = GovernedVectorbtInputAdapter().prepare(recorded_dataset())
+    dates = list(prepared.dates_by_instrument["2330.TW"])[10:]
+    candidate = _replay(prepared, screen_artifact(), dates)
+    combined = _replay(prepared, target_envelope(), dates)
+    assert len(candidate) == len(combined) == len(dates) - 1
+    assert all(isinstance(value, float) for value in candidate + combined)

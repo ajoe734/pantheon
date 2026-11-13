@@ -32,6 +32,40 @@ def _replay(prepared, artifact, dates):
         if any(replay["bars"][i] is None for i in indexes):
             raise ValueError("backtest_warmup_missing")
         return [replay["returns"][i] for i in indexes[1:]]
+    if "screen" in artifact.get("strategy_logic", {}):
+        from services.research.vectorbt.adapter.vectorbt_adapter import _screened_artifact_view_sequence
+        sequences = _screened_artifact_view_sequence(prepared, artifact)
+        series = []
+        for symbol, views in sequences.items():
+            calendar = list(prepared.dates_by_instrument[symbol])
+            if not set(dates) <= set(calendar):
+                raise ValueError("backtest_dates_missing_or_duplicate")
+            rows = []
+            strength = 0.0
+            for index, view in enumerate(views):
+                direction = view.get("target_direction", view["direction"])
+                if view.get("exit_reason"):
+                    direction = "FLAT"
+                if view["action"] != "HOLD":
+                    strength = 1.0 if view["strength"] is None else view["strength"]
+                if direction == "FLAT":
+                    strength = 0.0
+                if calendar[index] in dates:
+                    rows.append({"exposure": {"LONG": 1, "SHORT": -1, "FLAT": 0}[direction] * strength,
+                                 "price": prepared.ohlcv_by_instrument[symbol][index][3]})
+            costs = _net_interval_costs(symbol, rows)
+            values = []
+            for i, (prior, row) in enumerate(zip(rows, rows[1:]), 1):
+                value = prior["exposure"] * (row["price"] / prior["price"] - 1) - costs[i]
+                if i == 1:
+                    value -= costs[0]
+                if i == len(rows) - 1:
+                    value -= _net_interval_costs(symbol, [rows[-1], {"exposure": 0}])[-1]
+                if not math.isfinite(value) or value <= -1:
+                    raise ValueError("backtest_return_invalid")
+                values.append(value)
+            series.append(values)
+        return [statistics.mean(values) for values in zip(*series)]
     wanted = {normalize_taiwan_symbol(s) for s in artifact["parameters"]["symbols"]}
     instruments = [s for s in prepared.instruments if normalize_taiwan_symbol(s) in wanted]
     if {normalize_taiwan_symbol(s) for s in instruments} != wanted:
