@@ -20,7 +20,7 @@ from .pollers import (
     CbcMacroPoller,
     DbnomicsMacroPoller,
     DoclingLibraryPoller,
-    GdeltDocPoller,
+    GdeltRawFeedPoller,
     GeminiVideoNotesPoller,
     NdcIndicatorsPoller,
     OpenAlexPaperPoller,
@@ -143,8 +143,9 @@ class CollectorRunner:
                 policy, transport=self.transport, contact_user_agent=ua
             )
         if sid == "collector-gdelt":
-            return GdeltDocPoller(
-                policy, transport=self.transport, contact_user_agent=ua
+            return GdeltRawFeedPoller(
+                policy, transport=self.transport, contact_user_agent=ua,
+                cache_dir=self.root_dir / "state" / "gdelt-feed"
             )
         if sid == "collector-macro-dbnomics":
             return DbnomicsMacroPoller(
@@ -321,6 +322,8 @@ class CollectorRunner:
             skipped_count=skipped,
             reason=reason,
         )
+        if isinstance(collector, GdeltRawFeedPoller):
+            collector.acknowledge_bundle()
         return RunOutcome(
             source_id=source_id,
             run_id=run_id,
@@ -351,6 +354,8 @@ def _zero_item_reason(collector: Any) -> str:
     no_data_for_date: only when the collector positively confirmed the source has no data (no_data_confirmed).
     parse_zero: every response was fetched OK but nothing could be parsed into items.
     """
+    if isinstance(collector, GdeltRawFeedPoller):
+        return collector.empty_reason
     for fetcher in _fetchers(collector):
         for entry in getattr(fetcher, "request_log", ()):
             status = entry.get("status")

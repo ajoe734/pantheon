@@ -209,3 +209,16 @@ def test_missing_vocabulary_and_social_steering_fail_closed(tmp_path, monkeypatc
     monkeypatch.setattr(module, "QUERY_VOCABULARY_PATH", tmp_path / "missing.json")
     with pytest.raises(CollectorConfigError, match="missing or invalid fixed query vocabulary"):
         validate_collector_config(_raw_policy(), env={})
+
+
+@pytest.mark.parametrize("override", [
+    {"base_urls": ["https://api.gdeltproject.org/api/v2/doc/doc"]},
+    {"index_url": "https://other.invalid/lastupdate.txt"},
+    {"feed_type": "gkg"}, {"cadence_seconds": 900}, {"max_records_per_call": 250},
+    {"fetcher": "api"}, {"max_requests_per_run": 5}, {"min_interval_seconds": 0},
+])
+def test_gdelt_requires_single_official_hourly_raw_feed(override):
+    data = _raw_policy()
+    data["sources"]["collector-gdelt"].update(override)
+    with pytest.raises(CollectorConfigError, match="official hourly export feed"):
+        validate_collector_config(data, env={})
