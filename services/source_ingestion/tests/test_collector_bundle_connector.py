@@ -1318,3 +1318,108 @@ def test_real_http_body_within_budget_returns_exact_bytes(monkeypatch):
     monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
     with cb.operation_deadline(15.0):
         assert cb.HttpBundleTransport(host=HOST).read("raw/body", max_bytes=100000) == payload
+
+
+# COLLECTOR-CLOSE-CONTINUATION-20261113: held symbols beyond the first bounded prefix ----
+def _held_session(tmp_path, *, n_rows=600, held_pos=(531, 538), tamper=None):
+    """Newest-session bundle shaped like the captured manifest (``twse-price-history-<date>-<code>``)."""
+    source_id = "collector-tw-twse-price-history"
+    files, entries = _day_bundle(source_id, 3, n_rows)
+    base = f"bundles/{source_id}/{entries['date']}/{entries['run_id']}"
+    manifest = json.loads(files[f"{base}/manifest.json"])
+    rows = [json.loads(line) for line in files[f"{base}/items.jsonl"].decode().splitlines()]
+    codes = {pos: code for pos, code in zip(held_pos, ("2317", "2330"))}
+    for i, (m, r) in enumerate(zip(manifest["items"], rows)):
+        code = codes.get(i, f"{1000 + i}")
+        m["item_id"] = r["id"] = f"twse-price-history-{entries['date']}-{code}"
+        r["symbol"] = code
+    manifest["bundle_sha256"] = compute_bundle_sha256([m["content_sha256"] for m in manifest["items"]])
+    files[f"{base}/manifest.json"] = json.dumps(manifest).encode()
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    files["bundles/index.json"] = json.dumps({"bundles": [entries]}).encode()
+    if tamper:
+        sha = next(m["content_sha256"] for m in manifest["items"] if m["item_id"].endswith(tamper))
+        files[f"{base}/raw/{sha}.html"] = b"tampered"
+
+    def make():
+        return CollectorBundleAdapter(
+            connector_id="conn-held", raw_root=str(tmp_path / "store"), transport=FakeTransport(files), host=HOST,
+            source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
+            max_records=55, cadence_seconds=1800,
+        )
+    return make
+
+
+def _symbols(result):
+    return [r.metadata["normalized_row"]["symbol"] for r in result.records]
+
+
+def test_held_symbols_beyond_first_prefix_are_delivered_in_the_first_bounded_pull(tmp_path):
+    make = _held_session(tmp_path)
+    # old behaviour: manifest order, 55 rows, held positions 531/538 wait ~10 pulls
+    plain = make().pull()
+    assert "2330" not in _symbols(plain) and "2317" not in _symbols(plain)
+    first = make().pull(priority_symbols=("2330.TWSE", "2317.TWSE"))
+    assert len(first.records) == 55 and not first.priority_done
+    assert _symbols(first)[:2] == ["2317", "2330"]  # held first, manifest order among them
+    assert first.priority_held == ("2317", "2330")
+    # selected hash/size and priority provenance are intact
+    close = first.records[0].metadata["collector_close"]
+    assert close["provisional"] is True and close["official"] is False
+
+
+def test_held_first_order_continues_across_ticks_without_gaps(tmp_path):
+    make = _held_session(tmp_path)
+    seen, done = [], False
+    for _ in range(20):
+        adapter = make()
+        result = adapter.pull(cursor=adapter.load_resume_cursor(), priority_symbols=("2330", "2317"))
+        seen.extend(r.source_id for r in result.records if r.metadata["trade_date"] == "2024-11-03")
+        adapter.save_resume_cursor(result)
+        if result.priority_done:
+            done = True
+            break
+    # every row arrives; leftover cap handed to the ordered sweep may replay already
+    # delivered rows (pre-existing idempotent replay), never a gap
+    assert done and len(set(seen)) == 600
+
+
+def test_held_set_change_restarts_the_session_order_instead_of_skipping_rows(tmp_path):
+    make = _held_session(tmp_path)
+    adapter = make()
+    first = adapter.pull(priority_symbols=("2330",))
+    adapter.save_resume_cursor(first)
+    adapter = make()
+    second = adapter.pull(cursor=adapter.load_resume_cursor(), priority_symbols=("2330", "2317"))
+    assert second.priority_delivered == 55 and "2317" in _symbols(second)
+
+
+def test_deferred_ack_does_not_persist_held_progress_before_persistence(tmp_path):
+    from services.source_ingestion.connectors.collector_bundle import deferred_collector_acknowledgement
+
+    make = _held_session(tmp_path)
+    adapter = make()
+    with deferred_collector_acknowledgement():
+        result = adapter.pull(priority_symbols=("2330",))
+    assert not adapter._priority_key_path().exists()
+    result.delivery.acknowledge()
+    assert json.loads(adapter._priority_key_path().read_text())["held"] == ["2330"]
+
+
+def test_tampered_held_raw_fails_truthfully_and_acknowledges_nothing(tmp_path):
+    make = _held_session(tmp_path, tamper="-2330")
+    adapter = make()
+    with pytest.raises(SourceEvidenceError):
+        adapter.pull(priority_symbols=("2330",))
+    assert not adapter._priority_key_path().exists()
+
+
+def test_provider_handler_uses_active_paper_symbol_environment(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import _collector_bundle
+
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TWSE,2317.TWSE")
+    result = _collector_bundle(_held_session(tmp_path)(), {"_effective_max_records": 55}, "trace")
+    assert {"2330", "2317"} <= set(_symbols(result))
+    monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS")
+    result = _collector_bundle(_held_session(tmp_path / "b")(), {"_effective_max_records": 55}, "trace")
+    assert "2330" not in _symbols(result)

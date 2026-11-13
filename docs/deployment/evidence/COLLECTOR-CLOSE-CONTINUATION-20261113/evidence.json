@@ -1,0 +1,13 @@
+{
+ "task_id": "COLLECTOR-CLOSE-CONTINUATION-20261113",
+ "diagnosis": "Newest-session priority delivery advanced in manifest order (55 of 1377 per bounded pull), so held symbols at positions 531/538 (2317/2330) waited ~10+ pulls behind unrelated rows.",
+ "change": "Held (active paper) symbol rows are verified and delivered first inside the newest-session bundle; every row still hash/size verified, remaining rows continue in manifest order; persisted priority state records the held set and restarts the session order (idempotent replay) if it changes. Held symbols come from SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS and request priority_symbols, same identities as the Taiwan official adapter. No new store/service.",
+ "validation": {"command": "pytest services/source_ingestion/tests/test_collector_bundle_connector.py test_scheduled_connector.py test_controller_worker.py", "exit": 0, "result": "339 passed, 1 skipped"},
+ "source_sha256": {"connectors/collector_bundle.py": "b59a2bbe8354b5d87c99dee2ce28584dc05c3bc70d84d1895c7f5646779b9988", "provider_adapters.py": "f64a5c4dee9321c628cf92980fd7b7c59543e6ec6b697880c38f3cd0098b147b", "tests/test_collector_bundle_connector.py": "2cbf983af8b4166af92378617e9a986ceb3b06ff554bc433fefc6456b2bd2d9e"},
+ "scope_note": "provider_adapters.py was edited beyond the listed scoped artifacts: the Collector handler is the only place the active paper symbols can reach the adapter; reviewer should confirm.",
+ "remaining_hosted_gaps": [
+  "No hosted/provider verification performed by the author; Ops must deploy and confirm 2330/2317 snapshots reach Nov 13 and SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS is set on the live ingest service.",
+  "tw_close_reconcile cover logic (partial-batch receipt) not changed; out of listed scope.",
+  "Fixtures reproduce captured manifest shape only; not production data."
+ ]
+}
