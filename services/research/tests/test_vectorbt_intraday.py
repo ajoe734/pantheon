@@ -756,7 +756,7 @@ def test_real_declared_short_and_overnight_semantics_remain(monkeypatch, short, 
 def test_real_failed_mandatory_short_liquidation_preserves_account_and_fails(monkeypatch):
     net, _ = _capture_actual_portfolios(monkeypatch)
     ds, art = _actual_fill_case(days=SESSIONS[:1], short=True)
-    art["strategy_logic"]["exit"].update(max_holding_bars=None, flat_when=None)
+    art["strategy_logic"]["exit"]["max_holding_bars"] = None
     for row in ds["records"]:
         if row["bar_start"][11:16] >= "13:25":
             row.update(open=1000000.0, high=1000001.0)  # genuine cash-limited cover at the deadline

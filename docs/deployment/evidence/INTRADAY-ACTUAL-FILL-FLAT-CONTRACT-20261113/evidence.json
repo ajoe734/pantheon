@@ -2,7 +2,7 @@
   "task_id": "INTRADAY-ACTUAL-FILL-FLAT-CONTRACT-20261113",
   "classification": "SYNTHETIC controlled software mechanism validation only; source and isolated local tests",
   "financial_or_hosted_acceptance": false,
-  "status": "implementation anchor; validation pending; independent review pending",
+  "status": "source implementation and local validation ready for assigned independent review; not merged or done",
   "scope": [
     "services/research/vectorbt/adapter/vectorbt_adapter.py",
     "services/research/tests/test_vectorbt_intraday.py",
@@ -906,8 +906,37 @@
     "Reject an unfilled mandatory flatten with IntradayExecutionError(reason=mandatory_flatten_unfilled), preserving instrument, deadline, actual cash and actual residual position. No fabricated fills, no position-output zeroing, no new capital policy."
   ],
   "remaining_acceptance": [
-    "Focused local real-engine validation pending at anchor.",
-    "Assigned independent Claude review, required CI and supervisor integration pending.",
-    "Original full K6 protocol acceptance remains with original K6 after its genuine terminal; no duplicate long run, real-market or hosted proof claimed."
+    "Assigned independent Claude exact-head review, required CI and native supervisor integration.",
+    "Original full K6 protocol acceptance remains with original K6 after its genuine terminal; this bounded witness does not replace it."
+  ],
+  "validation": [
+    {
+      "command": "timeout --foreground --kill-after=5s 240s .venv-pantheon/bin/python3 -B -m pytest -q services/research/tests/test_vectorbt_intraday.py -k \"real_multisession or real_fully_rejected or real_declared_short or real_failed_mandatory\"",
+      "exit_code": 1,
+      "result": "5 passed, 1 failed, 34 deselected in 32.10s; failure was test fixture schema (exit must specify max_holding_bars or flat_when), corrected before full suite; not counted as passed"
+    },
+    {
+      "command": "timeout --foreground --kill-after=5s 300s .venv-pantheon/bin/python3 -B -m pytest -q services/research/tests/test_vectorbt_intraday.py services/research/vectorbt/test_adapter.py",
+      "exit_code": 0,
+      "result": "97 passed, 413 warnings, 5 subtests passed in 131.21s; no skips",
+      "log_sha256": "b536d32a0d5002e61b4ba671394686ed0ca7f90b508d58c88a0fb05af07fbbd2",
+      "warnings": "Upstream Vectorbt/Pandas deprecation warnings; assertions passed."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "after_verified": {
+    "test_real_multisession_partial_and_rejected_entry_closes_without_undeclared_short": "Same two full 270-bar 1m sessions and OPEN/CLOSE=600, init_cash=100000, requested 1000 SHARES, original fee/tax constants. First BUY actually fills 166.4295046225795, later BUY rejects NoCashLong; strategy close at 09:07 requests TargetAmount=0 and sells only actual filled quantity. No negative inventory throughout; both 13:25..13:29 windows are flat. Net return stays negative (-1 < return < 0), independent gross return=0 with different cash-limited fill quantity. Costs verified against each real fill side/quantity/price.",
+    "test_real_fully_rejected_entry_never_turns_close_into_short": "Separate zero-cash boundary fixture: no fills, no short inventory, no fees; rejected entries do not turn later FLAT actions into sells.",
+    "test_real_declared_short_and_overnight_semantics_remain": "Three real-engine controls: explicit short / intraday, long / overnight, short / overnight. Explicit short entry remains amount=-1000 shares; BUY-to-close targets zero without sell tax; declared overnight positions remain open beyond 13:25 and at terminal. Full costs reconcile to real fill quantities.",
+    "test_real_failed_mandatory_short_liquidation_preserves_account_and_fails": "Separate declared-short control at OPEN=1000000 on 13:25 cannot fully cover the actual short. IntradayExecutionError identifies the exact deadline, actual cash=0 and actual residual short from the same portfolio. Negative equity remains visible in actual engine records; no successful artifact is built."
+  },
+  "limitations": [
+    "Correction uses the existing factor_rule_v1 post-decision FLAT intent and actual-position TargetAmount close. It does not redesign the strategy evaluator or change its historical intent/holding calculation.",
+    "The five original K6 windows are preserved, not rerun. Their exact first causal order remains unknown because those retained results have no per-order trace.",
+    "No claim about full original single/dual K6 acceptance, licensed market data, owner/provider admission, positive performance, deployment or hosted acceptance.",
+    "No Registry or portfolio-envelope contract was modified; the controlled causal proof and close mapping cover the observed single factor-rule artifact. Any separate envelope ambiguity needs its own native trace/contract evidence, not inferred execution semantics."
   ]
 }
