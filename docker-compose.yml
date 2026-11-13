@@ -137,6 +137,15 @@ services:
       CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-pantheon-local-consultation-handoff-token}
       CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: ${CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE:-/data/health/workflow-health.json}
       CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS:-15}
+      # Consult-policy persona panels: outcome memory writeback (memory) and
+      # the harness-patch decision owner (evolution). Governance is the
+      # handoff sink above. A panel blocks, never silently skips, if absent.
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      # No depends_on for evolution: it transitively depends on this service
+      # (via runtime-manager). A harness-patch panel probes it and blocks.
+      PANTHEON_EVOLUTION_API_URL: http://evolution:8093
     volumes:
       - consultation-data:/data/consultation
       - worker-health-data:/data/health
@@ -149,6 +158,8 @@ services:
         condition: service_healthy
         required: false
       governance:
+        condition: service_healthy
+      memory:
         condition: service_healthy
     healthcheck:
       test:
@@ -937,6 +948,12 @@ services:
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
       CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
       CONSULTATION_PROVIDER_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
+      # Committee-visible memory reader (tenant-filtered in the provider).
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-consultation-provider}
+      PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-operator}
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
