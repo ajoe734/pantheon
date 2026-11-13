@@ -3,18 +3,50 @@
   "owner": "Codex",
   "reviewer": "Claude",
   "recorded_at": "2026-11-13",
-  "source_status": "implemented_engineering_proposal_provenance_rework",
+  "source_status": "implemented_direction_authorized_pending_exact_head_review",
   "review_decision": "historical_technical_approval_preserved_new_head_not_approved",
   "integration_base": "bc8807e042d3e85f611ffe8a5564db2d60158353",
   "authorization": {
-    "operator": "Explicit 2026-11-13 policy approval is unverified; the prior task-brief-based attribution is withdrawn",
-    "classification": "Engineering proposal interpreting the original dynamic-picks and combined-net-view goals; a substantive expression-policy amendment, not an operator-approved amendment",
-    "direct_decision_reference": null,
+    "operator": "Direct operator approval of the fix direction independently verified on 2026-11-13; user replies 好 to the proposed four changes and ordering before a second strategy trades",
+    "classification": "Operator-approved dynamic picks, allocation before expression, target-versus-held reconciliation and member-owned exits; policy name, exact formula and numeric band are engineering choices for independent review",
+    "direct_decision_reference": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/cb4f6795-9064-4bb2-ab77-c0740122bce1.jsonl",
+      "session_id": "cb4f6795-9064-4bb2-ab77-c0740122bce1",
+      "proposal": {
+        "line": 467,
+        "uuid": "fc20ae16-1999-48e5-8cf7-565bc8d12b8c",
+        "parent_uuid": "16d57245-42da-402c-aedd-600168f31af8",
+        "timestamp": "2026-11-13T06:52:40.828Z",
+        "role": "assistant",
+        "record_sha256": "2578b4202c385e44d0d0637f987844f8f290d41c0881e8d825b05b926ee987c5"
+      },
+      "operator_reply": {
+        "line": 475,
+        "uuid": "cd23b4d9-24d7-4799-842b-b9fc9170245b",
+        "parent_uuid": "fc20ae16-1999-48e5-8cf7-565bc8d12b8c",
+        "timestamp": "2026-11-13T06:54:55.847Z",
+        "role": "user",
+        "record_sha256": "43b9066ac6bac0a87fc36a42206dc287ffc7e11a0ff70ed39ab17372ec0542ce",
+        "text": "好"
+      },
+      "approved_direction": [
+        "Daily candidate pools are not pinned into a version",
+        "Allocate across underlyings by strength and weight before instrument expression",
+        "Compare target positions with actual holdings and add/reduce/close the difference",
+        "Each member exits from its own virtual-book position state",
+        "Deliver these fixes before a second strategy trades"
+      ],
+      "not_operator_decisions": [
+        "target_position_v1 policy name",
+        "Exact common-scale allocation formula",
+        "0.2 rebalance band fraction and max(one unit, fraction times target) formula"
+      ]
+    },
     "rebalance_band_fraction": 0.2,
     "numeric_authority": "Coordinator starting proposal already implemented as a source default, not an operator numerical decision"
   },
   "scope_and_provenance": {
-    "rework_basis": "Canonical Human/Ops reopen of 2026-11-13T08:18:20Z for truthful scope and authority attribution; preserve PR7303 source and technical evidence, do not infer new strategy-policy consent from continued work",
+    "rework_basis": "Canonical Human/Ops reopen at 2026-11-13T08:48:32Z supplies the pre-existing direct operator decision and resumes PR7303; verified the specified primary records rather than inferring consent from task creation or technical approval",
     "original_obligations": [
       "SD pool autonomy section 4.2 P-1: combine strategy views into one net view per underlying and maintain separate member virtual books",
       "SD pool autonomy section 4.3 P-5: strategies select daily candidate underlyings from the governed persona universe"
@@ -30,7 +62,7 @@
       "services/registry/portfolio_envelope.py: envelope expression_policy parameters",
       "services/execution/lean_runtime/expression_policy.py: target policy and replay parameter defaults"
     ],
-    "unsupported_attribution_chain": "Task creation/brief -> this evidence -> amended design; none independently establishes a direct operator decision",
+    "unsupported_attribution_chain": "Earlier task-brief -> evidence -> amended design attribution was insufficient; replaced by direct proposal/reply records with matching parent UUID and record hashes",
     "bounded_lookup": {
       "result": "No independently verified matching direct policy decision in the inspected source windows",
       "limit": "Not exhaustive across other contexts, times or structured replies; does not prove approval absent or fabricated",
@@ -43,12 +75,13 @@
           "path": "/tmp/pantheon-goal-resume-20261111/goal-target7303-approval-recursion-and-bounded-primary-lookup-20261113.json",
           "sha256": "348978a8a02a9537b4214b2c921910074943c9b3239f56a423e77d934c52e17f"
         }
-      ]
+      ],
+      "status": "Historical incomplete lookup; resolved by the primary decision reference now recorded in authorization"
     },
-    "canonical_metadata_correction_needed": "The canonical summary still asserts operator agreement on 11/13 and AC12 still requires citing that approval. The latest reopen instruction overrides those unsupported attributions. Original coordinator must reconcile those fields through existing governed task maintenance; no hand-edited task JSON or new task is proposed",
-    "integration_and_activation": "Unresolved substantive design amendment; retain as reviewable engineering proposal. No integration, deployment or activation is claimed or authorized by this evidence",
-    "next_actor_action": "Original coordinator identifies the pre-existing direct decision reference if available, or reconciles the same task's summary/AC12 and amendment disposition with the engineering-proposal attribution. Do not ask the operator to approve again or substitute technical review, green CI, task creation or automatic tool approval for user consent",
-    "this_rework": "Documentation and evidence only; existing source, tests, historical commits and real paper/live boundaries preserved"
+    "canonical_metadata_correction_needed": "The older summary describes an unresolved provenance question; the current canonical reopen instruction supplies the primary decision and authorizes resumption. AC12 is fulfilled by the verified direction citation, without attributing engineering parameters to the operator",
+    "integration_and_activation": "Direction authorized for source delivery through the existing independent-review and supervisor-integration flow; no deployment, broker operation, activation or new-head approval is claimed",
+    "next_actor_action": "Owner publishes the refreshed current-base head and hands the committed evidence to assigned reviewer Claude; supervisor integrator alone merges after exact-head review and required checks",
+    "this_rework": "Two design documents and evidence only; source and tests preserved. Current dev is integrated separately and the composed result is validated before handoff"
   },
   "historical_technical_review": {
     "reviewer": "Claude",
@@ -160,8 +193,8 @@
     },
     {
       "id": 12,
-      "status": "proposal_documented_operator_attribution_unverified",
-      "evidence": "DEV_PLAN section 4.4 and SD pool autonomy sections 4.2/4.3 now distinguish the original dynamic-picks/netting obligations from the substantive proposed expression-policy amendment. Unsupported explicit operator-approval wording is withdrawn. AC12's demand for that citation remains unresolved in canonical metadata; no approval reference is invented."
+      "status": "documented_with_verified_direct_operator_direction",
+      "evidence": "DEV_PLAN section 4.4 and SD pool autonomy sections 4.2/4.3 cite the independently checked 2026-11-13 proposal and direct human reply approving daily picks, pre-expression allocation, target reconciliation and member-owned exits. The policy name, precise formula and 0.2 starting band remain engineering choices; no numerical operator decision or deployment is asserted."
     }
   ],
   "recorded_market": {
@@ -227,8 +260,13 @@
     "branch": "task/PERSONA-POOL-TARGET-POSITIONS-20261113",
     "target": "dev",
     "review_file": "docs/deployment/evidence/PERSONA-POOL-TARGET-POSITIONS-20261113/evidence.json",
-    "state": "provenance_rework_preserved_pending_coordinator_disposition",
+    "state": "provenance_resolved_preparing_exact_head_review",
     "pr": 7303,
-    "integration": "not_merged_no_new_head_review_or_policy_acceptance_claimed"
+    "integration": "not_merged_current_head_requires_independent_review"
+  },
+  "primary_decision_validation": {
+    "method": "Read only the two identified primary JSONL records; confirm assistant proposal, human reply 好, timestamps and parent UUID linkage; compute SHA-256 of each original JSONL line including newline",
+    "exit_status": 0,
+    "result": "Verified the approved direction without expanding it into numerical authority; prior bounded lookup did not cover this decision"
   }
 }
