@@ -1,0 +1,78 @@
+{
+  "task_id": "COLLECTOR-OUTCOME-TRUTH-20261113",
+  "owner": "Codex2",
+  "assigned_independent_reviewer": "Claude",
+  "scope": "Source code and local fixtures only; independent exact-head review is required before native integration and closeout",
+  "base_commit": "04947d53bcf3014389b530803c1551fa841d55e9",
+  "reproduction": {
+    "inputs": [
+      "/tmp/pantheon-root01a15322-resume-20261111/COLLECTOR-OUTCOME-TRUTH-20261113-sanitized-source-facts.json",
+      "/tmp/pantheon-root01a15322-resume-20261111/actual-Root433321-candidate-Source-20261113T001445.json"
+    ],
+    "candidate_backend": "164fa75160f31e209d10a580f621be1ea83b7075",
+    "unchanged_candidate_blobs_at_task_base": {
+      "services/source_ingestion/provider_adapters.py": "99e2df9ff0f3ebeb7c002de80b4030e45d2bdada",
+      "services/source_ingestion/configured.py": "20f6f0f2bfa261aff0020a75120061009db0f859",
+      "services/source_ingestion/connectors/collector_bundle.py": "dfedb564aaa1f0c0a3f2d19bf189ca37d5c73306"
+    },
+    "actual_observation": "Original Root43332115634, scheduler227073e8250d tick2 failed on collector-youtube-finance zero rows without an explicit no-new-data marker. Subsequent controller timeouts have no proven request-specific cause. Source readback returned HTTP 200 in 1.460s, with 22 connectors and 1579 records. Original backend and Agora restart gate passed; original FE43335791094 proceeds independently. These recorded facts do not establish an overall deployment or W1 verdict.",
+    "before_source_changes": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py",
+      "exit_code": 1,
+      "result": "3 failed in 1.18s on the unchanged base sources",
+      "cases": [
+        "Verified nonempty ingest returned 2 records but lost the Collector cursor instead of persisting the scheduler watermark.",
+        "Paused empty pull failed only in the scheduler, after configured fetch state had already recorded success; paused reasons and observed health were discarded.",
+        "An explicit consumed cursor produced zero rows but lost its outcome before the strict scheduler guard. The recorded DLQ reason was scheduled ingest returned zero rows without explicit no-new-data marker."
+      ],
+      "fixture_correction": "An earlier fixture attempted a raw_root field that is intentionally not exposed by the allowlisted adapter config. Tests use their temporary SOURCE_INGEST_DATA_DIR instead; that exploratory read-only-filesystem failure was not counted as a regression reproduction or a pass."
+    }
+  },
+  "implementation": {
+    "provider": "The registered Collector handler retains CollectorPullResult. The existing provider executor attaches run metadata while allowing the configured fetcher to retain the typed Collector result; default public callers still receive the same capped tuple. Other providers keep their tuple behavior.",
+    "configured_fetcher": "Passes the acknowledged scheduler watermark into the existing Collector request unless an explicit watermark is configured; propagates next_cursor, verified empty outcome and observed fields into IngestBatch. Persists the Collector outcome in the existing configured fetch-state JSONL, including degraded empty/pause reasons. Transport and verification failure replace a previous healthy outcome with degraded/unverified truth and preserve the real last_error. Static allow_empty cannot override Collector evidence.",
+    "no_new_data_proof": "Zero returned records, no pending bundle or partial cursor, complete sweep, no feature rejection, healthy recognized host status with last_run_at exactly matching the latest consumed complete bundle, reverified manifest/hash declarations and item coverage over the existing guarded transport, and an identical locally stored verified manifest plus every previously verified raw file. A bare supplied cursor or initial missing bundles cannot establish success. No raw network reads are added to the consumed-boundary check.",
+    "cursor_fencing": "Ordered verification stops at paused or partial bundles. A paused bundle never advances the cursor; partial bundle consumption retains an item-offset cursor and prevents later bundles from being skipped. Existing cap, durable adapter resume and idempotent tuple replay remain in place.",
+    "contradictions": "Manifest/index status and finished_at must agree; malformed source entries and unknown, unavailable, paused or failed source status cannot qualify a healthy empty result.",
+    "existing_owner_paths": "No artifact-contract extension was needed. Changes stay in the three declared source files, two declared test files and this manifest. Existing runtime readback already exposes configured fetch_state; existing scheduler, pipeline, source health, receipt and persistence implementations remain unchanged."
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --print-python",
+      "exit_code": 0,
+      "result": "Checkout-scoped .venv-pantheon provisioning and foreign-cwd import verification passed; pytest is available."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_ingest_run.py services/source_ingestion/tests/test_bounded_ingestion.py services/source_ingestion/tests/test_provider_management_coverage.py",
+      "exit_code": 0,
+      "result": "171 passed, 1 Starlette/httpx deprecation warning in 98.67s; terminal output collected."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_bundle_connector.py",
+      "exit_code": 0,
+      "result": "75 passed in 16.10s after the final dataclass positional-compatibility and provider docstring adjustments; terminal output collected."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Passed."
+    }
+  ],
+  "acceptance_evidence": [
+    "Real provider -> configured fetcher -> scheduler fixtures verify record counts 2 then 0, unchanged consumed watermark, persisted healthy no_new_data and zero fabricated SourceRecord objects.",
+    "Cap=1 across fresh schedulers/configured stores returns counts 1,1,0 with item-offset then complete watermark, distinct source ids and unchanged business event time.",
+    "Paused/unavailable/failed/failing/unknown statuses, missing bundle/status/source/last_run, stale or mismatched run time, unknown or partial cursor, absent local raw evidence and changed consumed manifest all fail with zero records and no watermark advancement.",
+    "Invalid new-bundle raw hash, invalid consumed bundle digest, malformed source/status, manifest/index contradictions and real HttpBundleTransport missing-token/401 fixtures fail without reusing a prior healthy empty outcome. No actual external request is made.",
+    "Paused/partial barriers before later material retain the previous safe cursor and do not deliver the later bundle.",
+    "Actual local API/pipeline test proves first ingest=2 then verified empty=0, source-record count/content unchanged, empty receipt has no new source timestamp, freshness stays stale, and subsequent paused failure preserves records/watermark while persisting failed SourceHealth with login_required.",
+    "Existing steady-controller fixture now supplies an explicit healthy matching status and bounded fixture health clock instead of relying on old-record replay. Due-again tick returns zero new records while existing terminal readback, tenant, PIT and incomplete-bundle negatives stay enabled.",
+    "Existing Collector raw/derived cap, priority, partial resume, hash, entitlement and PIT tests and non-Collector configured/scheduler coverage pass."
+  ],
+  "limitations_and_handoff": [
+    "A missing or changed local verified raw boundary fails closed rather than treating a cursor as proof; recovery belongs to existing owner operations.",
+    "Observed Collector health is retained in configured fetch-state and batch metadata. Existing SourceHealth persistence receives genuine scheduler success/failure; no new controller or product DTO protocol is introduced.",
+    "The actual YouTube empty cause remains unknown. No worker VM, SSH, Collector host, provider, model, secrets, business/data service, real egress or deployment operation was performed.",
+    "Source review/merge/done cannot prove actual W1 three governed days, healthy hosted YouTube delivery, accepted hosted FE/BFF, financial marks or new fills. Original publisher and hosted Ops retain activation and failed-frontier/DLQ recovery through their existing operations.",
+    "Assigned Claude must review the exact committed PR head and frozen manifest. Only the native canonical integrator may merge after approval and all required checks; only the owner may then finalize done. This manifest is prepared evidence, not independent review approval."
+  ]
+}

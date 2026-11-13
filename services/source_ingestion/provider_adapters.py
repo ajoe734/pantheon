@@ -108,6 +108,7 @@ def execute_provider_owned_adapter(
     job_parameters: Mapping[str, Any] | None = None,
     preserve_collector_outcome: bool = False,
 ) -> tuple[SourceRecord, ...] | CollectorPullResult:
+    """Keep tuple callers compatible; configured ingestion can retain Collector truth."""
     token = validate_provider_adapter_token(str(fetch.get("adapter") or fetch.get("provider_owned_fetcher") or ""))
     spec = ALLOWED_PROVIDER_ADAPTERS[token]
     adapter_config = _mapping(fetch.get("adapter_config"))

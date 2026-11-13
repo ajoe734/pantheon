@@ -171,10 +171,10 @@ class CollectorPullResult:
     observed: Mapping[str, Any] = field(default_factory=dict)
     feature_rejected: tuple[Mapping[str, str], ...] = ()
     complete: bool = True  # False: the output cap left raw items / derived rows for a later pull
-    no_new_data: bool = False  # verified complete boundary agrees with the consumed cursor and host status
     priority_key: str | None = None  # newest-trading-day bundle delivered ahead of the cursor sweep
     priority_delivered: int = 0  # items of that bundle delivered so far (it may exceed one pull's cap)
     priority_done: bool = False
+    no_new_data: bool = False  # verified complete boundary agrees with the consumed cursor and host status
 
 
 PRIORITY_LATEST_DATASETS = frozenset({"tw_price_daily"})
@@ -263,6 +263,8 @@ def verify_bundle(
     status = str(manifest.get("status") or "")
     if status not in BUNDLE_STATUSES:
         raise SourceEvidenceError(f"collector bundle status must be one of {sorted(BUNDLE_STATUSES)}: {status!r}")
+    if "status" in entry and entry["status"] != status:
+        raise SourceEvidenceError("collector bundle status does not match its index entry")
     finished_at = _utc(manifest.get("finished_at"), "finished_at")
     if finished_at != _utc(entry.get("finished_at"), "index finished_at"):
         raise SourceEvidenceError("collector bundle finished_at does not match its index entry")
@@ -611,8 +613,8 @@ class CollectorBundleAdapter:
             ),
         )
         key = _cursor_key(_utc(newest.get("finished_at"), "index finished_at"), str(newest.get("run_id") or ""))
-        base_cursor, partial_skip = _split_cursor(cursor)
-        if base_cursor is not None and (key < base_cursor or (key == base_cursor and not partial_skip)):
+        base_cursor, _ = _split_cursor(cursor)
+        if base_cursor is not None and (key < base_cursor or (key == base_cursor and _PARTIAL_CURSOR_MARK not in str(cursor))):
             return None  # the sweep already consumed it
         state_key, delivered, done = self._load_priority_state()
         if state_key is not None:
@@ -647,6 +649,7 @@ class CollectorBundleAdapter:
             raise SourceEvidenceError("collector bundle index.json must contain a bundles list")
 
         base_cursor, partial_skip = _split_cursor(cursor)
+        partial_cursor = _PARTIAL_CURSOR_MARK in str(cursor)
         pending: list[tuple[datetime, str, Mapping[str, Any]]] = []
         source_entries: list[tuple[str, Mapping[str, Any]]] = []
         for entry in entries:
@@ -655,7 +658,7 @@ class CollectorBundleAdapter:
             finished = _utc(entry.get("finished_at"), "index finished_at")
             key = _cursor_key(finished, str(entry.get("run_id") or ""))
             source_entries.append((key, entry))
-            if base_cursor is None or key > base_cursor or (partial_skip and key == base_cursor):
+            if base_cursor is None or key > base_cursor or (partial_cursor and key == base_cursor):
                 pending.append((finished, key, entry))
         pending.sort(key=lambda t: t[1])
 
@@ -728,7 +731,7 @@ class CollectorBundleAdapter:
         pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
         complete = not unverified_pending and (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
         no_new_data = False
-        if not records and not feature_records and not verified and source_entries and cursor and not partial_skip:
+        if not records and not feature_records and not verified and source_entries and cursor and not partial_cursor:
             # Revalidate the exact consumed boundary over the guarded transport. No raw
             # rows are fetched here: the acknowledged cursor represents their previous
             # consumption; manifest hashes and item coverage are verified again.
@@ -736,12 +739,18 @@ class CollectorBundleAdapter:
             if cursor == latest_key:
                 boundary = verify_bundle(transport, expected_source_id=self.source_id,
                                          entry=latest_entry, item_window=(0, 0))
+                if boundary.status == "paused":
+                    paused.append(f"{boundary.run_id}:{boundary.manifest.get('paused_reason') or 'paused'}")
                 no_new_data = (
                     boundary.status == "complete" and boundary.cursor == cursor and complete
                     and observed["health_state"] == "healthy"
                     and observed["freshness"]["collector_last_run_at"] == _iso(boundary.finished_at)
                     and not feature_rejected
+                    and self._has_verified_boundary(boundary)
                 )
+        if paused:
+            observed = {**observed, "health_state": "degraded",
+                        "reasons": (*observed["reasons"], *(f"collector_bundle_paused:{r}" for r in paused))}
         return CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
@@ -1152,6 +1161,26 @@ class CollectorBundleAdapter:
         return self.pull(cursor=cursor, trace_id=trace_id)
 
     # -- raw storage -----------------------------------------------------------
+    def _raw_bundle_path(self, bundle: VerifiedBundle) -> Path:
+        return (self._raw_root() / "raw" / _slug(self.connector_id) / _slug(self.dataset)
+                / f"date={bundle.date}" / f"bundle-{bundle.run_id}")
+
+    def _has_verified_boundary(self, bundle: VerifiedBundle) -> bool:
+        """A supplied cursor alone cannot prove that this exact bundle was consumed.
+
+        Reuse the raw evidence written only after verification. The manifest must
+        still match, and all of its window-verified raw files must be present.
+        This reads no raw files over the network and stays within the pull cap.
+        """
+        root = self._raw_bundle_path(bundle)
+        try:
+            if json.loads((root / "manifest.json").read_text(encoding="utf-8")) != bundle.manifest:
+                return False
+            return all((root / PurePosixPath(_safe_raw_path(str(item["raw_path"]))).name).is_file()
+                       for item in bundle.manifest_items.values())
+        except (OSError, ValueError):
+            return False
+
     def _raw_root(self) -> Path:
         if self.raw_root:
             return Path(self.raw_root)
@@ -1163,9 +1192,8 @@ class CollectorBundleAdapter:
         return Path(os.environ.get("SOURCE_INGEST_DATA_DIR", "/data/source-ingest")) / "market_data_store"
 
     def _write_raw(self, plan: Sequence[tuple[VerifiedBundle, Mapping[str, Any]]], records: Sequence[SourceRecord]) -> None:
-        root = self._raw_root()
         for bundle, _ in plan:
-            target = root / "raw" / _slug(self.connector_id) / _slug(self.dataset) / f"date={bundle.date}" / f"bundle-{bundle.run_id}"
+            target = self._raw_bundle_path(bundle)
             target.mkdir(parents=True, exist_ok=True)
             # Raw files are written per verified item (windowed pulls verify a bundle in
             # slices), each atomically; the manifest lands once the first slice does.

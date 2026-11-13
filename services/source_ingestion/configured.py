@@ -516,6 +516,10 @@ class ConfiguredConnectorFetcher:
                     }
                     if not records and not result.no_new_data:
                         reasons = [*result.paused_reasons, *result.observed.get("reasons", ())]
+                        collector_outcome["observed"] = {
+                            **result.observed, "health_state": "degraded",
+                            "reasons": [*result.observed.get("reasons", ()), "collector_empty_unproven"],
+                        }
                         raise SourceEvidenceError("collector empty outcome is not verified no-new-data: "
                                                   + "; ".join(reasons or ["no complete consumed bundle evidence"]))
                 else:
@@ -534,16 +538,29 @@ class ConfiguredConnectorFetcher:
                     for payload in record_payloads
                 )
         except Exception as exc:
+            if (config.fetch.get("mode") == "provider_owned_adapter"
+                    and config.fetch.get("adapter") == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+                    and collector_outcome is None):
+                # Verification/transport failures must not leave a prior healthy empty
+                # outcome looking current in the persisted fetch-state readback.
+                collector_outcome = {
+                    "observed": {"health_state": "degraded", "reasons": ["collector_pull_failed"]},
+                    "complete": False, "no_new_data": False,
+                }
             self.store.record_fetch_attempt(connector_id, success=False, error=str(exc),
                                            collector_outcome=collector_outcome)
             raise
         self.store.record_fetch_attempt(connector_id, success=True, collector_outcome=collector_outcome)
+        empty_ok = bool(config.fetch.get("allow_empty", False))
+        empty_reason = str(config.fetch.get("empty_reason") or "") or None
+        if collector_result is not None:
+            empty_ok = collector_result.no_new_data
+            empty_reason = "verified collector consumed cursor; no new data" if empty_ok else None
         return IngestBatch(
             records=records,
             next_watermark=next_watermark,
-            empty_ok=collector_result.no_new_data if collector_result else bool(config.fetch.get("allow_empty", False)),
-            empty_reason=("verified collector consumed cursor; no new data" if collector_result and collector_result.no_new_data
-                          else None if collector_result else str(config.fetch.get("empty_reason") or "") or None),
+            empty_ok=empty_ok,
+            empty_reason=empty_reason,
             metadata={
                 "fetch_mode": config.fetch.get("mode"),
                 "job_parameters": dict(job_parameters or {}),
