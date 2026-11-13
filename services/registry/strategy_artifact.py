@@ -496,7 +496,7 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
             raise StrategyArtifactValidationError(
                 f"expression_policy.version must be {EXPRESSION_POLICY_VERSION!r}"
             )
-        if expression_policy.get("kind") != EXPRESSION_POLICY_KIND:
+        if expression_policy.get("kind") not in {EXPRESSION_POLICY_KIND, "target_position_v1"}:
             raise StrategyArtifactValidationError(
                 f"expression_policy.kind must be {EXPRESSION_POLICY_KIND!r}"
             )
@@ -512,7 +512,17 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
                     f"expression_policy.parameters key {expr_key!r} is forbidden: "
                     "fixed mapping keys matching 'prefer_.*_when_.*' are not allowed"
                 )
-        unknown_expr_keys = set(expression_params) - _EXPRESSION_POLICY_REQUIRED_PARAM_KEYS
+        allowed_expr_keys = set(_EXPRESSION_POLICY_REQUIRED_PARAM_KEYS)
+        if expression_policy.get("kind") == "target_position_v1":
+            if artifact["strategy_logic"]["kind"] != "persona_portfolio_v1":
+                raise StrategyArtifactValidationError("target_position_v1 requires a portfolio envelope")
+            allowed_expr_keys.add("rebalance_band_fraction")
+            band = expression_params.get("rebalance_band_fraction")
+            if not _is_finite_number(band) or not 0 <= band <= 1:
+                raise StrategyArtifactValidationError("rebalance_band_fraction must be within [0, 1]")
+            if expression_params.get("close_before_reverse") is not True:
+                raise StrategyArtifactValidationError("target positions must close before reversing")
+        unknown_expr_keys = set(expression_params) - allowed_expr_keys
         if unknown_expr_keys:
             raise StrategyArtifactValidationError(
                 "expression_policy.parameters has unknown keys: "

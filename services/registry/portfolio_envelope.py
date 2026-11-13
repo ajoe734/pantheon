@@ -18,6 +18,23 @@ def is_portfolio(artifact: Mapping[str, Any]) -> bool:
     return isinstance(logic, Mapping) and logic.get("kind") == KIND
 
 
+def is_screened(artifact):
+    return "screen" in artifact.get("strategy_logic", {})
+
+
+def singleton_passthrough(artifact):
+    """Trials do not change the one execution member's legacy decision path."""
+    members = artifact["strategy_logic"]["members"]
+    active = [m for m in members if not m["virtual_only"]]
+    return (len(active) == 1 and active[0]["risk_weight"] == 1
+            and not is_screened(active[0]["artifact"])
+            and artifact["strategy_logic"]["risk_limits"]["max_net_strength"] == 1)
+
+
+def uses_target_positions(artifact):
+    return artifact.get("expression_policy", {}).get("kind") == "target_position_v1"
+
+
 def _symbol_key(symbol: str) -> str:
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
@@ -44,7 +61,7 @@ def validate_portfolio_envelope(artifact: Mapping[str, Any]) -> None:
     if set(artifact["mutation_surface"]["immutable_parameters"]) != set(params):
         raise Error("all envelope parameters must be immutable")
     symbols = params.get("symbols")
-    if not isinstance(symbols, list) or not symbols:
+    if not isinstance(symbols, list) or (not symbols and not any(is_screened(m["artifact"]) for m in members)):
         raise Error("portfolio envelope requires symbols")
     if len({_symbol_key(s) for s in symbols}) != len(symbols):
         raise Error("portfolio envelope contains duplicate underlying aliases")
@@ -72,8 +89,8 @@ def validate_portfolio_envelope(artifact: Mapping[str, Any]) -> None:
                 raise Error(f"portfolio members must share {field}")
         if not isinstance(child_params.get("symbols"), list):
             raise Error("portfolio member requires a symbol list")
-        child_symbols = {_symbol_key(s) for s in child_params["symbols"]}
-        if not child_symbols or not child_symbols <= {_symbol_key(s) for s in symbols}:
+        child_symbols = set() if is_screened(child) else {_symbol_key(s) for s in child_params["symbols"]}
+        if (not child_symbols and not is_screened(child)) or not child_symbols <= {_symbol_key(s) for s in symbols}:
             raise Error("member symbols must be inside the envelope universe")
         covered.update(child_symbols)
         weight = member["risk_weight"]
@@ -102,7 +119,8 @@ def required_portfolio_history(artifact: Mapping[str, Any]) -> int:
 
 
 def evaluate_portfolio_envelope(artifact, closes, *, features=None,
-                                decision_time=None, symbol=None, holding_bars=None, current_direction=None):
+                                decision_time=None, symbol=None, holding_bars=None, current_direction=None,
+                                member_views=None):
     """Evaluate each member with its single-strategy interpreter, then net views.
 
     Legacy views without a strength represent a unit directional view. A full
@@ -123,22 +141,29 @@ def evaluate_portfolio_envelope(artifact, closes, *, features=None,
         if len(symbols) != 1:
             raise Error("multi-underlying portfolio evaluation requires symbol")
         symbol = symbols[0]
-    if _symbol_key(symbol) not in {_symbol_key(s) for s in symbols}:
+    if member_views is None and _symbol_key(symbol) not in {_symbol_key(s) for s in symbols}:
         raise Error("portfolio symbol outside envelope universe")
     views = {}
     weighted = []
     for member in artifact["strategy_logic"]["members"]:
         child = member["artifact"]
-        if _symbol_key(symbol) not in {_symbol_key(s) for s in child["parameters"]["symbols"]}:
+        if member_views is not None:
+            if member["member_id"] not in member_views:
+                continue
+            view = dict(member_views[member["member_id"]])
+        elif _symbol_key(symbol) not in {_symbol_key(s) for s in child["parameters"]["symbols"]}:
             continue
-        assert_governed_feature_inputs(child["strategy_logic"])
-        assert_governed_feature_observations(child["strategy_logic"], features, decision_time)
-        singleton = len(artifact["strategy_logic"]["members"]) == 1 and member["risk_weight"] == 1
-        view = evaluate_strategy_view(
-            child, closes, features=features, decision_time=decision_time,
-            holding_bars=holding_bars if singleton else None,
-            current_direction=current_direction if singleton else None,
-        )
+        else:
+            view = None
+        if view is None:
+            assert_governed_feature_inputs(child["strategy_logic"])
+            assert_governed_feature_observations(child["strategy_logic"], features, decision_time)
+            singleton = singleton_passthrough(artifact) and not member["virtual_only"]
+            view = evaluate_strategy_view(
+                child, closes, features=features, decision_time=decision_time,
+                holding_bars=holding_bars if singleton else None,
+                current_direction=current_direction if singleton else None,
+            )
         views[member["member_id"]] = view
         if not member["virtual_only"]:
             strength = 1.0 if view["strength"] is None else view["strength"]
@@ -150,8 +175,10 @@ def evaluate_portfolio_envelope(artifact, closes, *, features=None,
             "direction": "LONG" if net > 0 else "SHORT" if net < 0 else "FLAT",
             "strength": abs(net), "momentum": net}
     members = artifact["strategy_logic"]["members"]
-    if len(members) == 1 and members[0]["risk_weight"] == 1 and limit == 1:
-        view = dict(views[members[0]["member_id"]])
+    if singleton_passthrough(artifact):
+        active = next(m for m in members if not m["virtual_only"])
+        if active["member_id"] in views:
+            view = dict(views[active["member_id"]])
     return {"view": view, "member_views": views}
 
 
@@ -180,7 +207,7 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
                        "virtual_only": member.get("virtual_only", False), "artifact": child})
     symbols_by_underlying = {}
     for member in pinned:
-        for symbol in member["artifact"]["parameters"]["symbols"]:
+        for symbol in ([] if is_screened(member["artifact"]) else member["artifact"]["parameters"]["symbols"]):
             symbols_by_underlying.setdefault(_symbol_key(symbol), symbol)
     if members:
         template["parameters"]["symbols"] = sorted(symbols_by_underlying.values())
@@ -188,6 +215,14 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
                                   "members": pinned, "risk_limits": {
                                       "max_net_strength": max_net_strength,
                                       "gross_weight_limit": gross_weight_limit}}
+    if not singleton_passthrough(template):
+        from services.execution.lean_runtime.expression_policy import DEFAULT_PARAMETERS
+        template["expression_policy"] = {
+            "version": "1.0", "kind": "target_position_v1",
+            "parameters": {**DEFAULT_PARAMETERS,
+                           **template.get("expression_policy", {}).get("parameters", {}),
+                           "close_before_reverse": True, "rebalance_band_fraction": 0.2},
+        }
     parents = {m["artifact_id"] for m in pinned}
     if parent_envelope_id:
         parents.add(parent_envelope_id)
@@ -200,3 +235,117 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
     template["mutation_surface"] = {"controls": [], "immutable_parameters": sorted(template["parameters"])}
     validate_strategy_artifact(template)
     return template
+
+
+def _target_view(view):
+    """An exit order's side is not its post-decision position direction."""
+    direction = view.get("target_direction", view["direction"])
+    if view.get("exit_reason"):
+        direction = "FLAT"
+    return {**view, "direction": direction,
+            "action": {"LONG": "BUY", "SHORT": "SELL", "FLAT": "HOLD"}[direction],
+            "strength": 0.0 if direction == "FLAT" else view["strength"]}
+
+
+def screened_member_history(artifact, market, decision_time):
+    """Rebuild only this member's virtual holdings from governed dated history.
+
+    No aggregate position or mutable process cache enters a screen's exit rules.
+    The final bar uses exactly the standalone candidate snapshot evaluator.
+    """
+    from .candidate_pool import _market, evaluate_screened_views
+    from .factor_rule import _parse_timestamp_utc
+
+    _, symbols = _market(market)
+    cutoff = _parse_timestamp_utc(decision_time, is_decision_time=True)
+    days = sorted({str(row["date"])[:10] for payload in symbols.values()
+                   for row in payload["bars"] if str(row["date"])[:10] <= cutoff.date().isoformat()})
+    final_day = cutoff.date().isoformat()
+    days = sorted(set(days) | {final_day})
+    positions = {}
+    views = {}
+    for day in days:
+        for position in positions.values():
+            if position.get("current_direction") in {"LONG", "SHORT"}:
+                position["holding_bars"] += 1
+        raw = evaluate_screened_views(
+            artifact, market, decision_time if day == final_day else day, positions=positions)
+        for symbol, view in raw.items():
+            prior = positions.get(symbol, {})
+            target = _target_view(view)
+            if view["action"] == "HOLD" and target["direction"] != "FLAT":
+                target["strength"] = prior.get("strength", 0.0)
+            views[symbol] = target
+            positions[symbol] = {
+                "current_direction": target["direction"],
+                "holding_bars": view.get("holding_bars", 0),
+                "strength": target["strength"],
+            }
+    return views
+
+
+def evaluate_portfolio_bar(artifact, snapshots, *, market=None, held_symbols=()):
+    """Evaluate all member views before allocation; daily screen picks stay unpinned."""
+    from .candidate_pool import canonical_symbol, _market
+    from .factor_rule import evaluate_factor_rule_view
+    from .strategy_artifact import evaluate_strategy_view, validate_strategy_artifact
+
+    validate_strategy_artifact(artifact)
+    keyed = {canonical_symbol(s): dict(row) for s, row in snapshots.items()}
+    if len(keyed) != len(snapshots) or not keyed:
+        raise ValueError("portfolio market inputs missing or duplicate aliases")
+    stamps = {row.get("event_time") for row in keyed.values()}
+    if len(stamps) != 1 or not next(iter(stamps)):
+        raise ValueError("portfolio requires one common decision bar")
+    at = next(iter(stamps))
+    evaluated = {}
+    required = {canonical_symbol(s) for s in artifact["parameters"]["symbols"]}
+    required.update(canonical_symbol(s) for s in held_symbols)
+    digests, pool_snapshots = {}, {}
+    for member in artifact["strategy_logic"]["members"]:
+        child, mid = member["artifact"], member["member_id"]
+        if is_screened(child):
+            _, market_symbols = _market(market)
+            if not set(market_symbols) <= set(keyed):
+                raise ValueError("screen market_inputs must cover the complete governed market")
+            views = screened_member_history(child, market, at)
+            snapshot = next(iter(views.values()))["candidate_pool_snapshot"]
+            digests[mid], pool_snapshots[mid] = snapshot["digest"], snapshot
+            if snapshot.get("data_status") == "needs_data":
+                raise ValueError("member_candidate_pool_needs_data:" + mid)
+            required.update(snapshot["members"])
+            required.update(s for s, v in views.items()
+                            if v["direction"] != "FLAT" or v.get("exit_reason"))
+            evaluated[mid] = views
+        else:
+            views = {}
+            for symbol in child["parameters"]["symbols"]:
+                symbol = canonical_symbol(symbol)
+                if symbol not in keyed:
+                    raise ValueError("portfolio snapshot missing for " + symbol)
+                row = keyed[symbol]
+                if child["strategy_logic"]["kind"] == "factor_rule_v1":
+                    view = evaluate_factor_rule_view(
+                        child, row["closes"], features=row.get("features"), decision_time=at,
+                        include_position_state=True)
+                    # The interpreter reconstructs this member's own position
+                    # state across its history, never the persona's holdings.
+                    view = _target_view(view)
+                else:
+                    view = evaluate_strategy_view(child, row["closes"],
+                        features=row.get("features"), decision_time=at, symbol=symbol)
+                views[symbol] = view
+            evaluated[mid] = views
+    if not required <= set(keyed):
+        raise ValueError("portfolio held/picked snapshot missing: " + ",".join(sorted(required - set(keyed))))
+    results = {}
+    for symbol in sorted(required):
+        row = keyed[symbol]
+        if not row.get("source_ref") or not row.get("closes"):
+            raise ValueError("portfolio market input missing mark/source: " + symbol)
+        views = {mid: values[symbol] for mid, values in evaluated.items() if symbol in values}
+        result = evaluate_portfolio_envelope(artifact, row["closes"], symbol=symbol,
+            decision_time=at, features=row.get("features"), member_views=views)
+        results[symbol] = {**result, "member_candidate_pool_digests": digests,
+                           "member_candidate_pool_snapshots": pool_snapshots}
+    return results
