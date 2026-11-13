@@ -16,9 +16,9 @@
     "No hosted/VM/live verification; real latency distribution unknown."
   ],
   "review_fix_20261113": {
-    "p1_request_deadline": "run_scheduled_connectors wraps the serial claimed-frontier loop in one operation_deadline(15s); per-pull budget no longer resets (reentrant, outermost wins).",
-    "p1_body_deadline": "read_bounded_response takes deadline/clock and raises TimeoutError between chunks; HttpBundleTransport passes the 1s-floored op deadline.",
-    "tests": "373 passed, 1 skipped (3 scoped suites) + 3 new tests",
-    "limitations": "A blocking single read.read() is bounded only by socket timeout; each pull after budget exhaustion still performs its mandatory one raw read (progress guarantee), so worst case is budget plus N minimal reads, not strictly 15s. Source/local only; no hosted claims."
+    "p1_request_deadline": "Steady tick now claims exactly one Collector pull per scheduler HTTP request (STEADY_PULLS_PER_REQUEST=1 for both the selected batch and max_concurrency); remaining due sources stay due for following ticks, nothing dropped. Per-pull 15s budget therefore bounds the request.",
+    "p1_body_deadline": "collector_bundle._DeadlineBody enforces the floored operation deadline between body chunks (TimeoutError, never partial data).",
+    "tests": "3 scoped suites 374 passed/1 skipped incl. slow-drip body test and steady-limit test",
+    "limitations": "Non-steady modes unchanged (pipeline.py/bounded_reader.py outside the artifact contract); a single blocking socket read is bounded only by socket timeout; mandatory one raw read per pull after budget exhaustion. The steady-limit test is structural, not a full HTTP integration. Source/local only."
   }
 }

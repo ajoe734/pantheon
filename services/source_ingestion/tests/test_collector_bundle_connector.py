@@ -1198,7 +1198,7 @@ def test_http_read_timeout_is_capped_by_remaining_operation_budget(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr(cb, "open_external_url", fake_open)
-    monkeypatch.setattr(cb, "read_bounded_response", lambda r, max_bytes, deadline=None: b"{}")
+    monkeypatch.setattr(cb, "read_bounded_response", lambda r, max_bytes: b"{}")
     transport = cb.HttpBundleTransport(host=HOST)
     with cb.operation_deadline(15.0):
         transport.read("a", max_bytes=10)
@@ -1210,11 +1210,13 @@ def test_http_read_timeout_is_capped_by_remaining_operation_budget(monkeypatch):
     assert timeouts == [15.0, 1.0, 1.0, 20.0]
 
 
-def test_body_stream_stops_at_operation_deadline_not_returned_as_data():
+def test_body_stream_stops_at_operation_deadline_not_returned_as_data(monkeypatch):
     """Slow-drip body: four 10s chunks under a 15s budget must fail, never return data."""
+    from services.source_ingestion.connectors import collector_bundle as cb
     from services.source_ingestion.connectors.bounded_reader import read_bounded_response
 
     now = [0.0]
+    monkeypatch.setattr(cb.time, "monotonic", lambda: now[0])
 
     class _Slow:
         headers: dict = {}
@@ -1224,7 +1226,7 @@ def test_body_stream_stops_at_operation_deadline_not_returned_as_data():
             return b"x"
 
     with pytest.raises(TimeoutError):
-        read_bounded_response(_Slow(), max_bytes=100, deadline=15.0, clock=lambda: now[0])
+        read_bounded_response(cb._DeadlineBody(_Slow(), 15.0), max_bytes=100)
     assert now[0] <= 20.0
 
 

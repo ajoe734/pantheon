@@ -39,6 +39,7 @@ CONTROLLER_MODES = frozenset({RECONCILE_ONLY_MODE, RECONCILE_AND_PULL_MODE})
 # own cadence. Deliberately outside CONTROLLER_MODES: the finite one-shot entry
 # (run_controller_once / scheduler_once) must never accept it.
 COLLECTOR_STEADY_PULL_MODE = "collector_steady_pull"
+STEADY_PULLS_PER_REQUEST = 1
 CONFIGURABLE_CONTROLLER_MODES = CONTROLLER_MODES | {COLLECTOR_STEADY_PULL_MODE}
 UNRESOLVED_FRONTIER_STATUSES = frozenset({"queued", "retry", "running"})
 MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS = 100
@@ -2054,7 +2055,10 @@ def run_controller_tick(
             steady_pull_ids = limit_collector_pull_batch(
                 steady_actual,
                 select_collector_pull_connectors(steady_actual, reconcile),
-                limit=config.max_concurrency,
+                # Claimed connectors run serially inside ONE scheduler HTTP request, so a steady
+                # tick carries exactly one Collector pull (bounded by its own read budget);
+                # the rest stay due for following ticks.
+                limit=STEADY_PULLS_PER_REQUEST,
             )
         provider_egress_attempted = config.mode == RECONCILE_AND_PULL_MODE or bool(steady_pull_ids)
         if config.mode == RECONCILE_ONLY_MODE or (
@@ -2105,7 +2109,7 @@ def run_controller_tick(
             )
             schedule = run_schedule_tick(
                 api_url=config.api_url,
-                max_concurrency=config.max_concurrency,
+                max_concurrency=STEADY_PULLS_PER_REQUEST if steady else config.max_concurrency,
                 timeout_seconds=config.timeout_seconds,
                 force_connector_ids=forced_connector_ids,
                 exclusive_connector_ids=exclusive_connector_ids,

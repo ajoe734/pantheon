@@ -3452,3 +3452,13 @@ def test_finmind_1800_cutoff_session_binds_to_selected_at() -> None:
     # requested session across the 18:00 cutoff, while the real clock would retarget Nov13.
     assert _latest_eligible_session(finmind, min(later, selected)).isoformat() == "2026-11-12"
     assert _latest_eligible_session(finmind, later).isoformat() == "2026-11-13"
+
+
+def test_steady_request_carries_one_collector_pull_so_serial_pulls_fit_one_http_timeout() -> None:
+    """Serial claimed pulls share one HTTP request; a steady tick must claim exactly one."""
+    assert controller_worker.STEADY_PULLS_PER_REQUEST == 1
+    import inspect
+
+    src = inspect.getsource(controller_worker.run_controller_tick)
+    assert "limit=STEADY_PULLS_PER_REQUEST" in src
+    assert "STEADY_PULLS_PER_REQUEST if steady else config.max_concurrency" in src

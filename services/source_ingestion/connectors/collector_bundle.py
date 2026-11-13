@@ -80,6 +80,24 @@ COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
 
 
+class _DeadlineBody:
+    """Response wrapper: a body stream never outlives the operation deadline.
+
+    Raises TimeoutError between chunks once the deadline passes; partial bytes are never
+    returned as data.
+    """
+
+    def __init__(self, response: Any, deadline: float) -> None:
+        self._response = response
+        self._deadline = deadline
+        self.headers = getattr(response, "headers", None)
+
+    def read(self, size: int = -1) -> bytes:
+        if time.monotonic() >= self._deadline:
+            raise TimeoutError("collector response body read exceeded the operation deadline")
+        return self._response.read(size)
+
+
 @contextmanager
 def operation_deadline(seconds: float | None):
     if seconds is None or _OP_DEADLINE.get() is not None:
@@ -230,7 +248,9 @@ class HttpBundleTransport(BundleTransport):
             timeout = min(timeout, max(op_deadline - time.monotonic(), 1.0))
             op_deadline = max(op_deadline, time.monotonic() + 1.0)
         with open_external_url(request, caller="source_ingest.collector_bundle", timeout=timeout) as response:
-            return read_bounded_response(response, max_bytes=max_bytes, deadline=op_deadline)
+            if op_deadline is not None:
+                response = _DeadlineBody(response, op_deadline)
+            return read_bounded_response(response, max_bytes=max_bytes)
 
 
 @dataclass(frozen=True)
