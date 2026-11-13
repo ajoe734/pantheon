@@ -1,0 +1,13 @@
+{
+  "task_id": "COLLECTOR-DEMAND-QUERY-PLAN-R2-20261112",
+  "status": "partial",
+  "acceptance": {
+    "1_2_3_4_5": "implemented; covered by deploy/collector tests and services/research/tests/test_query_plan.py",
+    "6": "arXiv and OpenAlex recorded real responses in fixtures (sha256 in recorded-responses.json). GDELT recording NOT captured: api.gdeltproject.org returned HTTP 429 to this host on every attempt (2026-11-13, ~10 attempts over ~10 minutes). No fabricated fixture was substituted."
+  },
+  "tests": {
+    "deploy/collector/tests": "154 passed, 2 skipped, 1 failed (gdelt recorded-shape test: fixture missing)",
+    "services/research/tests/test_query_plan.py": "5 passed",
+    "services/control-plane/bff/tests/test_research_tasks_read.py": "10 passed"
+  }
+}

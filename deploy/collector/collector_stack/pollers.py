@@ -664,7 +664,7 @@ class ArxivPaperPoller:
             items.append(
                 CollectedItem(
                     item_id=f"arxiv-{arxiv_id}",
-                    url=raw_id or url,
+                    url=raw_id or target_url,
                     fetched_at=fetched_iso,
                     published_at=published,
                     text=f"{title}\n\n{summary}",
@@ -748,7 +748,7 @@ class OpenAlexPaperPoller:
             items.append(
                 CollectedItem(
                     item_id=f"openalex-{work_id.lower()}",
-                    url=str(work.get("id") or url),
+                    url=str(work.get("id") or target_url),
                     fetched_at=fetched_iso,
                     published_at=pub_iso,
                     text=f"{title}\n\n{abstract}".strip(),

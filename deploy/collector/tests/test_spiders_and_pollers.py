@@ -492,3 +492,40 @@ def test_rss_pub_iso_rejects_malformed_offsets_and_trailing_text_unchanged() -> 
         assert _rss_pub_iso(bad) == bad
     assert _rss_pub_iso("Tue, 10 Nov 2026 09:00:00 +0800") == "2026-11-10T01:00:00Z"
     assert _rss_pub_iso("Tue, 10 Nov 2026 01:00:00 GMT") == "2026-11-10T01:00:00Z"
+
+
+@pytest.mark.parametrize(("sid", "fixture", "parameter"), [
+    ("collector-paper-arxiv", "arxiv_query_recorded.xml", "search_query"),
+    ("collector-paper-openalex", "openalex_search_recorded.json", "search"),
+    ("collector-gdelt", "gdelt_query_recorded.json", "query"),
+])
+def test_recorded_query_shapes_through_real_runner(tmp_path, fixtures_dir, test_hasher, sid, fixture, parameter):
+    from urllib.parse import parse_qs, urlparse
+    from collector_stack.pollers import _policy_query
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    transport = FixtureTransport()
+    policy = config.get_source(sid)
+    metadata_path = Path(__file__).resolve().parents[3] / "docs/deployment/evidence/COLLECTOR-DEMAND-QUERY-PLAN-R2-20261112/recorded-responses.json"
+    metadata = next(r for r in json.loads(metadata_path.read_text()) if r["file"] == fixture)
+    recorded = (fixtures_dir / fixture).read_bytes()
+    import hashlib
+    assert hashlib.sha256(recorded).hexdigest() == metadata["sha256"]
+    transport.register(metadata["url"], recorded)
+    runner = CollectorRunner(config, root_dir=tmp_path, hasher=test_hasher, transport=transport)
+    outcome = runner.run_source(sid, run_id="query-shape-" + sid, started_at="2026-11-13T09:00:00Z", allow_disabled=True)
+    assert outcome.status == "complete"
+    query = parse_qs(urlparse(transport.calls[0]["url"]).query)[parameter][0]
+    assert query == _policy_query(policy, arxiv=(sid == "collector-paper-arxiv"))
+    if sid != "collector-gdelt":
+        assert outcome.bundle.items_path.read_text().strip()
+
+
+@pytest.mark.parametrize("sid", ["collector-paper-arxiv", "collector-paper-openalex", "collector-gdelt"])
+def test_api_query_override_cannot_bypass_committed_policy(sid):
+    from collector_stack.pollers import ArxivPaperPoller, OpenAlexPaperPoller
+    cls = {"collector-paper-arxiv": ArxivPaperPoller, "collector-paper-openalex": OpenAlexPaperPoller, "collector-gdelt": GdeltDocPoller}[sid]
+    transport = FixtureTransport()
+    poller = cls(load_collector_config(DEFAULT_POLICY_PATH, env={}).get_source(sid), transport=transport)
+    with pytest.raises(CollectorConfigError, match="query URL must match"):
+        poller.collect(url=poller.policy.base_urls[0] + "?query=unreviewed")
+    assert transport.calls == []
