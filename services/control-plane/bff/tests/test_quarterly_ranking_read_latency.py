@@ -1,8 +1,8 @@
 """BFF-QUARTERLY-RANKING-READ-LATENCY-20261114.
 
-Quarterly ranking, recommendations and drilldown must pay a bounded number of
-evidence-owner requests (independent of the owner's total evidence count) and
-at most one owner wait per request, with ranking output unchanged.
+Quarterly ranking, recommendations and drilldown read the complete owner
+evidence (no truncation, no ordering assumption) with owner pages fetched
+concurrently so a slow owner is waited on about once, ranking output unchanged.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ ROUTES = (
 
 
 class _Owner:
-    """Fake source-ingest owner: newest-first pages, call counting, optional
+    """Fake source-ingest owner: append-order pages, call counting, optional
     latency / unavailability."""
 
     def __init__(self, total: int, *, unavailable: bool = False, delay: float = 0.0):
@@ -92,14 +92,13 @@ def _get(owner: _Owner, route: str) -> Dict[str, Any]:
 
 
 @pytest.mark.parametrize("route", ROUTES)
-def test_owner_requests_do_not_grow_with_total_evidence(route: str) -> None:
-    counts = []
-    for total in (50, 5_000, 50_000):
+def test_owner_requests_are_complete_pages_only(route: str) -> None:
+    # Exactness requires every owner row (the owner has no time filter), so
+    # requests are exactly ceil(total / page) -- never a truncated read.
+    for total, expected in ((50, 1), (1_600, 4), (5_000, 10)):
         owner = _Owner(total)
         _get(owner, route)
-        counts.append(len(owner.calls))
-    cap = personas_service._PM12_QUARTER_EVIDENCE_MAX_PAGES
-    assert counts[1] == counts[2] <= cap and counts[0] == 1, counts
+        assert len(owner.calls) == expected, (total, owner.calls)
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -110,6 +109,38 @@ def test_unavailable_owner_is_paid_once_and_marks_surface(route: str) -> None:
     if route.endswith("quarterly-ranking") and result["status"] == 200:
         surfaces = (result["body"].get("meta") or {}).get("surfaces") or result["body"].get("surfaces") or {}
         assert "unavailable" in repr(surfaces.get("evidence_refs", surfaces))
+
+
+def test_slow_available_owner_wait_is_paid_once_not_per_page() -> None:
+    owner = _Owner(3_000, delay=0.2)
+    port = DefaultResearchKnowledgeSourcePort(
+        source_ingest_service_url="http://owner.invalid", http_get_fn=owner.http_get
+    )
+    started = time.monotonic()
+    rows = personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs)
+    elapsed = time.monotonic() - started
+    assert rows is not None and len(rows) == 3_000
+    assert len(owner.calls) == 6
+    # first page sequential + the other five concurrently = 2 waits, not 6
+    assert elapsed < 0.2 * 3, elapsed
+
+
+def test_slow_owner_over_timeout_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS", "0.1")
+    owner = _Owner(3_000, delay=0.3)
+    port = DefaultResearchKnowledgeSourcePort(
+        source_ingest_service_url="http://owner.invalid", http_get_fn=owner.http_get
+    )
+    assert personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs) is None
+
+
+def test_rows_keep_owner_order_and_are_not_truncated() -> None:
+    owner = _Owner(3_100)
+    port = DefaultResearchKnowledgeSourcePort(
+        source_ingest_service_url="http://owner.invalid", http_get_fn=owner.http_get
+    )
+    rows = personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs)
+    assert [r["ref_id"] for r in rows] == [f"ev-{i}" for i in range(3_100)]
 
 
 _VOLATILE_KEYS = {"snapshot_at", "generated_at", "request_id", "as_of", "observed_time", "last_known_at", "correlation_id"}
@@ -203,3 +234,40 @@ def test_linked_evidence_beyond_first_page_keeps_full_output(
     body = bounded["body"]["data"]
     if "evidence_refs" in body:
         assert len(body["evidence_refs"]) == 501
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_owner_pages_out_of_order_beyond_cap_match_full_stream(
+    route: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In-quarter linked rows sit behind 1500+ newer rows in owner append
+    order (the shape that was silently truncated)."""
+    newer = _linked_refs("newer", 1_600, "2026-06-01T00:00:00Z")
+    inq = _linked_refs("q", 501, "2026-02-15T00:00:00Z")
+    rows = newer + inq
+
+    class _OrderedOwner(_Owner):
+        def http_get(self, base_url: str, path: str) -> Tuple[bool, Any]:
+            self.calls.append(path)
+            query = dict(p.split("=") for p in path.split("?", 1)[1].split("&"))
+            size, start = int(query["page_size"]), int(query["page_token"])
+            items = [
+                {
+                    "evidence_item_id": r["ref_id"],
+                    "item_type": "filing",
+                    "citation_label": r["ref_id"],
+                    "available_time": r["source_document"]["captured_at"],
+                    "metadata": {},
+                    "linked_object_summary": r["linked_object_summary"],
+                }
+                for r in rows[start:start + size]
+            ]
+            return True, {"items": items, "total": len(rows), "summary": None}
+
+    bounded = _get(_OrderedOwner(0), route)
+    monkeypatch.setattr(personas_service, "_PM12_QUARTER_EVIDENCE_PAGE_SIZE", None)
+    full = _get(_OrderedOwner(0), route)
+    assert bounded["status"] == full["status"]
+    assert _strip_volatile(copy.deepcopy(bounded["body"])) == _strip_volatile(
+        copy.deepcopy(full["body"])
+    )

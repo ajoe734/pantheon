@@ -2,72 +2,119 @@
   "task_id": "BFF-QUARTERLY-RANKING-READ-LATENCY-20261114",
   "method": "Local TestClient, 166 shaped personas (+fixture personas), fake source-ingest owner with newest-first pages, 3000 evidence items, 0.2 s per owner request (slow) or unavailable after 0.2 s. 5 runs per cell. Harness: services/control-plane/bff/tests/test_quarterly_ranking_read_latency.py helpers.",
   "root_cause": "_pm12_public_quarter_evidence_refs called read_evidence_refs() with no page_size, so the port streamed every owner evidence page (EVIDENCE_OWNER_PAGE_SIZE=200) before filtering to the quarter. Cost grew linearly with total owner evidence; on hosted each owner request waits ~4 s.",
-  "fix": "personas/service.py: quarter evidence read pages the owner newest-first at page_size 500, stopping when the owner is exhausted, a page has no row at/after the quarter start, or _PM12_QUARTER_EVIDENCE_MAX_PAGES=3 is reached; any unavailable page marks the surface unavailable. Context composed once per request. No cache/setting/endpoint/job; port unchanged.",
+  "fix": "personas/service.py _pm12_read_all_evidence_pages: reads the COMPLETE owner evidence (page 500, the owner max) with no truncation and no ordering assumption, rows kept in owner page order. Page 1 gives total + offset token; remaining offset pages are fetched concurrently (<=8 workers, contextvars copied) so a slow-but-available owner is waited ~once per request (first page + one concurrent round) instead of once per page; total read time is capped by the evidence owner read timeout (over => surface unavailable, not silent truncation). Unavailable page => unavailable surface after one wait. Opaque tokens fall back to sequential complete follow. No cache/setting/endpoint/job; port unchanged.",
   "profile_ms_before_after": {
-    "slow_owner_3000_evidence": {
-      "quarterly-ranking": {
-        "before": {
-          "p50_s": 3.819,
-          "p95_s": 3.877,
-          "owner_requests": 15
+    "method": "5 runs per cell, 166 personas, fake owner with 3000 evidence rows and 0.2 s per owner request; 'before' = page_size unset full stream (page 200, original behaviour).",
+    "results": {
+      "slow_available_3000_0.2s": {
+        "quarterly-ranking": {
+          "before": {
+            "p50_s": 3.884,
+            "p95_s": 3.936,
+            "runs": 5,
+            "owner_requests": 15
+          },
+          "after": {
+            "p50_s": 1.271,
+            "p95_s": 1.403,
+            "runs": 5,
+            "owner_requests": 6
+          }
         },
-        "after": {
-          "p50_s": 1.313,
-          "p95_s": 1.504,
-          "owner_requests": 3
+        "quarterly-ranking/recommendations": {
+          "before": {
+            "p50_s": 4.101,
+            "p95_s": 4.164,
+            "runs": 5,
+            "owner_requests": 15
+          },
+          "after": {
+            "p50_s": 1.461,
+            "p95_s": 1.624,
+            "runs": 5,
+            "owner_requests": 6
+          }
         }
       },
-      "quarterly-ranking/recommendations": {
-        "before": {
-          "p50_s": 4.011,
-          "p95_s": 4.123,
-          "owner_requests": 15
+      "unavailable_0.2s": {
+        "quarterly-ranking": {
+          "before": {
+            "p50_s": 1.038,
+            "p95_s": 1.062,
+            "runs": 5,
+            "owner_requests": 1
+          },
+          "after": {
+            "p50_s": 1.064,
+            "p95_s": 1.102,
+            "runs": 5,
+            "owner_requests": 1
+          }
         },
-        "after": {
-          "p50_s": 1.54,
-          "p95_s": 1.559,
-          "owner_requests": 3
-        }
-      }
-    },
-    "owner_unavailable_0.2s": {
-      "quarterly-ranking": {
-        "before": {
-          "p50_s": 0.918,
-          "p95_s": 0.992,
-          "owner_requests": 1
-        },
-        "after": {
-          "p50_s": 0.945,
-          "p95_s": 1.022,
-          "owner_requests": 1
+        "quarterly-ranking/recommendations": {
+          "before": {
+            "p50_s": 1.241,
+            "p95_s": 1.271,
+            "runs": 5,
+            "owner_requests": 1
+          },
+          "after": {
+            "p50_s": 1.27,
+            "p95_s": 1.288,
+            "runs": 5,
+            "owner_requests": 1
+          }
         }
       },
-      "quarterly-ranking/recommendations": {
-        "before": {
-          "p50_s": 1.158,
-          "p95_s": 1.27,
-          "owner_requests": 1
-        },
-        "after": {
-          "p50_s": 1.205,
-          "p95_s": 1.212,
-          "owner_requests": 1
-        }
+      "persona-league/tiers": {
+        "p50_s": 0.516,
+        "p95_s": 0.724,
+        "runs": 5
+      },
+      "profile_after_slow_owner": {
+        "quarterly-ranking": [
+          "1 0.000 0.000 1.197 1.197 /tmp/pantheon-worker-worktrees/pantheon/bff-quarterly-ranking-read-latency-20261114/services/control-plane/bff/personas/service.py:16912(get_quarterly_ranking)",
+          "1 0.003 0.003 1.190 1.190 /tmp/pantheon-worker-worktrees/pantheon/bff-quarterly-ranking-read-latency-20261114/services/control-plane/bff/personas/service.py:16310(_compose_quarterly_ranking_context)",
+          "1 0.000 0.000 0.767 0.767 /tmp/pantheon-worker-worktrees/pantheon/bff-quarterly-ranking-read-latency-20261114/services/control-plane/bff/personas/service.py:6006(_pm12_public_quarter_evidence_refs)",
+          "1 0.000 0.000 0.744 0.744 /tmp/pantheon-worker-worktrees/pantheon/bff-quarterly-ranking-read-latency-20261114/services/control-plane/bff/personas/service.py:5933(_pm12_read_all_evidence_pages)"
+        ],
+        "quarterly-ranking/recommendations": [
+          "1 0.004 0.004 1.572 1.572 /tmp/pantheon-worker-worktrees/pantheon/bff-quarterly-ranking-read-latency-20261114/services/control-plane/bff/personas/service.py:16696(get_quarterly_ranking_recommendations)",
+          "1 0.002 0.002 1.180 1.180 /tmp/pantheon-worker-worktrees/pantheon/bff-quarterly-ranking-read-latency-20261114/services/control-plane/bff/personas/service.py:16310(_compose_quarterly_ranking_context)",
+          "1 0.000 0.000 0.539 0.539 /tmp/pantheon-worker-worktrees/pantheon/bff-quarterly-ranking-read-latency-20261114/services/control-plane/bff/personas/service.py:6006(_pm12_public_quarter_evidence_refs)",
+          "1 0.000 0.000 0.516 0.516 /tmp/pantheon-worker-worktrees/pantheon/bff-quarterly-ranking-read-latency-20261114/services/control-plane/bff/personas/service.py:5933(_pm12_read_all_evidence_pages)"
+        ]
       }
     },
-    "reproduce": "Loop of 5 runs per cell over t._get(t._Owner(3000, unavailable, delay=0.2), route); 'before' sets personas_service._PM12_QUARTER_EVIDENCE_PAGE_SIZE=None (full stream, page 200). Local noisy machine; absolute times ~2x the earlier run.",
-    "per_step_note": "Dominant cost before: 15 sequential owner requests x 0.2 s = 3.0 s of ~3.8 s. After: 3 x 0.2 = 0.6 s owner wait plus ~0.7 s compute (earlier cProfile: snapshot digest ~0.28 s, remainder ASGI/serialisation). Unavailable owner: first page fails, 1 wait, unchanged."
+    "reproduce": "temporary pytest module (not committed) looping t._get(t._Owner(3000, unavailable, delay=0.2), route) with personas_service._PM12_QUARTER_EVIDENCE_PAGE_SIZE=None for 'before'; cProfile of the same call for per-step times.",
+    "per_step_after_slow_owner_s": {
+      "quarterly-ranking": {
+        "total_handler": 1.197,
+        "compose_context": 1.19,
+        "evidence_read(_pm12_public_quarter_evidence_refs)": 0.767,
+        "evidence_owner_pages": 0.744,
+        "rest_of_compose_and_rank": 0.42
+      },
+      "recommendations": {
+        "total_handler": 1.572,
+        "compose_context": 1.18,
+        "evidence_read": 0.539,
+        "evidence_owner_pages": 0.516,
+        "recommendations_assembly_after_context": 0.39
+      }
+    },
+    "persona_league_tiers": "p50 0.516 s / p95 0.724 s locally; it makes no evidence-owner call and is not changed by this task, so before == after.",
+    "dominant_cost_before": "15 sequential owner requests x 0.2 s = 3.0 s of ~3.9 s; after: owner wait ~0.4-0.7 s (2 rounds) plus ~0.5 s compute."
   },
   "notes": [
-    "Review fix: previous single newest-500 read truncated linked in-quarter evidence (501 vs 500 refs, snapshot id changed). Now parity is tested with 501 linked in-quarter refs, with and without 700 newer post-quarter refs, on all 3 routes.",
-    "Residual bounds, stated honestly: owner order is append order (not timestamp), and the owner has no time filter. Output equals the full stream whenever quarter-relevant rows lie within the first 3 pages (1500 newest) and paging was not cut by the early-stop; older late-appended rows beyond that are not attached. Fully exact bounded reads need an owner-side time filter (out of scope: no new endpoint).",
-    "Acceptance 4 partial: unavailable owner pays one wait; a slow-but-available owner pays up to 3 waits (cap), down from N=total/200. Acceptance 5 (<1.5 s p50 local) holds for ranking in this run (1.313 s) with 0.2 s owner delay but recommendations is 1.54 s.",
-    "persona-league/tiers makes no evidence-owner request locally; not changed by this task and not claimed fixed."
+    "Review fix 2: removed the 3-page cap and newest-first early stop (owner order is append order; they silently dropped linked in-quarter evidence). Parity tests now cover 501 linked in-quarter refs behind 1600 newer refs in owner append order on all 3 routes, compared to the full unpaged stream.",
+    "Acceptance 2 honest limit: the owner list endpoint has no time/quarter filter and caps pages at 500, so exact output requires ceil(total/500) owner requests; they grow with total evidence (3000 rows => 6) but run concurrently, so latency does not grow linearly and the wait is bounded by the owner read timeout. A request count independent of total needs an owner-side time filter (new endpoint, out of scope per acceptance 6).",
+    "Acceptance 4: slow-available owner wait is paid in ~2 rounds regardless of page count (test: 3000 rows, 0.2 s => elapsed < 0.6 s with 6 calls); unavailable owner pays one wait; total read over the owner timeout => unavailable.",
+    "Acceptance 5: ranking p50 1.27 s (<1.5 s) with a 0.2 s/request slow owner; recommendations p50 1.46 s, also <1.5 s here."
   ],
   "tests": {
-    "added": "test_quarterly_ranking_read_latency.py (15 tests): owner requests constant (<=cap) for 5000/50000 evidence on 3 routes; unavailable paid once; 300-row parity; linked >500 evidence parity (with/without newer refs) on 3 routes.",
-    "existing_run": "test_bff_pm12_persona_league, test_ranking_evidence_surfaces_default_composition, test_bff_b3_management_evidence, test_evidence_redaction_fail_closed: all pass.",
-    "assertions_changed": "none; no existing test weakened or deleted."
+    "added": "test_quarterly_ranking_read_latency.py (21 tests): exact owner request counts per total (no truncation) on 3 routes; unavailable paid once; slow-available wait not per page; over-timeout => unavailable; owner order preserved for 3100 rows; 300-row parity; linked >500 evidence parity; 501 in-quarter rows behind 1600 newer owner-order rows parity on 3 routes.",
+    "existing_run": "see commit/validation notes",
+    "assertions_changed": "none to existing tests; the earlier new-test assertion that owner requests are <= a page cap was replaced because the cap itself was the defect."
   }
 }

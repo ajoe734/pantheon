@@ -5927,7 +5927,79 @@ def _pm12_is_unlinked_source_ingest_row(item: Dict[str, Any]) -> bool:
 
 
 _PM12_QUARTER_EVIDENCE_PAGE_SIZE = 500  # owner list endpoint maximum page
-_PM12_QUARTER_EVIDENCE_MAX_PAGES = 3  # constant bound on owner requests per read
+_PM12_QUARTER_EVIDENCE_MAX_WORKERS = 8
+
+
+def _pm12_read_all_evidence_pages(read_fn: Any) -> Optional[List[Dict[str, Any]]]:
+    """Read every owner evidence page exactly (no truncation, no ordering
+    assumption), or return ``None`` when the owner is unavailable.
+
+    The first page yields the owner total and an offset page token; the
+    remaining offset pages are then requested concurrently so a slow owner is
+    waited on about once per request instead of once per page. Rows keep owner
+    page order. Any unavailable page, or a read exceeding the owner timeout in
+    total, marks the whole surface unavailable.
+    """
+    import concurrent.futures
+    import contextvars
+    import time
+
+    try:
+        from ..ports.research_knowledge_source import evidence_owner_read_timeout_seconds
+
+        deadline = time.monotonic() + max(evidence_owner_read_timeout_seconds(), 0.05)
+    except Exception:
+        deadline = time.monotonic() + 4.0
+    page_size = _PM12_QUARTER_EVIDENCE_PAGE_SIZE
+    first = read_fn(page_size=page_size, page_token=None)
+    if not first.available:
+        return None
+    rows: List[Dict[str, Any]] = list(first.items or [])
+    token = first.next_page_token
+    if not token or not rows:
+        return rows
+    total = first.total
+    offset_tokens = (
+        isinstance(total, int)
+        and not isinstance(total, bool)
+        and str(token) == str(len(rows))
+    )
+    if not offset_tokens:
+        # Opaque tokens: sequential follow, still complete.
+        while token:
+            if time.monotonic() > deadline:
+                return None
+            page = read_fn(page_size=page_size, page_token=token)
+            if not page.available:
+                return None
+            items = list(page.items or [])
+            rows.extend(items)
+            token = page.next_page_token if items else None
+        return rows
+    step = len(rows)
+    offsets = list(range(step, int(total), step))
+
+    def _fetch(offset: int) -> Any:
+        return read_fn(page_size=page_size, page_token=str(offset))
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(_PM12_QUARTER_EVIDENCE_MAX_WORKERS, max(len(offsets), 1))
+    ) as pool:
+        futures = [pool.submit(contextvars.copy_context().run, _fetch, o) for o in offsets]
+        pages: List[Any] = []
+        for future in futures:
+            remaining = deadline - time.monotonic()
+            try:
+                pages.append(future.result(timeout=max(remaining, 0.0)))
+            except Exception:
+                for pending in futures:
+                    pending.cancel()
+                return None
+    for page in pages:
+        if not page.available:
+            return None
+        rows.extend(page.items or [])
+    return rows
 
 
 # --- _pm12_public_quarter_evidence_refs ---
@@ -5943,29 +6015,10 @@ def _pm12_public_quarter_evidence_refs(
     read_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
     try:
         if callable(read_fn):
-            # Newest-first owner pages, never the whole stream: stop when the
-            # owner has no more rows, a page holds nothing at/after the quarter
-            # start, or the constant page cap is hit, so owner requests do not
-            # grow with total evidence. Unavailable on any page => unavailable.
-            quarter_start = _audit_datetime(quarter_window.get("start_at"))
-            page_token: Optional[str] = None
-            evidence_dataset_available = True
-            for _ in range(_PM12_QUARTER_EVIDENCE_MAX_PAGES):
-                result = read_fn(page_size=_PM12_QUARTER_EVIDENCE_PAGE_SIZE, page_token=page_token)
-                if not result.available:
-                    raw_evidence_refs = []
-                    evidence_dataset_available = False
-                    break
-                page_items = list(result.items or [])
-                raw_evidence_refs.extend(page_items)
-                page_token = result.next_page_token
-                if not page_token or not page_items:
-                    break
-                if quarter_start is not None and not any(
-                    (ts := _pm12_evidence_timestamp(it)) is not None and ts >= quarter_start
-                    for it in page_items
-                ):
-                    break
+            all_rows = _pm12_read_all_evidence_pages(read_fn)
+            if all_rows is not None:
+                raw_evidence_refs = all_rows
+                evidence_dataset_available = True
         elif store is not None:
             raw_evidence_refs = list(store.list_evidence_refs() or [])
             evidence_dataset_available = store.dataset_source("evidence_refs") not in ("missing", "unavailable")
