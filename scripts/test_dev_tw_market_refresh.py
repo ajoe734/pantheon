@@ -2730,7 +2730,9 @@ def test_refresh_entrypoint_taifex_non_force_proceeds_when_twse_fresh_and_enforc
                 "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc123",
                 "status": "normalized",
                 "metadata": {
-                    "date": "2026-11-06",
+                    # Verifier binds to the latest closed session at deploy start (real clock).
+                    "date": _latest_closed_taipei_session(datetime.now(timezone.utc)),
+                    "underlying_code": "2330",
                     "dataset": "taifex_ssf_contracts",
                     "schema_hash": "tw_taifex_ssf_contracts.v1",
                 },
@@ -3308,3 +3310,56 @@ def test_taifex_bounded_prepare_targets_latest_closed_session(now: str, expected
     assert proc.returncode == 0, proc.stderr
     schedule = next(item for item in posted if item["path"].endswith("/active-universe/schedule"))
     assert schedule["run_date"] == expected
+
+
+def _latest_closed_taipei_session(now: datetime) -> str:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    return _latest_eligible_session("tw-taifex-futures-options-chip", now).isoformat()
+
+
+def _run_embedded_readback_verifier(tmp_path: Path, *, started: str, record_meta: dict, symbols: str = "2330.TW") -> subprocess.CompletedProcess:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("<<'PY'\nimport json\nimport math\n", script.index("verify_bounded_source_refresh_readback() {"))
+    body = script[start + len("<<'PY'\n"):].split("\nPY\n", 1)[0]
+    run = "run-ssf-1"
+    receipts = {"receipts": [{
+        "connector_id": "tw-taifex-futures-options-chip", "status": "completed", "typed_failure": None,
+        "source_timestamp": "2026-11-12T07:15:00Z", "source_timestamp_status": "valid",
+        "created_at": "2026-11-13T02:50:00Z", "finished_at": "2026-11-13T02:50:00Z", "ingest_run_id": run,
+    }]}
+    readback = {"connectors": [{
+        "connector_id": "tw-taifex-futures-options-chip",
+        "freshness": {"latest_receipt": {"ingest_run_id": run}, "source_timestamp_status": "valid"},
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_ssf_contracts:CDF:202611:abc", "status": "normalized",
+            "metadata": {"dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1", **record_meta},
+            "provenance": {"source_ingest_run_id": run, "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+        },
+    }]}
+    for name, payload in (("receipts", receipts), ("readback", readback), ("projection", {})):
+        (tmp_path / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+    return subprocess.run(
+        ["python3", "-I", "-c", f"import sys\nsys.path.insert(0, {str(ROOT)!r})\nexec(compile({body!r}, 'verify', 'exec'))",
+         "tw-taifex-futures-options-chip", started, str(tmp_path / "receipts.json"), str(tmp_path / "readback.json"),
+         str(tmp_path / "projection.json"), symbols, "taifex_ssf_contracts"],
+        capture_output=True, text=True, check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "started,meta,message",
+    [
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-12", "underlying_code": "2330"}, None),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-11", "underlying_code": "2330"}, "requested session"),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, "requested session"),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-12", "underlying_code": "9999", "contract": "ZZF"}, "outside active scope"),
+        ("2026-11-13T05:30:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, None),
+    ],
+)
+def test_taifex_terminal_verifier_binds_requested_session_and_scope(tmp_path: Path, started: str, meta: dict, message: str | None) -> None:
+    proc = _run_embedded_readback_verifier(tmp_path, started=started, record_meta=meta)
+    if message is None:
+        assert "requested session" not in proc.stderr and "active scope" not in proc.stderr, proc.stderr
+    else:
+        assert proc.returncode != 0 and message in proc.stderr, proc.stderr

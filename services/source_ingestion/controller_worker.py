@@ -945,24 +945,54 @@ def _validate_terminal_readback(
         if exclusive_connector_ids
         else frontier_backlog
     )
-    deferred_frontier_ids: list[str] = []
-    if validated_frontier_backlog and exclusive_connector_ids:
-        # Queued, never-attempted work whose business run_date is after the latest
-        # closed/published session stays visible but is not proof for that session.
+    if validated_frontier_backlog and exclusive_connector_ids and frontier_items:
+        # Reconcile the aggregate against the unique per-connector frontier items
+        # read separately; any disagreement (e.g. a concurrent enqueue) fails closed.
+        # Only queued, never-attempted work for a session after the latest
+        # closed/published one is deferred (visible, not proof for that session);
+        # every other unresolved item still counts.
+        unique: dict[str, Mapping[str, Any]] = {}
         for item in frontier_items:
             connector_id = str(item.get("connector_id") or "")
-            run_date = str((item.get("job_parameters") or {}).get("run_date") or "")
-            if (
-                connector_id in exclusive_connector_ids
-                and item.get("status") == "queued"
+            if connector_id in exclusive_connector_ids and item.get("status") in {"queued", "retry", "running"}:
+                frontier_id = item.get("frontier_id")
+                if not isinstance(frontier_id, str) or not frontier_id or frontier_id in unique:
+                    raise ControllerTickError(
+                        "actual_readback",
+                        "authoritative frontier items are malformed or duplicated",
+                        reconcile=reconcile,
+                        schedule=schedule,
+                        actual_readback=actual,
+                    )
+                unique[frontier_id] = item
+        per_connector: dict[str, int] = {}
+        for item in unique.values():
+            per_connector[str(item["connector_id"])] = per_connector.get(str(item["connector_id"]), 0) + 1
+        if per_connector != {
+            connector_id: frontier_backlog_by_connector[connector_id]
+            for connector_id in exclusive_connector_ids
+            if connector_id in frontier_backlog_by_connector
+        }:
+            raise ControllerTickError(
+                "actual_readback",
+                "authoritative frontier items contradict the readback frontier counts",
+                reconcile=reconcile,
+                schedule=schedule,
+                actual_readback=actual,
+            )
+        validated_frontier_backlog = sum(
+            1
+            for item in unique.values()
+            if not (
+                item.get("status") == "queued"
                 and item.get("attempts") == 0
                 and not item.get("last_error")
-                and isinstance(item.get("frontier_id"), str)
-                and _iso_date_after(run_date, _latest_eligible_session(connector_id, now_dt))
-            ):
-                deferred_frontier_ids.append(item["frontier_id"])
-        deferred_frontier_ids = deferred_frontier_ids[:validated_frontier_backlog]
-        validated_frontier_backlog -= len(deferred_frontier_ids)
+                and _iso_date_after(
+                    str((item.get("job_parameters") or {}).get("run_date") or ""),
+                    _latest_eligible_session(str(item["connector_id"]), now_dt),
+                )
+            )
+        )
     if validated_frontier_backlog:
         scope = "selected connector scope" if exclusive_connector_ids else "global scope"
         raise ControllerTickError(

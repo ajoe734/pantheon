@@ -3310,11 +3310,11 @@ def _queued_item(run_date: str, **overrides: Any) -> dict[str, Any]:
     }
 
 
-def _queued_actual(run_date: str, now: datetime) -> dict[str, Any]:
+def _queued_actual(run_date: str, now: datetime, count: int = 1) -> dict[str, Any]:
     actual = _actual_readback()
     actual["captured_at"] = now.isoformat().replace("+00:00", "Z")
-    actual["frontier_backlog"] = 1
-    actual["frontier_backlog_by_connector"] = {CONNECTOR_ID: 1}
+    actual["frontier_backlog"] = count
+    actual["frontier_backlog_by_connector"] = {CONNECTOR_ID: count}
     return actual
 
 
@@ -3336,7 +3336,7 @@ def test_terminal_readback_defers_untouched_queue_for_unclosed_later_session() -
 )
 def test_terminal_readback_still_rejects_non_deferrable_queue(item: dict[str, Any]) -> None:
     now = datetime.now(timezone.utc)
-    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+    with pytest.raises(ControllerTickError, match="unresolved frontier|contradict"):
         _deferred_scope_validate(_queued_actual(item["job_parameters"]["run_date"], now), now, [item])
 
 
@@ -3356,3 +3356,44 @@ def test_latest_eligible_session_boundaries(now: str, connector: str, expected: 
 
     parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
     assert _latest_eligible_session(connector, parsed).isoformat() == expected
+
+
+NOV13_MORNING = datetime(2026, 11, 13, 2, 48, tzinfo=timezone.utc)  # actual 10:48 Taipei
+
+
+def _nov(frontier_id: str, run_date: str, **overrides: Any) -> dict[str, Any]:
+    return _queued_item(run_date, frontier_id=frontier_id, **overrides)
+
+
+def test_terminal_readback_defers_only_session_after_real_latest_closed() -> None:
+    from datetime import timedelta
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    now = datetime.now(timezone.utc)
+    later = (_latest_eligible_session(CONNECTOR_ID, now) + timedelta(days=1)).isoformat()
+    assert _deferred_scope_validate(_queued_actual(later, now), now, [_nov("frontier-a0bceb2da89b", later)]) == 0
+
+
+@pytest.mark.parametrize(
+    "items,count,match",
+    [
+        # requested-day work plus newly queued later work: never netted away
+        ([_nov("f-req", "2026-11-12"), _nov("f-later", "2026-11-13")], 2, "unresolved frontier"),
+        ([_nov("f-req", "2026-11-12")], 1, "unresolved frontier"),
+        # concurrent enqueue: aggregate (1) predates the item list (2), or the reverse
+        ([_nov("f-req", "2026-11-12"), _nov("f-later", "2026-11-13")], 1, "contradict"),
+        ([_nov("f-later", "2026-11-13")], 2, "contradict"),
+        ([_nov("f-later", "2026-11-13"), _nov("f-later", "2026-11-13")], 2, "malformed or duplicated"),
+        # holiday/weekend: Sunday Nov15 morning-closed session is Fri Nov13, so Nov13 is requested work
+        ([_nov("f-fri", "2026-11-13")], 1, None),
+    ],
+)
+def test_terminal_readback_reconciles_frontier_items_exactly(items, count, match) -> None:
+    now = NOV13_MORNING
+    if match is None:
+        now = datetime(2026, 11, 15, 3, 0, tzinfo=timezone.utc)
+        with pytest.raises(ControllerTickError, match="unresolved frontier"):
+            _deferred_scope_validate(_queued_actual("2026-11-13", now, count), now, items)
+        return
+    with pytest.raises(ControllerTickError, match=match):
+        _deferred_scope_validate(_queued_actual("x", now, count), now, items)
