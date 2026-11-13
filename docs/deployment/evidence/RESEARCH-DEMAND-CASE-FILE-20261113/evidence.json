@@ -64,5 +64,34 @@
     "Context attachment is recorded as influence_unknown with null weight; no causal outcome, profitable effect or ranker score is invented.",
     "The demand id occupies the legacy influence record's task_id/run_id slots with metadata.decision_type=research_demand; no Research task or run is fabricated.",
     "The influence snapshot on the demand is retained if the existing secondary influence index is unavailable; the reason is explicit."
-  ]
+  ],
+  "resumed_validation": {
+    "reason": "Human/Ops declared the four originally required integration files and resumed the same task generation 2, PR #7321, owner Codex2 and reviewer Claude2. Four acceptance criteria and dependencies remain unchanged.",
+    "base_commit": "91bd1e1c78a7776157601f590b3988100197c6fb",
+    "validated_source_commit": "5d69ef82deea98cc9844e97c3de01bbb21a5261f",
+    "composition": "Merged current dev, including memory index projection PR #7319, into the published task branch without conflicts or history rewriting. Original demand implementation is unchanged.",
+    "verification": [
+      {
+        "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_retrieval_influence_case_file.py services/research/tests/test_research_demand.py services/research/tests/test_reviewed_memory_writeback.py services/research/alpha_replication/test_evolution_executor_case_file.py",
+        "exit_code": 0,
+        "result": "43 passed, 333 warnings in 30.93s"
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_persona_demand_routes_auth.py services/research/tests/test_query_plan.py services/research/tests/test_template_demand_search.py",
+        "exit_code": 0,
+        "result": "71 passed, 575 warnings in 60.09s"
+      },
+      {
+        "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_persona_cycle_demand_integration.py services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py",
+        "exit_code": 0,
+        "result": "17 passed, 253 warnings in 144.38s"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "exit_code": 0,
+        "result": "No whitespace errors"
+      }
+    ],
+    "scope": "Source integration only. No new route, service, privilege, compatibility layer, dependency, acceptance criterion or hosted authority. This manifest update follows the validated source; independent exact-head review and current required CI remain necessary."
+  }
 }
