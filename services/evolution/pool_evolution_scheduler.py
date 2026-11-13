@@ -141,11 +141,15 @@ class PoolEvolutionScheduler:
         if len(days) >= 20:
             self._propose(proposal(pool, member, entry, "revalidate", f"trading-window:{len(days)//20}"), report)
         family = (entry["metadata"]["strategy_artifact"]).get("strategy_id")
-        state = self.owner.family_state(family)
-        if state["trials"] >= FAMILY_LIMIT:
+        frequency = ((entry["metadata"]["strategy_artifact"]).get("parameters") or {}).get("bar_frequency")
+        # Daily/undeclared callers keep the legacy one-argument contract.
+        state = self.owner.family_state(family, frequency) if frequency else self.owner.family_state(family)
+        # O-17: the 500 lifetime cap is family-wide across frequencies.
+        used = max(state["trials"], state.get("family_total_trials", 0))
+        if used >= FAMILY_LIMIT:
             report.skipped[key] = "family_tried"
             return
-        if state["trials"] + VARIANTS > FAMILY_LIMIT:
+        if used + VARIANTS > FAMILY_LIMIT:
             report.skipped[key] = "family_budget_below_50"
             return
         kind = entry["metadata"]["strategy_artifact"]["strategy_logic"]["kind"]

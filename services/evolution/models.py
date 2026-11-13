@@ -29,6 +29,43 @@ from pydantic import BaseModel, Field
 # reject_mutation) are U8B's obligation.
 # ---------------------------------------------------------------------------
 
+# SD_INTRADAY_MINUTE_BARS §9 K8: a program's source/bar_frequency declaration is
+# fixed at creation.  No mutation rule may carry or rewrite these keys.
+IMMUTABLE_DECLARATION_KEYS = frozenset(
+    {"bar_frequency", "data_frequency", "frequency", "data_source", "source_dataset"}
+)
+
+
+class BarFrequencyMutationError(ValueError):
+    """Raised when a mutation rule tries to change the declared bar frequency/source."""
+
+
+def reject_bar_frequency_mutation(*values: Any) -> None:
+    """Fail closed if any (nested) key or the expression text targets the declaration."""
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, val in node.items():
+                if str(key).strip().lower() in IMMUTABLE_DECLARATION_KEYS:
+                    raise BarFrequencyMutationError(
+                        f"{key!r} is immutable for an evolution program; bar_frequency cannot be mutated"
+                    )
+                walk(val)
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+        elif isinstance(node, str):
+            low = node.lower()
+            for key in IMMUTABLE_DECLARATION_KEYS:
+                if key in low:
+                    raise BarFrequencyMutationError(
+                        f"mutation text references immutable declaration {key!r}"
+                    )
+
+    for value in values:
+        walk(value)
+
+
 class ProgramStatus(str, Enum):
     DRAFT = "draft"
     ACTIVE = "active"
