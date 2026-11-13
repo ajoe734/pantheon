@@ -43,6 +43,7 @@ READERS = {
     "RESEARCH_PERSONA_SERVICE_TOKEN": ("research-orchestrator", "viewer"),
     # Persona daily pool cycle -> research owner (persona demands, candidate supply).
     "PERSONA_RESEARCH_SERVICE_TOKEN": ("persona-pool-cycle", "viewer"),
+    "DISTILLATION_RESEARCH_SERVICE_TOKEN": ("strategy-distillation-worker", "viewer"),
     "RESEARCH_CAPITAL_SERVICE_TOKEN": ("research-orchestrator", "capital-reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
     "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", ("viewer", "registry-reader")),
@@ -119,7 +120,7 @@ CONSUMER_FILES = {
         "EVOLUTION_EXECUTE_PROPOSER_TOKEN",
     ),
     "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN", "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"),
-    "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
+    "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN", "DISTILLATION_RESEARCH_SERVICE_TOKEN"),
     "alpha-replication-worker": (
         "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",
         "TRAINING_SESSION_WORKER_TOKEN",
