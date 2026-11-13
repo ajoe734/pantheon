@@ -10,6 +10,7 @@
   "session_last_bar_start": "13:30",
   "expected_bars": 271,
   "volume_unit_factor": "1000",
+  "volume_component_categories": ["intraday_odd", "afterhours_odd", "afterhours_fixed", "block"],
   "volume_unit_status": "inferred_unverified_not_acceptance",
   "tick_size_bands": [
     {"min_price": "0", "tick": "0.01"},

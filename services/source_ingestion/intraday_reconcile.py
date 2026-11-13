@@ -25,7 +25,7 @@ import gzip
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -83,6 +83,7 @@ class ReconcileConfig:
     volume_unit_factor: Decimal
     volume_unit_status: str
     tick_bands: tuple[tuple[Decimal, Decimal], ...]
+    volume_component_categories: tuple[str, ...]
     pass_rate_review_below: Decimal
     pass_rate_window_days: int
     config_hash: str
@@ -127,6 +128,7 @@ def load_config(path: str | Path | None = None) -> ReconcileConfig:
         volume_unit_factor=Decimal(raw["volume_unit_factor"]),
         volume_unit_status=str(raw.get("volume_unit_status") or ""),
         tick_bands=bands,
+        volume_component_categories=tuple(raw.get("volume_component_categories") or ()),
         pass_rate_review_below=Decimal(raw["pass_rate_operator_review_below"]),
         pass_rate_window_days=int(raw["pass_rate_window_trading_days"]),
         config_hash=_sha256(_canonical(raw)),
@@ -182,6 +184,37 @@ def _official_volume_shares(body: Mapping[str, Any]) -> Decimal | None:
 
 
 @dataclass(frozen=True)
+class VolumeComponent:
+    """One official non-regular volume category (odd lot / after-hours fixed / block ...) of a
+    symbol-day, bound to its own stock/date/market/unit and source line hash."""
+    symbol: str
+    date: str
+    market: str | None
+    category: str
+    shares: Decimal | None  # normalized to shares; None = malformed/unsupported unit
+    unit: str
+    available_at: datetime | None
+    ref: Mapping[str, Any]
+
+
+def _component_from_body(body: Mapping[str, Any], ref: Mapping[str, Any], default_avail: Any) -> VolumeComponent:
+    unit = str(body.get("unit") or "").lower()
+    raw = _dec(body.get("volume"))
+    shares = raw if unit == "shares" else raw * SHARES_PER_LOT if unit == "lots" and raw is not None else None
+    market = body.get("market")
+    symbol, day = body.get("symbol"), body.get("date")
+    if not isinstance(symbol, str) or not symbol.strip() or not isinstance(day, str):
+        raise ValueError("component identity (symbol/date) missing or untyped")
+    try:
+        date.fromisoformat(day.strip()[:10])
+    except ValueError:
+        raise ValueError("component date is not a valid session date") from None
+    return VolumeComponent(
+        symbol.strip().upper(), day.strip()[:10], None if market is None else str(market).upper(),
+        str(body.get("category") or ""), shares, unit, _parse_ts(body.get("available_time") or default_avail), ref)
+
+
+@dataclass(frozen=True)
 class OfficialRow:
     symbol: str
     date: str
@@ -192,6 +225,8 @@ class OfficialRow:
     volume: Decimal
     available_at: datetime | None
     ref: Mapping[str, Any]
+    market: str | None = None
+    components: tuple["VolumeComponent", ...] = ()
 
     def ohlcv(self) -> tuple[Decimal, ...]:
         return (self.open, self.high, self.low, self.close, self.volume)
@@ -200,8 +235,16 @@ class OfficialRow:
 class OfficialDaily:
     """Read-only view of ``normalized/tw_price_daily`` (date-partitioned jsonl)."""
 
-    def __init__(self, rows: Iterable[OfficialRow], dates_present: Iterable[str]) -> None:
+    def __init__(self, rows: Iterable[OfficialRow], dates_present: Iterable[str],
+                 components: Iterable[VolumeComponent] = ()) -> None:
         self._rows: dict[tuple[str, str], list[OfficialRow]] = {}
+        self._components: dict[tuple[str, str], list[VolumeComponent]] = {}
+        self._unattributable: list[VolumeComponent] = []
+        for comp in components:
+            if not comp.symbol:  # unparseable line: cannot be attributed to any stock
+                self._unattributable.append(comp)
+                continue
+            self._components.setdefault((comp.symbol, comp.date), []).append(comp)
         for row in rows:
             self._rows.setdefault((row.symbol, row.date), []).append(row)
         self.dates_present = frozenset(dates_present)
@@ -209,8 +252,11 @@ class OfficialDaily:
     @classmethod
     def from_snapshot(cls, root: str | Path) -> "OfficialDaily":
         base = Path(root)
+        snapshot_root = base
         if (base / "normalized" / "tw_price_daily").is_dir():
             base = base / "normalized" / "tw_price_daily"
+        elif base.name == "tw_price_daily" and base.parent.name == "normalized":
+            snapshot_root = base.parent.parent  # direct dataset dir: components live at the canonical root
         if not base.is_dir():
             raise ReconcileError(f"official tw_price_daily snapshot missing: {base}")
         rows: list[OfficialRow] = []
@@ -233,12 +279,44 @@ class OfficialDaily:
                 if any(v is None for v in vals):
                     continue  # all-null no-trade quote: not an official bar
                 avail = _parse_ts(body.get("available_time") or meta.get("available_time"))
+                mkt = body.get("market")
                 rows.append(OfficialRow(
                     sym, day, *vals, avail,
                     {"path": path.relative_to(base).as_posix(), "line": number,
                      "line_sha256": _sha256(line), "source_id": rec.get("source_id")},
+                    None if mkt is None else str(mkt).upper(),
                 ))
-        return cls(rows, dates)
+        return cls(rows, dates, cls._load_components(snapshot_root))
+
+    @staticmethod
+    def _load_components(root: Path) -> list[VolumeComponent]:
+        """Optional ``normalized/tw_price_daily_volume_components`` jsonl: one line per official
+        category {symbol,date,market,category,volume,unit(shares|lots),available_time}."""
+        base = root / "normalized" / "tw_price_daily_volume_components"
+        out: list[VolumeComponent] = []
+        if not base.is_dir():
+            return out
+        for path in sorted(p for p in base.rglob("*.jsonl") if p.is_file()):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if not line.strip():
+                    continue
+                ref = {"path": path.relative_to(base).as_posix(), "line": number, "line_sha256": _sha256(line)}
+                try:
+                    rec = json.loads(line)
+                    meta = rec.get("metadata") or {}
+                    body = meta.get("body") or rec
+                    body = json.loads(body) if isinstance(body, str) else dict(body)
+                    ref["source_id"] = rec.get("source_id")
+                    out.append(_component_from_body(body, ref, meta.get("available_time")))
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    # Unparseable line: keep an unusable marker so the basis is unavailable, never zero.
+                    out.append(VolumeComponent("", "", None, "", None, "", None, ref))
+        return out
+
+    def components_for(self, symbol: str, day: str) -> list[VolumeComponent]:
+        found = list(self._components.get((symbol.upper(), day), ()))
+        # An unreadable component line could belong to this stock: its basis is then unavailable.
+        return found + self._unattributable
 
     def rows_for(self, symbol: str, day: str) -> list[OfficialRow]:
         return list(self._rows.get((symbol.upper(), day), ()))
@@ -312,7 +390,68 @@ def _fmt(value: Any) -> Any:
     return str(value) if isinstance(value, Decimal) else value
 
 
-def evaluate_aggregate(agg: Mapping[str, Any], official: OfficialRow, cfg: ReconcileConfig) -> list[dict[str, Any]]:
+def volume_basis(official: OfficialRow, components: Sequence[VolumeComponent], cfg: ReconcileConfig,
+                 now: datetime) -> dict[str, Any]:
+    """Comparable regular-session official volume (shares), evidence-bound.
+
+    * no component evidence at all -> legacy basis: the full official total (raw volume kept).
+    * any component evidence -> every configured category must be present exactly once, with the
+      same stock/date/market, a supported unit, a non-negative amount and a known availability;
+      otherwise ``status='unavailable'`` (never infer a missing category as zero).
+    ``status='pending'`` when a component is not yet available at ``now``.
+    """
+    out: dict[str, Any] = {"official_total_volume": str(official.volume), "components": [],
+                           "basis": "official_total", "status": "ok", "volume": official.volume}
+    if not components:
+        return out
+    need = set(cfg.volume_component_categories)
+    problems: list[str] = []
+    seen: dict[str, VolumeComponent] = {}
+    for c in components:
+        out["components"].append({"category": c.category, "shares": None if c.shares is None else str(c.shares),
+                                  "unit": c.unit, "market": c.market, "ref": dict(c.ref),
+                                  "available_at": None if c.available_at is None else _iso(c.available_at)})
+        if c.symbol != official.symbol or c.date != official.date:
+            problems.append("component_stock_or_date_mismatch")
+        if c.market is None or official.market is None or c.market != official.market:
+            problems.append("component_market_unbound_or_mismatch")
+        if c.shares is None:
+            problems.append("component_unit_or_amount_unsupported")
+        elif c.shares < 0:
+            problems.append("component_negative")
+        if c.category not in need:
+            problems.append("component_category_unsupported")
+        elif c.category in seen:
+            problems.append("component_category_duplicate")
+        seen[c.category] = c
+    problems += [f"component_category_missing:{k}" for k in sorted(need - set(seen))]
+    if not problems and any(c.available_at is None for c in components):
+        problems.append("component_availability_unknown")
+    if problems:
+        out.update(status="unavailable", reason=",".join(sorted(set(problems))), volume=None)
+        return out
+    if any(c.available_at > now for c in components):  # type: ignore[operator]
+        out.update(status="pending", reason="official_volume_component_not_yet_available", volume=None)
+        return out
+    total = sum((c.shares for c in components), Decimal(0))  # type: ignore[misc]
+    comparable = official.volume - total
+    if comparable < 0:
+        out.update(status="unavailable", reason="components_exceed_official_total", volume=None)
+        return out
+    out.update(basis="official_total_minus_non_regular_categories", volume=comparable,
+               non_regular_total=str(total), comparable_volume=str(comparable),
+               component_available_at=_iso(max(c.available_at for c in components)))  # type: ignore[type-var]
+    return out
+
+
+
+def _basis_ref(basis: Mapping[str, Any]) -> dict[str, Any]:
+    """JSON-safe copy for source_refs (drops the Decimal working value)."""
+    return {k: v for k, v in basis.items() if k != "volume"}
+
+
+def evaluate_aggregate(agg: Mapping[str, Any], official: OfficialRow, cfg: ReconcileConfig,
+                       basis: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     """Return the list of violations (empty = pass). Pure; no I/O."""
     out: list[dict[str, Any]] = []
     if agg.get("malformed") or "open" not in agg:
@@ -330,8 +469,18 @@ def evaluate_aggregate(agg: Mapping[str, Any], official: OfficialRow, cfg: Recon
             out.append({"field": name, "observed": str(obs), "official": str(off),
                         "tolerance": f"max({cfg.price_tolerance_ticks} tick={tick}, {cfg.price_tolerance_pct * 100}%)={tol}",
                         "reason": "price_outside_tolerance"})
-    obs_v, off_v = agg["volume"], official.volume
-    if off_v == 0:
+    basis = basis or {"status": "ok", "volume": official.volume, "basis": "official_total"}
+    if basis["status"] != "ok":
+        out.append({"field": "volume", "observed": str(agg["volume"]), "official": str(official.volume),
+                    "tolerance": None, "reason": "volume_basis_unavailable", "basis_reason": basis.get("reason")})
+        off_v = None
+    else:
+        off_v = basis["volume"]
+    obs_v = agg["volume"]
+    if off_v is None:
+        vol_bad = False
+        rel: Decimal | None = None
+    elif off_v == 0:
         vol_bad = obs_v != 0
         rel: Decimal | None = None
     else:
@@ -339,6 +488,7 @@ def evaluate_aggregate(agg: Mapping[str, Any], official: OfficialRow, cfg: Recon
         vol_bad = rel > cfg.volume_tolerance_pct
     if vol_bad:
         out.append({"field": "volume", "observed": str(obs_v), "official": str(off_v),
+                    "basis": basis["basis"], "official_total_volume": str(official.volume),
                     "tolerance": f"{cfg.volume_tolerance_pct * 100}% (unit_factor={cfg.volume_unit_factor}, "
                                  f"{cfg.volume_unit_status})",
                     "relative_error": None if rel is None else str(rel),
@@ -486,6 +636,9 @@ def reconcile_symbol_day(
     res.official = {k: str(getattr(row, k)) for k in (*PRICE_FIELDS, "volume")}
     if row.available_at is None or row.available_at > now:
         return _pending(store, res, write, "official_row_not_yet_available", drop_record=True)
+    basis = volume_basis(row, official.components_for(sym, day), cfg, now)
+    if basis["status"] == "pending":
+        return _pending(store, res, write, basis["reason"], drop_record=True)
 
     if recovered is not None:
         rec0 = recovered[0]
@@ -506,8 +659,8 @@ def reconcile_symbol_day(
     agg = aggregate_minutes(rows, cfg)
     res.observed = {k: _fmt(agg.get(k)) for k in (*PRICE_FIELDS, "volume", "raw_volume", "bar_count",
                                                   "coverage", "longest_missing_run")}
-    res.source_refs = {"official": dict(row.ref), "minute": minute_ref}
-    res.violations = evaluate_aggregate(agg, row, cfg)
+    res.source_refs = {"official": dict(row.ref), "minute": minute_ref, "volume_basis": _basis_ref(basis)}
+    res.violations = evaluate_aggregate(agg, row, cfg, basis)
     if res.violations:
         res.outcome, res.reason = OUTCOME_FAIL, ",".join(sorted({v["reason"] for v in res.violations}))
         return _quarantine(store, res, write, now)
@@ -517,11 +670,13 @@ def reconcile_symbol_day(
     prior = read_record(store, sym, day)
     if (prior and not prior.get("withheld") and prior.get("kind") == kind and prior.get("shard_sha256") == shard_hash
             and prior.get("official_row_hash") == row.ref.get("line_sha256")
+            and (prior.get("source_refs") or {}).get("volume_basis") == json.loads(_canonical(_basis_ref(basis)))
             and prior.get("config_hash") == cfg.config_hash):
         res.outcome, res.unchanged = OUTCOME_PASS, True
         res.reconciled_at, res.bar_availability_ts = prior["reconciled_at"], prior["bar_availability_ts"]
         return res
-    reconciled = max(now, fetched, row.available_at)  # real clock; never earlier than its inputs
+    reconciled = max(now, fetched, row.available_at,
+                     *([_parse_ts(basis["component_available_at"])] if "component_available_at" in basis else []))
     res.outcome = OUTCOME_PASS
     res.reconciled_at = _iso(reconciled)
     res.bar_availability_ts = _availability(rows, fetched, reconciled)
@@ -632,7 +787,11 @@ def readmit_after_refetch(
     if len({r["bar_start"] for r in clean}) != len(clean):
         res.outcome, res.reason = OUTCOME_FAIL, "duplicate_bar_start_in_refetch"
         return res
-    res.violations = evaluate_aggregate(agg, off, cfg)
+    basis = volume_basis(off, official.components_for(sym, day), cfg, now)
+    if basis["status"] == "pending":
+        res.outcome, res.reason = OUTCOME_PENDING, basis["reason"]
+        return res
+    res.violations = evaluate_aggregate(agg, off, cfg, basis)
     res.observed = {k: _fmt(agg.get(k)) for k in (*PRICE_FIELDS, "volume", "bar_count")}
     res.official = {k: str(getattr(off, k)) for k in (*PRICE_FIELDS, "volume")}
     if res.violations:
@@ -644,11 +803,12 @@ def readmit_after_refetch(
         store._write_raw(sym, day, raw_envelope, path=store.raw_path(sym, day).with_name(f"{sym}.raw.refetch-{digest}.jsonl.gz"))
     payload = _gz_bytes(_canonical(r) for r in ordered)
     _atomic_write(_readmit_rows_path(store, sym, day), payload)
-    reconciled = max(now, fetched, off.available_at)
+    reconciled = max(now, fetched, off.available_at,
+                     *([_parse_ts(basis["component_available_at"])] if "component_available_at" in basis else []))
     res.outcome, res.reconciled_at = OUTCOME_PASS, _iso(reconciled)
     res.bar_availability_ts = _availability(ordered, fetched, reconciled)
     res.official_available_at = _iso(off.available_at)
-    res.source_refs = {"official": dict(off.ref), "readmitted_rows_sha256": _sha256(payload),
+    res.source_refs = {"official": dict(off.ref), "volume_basis": _basis_ref(basis), "readmitted_rows_sha256": _sha256(payload),
                        "quarantine_reason": qrec.get("reason")}
     _write_record(store, res, kind="readmitted", shard_sha256=_sha256(payload), content_hash=_sha256(_canonical(
         [[r["bar_start"], r["open"], r["high"], r["low"], r["close"], r["volume"]] for r in ordered])),
