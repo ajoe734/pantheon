@@ -82,6 +82,11 @@
       "command": "timeout 90 .venv-pantheon/bin/python3 /tmp/tw-refresh-workflow-baseline.py",
       "exit_status": 1,
       "result": "Same five failed, nine passed on the exact official unmodified script; these tests stub out check_taiwan_refresh_preflight. Both wait_for_bounded_source_refresh_service and execute_bounded_source_refresh_entrypoint were also confirmed byte-identical old/new."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py",
+      "exit_status": 0,
+      "result": "23 passed in 9.43s after provisioning the existing pyarrow dependency; all nine dependency-related failures resolved."
     }
   ],
   "reproduction": {
