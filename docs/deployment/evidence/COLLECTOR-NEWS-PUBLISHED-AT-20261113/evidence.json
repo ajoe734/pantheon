@@ -2,14 +2,26 @@
   "task": "COLLECTOR-NEWS-PUBLISHED-AT-20261113",
   "root_cause": "RSS producer forwarded raw RFC 2822 pubDate (e.g. 'Wed, 11 Nov 2026 04:37:00 GMT') as published_at; verified reader _utc() accepted ISO-8601 only, failing run ingest-de7de36ab114 item news-cna-202611110105-aspx.",
   "fix": {
-    "reader": "collector_bundle._utc(allow_rfc2822=True) for published_at only; RFC 2822 accepted only with an explicit zone (naive/-0000 rejected); ISO path unchanged; raw bytes/manifest hashes untouched and verified first.",
-    "producer": "pollers._rss_pub_iso normalizes RSSHub news/paper pubDate to canonical UTC ISO; unparseable or zone-less literals left unchanged; raw item bytes keep the original literal."
+    "reader": "collector_bundle._strict_rfc2822_utc (published_at only): full RFC 2822 date, GMT/UT/UTC or 4-digit numeric offset (hh<=23, mm<=59), weekday/calendar validated, no trailing text; no-zone/-0000/named zones/+080/+1260 rejected; ISO path unchanged; raw bytes/hashes verified first.",
+    "producer": "pollers._rss_pub_iso uses the same strict parser; invalid literals pass through unchanged so the reader rejects them; raw item bytes keep the original literal."
   },
-  "negatives_kept": ["no-timezone", "-0000", "malformed", "published after fetched_at (PIT available>=event)", "raw hash mismatch"],
+  "negatives_kept": [
+    "no-timezone",
+    "-0000",
+    "malformed",
+    "+080",
+    "+1260",
+    "GMT trailing garbage",
+    "EST named zone",
+    "weekday mismatch",
+    "impossible date",
+    "published after fetched_at",
+    "raw hash mismatch"
+  ],
   "commands": {
-    "collector_bundle_connector": "pytest services/source_ingestion/tests/test_collector_bundle_connector.py -> 50 passed",
-    "collector_outcome_truth": "pytest services/source_ingestion/tests/test_collector_outcome_truth.py -> 70 passed (a venv lacking fastapi/pydantic shows 37 baseline ModuleNotFound failures, identical on clean dev)",
-    "collector_pollers": "pytest deploy/collector/tests/test_spiders_and_pollers.py -> 29 passed"
+    "result": "158 passed, exit 0",
+    "all": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_outcome_truth.py deploy/collector/tests/test_spiders_and_pollers.py"
   },
-  "scope": "source-only; no network/provider/host operations"
+  "scope": "source-only; no network/provider/host operations",
+  "recorded_rss_bundle": "test_recorded_rss_bundle_* build a sanitized RSS item bundle for news-cna-202611110105-aspx through CollectorBundleAdapter.pull(): exact 'Wed, 11 Nov 2026 04:37:00 GMT' (old code: fails ISO-8601) == equivalent ISO instant 2026-11-11T04:37:00Z; raw sha256 hash and replay stable."
 }

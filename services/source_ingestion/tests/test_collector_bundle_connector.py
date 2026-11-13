@@ -880,3 +880,66 @@ def test_rss_published_after_fetch_time_keeps_pit_failure(tmp_path):
     with pytest.raises(SourceEvidenceError, match="available_time must be >= event_time"):
         adapter.pull()
     assert raw_files(tmp_path) == []
+
+
+_BAD_RFC2822 = ["Tue, 10 Nov 2026 01:00:00 +080", "Tue, 10 Nov 2026 01:00:00 +1260",
+                "Tue, 10 Nov 2026 01:00:00 GMT trailing", "Tue, 10 Nov 2026 01:00:00 EST",
+                "Wed, 10 Nov 2026 01:00:00 GMT", "Tue, 31 Nov 2026 01:00:00 GMT"]
+
+
+@pytest.mark.parametrize("literal", _BAD_RFC2822)
+def test_rss_malformed_or_contradictory_rfc2822_is_rejected_by_verified_reader(tmp_path, literal):
+    adapter = _news_with_published(tmp_path, literal)
+    with pytest.raises(SourceEvidenceError, match="ISO-8601"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+def _recorded_rss_bundle(literal, fetched="2026-11-11T05:00:00Z", raw_tamper=False):
+    item_id = "news-cna-202611110105-aspx"
+    body = (f"<item><guid>{item_id}</guid><title>t</title><link>https://x.test/{item_id}</link>"
+            f"<pubDate>{literal}</pubDate></item>").encode()
+    sha = hashlib.sha256(body).hexdigest()
+    src, run, date = "collector-news-rss", "run1", "2026-11-11"
+    manifest = {
+        "schema_version": "collector_bundle.v1", "source_id": src, "run_id": run, "collector_version": "1.0.0",
+        "started_at": "2026-11-11T04:59:00Z", "finished_at": fetched, "fetch_policy_hash": "fph",
+        "robots_decision": "allowed", "terms_ref": "https://example.test/terms", "status": "complete",
+        "items": [{"item_id": item_id, "url": f"https://x.test/{item_id}", "http_status": 200,
+                   "content_sha256": sha, "raw_path": f"raw/{sha}.xml", "bytes": len(body)}],
+        "bundle_sha256": compute_bundle_sha256([sha]),
+    }
+    row = {"id": item_id, "url": f"https://x.test/{item_id}", "fetched_at": fetched, "published_at": literal,
+           "text": "t", "lang": "zh-TW", "hashed_author": "hmac-abc", "metrics": {}, "title": "t"}
+    base = f"bundles/{src}/{date}/{run}"
+    files = {f"{base}/manifest.json": json.dumps(manifest).encode(), f"{base}/items.jsonl": json.dumps(row).encode(),
+             f"{base}/raw/{sha}.xml": b"tampered" if raw_tamper else body}
+    return files, {"source_id": src, "date": date, "run_id": run, "finished_at": fetched}
+
+
+def _pull_rss(tmp_path, literal, **kw):
+    files, entry = _recorded_rss_bundle(literal, **kw)
+    return adapter_for(files, [entry], tmp_path, source_id="collector-news-rss", source_type="news",
+                       platform=None, publisher="cna").pull()
+
+
+def test_recorded_rss_bundle_exact_literal_and_equivalent_iso_yield_same_instant_and_hash(tmp_path):
+    exact = _pull_rss(tmp_path / "a", "Wed, 11 Nov 2026 04:37:00 GMT").records
+    iso = _pull_rss(tmp_path / "b", "2026-11-11T04:37:00Z").records
+    assert {r.metadata["published_at"] for r in exact} == {"2026-11-11T04:37:00Z"}
+    assert {r.metadata["published_at"] for r in iso} == {"2026-11-11T04:37:00Z"}
+    assert exact[0].metadata["content_hash"] == "sha256:" + hashlib.sha256(
+        b"<item><guid>news-cna-202611110105-aspx</guid><title>t</title>"
+        b"<link>https://x.test/news-cna-202611110105-aspx</link>"
+        b"<pubDate>Wed, 11 Nov 2026 04:37:00 GMT</pubDate></item>").hexdigest()
+    replay = _pull_rss(tmp_path / "c", "Wed, 11 Nov 2026 04:37:00 GMT").records
+    assert replay[0].metadata["content_hash"] == exact[0].metadata["content_hash"]
+
+
+def test_recorded_rss_bundle_negatives_future_time_order_and_hash(tmp_path):
+    with pytest.raises(SourceEvidenceError, match="available_time must be >= event_time"):
+        _pull_rss(tmp_path / "f", "Wed, 11 Nov 2026 04:37:00 GMT", fetched="2026-11-11T04:00:00Z")
+    with pytest.raises(SourceEvidenceError, match="ISO-8601"):
+        _pull_rss(tmp_path / "n", "Wed, 11 Nov 2026 04:37:00")
+    with pytest.raises(SourceEvidenceError):
+        _pull_rss(tmp_path / "h", "Wed, 11 Nov 2026 04:37:00 GMT", raw_tamper=True)

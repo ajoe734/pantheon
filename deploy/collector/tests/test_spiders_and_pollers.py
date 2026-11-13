@@ -481,3 +481,14 @@ def test_rsshub_news_pubdate_is_emitted_as_canonical_utc_iso_and_raw_bytes_keep_
     # no provable zone: left as-is so the verified reader keeps failing truthfully
     assert got["news-cna-d"].published_at == "Wed, 11 Nov 2026 04:37:00"
     assert b"Wed, 11 Nov 2026 04:37:00 GMT" in got["news-cna-a"].raw_bytes
+
+
+def test_rss_pub_iso_rejects_malformed_offsets_and_trailing_text_unchanged() -> None:
+    from collector_stack.pollers import _rss_pub_iso
+
+    for bad in ("Tue, 10 Nov 2026 01:00:00 +080", "Tue, 10 Nov 2026 01:00:00 +1260",
+                "Tue, 10 Nov 2026 01:00:00 GMT trailing", "Wed, 10 Nov 2026 01:00:00 GMT",
+                "Tue, 10 Nov 2026 01:00:00 -0000"):
+        assert _rss_pub_iso(bad) == bad
+    assert _rss_pub_iso("Tue, 10 Nov 2026 09:00:00 +0800") == "2026-11-10T01:00:00Z"
+    assert _rss_pub_iso("Tue, 10 Nov 2026 01:00:00 GMT") == "2026-11-10T01:00:00Z"

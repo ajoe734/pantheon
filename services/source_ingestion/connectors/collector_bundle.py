@@ -36,7 +36,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -128,14 +127,39 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _parse_rfc2822_with_tz(text: str) -> datetime | None:
-    """Parse an RSS pubDate (RFC 2822) only when it carries an explicit timezone."""
-    try:
-        parsed = parsedate_to_datetime(text)
-    except (TypeError, ValueError, IndexError):
+_RFC2822_RE = re.compile(
+    r"^(?:(?P<dow>Mon|Tue|Wed|Thu|Fri|Sat|Sun), )?(?P<d>\d{1,2}) "
+    r"(?P<mon>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?P<y>\d{4}) "
+    r"(?P<H>\d{2}):(?P<M>\d{2}):(?P<S>\d{2}) (?:(?P<utc>GMT|UTC?)|(?P<sign>[+-])(?P<oh>\d{2})(?P<om>\d{2}))$"
+)
+_RFC2822_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_RFC2822_DOWS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _strict_rfc2822_utc(text: str) -> datetime | None:
+    """Strictly parse a full RFC 2822 date with GMT/UT/UTC or a 4-digit numeric offset.
+
+    Anything else (no zone, -0000, short/oversized offsets, named zones, trailing text,
+    impossible calendar values, weekday mismatch) returns None; never guesses.
+    """
+    m = _RFC2822_RE.match(text)
+    if not m:
         return None
-    # "-0000" / missing zone yields a naive value: timezone unknown, never guess.
-    return parsed if parsed is not None and parsed.tzinfo is not None else None
+    if m["utc"]:
+        offset = timedelta(0)
+    else:
+        oh, om = int(m["oh"]), int(m["om"])
+        if oh > 23 or om > 59 or (m["sign"] == "-" and oh == 0 and om == 0):
+            return None
+        offset = (1 if m["sign"] == "+" else -1) * timedelta(hours=oh, minutes=om)
+    try:
+        local = datetime(int(m["y"]), _RFC2822_MONTHS.index(m["mon"]) + 1, int(m["d"]),
+                         int(m["H"]), int(m["M"]), int(m["S"]))
+    except ValueError:
+        return None
+    if m["dow"] and _RFC2822_DOWS[local.weekday()] != m["dow"]:
+        return None
+    return (local - offset).replace(tzinfo=timezone.utc)
 
 
 def _utc(value: Any, field_name: str, *, allow_rfc2822: bool = False) -> datetime:
@@ -145,7 +169,7 @@ def _utc(value: Any, field_name: str, *, allow_rfc2822: bool = False) -> datetim
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
-        parsed = _parse_rfc2822_with_tz(text) if allow_rfc2822 else None
+        parsed = _strict_rfc2822_utc(text) if allow_rfc2822 else None
         if parsed is None:
             raise SourceEvidenceError(f"collector bundle {field_name} must be ISO-8601: {text!r}") from exc
     if parsed.tzinfo is None:

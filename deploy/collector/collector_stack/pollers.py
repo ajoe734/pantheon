@@ -9,8 +9,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 import zipfile
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlencode
 from typing import Any, Mapping, Sequence
@@ -43,19 +42,48 @@ def _api_key_headers(env_name: str) -> dict[str, str]:
     return {"x-goog-api-key": key} if key else {}
 
 
-def _rss_pub_iso(raw: str) -> str:
-    """Canonical UTC ISO for an RSS pubDate (RFC 2822) that carries an explicit zone.
+_RFC2822_RE = re.compile(
+    r"^(?:(?P<dow>Mon|Tue|Wed|Thu|Fri|Sat|Sun), )?(?P<d>\d{1,2}) "
+    r"(?P<mon>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?P<y>\d{4}) "
+    r"(?P<H>\d{2}):(?P<M>\d{2}):(?P<S>\d{2}) (?:(?P<utc>GMT|UTC?)|(?P<sign>[+-])(?P<oh>\d{2})(?P<om>\d{2}))$"
+)
+_RFC2822_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_RFC2822_DOWS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
-    Anything else (ISO, missing zone, malformed) is returned unchanged so the verified
-    reader keeps its truthful verdict; the raw item bytes are never touched.
+
+def _strict_rfc2822_utc(text: str) -> datetime | None:
+    """Strictly parse a full RFC 2822 date with GMT/UT/UTC or a 4-digit numeric offset.
+
+    Anything else (no zone, -0000, short/oversized offsets, named zones, trailing text,
+    impossible calendar values, weekday mismatch) returns None; never guesses.
     """
+    m = _RFC2822_RE.match(text)
+    if not m:
+        return None
+    if m["utc"]:
+        offset = timedelta(0)
+    else:
+        oh, om = int(m["oh"]), int(m["om"])
+        if oh > 23 or om > 59 or (m["sign"] == "-" and oh == 0 and om == 0):
+            return None
+        offset = (1 if m["sign"] == "+" else -1) * timedelta(hours=oh, minutes=om)
     try:
-        parsed = parsedate_to_datetime(raw)
-    except (TypeError, ValueError, IndexError):
+        local = datetime(int(m["y"]), _RFC2822_MONTHS.index(m["mon"]) + 1, int(m["d"]),
+                         int(m["H"]), int(m["M"]), int(m["S"]))
+    except ValueError:
+        return None
+    if m["dow"] and _RFC2822_DOWS[local.weekday()] != m["dow"]:
+        return None
+    return (local - offset).replace(tzinfo=timezone.utc)
+
+
+def _rss_pub_iso(raw: str) -> str:
+    """Canonical UTC ISO for a strictly valid RFC 2822 RSS pubDate; anything else is
+    returned unchanged so the verified reader keeps its truthful verdict."""
+    parsed = _strict_rfc2822_utc(raw)
+    if parsed is None:
         return raw
-    if parsed is None or parsed.tzinfo is None:
-        return raw
-    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _detect_tw_symbols(text: str) -> list[str]:
