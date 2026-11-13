@@ -20,7 +20,7 @@
   "review_round_2_fixes": {
     "AC4": "model-manifest.json now pins Qdrant/multilingual-e5-large-onnx@ac6781cd1cf88b8306a536d7c9d18a5bd57cc14b (flat paths); all 6 sha256 values re-verified against that revision (LFS oids + downloaded small files). Prior intfloat/multilingual-e5-large@66076b8d URL returned HTTP 404.",
     "AC5": "persona_private = caller has a persona, independent of hits; retrieval_query_labels RLS inherits parent log-row visibility; record_label takes persona_id.",
-    "AC5/6": "query log written by SearchGateway after canonical-owner/evidence/ACL validation, only served hits in order; log failure still fails the query (501).",
+    "AC5/6": "query log written in main.py after SearchGateway canonical-owner/evidence/ACL validation, only served hits in served order (gateway.py untouched); log failure still fails the query (501).",
     "AC2": "absent PANTHEON_SEARCH_BACKEND defaults to postgres_pgvector; absent DSN => unavailable (readyz non-200); jsonl only when explicitly selected.",
     "P2": "restored misplaced assertions in test_capture_individual_ids_and_absent_registry_metadata; opt-in pgvector image test fixed."
   }

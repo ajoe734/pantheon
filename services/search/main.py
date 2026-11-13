@@ -575,6 +575,39 @@ def _source_watermarks(repository: InMemoryEvidenceRepository) -> dict[str, str 
     return watermarks
 
 
+class _CapturingBackend:
+    """Proxy that remembers backend candidates; they are logged only after gateway validation."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.candidates: list[Any] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def search(self, *args: Any, **kwargs: Any) -> Any:
+        hits = self._inner.search(*args, **kwargs)
+        self.candidates = list(hits)
+        return hits
+
+
+def _record_served_query(backend: Any, capture: _CapturingBackend, response: Any, context: Any,
+                         body: Any, latency_ms: float) -> None:
+    """Log what was actually served (gateway-validated, served order); a failed write fails the query."""
+    by_id = {hit.id: hit for hit in capture.candidates}
+    served = [by_id[r.result_id] for r in response.results if r.result_id in by_id]
+    try:
+        backend.record_query(
+            context=context, request_id=body.request_id, query=body.query,
+            retrieval_mode=response.retrieval_mode, hits=served, latency_ms=latency_ms,
+            caller_decision_type=body.caller_decision_type, source_event_id=body.source_event_id,
+        )
+    except SearchCapabilityUnavailableError:
+        raise
+    except Exception as exc:
+        raise SearchCapabilityUnavailableError("retrieval_query_log_unavailable") from exc
+
+
 def create_app(
     index_store_path: Path | None = None,
     evidence_store_path: Path | None = None,
@@ -656,21 +689,9 @@ def create_app(
         adapter: KeywordIndexAdapter | None = None,
         query_body: "SearchQueryBody | None" = None,
     ) -> SearchGateway:
-        recorder = None
+        served_backend = retrieval_backend
         if retrieval_backend is not None and query_body is not None:
-            def recorder(*, context: Any, request: Any, hits: Any, latency_ms: float) -> None:
-                # Logged after gateway validation: only what was actually served.
-                try:
-                    retrieval_backend.record_query(
-                        context=context, request_id=request.request_id, query=request.query,
-                        retrieval_mode=request.retrieval_mode, hits=hits, latency_ms=latency_ms,
-                        caller_decision_type=query_body.caller_decision_type,
-                        source_event_id=query_body.source_event_id,
-                    )
-                except SearchCapabilityUnavailableError:
-                    raise
-                except Exception as exc:
-                    raise SearchCapabilityUnavailableError("retrieval_query_log_unavailable") from exc
+            served_backend = _CapturingBackend(retrieval_backend)
         return SearchGateway(
             repository=repository,
             retriever=kw_retriever,
@@ -680,8 +701,7 @@ def create_app(
             alpha_engine=alpha_eng,
             index_store=store,
             index_adapter=adapter,
-            retrieval_backend=retrieval_backend,
-            query_recorder=recorder,
+            retrieval_backend=served_backend,
         )
 
     def capabilities() -> dict[str, Any]:
@@ -988,7 +1008,11 @@ def create_app(
             )
 
             gateway = _build_gateway(repository, adapter=index_adapter, query_body=body)
+            started = time.perf_counter()
             response = gateway.search(request, context)
+            if isinstance(gateway.retrieval_backend, _CapturingBackend):
+                _record_served_query(retrieval_backend, gateway.retrieval_backend, response, context, body,
+                                     (time.perf_counter() - started) * 1000.0)
             snapshot = store.get_snapshot(response.request_id)
             return {
                 **response.to_dict(),
