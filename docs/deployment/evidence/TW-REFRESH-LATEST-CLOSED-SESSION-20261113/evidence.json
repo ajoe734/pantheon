@@ -1,0 +1,261 @@
+{
+  "task_id": "TW-REFRESH-LATEST-CLOSED-SESSION-20261113",
+  "owner": "Codex2",
+  "assigned_independent_reviewer": "Claude",
+  "delivery_scope": "Source/local only; independent exact-head review, required CI, native integration and owner DONE remain required.",
+  "base_commit": "bee86402b53352e8b4eecec12916395619a10944",
+  "anchor_commit": "99460d07f",
+  "scoped_source_sha256": {
+    "scripts/deploy_nonprod_vm.sh": "b12d29bea0e6c9c3c461670687347f8f8a00de41b22cbba9efa961827049ab37",
+    "scripts/test_dev_tw_market_refresh.py": "db20e7139e55674e869b2959c40703e9840876c567a7b5b34446d45114c2db85"
+  },
+  "defect": "CHIP preflight selected the latest closed/published session but skipped before 13:30 Taipei without reading that session dataset/coverage. Official outcomes alone do not establish historical missing data, especially equity.",
+  "correction": [
+    "Remove only the CHIP before-13:30 early skip; retain current weekend/holiday skips. On an ordinary morning, use the already-selected previous closed/published session for missing/stale/fresh and coverage decisions.",
+    "Call governed_taiwan_calendar_evidence with its actual venue/trade_date signature when every equity snapshot is missing. Preserve its governed fetched_at and pins instead of inventing a refreshed timestamp.",
+    "Require CHIP record trade date to equal the selected eligible session: future/unpublished records cannot prove freshness for it.",
+    "Replace the separate preflight implementation in tests with execution of the actual maintained PREFLIGHT_PY heredoc; inject only local I/O and the existing preflight test clock."
+  ],
+  "acceptance_mapping": {
+    "1_official_reproduction": "Verified official ZIP against named sanitized facts and exact historical script blob. Replayed each official checked_at with force=false through actual old and new code using clearly labelled controlled fixtures; see reproduction.",
+    "2_session_and_dataset_boundaries": "CHIP missing/stale -> proceed for 2026-11-12 at 2026-11-13 morning; complete -> noop. Broker coverage must include every current active symbol for the selected session; broker cutoff stays 18:00, TAIFEX close stays 13:30. Equity behavior unchanged; stale/missing equity separately proceeds.",
+    "3_regressions": "Actual preflight tests cover absent/stale/fresh records, no equity snapshot, weekend/holiday skips, prior weekend/emergency closures, UTC/Taipei rollover, exact close/publication boundaries, coverage across batches/dates, wrong dataset/status, early receipt/unpublished record, calendar pins, equity lineage and HTTP 503/404. Old official code: 30 failed, 9 passed. Corrected code: 39 passed.",
+    "4_scope_and_protections": "Only the three declared artifacts changed. Existing single workflow, scheduler/dispatcher, running-image pin, restoration, bounded provider policies, Collector afternoon capture, StageProd frozen pair and original Pattern/all12/all49 scopes unchanged.",
+    "5_delivery": "This committed manifest is prepared before review admission. Claude must independently approve the exact frozen PR/head; only the native supervisor integrator may merge. No author self-approval or hosted acceptance claim."
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_status": 0,
+      "result": "Checkout-scoped interpreter provisioned; verified package mappings and pytest from foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 /tmp/tw-refresh-baseline.py",
+      "exit_status": 1,
+      "expected_failure": true,
+      "result": "30 failed, 9 passed, 67 deselected; final regressions run against exact official script blob, with no copied decision logic."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py -k preflight",
+      "exit_status": 0,
+      "result": "39 passed, 67 deselected in 3.20s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 /tmp/tw-refresh-reproduce.py",
+      "exit_status": 0,
+      "result": "ZIP/facts equality and official script blob verified; 7 actual old/new controlled decisions asserted."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_taiwan_connectors.py -k 'broker or quota'",
+      "exit_status": 0,
+      "result": "20 passed, 14 deselected in 1.56s"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py -k 'source_refresh'",
+      "exit_status": 0,
+      "result": "11 passed, 123 deselected in 5.65s; exact running-image pin and restoration guards retained"
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "exit_status": 0
+    },
+    {
+      "command": "git diff --check bee86402b53352e8b4eecec12916395619a10944",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py",
+      "exit_status": 124,
+      "result": "Timed out with progress output only; NOT a passed run. Retried in a larger bounded batch; final result must be collected before handoff."
+    }
+  ],
+  "reproduction": {
+    "workflow_run": "https://github.com/ajoe734/pantheon/actions/runs/43337547540",
+    "workflow_head": "04947d53bcf3014389b530803c1551fa841d55e9",
+    "verified_script_blob": "ffc5e397431b9daa38da8ffa80d8828fce7a5ad1",
+    "official_zip_sha256": "a12cb317268893042ca5cb27073f5788175edd17cc3f788f4a96bdb7e28125f7",
+    "sanitized_facts_sha256": "6f41b7897618adbb3a7599776f4158471934921f2802e23daa0036c70b180899",
+    "historical_state_limit": "ZIP establishes outcomes only; injected readback/snapshot fixtures are controlled alternatives, not historical database claims.",
+    "official_outcomes": {
+      "tw-refresh-outcome.json": {
+        "checked_at": "2026-11-13T00:39:15.939381+00:00",
+        "connector_id": "tw-twse-tpex-official-market",
+        "dataset": "tw_price_daily",
+        "log": "",
+        "reason": "session_not_closed",
+        "status": "skipped",
+        "taipei_date": "2026-11-13"
+      },
+      "taifex-ssf-refresh-outcome.json": {
+        "checked_at": "2026-11-13T00:38:49.154737+00:00",
+        "connector_id": "tw-taifex-futures-options-chip",
+        "dataset": "taifex_ssf_contracts",
+        "log": "",
+        "reason": "session_not_closed",
+        "status": "skipped",
+        "taipei_date": "2026-11-13"
+      },
+      "finmind-broker-refresh-outcome.json": {
+        "checked_at": "2026-11-13T00:39:03.679594+00:00",
+        "connector_id": "tw-finmind-broker-daily-report",
+        "dataset": "tw_broker_top",
+        "log": "",
+        "reason": "session_not_closed",
+        "status": "skipped",
+        "taipei_date": "2026-11-13"
+      }
+    },
+    "controlled_old_new_decisions": [
+      {
+        "official_outcome_file": "tw-refresh-outcome.json",
+        "fixture_state": "fresh",
+        "old": {
+          "checked_at": "2026-11-13T00:39:15.939381+00:00",
+          "reason": "session_not_closed",
+          "status": "skipped",
+          "taipei_date": "2026-11-13"
+        },
+        "new": {
+          "checked_at": "2026-11-13T00:39:15.939381+00:00",
+          "reason": "session_not_closed",
+          "status": "skipped",
+          "taipei_date": "2026-11-13"
+        }
+      },
+      {
+        "official_outcome_file": "taifex-ssf-refresh-outcome.json",
+        "fixture_state": "missing",
+        "old": {
+          "checked_at": "2026-11-13T00:38:49.154737+00:00",
+          "connector_id": "tw-taifex-futures-options-chip",
+          "dataset": "taifex_ssf_contracts",
+          "reason": "session_not_closed",
+          "status": "skipped",
+          "taipei_date": "2026-11-13"
+        },
+        "new": {
+          "connector_id": "tw-taifex-futures-options-chip",
+          "dataset": "taifex_ssf_contracts",
+          "reason": "dataset_missing",
+          "session_date": "2026-11-12",
+          "status": "proceed",
+          "taipei_date": "2026-11-13"
+        }
+      },
+      {
+        "official_outcome_file": "taifex-ssf-refresh-outcome.json",
+        "fixture_state": "stale",
+        "old": {
+          "checked_at": "2026-11-13T00:38:49.154737+00:00",
+          "connector_id": "tw-taifex-futures-options-chip",
+          "dataset": "taifex_ssf_contracts",
+          "reason": "session_not_closed",
+          "status": "skipped",
+          "taipei_date": "2026-11-13"
+        },
+        "new": {
+          "connector_id": "tw-taifex-futures-options-chip",
+          "dataset": "taifex_ssf_contracts",
+          "reason": "closed_session_missing",
+          "session_date": "2026-11-12",
+          "status": "proceed",
+          "taipei_date": "2026-11-13"
+        }
+      },
+      {
+        "official_outcome_file": "taifex-ssf-refresh-outcome.json",
+        "fixture_state": "fresh",
+        "old": {
+          "checked_at": "2026-11-13T00:38:49.154737+00:00",
+          "connector_id": "tw-taifex-futures-options-chip",
+          "dataset": "taifex_ssf_contracts",
+          "reason": "session_not_closed",
+          "status": "skipped",
+          "taipei_date": "2026-11-13"
+        },
+        "new": {
+          "checked_at": "2026-11-13T00:38:49.154737+00:00",
+          "connector_id": "tw-taifex-futures-options-chip",
+          "dataset": "taifex_ssf_contracts",
+          "reason": "already_fresh",
+          "session_date": "2026-11-12",
+          "source_id": "tw-taifex:taifex_ssf_contracts:test",
+          "status": "noop",
+          "taipei_date": "2026-11-13"
+        }
+      },
+      {
+        "official_outcome_file": "finmind-broker-refresh-outcome.json",
+        "fixture_state": "missing",
+        "old": {
+          "checked_at": "2026-11-13T00:39:03.679594+00:00",
+          "connector_id": "tw-finmind-broker-daily-report",
+          "dataset": "tw_broker_top",
+          "reason": "session_not_closed",
+          "status": "skipped",
+          "taipei_date": "2026-11-13"
+        },
+        "new": {
+          "connector_id": "tw-finmind-broker-daily-report",
+          "dataset": "tw_broker_top",
+          "reason": "dataset_missing",
+          "session_date": "2026-11-12",
+          "status": "proceed",
+          "taipei_date": "2026-11-13"
+        }
+      },
+      {
+        "official_outcome_file": "finmind-broker-refresh-outcome.json",
+        "fixture_state": "stale",
+        "old": {
+          "checked_at": "2026-11-13T00:39:03.679594+00:00",
+          "connector_id": "tw-finmind-broker-daily-report",
+          "dataset": "tw_broker_top",
+          "reason": "session_not_closed",
+          "status": "skipped",
+          "taipei_date": "2026-11-13"
+        },
+        "new": {
+          "connector_id": "tw-finmind-broker-daily-report",
+          "dataset": "tw_broker_top",
+          "reason": "closed_session_missing",
+          "session_date": "2026-11-12",
+          "status": "proceed",
+          "taipei_date": "2026-11-13"
+        }
+      },
+      {
+        "official_outcome_file": "finmind-broker-refresh-outcome.json",
+        "fixture_state": "fresh",
+        "old": {
+          "checked_at": "2026-11-13T00:39:03.679594+00:00",
+          "connector_id": "tw-finmind-broker-daily-report",
+          "dataset": "tw_broker_top",
+          "reason": "session_not_closed",
+          "status": "skipped",
+          "taipei_date": "2026-11-13"
+        },
+        "new": {
+          "checked_at": "2026-11-13T00:39:03.679594+00:00",
+          "connector_id": "tw-finmind-broker-daily-report",
+          "dataset": "tw_broker_top",
+          "reason": "already_fresh",
+          "session_date": "2026-11-12",
+          "source_id": "finmind:test",
+          "status": "noop",
+          "taipei_date": "2026-11-13"
+        }
+      }
+    ]
+  },
+  "reproduction_programs": {
+    "/tmp/tw-refresh-reproduce.py": "import hashlib\nimport importlib.util\nimport json\nimport subprocess\nimport zipfile\nfrom datetime import datetime\nfrom pathlib import Path\n\nroot = Path.cwd()\nfacts_path = Path('/tmp/pantheon-root01a15322-resume-20261111/TW-REFRESH-LATEST-CLOSED-SESSION-20261113-sanitized-source-facts.json')\nfacts = json.loads(facts_path.read_text())\narchive = Path(facts['official_artifact'])\nwith zipfile.ZipFile(archive) as z:\n    outcomes = {n: json.loads(z.read(n)) for n in z.namelist()}\nassert outcomes == facts['outcomes']\nold = subprocess.check_output(['git', 'show', facts['workflow_head'] + ':scripts/deploy_nonprod_vm.sh'], text=True)\nblob = subprocess.check_output(['git', 'rev-parse', facts['workflow_head'] + ':scripts/deploy_nonprod_vm.sh'], text=True).strip()\nassert blob == facts['script_blob_verified_via_GitHub']\nspec = importlib.util.spec_from_file_location('refresh_tests', root / 'scripts/test_dev_tw_market_refresh.py')\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nrows = []\nfor filename, outcome in outcomes.items():\n    profile = (outcome['connector_id'], outcome['dataset'])\n    now = datetime.fromisoformat(outcome['checked_at'])\n    states = ('fresh',) if profile not in module.CHIP_PROFILES else ('missing', 'stale', 'fresh')\n    for state in states:\n        kwargs = {'profile': profile}\n        if profile in module.CHIP_PROFILES:\n            kwargs['readback'] = None if state == 'missing' else module._preflight_readback(profile, '2026-11-11' if state == 'stale' else '2026-11-12')\n            kwargs['source_records'] = module._preflight_broker_coverage()\n        old_result = module._run_preflight_script(False, now, module._preflight_snapshot(), script_text=old, **kwargs)\n        assert old_result['status'] == outcome['status'] and old_result['reason'] == outcome['reason']\n        new_result = module._run_preflight_script(False, now, module._preflight_snapshot(), **kwargs)\n        expected = ('skipped' if profile not in module.CHIP_PROFILES else 'noop' if state == 'fresh' else 'proceed')\n        assert new_result['status'] == expected\n        rows.append({'official_outcome_file': filename, 'fixture_state': state, 'old': old_result, 'new': new_result})\nreport = {\n    'workflow_run': facts['workflow_run'], 'workflow_head': facts['workflow_head'], 'verified_script_blob': blob,\n    'official_zip_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),\n    'sanitized_facts_sha256': hashlib.sha256(facts_path.read_bytes()).hexdigest(),\n    'historical_state_limit': 'ZIP establishes outcomes only; injected readback/snapshot fixtures are controlled alternatives, not historical database claims.',\n    'official_outcomes': outcomes, 'controlled_old_new_decisions': rows,\n}\nPath('/tmp/tw-refresh-reproduction.json').write_text(json.dumps(report, indent=2) + '\\n')\nprint(json.dumps(report, indent=2))\n",
+    "/tmp/tw-refresh-baseline.py": "import subprocess\nfrom pathlib import Path\nimport pytest\n\nold_path = Path('/tmp/tw-refresh-official-baseline.sh')\nold_path.write_bytes(subprocess.check_output(['git', 'show', '04947d53bcf3014389b530803c1551fa841d55e9:scripts/deploy_nonprod_vm.sh']))\nclass OfficialBaseline:\n    def pytest_collection_modifyitems(self, items):\n        for item in items:\n            item.module.DEPLOY_SCRIPT = old_path\nraise SystemExit(pytest.main(['-q', 'scripts/test_dev_tw_market_refresh.py', '-k', 'preflight'], plugins=[OfficialBaseline()]))\n"
+  },
+  "explicit_limits": [
+    "No VM, SSH, credentials, live provider/model/data/service operations, deployment or workflow dispatch performed by author. Existing sole hosted acceptance owner retains actual data refresh and later exact-pair publication.",
+    "Source/local PASS is not hosted activation, fresh quotes, normal post-deployment fill, full financial acceptance or W1 acceptance.",
+    "Provider inability to supply a required session remains subject to existing terminal readback failure/unavailable behavior; preflight proceed is not completed ingestion.",
+    "Existing governed calendar coverage and provider publication policy are reused without adding a calendar framework or claiming broader evidence coverage."
+  ]
+}
