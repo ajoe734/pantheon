@@ -1,0 +1,125 @@
+{
+  "task_id": "TEMPLATE-DEMAND-SEARCH-R2-20261112",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "status": "ready_for_independent_review",
+  "paper_only": true,
+  "acceptance": {
+    "1": "Registered time-series templates, owner tenant and checksum checked; observed inputs required on all mandate symbols; compiler validates factor_rule_v1; >100 registered signals compared on recorded observations.",
+    "2": "Normal persona HTTP caller with strict dev-issued cycle JWT -> existing authenticated reconcile -> durable Research run -> existing worker/startup/retry/terminal lifecycle -> admission.evaluate_template_candidate -> SharedReplicationGate and authoritative real-backtest store. Reconcile does no owner reads or backtests and retains its original 15-second HTTP timeout.",
+    "3": "Passing gate responses persist artifact, mechanism_untested/null support and demand/persona/tenant references. Receipt handling exercised with an explicit gate double, not a numerical admission claim.",
+    "4": "Library/family lifetime counters share replication store, all frequencies aggregated; exhausted families durably marked tried; missing inputs spend no trial; repeat receipts reuse identity.",
+    "5": "Authenticated normal caller integration holds the owner read until reconcile has returned, verifies duplicate-cycle reuse of one active run, releases and joins the actual worker, then checks recorded official Taiwan OHLCV compilation, real vectorbt/default gate and durable run/task/backtest/counter stores. All 1361 bars reconstructed from recordings, synthetic/fallback builders poisoned. KMID is genuinely rejected; no passing strategy is claimed."
+  },
+  "validation": [
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q -s services/research/tests/test_template_demand_search.py services/research/tests/test_persona_demand_routes_auth.py services/research/tests/test_query_plan.py services/research/tests/test_research_demand.py services/research/alpha_replication/test_admission.py services/persona/test_pool_autonomy_cycle.py services/research/tests/test_persona_cycle_demand_integration.py --basetemp=/tmp/template-demand-r2-final",
+      "exit_status": 0,
+      "result": "110 passed, 859 warnings in 204.78s (0:03:24)",
+      "log": "validation-regression.log"
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_retrain_search_update.py services/research/tests/test_retrain_oos_gate.py --basetemp=/tmp/template-demand-r2-final-worker",
+      "exit_status": 0,
+      "result": "47 passed, 492 warnings in 82.00s (0:01:22)",
+      "log": "validation-worker.log"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_template_demand_search.py services/research/tests/test_query_plan.py --basetemp=/tmp/template-demand-r2-correction",
+      "exit_status": 0,
+      "result": "24 passed, 105 warnings in 44.80s",
+      "log": "validation-final.log"
+    },
+    {
+      "command": "git diff --check origin/dev",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_template_demand_search.py services/research/tests/test_query_plan.py --basetemp=/tmp/template-demand-r2-evidence-revision",
+      "exit_status": 0,
+      "result": "24 passed, 105 warnings in 72.91s (0:01:12)",
+      "log": "validation-evidence-revision.log"
+    }
+  ],
+  "source_sha256": {
+    "services/research/template_demand_search.py": "1e590f0c1f4c84017db60fc835f66eb5d57913e6d41709570560507e52090896",
+    "services/research/research_demand.py": "afe28354786bff5f823fdbf1f657028e99012b8aba7f9b26916a109a79ecc7b4",
+    "services/research/alpha_replication/admission.py": "d3ca6892cec77216f274e084477aeea7c44b4f3216e0f686ecb826d47714ce75",
+    "services/research/main.py": "eca68a2ef263e0c38a8a5c002506695c61f2c2644f5561be27ce98f839de345f",
+    "services/persona/pool_autonomy_cycle.py": "b5e0df879a67f3fa37e9e2afb16c8bfc82c47c95912dec020842b04344e11e03",
+    "services/research/tests/test_template_demand_search.py": "8f834f52fe1f3bcf4ddfaa45c10177e1ed4788ac335b1ac0fd0a0f56d20fe41e",
+    "services/research/tests/fixtures/template_demand_tw_bars.json": "5e06f3b9ebacea8e0a7852bee281401b7b56d987bf7ea89625a00c6bbc05d9a9"
+  },
+  "fixture_sha256": "5e06f3b9ebacea8e0a7852bee281401b7b56d987bf7ea89625a00c6bbc05d9a9",
+  "recorded_gate_result": {
+    "path": "recorded-gate-result.json",
+    "status": "rejected",
+    "template_id": "qlib_alpha158:KMID",
+    "family_id": "template:qlib_alpha158:kbar",
+    "family_trial_count": 1,
+    "oos_sharpe": -0.743661,
+    "oos_round_trips": 98
+  },
+  "integration_scope_additions": {
+    "services/research/main.py": "Original production owner wiring via existing Research execution lifecycle, composed with merged PR7315 authorization."
+  },
+  "limits": [
+    "No hosted deployment or pool/capital changes.",
+    "No StrategySpec review, queue approval or baseline synthesized.",
+    "Real KMID run is a rejection; passing-candidate persistence uses a clearly named gate double.",
+    "Independent reviewer approval, required CI and canonical supervisor merge remain pending."
+  ],
+  "corrected_validation_failure": {
+    "exit_status": 1,
+    "result": "1 failed, 108 passed, 849 warnings in 206.91s (0:03:26)",
+    "log": "validation-initial.log",
+    "cause": "Unconfigured owner search created a Research task during the collector-only persona cycle.",
+    "correction": "Record unavailable demand outcome before creating a run when owner credentials have no configured value or file. Final query-plan and cross-service regressions pass."
+  },
+  "log_format": "Terminal output with trailing whitespace removed; no result text altered.",
+  "validated_source_commit": "0c0962e7864e230a6b56a0969aab2ecdd8fe5440",
+  "delivery_base_sha": "696e4579a25adfdd02f792b699cbad5cc1bd3a54",
+  "pr": 7318,
+  "caller_boundary": {
+    "authorization_predecessor": "f6f8d1be6374feb8415f0b03b0299d0520fed811",
+    "normal_caller": "services.persona.pool_autonomy_cycle.HttpPoolCyclePorts",
+    "timeout_seconds": 15,
+    "caller_source_diff_against_base": false,
+    "authentication_dependency_overrides": false,
+    "no_hosted_or_deployment_authority_claimed": true
+  },
+  "recorded_research_runs": {
+    "path": "recorded-research-runs.json",
+    "format": "focused_research_run_summary_v1",
+    "full_output": {
+      "sha256": "991bd8d50f998bafe6982ed2a39ef6709cc2a8a41c828570a1009d4370ee1a41",
+      "bytes": 36253,
+      "lines": 786,
+      "git_commit": "c122aeaa100a362c5f340ddc14c53f6d162c4ba6",
+      "git_blob": "471df7921f8cca66c8a25871218a59d5cc82a88c",
+      "path": "docs/deployment/evidence/TEMPLATE-DEMAND-SEARCH-R2-20261112/recorded-research-runs.json",
+      "url": "https://github.com/ajoe734/pantheon/blob/c122aeaa100a362c5f340ddc14c53f6d162c4ba6/docs/deployment/evidence/TEMPLATE-DEMAND-SEARCH-R2-20261112/recorded-research-runs.json",
+      "retrieval": "git show c122aeaa100a362c5f340ddc14c53f6d162c4ba6:docs/deployment/evidence/TEMPLATE-DEMAND-SEARCH-R2-20261112/recorded-research-runs.json"
+    },
+    "summary_sha256": "a8d25cc0abb13c1dd7df1471487822328f02db65a36562b2e4f3fe2e8316021a",
+    "run_count": 2,
+    "receipt_reused": true
+  },
+  "evidence_revision": {
+    "reason": "PR7318 reviewer reopen: replace repeated full Research run output with focused summary below 400-line cap.",
+    "anchor_commit": "ec9b9498b",
+    "production_and_test_source_changed": false,
+    "integrity_verification": "Original SHA-256/bytes/lines, both run lifecycles, candidate/gate identities, summary digest and seven source hashes verified.",
+    "ci_failure_diagnosis": "Old Service suites legs were skipped because the required Runtime mirror guard failed Diff budget; no service assertion failure was reported."
+  },
+  "base_refresh": {
+    "previous_base": "f6f8d1be6374feb8415f0b03b0299d0520fed811",
+    "current_base": "696e4579a25adfdd02f792b699cbad5cc1bd3a54",
+    "reason": "Dev advanced while CI was running; handoff admission requires current base ancestry.",
+    "task_source_hashes_unchanged": true,
+    "previous_validated_head": "be080ec8610224fe702bbe3dc7efbdacce463074",
+    "previous_ci_run": "https://github.com/ajoe734/pantheon/actions/runs/43427911864",
+    "previous_ci_conclusion": "success",
+    "refreshed_head_ci": "Must rerun on pushed head; previous success is not represented as refreshed-head CI."
+  }
+}

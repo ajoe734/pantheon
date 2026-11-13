@@ -1,0 +1,195 @@
+..........Recorded default-gate result: rejected OOS Sharpe: -0.743661 round trips: 98
+........................................................F..........................................
+=================================== FAILURES ===================================
+__ test_persona_cycle_real_research_http_entry_produces_read_only_weekly_task __
+
+tmp_path = PosixPath('/tmp/template-demand-r2-regression/test_persona_cycle_real_resear0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x72531bd5ef30>
+
+    def test_persona_cycle_real_research_http_entry_produces_read_only_weekly_task(tmp_path, monkeypatch):
+        # Real PoolAutonomyCycle and HttpPoolCyclePorts demand calls enter the actual
+        # research HTTP handlers. Pool/registry/memory owner reads are fixtures only.
+        from services.persona.pool_autonomy_cycle import PoolAutonomyCycle
+        from services.persona.test_pool_autonomy_cycle import Ports, pool, LOW
+        from services.research.tests.test_persona_demand_routes_auth import _cycle_headers, SECRET, TENANT
+        monkeypatch.setenv("PANTHEON_RESEARCH_AUTH_MODE", "strict")
+        monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", SECRET)
+        module = _load_service_module(data_dir=str(tmp_path))
+        module.research_demand_store = ResearchDemandStore(tmp_path / "demands.json", now=lambda: NOW)
+        module.query_plan_store = QueryPlanStore(tmp_path / "plans.json", now=lambda: NOW)
+        client = TestClient(module.app)
+        headers = _cycle_headers()
+        calls = []
+        class OwnerPorts(Ports):
+            def reconcile_demands(self, persona, members):
+                calls.append("reconcile")
+                response = client.post("/api/research/persona-demands/reconcile", headers=headers,
+                                       json={"persona_id": persona["persona_id"], "members": members})
+                assert response.status_code == 200, response.text
+                return response.json()["demands"]
+            def open_demand(self, persona, body):
+                calls.append("open")
+                response = client.post("/api/research/persona-demands", headers=headers, json=body)
+                assert response.status_code == 201, response.text
+                return response.json()
+        persona = {"persona_id": "p1", "tenant_id": TENANT, "mandate": "Taiwan momentum", "required_data_sources": ["tw-margin-balance"]}
+        cycle = PoolAutonomyCycle(OwnerPorts(), now=lambda: NOW.isoformat())
+        result = cycle.run(persona, {"pool": pool(), "pool_health": LOW, "unavailable": []}, "cycle-1")
+        assert result["status"] == "completed", repr(result)
+        assert "open" in calls and "reconcile" in calls
+        items = client.get("/api/research-orchestrator/tasks").json()
+        assert len(items) == 1 and items[0]["query_plan"]["matched_terms"]
+        task_id = items[0]["task_id"]
+        assert client.get(f"/api/research-orchestrator/tasks/{task_id}").json() == items[0]
+        assert client.post(f"/api/research-orchestrator/tasks/{task_id}/runs", json={"adapter": "stub"}).status_code == 404
+        assert client.post("/api/research/persona-demands/reconcile").status_code in (401, 403)
+        # Same-week daily run is idempotent; next week's cycle emits a new proposal.
+        cycle.run(persona, {"pool": pool(), "pool_health": LOW, "unavailable": []}, "cycle-2")
+>       assert client.get("/api/research-orchestrator/tasks").json() == items
+E       AssertionError: assert [{'id': 'rtas...y_plan', ...}] == [{'id': 'coll...y_plan', ...}]
+E
+E         At index 0 diff: {'id': 'rtask-20261113-001', 'task_id': 'rtask-20261113-001', 'title': 'Search registered templates for rd-ca7fde50bbb841047fbc', 'objective': 'Compile mandate-compatible templates through the replication gate', 'status': 'running', 'generation': 1, 'source_refs': [], 'constraints': {'tenant_id': 'tenant-dev', 'persona_id': 'p1'}, 'created_by': 'persona-pool-cycle', 'created_at': '2026-11-13T12:28:17Z', 'updated_at': '2026-11-13T12:28:17Z', 'idempotency_key': 'template-search:tenant-dev:rd-ca7fde50bbb841047fbc'} != {'id': 'collector-query-plan-7c51172be...
+E
+E         ...Full output truncated, use '-vv' to show
+
+services/research/tests/test_query_plan.py:139: AssertionError
+=============================== warnings summary ===============================
+../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+services/research/replication/gate.py:19
+services/research/replication/gate.py:19
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate.py:19: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+services/research/tests/test_template_demand_search.py: 5 warnings
+services/research/tests/test_persona_demand_routes_auth.py: 47 warnings
+services/research/tests/test_query_plan.py: 3 warnings
+services/research/tests/test_research_demand.py: 1 warning
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 5 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:474: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+services/research/tests/test_template_demand_search.py: 25 warnings
+services/research/tests/test_persona_demand_routes_auth.py: 235 warnings
+services/research/tests/test_query_plan.py: 15 warnings
+services/research/tests/test_research_demand.py: 5 warnings
+services/persona/test_pool_autonomy_cycle.py: 5 warnings
+services/research/tests/test_persona_cycle_demand_integration.py: 25 warnings
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/applications.py:4744: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+services/research/tests/test_template_demand_search.py: 5 warnings
+services/research/tests/test_persona_demand_routes_auth.py: 47 warnings
+services/research/tests/test_query_plan.py: 3 warnings
+services/research/tests/test_research_demand.py: 1 warning
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 5 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:480: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("shutdown")
+
+services/research/tests/test_template_demand_search.py: 5 warnings
+services/research/tests/test_persona_demand_routes_auth.py: 47 warnings
+services/research/tests/test_query_plan.py: 3 warnings
+services/research/tests/test_research_demand.py: 1 warning
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 5 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:559: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+services/research/tests/test_template_demand_search.py: 5 warnings
+services/research/tests/test_persona_demand_routes_auth.py: 47 warnings
+services/research/tests/test_query_plan.py: 3 warnings
+services/research/tests/test_research_demand.py: 1 warning
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 5 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:2944: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+services/research/tests/test_template_demand_search.py: 5 warnings
+services/research/tests/test_persona_demand_routes_auth.py: 47 warnings
+services/research/tests/test_query_plan.py: 3 warnings
+services/research/tests/test_research_demand.py: 1 warning
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 5 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:2962: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+services/research/tests/test_template_demand_search.py: 10 warnings
+services/persona/test_pool_autonomy_cycle.py: 10 warnings
+services/research/tests/test_persona_cycle_demand_integration.py: 140 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate_schema.py:59: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/research/tests/test_template_demand_search.py: 1 warning
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 14 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate_schema.py:121: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/research/tests/test_template_demand_search.py: 1 warning
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 14 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate.py:1991: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "timestamp": datetime.utcnow().isoformat() + "Z",
+
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 14 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate_schema.py:80: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 10 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate_schema.py:160: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_demand_then_admitted_trial_member
+services/research/tests/test_persona_cycle_demand_integration.py::test_consultation_opened_then_trial_member_admitted_after_approving_memo
+services/research/tests/test_persona_cycle_demand_integration.py::test_risk_oppose_becomes_operator_decision_and_never_admits
+services/research/tests/test_persona_cycle_demand_integration.py::test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/test_gate.py:214: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "retrieved_at": datetime.utcnow().isoformat() + "Z",
+
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_demand_then_admitted_trial_member
+services/research/tests/test_persona_cycle_demand_integration.py::test_consultation_opened_then_trial_member_admitted_after_approving_memo
+services/research/tests/test_persona_cycle_demand_integration.py::test_risk_oppose_becomes_operator_decision_and_never_admits
+services/research/tests/test_persona_cycle_demand_integration.py::test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/test_gate.py:257: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "created_at": datetime.utcnow().isoformat() + "Z",
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED services/research/tests/test_query_plan.py::test_persona_cycle_real_research_http_entry_produces_read_only_weekly_task
+1 failed, 108 passed, 849 warnings in 206.91s (0:03:26)
