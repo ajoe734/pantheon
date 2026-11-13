@@ -5,10 +5,11 @@
     "integrations/openclaw/persona_memory_bridge.py (build_cycle_memory_query; tags; retrieval recorded in context and receipt)",
     "services/openclaw-gateway-adapter/main.py (materialise route accepts the cycle's query and tags; a supplied blank query is refused)",
     "services/persona/persona_cycle_controller.py (cycle query from shortfall+families+underlyings; cycle and per-proposal case files; CaseFileProposal/CaseFileTurnOutput citation schema and CaseFile prompt section; citation check; fail-closed reasons)",
-    "services/persona/test_pool_autonomy_cycle.py (stub owner gains a case_file port; outside the declared artifact contract, see known_limits)"
+    "services/persona/test_pool_autonomy_cycle.py (stub owner gains a case_file port; now declared in the task artifact contract by Human/Ops maintenance)"
   ],
   "verification": {
     "commands": [
+      "/tmp/v/bin/python -m pytest -q services/persona integrations/openclaw/test_persona_memory_bridge.py services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py services/knowledge/test_case_file_integration.py -> 329 passed, 1 skipped (head refresh 2026-11-13)",
       ".venv-pantheon/bin/python3 -m pytest -q services/persona services/research/tests/test_persona_cycle_demand_integration.py  -> 1 failure fixed in test_pool_autonomy_cycle.py stub, rerun 17 passed; rest 314 passed",
       ".venv-pantheon/bin/python3 -m pytest -q services/knowledge integrations/openclaw --ignore=integrations/openclaw/test_dev_gates.py -> 177 passed (before the final scope reduction; the touched tests were rerun: 45 passed)",
       ".venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py -> 5 passed",
@@ -30,7 +31,6 @@
   ],
   "known_limits": [
     "the route keeps the bridge bootstrap query when a caller omits query (agent sync/legacy callers); the cycle never omits it",
-    "services/persona/test_pool_autonomy_cycle.py is edited but not in the task artifact contract (its stub owners lacked the new case_file port)",
     "case_file.Subject carries one strategy_family: the first sorted family; the memory query itself carries all families",
     "pool_health observations are not yet projected by the telemetry owner; the test injects them via the telemetry reader",
     "harness_patch/no_action proposals reference the cycle-level case file; other kinds get their own"
