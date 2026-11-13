@@ -1,0 +1,57 @@
+{
+  "schema_version": "collector_governed_feature_handoff_evidence.v1",
+  "task_id": "COLLECTOR-GOVERNED-FEATURE-HANDOFF-20261113",
+  "owner": "Codex2",
+  "assigned_reviewer": "Claude",
+  "status": "reproduced_awaiting_native_artifact_extension",
+  "implementation_base": "8472268bb82c9eddad0f12db3b583be3154dacbb",
+  "scope": "Repository/local contract-fixture reproduction only; no product implementation or hosted acceptance yet.",
+  "source_facts": {
+    "file": "/tmp/pantheon-root01a15322-resume-20261111/COLLECTOR-GOVERNED-FEATURE-HANDOFF-20261113-sanitized-source-facts.json",
+    "sha256": "9b52c163f1051f3cca5180d58cd542953f8b47dee27432fee59e6582576d0e9b",
+    "inspected_hosted_source_ref": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4"
+  },
+  "retained_readonly_proof": {
+    "file": "/tmp/pantheon-root01a15322-resume-20261111/actual-W1-governed-receipt-calendar-readonly-20261113T043111.json",
+    "sha256": "fb3d35c700cdf0e015b422fd7f265f803c1be1c162d01f17435708f85744edb9",
+    "runs": ["ingest-47d79b6ad6b8", "ingest-c3ee8f91be30"],
+    "failure": "fetched record source_type must match job connector",
+    "payload_limitation": "Readonly proof contains receipt metadata, not recorded raw provider payloads. Tests use existing local make_bundle contract fixtures with catalogued NDC fields and an admitted PTT symbol; they do not claim a byte-for-byte hosted payload replay."
+  },
+  "diagnosis": [
+    "collector_bundle._pull_ordered returns market feature SourceRecords and original macro/social raw SourceRecords in one records tuple.",
+    "ConfiguredConnectorFetcher forwards the mixed tuple in one IngestBatch; scheduler correctly rejects the feature source_type on the raw connector job.",
+    "_commit_governed_features writes emission markers before the scheduler validates or pipeline persists the batch. Both failed local reproductions leave emission marker files on disk.",
+    "provider_adapters._collector_bundle can save a partial adapter resume cursor before persistence; scheduler.run_once updates its watermark before pipeline.run_job invokes the existing storage/evidence/receipt persistence functions.",
+    "Permitting market records alone would leave premature acknowledgements. No source-type guard has been relaxed."
+  ],
+  "requested_artifact_extension": {
+    "path": "services/source_ingestion/pipeline.py",
+    "reason": "The existing owner of storage/evidence/receipt persistence must confirm Collector feature emission and scheduler cursor only after those writes succeed. This call site is outside the current artifact contract.",
+    "proposed_boundary": "Keep the existing pipeline, storage writer, raw connector identities and strict raw validation. Carry an explicitly validated Collector-derived batch channel and deferred acknowledgement through scoped collector/configured/scheduler changes; invoke acknowledgement from existing pipeline persistence success, retaining failure receipts and previous cursor on errors.",
+    "authorization": "requested; not granted in this work session",
+    "product_files_edited": false,
+    "canonical_change_required": "Human/Ops artifact-contract add for this exact path before resuming implementation; never hand-edit canonical state."
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped interpreter provisioned and import mapping verified."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py -k governed_features_persist",
+      "exit_code": 1,
+      "result": "2 failed, 33 deselected; macro and social both reach the original scheduler source_type mismatch. Expected regression reproduction, not passing acceptance."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py -k 'not governed_features_persist'",
+      "exit_code": 0,
+      "result": "33 passed, 2 deselected; existing outcome truth remains passing."
+    }
+  ],
+  "independent_review": "not requested for incomplete implementation; assigned Claude review still required on a future finished exact head",
+  "delivery": "Anchor/reproduction only. No merge or DONE claim. Original CI, independent review and canonical integration remain required.",
+  "hosted_followup": "Existing hosted owner later validates natural ingestion and retained source hashes through the original dev release/data entry. No VM, SSH, provider, model, Collector-host, secret, business-data, service, deployment or workflow-dispatch operation was performed here.",
+  "unchanged_open_scope": "Original W1 three real governed days and full financial/Persona/Loops scope remain open. Pattern/original9aeb/all49 CLOSED and separate StageProd unchanged."
+}
