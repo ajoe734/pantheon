@@ -1,0 +1,135 @@
+{
+  "task_id": "DEV-REFRESH-RESTORE-EXACT-READY-20261113",
+  "owner": "Codex2",
+  "assigned_independent_reviewer": "Claude",
+  "delivery_scope": "Source and local regression tests only; no hosted success claimed",
+  "base_sha": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
+  "anchor_commit": "3340e50cb",
+  "source_file_sha256": {
+    "scripts/deploy_nonprod_vm.sh": "e78446dd8e24d2625e5b2021ebfe54306766bd3a67a6d206c4903117765287fb",
+    "scripts/test_dev_tw_market_refresh.py": "e35a3e2173d89b04d7ad296d2208f23de1be405c4c7e0baaee8dd4af59fe2bec"
+  },
+  "incident_evidence": {
+    "workflow": "https://github.com/ajoe734/pantheon/actions/runs/43354287693",
+    "force": false,
+    "job_id": 131652478314,
+    "official_artifact": {
+      "id": 14005023883,
+      "name": "official-market43354287693-artifact14005023883.zip",
+      "sha256": "29e8eae01b228691fb3a275611ade0e8e45f60aff4f28ac7a19010a399af68ac",
+      "members": [
+        "tw-refresh-outcome.json",
+        "taifex-ssf-refresh-outcome.json",
+        "finmind-broker-refresh-outcome.json"
+      ]
+    },
+    "sanitized_source_facts_sha256": "5740a9ad11aaff58872ff114ad5d38903a7fb9669f639b2d66f4852affb7a8ce",
+    "readonly_timing_state_proof_sha256": "38a77867e47c08f481cd96d7c88fb116caf55606e216f31e45cbe7d38e61ca24",
+    "restore_failure": "02:49:58: captured environment lacked INTRADAY_STORE_ROOT; current Compose added it while using the exact pinned old image. No removed keys.",
+    "broker_failure": "Official finmind-broker-refresh-outcome.json records failed preflight: [Errno 104] Connection reset by peer. Supplied timing records request at 02:50:18.437, before startup completed at 02:50:24.412981400Z; first /readyz 200 at 02:50:28.143400021Z.",
+    "recovered_state": "Supplied read-only observation at 03:01:43.966898Z: source-ingest and source-ingest-scheduler running and healthy, restart_count=0; no manual restart.",
+    "separate_taifex_facts": {
+      "selected_tick_sequence": 90838,
+      "unresolved_frontier_count": 1,
+      "actual_completed_run": "ingest-8aa39caeb5d2",
+      "actual_finished_at": "2026-11-13T02:48:58Z",
+      "normalized_records": 25,
+      "record_session_date": "2026-11-12",
+      "symbols": [
+        "2330",
+        "0050",
+        "2317"
+      ],
+      "later_authoritative_snapshot": "connector disabled; frontier remains unresolved",
+      "interpretation": "The data exists. The selected tick failure remains failed; no claim of full TAIFEX success."
+    }
+  },
+  "implementation": [
+    "Retain existing running-image pin JSON and pre/post exact-image validation for both bounded and restore actions.",
+    "During restore only, add environment !override in the same temporary override directory, using the complete captured API environment with only existing deliberate egress/controller changes. Compose defaults cannot inject an absent key; empty/custom present values and prior secrets survive.",
+    "Escape captured literal dollars for Compose, retain newline/quote values, use private temporary directory and mode 0600, and remove temporary files at exit.",
+    "Keep complete environment equality strict. Report changed/added/removed key names without printing secret values.",
+    "After successful image/environment validation, use existing curl_with_retry count/delay (12 retries, 5-second delay and final attempt) on existing /readyz, with 5-second request/connect limits matching Source healthcheck. Return startup failure to cleanup caller; non-blocking connector mode cannot turn restore failure into success.",
+    "When a captured environment is unavailable, cleanup fails honestly instead of silently invoking an unpinned/unverified Compose fallback."
+  ],
+  "regression_method": "Maintained shell/Python restoration and retry helpers execute with existing runtime/HTTP fixture. For new environment regressions, actual local Docker Compose v5.5.0 config merges a base containing new defaults with generated overrides; Docker runtime operations remain simulated. Existing named data volume is asserted. No daemon/service operations are performed.",
+  "verification": [
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py -k exact_restore",
+      "exit_status": 0,
+      "result": "10 passed, 106 deselected in 52.25s"
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py -k 'refresh_entrypoint or bounded_refresh_restore or exact_restore or terminating_signal'",
+      "exit_status": 0,
+      "result": "35 passed, 81 deselected in 122.21s",
+      "coverage": "Normal refresh entry, pre/post image guard, exact environment, readiness delay/timeout, non-blocking restore failure, Collector posture restoration and terminating signal cleanup."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 /tmp/DEV-REFRESH-RESTORE-EXACT-READY-20261113-baseline-runner.py -q scripts/test_dev_tw_market_refresh.py -k exact_restore",
+      "exit_status": 1,
+      "result": "8 failed, 2 passed, 106 deselected in 52.96s",
+      "interpretation": "Same new tests against deploy script from the recorded base: exact environment, readiness ordering/timeout/non-blocking propagation and value redaction fail before the repair; both wrong-image negatives remain failed safely."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py -k source_refresh",
+      "exit_status": 1,
+      "result": "10 passed, 1 failed, 123 deselected in 14.62s",
+      "failure": "test_source_refresh_restore_env_mode_key_presence_and_wrong_env expects full key=value diagnostics; production correctly fails closed with key-only diagnostics. Updating its two assertions is outside the three declared task artifacts; narrow operator scope confirmation requested. This is a changed diagnostic assertion, not a pre-existing baseline failure."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py -k workflow",
+      "exit_status": 1,
+      "result": "15 passed, 5 failed, 110 deselected in 18.99s"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 /tmp/DEV-REFRESH-RESTORE-EXACT-READY-20261113-baseline-runner.py -q scripts/test_dev_tw_market_refresh_workflow.py",
+      "exit_status": 1,
+      "result": "9 passed, 5 failed in 9.38s",
+      "interpretation": "Exact same five workflow fixture failures reproduced on the base deploy script."
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py",
+      "exit_status": 124,
+      "result": "Incomplete; timeout, not passed. Initial batch also timed out while readiness fixture support was still being updated."
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 /tmp/DEV-REFRESH-RESTORE-EXACT-READY-20261113-baseline-runner.py -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py -k 'not exact_restore'",
+      "exit_status": 124,
+      "result": "Incomplete baseline full-suite timeout, not passed."
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "exit_status": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0
+    }
+  ],
+  "preserved_baseline_workflow_failures": [
+    "test_refresh_skips_without_touching_containers_when_no_taiwan_symbols",
+    "test_refresh_never_replaces_steady_scheduler_or_projector[0-0]",
+    "test_refresh_never_replaces_steady_scheduler_or_projector[1-1]",
+    "test_refresh_pauses_and_restarts_same_steady_containers_with_own_state[0]",
+    "test_refresh_pauses_and_restarts_same_steady_containers_with_own_state[1]"
+  ],
+  "delivery_limits": [
+    "Independent exact-head review by Claude, required CI, native supervisor integration and DONE remain pending; this manifest is owner evidence, not reviewer attestation.",
+    "Outstanding narrow test-assertion scope confirmation must be resolved before claiming all affected image-pin checks pass.",
+    "Original hosted owner must later perform the same normal force=false validation and exact-pair release; author performs no VM/SSH/secrets/provider/model/business/data/service operations or workflow dispatch.",
+    "No frontier clearing/skipping, TAIFEX enabling, journal migration, fabricated dates/quotes/fills/resume, licensed intraday expansion, StageProd/time/frozenpair changes, new Root/gate/platform/scheduler/lease.",
+    "Pattern/original9aeb all12/original49 remain CLOSED."
+  ],
+  "baseline_comparison_method": "A local pytest collection hook sets each collected module DEPLOY_SCRIPT to an unmodified git-show copy of deploy_nonprod_vm.sh from base_sha, with sibling script symlinks. New tests and fixtures stay unchanged. Baseline full-suite timeout and baseline workflow/new-regression terminal results are recorded separately.",
+  "terminal_output_sha256": {
+    "regressions": "1bfa575b8d792db587f2bea37fa112a76ac7fb54dd2c202fa527d9d36c8fdbd2",
+    "focused": "f88ad5d5b97df61dca599b397bfe94e6d43acf716aba73e2320d2a30634eb0d2",
+    "old-regressions": "bc722de3091a310f7533ce0605ec4e9d3220dd1ca47349d27f70ee37682b3337",
+    "pin": "a7915546923059fbfa8d4142e64cbbbbda0d1ba5e39d95208acabebcf4ab94c6",
+    "workflow": "0243a76094ea59fe0ab65b1fd799a3be6c303cfb5aa0015abdd6d96b7327483d",
+    "workflow-before": "81090b5c51443a7367da4274e080afd733ac4969eaee2ce69d641c9fa5adbc79",
+    "refresh": "7254d8a64cc0dfa4c4a38077456783adb29586155e7207bc7baaf1a84cc3174f",
+    "before": "b1465583f636400d07cfcb4155ca42d335e6ba18991ff96f7a4fd2957fcadf92"
+  }
+}
