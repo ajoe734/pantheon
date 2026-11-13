@@ -23,5 +23,5 @@
     "all": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_outcome_truth.py deploy/collector/tests/test_spiders_and_pollers.py"
   },
   "scope": "source-only; no network/provider/host operations",
-  "recorded_rss_bundle": "test_recorded_rss_bundle_* build a sanitized RSS item bundle for news-cna-202611110105-aspx through CollectorBundleAdapter.pull(): exact 'Wed, 11 Nov 2026 04:37:00 GMT' (old code: fails ISO-8601) == equivalent ISO instant 2026-11-11T04:37:00Z; raw sha256 hash and replay stable."
+  "recorded_rss_bundle": "NOT PROVIDED: the named retained sanitized RSS proof/native bundle for run ingest-de7de36ab114 (item news-cna-202611110105-aspx) is not in the repo or worktree. test_recorded_rss_bundle_* use a GENERATED synthetic fixture (title t, x.test URL, run1, fph, freshly computed hashes) through CollectorBundleAdapter.pull() only; they are NOT native bytes and do not prove original raw/hash/time provenance. Required artifact: sanitized native bundle (manifest.json, items.jsonl, raw/<sha>.xml) with original content_sha256/bundle_sha256/fetched_at and the exact 'Wed, 11 Nov 2026 04:37:00 GMT' literal, to replay through the configured ingestion path with isolated local stores."
 }
