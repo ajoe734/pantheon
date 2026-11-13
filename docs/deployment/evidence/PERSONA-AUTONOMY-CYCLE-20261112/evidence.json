@@ -10,8 +10,14 @@
     "allocator_removed": "services/research/discovery_allocator.py, its two test files, the startup schedule and port wiring in services/research/main.py, and DISCOVERY_ALLOCATOR_* in docker-compose.yml are deleted; nothing else creates discovery capital bindings."
   },
   "verification": [
-    {"command": "pytest services/persona/test_pool_autonomy_cycle.py services/research/tests/test_research_demand.py services/research/tests/test_persona_cycle_demand_integration.py", "result": "all passed (11 + 5 + 1)"},
-    {"command": "pytest services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py services/control-plane/persona/test_persona_strategy_pool.py services/research/tests/test_research_orchestrator_http_service.py", "result": "103 passed, 4 failed; the 4 failures are environmental (asyncpg and QuantLib not installed in the review venv); the two persona-lifespan failures reproduce on the unchanged baseline."}
+    {
+      "command": "pytest services/persona/test_pool_autonomy_cycle.py services/research/tests/test_research_demand.py services/research/tests/test_persona_cycle_demand_integration.py",
+      "result": "all passed (11 + 5 + 1)"
+    },
+    {
+      "command": "pytest services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py services/control-plane/persona/test_persona_strategy_pool.py services/research/tests/test_research_orchestrator_http_service.py",
+      "result": "103 passed, 4 failed; the 4 failures are environmental (asyncpg and QuantLib not installed in the review venv); the two persona-lifespan failures reproduce on the unchanged baseline."
+    }
   ],
   "acceptance_evidence": {
     "1_2_daily_cycle_and_decisions": "test_persona_cycle_demand_integration drives PersonaCycleController.consume_run twice; each packet carries pool_autonomy with observe, orient, decide, act receipts and learn. Policy cases in test_pool_autonomy_cycle.",
@@ -27,5 +33,13 @@
     "candidate_source": "Candidates come from the research alpha-replication entries route (status admitted with checksum); field mapping should be confirmed on hosted.",
     "hosted": "No hosted verification performed."
   },
-  "review": {"status": "pending_independent_review"}
+  "review": {
+    "status": "pending_independent_review"
+  },
+  "reopen_fixes": {
+    "owner_credentials": "HttpPoolCyclePorts now uses the persona service's configured owner-specific principals (PERSONA_RESEARCH_SERVICE_TOKEN issued by scripts/issue_dev_paper_principals.py into the persona volume, PANTHEON_MEMORY_AUTH_TOKEN, EVOLUTION_AUTH_TOKEN, PERSONA_REGISTRY_SERVICE_TOKEN) read via configured_service_token (rotating _FILE aware); an unset credential raises owner_credential_unconfigured instead of sending an empty bearer. Persona owner calls are in-process through the pool store (no self-HTTP). docker-compose persona service wires the env.",
+    "governed_dataset": "services/control-plane/persona/main.py constructs HttpPoolCyclePorts(pool_store, dataset_loader=governed_dataset_loader()); the loader reads the governed evaluation authority (PERSONA_POOL_CANONICAL_DATASET_PATH / THRESHOLD_POLICY_PATH, falling back to TRAINING_SESSION_*) and fails closed when unconfigured. Deployment must supply the canonical dataset path; none is defaulted.",
+    "prior_risk_removal": "PoolAutonomyCycle diffs the observed pool against the owner's current pool, writes risk-owner removals to the persona memory (tried_family tags) before recall, and excludes those families from demand tried_families and candidates.",
+    "tests": "services/persona/test_pool_autonomy_cycle.py (+2), integration test now uses real pool store and governed_dataset_loader (only owner HTTP and the authority snapshot reader pinned to recorded TWSE data). Not covered: end-to-end scheduled risk removal through the controller with real observations."
+  }
 }

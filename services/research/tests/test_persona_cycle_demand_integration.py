@@ -16,7 +16,7 @@ import pytest
 
 from services.foundation.reliable_delivery import AtomicJsonRecordStore
 from services.persona.persona_cycle_controller import CycleOwners, PersonaCycleController, read_packets
-from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle
+from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle, governed_dataset_loader
 from services.research.research_demand import ResearchDemandStore
 from services.research.tests.test_pool_admission import entries_and_members, recorded_dataset
 
@@ -80,11 +80,6 @@ def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatc
             return list(supply)
         if service == "registry":
             return {"entry": registry[path.rsplit("/", 1)[1]]}
-        if service == "persona" and path.endswith("/strategy-pool"):
-            return pool.current(PID, TENANT)
-        if service == "persona" and path.endswith("/strategy-pool/decisions"):
-            module = importlib.import_module("services.control_plane.persona.persona_strategy_pool")
-            return pool.decide(PID, TENANT, module.PoolDecisionRequest.model_validate(body), actor_id="persona-pool-cycle")
         if service == "memory" and method == "POST":
             memory.append(body)
             return {"created": True}
@@ -92,7 +87,16 @@ def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatc
             return {"entries": [{"content": {"tags": m["tags"]}} for m in memory]}
         raise AssertionError((method, service, path))
 
-    ports = HttpPoolCyclePorts(transport, dataset_loader=lambda persona, cand: recorded_dataset())
+    # Real scheduled construction: in-process persona owner plus the governed
+    # dataset loader reading the configured authority paths. Only the authority
+    # snapshot reader is pinned to the recorded TWSE dataset.
+    monkeypatch.syspath_prepend(str(importlib.import_module("pathlib").Path(__file__).parents[2] / "training-session"))
+    authority = importlib.import_module("evaluation_authority")
+    monkeypatch.setattr(authority, "load_evaluation_authority",
+                        lambda *a, **k: SimpleNamespace(vectorbt_dataset=recorded_dataset()))
+    env = {"PERSONA_POOL_CANONICAL_DATASET_PATH": "/governed/dataset.json",
+           "PERSONA_POOL_THRESHOLD_POLICY_PATH": "/governed/policy.json"}
+    ports = HttpPoolCyclePorts(transport, pool_store=pool, dataset_loader=governed_dataset_loader(env), env=env)
     controller = PersonaCycleController(None, StubOwners(pool, books, observations), store_path=tmp_path / "packets.jsonl",
         turn_runner=lambda *a: SimpleNamespace(status="error", persona_id=PID, decision="", to_dict=lambda: {}),
         pool_cycle=PoolAutonomyCycle(ports))

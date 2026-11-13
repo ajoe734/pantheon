@@ -103,10 +103,20 @@ class PoolAutonomyCycle:
         health = observe.get("pool_health") or {}
         # Observe. The risk reweight earlier in the same cycle may have appended a
         # version, so decide against the owner's current pool, not the snapshot.
+        observed_live = {m["artifact_ref"] for m in pool["members"] if m["stage"] != "removed"}
         pool = ports.current_pool(persona) or pool
+        # Members the deterministic risk owner removed earlier in this same cycle are
+        # outcomes too: persist them to this persona's memory so the demand and the
+        # candidate filter below exclude their families.
+        pre_learned = [{"outcome": "removed", "family": ports.family(persona, ref), "artifact_ref": ref,
+                        "detail": "own_high_water_drawdown"}
+                       for ref in sorted(observed_live - {m["artifact_ref"] for m in pool["members"] if m["stage"] != "removed"})]
+        memory_errors: list[str] = []
+        self._learn(persona, pre_learned, packet_id, memory_errors)
         demands = ports.reconcile_demands(persona, pool["members"])
         candidates = ports.candidates(persona, pool)
-        failed_families = {str(f).lower() for f in ports.recall_tried_families(persona)}
+        failed_families = ({str(f).lower() for f in ports.recall_tried_families(persona)}
+                           | {str(e["family"]).lower() for e in pre_learned if e.get("family")})
         member_families = {str(f).lower() for f in (ports.family(persona, m["artifact_ref"]) for m in pool["members"]) if f}
         tried = sorted(failed_families | member_families)
         orient = {"pool_version": pool["pool_version"], "health": health,
@@ -119,18 +129,21 @@ class PoolAutonomyCycle:
         # Act
         receipts, learned = self._act(persona, pool, observe, health, decision, tried, packet_id)
         # Learn
-        memory_errors = []
-        for entry in learned:
-            try:
-                ports.write_memory(persona, entry | {"packet_id": packet_id})
-            except Exception as exc:  # noqa: BLE001 - the action already happened; record, do not hide
-                memory_errors.append(f"{entry['outcome']}:{type(exc).__name__}")
+        self._learn(persona, learned, packet_id, memory_errors)
+        learned = pre_learned + learned
         return {"status": "completed", "observe": {"pool_version": pool["pool_version"], "members": len(pool["members"]),
                 "health": health}, "orient": orient,
                 "decide": {k: v for k, v in decision.items() if k not in ("candidate", "member")}
                          | ({"candidate_ref": decision["candidate"]["artifact_ref"]} if "candidate" in decision else {}),
                 "act": {"receipts": receipts, "paper_only": True}, "learn": {"memory_entries": [e["outcome"] for e in learned], "memory_write_errors": memory_errors,
                 "tried_families": sorted({e["family"] for e in learned if e.get("family")})}}
+
+    def _learn(self, persona, entries, packet_id, errors):
+        for entry in entries:
+            try:
+                self.ports.write_memory(persona, entry | {"packet_id": packet_id})
+            except Exception as exc:  # noqa: BLE001 - the action already happened; record, do not hide
+                errors.append(f"{entry['outcome']}:{type(exc).__name__}")
 
     def _act(self, persona, pool, observe, health, decision, tried, packet_id):
         ports, kind = self.ports, decision["kind"]
@@ -207,6 +220,34 @@ def apply_to_packet(packet: dict[str, Any], result: Mapping[str, Any]) -> None:
     packet["learn"]["telemetry_refs"].append(ref + "/learn")
 
 
+def governed_dataset_loader(env: Mapping[str, str] | None = None) -> Callable[[Mapping, Mapping], dict]:
+    """Admission dataset from the same governed evaluation authority research uses.
+
+    Fails closed (raises) when the dataset/policy authority is not configured or
+    rejected; never synthesises data.
+    """
+    source = os.environ if env is None else env
+
+    def load(persona: Mapping, candidate: Mapping) -> dict:
+        dataset_path = source.get("PERSONA_POOL_CANONICAL_DATASET_PATH") or source.get("TRAINING_SESSION_CANONICAL_DATASET_PATH")
+        policy_path = source.get("PERSONA_POOL_THRESHOLD_POLICY_PATH") or source.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH")
+        if not dataset_path or not policy_path:
+            raise RuntimeError("governed_dataset_loader_unconfigured")
+        import sys
+        from pathlib import Path
+        training_dir = str(Path(__file__).resolve().parents[1] / "training-session")
+        sys.path.insert(0, training_dir)
+        try:
+            import evaluation_authority as authority  # type: ignore
+            snapshot = authority.load_evaluation_authority(
+                dataset_path, policy_path, trusted_now=datetime.now(timezone.utc), strategy_id=str(candidate["artifact_ref"]))
+            return dict(snapshot.vectorbt_dataset)
+        finally:
+            if training_dir in sys.path:
+                sys.path.remove(training_dir)
+    return load
+
+
 class HttpPoolCyclePorts:
     """Owner HTTP ports. ``transport(method, service, path, tenant, body)`` is the only I/O."""
 
@@ -216,16 +257,25 @@ class HttpPoolCyclePorts:
                        "evolution": ("EVOLUTION_API_URL", "http://evolution:8093"),
                        "registry": ("REGISTRY_URL", "http://registry:8087")}
 
-    def __init__(self, transport: Callable[..., Any] | None = None, *, dataset_loader: Callable[[Mapping, Mapping], dict] | None = None, env: Mapping[str, str] | None = None):
+    # Owner-specific credentials already configured for the persona service; the
+    # persona owner itself is called in-process through ``pool_store`` (no self-HTTP).
+    TOKEN_VARIABLE = {"research": "PERSONA_RESEARCH_SERVICE_TOKEN", "memory": "PANTHEON_MEMORY_AUTH_TOKEN",
+                      "evolution": "EVOLUTION_AUTH_TOKEN", "registry": "PERSONA_REGISTRY_SERVICE_TOKEN"}
+
+    def __init__(self, transport: Callable[..., Any] | None = None, *, pool_store: Any = None,
+                 dataset_loader: Callable[[Mapping, Mapping], dict] | None = None, env: Mapping[str, str] | None = None):
         self.env = os.environ if env is None else env
         self.transport = transport or self._urllib
+        self.pool_store = pool_store
         self.dataset_loader = dataset_loader
         self._entries: dict[tuple[str, str], Mapping] = {}
 
     def _urllib(self, method, service, path, tenant, body=None):
         from services.service_token_file import configured_service_token
         name, default = self.SERVICE_URL_ENV[service]
-        token = configured_service_token(f"PANTHEON_{service.upper()}_AUTH_TOKEN")
+        token = configured_service_token(self.TOKEN_VARIABLE[service], self.env)
+        if not token:  # fail closed: never send an empty bearer
+            raise RuntimeError(f"owner_credential_unconfigured:{service}")
         request = Request(self.env.get(name, default).rstrip("/") + path, method=method,
                           data=None if body is None else json.dumps(body).encode(),
                           headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant,
@@ -237,7 +287,7 @@ class HttpPoolCyclePorts:
         return self.transport(method, service, path, persona["tenant_id"], body)
 
     def current_pool(self, persona):
-        return self._call("GET", "persona", f"/api/personas/{quote(persona['persona_id'], safe='')}/strategy-pool", persona)
+        return self.pool_store.current(persona["persona_id"], persona["tenant_id"])
 
     def reconcile_demands(self, persona, members):
         out = self._call("POST", "research", "/api/research/persona-demands/reconcile", persona,
@@ -283,7 +333,10 @@ class HttpPoolCyclePorts:
         return self.dataset_loader(persona, candidate)
 
     def decide_pool(self, persona, body):
-        return self._call("POST", "persona", f"/api/personas/{quote(persona['persona_id'], safe='')}/strategy-pool/decisions", persona, body)
+        import importlib
+        module = importlib.import_module("services.control_plane.persona.persona_strategy_pool")
+        return self.pool_store.decide(persona["persona_id"], persona["tenant_id"],
+                                      module.PoolDecisionRequest.model_validate(body), actor_id="persona-pool-cycle")
 
     def propose_evolution(self, persona, pool, member):
         from services.evolution.pool_evolution_scheduler import proposal

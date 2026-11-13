@@ -136,3 +136,40 @@ def test_removed_member_is_learned_and_packet_gets_all_five_stages():
     apply_to_packet(packet, result)
     assert packet["decide"]["decision_rationale_ref"] == "pk1#pool_autonomy/decide" and packet["act"]["live_capital_side_effects"] is False
     assert packet["pool_autonomy"]["act"]["paper_only"] is True
+
+
+def test_prior_risk_removal_is_persisted_and_excludes_family_and_candidate():
+    """Removal by the deterministic risk owner earlier in the cycle becomes memory and excludes its family."""
+    observed = pool(member("a"), member("b"))
+    now = pool(member("b"), dict(member("a"), stage="removed"))
+    ports = Ports(pool_now=now, families={"a": "fam-a", "b": "fam-b"},
+                  candidates=[{"artifact_ref": "c", "checksum": "sha256:" + "c" * 64, "family": "fam-a"}])
+    out = PoolAutonomyCycle(ports).run(PERSONA, observe(observed), "pk-1")
+    assert out["status"] == "completed"
+    assert [(e["outcome"], e["artifact_ref"], e["family"]) for e in ports.memory] == [("removed", "a", "fam-a")]
+    assert out["decide"]["kind"] != "admit_trial"  # candidate from the removed family is excluded
+    assert "fam-a" in out["orient"]["tried_families"]
+    assert out["learn"]["tried_families"] == ["fam-a"]
+
+
+def test_http_ports_use_owner_specific_credentials_and_fail_closed(monkeypatch):
+    from unittest import mock
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, governed_dataset_loader
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen[request.full_url] = request.get_header("Authorization")
+        import io
+        return io.StringIO("{}")
+
+    env = {"PERSONA_RESEARCH_SERVICE_TOKEN": "r-tok", "PANTHEON_MEMORY_AUTH_TOKEN": "m-tok",
+           "EVOLUTION_AUTH_TOKEN": "e-tok", "PERSONA_REGISTRY_SERVICE_TOKEN": "g-tok"}
+    ports = HttpPoolCyclePorts(env=env)
+    with mock.patch("services.persona.pool_autonomy_cycle.urlopen", fake_urlopen):
+        for service in ("research", "memory", "evolution", "registry"):
+            ports._urllib("GET", service, "/x", "t1")
+    assert sorted(seen.values()) == ["Bearer e-tok", "Bearer g-tok", "Bearer m-tok", "Bearer r-tok"]
+    with pytest.raises(RuntimeError, match="owner_credential_unconfigured:research"):
+        HttpPoolCyclePorts(env={})._urllib("GET", "research", "/x", "t1")
+    with pytest.raises(RuntimeError, match="governed_dataset_loader_unconfigured"):
+        governed_dataset_loader({})(PERSONA, {"artifact_ref": "c"})
