@@ -746,3 +746,50 @@ def test_single_raw_body_exceeding_budget_fails_truthfully_then_retry_persists(t
     assert len({r.source_id for r in retry.records}) == len(retry.records)
     again = run_scheduler(tmp_path, store)
     assert again.run.raw_count == 0 and again.watermark.value == CURSOR
+
+
+def test_verified_bundle_prefix_survives_next_bundle_deadline(tmp_path, monkeypatch):
+    """Two singleton bundles, constant per-raw-read latency over the shared budget.
+
+    Bundle 1 verifies and persists; bundle 2 is cut by the deadline at its first raw read
+    and stays pending. Retries resume without duplicates; the backlog must progress.
+    """
+    from types import SimpleNamespace
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests.test_collector_bundle_connector import _trickle_response
+
+    files, _, _, store, _ = setup_path(tmp_path, monkeypatch)
+    entries = []
+    for num in (1, 2):
+        f, entry, manifest = make_bundle(run_id=f"run{num}", finished=f"2026-11-10T02:0{num + 4}:00Z")
+        base = f"bundles/{SOURCE}/2026-11-10/run{num}"
+        manifest["items"] = manifest["items"][:1]
+        manifest["bundle_sha256"] = cb.compute_bundle_sha256([manifest["items"][0]["content_sha256"]])
+        f[base + "/manifest.json"] = json.dumps(manifest).encode()
+        f[base + "/items.jsonl"] = f[base + "/items.jsonl"].splitlines()[0]
+        files.update(f)
+        entries.append(entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": {SOURCE: {
+        "status": "ok", "last_run_at": "2026-11-10T02:06:00Z", "last_run_id": "run2"}}}).encode()
+    clock = [0.0]
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
+    monkeypatch.setattr(cb.CollectorBundleAdapter, "_transport", lambda self: cb.HttpBundleTransport(host=HOST))
+
+    def fake_open(request, **kwargs):
+        rel = request.full_url.split(HOST + "/", 1)[1]
+        response, _ = _trickle_response(files[rel], clock, 8.0 if "/raw/" in rel else 0.0, chunk=65536)
+        return response
+
+    monkeypatch.setattr(cb, "open_external_url", fake_open)
+    first = run_scheduler(tmp_path, store)
+    assert first.run.status.value == "completed" and first.run.raw_count == 1
+    assert first.watermark.value == "2026-11-10T02:05:00Z#run1"  # run2 stays pending
+    second = run_scheduler(tmp_path, store)
+    assert second.run.status.value == "completed" and second.run.raw_count == 1
+    assert second.watermark.value == "2026-11-10T02:06:00Z#run2"
+    assert len(first.records) == len(second.records) == 1  # one bundle per attempt, none replayed
+    third = run_scheduler(tmp_path, store)
+    assert third.run.raw_count == 0 and third.watermark.value == "2026-11-10T02:06:00Z#run2"
+    assert third.run.status.value == "completed"

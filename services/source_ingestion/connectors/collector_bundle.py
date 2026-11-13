@@ -887,10 +887,19 @@ class CollectorBundleAdapter:
                 unverified_pending = True
                 break
             skip = partial_skip if key == base_cursor else 0
-            bundle = verify_bundle(
-                transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
-                deadline=deadline,
-            )
+            try:
+                bundle = verify_bundle(
+                    transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
+                    deadline=deadline,
+                )
+            except TimeoutError:
+                # A later bundle cut by the shared deadline before any of its rows verified
+                # keeps the already verified prefix; that bundle stays pending (no skip, no
+                # forged completion). With nothing verified yet, the timeout is not progress.
+                if verified and deadline is not None and time.monotonic() >= deadline:
+                    unverified_pending = True
+                    break
+                raise
             verified.append(bundle)
             if bundle.verified_through is not None:
                 # Read budget exhausted mid-window: later rows/bundles stay pending.

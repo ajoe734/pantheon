@@ -36,5 +36,11 @@
     "p1_endpoint_integration": "test_controller_worker.py::test_controller_disconnect_keeps_execution_lock_and_terminal_receipt_without_duplicates: real uvicorn run-scheduled endpoint + real controller run_schedule_tick (0.5s timeout) with the configured fetch held in flight. Controller disconnects; source_execution_lock stays held; a second controller request waits (no overlapping fetch); after release exactly one run/record/done frontier/attempt, terminal completed receipt readable, later tick ran 0.",
     "tests": "egress + collector_bundle_connector + collector_outcome_truth + controller_worker: 409 passed, 1 skipped.",
     "limitations": "Persistence-write interruption mid-ack is covered by existing scheduler partial-cursor/replay tests, not re-simulated in the HTTP test. A prefix cut converts a mid-read deadline at offset>0 into partial progress (not failure) even if the network genuinely stalled; the stalled row is retried next pull and a stall at offset 0 still fails. Source/local only; real latency unknown."
+  },
+  "review_fix_multibundle_20261113": {
+    "p1_cross_bundle_prefix": "_pull_ordered now catches TimeoutError from a later bundle verify_bundle when earlier bundles are already verified and the shared deadline has passed: the verified prefix is kept and persisted, the timed-out bundle stays pending behind the cursor (unverified_pending, no skipped raw, no forged completion). With nothing verified yet, or before the deadline, the timeout still raises (first-read/no-progress, malformed/hash/size unchanged).",
+    "test": "test_collector_outcome_truth.py::test_verified_bundle_prefix_survives_next_bundle_deadline (configured fetcher + IngestionScheduler + HttpBundleTransport + real HTTPResponse, two singleton bundles, 8 fake seconds per raw read under 15s budget): attempt1 completes run1 only, attempt2 resumes run2 without duplicates, attempt3 no-new-data. Old code: three failed attempts, raw_count=0, watermark None.",
+    "result": "410 passed, 1 skipped (outcome_truth, bundle_connector, controller_worker, test_external_egress); git diff --check clean",
+    "limitations": "Source/local only; hosted health and real governed days remain with W1/publisher. Fixture uses identical item content across both bundles, so duplicate check is by per-attempt record count and watermark."
   }
 }
