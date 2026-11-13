@@ -1,0 +1,333 @@
+{
+  "template_id": "qlib_alpha158:KMID",
+  "family_id": "template:qlib_alpha158:kbar",
+  "family_trial_count": 1,
+  "template_checksum": "sha256:23f8fc5d0e3a060684a31783b4a303dc5629714006dc27a4db22fdd0379d1cf8",
+  "demand_ref": "rd-9d541a6fbd82e9649581",
+  "persona_id": "persona-template",
+  "tenant_id": "tenant-a",
+  "paper_only": true,
+  "status": "rejected",
+  "gate": {
+    "gate_run_id": "73504115",
+    "candidate_id": "template-demand-c47e99bd182112464334a2b7",
+    "admission_status": "rejected",
+    "replication_status": "failed",
+    "results": [
+      {
+        "criterion_id": "mechanism_stage",
+        "passed": true,
+        "evidence": "mechanism_untested: 0 testable of 0 predictions",
+        "details": {
+          "mechanism_status": "mechanism_untested",
+          "mechanism_support": null,
+          "testable_predictions": 0,
+          "supported_predictions": 0,
+          "contradicted_predictions": 0,
+          "prediction_count": 0,
+          "in_sample_cutoff": "2025-12-29",
+          "holm_family_size": 0,
+          "alpha": 0.05,
+          "predictions": []
+        },
+        "timestamp": "2026-11-13T12:04:41.368314Z"
+      },
+      {
+        "criterion_id": "schema_validity",
+        "passed": true,
+        "evidence": "StrategySpec schema is valid",
+        "details": {
+          "validated_fields": [
+            "name",
+            "description",
+            "signals",
+            "parameters"
+          ]
+        },
+        "timestamp": "2026-11-13T12:04:41.368358Z"
+      },
+      {
+        "criterion_id": "lineage_complete",
+        "passed": true,
+        "evidence": "Research handoff has complete lineage metadata",
+        "details": {
+          "source_metadata_fields": [
+            "api_endpoint",
+            "retrieved_at",
+            "governance_context"
+          ]
+        },
+        "timestamp": "2026-11-13T12:04:41.368372Z"
+      },
+      {
+        "criterion_id": "governance_context",
+        "passed": true,
+        "evidence": "Governance context verified from StrategySpec policy and source lineage",
+        "details": {
+          "policy_id": "template-demand-paper-research",
+          "approval_required": true,
+          "governance_context": "Persona-written research demand; paper research only"
+        },
+        "timestamp": "2026-11-13T12:04:41.368384Z"
+      },
+      {
+        "criterion_id": "no_live_bypass",
+        "passed": true,
+        "evidence": "No live bypass attempts detected",
+        "details": null,
+        "timestamp": "2026-11-13T12:04:41.368394Z"
+      },
+      {
+        "criterion_id": "real_backtest_validation",
+        "passed": false,
+        "evidence": "Real backtest failed admission conditions (oos_sharpe_positive_after_costs, oos_sharpe_exceeds_deflated_threshold, oos_sharpe_beats_buy_and_hold, oos_max_drawdown_within_mandate, walk_forward_consistent_across_folds): IS Sharpe=-0.857, OOS Sharpe=-0.744, deflated threshold=0.500 (trial 1)",
+        "details": {
+          "status": "failed",
+          "backtest_run_id": "vbt-real-8a6fa4fa18bc",
+          "artifact_ref": "vectorbt://backtest-runs/vbt-real-8a6fa4fa18bc",
+          "family_id": "template:qlib_alpha158:kbar",
+          "trial_count": 1,
+          "family_total_trial_count": 1,
+          "frequency_trial_count": 1,
+          "trial_frequency": "1d",
+          "base_sharpe_threshold": 0.5,
+          "sharpe_haircut": 0.0,
+          "deflated_sharpe_threshold": 0.5,
+          "deflated_sharpe_ratio": -0.743661,
+          "in_sample_sharpe_ratio": -0.857256,
+          "out_of_sample_sharpe_ratio": -0.743661,
+          "out_of_sample_max_drawdown": 0.471775,
+          "out_of_sample_total_return": -0.261046,
+          "out_of_sample_round_trips": 98,
+          "mandate_max_drawdown": 0.25,
+          "buy_and_hold_sharpe_ratio": 1.957343,
+          "tw_0050_sharpe_ratio": 2.103444,
+          "walk_forward_fold_sharpes": [
+            -2.489727,
+            0.582612,
+            -1.368781
+          ],
+          "walk_forward_fold_returns": [
+            -0.497766,
+            0.070033,
+            -0.4303
+          ],
+          "max_fold_profit_share": 1.0,
+          "transaction_costs": {
+            "applied_on_every_fill": true,
+            "commission_rate": 0.001425,
+            "transaction_tax_rate": 0.003,
+            "equity_transaction_tax_rate": 0.003,
+            "etf_transaction_tax_rate": 0.001,
+            "in_sample_commission_paid": 6942.87075,
+            "in_sample_transaction_tax_paid": 8300.4,
+            "in_sample_total_fees_paid": 15243.27075,
+            "out_of_sample_commission_paid": 6192.389045,
+            "out_of_sample_transaction_tax_paid": 6811.2,
+            "out_of_sample_total_fees_paid": 13003.589045,
+            "total_commission_paid": 13277.28075,
+            "total_transaction_tax_paid": 15111.6,
+            "total_fees_paid": 28388.88075,
+            "rate_citations": {
+              "broker_commission": "TWSE Operating Rules Art. 85 / TPEx Brokerage Fee Schedule statutory ceiling: 0.1425% (0.001425) per fill on buy and sell orders.",
+              "securities_transaction_tax_equity": "Taiwan Securities Transaction Tax Act Art. 2 (\u8b49\u5238\u4ea4\u6613\u7a05\u689d\u4f8b\u7b2c2\u689d): 0.3% (0.003) on corporate stock sell fills.",
+              "securities_transaction_tax_etf": "Taiwan Securities Transaction Tax Act Art. 2-2: 0.1% (0.001) on beneficiary certificate / ETF (e.g. 0050) sell fills."
+            },
+            "citations": {
+              "broker_commission": "TWSE Operating Rules Art. 85 / TPEx Brokerage Fee Schedule statutory ceiling: 0.1425% (0.001425) per fill on buy and sell orders.",
+              "securities_transaction_tax_equity": "Taiwan Securities Transaction Tax Act Art. 2 (\u8b49\u5238\u4ea4\u6613\u7a05\u689d\u4f8b\u7b2c2\u689d): 0.3% (0.003) on corporate stock sell fills.",
+              "securities_transaction_tax_etf": "Taiwan Securities Transaction Tax Act Art. 2-2: 0.1% (0.001) on beneficiary certificate / ETF (e.g. 0050) sell fills."
+            }
+          },
+          "history_check": {
+            "sufficient": true,
+            "calendar_days": 1032,
+            "trading_days": 683,
+            "required_calendar_days": 730,
+            "required_trading_days": 480,
+            "details": {
+              "per_symbol": {
+                "2330": {
+                  "bars": 683,
+                  "calendar_days": 1032,
+                  "start_date": "2024-01-02",
+                  "end_date": "2026-10-30"
+                }
+              },
+              "features": {}
+            }
+          },
+          "checks": {
+            "oos_sharpe_positive_after_costs": false,
+            "oos_sharpe_exceeds_deflated_threshold": false,
+            "oos_sharpe_beats_buy_and_hold": false,
+            "oos_max_drawdown_within_mandate": false,
+            "oos_minimum_round_trips_met": true,
+            "walk_forward_consistent_across_folds": false
+          },
+          "failed_checks": [
+            "oos_sharpe_positive_after_costs",
+            "oos_sharpe_exceeds_deflated_threshold",
+            "oos_sharpe_beats_buy_and_hold",
+            "oos_max_drawdown_within_mandate",
+            "walk_forward_consistent_across_folds"
+          ]
+        },
+        "timestamp": "2026-11-13T12:05:14.732056Z"
+      },
+      {
+        "criterion_id": "confidence_score",
+        "passed": false,
+        "evidence": "Research confidence: low (score: 0.5)",
+        "details": {
+          "confidence_level": "low",
+          "score": 0.5,
+          "threshold": 0.7
+        },
+        "timestamp": "2026-11-13T12:05:14.732122Z"
+      },
+      {
+        "criterion_id": "replication_notes_present",
+        "passed": true,
+        "evidence": "Replication notes present",
+        "details": {
+          "has_notes": true,
+          "notes_length": 84
+        },
+        "timestamp": "2026-11-13T12:05:14.732139Z"
+      },
+      {
+        "criterion_id": "evaluation_hypotheses",
+        "passed": true,
+        "evidence": "Evaluation hypotheses defined",
+        "details": {
+          "has_hypotheses": true,
+          "hypotheses_length": 73
+        },
+        "timestamp": "2026-11-13T12:05:14.732151Z"
+      },
+      {
+        "criterion_id": "implementation_ready",
+        "passed": true,
+        "evidence": "Implementation readiness: ready_for_replication",
+        "details": {
+          "readiness_status": "ready_for_replication"
+        },
+        "timestamp": "2026-11-13T12:05:14.732163Z"
+      }
+    ],
+    "summary": "Replication gate evaluation: 4/5 required criteria, 3/4 optional criteria. Failed required criteria: real_backtest_validation",
+    "metadata": {
+      "source_task_id": "rd-9d541a6fbd82e9649581",
+      "passed_all_required": false,
+      "optional_pass_rate": 0.75,
+      "backtest_summary": {
+        "status": "failed",
+        "backtest_run_id": "vbt-real-8a6fa4fa18bc",
+        "artifact_ref": "vectorbt://backtest-runs/vbt-real-8a6fa4fa18bc",
+        "family_id": "template:qlib_alpha158:kbar",
+        "trial_count": 1,
+        "family_total_trial_count": 1,
+        "frequency_trial_count": 1,
+        "trial_frequency": "1d",
+        "base_sharpe_threshold": 0.5,
+        "sharpe_haircut": 0.0,
+        "deflated_sharpe_threshold": 0.5,
+        "deflated_sharpe_ratio": -0.743661,
+        "in_sample_sharpe_ratio": -0.857256,
+        "out_of_sample_sharpe_ratio": -0.743661,
+        "out_of_sample_max_drawdown": 0.471775,
+        "out_of_sample_total_return": -0.261046,
+        "out_of_sample_round_trips": 98,
+        "mandate_max_drawdown": 0.25,
+        "buy_and_hold_sharpe_ratio": 1.957343,
+        "tw_0050_sharpe_ratio": 2.103444,
+        "walk_forward_fold_sharpes": [
+          -2.489727,
+          0.582612,
+          -1.368781
+        ],
+        "walk_forward_fold_returns": [
+          -0.497766,
+          0.070033,
+          -0.4303
+        ],
+        "max_fold_profit_share": 1.0,
+        "transaction_costs": {
+          "applied_on_every_fill": true,
+          "commission_rate": 0.001425,
+          "transaction_tax_rate": 0.003,
+          "equity_transaction_tax_rate": 0.003,
+          "etf_transaction_tax_rate": 0.001,
+          "in_sample_commission_paid": 6942.87075,
+          "in_sample_transaction_tax_paid": 8300.4,
+          "in_sample_total_fees_paid": 15243.27075,
+          "out_of_sample_commission_paid": 6192.389045,
+          "out_of_sample_transaction_tax_paid": 6811.2,
+          "out_of_sample_total_fees_paid": 13003.589045,
+          "total_commission_paid": 13277.28075,
+          "total_transaction_tax_paid": 15111.6,
+          "total_fees_paid": 28388.88075,
+          "rate_citations": {
+            "broker_commission": "TWSE Operating Rules Art. 85 / TPEx Brokerage Fee Schedule statutory ceiling: 0.1425% (0.001425) per fill on buy and sell orders.",
+            "securities_transaction_tax_equity": "Taiwan Securities Transaction Tax Act Art. 2 (\u8b49\u5238\u4ea4\u6613\u7a05\u689d\u4f8b\u7b2c2\u689d): 0.3% (0.003) on corporate stock sell fills.",
+            "securities_transaction_tax_etf": "Taiwan Securities Transaction Tax Act Art. 2-2: 0.1% (0.001) on beneficiary certificate / ETF (e.g. 0050) sell fills."
+          },
+          "citations": {
+            "broker_commission": "TWSE Operating Rules Art. 85 / TPEx Brokerage Fee Schedule statutory ceiling: 0.1425% (0.001425) per fill on buy and sell orders.",
+            "securities_transaction_tax_equity": "Taiwan Securities Transaction Tax Act Art. 2 (\u8b49\u5238\u4ea4\u6613\u7a05\u689d\u4f8b\u7b2c2\u689d): 0.3% (0.003) on corporate stock sell fills.",
+            "securities_transaction_tax_etf": "Taiwan Securities Transaction Tax Act Art. 2-2: 0.1% (0.001) on beneficiary certificate / ETF (e.g. 0050) sell fills."
+          }
+        },
+        "history_check": {
+          "sufficient": true,
+          "calendar_days": 1032,
+          "trading_days": 683,
+          "required_calendar_days": 730,
+          "required_trading_days": 480,
+          "details": {
+            "per_symbol": {
+              "2330": {
+                "bars": 683,
+                "calendar_days": 1032,
+                "start_date": "2024-01-02",
+                "end_date": "2026-10-30"
+              }
+            },
+            "features": {}
+          }
+        },
+        "checks": {
+          "oos_sharpe_positive_after_costs": false,
+          "oos_sharpe_exceeds_deflated_threshold": false,
+          "oos_sharpe_beats_buy_and_hold": false,
+          "oos_max_drawdown_within_mandate": false,
+          "oos_minimum_round_trips_met": true,
+          "walk_forward_consistent_across_folds": false
+        },
+        "failed_checks": [
+          "oos_sharpe_positive_after_costs",
+          "oos_sharpe_exceeds_deflated_threshold",
+          "oos_sharpe_beats_buy_and_hold",
+          "oos_max_drawdown_within_mandate",
+          "walk_forward_consistent_across_folds"
+        ]
+      },
+      "mechanism_status": "mechanism_untested",
+      "mechanism_support": null,
+      "mechanism": {
+        "mechanism_status": "mechanism_untested",
+        "mechanism_support": null,
+        "testable_predictions": 0,
+        "supported_predictions": 0,
+        "contradicted_predictions": 0,
+        "prediction_count": 0,
+        "in_sample_cutoff": "2025-12-29",
+        "holm_family_size": 0,
+        "alpha": 0.05,
+        "predictions": []
+      }
+    },
+    "timestamp": "2026-11-13T12:05:14.732237Z"
+  }
+}

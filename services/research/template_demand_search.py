@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from services.execution.shioaji_adapter import normalize_taiwan_symbol
-from services.registry.alpha_template import validate_alpha_template
+from services.registry.alpha_template import alpha_template_checksum, validate_alpha_template
 from services.registry.strategy_artifact import validate_strategy_artifact
 
 FAMILY_TRIAL_BUDGET = 500
@@ -64,9 +64,9 @@ def compile_template(template: Mapping, *, universe: list[str], demand: Mapping,
                  "current_value": v, "allowed_range": {"min": v, "max": v}, "step": 1}
                 for k, v in params.items()]
     parameters = {**params, "market": "TW", "symbols": symbols, "bar_frequency": "1d",
-                  "data_source": str(dataset["dataset_id"]), "order_quantity": 1000, "quantity_type": "SHARES"}
+                  "data_source": str(dataset["dataset_id"]), "order_quantity": 10, "quantity_type": "SHARES"}
     identity = _digest([demand["tenant_id"], demand["demand_id"], source_ref, template,
-                        symbols, dataset])[:24]
+                        symbols, dataset, parameters, signal, "positive_signal_long_v1"])[:24]
     artifact = {
         "artifact_schema_version": "1.0", "artifact_id": "template-demand-" + identity,
         "strategy_id": "template-" + _digest([demand["tenant_id"], template["template_id"]])[:20],
@@ -162,8 +162,14 @@ class TemplateDemandSearch:
                 entry = view["entry"]
                 if entry.get("artifact_type") != "alpha_template":
                     continue
+                if entry.get("owner_tenant") not in (demand["tenant_id"], "__builtin__"):
+                    record["excluded"].append({"registry_id": entry["registry_id"], "reason": "template_tenant_mismatch"})
+                    continue
                 template = validate_alpha_template(entry["metadata"]["alpha_template"])
                 tid = template["template_id"]
+                if alpha_template_checksum(template) != entry.get("checksum"):
+                    record["excluded"].append({"template_id": tid, "reason": "template_checksum_mismatch"})
+                    continue
                 if template["scope"] != "time_series" or template["status"] in ("retired", "rejected"):
                     record["excluded"].append({"template_id": tid, "reason": "template_ineligible"})
                     continue
@@ -193,6 +199,7 @@ class TemplateDemandSearch:
                     self.gate.record_family_trial(family)
                 total = self.gate.get_family_total_trial_count(family)
                 receipt = {"template_id": tid, "family_id": family, "family_trial_count": total,
+                           "template_checksum": entry["checksum"],
                            "demand_ref": demand["demand_id"], "persona_id": demand["persona_id"],
                            "tenant_id": demand["tenant_id"], "paper_only": True,
                            "status": response.admission_status.value, "gate": response.to_dict()}

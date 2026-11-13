@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,7 +35,7 @@ def entries(*ids):
         if ids and t['template_id'] not in ids:
             continue
         rid, payload = build_alpha_template_registry_payload(t)
-        result.append({'entry': {'registry_id': rid, 'artifact_type': 'alpha_template',
+        result.append({'entry': {'registry_id': rid, 'artifact_type': 'alpha_template', 'owner_tenant': '__builtin__',
                                  'checksum': payload.checksum, 'metadata': payload.metadata}})
     return result
 
@@ -150,6 +151,51 @@ def test_unconfigured_authority_fails_closed_without_gate_or_market_fallback(tmp
     assert not (tmp_path / 'runs.json').exists()
 
 
+@pytest.mark.parametrize('field,value,reason', [('owner_tenant', 'tenant-other', 'template_tenant_mismatch'),
+                                              ('checksum', 'sha256:' + '0'*64, 'template_checksum_mismatch')])
+def test_registry_binding_mismatch_cannot_consume_a_trial(tmp_path, field, value, reason):
+    search, store, demand, context = setup_search(tmp_path)
+    context['templates'][0]['entry'][field] = value
+    row = search.run(demand)
+    result = row['discovery']['template_search']
+    assert not result['attempts'] and result['excluded'][0]['reason'] == reason
+    assert not (tmp_path / 'trials.json').exists()
+
+
+@pytest.mark.parametrize('run_budget', [1, 50])
+def test_passing_candidates_are_durable_linked_untested_and_each_family_is_counted(tmp_path, run_budget):
+    """A gate double isolates receipt handling; real numerical admission is tested below."""
+    class Gate:
+        def __init__(self):
+            self.counts = {}
+        def get_family_total_trial_count(self, family):
+            return self.counts.get(family, 0)
+        def record_family_trial(self, family):
+            self.counts[family] = self.counts.get(family, 0) + 1
+        def evaluate_candidate(self, request):
+            family = request.research_handoff['family_id']
+            self.record_family_trial(family)
+            return SimpleNamespace(passed=True, admission_status=SimpleNamespace(value='admitted'),
+                                   to_dict=lambda: {'candidate_id': request.candidate_id})
+    gate = Gate()
+    search, store, demand, context = setup_search(tmp_path, gate=gate, family_budget=1, run_budget=run_budget,
+                                                 templates=entries('qlib_alpha158:KMID', 'qlib_alpha158:ROC5'))
+    row = search.run(demand)
+    assert len(row['discovery']['template_search']['attempts']) == min(run_budget, 2)
+    row = search.run(demand)
+    receipts = row['discovery']['template_search']['attempts']
+    assert len(receipts) == 2 and len(gate.counts) == 2
+    for aid, receipt in receipts.items():
+        assert receipt['family_trial_count'] == 1
+        assert receipt['demand_ref'] == demand['demand_id']
+        assert receipt['mechanism_status'] == 'mechanism_untested' and receipt['mechanism_support'] is None
+        assert receipt['artifact']['artifact_id'] == aid and receipt['paper_only']
+        assert receipt['family_id'] in row['tried_families']
+    search.run(demand)
+    assert all(v == 1 for v in gate.counts.values())
+    assert ResearchDemandStore(store.path).list('tenant-a')[0]['discovery']['template_search']['attempts'] == receipts
+
+
 def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(tmp_path, monkeypatch):
     """Real cycle HTTP port, research route, stores, compiler, interpreter and default gate.
 
@@ -195,6 +241,13 @@ def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(
     assert receipt['demand_ref'] == demand['demand_id'] and receipt['paper_only']
     bt = next(r for r in receipt['gate']['results'] if r['criterion_id'] == 'real_backtest_validation')
     assert 'Check failed with error' not in bt['evidence'], bt
+    assert bt['details']['status'] in ('passed', 'failed'), bt
+    assert bt['details']['history_check']['sufficient']
+    assert bt['details']['history_check']['calendar_days'] >= 730
+    assert bt['details']['out_of_sample_round_trips'] >= 20
+    print('Recorded default-gate result:', receipt['status'],
+          'OOS Sharpe:', bt['details']['out_of_sample_sharpe_ratio'],
+          'round trips:', bt['details']['out_of_sample_round_trips'])
     assert receipt['gate']['metadata']['mechanism_status'] == 'mechanism_untested'
     assert receipt['family_trial_count'] == 1
     assert (tmp_path / 'alpha' / 'backtest_runs.json').exists()

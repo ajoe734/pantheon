@@ -2766,6 +2766,8 @@ def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _search_demand_templates(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not any(row["status"] == "open" for row in rows):
+        return rows
     from services.research.template_demand_search import TemplateDemandSearch
     from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
 

@@ -1,0 +1,164 @@
+.........Recorded default-gate result: rejected {'status': 'failed', 'backtest_run_id': 'vbt-real-a090edf14295', 'artifact_ref': 'vectorbt://backtest-runs/vbt-real-a090edf14295', 'family_id': 'template:qlib_alpha158:kbar', 'trial_count': 1, 'family_total_trial_count': 1, 'frequency_trial_count': 1, 'trial_frequency': '1d', 'base_sharpe_threshold': 0.5, 'sharpe_haircut': 0.0, 'deflated_sharpe_threshold': 0.5, 'deflated_sharpe_ratio': -0.743661, 'in_sample_sharpe_ratio': -0.857256, 'out_of_sample_sharpe_ratio': -0.743661, 'out_of_sample_max_drawdown': 0.471775, 'out_of_sample_total_return': -0.261046, 'out_of_sample_round_trips': 98, 'mandate_max_drawdown': 0.25, 'buy_and_hold_sharpe_ratio': 1.957343, 'tw_0050_sharpe_ratio': 2.103444, 'walk_forward_fold_sharpes': [-2.489727, 0.582612, -1.368781], 'walk_forward_fold_returns': [-0.497766, 0.070033, -0.4303], 'max_fold_profit_share': 1.0, 'transaction_costs': {'applied_on_every_fill': True, 'commission_rate': 0.001425, 'transaction_tax_rate': 0.003, 'equity_transaction_tax_rate': 0.003, 'etf_transaction_tax_rate': 0.001, 'in_sample_commission_paid': 6942.87075, 'in_sample_transaction_tax_paid': 8300.4, 'in_sample_total_fees_paid': 15243.27075, 'out_of_sample_commission_paid': 6192.389045, 'out_of_sample_transaction_tax_paid': 6811.2, 'out_of_sample_total_fees_paid': 13003.589045, 'total_commission_paid': 13277.28075, 'total_transaction_tax_paid': 15111.6, 'total_fees_paid': 28388.88075, 'rate_citations': {'broker_commission': 'TWSE Operating Rules Art. 85 / TPEx Brokerage Fee Schedule statutory ceiling: 0.1425% (0.001425) per fill on buy and sell orders.', 'securities_transaction_tax_equity': 'Taiwan Securities Transaction Tax Act Art. 2 (證券交易稅條例第2條): 0.3% (0.003) on corporate stock sell fills.', 'securities_transaction_tax_etf': 'Taiwan Securities Transaction Tax Act Art. 2-2: 0.1% (0.001) on beneficiary certificate / ETF (e.g. 0050) sell fills.'}, 'citations': {'broker_commission': 'TWSE Operating Rules Art. 85 / TPEx Brokerage Fee Schedule statutory ceiling: 0.1425% (0.001425) per fill on buy and sell orders.', 'securities_transaction_tax_equity': 'Taiwan Securities Transaction Tax Act Art. 2 (證券交易稅條例第2條): 0.3% (0.003) on corporate stock sell fills.', 'securities_transaction_tax_etf': 'Taiwan Securities Transaction Tax Act Art. 2-2: 0.1% (0.001) on beneficiary certificate / ETF (e.g. 0050) sell fills.'}}, 'history_check': {'sufficient': True, 'calendar_days': 1032, 'trading_days': 683, 'required_calendar_days': 730, 'required_trading_days': 480, 'details': {'per_symbol': {'2330': {'bars': 683, 'calendar_days': 1032, 'start_date': '2024-01-02', 'end_date': '2026-10-30'}}, 'features': {}}}, 'checks': {'oos_sharpe_positive_after_costs': False, 'oos_sharpe_exceeds_deflated_threshold': False, 'oos_sharpe_beats_buy_and_hold': False, 'oos_max_drawdown_within_mandate': False, 'oos_minimum_round_trips_met': True, 'walk_forward_consistent_across_folds': False}, 'failed_checks': ['oos_sharpe_positive_after_costs', 'oos_sharpe_exceeds_deflated_threshold', 'oos_sharpe_beats_buy_and_hold', 'oos_max_drawdown_within_mandate', 'walk_forward_consistent_across_folds']}
+........................................
+=============================== warnings summary ===============================
+../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+services/research/replication/gate.py:19
+services/research/replication/gate.py:19
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate.py:19: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+services/research/tests/test_template_demand_search.py::test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate
+services/research/tests/test_research_demand.py::test_http_routes_require_tenant_auth_and_serve_records
+services/persona/test_pool_autonomy_cycle.py::test_candidates_resolve_spec_admissions_to_approved_artifacts_and_unusable_entries_do_not_starve_supply
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_demand_then_admitted_trial_member
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_genuine_fixture_artifact_refusal_recorded
+services/research/tests/test_persona_cycle_demand_integration.py::test_consultation_opened_then_trial_member_admitted_after_approving_memo
+services/research/tests/test_persona_cycle_demand_integration.py::test_risk_oppose_becomes_operator_decision_and_never_admits
+services/research/tests/test_persona_cycle_demand_integration.py::test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:474: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+services/research/tests/test_template_demand_search.py: 5 warnings
+services/research/tests/test_research_demand.py: 5 warnings
+services/persona/test_pool_autonomy_cycle.py: 5 warnings
+services/research/tests/test_persona_cycle_demand_integration.py: 25 warnings
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/applications.py:4744: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+services/research/tests/test_template_demand_search.py::test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate
+services/research/tests/test_research_demand.py::test_http_routes_require_tenant_auth_and_serve_records
+services/persona/test_pool_autonomy_cycle.py::test_candidates_resolve_spec_admissions_to_approved_artifacts_and_unusable_entries_do_not_starve_supply
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_demand_then_admitted_trial_member
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_genuine_fixture_artifact_refusal_recorded
+services/research/tests/test_persona_cycle_demand_integration.py::test_consultation_opened_then_trial_member_admitted_after_approving_memo
+services/research/tests/test_persona_cycle_demand_integration.py::test_risk_oppose_becomes_operator_decision_and_never_admits
+services/research/tests/test_persona_cycle_demand_integration.py::test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:480: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+services/research/tests/test_template_demand_search.py::test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate
+services/research/tests/test_research_demand.py::test_http_routes_require_tenant_auth_and_serve_records
+services/persona/test_pool_autonomy_cycle.py::test_candidates_resolve_spec_admissions_to_approved_artifacts_and_unusable_entries_do_not_starve_supply
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_demand_then_admitted_trial_member
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_genuine_fixture_artifact_refusal_recorded
+services/research/tests/test_persona_cycle_demand_integration.py::test_consultation_opened_then_trial_member_admitted_after_approving_memo
+services/research/tests/test_persona_cycle_demand_integration.py::test_risk_oppose_becomes_operator_decision_and_never_admits
+services/research/tests/test_persona_cycle_demand_integration.py::test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:559: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+services/research/tests/test_template_demand_search.py::test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate
+services/research/tests/test_research_demand.py::test_http_routes_require_tenant_auth_and_serve_records
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:2846: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+services/research/tests/test_template_demand_search.py::test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate
+services/research/tests/test_research_demand.py::test_http_routes_require_tenant_auth_and_serve_records
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:2864: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+services/research/tests/test_template_demand_search.py: 10 warnings
+services/persona/test_pool_autonomy_cycle.py: 10 warnings
+services/research/tests/test_persona_cycle_demand_integration.py: 140 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate_schema.py:59: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/research/tests/test_template_demand_search.py: 1 warning
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 14 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate_schema.py:121: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/research/tests/test_template_demand_search.py: 1 warning
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 14 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate.py:1991: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "timestamp": datetime.utcnow().isoformat() + "Z",
+
+services/persona/test_pool_autonomy_cycle.py::test_candidates_resolve_spec_admissions_to_approved_artifacts_and_unusable_entries_do_not_starve_supply
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_demand_then_admitted_trial_member
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_genuine_fixture_artifact_refusal_recorded
+services/research/tests/test_persona_cycle_demand_integration.py::test_consultation_opened_then_trial_member_admitted_after_approving_memo
+services/research/tests/test_persona_cycle_demand_integration.py::test_risk_oppose_becomes_operator_decision_and_never_admits
+services/research/tests/test_persona_cycle_demand_integration.py::test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:2848: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    """Resume in place every retrain run a restart left queued or running.
+
+services/persona/test_pool_autonomy_cycle.py::test_candidates_resolve_spec_admissions_to_approved_artifacts_and_unusable_entries_do_not_starve_supply
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_demand_then_admitted_trial_member
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_genuine_fixture_artifact_refusal_recorded
+services/research/tests/test_persona_cycle_demand_integration.py::test_consultation_opened_then_trial_member_admitted_after_approving_memo
+services/research/tests/test_persona_cycle_demand_integration.py::test_risk_oppose_becomes_operator_decision_and_never_admits
+services/research/tests/test_persona_cycle_demand_integration.py::test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/main.py:2866: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    """Bring a task left running by an earlier terminal retrain run to that status.
+
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 14 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate_schema.py:80: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/persona/test_pool_autonomy_cycle.py: 1 warning
+services/research/tests/test_persona_cycle_demand_integration.py: 10 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/gate_schema.py:160: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_demand_then_admitted_trial_member
+services/research/tests/test_persona_cycle_demand_integration.py::test_consultation_opened_then_trial_member_admitted_after_approving_memo
+services/research/tests/test_persona_cycle_demand_integration.py::test_risk_oppose_becomes_operator_decision_and_never_admits
+services/research/tests/test_persona_cycle_demand_integration.py::test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/test_gate.py:214: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "retrieved_at": datetime.utcnow().isoformat() + "Z",
+
+services/research/tests/test_persona_cycle_demand_integration.py::test_two_daily_cycles_demand_then_admitted_trial_member
+services/research/tests/test_persona_cycle_demand_integration.py::test_consultation_opened_then_trial_member_admitted_after_approving_memo
+services/research/tests/test_persona_cycle_demand_integration.py::test_risk_oppose_becomes_operator_decision_and_never_admits
+services/research/tests/test_persona_cycle_demand_integration.py::test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed
+  /tmp/pantheon-worker-worktrees/pantheon/template-demand-search-r2-20261112/services/research/replication/test_gate.py:257: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "created_at": datetime.utcnow().isoformat() + "Z",
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+49 passed, 309 warnings in 171.74s (0:02:51)
