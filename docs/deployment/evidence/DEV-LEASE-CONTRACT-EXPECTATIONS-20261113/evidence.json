@@ -1,0 +1,393 @@
+{
+  "task_id": "DEV-LEASE-CONTRACT-EXPECTATIONS-20261113",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "status": "implementation anchor; full validation pending",
+  "scope": [
+    "scripts/test_dev_environment_lease_deploy_contract.py",
+    "docs/deployment/evidence/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113/evidence.json"
+  ],
+  "summary": "Repair existing lease-contract expectations to accepted conditional paper, pre_restore and provisioning coordinator contracts. No workflow/runtime change or deployment.",
+  "source": {
+    "base_dev": "802df28ee7559c299d499f3a81882464272cf7fb",
+    "frozen_base": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
+    "original_review_head": "1a70ff2e586389b8a054da71334f4945fc4a2b99",
+    "audit_sha256": "784c81a82f938082cb201b5936bb4b9d8901db83248ae64dc737b664a3d8e99e",
+    "current_base_files": {
+      "scripts/test_dev_environment_lease_deploy_contract.py": {
+        "git_blob": "1926f2d9e76c1c53497e2089c7eae0534c0e7fbb",
+        "sha256": "6a5123f8adfcd95111f7116d036c9ac0d46c66094b3ef12e0963664d062b1934"
+      },
+      ".github/workflows/nonprod-deploy.yml": {
+        "git_blob": "c5e51cceb68fc8a4abcbfdcd49267a6321e83e5d",
+        "sha256": "66cd2ea1a2460b96388b5362961102029662118e0323cc6987d851973eb94fcc"
+      },
+      "scripts/deploy_nonprod_vm.sh": {
+        "git_blob": "49a8e08d1040a315521d50c62f2717e519e34774",
+        "sha256": "b12d29bea0e6c9c3c461670687347f8f8a00de41b22cbba9efa961827049ab37"
+      },
+      "scripts/retire_dev_paper_release_cases.py": {
+        "git_blob": "1948a6983b3b3abebfc6c2f4074ebed5f201b3bf",
+        "sha256": "5632f60e90093e47a127825b70eb1910a8c59bc44cb40d54ea2015fc1fa30c43"
+      },
+      "scripts/test_nonprod_dev_artifact_workflow.py": {
+        "git_blob": "c77aa09b064f5857917967e13395e17966871df1",
+        "sha256": "29b2f6217ceb988dc585a61b678ddd4a353f1c85191dda1ead648b0f95622b29"
+      },
+      "scripts/test_retire_dev_paper_release_cases.py": {
+        "git_blob": "ed7aeab5b38d8dcbcf1dfda16d80afcab020b65d",
+        "sha256": "a05f2fbd16692e719da95e079bbadff3c74aa6b4466b51bc17542e2f73e22c6b"
+      }
+    },
+    "frozen_base_files": {
+      "scripts/test_dev_environment_lease_deploy_contract.py": {
+        "git_blob": "1926f2d9e76c1c53497e2089c7eae0534c0e7fbb",
+        "sha256": "6a5123f8adfcd95111f7116d036c9ac0d46c66094b3ef12e0963664d062b1934"
+      },
+      ".github/workflows/nonprod-deploy.yml": {
+        "git_blob": "c5e51cceb68fc8a4abcbfdcd49267a6321e83e5d",
+        "sha256": "66cd2ea1a2460b96388b5362961102029662118e0323cc6987d851973eb94fcc"
+      },
+      "scripts/deploy_nonprod_vm.sh": {
+        "git_blob": "49a8e08d1040a315521d50c62f2717e519e34774",
+        "sha256": "b12d29bea0e6c9c3c461670687347f8f8a00de41b22cbba9efa961827049ab37"
+      },
+      "scripts/retire_dev_paper_release_cases.py": {
+        "git_blob": "1948a6983b3b3abebfc6c2f4074ebed5f201b3bf",
+        "sha256": "5632f60e90093e47a127825b70eb1910a8c59bc44cb40d54ea2015fc1fa30c43"
+      },
+      "scripts/test_nonprod_dev_artifact_workflow.py": {
+        "git_blob": "c77aa09b064f5857917967e13395e17966871df1",
+        "sha256": "29b2f6217ceb988dc585a61b678ddd4a353f1c85191dda1ead648b0f95622b29"
+      },
+      "scripts/test_retire_dev_paper_release_cases.py": {
+        "git_blob": "ed7aeab5b38d8dcbcf1dfda16d80afcab020b65d",
+        "sha256": "a05f2fbd16692e719da95e079bbadff3c74aa6b4466b51bc17542e2f73e22c6b"
+      }
+    },
+    "contract_origins": [
+      {
+        "commit": "42f5cac8e5e5f3a0bd4f34b35ebd5ea3b624a80b",
+        "task": "DEV-ROOT-PAPER-SCOPE-20261021",
+        "changed_paths": [
+          ".github/workflows/nonprod-deploy.yml",
+          "docs/deployment/evidence/DEV-ROOT-PAPER-SCOPE-20261021/evidence.json",
+          "scripts/test_nonprod_dev_artifact_workflow.py"
+        ],
+        "legacy_lease_contract_test_updated": false
+      },
+      {
+        "commit": "f459f58341bf32a1ff16f99d88b9b4a0da28cefe",
+        "task": "RETIRE-SCRIPT-USES-RETIRE-CASE-20261019",
+        "changed_paths": [
+          "docs/deployment/evidence/RETIRE-SCRIPT-USES-RETIRE-CASE-20261019/evidence.json",
+          "scripts/retire_dev_paper_release_cases.py",
+          "scripts/test_retire_dev_paper_release_cases.py"
+        ],
+        "legacy_lease_contract_test_updated": false
+      },
+      {
+        "commit": "b7d7137e3cae4a8ae0f8f1b1c070a9971efcb3cf",
+        "task": "DEV-CASE-RETIRE-BEFORE-RESTORE-20261107",
+        "changed_paths": [
+          ".github/workflows/nonprod-deploy.yml",
+          "docs/deployment/evidence/DEV-CASE-RETIRE-BEFORE-RESTORE-20261107/evidence.json",
+          "docs/deployment/evidence/DEV-CASE-RETIRE-BEFORE-RESTORE-20261107/repair_plan.json",
+          "scripts/retire_dev_paper_release_cases.py",
+          "scripts/test_nonprod_dev_artifact_workflow.py",
+          "scripts/test_retire_dev_paper_release_cases.py"
+        ],
+        "legacy_lease_contract_test_updated": false
+      }
+    ]
+  },
+  "baseline": {
+    "audit": {
+      "at": "2026-11-13T03:26:20.876727+00:00",
+      "kind": "Finite read-only baseline-eight audit; no tests or workflow/VM/provider/task mutations by this child",
+      "head": "1a70ff2e586389b8a054da71334f4945fc4a2b99",
+      "base": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
+      "primary_log": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/.orchestrator/logs/20261113T030741774592Z-codex-codex1_4-bfa47c.log",
+        "observed_prefix_bytes": 484006,
+        "observed_prefix_sha256": "901a9d8464b1158e19ad174687ceacc5f202adce3a1e02f808824097f84b4177",
+        "full_batch": {
+          "lines": [
+            7138,
+            7328
+          ],
+          "byte_start": 460832,
+          "byte_end_exclusive": 473184,
+          "sha256": "7d0987f21013e2efbfc5dad2e384975db2eb6458d344994996fac249c879760f"
+        },
+        "frozen_base_control": {
+          "lines": [
+            7331,
+            7405
+          ],
+          "byte_start": 473190,
+          "byte_end_exclusive": 480221,
+          "sha256": "56eedbc0172a88914a75d925e3e0e94b4995e1ce2ce6b49000ef9f99716aca85"
+        },
+        "original_executor": "Actual configured Codex reviewer; not this auditor"
+      },
+      "source_identity": {
+        "unchanged_test_deploy_retire_git_diff_exit": 0,
+        "source_blob_ids": {
+          "scripts/test_dev_environment_lease_deploy_contract.py": "1926f2d9e76c1c53497e2089c7eae0534c0e7fbb",
+          "scripts/deploy_nonprod_vm.sh": "49a8e08d1040a315521d50c62f2717e519e34774",
+          "scripts/retire_dev_paper_release_cases.py": "1948a6983b3b3abebfc6c2f4074ebed5f201b3bf"
+        },
+        "workflow_blob": "c6e7047a4891f9173c210fc4014800b1efd5b265"
+      },
+      "recorded_results": {
+        "head_related_batch": "8 failed, 529 passed in150.77s",
+        "same8_frozen_base_control": "8 failed, 19 passed, 227 deselected in6.41s; unchanged test/deploy/retire verified",
+        "all_eight_in": "scripts/test_dev_environment_lease_deploy_contract.py",
+        "no_auditor_test_execution": true
+      },
+      "cases": [
+        {
+          "name": "test_provider_live_acceptance_is_not_a_dev_deployment_gate",
+          "test_line": 277,
+          "log_lines": [
+            7356,
+            7359
+          ],
+          "class": "stale_literal",
+          "finding": "Still asserts six literal success values; actual complete_success uses success:success:${expected_paper}:success:success:success. Existing no-OpenClaw/provider-gate assertions passed; failure does not show a provider gate.",
+          "source": [
+            ".github/workflows/nonprod-deploy.yml:2794-2805"
+          ]
+        },
+        {
+          "name": "test_deployment_completion_retains_real_checks_without_provider_gate[None-root]",
+          "test_line": 304,
+          "log_lines": [
+            7360,
+            7366
+          ],
+          "class": "stale_fixture",
+          "finding": "Fixture sets PAPER_BOOTSTRAP_OUTCOME=success but omits PAPER_BOOTSTRAP_REQUESTED. Actual helper defaults expected_paper=skipped unless explicitly requested, so returns false. Source has the applicability field bound at lease_cleanup env.",
+          "source": [
+            "scripts/test_dev_environment_lease_deploy_contract.py:284-304",
+            ".github/workflows/nonprod-deploy.yml:2736-2743,2794-2805"
+          ]
+        },
+        {
+          "name": "test_deployment_completion_retains_real_checks_without_provider_gate[None-auto]",
+          "test_line": 304,
+          "log_lines": [
+            7367,
+            7373
+          ],
+          "class": "stale_fixture",
+          "finding": "Same missing applicability input as root case. bff no-failure case supplies skipped and was not in failing list; root/auto are not evidence that the runtime success path is broken.",
+          "source": [
+            "scripts/test_dev_environment_lease_deploy_contract.py:284-304",
+            ".github/workflows/nonprod-deploy.yml:2797-2801"
+          ]
+        },
+        {
+          "name": "test_all_third_party_actions_are_full_sha_pinned",
+          "test_line": 386,
+          "log_lines": [
+            7374,
+            7379
+          ],
+          "class": "stale_cardinality",
+          "finding": "Fails only hardcoded checkout count6 versus actual7. Static inspection of frozen workflow finds all third-party uses refs full40hex; the existing subsequent per-ref validation is never reached after the obsolete count assertion.",
+          "source": [
+            "scripts/test_dev_environment_lease_deploy_contract.py:383-393"
+          ]
+        },
+        {
+          "name": "test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative",
+          "test_line": 1357,
+          "log_lines": [
+            7380,
+            7383
+          ],
+          "class": "obsolete_applicability_predicate",
+          "finding": "Old assertion demands unconditional root/auto paper-bootstrap failure predicate. Actual compensation gates paper-bootstrap failure with PAPER_BOOTSTRAP_REQUESTED=true, matching scoped ordinary-code release behavior. Test aborts at string check before its later simulation.",
+          "source": [
+            ".github/workflows/nonprod-deploy.yml:194,2270-2274",
+            "scripts/test_dev_environment_lease_deploy_contract.py:1351-1357"
+          ]
+        },
+        {
+          "name": "test_restart_admission_removal_is_detected",
+          "test_line": 3067,
+          "log_lines": [
+            7384,
+            7387
+          ],
+          "class": "masked_mutation_oracle",
+          "finding": "The borrowed root completion fixture has the same missing applicability flag. Even replacing AGORA_OUTCOME by success remains false because unrequested paper success mismatches expected skipped; the negative assertion no longer discriminates restart removal. Actual workflow still folds AGORA_OUTCOME.",
+          "source": [
+            "scripts/test_dev_environment_lease_deploy_contract.py:3061-3068",
+            ".github/workflows/nonprod-deploy.yml:2801"
+          ]
+        },
+        {
+          "name": "test_release_case_retirement_runs_after_both_compensation_paths",
+          "test_line": 3176,
+          "log_lines": [
+            7388,
+            7391
+          ],
+          "class": "obsolete_lifecycle_contract",
+          "finding": "Expects old accepted-or-compensated Admit cleanup and post-compensation Deploy retirement. Current workflow has candidate-only pre_restore retirement before restore and accepted-only cleanup after exact final verification; old later step-name/outcome assertions are stale too. No runtime rollback failure is demonstrated by this string mismatch.",
+          "source": [
+            ".github/workflows/nonprod-deploy.yml:2228-2235,3531-3537",
+            "scripts/test_dev_environment_lease_deploy_contract.py:3169-3193"
+          ]
+        },
+        {
+          "name": "test_release_case_retirement_uses_only_the_retire_action",
+          "test_line": 3200,
+          "log_lines": [
+            7392,
+            7395
+          ],
+          "class": "obsolete_owner_boundary_assertion",
+          "finding": "Demands old saga HTTP /retire literal. Existing helper intentionally composes BFF provisioning owner, gets retire_persona_provisioning_case and calls retire_case for the whole aggregate; no legacy HTTP fallback. Restoring the old URL would contradict the current owner boundary.",
+          "source": [
+            "scripts/retire_dev_paper_release_cases.py:5-15,381-397",
+            "scripts/test_dev_environment_lease_deploy_contract.py:3197-3204"
+          ]
+        }
+      ],
+      "static_actions": {
+        "checkout_count": 7,
+        "all_observed_uses_refs_40hex": true
+      },
+      "change_origins": [
+        {
+          "commit": "42f5cac8e5e5f3a0bd4f34b35ebd5ea3b624a80b",
+          "task": "DEV-ROOT-PAPER-SCOPE-20261021",
+          "changed_paths": [
+            ".github/workflows/nonprod-deploy.yml",
+            "docs/deployment/evidence/DEV-ROOT-PAPER-SCOPE-20261021/evidence.json",
+            "scripts/test_nonprod_dev_artifact_workflow.py"
+          ],
+          "legacy_lease_contract_test_updated": false
+        },
+        {
+          "commit": "f459f58341bf32a1ff16f99d88b9b4a0da28cefe",
+          "task": "RETIRE-SCRIPT-USES-RETIRE-CASE-20261019",
+          "changed_paths": [
+            "docs/deployment/evidence/RETIRE-SCRIPT-USES-RETIRE-CASE-20261019/evidence.json",
+            "scripts/retire_dev_paper_release_cases.py",
+            "scripts/test_retire_dev_paper_release_cases.py"
+          ],
+          "legacy_lease_contract_test_updated": false
+        },
+        {
+          "commit": "b7d7137e3cae4a8ae0f8f1b1c070a9971efcb3cf",
+          "task": "DEV-CASE-RETIRE-BEFORE-RESTORE-20261107",
+          "changed_paths": [
+            ".github/workflows/nonprod-deploy.yml",
+            "docs/deployment/evidence/DEV-CASE-RETIRE-BEFORE-RESTORE-20261107/evidence.json",
+            "docs/deployment/evidence/DEV-CASE-RETIRE-BEFORE-RESTORE-20261107/repair_plan.json",
+            "scripts/retire_dev_paper_release_cases.py",
+            "scripts/test_nonprod_dev_artifact_workflow.py",
+            "scripts/test_retire_dev_paper_release_cases.py"
+          ],
+          "legacy_lease_contract_test_updated": false
+        }
+      ],
+      "root_cause": "Workflow/helper contracts changed in their focused tests while this legacy lease-contract file independently encoded literals, old lifecycle ordering and a coupled fixture. Its duplicated assumptions were not updated, and the bad positive fixture also masks the restart negative oracle. These eight are real test-debt findings, not eight proven runtime defects.",
+      "minimal_surviving_obligation": "Reconcile the existing lease-contract test with actual conditional-paper/pre_restore/coordinator contracts; exercise applicability truth table, real guard mutation and all action refs semantically. Preserve mandatory restart/artifact/rollback and owner-boundary negatives. Do not restore the old saga route, unconditional bootstrap, remove current guards or build a test framework.",
+      "ownership": "Existing lease/deploy contract test owner with provenance from the three named original tasks; no new task or scope mutation by auditor. Handle as separate original-goal debt, not a new gate or scope extension on one-line PR7290.",
+      "limits": "Static/source and existing terminal evidence only. No runtime validation or universal deployment PASS inferred; no source/task/report/checkpoint edits, test execution, process attach or external business calls.",
+      "action_pin_boundary": "The all40hex observation applies ONLY to third-party uses: action implementation SHAs (e.g. actions/checkout@34e...). It says NOTHING about each checkout with.ref repository revision. The independently documented controller with.ref:dev race is a real workflow defect; full-SHA-pinned action code does not pin the repository revision.",
+      "active_owner_preflight": {
+        "at": "2026-11-13T03:26:56.605697+00:00",
+        "target": "scripts/test_dev_environment_lease_deploy_contract.py",
+        "matches": [],
+        "method": "Canonical observational active rows; exact artifact/directory prefixes and named stale-lease/paper-scope expectation tasks only. No new task/claim that completed historic source tasks should be reopened."
+      }
+    },
+    "original_reviewer_output": {
+      "full_batch": {
+        "sha256": "7d0987f21013e2efbfc5dad2e384975db2eb6458d344994996fac249c879760f",
+        "output": ".................................                                        [100%]\n=================================== FAILURES ===================================\n__________ test_provider_live_acceptance_is_not_a_dev_deployment_gate __________\n\n    def test_provider_live_acceptance_is_not_a_dev_deployment_gate() -> None:\n        dev = _job(_workflow(), \"deploy-dev\", \"coordinate-dev-release\")\n        assert \"id: openclaw\" not in dev\n        assert \"openclaw-assistant-openclaw-live-smoke.sh\" not in dev\n        assert \"steps.openclaw\" not in dev\n        assert \"OPENCLAW_OUTCOME\" not in dev\n>       assert \"success:success:success:success:success:success\" in dev\nE       assert 'success:success:success:success:success:success' in '  deploy-dev:\\n    name: Deploy dev under shared environment lease\\n    if: ${{ github.event_name == \\'workflow_dispa...PL-ALLOC-009 dev proof enabled: \\\\`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\\\\`\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n\\n'\n\nscripts/test_dev_environment_lease_deploy_contract.py:277: AssertionError\n_ test_deployment_completion_retains_real_checks_without_provider_gate[None-root] _\n\ncomponent = 'root', failed_step = None\n\n    @pytest.mark.parametrize(\"component\", [\"root\", \"auto\", \"bff\"])\n    @pytest.mark.parametrize(\"failed_step\", [None, \"HEARTBEAT_OUTCOME\", \"DEPLOY_OUTCOME\",\n                                          \"PAPER_BOOTSTRAP_OUTCOME\", \"PUBLIC_SMOKE_OUTCOME\",\n                                          \"DEPLOY_POSTURE_EVIDENCE_OUTCOME\", \"AGORA_OUTCOME\"])\n    def test_deployment_completion_retains_real_checks_without_provider_gate(\n        component: str, failed_step: str | None,\n    ) -> None:\n        dev = _job(_workflow(), \"deploy-dev\", \"coordinate-dev-release\")\n        start = dev.index(\"          complete_success=false\")\n        end = dev.index('          if [[ ! -s \"${LEASE_PID_FILE}\" ]]', start)\n        outcomes = {name: \"success\" for name in (\n            \"HEARTBEAT_OUTCOME\", \"DEPLOY_OUTCOME\", \"PAPER_BOOTSTRAP_OUTCOME\",\n            \"PUBLIC_SMOKE_OUTCOME\", \"DEPLOY_POSTURE_EVIDENCE_OUTCOME\", \"AGORA_OUTCOME\",\n        )}\n        if component == \"bff\":\n            outcomes[\"PAPER_BOOTSTRAP_OUTCOME\"] = \"skipped\"\n        if failed_step:\n            outcomes[failed_step] = \"failure\"\n        result = subprocess.run(\n            [\"bash\", \"-c\", dev[start:end] + '\\nprintf \"%s\" \"$complete_success\"'],\n            env={**os.environ, **outcomes, \"TARGET_COMPONENT\": component, \"ARTIFACTS_VERIFIED\": \"true\"},\n            capture_output=True, text=True, check=True,\n        )\n>       assert result.stdout == (\"false\" if failed_step else \"true\")\nE       AssertionError: assert 'false' == 'true'\nE         \nE         - true\nE         + false\n\nscripts/test_dev_environment_lease_deploy_contract.py:304: AssertionError\n_ test_deployment_completion_retains_real_checks_without_provider_gate[None-auto] _\n\ncomponent = 'auto', failed_step = None\n\n    @pytest.mark.parametrize(\"component\", [\"root\", \"auto\", \"bff\"])\n    @pytest.mark.parametrize(\"failed_step\", [None, \"HEARTBEAT_OUTCOME\", \"DEPLOY_OUTCOME\",\n                                          \"PAPER_BOOTSTRAP_OUTCOME\", \"PUBLIC_SMOKE_OUTCOME\",\n                                          \"DEPLOY_POSTURE_EVIDENCE_OUTCOME\", \"AGORA_OUTCOME\"])\n    def test_deployment_completion_retains_real_checks_without_provider_gate(\n        component: str, failed_step: str | None,\n    ) -> None:\n        dev = _job(_workflow(), \"deploy-dev\", \"coordinate-dev-release\")\n        start = dev.index(\"          complete_success=false\")\n        end = dev.index('          if [[ ! -s \"${LEASE_PID_FILE}\" ]]', start)\n        outcomes = {name: \"success\" for name in (\n            \"HEARTBEAT_OUTCOME\", \"DEPLOY_OUTCOME\", \"PAPER_BOOTSTRAP_OUTCOME\",\n            \"PUBLIC_SMOKE_OUTCOME\", \"DEPLOY_POSTURE_EVIDENCE_OUTCOME\", \"AGORA_OUTCOME\",\n        )}\n        if component == \"bff\":\n            outcomes[\"PAPER_BOOTSTRAP_OUTCOME\"] = \"skipped\"\n        if failed_step:\n            outcomes[failed_step] = \"failure\"\n        result = subprocess.run(\n            [\"bash\", \"-c\", dev[start:end] + '\\nprintf \"%s\" \"$complete_success\"'],\n            env={**os.environ, **outcomes, \"TARGET_COMPONENT\": component, \"ARTIFACTS_VERIFIED\": \"true\"},\n            capture_output=True, text=True, check=True,\n        )\n>       assert result.stdout == (\"false\" if failed_step else \"true\")\nE       AssertionError: assert 'false' == 'true'\nE         \nE         - true\nE         + false\n\nscripts/test_dev_environment_lease_deploy_contract.py:304: AssertionError\n_______________ test_all_third_party_actions_are_full_sha_pinned _______________\n\n    def test_all_third_party_actions_are_full_sha_pinned() -> None:\n        workflow = _workflow()\n    \n>       assert workflow.count(f\"actions/checkout@{CHECKOUT_SHA}\") == 6\nE       assert 7 == 6\nE        +  where 7 = <built-in method count of str object at 0x33778970>('actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5')\nE        +    where <built-in method count of str object at 0x33778970> = 'name: Pantheon Nonprod Deploy\\nrun-name: ${{ inputs.environment == \\'dev\\' && (inputs.compensation_drill && format(\\'...\"- a paused or failed segment is incomplete progress, never an all-12 pass\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n'.count\n\nscripts/test_dev_environment_lease_deploy_contract.py:386: AssertionError\n____ test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative ____\n\ntmp_path = PosixPath('/tmp/pytest-of-chloe_ong_dev_cctech_support_com/pytest-1925/test_dev_root_post_up_failure_0')\n\n    def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_path: Path) -> None:\n        \"\"\"When a post-up check fails after container rollout, the deploy script and workflow\n        must automatically roll back the dev BFF to the captured baseline, preserving the prior\n        exact public FE/BFF pair.\"\"\"\n        deploy_script = DEPLOY.read_text(encoding=\"utf-8\")\n        workflow = _workflow()\n        dev_job = _job(workflow, \"deploy-dev\", \"coordinate-dev-release\")\n    \n        # 1. Verify remote deploy script defines and uses rollback_dev_bff_on_failure\n        assert \"rollback_dev_bff_on_failure()\" in deploy_script\n        assert \"PANTHEON_DEV_ROLLBACK_BACKEND_SHA\" in deploy_script\n        assert \"--rollback-sha\" in deploy_script\n    \n        root_section = deploy_script.split(\"case \\\"${PANTHEON_DEPLOY_COMPONENT}\\\" in\", 1)[1].split(\"root)\", 1)[1].split(\";;\", 1)[0]\n        bff_section = deploy_script.split(\"case \\\"${PANTHEON_DEPLOY_COMPONENT}\\\" in\", 1)[1].split(\"\\n  bff)\", 1)[1].split(\";;\", 1)[0]\n    \n        for post_up_gate in (\n            'rollback_dev_bff_on_failure \"docker_compose_up\"',\n            'rollback_dev_bff_on_failure \"projector_recreate\"',\n            'rollback_dev_bff_on_failure \"source_refresh_readback\"',\n            'rollback_dev_bff_on_failure \"shared_model_pool\"',\n            'rollback_dev_bff_on_failure \"paper_fleet\"',\n            'rollback_dev_bff_on_failure \"bff_lifecycle_readiness\"',\n            'rollback_dev_bff_on_failure \"bff_source_sha\"',\n            'rollback_dev_bff_on_failure \"bff_auth_gate\"',\n            'rollback_dev_bff_on_failure \"ppl_alloc_009_proof_gate\"',\n            'rollback_dev_bff_on_failure \"caddy_ingress\"',\n            'rollback_dev_bff_on_failure \"evolution_daily_sweep\"',\n            'rollback_dev_bff_on_failure \"trade_journey_residual\"',\n        ):\n            assert post_up_gate in root_section, f\"Missing {post_up_gate} in root deploy path\"\n    \n        for post_up_gate in (\n            'rollback_dev_bff_on_failure \"bff_recreate\"',\n            'rollback_dev_bff_on_failure \"bff_lifecycle_readiness\"',\n            'rollback_dev_bff_on_failure \"bff_source_sha\"',\n            'rollback_dev_bff_on_failure \"bff_auth_gate\"',\n            'rollback_dev_bff_on_failure \"ppl_alloc_009_proof_gate\"',\n            'rollback_dev_bff_on_failure \"caddy_ingress\"',\n        ):\n            assert post_up_gate in bff_section, f\"Missing {post_up_gate} in bff deploy path\"\n    \n        # 2. Verify nonprod-deploy workflow has compensation step bound to lease and baseline\n        assert \"Compensate dev deployment failure to exact hosted baseline\" in dev_job\n        assert \"PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}\" in dev_job\n        assert \"PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}\" in dev_job\n>       assert \"((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')\" in dev_job\nE       assert \"((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')\" in '  deploy-dev:\\n    name: Deploy dev under shared environment lease\\n    if: ${{ github.event_name == \\'workflow_dispa...PL-ALLOC-009 dev proof enabled: \\\\`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\\\\`\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n\\n'\n\nscripts/test_dev_environment_lease_deploy_contract.py:1357: AssertionError\n__________________ test_restart_admission_removal_is_detected __________________\n\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f53cc437380>\n\n    def test_restart_admission_removal_is_detected(monkeypatch):\n        test_deployment_completion_retains_real_checks_without_provider_gate(\"root\", \"AGORA_OUTCOME\")\n        source = _workflow()\n        assert \"${AGORA_OUTCOME}\" in source\n        monkeypatch.setitem(globals(), \"_workflow\", lambda: source.replace(\"${AGORA_OUTCOME}\", \"success\"))\n>       with pytest.raises(AssertionError):\nE       Failed: DID NOT RAISE AssertionError\n\nscripts/test_dev_environment_lease_deploy_contract.py:3067: Failed\n_______ test_release_case_retirement_runs_after_both_compensation_paths ________\n\n    def test_release_case_retirement_runs_after_both_compensation_paths() -> None:\n        text = WORKFLOW.read_text(encoding=\"utf-8\")\n        admit = _step_text(\n            \"Retire non-served dev paper release cases\",\n            \"Upload accepted or compensated release evidence\",\n        )\n>       assert \"steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'\" in admit\nE       assert \"steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'\" in '      - name: Retire non-served dev paper release cases\\n        id: retire_release_cases\\n        # Accepted-release...atus}; raw outcome in original-paired-readonly-qa.json\" >> \"${GITHUB_STEP_SUMMARY}\"\\n          exit \"${qa_status}\"\\n\\n'\n\nscripts/test_dev_environment_lease_deploy_contract.py:3176: AssertionError\n___________ test_release_case_retirement_uses_only_the_retire_action ___________\n\n    def test_release_case_retirement_uses_only_the_retire_action() -> None:\n        script = (SCRIPTS / \"retire_dev_paper_release_cases.py\").read_text(encoding=\"utf-8\")\n        code = script.split('\"\"\"', 2)[2]\n>       assert '/retire\"' in code\nE       assert '/retire\"' in '\\n\\nfrom __future__ import annotations\\n\\nimport argparse\\nimport json\\nimport os\\nimport sys\\nimport threading\\nimpo...f _ABANDONED:\\n        os._exit(code)\\n    sys.exit(code)\\n\\n\\nif __name__ == \"__main__\":\\n    _exit_process(main())\\n'\n\nscripts/test_dev_environment_lease_deploy_contract.py:3200: AssertionError\n=========================== short test summary info ============================\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_provider_live_acceptance_is_not_a_dev_deployment_gate\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_deployment_completion_retains_real_checks_without_provider_gate[None-root]\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_deployment_completion_retains_real_checks_without_provider_gate[None-auto]\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_all_third_party_actions_are_full_sha_pinned\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_restart_admission_removal_is_detected\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_release_case_retirement_runs_after_both_compensation_paths\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_release_case_retirement_uses_only_the_retire_action\n8 failed, 529 passed in 150.77s (0:02:30)\n"
+      },
+      "frozen_base_control": {
+        "sha256": "56eedbc0172a88914a75d925e3e0e94b4995e1ce2ce6b49000ef9f99716aca85",
+        "output": "/usr/bin/bash -lc \"timeout 90 .venv-pantheon/bin/python3 - <<'PY'\nimport subprocess, tempfile\nfrom pathlib import Path\nimport pytest\nbase = 'ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690'\nunchanged = ['scripts/test_dev_environment_lease_deploy_contract.py', 'scripts/deploy_nonprod_vm.sh', 'scripts/retire_dev_paper_release_cases.py']\nsubprocess.run(['git', 'diff', '--exit-code', base, 'HEAD', '--', *unchanged], check=True)\nbaseline = subprocess.check_output(['git', 'show', base + ':.github/workflows/nonprod-deploy.yml'], text=True)\nclass BaseWorkflow:\n    def __init__(self, path):\n        self.path = path\n    def pytest_collection_modifyitems(self, items):\n        for item in items:\n            item.module.WORKFLOW = self.path\nwith tempfile.TemporaryDirectory(prefix='root-gate-base-review-') as tmp:\n    path = Path(tmp) / 'nonprod-deploy.yml'\n    path.write_text(baseline)\n    select = 'provider_live_acceptance_is_not or deployment_completion_retains_real_checks or all_third_party_actions or dev_root_post_up_failure_rolls_back or restart_admission_removal or release_case_retirement_runs_after or release_case_retirement_uses_only'\n    print('BASELINE: frozen workflow; test/deploy/retire sources verified unchanged', flush=True)\n    raise SystemExit(pytest.main(['-q', '--tb=short', 'scripts/test_dev_environment_lease_deploy_contract.py', '-k', select], plugins=[BaseWorkflow(path)]))\nPY\" in /tmp/pantheon-worker-worktrees/pantheon/dev-root-gate-controller-pin-20261113\n exited 1 in 8066ms:\nBASELINE: frozen workflow; test/deploy/retire sources verified unchanged\nFFF...................FFFFF                                              [100%]\n=================================== FAILURES ===================================\n__________ test_provider_live_acceptance_is_not_a_dev_deployment_gate __________\nscripts/test_dev_environment_lease_deploy_contract.py:277: in test_provider_live_acceptance_is_not_a_dev_deployment_gate\n    assert \"success:success:success:success:success:success\" in dev\nE   assert 'success:success:success:success:success:success' in '  deploy-dev:\\n    name: Deploy dev under shared environment lease\\n    if: ${{ github.event_name == \\'workflow_dispa...PL-ALLOC-009 dev proof enabled: \\\\`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\\\\`\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n\\n'\n_ test_deployment_completion_retains_real_checks_without_provider_gate[None-root] _\nscripts/test_dev_environment_lease_deploy_contract.py:304: in test_deployment_completion_retains_real_checks_without_provider_gate\n    assert result.stdout == (\"false\" if failed_step else \"true\")\nE   AssertionError: assert 'false' == 'true'\nE     \nE     - true\nE     + false\n_ test_deployment_completion_retains_real_checks_without_provider_gate[None-auto] _\nscripts/test_dev_environment_lease_deploy_contract.py:304: in test_deployment_completion_retains_real_checks_without_provider_gate\n    assert result.stdout == (\"false\" if failed_step else \"true\")\nE   AssertionError: assert 'false' == 'true'\nE     \nE     - true\nE     + false\n_______________ test_all_third_party_actions_are_full_sha_pinned _______________\nscripts/test_dev_environment_lease_deploy_contract.py:386: in test_all_third_party_actions_are_full_sha_pinned\n    assert workflow.count(f\"actions/checkout@{CHECKOUT_SHA}\") == 6\nE   assert 7 == 6\nE    +  where 7 = <built-in method count of str object at 0x2bbebde0>('actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5')\nE    +    where <built-in method count of str object at 0x2bbebde0> = 'name: Pantheon Nonprod Deploy\\nrun-name: ${{ inputs.environment == \\'dev\\' && (inputs.compensation_drill && format(\\'...\"- a paused or failed segment is incomplete progress, never an all-12 pass\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n'.count\n____ test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative ____\nscripts/test_dev_environment_lease_deploy_contract.py:1357: in test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\n    assert \"((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')\" in dev_job\nE   assert \"((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')\" in '  deploy-dev:\\n    name: Deploy dev under shared environment lease\\n    if: ${{ github.event_name == \\'workflow_dispa...PL-ALLOC-009 dev proof enabled: \\\\`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\\\\`\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n\\n'\n__________________ test_restart_admission_removal_is_detected __________________\nscripts/test_dev_environment_lease_deploy_contract.py:3067: in test_restart_admission_removal_is_detected\n    with pytest.raises(AssertionError):\nE   Failed: DID NOT RAISE AssertionError\n_______ test_release_case_retirement_runs_after_both_compensation_paths ________\nscripts/test_dev_environment_lease_deploy_contract.py:3176: in test_release_case_retirement_runs_after_both_compensation_paths\n    assert \"steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'\" in admit\nE   assert \"steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'\" in '      - name: Retire non-served dev paper release cases\\n        id: retire_release_cases\\n        # Accepted-release...atus}; raw outcome in original-paired-readonly-qa.json\" >> \"${GITHUB_STEP_SUMMARY}\"\\n          exit \"${qa_status}\"\\n\\n'\n___________ test_release_case_retirement_uses_only_the_retire_action ___________\nscripts/test_dev_environment_lease_deploy_contract.py:3200: in test_release_case_retirement_uses_only_the_retire_action\n    assert '/retire\"' in code\nE   assert '/retire\"' in '\\n\\nfrom __future__ import annotations\\n\\nimport argparse\\nimport json\\nimport os\\nimport sys\\nimport threading\\nimpo...f _ABANDONED:\\n        os._exit(code)\\n    sys.exit(code)\\n\\n\\nif __name__ == \"__main__\":\\n    _exit_process(main())\\n'\n=========================== short test summary info ============================\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_provider_live_acceptance_is_not_a_dev_deployment_gate\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_deployment_completion_retains_real_checks_without_provider_gate[None-root]\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_deployment_completion_retains_real_checks_without_provider_gate[None-auto]\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_all_third_party_actions_are_full_sha_pinned\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_restart_admission_removal_is_detected\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_release_case_retirement_runs_after_both_compensation_paths\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_release_case_retirement_uses_only_the_retire_action\n8 failed, 19 passed, 227 deselected in 6.41s\n"
+      }
+    },
+    "reproductions": [
+      {
+        "label": "current-dev-before",
+        "command": [
+          "/tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113/.venv-pantheon/bin/python3",
+          "-m",
+          "pytest",
+          "-q",
+          "/tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113/scripts/test_dev_environment_lease_deploy_contract.py",
+          "-k",
+          "provider_live_acceptance_is_not_a_dev_deployment_gate or deployment_completion_retains_real_checks_without_provider_gate or all_third_party_actions_are_full_sha_pinned or dev_root_post_up_failure_rolls_back_to_captured_baseline_negative or restart_admission_removal_is_detected or release_case_retirement_runs_after_both_compensation_paths or release_case_retirement_uses_only_the_retire_action",
+          "--tb=short",
+          "-o",
+          "addopts="
+        ],
+        "cwd": "/tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113",
+        "exit_code": 1,
+        "elapsed_seconds": 2.5,
+        "stdout": "FFF...................FFFFF                                              [100%]\n=================================== FAILURES ===================================\n__________ test_provider_live_acceptance_is_not_a_dev_deployment_gate __________\nscripts/test_dev_environment_lease_deploy_contract.py:277: in test_provider_live_acceptance_is_not_a_dev_deployment_gate\n    assert \"success:success:success:success:success:success\" in dev\nE   assert 'success:success:success:success:success:success' in '  deploy-dev:\\n    name: Deploy dev under shared environment lease\\n    if: ${{ github.event_name == \\'workflow_dispa...PL-ALLOC-009 dev proof enabled: \\\\`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\\\\`\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n\\n'\n_ test_deployment_completion_retains_real_checks_without_provider_gate[None-root] _\nscripts/test_dev_environment_lease_deploy_contract.py:304: in test_deployment_completion_retains_real_checks_without_provider_gate\n    assert result.stdout == (\"false\" if failed_step else \"true\")\nE   AssertionError: assert 'false' == 'true'\nE     \nE     - true\nE     + false\n_ test_deployment_completion_retains_real_checks_without_provider_gate[None-auto] _\nscripts/test_dev_environment_lease_deploy_contract.py:304: in test_deployment_completion_retains_real_checks_without_provider_gate\n    assert result.stdout == (\"false\" if failed_step else \"true\")\nE   AssertionError: assert 'false' == 'true'\nE     \nE     - true\nE     + false\n_______________ test_all_third_party_actions_are_full_sha_pinned _______________\nscripts/test_dev_environment_lease_deploy_contract.py:386: in test_all_third_party_actions_are_full_sha_pinned\n    assert workflow.count(f\"actions/checkout@{CHECKOUT_SHA}\") == 6\nE   assert 7 == 6\nE    +  where 7 = <built-in method count of str object at 0x217e1000>('actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5')\nE    +    where <built-in method count of str object at 0x217e1000> = 'name: Pantheon Nonprod Deploy\\nrun-name: ${{ inputs.environment == \\'dev\\' && (inputs.compensation_drill && format(\\'...\"- a paused or failed segment is incomplete progress, never an all-12 pass\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n'.count\n____ test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative ____\nscripts/test_dev_environment_lease_deploy_contract.py:1357: in test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\n    assert \"((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')\" in dev_job\nE   assert \"((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')\" in '  deploy-dev:\\n    name: Deploy dev under shared environment lease\\n    if: ${{ github.event_name == \\'workflow_dispa...PL-ALLOC-009 dev proof enabled: \\\\`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\\\\`\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n\\n'\n__________________ test_restart_admission_removal_is_detected __________________\nscripts/test_dev_environment_lease_deploy_contract.py:3067: in test_restart_admission_removal_is_detected\n    with pytest.raises(AssertionError):\nE   Failed: DID NOT RAISE AssertionError\n_______ test_release_case_retirement_runs_after_both_compensation_paths ________\nscripts/test_dev_environment_lease_deploy_contract.py:3176: in test_release_case_retirement_runs_after_both_compensation_paths\n    assert \"steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'\" in admit\nE   assert \"steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'\" in '      - name: Retire non-served dev paper release cases\\n        id: retire_release_cases\\n        # Accepted-release...atus}; raw outcome in original-paired-readonly-qa.json\" >> \"${GITHUB_STEP_SUMMARY}\"\\n          exit \"${qa_status}\"\\n\\n'\n___________ test_release_case_retirement_uses_only_the_retire_action ___________\nscripts/test_dev_environment_lease_deploy_contract.py:3200: in test_release_case_retirement_uses_only_the_retire_action\n    assert '/retire\"' in code\nE   assert '/retire\"' in '\\n\\nfrom __future__ import annotations\\n\\nimport argparse\\nimport json\\nimport os\\nimport sys\\nimport threading\\nimpo...f _ABANDONED:\\n        os._exit(code)\\n    sys.exit(code)\\n\\n\\nif __name__ == \"__main__\":\\n    _exit_process(main())\\n'\n=========================== short test summary info ============================\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_provider_live_acceptance_is_not_a_dev_deployment_gate\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_deployment_completion_retains_real_checks_without_provider_gate[None-root]\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_deployment_completion_retains_real_checks_without_provider_gate[None-auto]\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_all_third_party_actions_are_full_sha_pinned\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_restart_admission_removal_is_detected\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_release_case_retirement_runs_after_both_compensation_paths\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_release_case_retirement_uses_only_the_retire_action\n8 failed, 19 passed, 227 deselected in 1.95s\n"
+      },
+      {
+        "label": "frozen-base-control",
+        "command": [
+          "/tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113/.venv-pantheon/bin/python3",
+          "-m",
+          "pytest",
+          "-q",
+          "/tmp/lease-frozen-control-amqq5drm/scripts/test_dev_environment_lease_deploy_contract.py",
+          "-k",
+          "provider_live_acceptance_is_not_a_dev_deployment_gate or deployment_completion_retains_real_checks_without_provider_gate or all_third_party_actions_are_full_sha_pinned or dev_root_post_up_failure_rolls_back_to_captured_baseline_negative or restart_admission_removal_is_detected or release_case_retirement_runs_after_both_compensation_paths or release_case_retirement_uses_only_the_retire_action",
+          "--tb=short",
+          "-o",
+          "addopts="
+        ],
+        "cwd": "/tmp/lease-frozen-control-amqq5drm",
+        "exit_code": 1,
+        "elapsed_seconds": 1.81,
+        "stdout": "FFF...................FFFFF                                              [100%]\n=================================== FAILURES ===================================\n__________ test_provider_live_acceptance_is_not_a_dev_deployment_gate __________\nscripts/test_dev_environment_lease_deploy_contract.py:277: in test_provider_live_acceptance_is_not_a_dev_deployment_gate\n    assert \"success:success:success:success:success:success\" in dev\nE   assert 'success:success:success:success:success:success' in '  deploy-dev:\\n    name: Deploy dev under shared environment lease\\n    if: ${{ github.event_name == \\'workflow_dispa...PL-ALLOC-009 dev proof enabled: \\\\`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\\\\`\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n\\n'\n_ test_deployment_completion_retains_real_checks_without_provider_gate[None-root] _\nscripts/test_dev_environment_lease_deploy_contract.py:304: in test_deployment_completion_retains_real_checks_without_provider_gate\n    assert result.stdout == (\"false\" if failed_step else \"true\")\nE   AssertionError: assert 'false' == 'true'\nE     \nE     - true\nE     + false\n_ test_deployment_completion_retains_real_checks_without_provider_gate[None-auto] _\nscripts/test_dev_environment_lease_deploy_contract.py:304: in test_deployment_completion_retains_real_checks_without_provider_gate\n    assert result.stdout == (\"false\" if failed_step else \"true\")\nE   AssertionError: assert 'false' == 'true'\nE     \nE     - true\nE     + false\n_______________ test_all_third_party_actions_are_full_sha_pinned _______________\nscripts/test_dev_environment_lease_deploy_contract.py:386: in test_all_third_party_actions_are_full_sha_pinned\n    assert workflow.count(f\"actions/checkout@{CHECKOUT_SHA}\") == 6\nE   assert 7 == 6\nE    +  where 7 = <built-in method count of str object at 0x378c18c0>('actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5')\nE    +    where <built-in method count of str object at 0x378c18c0> = 'name: Pantheon Nonprod Deploy\\nrun-name: ${{ inputs.environment == \\'dev\\' && (inputs.compensation_drill && format(\\'...\"- a paused or failed segment is incomplete progress, never an all-12 pass\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n'.count\n____ test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative ____\nscripts/test_dev_environment_lease_deploy_contract.py:1357: in test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\n    assert \"((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')\" in dev_job\nE   assert \"((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')\" in '  deploy-dev:\\n    name: Deploy dev under shared environment lease\\n    if: ${{ github.event_name == \\'workflow_dispa...PL-ALLOC-009 dev proof enabled: \\\\`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\\\\`\"\\n          } >> \"${GITHUB_STEP_SUMMARY}\"\\n\\n'\n__________________ test_restart_admission_removal_is_detected __________________\nscripts/test_dev_environment_lease_deploy_contract.py:3067: in test_restart_admission_removal_is_detected\n    with pytest.raises(AssertionError):\nE   Failed: DID NOT RAISE AssertionError\n_______ test_release_case_retirement_runs_after_both_compensation_paths ________\nscripts/test_dev_environment_lease_deploy_contract.py:3176: in test_release_case_retirement_runs_after_both_compensation_paths\n    assert \"steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'\" in admit\nE   assert \"steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'\" in '      - name: Retire non-served dev paper release cases\\n        id: retire_release_cases\\n        # Accepted-release...atus}; raw outcome in original-paired-readonly-qa.json\" >> \"${GITHUB_STEP_SUMMARY}\"\\n          exit \"${qa_status}\"\\n\\n'\n___________ test_release_case_retirement_uses_only_the_retire_action ___________\nscripts/test_dev_environment_lease_deploy_contract.py:3200: in test_release_case_retirement_uses_only_the_retire_action\n    assert '/retire\"' in code\nE   assert '/retire\"' in '\\n\\nfrom __future__ import annotations\\n\\nimport argparse\\nimport json\\nimport os\\nimport sys\\nimport threading\\nimpo...f _ABANDONED:\\n        os._exit(code)\\n    sys.exit(code)\\n\\n\\nif __name__ == \"__main__\":\\n    _exit_process(main())\\n'\n=========================== short test summary info ============================\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_provider_live_acceptance_is_not_a_dev_deployment_gate\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_deployment_completion_retains_real_checks_without_provider_gate[None-root]\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_deployment_completion_retains_real_checks_without_provider_gate[None-auto]\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_all_third_party_actions_are_full_sha_pinned\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_restart_admission_removal_is_detected\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_release_case_retirement_runs_after_both_compensation_paths\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_release_case_retirement_uses_only_the_retire_action\n8 failed, 19 passed, 227 deselected in 1.31s\n"
+      }
+    ]
+  },
+  "implementation": [
+    "Completion exercises the maintained lease_cleanup shell with explicit requested and skipped paper for root/auto, and skipped BFF paper; all real failure checks retained.",
+    "Restart mutation first passes normal completion and true restart failure, then requires the precise erroneous true result after only AGORA_OUTCOME is replaced.",
+    "Validate all third-party action implementation uses pins without checkout cardinality assumptions. Repository with.ref is independent and its separate race is outside this scope/PR7290.",
+    "Rollback condition uses requested paper; existing compensation fixtures run the maintained compensation shell instead of a self-fulfilling Python simulation.",
+    "Use actual retirement step IDs and pre_restore ordering for inline, roundtrip, and rollback; accepted cleanup requires final verification. Execute coordinator helper with existing fixtures and check exact tenant/persona selection; no saga HTTP fallback.",
+    "Existing compensation truth-table fixture now explicitly requests paper for root/auto; paper-only failure rows are isolated from unrelated smoke failure."
+  ],
+  "validation": [
+    {
+      "command": [
+        ".venv-pantheon/bin/python3",
+        "-m",
+        "pytest",
+        "-q",
+        "scripts/test_dev_environment_lease_deploy_contract.py",
+        "-k",
+        "provider_live_acceptance_is_not_a_dev_deployment_gate or deployment_completion_retains_real_checks_without_provider_gate or all_third_party_actions_are_full_sha_pinned or dev_root_post_up_failure_rolls_back_to_captured_baseline_negative or restart_admission_removal_is_detected or release_case_retirement or compensation_condition_truth_table",
+        "--tb=short"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 38.7,
+      "stdout": ".....................................F........................           [100%]\n=================================== FAILURES ===================================\n____ test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative ____\nscripts/test_dev_environment_lease_deploy_contract.py:1395: in test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\n    assert (tmp_path / \"mock_bff_sha.txt\").read_text() == SAMPLE_BACKEND_SHA\nE   AssertionError: assert '40de8fcb1c69...e508c9162e0\\n' == '40de8fcb1c69...d6e508c9162e0'\nE     \nE     - 40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0\nE     + 40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0\nE     ?                                         +\n=========================== short test summary info ============================\nFAILED scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative\n1 failed, 61 passed, 212 deselected in 37.76s\n"
+    }
+  ],
+  "limitations": [
+    "Anchor only: full-file and focused regression terminal results pending.",
+    "Original full related batch had 8 failed, 529 passed; frozen controls select only the 27 named cases and do not reproduce all 537 original cases.",
+    "This is source-only test maintenance, not hosted, provider, financial or universal deployment acceptance. Original all12/original49 closure and independent PR7290 publication remain unchanged."
+  ]
+}
