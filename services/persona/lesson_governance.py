@@ -49,14 +49,150 @@ def validate_lesson_candidate_json(data: Dict[str, Any]) -> List[str]:
     return errors
 
 
-def is_sensitive_change(candidate: Dict[str, Any]) -> bool:
-    """Check if the lesson candidate proposes changes to policy, risk, capital, or live behaviors."""
-    scope = str(candidate.get("scope", "")).lower()
-    change = str(candidate.get("proposed_change", "")).lower()
-    sensitive_keywords = {"policy", "risk", "capital", "live", "allocation", "leverage", "limit"}
-    if scope in sensitive_keywords:
+def is_expired(candidate: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """True when the candidate expiry is missing, unparsable, or not in the future (fail closed)."""
+    raw = str(candidate.get("expiry") or "")
+    try:
+        expiry = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
         return True
-    return any(keyword in change for keyword in sensitive_keywords)
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    return expiry <= (now or datetime.now(timezone.utc))
+
+
+def candidates_from_reflection(reflection: Dict[str, Any], tenant_id: str) -> List[Dict[str, Any]]:
+    """Map every lesson candidate of a stored reflection to a memory-review registration payload."""
+    version = reflection.get("reflection_version", 1)
+    version_text = str(version) if str(version).startswith("v") else f"v{version}"
+    now = utc_now()
+    return [
+        {
+            "lesson_candidate_id": lesson["lesson_candidate_id"],
+            "reflection_id": reflection["reflection_id"],
+            "trade_episode_ids": list(lesson.get("supporting_episode_ids") or []),
+            "persona_id": reflection["persona_id"],
+            "tenant_id": tenant_id,
+            "scope": lesson["scope"],
+            "proposed_change": lesson["proposed_change"],
+            "confidence": lesson["confidence"],
+            "review_state": "proposed",
+            "created_at": now,
+            "updated_at": now,
+            "expiry": lesson["expiry"],
+            "reflection_version": version_text,
+            "target_env": "paper",
+        }
+        for lesson in reflection.get("lesson_candidates") or ()
+        if isinstance(lesson, dict)
+    ]
+
+
+class MemoryLessonRegistrar:
+    """Registers lesson candidates in the memory service lesson review, once per candidate id."""
+
+    def __init__(self, base_url: Optional[str] = None, urlopen_fn: Any = None) -> None:
+        self.base_url = (base_url if base_url is not None else os.getenv("PANTHEON_MEMORY_API_URL", "")).rstrip("/")
+        self._urlopen = urlopen_fn
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url)
+
+    @staticmethod
+    def _is_jwt(authorization: Optional[str]) -> bool:
+        token = str(authorization or "")
+        token = token[7:].strip() if token.lower().startswith("bearer ") else ""
+        return token.count(".") == 2
+
+    @staticmethod
+    def _mint_service_authorization(tenant_id: str) -> str:
+        """Short-lived tenant-bound memory-writer JWT for the admitted persona service path (never widens tenant)."""
+        import time
+
+        from services.runtime_auth_inbound import encode_jwt_hs256
+
+        secret = (os.getenv("PERSONA_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET") or "").strip()
+        if not secret:
+            raise RuntimeError("memory lesson registration requires PERSONA_JWT_SECRET for the service path")
+        now = int(time.time())
+        claims: Dict[str, Any] = {
+            "sub": os.getenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID") or "persona-service",
+            "service": "persona-lesson-registrar",
+            "tenant_id": tenant_id,
+            "allowed_tenants": [tenant_id],
+            "roles": ["memory-writer"],
+            "iat": now,
+            "exp": now + 120,
+        }
+        issuer = (os.getenv("PERSONA_JWT_ISSUER") or os.getenv("PANTHEON_BFF_JWT_ISSUER") or "").strip()
+        audience = (os.getenv("PERSONA_JWT_AUDIENCE") or os.getenv("PANTHEON_BFF_JWT_AUDIENCE") or "").strip()
+        if issuer:
+            claims["iss"] = issuer
+        if audience:
+            claims["aud"] = audience
+        return "Bearer " + encode_jwt_hs256(claims, secret=secret)
+
+    def register(self, candidates: List[Dict[str, Any]], authorization: Optional[str]) -> Dict[str, Any]:
+        """Returns {"registered": [...], "already_registered": [...]}; raises RuntimeError on failure."""
+        import urllib.error
+        import urllib.request
+
+        if candidates and not self._is_jwt(authorization):
+            tenants = {str(c.get("tenant_id") or "") for c in candidates}
+            if len(tenants) != 1 or "" in tenants:
+                raise RuntimeError("memory lesson registration requires exactly one tenant")
+            authorization = self._mint_service_authorization(tenants.pop())
+
+        opener = self._urlopen or urllib.request.urlopen
+        result: Dict[str, Any] = {"registered": [], "already_registered": []}
+        for candidate in candidates:
+            request = urllib.request.Request(
+                f"{self.base_url}/api/memory/trade-lessons",
+                data=json.dumps(candidate).encode("utf-8"),
+                headers={"Content-Type": "application/json", **({"Authorization": authorization} if authorization else {})},
+                method="POST",
+            )
+            try:
+                with opener(request, timeout=10):
+                    result["registered"].append(candidate["lesson_candidate_id"])
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode("utf-8", "replace") if hasattr(exc, "read") else ""
+                if exc.code == 422 and "already exists" in body:
+                    result["already_registered"].append(candidate["lesson_candidate_id"])
+                    continue
+                raise RuntimeError(f"memory lesson registration failed: HTTP {exc.code}") from exc
+            except OSError as exc:
+                raise RuntimeError(f"memory lesson registration unavailable: {exc}") from exc
+        return result
+
+
+_SENSITIVE_KEYWORDS = (
+    "policy", "risk", "capital", "live", "allocation", "allocat", "leverage", "limit", "position size",
+    "position-size", "sizing", "equity", "margin", "exposure", "drawdown", "stop loss", "stop-loss",
+    "notional", "portfolio", "budget", "guardrail", "kill switch", "production", "real money",
+)
+# Fail-closed allowlist: only these plain scope labels may use the paper-only shortcut.
+PAPER_ONLY_SCOPES = frozenset({"strategy", "regime", "pattern", "execution"})
+
+
+def canonical_scope(candidate: Dict[str, Any]) -> str:
+    """Single scope normalization shared by eligibility and evaluation gates."""
+    return str(candidate.get("scope", "")).strip().lower()
+
+
+def is_paper_only_eligible(candidate: Dict[str, Any]) -> bool:
+    """True only for an explicitly allowlisted, exact scope label with no sensitive wording anywhere."""
+    scope = canonical_scope(candidate)
+    if scope not in PAPER_ONLY_SCOPES:
+        return False
+    change = str(candidate.get("proposed_change", "")).lower()
+    return not any(keyword in change for keyword in _SENSITIVE_KEYWORDS)
+
+
+def is_sensitive_change(candidate: Dict[str, Any]) -> bool:
+    """Fail closed: anything not explicitly paper-only eligible is treated as sensitive."""
+    return not is_paper_only_eligible(candidate)
 
 
 def check_evaluation_gates(candidate: Dict[str, Any], episodes: List[Dict[str, Any]]) -> List[str]:
@@ -65,20 +201,30 @@ def check_evaluation_gates(candidate: Dict[str, Any], episodes: List[Dict[str, A
     Returns a list of validation errors; empty list means all gates passed.
     """
     errors = []
-    scope = str(candidate.get("scope", "")).lower()
+    scope = canonical_scope(candidate)
 
     # 1. Sample size gate (Pattern lessons require at least 3 supporting episodes)
     if scope in {"strategy", "regime", "pattern"}:
         min_sample = 3
-        actual_sample = len(candidate.get("trade_episode_ids", []))
+        actual_sample = len({str(i) for i in candidate.get("trade_episode_ids", [])})
         if actual_sample < min_sample:
             errors.append(f"Pattern lesson requires at least {min_sample} supporting episodes, got {actual_sample}")
 
-    # 2. Cross regime gate (Pattern lessons require at least 2 distinct market regimes)
+    # 2. Cross regime gate: only episodes that are the candidate's own (id, tenant, persona) count, once each
     if scope in {"strategy", "regime", "pattern"}:
+        own_ids = {str(i) for i in candidate.get("trade_episode_ids", [])}
+        seen: set[str] = set()
         regimes = set()
         for ep in episodes:
-            regime = ep.get("regime") or ep.get("market_regime") or ep.get("metadata", {}).get("regime")
+            ep_id = str(ep.get("trade_episode_id") or "")
+            if (
+                ep_id not in own_ids or ep_id in seen
+                or ep.get("tenant_id") != candidate.get("tenant_id")
+                or ep.get("persona_id") != candidate.get("persona_id")
+            ):
+                continue
+            seen.add(ep_id)
+            regime = ep.get("regime") or ep.get("market_regime") or (ep.get("metadata") or {}).get("regime")
             if regime:
                 regimes.add(str(regime).strip().lower())
         if len(regimes) < 2:
@@ -408,6 +554,9 @@ class LessonGovernanceService:
                 f"Cannot merge candidate in state '{current_state}'. Must be 'endorsed' first."
             )
 
+        if is_expired(candidate):
+            raise TradeLessonCandidateError(f"Cannot merge expired candidate {lesson_candidate_id}.")
+
         # Create persona memory entry
         memory_id = f"pmem-lesson-{candidate['lesson_candidate_id']}"
         entry = PersonaMemoryEntry(
@@ -444,3 +593,87 @@ class LessonGovernanceService:
         # Update candidate state to merged
         candidate["review_state"] = "merged"
         return self.store.update(candidate)
+
+    def paper_endorse_and_merge(
+        self,
+        lesson_candidate_id: str,
+        *,
+        operator_id: str,
+        risk_review: Dict[str, Any],
+        episodes: List[Dict[str, Any]],
+        memory_store: PersonaMemoryStore,
+    ) -> Dict[str, Any]:
+        """Paper-scope endorsement rule: gates pass + risk persona review recorded, then merge.
+
+        Anything touching risk/capital/policy/live, any non-paper target, and any
+        expired or quarantined candidate is refused and stays as-is.
+        """
+        candidate = self.store.get(lesson_candidate_id)
+        if not candidate:
+            raise TradeLessonCandidateError(f"Candidate not found: {lesson_candidate_id}")
+        if candidate.get("review_state") not in {"proposed", "pending_review"}:
+            raise TradeLessonCandidateError(
+                f"Paper endorsement requires 'proposed' or 'pending_review', got '{candidate.get('review_state')}'."
+            )
+        if is_expired(candidate):
+            raise TradeLessonCandidateError("Expired candidates are never endorsed or merged.")
+        if is_sensitive_change(candidate) or candidate.get("target_env", "paper") != "paper":
+            raise TradeLessonCandidateError(
+                "Lessons touching risk/capital/policy/live stay pending human endorsement."
+            )
+        review = risk_review or {}
+        review_id = str(review.get("review_id") or "")
+        reviewer = str(review.get("reviewer_persona_id") or "").strip()
+        if (
+            not review_id or not reviewer or review.get("reviewer_role") != "risk"
+            or str(review.get("verdict")).lower() != "approve" or reviewer == candidate["persona_id"]
+            or review.get("lesson_candidate_id") != lesson_candidate_id
+            or review.get("tenant_id") != candidate.get("tenant_id")
+            or review.get("reflection_version") != candidate.get("reflection_version")
+        ):
+            raise TradeLessonCandidateError(
+                "A recorded approving review from a distinct risk persona bound to this candidate version is required."
+            )
+        if candidate["review_state"] == "proposed":
+            self.submit_review(lesson_candidate_id)
+        self.decide(
+            lesson_candidate_id,
+            action="endorse",
+            operator_id=operator_id,
+            reason=f"paper-scope endorsement; risk persona review {review_id} by {reviewer}: approve",
+            audit_receipt_id=review_id,
+            episodes=episodes,
+        )
+        return self.merge_to_memory(lesson_candidate_id, memory_store)
+
+
+class RiskReviewStore:
+    """Durable, server-minted risk persona reviews bound to tenant + candidate + reflection version."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._lock = threading.RLock()
+
+    def _read(self) -> Dict[str, Dict[str, Any]]:
+        if not self._path.exists():
+            return {}
+        text = self._path.read_text(encoding="utf-8")
+        return json.loads(text) if text.strip() else {}
+
+    def record(self, *, review_id: str, candidate: Dict[str, Any], reviewer_persona_id: str, verdict: str) -> Dict[str, Any]:
+        record = {
+            "review_id": review_id, "tenant_id": candidate["tenant_id"], "lesson_candidate_id": candidate["lesson_candidate_id"],
+            "reflection_version": candidate.get("reflection_version"), "reviewer_persona_id": reviewer_persona_id,
+            "reviewer_role": "risk", "verdict": verdict, "recorded_at": utc_now(),
+        }
+        with self._lock:
+            data = self._read()
+            data[review_id] = record
+            tmp = self._path.with_name(f".{self._path.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(tmp, self._path)
+        return record
+
+    def get(self, review_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            return self._read().get(review_id)

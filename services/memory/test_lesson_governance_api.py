@@ -55,7 +55,7 @@ def make_valid_candidate_payload(overrides: dict | None = None) -> dict:
         "review_state": "proposed",
         "created_at": utc_now(),
         "updated_at": utc_now(),
-        "expiry": utc_now(),
+        "expiry": "2099-01-01T00:00:00Z",
         "reflection_version": "v1",
     }
     if overrides:
@@ -132,9 +132,9 @@ def test_api_decide_gate_check_failure(client: TestClient) -> None:
 
 def test_api_decide_and_merge_success(client: TestClient) -> None:
     episodes = [
-        {"trade_episode_id": "ep1", "regime": "bull_market"},
-        {"trade_episode_id": "ep2", "regime": "bear_market"},
-        {"trade_episode_id": "ep3", "regime": "bull_market"},
+        {"trade_episode_id": "ep1", "persona_id": "persona-macro", "tenant_id": "tenant-alpha", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "persona_id": "persona-macro", "tenant_id": "tenant-alpha", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "persona_id": "persona-macro", "tenant_id": "tenant-alpha", "regime": "bull_market"},
     ]
     payload = make_valid_candidate_payload({
         "scope": "strategy",
@@ -311,9 +311,9 @@ def test_api_decide_receipt_validation_sensitive(client: TestClient, monkeypatch
 
 def test_api_promotion_gates(client: TestClient, monkeypatch) -> None:
     episodes = [
-        {"trade_episode_id": "ep1", "regime": "bull_market"},
-        {"trade_episode_id": "ep2", "regime": "bear_market"},
-        {"trade_episode_id": "ep3", "regime": "bull_market"},
+        {"trade_episode_id": "ep1", "persona_id": "persona-macro", "tenant_id": "tenant-alpha", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "persona_id": "persona-macro", "tenant_id": "tenant-alpha", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "persona_id": "persona-macro", "tenant_id": "tenant-alpha", "regime": "bull_market"},
     ]
     payload = make_valid_candidate_payload({
         "scope": "strategy",
@@ -386,9 +386,9 @@ def test_api_promotion_gates(client: TestClient, monkeypatch) -> None:
 def test_api_promotion_stage_bypass_repro(client: TestClient, monkeypatch) -> None:
     # Repro/Regression test for API-level promotion_stage bypass attempt
     episodes = [
-        {"trade_episode_id": "ep1", "regime": "bull_market"},
-        {"trade_episode_id": "ep2", "regime": "bear_market"},
-        {"trade_episode_id": "ep3", "regime": "bull_market"},
+        {"trade_episode_id": "ep1", "persona_id": "persona-macro", "tenant_id": "tenant-alpha", "regime": "bull_market"},
+        {"trade_episode_id": "ep2", "persona_id": "persona-macro", "tenant_id": "tenant-alpha", "regime": "bear_market"},
+        {"trade_episode_id": "ep3", "persona_id": "persona-macro", "tenant_id": "tenant-alpha", "regime": "bull_market"},
     ]
     payload = make_valid_candidate_payload({
         "scope": "strategy",
@@ -817,3 +817,201 @@ def test_lesson_competing_writers_and_crash_restart(client: TestClient) -> None:
     # Replay check in fresh store
     _, replayed = fresh_store.transition_with_idempotency(p1["lesson_candidate_id"], lambda c: c, idempotency_key="comp-key-1", content={"candidate_id": p1["lesson_candidate_id"], "action": "decide", "tenant_id": "tenant-alpha", "actor_id": "op-alice", "decision": "reject", "reason": "reject", "audit_receipt_id": "aud", "target_env": None, "promotion_stage": None, "episodes": None})
     assert replayed is True
+
+
+# --- Reflection -> registered candidate -> paper endorsement -> merged memory (real entry points) ---
+
+import contextlib
+import io
+import urllib.error
+
+from services.persona import test_trade_reflection_owner as _reflection_tests
+from services.persona.lesson_governance import MemoryLessonRegistrar
+
+EP_A, EP_B, EP_C = (str(uuid.uuid4()) for _ in range(3))
+
+
+class _LessonProvider:
+    name = "mock-openclaw"
+    model = "mock-model-v1"
+
+    def __init__(self, lessons: list[dict]) -> None:
+        self.lessons = lessons
+
+    def reflect(self, *, facts: dict, trigger: str) -> dict:
+        return {
+            "expected_vs_actual": {"thesis": "supported", "entry_quality": "good"}, "attribution": "process",
+            "counterfactuals": [{"alternative_action": "wait", "estimated_impact": "higher", "assumptions": "same"}],
+            "lesson_candidates": self.lessons, "mistakes": [], "what_worked": [], "unknowns": [], "followups": [],
+        }
+
+
+def _bridge(memory_client: TestClient):
+    @contextlib.contextmanager
+    def _open(request, timeout=None):
+        path = request.full_url.split("://", 1)[1].split("/", 1)[1]
+        response = memory_client.post("/" + path, content=request.data, headers=dict(request.header_items()))
+        if response.status_code >= 400:
+            raise urllib.error.HTTPError(request.full_url, response.status_code, "err", {}, io.BytesIO(response.content))
+        yield response
+    return _open
+
+
+def _run_reflection(monkeypatch, tmp_path, client: TestClient, lessons: list[dict], episode_id: str = EP_A):
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", _reflection_tests.JWT_SECRET)
+    telemetry = {episode_id: {"trade_episode_id": episode_id, "persona_id": "p-alpha", "tenant_id": "tenant-1", "status": "closed", "realized_pnl": 1.0}}
+    _unused, _owner, _ = _reflection_tests._setup_app(str(tmp_path), monkeypatch, provider=_LessonProvider(lessons), telemetry_data=telemetry)
+    # rebuild the persona app with the real registrar wired to the memory app
+    from services.persona.write_owner import create_app
+    persona_client = TestClient(create_app(
+        owner=_owner, reflection_provider=_LessonProvider(lessons), telemetry_fetcher=lambda e, t, a: telemetry.get(e),
+        lesson_registrar=MemoryLessonRegistrar("http://memory.test", urlopen_fn=_bridge(client)),
+    ))
+    headers = {**_reflection_tests._auth_header("tenant-1"), "Idempotency-Key": f"k-{uuid.uuid4().hex}"}
+    response = persona_client.post(f"/api/personas/p-alpha/trade-reflections/{episode_id}:retry", json={"reason": "register"}, headers=headers)
+    assert response.status_code == 202, response.text
+    return response.json()["data"]
+
+
+def _memory_auth(client: TestClient) -> dict:
+    token = encode_jwt_hs256({"sub": "test-operator", "roles": ["operator", "admin", "persona.admin"], "tenant_id": "tenant-1", "exp": 4102444800}, secret=_reflection_tests.JWT_SECRET)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _risk_auth(roles=("operator", "risk"), actor="p-risk", tenant="tenant-1") -> dict:
+    token = encode_jwt_hs256({"sub": actor, "roles": list(roles), "tenant_id": tenant, "exp": 4102444800}, secret=_reflection_tests.JWT_SECRET)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _record_review(client, cid, verdict="approve", **kw) -> dict:
+    resp = client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": verdict}, headers=_risk_auth(**kw))
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_reflection_to_registered_candidate_to_endorsement_to_merged_memory(client, tmp_path, monkeypatch):
+    data = _run_reflection(monkeypatch, tmp_path, client, [{"scope": "execution", "proposed_change": "enter on pullbacks", "confidence": 0.8}])
+    assert data["lesson_registration"]["status"] == "registered" and len(data["lesson_registration"]["registered"]) == 1
+    auth = _memory_auth(client)
+    candidates = client.get("/api/memory/trade-lessons", headers=auth).json()["candidates"]
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand["review_state"] == "proposed" and cand["trade_episode_ids"] == [EP_A] and cand["expiry"] and cand["persona_id"] == "p-alpha"
+
+    cid = cand["lesson_candidate_id"]
+    # self review, non-risk reviewer refused at record time; fabricated / rejecting reviews refused at endorse time
+    assert client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": "approve"}, headers=_risk_auth(actor="p-alpha")).status_code == 403
+    assert client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": "approve"}, headers=_risk_auth(roles=("operator",))).status_code == 403
+    rejected = _record_review(client, cid, verdict="reject")
+    for bad in ({"review_id": str(uuid.uuid4())}, {"review_id": rejected["review_id"]}):
+        assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": bad}, headers=auth).status_code == 422
+    review = _record_review(client, cid)
+    done = client.post(f"/api/memory/trade-lessons/{cand['lesson_candidate_id']}/paper-endorse", json={"risk_review": review}, headers=auth)
+    assert done.status_code == 200, done.text
+    assert done.json()["review_state"] == "merged" and review["review_id"] in done.json()["receipt"]["reason"]
+    entry = main._persona_store().get(f"pmem-lesson-{cand['lesson_candidate_id']}")
+    assert entry is not None and entry.persona_id == "p-alpha" and entry.memory_type == "strategy_lesson"
+
+    # re-running registration for the same reflection never registers twice
+    registrar = MemoryLessonRegistrar("http://memory.test", urlopen_fn=_bridge(client))
+    again = registrar.register([{**cand}], _memory_auth(client)["Authorization"])
+    assert again["already_registered"] == [cand["lesson_candidate_id"]]
+
+
+def test_sensitive_lesson_stays_pending_human_endorsement(client, tmp_path, monkeypatch):
+    _run_reflection(monkeypatch, tmp_path, client, [{"scope": "risk", "proposed_change": "raise position limit", "confidence": 0.9}])
+    auth = _memory_auth(client)
+    cand = client.get("/api/memory/trade-lessons", headers=auth).json()["candidates"][0]
+    review = _record_review(client, cand["lesson_candidate_id"])
+    assert client.post(f"/api/memory/trade-lessons/{cand['lesson_candidate_id']}/paper-endorse", json={"risk_review": review}, headers=auth).status_code == 422
+    assert client.get(f"/api/memory/trade-lessons/{cand['lesson_candidate_id']}", headers=auth).json()["review_state"] == "proposed"
+
+
+def test_expired_and_quarantined_never_merge(client, tmp_path, monkeypatch):
+    _run_reflection(monkeypatch, tmp_path, client, [{"scope": "execution", "proposed_change": "tighten entries", "confidence": 0.6}, {"scope": "execution", "proposed_change": "wider entries", "confidence": 0.6}])
+    auth = _memory_auth(client)
+    first, second = client.get("/api/memory/trade-lessons", headers=auth).json()["candidates"]
+    review_first, review_second = _record_review(client, first["lesson_candidate_id"]), _record_review(client, second["lesson_candidate_id"])
+    # quarantine one
+    client.post(f"/api/memory/trade-lessons/{first['lesson_candidate_id']}/decide", headers=auth, json={"action": "quarantine", "operator_id": "test-operator", "reason": "suspect", "audit_receipt_id": str(uuid.uuid4())})
+    assert client.post(f"/api/memory/trade-lessons/{first['lesson_candidate_id']}/paper-endorse", json={"risk_review": review_first}, headers=auth).status_code == 422
+    # expire the other in the store
+    store = main._candidate_store()
+    expired = {**store.get(second["lesson_candidate_id"]), "expiry": "2000-01-01T00:00:00Z"}
+    store.update(expired)
+    assert client.post(f"/api/memory/trade-lessons/{second['lesson_candidate_id']}/paper-endorse", json={"risk_review": review_second}, headers=auth).status_code == 422
+    assert client.post(f"/api/memory/trade-lessons/{second['lesson_candidate_id']}/merge", headers=auth).status_code == 422
+
+
+def test_risk_review_is_bound_to_candidate_and_tenant(client, tmp_path, monkeypatch):
+    _run_reflection(monkeypatch, tmp_path, client, [{"scope": "execution", "proposed_change": "a", "confidence": 0.6}, {"scope": "execution", "proposed_change": "b", "confidence": 0.6}])
+    auth = _memory_auth(client)
+    first, second = client.get("/api/memory/trade-lessons", headers=auth).json()["candidates"]
+    review = _record_review(client, first["lesson_candidate_id"])
+    # a receipt for another candidate cannot endorse this one
+    assert client.post(f"/api/memory/trade-lessons/{second['lesson_candidate_id']}/paper-endorse", json={"risk_review": review}, headers=auth).status_code == 422
+    # stale receipt: candidate version moved on
+    store = main._candidate_store()
+    store.update({**store.get(first["lesson_candidate_id"]), "reflection_version": "v9"})
+    assert client.post(f"/api/memory/trade-lessons/{first['lesson_candidate_id']}/paper-endorse", json={"risk_review": review}, headers=auth).status_code == 422
+
+
+def test_pattern_gate_ignores_unrelated_episodes(client):
+    ids = [str(uuid.uuid4()) for _ in range(3)]
+    payload = make_valid_candidate_payload({"scope": "strategy", "trade_episode_ids": ids, "tenant_id": "tenant-alpha"})
+    assert client.post("/api/memory/trade-lessons", json=payload).status_code == 201
+    cid = payload["lesson_candidate_id"]
+    token = encode_jwt_hs256({"sub": "p-risk", "roles": ["operator", "risk"], "tenant_id": "tenant-alpha", "exp": 4102444800}, secret=JWT_SECRET)
+    review = client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": "approve"}, headers={"Authorization": f"Bearer {token}"}).json()
+    ep = lambda i, tenant, persona, regime: {"trade_episode_id": i, "tenant_id": tenant, "persona_id": persona, "regime": regime}
+    unrelated = [ep("x1", "tenant-alpha", payload["persona_id"], "bull"), ep(ids[0], "foreign", payload["persona_id"], "bull"), ep(ids[1], "tenant-alpha", "other", "bear"), ep(ids[2], "tenant-alpha", payload["persona_id"], "bull"), ep(ids[2], "tenant-alpha", payload["persona_id"], "bear")]
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": unrelated}).status_code == 422
+    good = [ep(ids[0], "tenant-alpha", payload["persona_id"], "bull"), ep(ids[1], "tenant-alpha", payload["persona_id"], "bear")]
+    done = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": good})
+    assert done.status_code == 200 and done.json()["review_state"] == "merged"
+
+
+@pytest.mark.parametrize("scope", ["strategy", "regime", "pattern"])
+def test_padded_pattern_scope_cannot_bypass_sample_and_regime_gates(client, tmp_path, monkeypatch, scope):
+    lessons = [{"scope": padded, "proposed_change": f"prefer pullbacks {n}", "confidence": 0.7} for n, padded in enumerate((f" {scope} ", f"  {scope.upper()}\t"))]
+    _run_reflection(monkeypatch, tmp_path, client, lessons)
+    auth = _memory_auth(client)
+    for cand in client.get("/api/memory/trade-lessons", headers=auth).json()["candidates"]:
+        cid = cand["lesson_candidate_id"]
+        review = _record_review(client, cid)
+        resp = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": []}, headers=auth)
+        assert resp.status_code == 422, resp.text
+        assert client.get(f"/api/memory/trade-lessons/{cid}", headers=auth).json()["review_state"] != "merged"
+        assert main._persona_store().get(f"pmem-lesson-{cid}") is None
+
+
+def test_scheduled_pattern_service_credential_registers_via_real_entry_points(client, tmp_path, monkeypatch):
+    """Scheduled path authenticates with the opaque persona service token; registrar mints a tenant-bound JWT for memory."""
+    from services.persona.lesson_governance import MemoryLessonRegistrar
+    from services.persona.test_trade_reflection_owner import JWT_SECRET, MockReflectionProvider, _auth_header, _setup_app
+    from services.persona.write_owner import create_app
+
+    _, owner, _ = _setup_app(str(tmp_path), monkeypatch)
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PERSONA_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", "persona-svc-token")
+    rows = [dict(trade_episode_id=f"ep-{i}", persona_id="p-alpha", tenant_id="tenant-1", status="closed") for i in range(3)]
+    persona = TestClient(create_app(owner=owner, reflection_provider=MockReflectionProvider(), pattern_episode_lister=lambda p, t: rows,
+                                    lesson_registrar=MemoryLessonRegistrar("http://memory.test", urlopen_fn=_bridge(client))))
+    path = "/api/personas/p-alpha/trade-reflections:pattern-review"
+    service = persona.post(path, json={"tenant_id": "tenant-1"}, headers={"Authorization": "Bearer persona-svc-token"})
+    assert service.status_code == 200, service.text
+    listed = client.get("/api/memory/trade-lessons", headers=_auth_header()).json()
+    assert listed["count"] >= 1 and all(c["tenant_id"] == "tenant-1" for c in listed["candidates"])
+    jwt = persona.post(path, json={"tenant_id": "tenant-1"}, headers=_auth_header())
+    assert jwt.status_code == 200, jwt.text
+
+
+def test_registrar_service_path_fails_closed_without_secret(monkeypatch):
+    from services.persona.lesson_governance import MemoryLessonRegistrar
+
+    monkeypatch.delenv("PERSONA_JWT_SECRET", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_JWT_SECRET", raising=False)
+    with pytest.raises(RuntimeError):
+        MemoryLessonRegistrar("http://memory.test", urlopen_fn=lambda *a, **k: None).register(
+            [{"lesson_candidate_id": "x", "tenant_id": "t"}], "Bearer opaque")
