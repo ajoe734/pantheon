@@ -583,3 +583,22 @@ def test_component_basis_write_path_pass_record_and_loader(tmp_path):
     res = _run(store, off)
     assert res.outcome == "pass" and len(read_reconciled_rows(store, "2330", DAY)) == 271
     assert _run(store, off).unchanged
+
+
+def test_only_malformed_component_evidence_fails_closed_and_loader_empty(tmp_path):
+    """P1: unreadable component evidence with NO parseable component must not be treated as absent."""
+    root = _write_snapshot(tmp_path / "off", comps=[])  # total == REGULAR, would pass legacy basis
+    cdir = root / "normalized" / "tw_price_daily_volume_components" / DAY
+    cdir.mkdir(parents=True)
+    (cdir / "bad.jsonl").write_text("{not json\n")
+    off = OfficialDaily.from_snapshot(root)
+    assert off.components_for("2330", DAY)  # marker preserved
+    store = _store(tmp_path / "store"); store.put_symbol_day("2330", DAY, _bars())
+    before = sorted(str(p) for p in (tmp_path / "store").rglob("*"))
+    ro = _run(store, off, write=False)  # read-only: verdict only, no writes
+    assert ro.outcome == "fail" and sorted(str(p) for p in (tmp_path / "store").rglob("*")) == before
+    res = _run(store, off)
+    assert res.outcome == "fail"
+    assert any(v["reason"] == "volume_basis_unavailable" for v in res.violations)
+    assert store.symbol_day_status("2330", DAY) == "quarantined"
+    assert read_reconciled_rows(store, "2330", DAY) == []

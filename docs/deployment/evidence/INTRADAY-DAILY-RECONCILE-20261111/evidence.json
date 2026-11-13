@@ -39,7 +39,8 @@
         "P2 pass->pending withdraws pass on write, write=False stays read-only",
         "P2 recovered clean day reconciles as pass with preserved timestamps; official change revalidated",
         "P2 readmitted pass->pending (absent partition / future official) withholds sidecar, loader closed, official restored re-passes; failing official requarantines then later refetch readmits",
-        "P2 read-only report enumerates intended universe (stored symbols or --symbols) x (stored dates + official dates from first stored day): absent symbol entries and wholly absent day manifests report minute_missing; unrelated official symbols ignored; store unchanged"
+        "P1 only-malformed component evidence (no parseable component) keeps unattributable markers: volume_basis_unavailable, quarantine, empty loader, read-only verdict without writes",
+    "P2 read-only report enumerates intended universe (stored symbols or --symbols) x (stored dates + official dates from first stored day): absent symbol entries and wholly absent day manifests report minute_missing; unrelated official symbols ignored; store unchanged"
       ]
     },
     "merged": {

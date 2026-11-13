@@ -306,7 +306,7 @@ class OfficialDaily:
     def components_for(self, symbol: str, day: str) -> list[VolumeComponent]:
         found = list(self._components.get((symbol.upper(), day), ()))
         # An unreadable component line could belong to this stock: its basis is then unavailable.
-        return found + self._unattributable if found else found
+        return found + self._unattributable
 
     def rows_for(self, symbol: str, day: str) -> list[OfficialRow]:
         return list(self._rows.get((symbol.upper(), day), ()))
