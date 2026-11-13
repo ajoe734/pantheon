@@ -79,6 +79,24 @@ services:
       retries: 10
       start_period: 10s
 
+  retrieval-postgres:
+    profiles: ["core", "root"]
+    image: pgvector/pgvector:0.8.0-pg16@sha256:a132765ec351c65111b5b675928a3a0515a466a40f97277329db8b8209ad8bc9
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: retrieval_owner
+      POSTGRES_PASSWORD: ${RETRIEVAL_POSTGRES_PASSWORD:-retrieval_dev_only}
+      POSTGRES_DB: pantheon_retrieval
+    volumes:
+      - retrieval-postgres-data:/var/lib/postgresql/data
+      - ./services/search/sql/retrieval_index.sql:/docker-entrypoint-initdb.d/01-retrieval.sql:ro
+    # No host port: this projection is accessible only inside the service network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retrieval_owner -d pantheon_retrieval"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   nats:
     profiles: ["core", "root"]
     image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
@@ -493,6 +511,11 @@ services:
       SEARCH_FRESHNESS_SLA_SECONDS: ${SEARCH_FRESHNESS_SLA_SECONDS:-3600}
       SEARCH_PIPELINE_RETENTION_RUNS: ${SEARCH_PIPELINE_RETENTION_RUNS:-500}
       SEARCH_DURABLE_INDEX_ONLY: ${SEARCH_DURABLE_INDEX_ONLY:-false}
+      # Hybrid Postgres backend is the default; jsonl only by explicit override and always reported.
+      PANTHEON_SEARCH_BACKEND: ${PANTHEON_SEARCH_BACKEND:-postgres_pgvector}
+      PANTHEON_SEARCH_POSTGRES_DSN: postgresql://retrieval_owner:${RETRIEVAL_POSTGRES_PASSWORD:-retrieval_dev_only}@retrieval-postgres:5432/pantheon_retrieval
+      SEARCH_EMBEDDING_CACHE_DIR: /opt/search/models
+      HF_HUB_OFFLINE: "1"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
       # Read the source owner's transactional evidence table by default.
@@ -507,6 +530,8 @@ services:
       - "${SEARCH_PORT:-18098}:8098"
     depends_on:
       postgres:
+        condition: service_healthy
+      retrieval-postgres:
         condition: service_healthy
       # source-ingest owns and bootstraps source_ingest.source_evidence;
       # search must not open its read-only view before the owner is ready.
@@ -3209,6 +3234,7 @@ services:
 
         required: false
 volumes:
+  retrieval-postgres-data:
   dev-paper-deployment-tokens:
   dev-paper-registry-tokens:
   dev-paper-governance-tokens:
