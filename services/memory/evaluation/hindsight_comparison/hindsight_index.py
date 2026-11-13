@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -156,7 +157,11 @@ class HindsightIndex:
     def delete_all(self, ids_by_bank: Mapping[str, Iterable[str]]) -> None:
         for bank, ids in ids_by_bank.items():
             for did in ids:
-                self.transport("DELETE", f"{API}/{urllib.parse.quote(bank, safe='')}/documents/{urllib.parse.quote(did, safe='')}", None)
+                try:
+                    self.transport("DELETE", f"{API}/{urllib.parse.quote(bank, safe='')}/documents/{urllib.parse.quote(did, safe='')}", None)
+                except urllib.error.HTTPError as exc:
+                    if exc.code != 404:      # absent on first build is fine
+                        raise
 
     def rebuild(self, items: Sequence[Mapping]) -> Dict[str, Any]:
         by_bank: Dict[str, List[str]] = {}

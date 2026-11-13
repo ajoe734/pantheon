@@ -87,7 +87,8 @@ def rerank_by_usefulness(ids: List[str], by_id: Mapping[str, Mapping]) -> List[s
 
 def run(data_dir: Path, out_dir: Path, *, transport: Callable, llm_info: Optional[Mapping] = None,
         embed: Optional[Callable[[List[str]], List[List[float]]]] = None, rebuild_twice: bool = True,
-        smoke: bool = False, max_decisions: Optional[int] = None) -> Dict[str, Any]:
+        smoke: bool = False, max_decisions: Optional[int] = None,
+        llm_enabled: bool = True) -> Dict[str, Any]:
     ds = load_dataset(Path(data_dir))
     entries, decisions = ds["entries"], ds["decisions"][:max_decisions]
     by_id = {canonical_id(e): e for e in entries}
@@ -97,7 +98,10 @@ def run(data_dir: Path, out_dir: Path, *, transport: Callable, llm_info: Optiona
 
     with tempfile.TemporaryDirectory() as tmp:
         current = CurrentRetrieval(entries, Path(tmp))
-    indexes = {"llm": HindsightIndex(transport, "llm"), "chunks": HindsightIndex(transport, "chunks")}
+    arms = ARMS if llm_enabled else tuple(a for a in ARMS if a not in ("hs_default", "hs_filtered_rerank"))
+    indexes = {"chunks": HindsightIndex(transport, "chunks")}
+    if llm_enabled:
+        indexes["llm"] = HindsightIndex(transport, "llm")
     retain = {name: ix.rebuild(entries) for name, ix in indexes.items()}
 
     def one_pass() -> Dict[str, Dict[str, Dict[str, Any]]]:
@@ -110,10 +114,11 @@ def run(data_dir: Path, out_dir: Path, *, transport: Callable, llm_info: Optiona
             t0 = time.monotonic()
             ids = current.retrieve(pid, q, tags, TOP_K)
             r["current"] = {"ids": ids, "latency": time.monotonic() - t0, "dropped": 0}
-            rr = indexes["llm"].recall(pid, q, top_k=TOP_K, known_ids=known)
-            r["hs_default"] = {"ids": rr.canonical_ids, "latency": rr.latency_s, "dropped": rr.dropped}
-            rr = indexes["llm"].recall(pid, q, tags=tags, top_k=TOP_K, known_ids=known)
-            r["hs_filtered_rerank"] = {"ids": rerank_by_usefulness(rr.canonical_ids, by_id), "latency": rr.latency_s, "dropped": rr.dropped}
+            if llm_enabled:
+                rr = indexes["llm"].recall(pid, q, top_k=TOP_K, known_ids=known)
+                r["hs_default"] = {"ids": rr.canonical_ids, "latency": rr.latency_s, "dropped": rr.dropped}
+                rr = indexes["llm"].recall(pid, q, tags=tags, top_k=TOP_K, known_ids=known)
+                r["hs_filtered_rerank"] = {"ids": rerank_by_usefulness(rr.canonical_ids, by_id), "latency": rr.latency_s, "dropped": rr.dropped}
             rr = indexes["chunks"].recall(pid, q, tags=tags, top_k=TOP_K, known_ids=known)
             r["hs_chunks_rerank"] = {"ids": rerank_by_usefulness(rr.canonical_ids, by_id), "latency": rr.latency_s, "dropped": rr.dropped}
             res[d["decision_id"]] = r
@@ -125,12 +130,12 @@ def run(data_dir: Path, out_dir: Path, *, transport: Callable, llm_info: Optiona
         for ix in indexes.values():
             ix.rebuild(entries)
         second = one_pass()
-        for arm in ARMS[1:]:
+        for arm in arms[1:]:
             stability[arm] = metrics.rebuild_stability(
                 {d: first[d][arm]["ids"] for d in first}, {d: second[d][arm]["ids"] for d in second})
     by_decision = {d["decision_id"]: d for d in decisions}
     per_arm: Dict[str, Any] = {}
-    for arm in ARMS:
+    for arm in arms:
         offs, dups, viol, lat, dropped = [], [], 0, [], 0
         by_lang: Dict[str, List[float]] = {}
         for did, r in first.items():
@@ -158,16 +163,16 @@ def run(data_dir: Path, out_dir: Path, *, transport: Callable, llm_info: Optiona
             "rebuild_top8_jaccard": stability.get(arm),
         }
     texts = {c: entry_text(e) for c, e in by_id.items()}
-    sheet, key = metrics.build_blind_sheet({d: {a: first[d][a]["ids"] for a in ARMS} for d in first}, texts, by_decision)
+    sheet, key = metrics.build_blind_sheet({d: {a: first[d][a]["ids"] for a in arms} for d in first}, texts, by_decision)
     (out_dir / "blind_sheet.json").write_text(json.dumps(sheet, indent=2, ensure_ascii=False))
     (out_dir / "blind_key.json").write_text(json.dumps(key, indent=2))
-    (out_dir / "ranked_results.json").write_text(json.dumps({d: {a: first[d][a]["ids"] for a in ARMS} for d in first}, indent=2))
+    (out_dir / "ranked_results.json").write_text(json.dumps({d: {a: first[d][a]["ids"] for a in arms} for d in first}, indent=2))
     result = {
         "kind": "smoke" if smoke else "comparison",
         "note": "smoke: pipeline check only, not a comparison result" if smoke else "",
         "llm": dict(llm_info or {}), "manifest_sha256": ds["manifest"]["sha256"],
         "retain": {name: {**retain[name], **metrics.retain_summary(indexes[name].retain_stats)} for name in indexes},
-        "arms": per_arm, "hosted_behavior_claimed": False,
+        "arms": per_arm, "llm_arms_run": llm_enabled, "hosted_behavior_claimed": False,
     }
     (out_dir / "results.json").write_text(json.dumps(result, indent=2, ensure_ascii=False))
     return result
@@ -179,13 +184,14 @@ def main(argv=None) -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--api", default=f"http://127.0.0.1:{os.getenv('HINDSIGHT_EVAL_API_PORT', '58888')}")
     ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--no-llm", action="store_true", help="skip arms that need an LLM")
     ap.add_argument("--max-decisions", type=int)
     a = ap.parse_args(argv)
     llm = {"provider": os.getenv("HINDSIGHT_EVAL_LLM_PROVIDER", ""), "model": os.getenv("HINDSIGHT_EVAL_LLM_MODEL", ""),
            "embeddings": os.getenv("HINDSIGHT_EVAL_EMBED_MODEL", "intfloat/multilingual-e5-large"),
            "reranker": os.getenv("HINDSIGHT_EVAL_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")}
     try:
-        r = run(Path(a.data), Path(a.out), transport=http_transport(a.api), llm_info=llm, smoke=a.smoke,
+        r = run(Path(a.data), Path(a.out), transport=http_transport(a.api), llm_info=llm, smoke=a.smoke, llm_enabled=not a.no_llm,
                 max_decisions=a.max_decisions)
     except ValueError as exc:
         print(f"refused: {exc}")

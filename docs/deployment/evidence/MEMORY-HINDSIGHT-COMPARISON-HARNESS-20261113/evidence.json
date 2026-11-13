@@ -1,0 +1,67 @@
+{
+  "task_id": "MEMORY-HINDSIGHT-COMPARISON-HARNESS-20261113",
+  "recorded_on": "2026-11-13",
+  "hosted_behavior_claimed": false,
+  "run_kind": "smoke",
+  "run_label": "SMOKE ONLY: pipeline check (retain -> recall -> id mapping -> metrics) on exporter fixture data; NOT a comparison result",
+  "images": {
+    "hindsight_api": {
+      "ref": "ghcr.io/vectorize-io/hindsight-api",
+      "index_digest": "sha256:662109ece429871a81e036427fb93fbb09ba9dc4b01d320d356f114c0e1aedd8",
+      "license": "MIT"
+    },
+    "postgres_base": {
+      "ref": "groonga/pgroonga:latest-debian-17",
+      "index_digest": "sha256:8360a0cd959687f92451f89c4ed2a59ebdf87e44dfbf744a77ca014ba177b738",
+      "license": "PostgreSQL License (pgroonga)"
+    },
+    "postgres_derived": {
+      "build": "Dockerfile.postgres adds Debian postgresql-17-pgvector to the pinned pgroonga base",
+      "local_image_id": "sha256:1d9dec1c927a628d8bb1bcfb7048cd2f8c84111fc4a8c34babd7b149151782c8",
+      "pgvector_license": "PostgreSQL License"
+    }
+  },
+  "stack_verified": {
+    "embeddings": "intfloat/multilingual-e5-large loaded under the local embeddings provider (confirmed in container log)",
+    "reranker": "BAAI/bge-reranker-v2-m3 loaded as local cross-encoder",
+    "api_paths_confirmed": [
+      "PUT /v1/default/banks/{id}",
+      "PATCH .../config retain_extraction_mode=chunks",
+      "POST .../memories (document_id,tags,metadata,timestamp,entities)",
+      "POST .../memories/recall (tag_groups any_strict)",
+      "DELETE .../documents/{id}"
+    ],
+    "chunks_mode": "retain made 0 LLM calls and 0 tokens; caller entities (e.g. TXF) appeared in recall entities",
+    "pgroonga_text_search": "extension present in the pg image; recall keyword score non-zero",
+    "not_verified": [
+      "LLM-extraction arms (hs_default, hs_filtered_rerank): no LLM key on this host, so run with --no-llm",
+      "cosine>=0.95 duplicate basis (no embedder passed in smoke)",
+      "real-owner endpoint shapes: exporter mappers are defensive and list unmappable sources; verify on the real run"
+    ]
+  },
+  "smoke_results": {
+    "arms_run": [
+      "current",
+      "hs_chunks_rerank"
+    ],
+    "llm_arms_run": false,
+    "retain": {
+      "chunks": {
+        "retained": 4,
+        "seconds": 1.8428107089712285,
+        "entries": 4,
+        "seconds_per_entry": 0.6628428534968407,
+        "llm_calls_per_entry": 0.0,
+        "input_tokens_per_entry": 0.0,
+        "output_tokens_per_entry": 0.0
+      }
+    },
+    "scope_violations": {
+      "current": 0,
+      "hs_chunks_rerank": 0
+    },
+    "chunks_rebuild_top8_jaccard": 1.0
+  },
+  "disk": "free 17G before, 12G after image pulls; stack torn down with down -v after smoke",
+  "tests": "pytest services/memory/evaluation/hindsight_comparison: 16 passed"
+}
