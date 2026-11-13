@@ -1142,6 +1142,41 @@ class ReadSurfacePorts:
                 return item
         return None
 
+    def get_approval_decisions(self, decision_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        """Resolve a page's decisions with the same precedence as the item read.
+
+        Read each owner/store at most once, including the legacy queue fallback.
+        The returned mapping is a caller-owned projection, not retained state.
+        """
+        pending = {str(value).strip() for value in decision_ids if str(value).strip()}
+        found: Dict[str, Dict[str, Any]] = {}
+        if not pending:
+            return found
+
+        def take(records: Any, *, queue: bool = False) -> None:
+            for item in records or []:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("decision_id") or item.get("id") or (item.get("item_id") if queue else "") or "").strip()
+                for candidate in (key, key.removeprefix("review-")) if queue else (key,):
+                    if candidate in pending:
+                        found[candidate] = item
+                        pending.remove(candidate)
+
+        rq = getattr(self.ooda_management, "review_queue", None)
+        by_id_reader = getattr(rq, "_approval_decisions_by_id_reader", None)
+        if callable(by_id_reader):
+            try:
+                take(by_id_reader(sorted(pending)))
+            except Exception:
+                pass
+        reader = getattr(rq, "_approval_decisions_reader", None)
+        if pending and callable(reader):
+            take(reader())
+        if pending:
+            take(self.ooda_management.list_approval_queue_items(), queue=True)
+        return found
+
     def list_approval_decisions(self, **kwargs: Any) -> List[Dict[str, Any]]:
         if not kwargs and hasattr(self.ooda_management, "review_queue"):
             reader = getattr(self.ooda_management.review_queue, "_approval_decisions_reader", None)

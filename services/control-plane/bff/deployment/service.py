@@ -11,10 +11,21 @@ the BFF composition root.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from .adapters import DefaultDeploymentCommands
 from .ports import DeploymentCommands, DeploymentQueries
+
+
+@dataclass
+class _StageTruthInputs:
+    """One list page's owner records; discarded when composition returns."""
+
+    approvals: Dict[str, Dict[str, Any]]
+    runtime_bindings: Sequence[Dict[str, Any]]
+    monitoring_sessions: Sequence[Dict[str, Any]] = ()
+    telemetry_summaries: Sequence[Dict[str, Any]] = ()
 
 
 class DeploymentService:
@@ -289,19 +300,48 @@ class DeploymentService:
         runtime_binding_ids.discard("")
         return bool(requested_binding_ids.intersection(runtime_binding_ids))
 
-    def deployment_runtime_binding(self, plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def deployment_runtime_binding(
+        self, plan: Dict[str, Any], *, inputs: Optional[_StageTruthInputs] = None,
+    ) -> Optional[Dict[str, Any]]:
         runtime_binding_id = str(plan.get("runtime_binding_id") or "").strip()
         if runtime_binding_id:
-            binding = self.queries.get_runtime_binding(runtime_binding_id)
+            binding = (
+                next((row for row in inputs.runtime_bindings if runtime_binding_id in {
+                    str(row.get(key) or "").strip()
+                    for key in ("binding_id", "id", "runtime_binding_id")
+                }), None)
+                if inputs is not None
+                else self.queries.get_runtime_binding(runtime_binding_id)
+            )
             if binding:
                 return binding
 
-        for binding in self.queries.list_runtime_bindings():
+        for binding in inputs.runtime_bindings if inputs is not None else self.queries.list_runtime_bindings():
             if self.runtime_binding_matches_deployment_plan(binding, plan):
                 return binding
         return None
 
-    def runtime_fleet_stage_truth(self, runtime_binding: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    @staticmethod
+    def _monitoring_session(
+        sessions: Sequence[Dict[str, Any]], runtime_id: str, binding_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        # Owner order wins across BOTH identifiers, just like the item query.
+        return next((session for session in sessions if (
+            binding_id and str(session.get("binding_id") or session.get("runtime_binding_id") or "").strip() == binding_id
+        ) or (
+            runtime_id and str(session.get("runtime_id") or "").strip() == runtime_id
+        )), None)
+
+    @staticmethod
+    def _runtime_identifiers(binding: Dict[str, Any]) -> tuple[str, str]:
+        return (
+            str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "").strip(),
+            str(binding.get("runtime_binding_id") or binding.get("binding_id") or binding.get("id") or "").strip(),
+        )
+
+    def runtime_fleet_stage_truth(
+        self, runtime_binding: Optional[Dict[str, Any]], *, inputs: Optional[_StageTruthInputs] = None,
+    ) -> Dict[str, Any]:
         if not runtime_binding:
             return self.deployment_stage_entry(
                 stage="runtime_fleet",
@@ -330,9 +370,11 @@ class DeploymentService:
             runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode") or ""
         ).strip().lower()
 
-        monitoring = self.queries.get_paper_runtime_monitoring_session(
-            runtime_id=runtime_id,
-            binding_id=runtime_binding_id,
+        monitoring = (
+            self._monitoring_session(inputs.monitoring_sessions, runtime_id, runtime_binding_id)
+            if inputs is not None else self.queries.get_paper_runtime_monitoring_session(
+                runtime_id=runtime_id, binding_id=runtime_binding_id,
+            )
         )
         if monitoring:
             active = bool(monitoring.get("active", True))
@@ -358,7 +400,11 @@ class DeploymentService:
                 terminal_reason=terminal_reason,
             )
 
-        telemetry = self.queries.get_telemetry_summary(runtime_id) if runtime_id else None
+        telemetry = (
+            next((row for row in inputs.telemetry_summaries
+                  if row.get("runtime_id") == runtime_id or row.get("id") == runtime_id), None)
+            if inputs is not None else self.queries.get_telemetry_summary(runtime_id)
+        ) if runtime_id else None
         if telemetry:
             health_summary = telemetry.get("health_summary") if isinstance(telemetry.get("health_summary"), dict) else {}
             unhealthy = [
@@ -403,10 +449,15 @@ class DeploymentService:
             ),
         )
 
-    def deployment_stage_truth(self, plan: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    def deployment_stage_truth(
+        self, plan: Dict[str, Any], *, inputs: Optional[_StageTruthInputs] = None,
+    ) -> Dict[str, Dict[str, Any]]:
         plan_id = self.deployment_plan_identifier(plan)
         approval_decision_id = str(plan.get("approval_decision_id") or "").strip()
-        approval_decision = self.queries.get_approval_decision(approval_decision_id)
+        approval_decision = (
+            inputs.approvals.get(approval_decision_id)
+            if inputs is not None else self.queries.get_approval_decision(approval_decision_id)
+        )
         if approval_decision:
             approval_status = approval_decision.get("outcome") or approval_decision.get("state")
             approval_entry = self.deployment_stage_entry(
@@ -476,7 +527,7 @@ class DeploymentService:
                 message="Deployment saga progress has not been observed for this plan.",
             )
 
-        runtime_binding = self.deployment_runtime_binding(plan)
+        runtime_binding = self.deployment_runtime_binding(plan, inputs=inputs)
         if runtime_binding:
             binding_status = runtime_binding.get("status") or runtime_binding.get("state") or "present"
             binding_entry = self.deployment_stage_entry(
@@ -511,7 +562,7 @@ class DeploymentService:
             "plan": plan_entry,
             "saga": saga_entry,
             "binding": binding_entry,
-            "runtime_fleet": self.runtime_fleet_stage_truth(runtime_binding),
+            "runtime_fleet": self.runtime_fleet_stage_truth(runtime_binding, inputs=inputs),
         }
 
     def deployment_stage_truth_surfaces(
@@ -519,6 +570,7 @@ class DeploymentService:
         stage_truth: Dict[str, Dict[str, Any]],
         *,
         snapshot_at: str,
+        sources: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         surfaces: Dict[str, Dict[str, Any]] = {}
         for stage in self.deployment_stage_truth_order:
@@ -529,6 +581,7 @@ class DeploymentService:
                 snapshot_at=snapshot_at,
                 has_data=bool(entry.get("available")),
                 missing_message=entry.get("message"),
+                **({"source": sources[dataset]} if sources is not None else {}),
             )
             if entry.get("failure") and surface.get("status") == "ok":
                 surface["status"] = "degraded"
@@ -550,8 +603,13 @@ class DeploymentService:
         *,
         snapshot_at: str,
     ) -> Dict[str, Dict[str, Any]]:
+        sources = {
+            str(entry.get("source_dataset") or "").strip() or "deployment_plans"
+            for truth in stage_truths for entry in truth.values()
+        }
+        dataset_sources = {dataset: self.queries.dataset_source(dataset) for dataset in sorted(sources)}
         collected = [
-            self.deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at)
+            self.deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at, sources=dataset_sources)
             for stage_truth in stage_truths
             if stage_truth
         ]
@@ -597,6 +655,27 @@ class DeploymentService:
         payload = dict(plan)
         payload["stage_truth"] = self.deployment_stage_truth(plan)
         return payload
+
+    def deployment_plans_with_stage_truth(
+        self, plans: Sequence[Dict[str, Any]], *, snapshot_at: str,
+    ) -> list[Dict[str, Any]]:
+        """Compose a page from bounded bulk reads, without per-plan store calls."""
+        if not plans:
+            return []
+        inputs = _StageTruthInputs(
+            approvals=self.queries.get_approval_decisions([
+                str(plan.get("approval_decision_id") or "").strip() for plan in plans
+            ]),
+            runtime_bindings=self.queries.list_runtime_bindings(),
+        )
+        linked = [self.deployment_runtime_binding(plan, inputs=inputs) for plan in plans]
+        identifiers = [self._runtime_identifiers(binding) for binding in linked if binding]
+        if any(runtime_id or binding_id for runtime_id, binding_id in identifiers):
+            inputs.monitoring_sessions = self.queries.list_paper_runtime_monitoring_sessions()
+        if any(runtime_id and not self._monitoring_session(inputs.monitoring_sessions, runtime_id, binding_id)
+               for runtime_id, binding_id in identifiers):
+            inputs.telemetry_summaries = self.queries.list_telemetry_summaries()
+        return [dict(plan, stage_truth=self.deployment_stage_truth(plan, inputs=inputs)) for plan in plans]
 
     # -- Deployment diff ------------------------------------------------------ #
 
