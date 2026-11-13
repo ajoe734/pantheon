@@ -2182,7 +2182,7 @@ def test_full_collector_steady_tick_from_default_desired_state_pulls_every_admit
         assert fetch["adapter_config"]["source_id"] == collector["source_id"]
     # Five social platforms share one dataset but are five connectors.
     social = [s for s in wanted if get_connector_definition(s).metadata["collector"]["dataset"] == "collector_social_posts"]
-    assert len(social) == 6 and len({by_id[s]["connector_id"] for s in social}) == 6
+    assert len(social) == 5 and len({by_id[s]["connector_id"] for s in social}) == 5
     # Community sources run at test volume.
     for source_id in social:
         assert module.runtime.connector_store.get_config(source_id).fetch["max_records"] == 50

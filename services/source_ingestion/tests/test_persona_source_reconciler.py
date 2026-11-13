@@ -939,7 +939,7 @@ def test_dbnomics_and_individual_paper_bundle_sources_are_provisioned(tmp_path, 
     monkeypatch.setenv("PANTHEON_COLLECTOR_HOST", "collector.example.test")
     reconciler, connectors, schedules = _reconciler(tmp_path)
     ids = ("collector-macro-dbnomics", "collector-paper-arxiv", "collector-paper-openalex",
-           "collector-paper-nber-rss", "collector-youtube-gemini-notes")
+           "collector-paper-nber-rss")
     result = reconciler.reconcile_persona(_collector_persona(*ids))
     assert result.summary["unsupported"] == 0
     for cid in ids:

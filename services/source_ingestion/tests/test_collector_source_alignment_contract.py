@@ -17,11 +17,14 @@ def test_every_enabled_host_source_has_its_own_admitted_definition_or_explicit_h
     admitted = {cid for persona in desired["personas"] for req in persona["required_data_sources"]
                 for cid in req["connector_candidates"]}
     held = {item["connector_id"]: item["reason"] for item in desired["held_collector_sources"]}
+    exclusions = desired.get("collector_ingestion_exclusions", {})
     assert {s["id"] for s in COLLECTOR_SOURCE_SPECS} <= set(policy)
     for sid, host_policy in policy.items():
         if not host_policy["enabled"]:
             continue
-        assert sid in by_source, f"{sid} has no hosted reader (a composite reader does not read child bundles)"
+        if sid not in by_source:
+            assert exclusions.get(sid), f"{sid} has no hosted reader or explicit ingestion exclusion"
+            continue
         definition = by_source[sid]
         assert definition.definition_id in admitted or held.get(definition.definition_id), f"{sid} lacks admission/reason"
     assert by_source["collector-macro-dbnomics"].datasets[0] == "collector_macro_series"

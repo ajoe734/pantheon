@@ -305,24 +305,12 @@
             "no_live_capital"
           ],
           "source_class": "live_pull"
-        },
-        {
-          "cadence": "daily",
-          "connector_candidates": [
-            "collector-youtube-gemini-notes"
-          ],
-          "dataset": "collector_social_posts",
-          "market": "GLOBAL",
-          "policy_gates": [
-            "require_connector_approved",
-            "require_schedule_active",
-            "require_source_health_ok",
-            "no_live_capital"
-          ],
-          "source_class": "live_pull"
         }
       ]
     }
   ],
-  "schema_version": "source_ingest_desired_state.v1"
+  "schema_version": "source_ingest_desired_state.v1",
+  "collector_ingestion_exclusions": {
+    "collector-youtube-gemini-notes": "Native GeminiVideoNotesPoller emits model-generated video summaries with hashed_author=null, not authored social posts. Hosted ingestion is deferred until a generated-note evidence/attribution contract is defined; do not synthesize an author or route these into community social features. Host policy and timers remain unchanged."
+  }
 }

@@ -235,7 +235,8 @@ missing/unverified offering metadata does not fabricate a disabled source.
 DBnomics and the individual arXiv/OpenAlex/NBER bundle sources have independent
 hosted definitions and desired admission. `strategy-seed-paper-corpus` reads
 `collector-papers` composite bundles only; it does not consume separately written
-child-source bundles. Gemini notes remain subject to the community test-volume cap.
+child-source bundles. Gemini video notes have an explicit ingestion exclusion: their native generated
+summary has no hashed author and needs a generated-note attribution contract.
 Books retain their existing operator hold. Actual hosted throughput/availability
 is accepted separately by `COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113`; synthetic
 rate evidence is in the throughput task's deployment evidence manifest.
