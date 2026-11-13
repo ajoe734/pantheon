@@ -664,3 +664,90 @@ def test_notify_search_index_refresh_ignores_network_errors():
         assert summary["status"] == "notify_failed"
         assert "connection refused" in summary["error"]
         ingest_main.runtime.SEARCH_INGEST_NOTIFY_URL = ""
+
+
+def test_unchanged_refresh_stays_incremental_when_readback_reloads_after_writer_reload(tmp_path):
+    # Interleaving: a readback starts reloading the shared store right after the pipeline's own
+    # reload returned and before the pipeline reads its checkpoint. The readback's (slow) reload
+    # must not make the checkpoint disappear: an unchanged refresh stays incremental with 0 work.
+    import threading
+    import time
+
+    repo = _make_repo_with_objects(["a", "b", "c"], created_at="2026-04-30T01:00:00Z")
+    store = _make_pipeline_store(tmp_path)
+    pipeline = _make_pipeline(repo, store)
+    pipeline.run(triggered_by="seed")
+
+    real_read_text = Path.read_text
+    reading = threading.Event()
+
+    def slow_read_text(self, *args, **kwargs):
+        if self == store.path:
+            reading.set()
+            time.sleep(0.2)
+        return real_read_text(self, *args, **kwargs)
+
+    real_reload = store.reload
+    readbacks: list[threading.Thread] = []
+
+    def reload_then_interleave():
+        real_reload()
+        if not readbacks:
+            reading.clear()
+            t = threading.Thread(target=real_reload)
+            readbacks.append(t)
+            t.start()
+            assert reading.wait(5)  # readback is now mid-reload
+
+    with mock.patch.object(Path, "read_text", slow_read_text):
+        store.reload = reload_then_interleave
+        run = pipeline.run(triggered_by="scheduled_refresh")
+        for t in readbacks:
+            t.join()
+    assert run.is_full_rebuild is False
+    assert run.incremental_count == 0
+    assert store.count_runs() == 2
+
+
+class _FakeBackend:
+    def __init__(self) -> None:
+        self.docs: set[str] = set()
+        self.indexed_batches: list[list[str]] = []
+
+    def index_documents(self, records):
+        self.indexed_batches.append([r.id for r in records])
+        self.docs.update(r.id for r in records)
+        return len(records)
+
+    def delete_document(self, document_id, *a, **k):
+        self.docs.discard(document_id)
+
+    def active_document_ids(self, tenant_id, ids):
+        return {i for i in ids if i in self.docs}
+
+
+def test_retained_checkpoint_with_empty_backend_reindexes_existing_objects(tmp_path):
+    repo = _make_repo_with_objects(["a", "b", "c"])
+    store = _make_pipeline_store(tmp_path)
+    # Retained checkpoint written before the hybrid backend existed (or its volume was wiped).
+    IncrementalIndexPipeline(repo, store).run(triggered_by="legacy")
+    backend = _FakeBackend()
+    pipeline = IncrementalIndexPipeline(repo, store, retrieval_backend=backend)
+    run = pipeline.run(triggered_by="scheduled_refresh")
+    assert backend.docs == {"a", "b", "c"}
+    assert run.incremental_count == 3 and run.is_full_rebuild is False
+    # Healthy backend: nothing further to do.
+    again = pipeline.run(triggered_by="scheduled_refresh")
+    assert again.incremental_count == 0 and len(backend.indexed_batches) == 1
+
+
+def test_underfilled_backend_only_receives_missing_objects(tmp_path):
+    repo = _make_repo_with_objects(["a", "b", "c"])
+    store = _make_pipeline_store(tmp_path)
+    backend = _FakeBackend()
+    pipeline = IncrementalIndexPipeline(repo, store, retrieval_backend=backend)
+    pipeline.run(triggered_by="seed")
+    backend.docs.discard("b")
+    run = pipeline.run(triggered_by="scheduled_refresh")
+    assert backend.indexed_batches[-1] == ["b"]
+    assert run.incremental_count == 1 and backend.docs == {"a", "b", "c"}

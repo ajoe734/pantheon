@@ -92,10 +92,10 @@
  },
  "review_round_5": {
   "rejected_head": "c07224c020e73beb103605d92d54c0e18311d216",
-  "p1_readback_race_fix": "main.py: JsonlIndexPipelineStore reload/record_run/prune and the freshness, pipeline-runs and source-completion readbacks (reload + snapshot) share one short RLock (store_view_lock), never held across indexing. A readback reload can no longer expose an emptied _runs to a running refresh.",
-  "regression_test": "test_readback_reload_never_overlaps_pipeline_store_mutation: fails without the lock (reload/record overlap), passes with it.",
+  "p1_readback_race_fix": "SUPERSEDED by review_round_6.store_snapshot_fix (main.py store_view_lock wrappers removed).",
+  "regression_test": "superseded: lock-mirroring test removed.",
   "validation": "pytest services/search scheduler + retrieval_activation + index_pipeline: 50 passed, 1 skipped (no integration DSN).",
-  "p1_retained_checkpoint_empty_backend": "OPEN: needs services/search/index_pipeline.py + test_index_pipeline.py (outside scope); external scope request filed via blocker. No completion claimed until backend recovery/full canonical fixture query is demonstrated.",
+  "p1_retained_checkpoint_empty_backend": "ADDRESSED in review_round_6 after native artifact admission of index_pipeline.py/test_index_pipeline.py.",
   "original_evidence_bindings": {
    "bundle_sha256": "629e06a729f8eda6806b83cdc3cab8274744551413dab90c59711716a2147bf2",
    "official_step20_raw_sha256": "6b7dff530ce8fdbd57c0a116386748edf6a357e18e31f9e77242008cadbef99b",
@@ -104,5 +104,22 @@
    "cohort_read_cost": "8208 canonical objects / 32.8k evidence rows, repo.reload ~2.1s (probe fixture mirrors, not the exact input)",
    "source_refs": "as bound in the supplied bundle; hashes above"
   }
+ },
+ "review_round_6": {
+  "store_snapshot_fix": {
+   "cause": "get_latest ran outside the lock after the locked reload, so a readback reload (which cleared _runs before refilling) could still empty the checkpoint between the writer's reload and get_latest, turning an unchanged refresh into a full rebuild.",
+   "change": "index_pipeline.JsonlIndexPipelineStore: reload builds a complete list and publishes it with one assignment (readers never see an emptied list); an in-store RLock serializes reload/record_run/prune file mutation. main.py store_view_lock and wrappers removed; readbacks are plain reload again.",
+   "regression_test": "test_unchanged_refresh_stays_incremental_when_readback_reloads_after_writer_reload: reproduces the reviewer interleaving (slow readback reload starts after writer reload returns, before get_latest) and asserts the observable result (is_full_rebuild False, incremental_count 0). Verified to FAIL on the previous index_pipeline.py (full rebuild) and pass now."
+  },
+  "retained_checkpoint_empty_or_underfilled_backend": {
+   "change": "IncrementalIndexPipeline.run: on a non-full run with a retrieval backend, objects the checkpoint claims but backend.active_document_ids(tenant, ids) does not report are added to the objects to index (no force-full, only the missing ones). PostgresRetrievalBackend.active_document_ids is RLS/tenant-scoped, requires is_active and non-null embedding. Backends that cannot report presence keep checkpoint-only behaviour. Failure still raises (503) with no checkpoint recorded.",
+   "tests": [
+    "test_retained_checkpoint_with_empty_backend_reindexes_existing_objects",
+    "test_underfilled_backend_only_receives_missing_objects"
+   ]
+  },
+  "validation": "/tmp/v venv: pytest services/search/test_index_pipeline.py test_index_scheduler_worker.py tests/test_retrieval_activation.py: 52 passed, 1 skipped.",
+  "not_rerun": "Real pgvector/model/uvicorn/scheduler run of the new recovery path and the canonical-fixture hybrid query were NOT rerun this session (container env inspection was denied by the sandbox classifier; no integration DSN). active_document_ids SQL is unexercised against real Postgres. Earlier recorded fixture query (ko-src-fx-0/1/2, round 3) stands only for the pre-recovery path. No hosted completion claimed.",
+  "bundle_binding": "original_evidence_bindings (bundle 629e06a..., step20 raw 6b7dff53...) retained unchanged; historical exception stays UNKNOWN; supported mechanism distinction retained."
  }
 }

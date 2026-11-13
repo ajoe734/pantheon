@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -79,47 +80,55 @@ class JsonlIndexPipelineStore:
         self.path = path
         self.max_retention = max(1, int(max_retention))
         self._runs: list[IndexPipelineSnapshot] = []
+        # File mutation and the in-memory swap are serialized so a concurrent readback never
+        # sees a half-written file; reload publishes a complete list in one assignment so
+        # readers (get_latest/list_runs) never observe a transiently empty store.
+        self._lock = threading.RLock()
         self.reload()
 
     def reload(self) -> None:
-        self._runs = []
-        if not self.path.exists():
-            return
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                data = json.loads(stripped)
-                self._runs.append(IndexPipelineSnapshot.from_dict(data))
-            except (json.JSONDecodeError, KeyError):
-                continue
+        with self._lock:
+            runs: list[IndexPipelineSnapshot] = []
+            if self.path.exists():
+                for line in self.path.read_text(encoding="utf-8").splitlines():
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        data = json.loads(stripped)
+                        runs.append(IndexPipelineSnapshot.from_dict(data))
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+            self._runs = runs
 
     def record_run(self, snapshot: IndexPipelineSnapshot) -> IndexPipelineSnapshot:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(snapshot.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
-        self._runs.append(snapshot)
-        if len(self._runs) > self.max_retention:
-            self.prune(self.max_retention)
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(snapshot.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
+            self._runs = [*self._runs, snapshot]
+            if len(self._runs) > self.max_retention:
+                self.prune(self.max_retention)
         return snapshot
 
     def prune(self, max_keep: int) -> int:
         """Compact store to last max_keep runs. Returns number of entries pruned."""
-        self.reload()
-        if len(self._runs) <= max_keep:
-            return 0
-        kept = self._runs[-max_keep:]
-        removed = len(self._runs) - len(kept)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w", encoding="utf-8") as handle:
-            for run in kept:
-                handle.write(json.dumps(run.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
-        self._runs = kept
-        return removed
+        with self._lock:
+            self.reload()
+            if len(self._runs) <= max_keep:
+                return 0
+            kept = self._runs[-max_keep:]
+            removed = len(self._runs) - len(kept)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("w", encoding="utf-8") as handle:
+                for run in kept:
+                    handle.write(json.dumps(run.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
+            self._runs = kept
+            return removed
 
     def get_latest(self) -> IndexPipelineSnapshot | None:
-        return self._runs[-1] if self._runs else None
+        runs = self._runs
+        return runs[-1] if runs else None
 
     def count_runs(self) -> int:
         return len(self._runs)
@@ -226,6 +235,31 @@ class IncrementalIndexPipeline:
                 return t
         return _parse_time(knowledge_object.created_at)
 
+    def _objects_missing_from_backend(self, all_objects: list[Any], selected: list[Any]) -> list[Any]:
+        """Objects the retained checkpoint claims are indexed but the retrieval backend lacks.
+
+        The checkpoint is JSONL while the hybrid index is a separate store; an empty or
+        underfilled backend (new backend, wiped volume) otherwise never receives pre-existing
+        objects because incremental runs only select changed ones.
+        """
+        probe = getattr(self.retrieval_backend, "active_document_ids", None)
+        if probe is None:
+            return []
+        selected_ids = {obj.knowledge_object_id for obj in selected}
+        by_tenant: dict[str, list[Any]] = {}
+        for obj in all_objects:
+            if obj.knowledge_object_id in selected_ids:
+                continue
+            tenant = str((dict(obj.metadata) if obj.metadata else {}).get("tenant_id") or "default")
+            by_tenant.setdefault(tenant, []).append(obj)
+        missing: list[Any] = []
+        for tenant, objects in by_tenant.items():
+            present = probe(tenant, [o.knowledge_object_id for o in objects])
+            if not isinstance(present, (set, frozenset)):
+                return []  # backend cannot report presence; keep checkpoint-only behaviour
+            missing.extend(o for o in objects if o.knowledge_object_id not in present)
+        return missing
+
     def run(
         self,
         *,
@@ -261,6 +295,9 @@ class IncrementalIndexPipeline:
                     or effective_time >= last_indexed_at
                 ):
                     new_objects.append(obj)
+
+        if not is_full_rebuild:
+            new_objects.extend(self._objects_missing_from_backend(all_objects, new_objects))
 
         adapter = KeywordIndexAdapter(
             self.repository,

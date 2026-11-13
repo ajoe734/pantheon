@@ -349,6 +349,22 @@ class PostgresRetrievalBackend:
             conn.commit()
         return len(records)
 
+    def active_document_ids(self, tenant_id: str, document_ids: Sequence[str]) -> set[str]:
+        """Return which of document_ids are active in the index for tenant_id (RLS-scoped)."""
+        tenant = tenant_id or "default"
+        ids = list(document_ids)
+        if not ids:
+            return set()
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant,))
+                cur.execute(
+                    "SELECT id FROM search_retrieval_index "
+                    "WHERE tenant_id = %s AND is_active AND embedding IS NOT NULL AND id = ANY(%s)",
+                    (tenant, ids),
+                )
+                return {row["id"] for row in cur.fetchall()}
+
     def delete_document(
         self,
         document_id: str,

@@ -689,21 +689,6 @@ def create_app(
     # recorded checkpoint instead of redoing the work. Timeouts and the checkpoint rule are unchanged.
     pipeline_run_lock = threading.Lock()
 
-    # The JSONL store reloads by clearing _runs then refilling it. A readback (freshness, runs,
-    # source-completion truth) reloading mid-run could expose an empty _runs to the running
-    # pipeline and turn an unchanged refresh into a full rebuild. Make every store mutation
-    # atomic w.r.t. readback reload+snapshot with a short lock (never held across indexing).
-    store_view_lock = threading.RLock()
-
-    def _locked_store_method(fn: Any) -> Any:
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            with store_view_lock:
-                return fn(*args, **kwargs)
-        return wrapper
-
-    for _name in ("reload", "record_run", "prune"):
-        setattr(pipeline_store, _name, _locked_store_method(getattr(pipeline_store, _name)))
-
     def _run_pipeline(**kwargs: Any) -> Any:
         with pipeline_run_lock:
             return pipeline.run(**kwargs)
@@ -777,18 +762,17 @@ def create_app(
         return state
 
     def _source_completion_truth(ingest_run_id: str) -> dict[str, Any]:
-        with store_view_lock:
-            pipeline_store.reload()
-            runs = [
-                run
-                for run in pipeline_store.list_runs(limit=pipeline_store.max_retention)
-                if run.trigger_ref == ingest_run_id
-            ]
-            freshness = pipeline.freshness_status()
+        pipeline_store.reload()
         materialize_store.reload()
+        runs = [
+            run
+            for run in pipeline_store.list_runs(limit=pipeline_store.max_retention)
+            if run.trigger_ref == ingest_run_id
+        ]
         latest = runs[-1] if runs else None
         materialized = materialize_store.get_last()
         materialized_trigger_ref = materialized.get("trigger_ref") if materialized else None
+        freshness = pipeline.freshness_status()
         index_refreshed = latest is not None
         materialized_matches_completion = bool(materialized and materialized_trigger_ref == ingest_run_id)
         return {
@@ -921,20 +905,17 @@ def create_app(
     @app.get("/api/search/index/freshness")
     def index_freshness() -> dict[str, Any]:
         """Query index freshness SLA status."""
-        with store_view_lock:
-            pipeline_store.reload()
-            return pipeline.freshness_status()
+        pipeline_store.reload()
+        return pipeline.freshness_status()
 
     @app.get("/api/search/index/pipeline-runs")
     def list_pipeline_runs(limit: int = 50) -> dict[str, Any]:
         """List recent pipeline run snapshots."""
-        with store_view_lock:
-            pipeline_store.reload()
-            runs = pipeline_store.list_runs(limit=min(max(limit, 1), 200))
-            total = pipeline_store.count_runs()
+        pipeline_store.reload()
+        runs = pipeline_store.list_runs(limit=min(max(limit, 1), 200))
         return {
             "runs": [r.to_dict() for r in reversed(runs)],
-            "total": total,
+            "total": pipeline_store.count_runs(),
             "retention_runs": pipeline_store.max_retention,
         }
 
@@ -965,9 +946,8 @@ def create_app(
                 trigger_ref=ingest_run_id,
                 force_full=body.force_full,
             )
-            with store_view_lock:
-                pipeline_store.reload()
-                freshness = pipeline.freshness_status()
+            pipeline_store.reload()
+            freshness = pipeline.freshness_status()
             materialized = (
                 _materialize_index_state(
                     triggered_by="ingest_completion",
