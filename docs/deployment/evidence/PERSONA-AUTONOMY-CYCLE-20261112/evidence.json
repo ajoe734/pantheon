@@ -21,6 +21,10 @@
   {
    "command": "pytest services/persona/test_pool_autonomy_cycle.py services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py services/research/tests/test_persona_cycle_demand_integration.py services/research/tests/test_research_demand.py services/research/tests/test_pool_admission.py",
    "result": "52 passed"
+  },
+  {
+   "command": "pytest services/persona/test_pool_autonomy_cycle.py services/persona/test_cron_ooda_closure.py services/research/tests/test_research_demand.py services/research/tests/test_persona_cycle_demand_integration.py",
+   "result": "32 passed"
   }
  ],
  "acceptance_evidence": {
@@ -29,12 +33,12 @@
   "4_memory_and_tried": "Refused admissions and removals are written as pool_outcome memory with tried_family tags; recalled families are excluded from candidates and listed in the next demand (test_demand_carries_..., test_refused_admission_...).",
   "5_allocator_removed": "Files deleted; test_http_routes_... asserts no discovery_allocator_ports or discovery routes.",
   "6_skip_and_isolation": "test_persona_without_pool_is_skipped_with_reason_and_failure_is_isolated.",
-  "7_integration": "Two consecutive cycles: open_demand then admit_trial against the real pool store and recorded TWSE admission replay; only owner HTTP transport and the model turn are faked."
+  "7_integration": "Two consecutive cycles through PersonaCycleController.consume_run: open_demand then admit_trial, with only owner HTTP and the model turn faked. The admitted candidate is built from the governed 2-year Taiwan dataset (build_governed_tw_replication_dataset, 760 bars, down_drop=-0.055): canonical lookback-2 momentum artifact with its own fresh real ReplicationGate proof (registry/promotion verification path, no checksum or owner_verified_binding rewrite), pool current member = momentum_threshold 0.002 variant with its own gate proof. Unmodified pool_policy: correlation 0.46 < 0.5, candidate OOS Sharpe ~8.0 above trial threshold, combined Sharpe improves; the pool store applies the admit as a trial member and the displaced weakest member removal is learned. The same suite keeps the genuine recorded-fixture refusal (corr ~0.90 / Sharpe below trial threshold) asserted in the packet and memory (tried_family tag)."
  },
  "known_limits": {
   "dataset_loader": "Admission dataset comes from governed_dataset_loader (configured canonical dataset + threshold policy paths, same evaluation authority research uses; wired in control-plane/persona/main.py). Unconfigured or rejected authority fails closed as not_attempted:governed_dataset_unavailable; nothing is synthesised.",
   "widen": "propose_widen is staged only; there is no permitted-universe owner, so no widening authority is inferred.",
-  "candidate_source": "Candidates come from the research alpha-replication entries route (status admitted with checksum); field mapping should be confirmed on hosted.",
+  "candidate_source": "Candidates are resolved from completed alpha-replication entries to approved gate-passed registry execution bundles (lineage.source_strategy_spec_id); real-data admission stays with PERSONA-AUTONOMY-HOSTED-ACCEPTANCE-20261112.",
   "hosted": "No hosted verification performed.",
   "verification_boundary": "The two-day integration test pins only evaluation_authority.load_evaluation_authority to the recorded TWSE dataset and fakes owner HTTP and the model turn; CycleOwners.observe is a stub that, like telemetry, returns books only for live bound members. Real telemetry, hosted dataset authority and hosted registry were not exercised."
  },
