@@ -18,6 +18,7 @@ Three pure, dependency-free pieces:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import urllib.error
@@ -258,6 +259,112 @@ def evaluate_gate(
         agreements,
         disagreements,
     )
+
+
+def trial_admission_decision_id(
+    tenant_id: str, persona_id: str, artifact_ref: str, checksum: str, pool_version: int | str
+) -> str:
+    """Stable id binding the candidate artifact_ref, its checksum and the pool version."""
+
+    raw = json.dumps(
+        [tenant_id, persona_id, artifact_ref, checksum, str(pool_version)], separators=(",", ":")
+    )
+    return "trial-admission-" + hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def trial_admission_requirement(
+    tenant_id: str,
+    persona_id: str,
+    artifact_ref: str,
+    checksum: str,
+    pool_version: int | str,
+    *,
+    risk_persona_id: str = RISK_PERSONA_ID,
+) -> ConsultRequirement:
+    """The consultation a persona-initiated paper trial admission requires (never ``None``)."""
+
+    required = required_consultation(
+        DECISION_TRIAL_ADMISSION,
+        trial_admission_decision_id(tenant_id, persona_id, artifact_ref, checksum, pool_version),
+        initiator_persona_id=persona_id,
+        risk_persona_id=risk_persona_id,
+        target_version=str(pool_version),
+        candidate_digest=hashlib.sha256(f"{artifact_ref}|{checksum}".encode()).hexdigest(),
+    )
+    assert required is not None
+    return required
+
+
+# Verification reasons that mean "a human must decide", not "not verified".
+OPERATOR_REASONS = frozenset({"risk_persona_requires_operator", "panel_conditions_require_operator"})
+
+
+@dataclass(frozen=True)
+class MemoCheck:
+    ok: bool
+    reason: str = "verified"
+
+    @property
+    def operator_decision_required(self) -> bool:
+        return self.reason in OPERATOR_REASONS
+
+
+def verify_published_memo(
+    client: Any, memo_id: str, *, tenant_id: str, persona_id: str, requirement: ConsultRequirement
+) -> MemoCheck:
+    """Shared published-memo verification (harness adoption and pool admission).
+
+    The memo and its request must be published and bound to the exact gated
+    decision; the risk gate is recomputed from each participant's own
+    transcript contribution (not the synthesis' claimed gate) and must be
+    ``adopt_eligible``, with every participant and the memo plainly approving.
+    """
+
+    memo = client.get_memo(memo_id)
+    if not memo or memo.get("status") != "published":
+        return MemoCheck(False, "memo_not_published")
+    request = client.get_request(memo["request_id"])
+    if (
+        not request
+        or request.get("tenant_id") != tenant_id
+        or request.get("status") != "published"
+        or request.get("from_persona_id") != persona_id
+        or request.get("target_type") != requirement.decision_type
+        or request.get("target_id") != requirement.decision_id
+        or memo.get("target_type") != requirement.decision_type
+        or memo.get("target_id") != requirement.decision_id
+    ):
+        return MemoCheck(False, "request_binding_mismatch")
+    panel = request.get("metadata", {}).get("panel", {})
+    expected = requirement.to_panel_metadata()
+    if (
+        panel.get("gated_decision") != expected["gated_decision"]
+        or panel.get("initiator_persona_id") != persona_id
+    ):
+        return MemoCheck(False, "panel_binding_mismatch")
+    recommendations: dict[str, Any] = {}
+    for transcript in client.list_transcripts():
+        if transcript.get("request_id") != request["request_id"]:
+            continue
+        for event in transcript.get("events", []):
+            actor = event.get("actor", {})
+            if (
+                actor.get("actor_type") == "persona"
+                and event.get("evidence_refs")
+                and event.get("event_type") == "persona_contribution"
+            ):
+                recommendations[actor.get("actor_id")] = event.get("content", {}).get(
+                    "recommendation"
+                )
+    gate = evaluate_gate([p.to_dict() for p in requirement.participants], recommendations)
+    if gate.operator_decision_required:
+        return MemoCheck(False, "risk_persona_requires_operator")
+    # Conditional approvals need their conditions resolved by governance.
+    if any(recommendations.get(p.persona_id) != "approve" for p in requirement.participants):
+        return MemoCheck(False, "panel_conditions_require_operator")
+    if memo.get("recommendation") != "approve":
+        return MemoCheck(False, "panel_conditions_require_operator")
+    return MemoCheck(True)
 
 
 # ---------------------------------------------------------------------------

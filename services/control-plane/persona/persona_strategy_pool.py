@@ -149,12 +149,33 @@ class PoolDecisionRequest(BaseModel):
     books: dict[str, dict[str, Any]] = Field(default_factory=dict)
     observations: list[dict[str, Any]] = Field(default_factory=list)
     dataset: dict[str, Any] = Field(default_factory=dict)
+    # Who started the admission. A persona-initiated paper admission needs a verified
+    # consultation memo; an operator-initiated one keeps its governed path unchanged.
+    initiated_by: Literal["operator", "persona"] = "operator"
+    consultation_memo_id: str | None = None
 
     @model_validator(mode="after")
     def _candidate_required(self):
         if self.action not in {"admit", "evolution_trial", "evolution_compete"} and self.candidate is not None:
             raise ValueError("only admission accepts a candidate")
         return self
+
+
+PERSONA_CYCLE_ACTOR = "persona-pool-cycle"
+
+
+class ConsultationMemoVerifier(Protocol):
+    """(tenant_id, persona_id, candidate, pool_version, memo_id) -> services.persona.consult_triggers.MemoCheck."""
+    def __call__(self, tenant_id: str, persona_id: str, candidate: "PoolCandidate", pool_version: int, memo_id: str) -> Any: ...
+
+
+def consultation_memo_verifier(tenant_id, persona_id, candidate, pool_version, memo_id):
+    """Owner-side check of the published risk memo with the verification harness adoption uses."""
+    from services.consultation.client import ConsultationServiceClient
+    from services.persona.consult_triggers import trial_admission_requirement, verify_published_memo
+    requirement = trial_admission_requirement(tenant_id, persona_id, candidate.artifact_ref, candidate.checksum, pool_version)
+    return verify_published_memo(ConsultationServiceClient(tenant_id=tenant_id), memo_id,
+                                 tenant_id=tenant_id, persona_id=persona_id, requirement=requirement)
 
 
 class RegistryEntryReader(Protocol):
@@ -294,8 +315,10 @@ class PersonaStrategyPoolStore:
         registry_reader: RegistryEntryReader | None = None,
         owner_lister: OwnerArtifactLister | None = None,
         now: Callable[[], str] = _utc_now,
+        consultation_verifier: ConsultationMemoVerifier | None = None,
     ) -> None:
         self._records = records
+        self._verify_memo = consultation_verifier or consultation_memo_verifier
         self._reader = registry_reader or http_registry_entry_reader
         self._lister = owner_lister or http_owner_artifact_lister
         self._now = now
@@ -576,6 +599,19 @@ class PersonaStrategyPoolStore:
                 candidate = request.candidate
                 if candidate is None:
                     raise ValueError("no_qualifying_candidate_budget_left_unused")
+                if request.initiated_by == "persona" or actor_id == PERSONA_CYCLE_ACTOR:
+                    # Paper only: the persona may not admit without the consultation owner's published risk memo.
+                    if not request.consultation_memo_id:
+                        raise ValueError("consultation_memo_required")
+                    try:
+                        check = self._verify_memo(tenant_id, persona_id, candidate, current["pool_version"],
+                                                  request.consultation_memo_id)
+                    except Exception as exc:  # noqa: BLE001 - unverifiable evidence is a refusal, never an admission
+                        raise ValueError("consultation_unavailable:" + type(exc).__name__) from exc
+                    if not check.ok:
+                        raise ValueError("consultation_memo_not_verified:" + check.reason)
+                    decision["consultation_memo_id"] = request.consultation_memo_id
+                    decision["evidence_refs"] = [{"ref_type": "consultation_memo", "ref_id": request.consultation_memo_id}]
                 live = [m for m in members if m["stage"] != "removed"]
                 if candidate.artifact_ref in {m["artifact_ref"] for m in members}:
                     raise ValueError("candidate_already_in_pool_history")
@@ -641,6 +677,8 @@ class PersonaStrategyPoolStore:
             raise
         except ValueError as exc:
             decision["reasons"] = [str(exc)]
+            for key in ("consultation_memo_id", "evidence_refs"):  # memo evidence only travels with an applied admission
+                decision.pop(key, None)
             members = [dict(m) for m in current["members"]]
         # Registry unavailability is 503, not a market verdict. A refused
         # policy decision with unchanged members still passes normal CAS and

@@ -67,7 +67,7 @@ class HarnessAdoption:
         return read_packets(resolve_ooda_packet_store_path())
 
     def verify(self, persona: Any, binding: dict, memo_id: str) -> bool:
-        from services.persona.consult_triggers import evaluate_gate, required_consultation
+        from services.persona.consult_triggers import required_consultation, verify_published_memo
         proposal = binding["proposal"]
         state = persona.metadata["persona_harness"]
         comparisons = state["patches"][proposal["patch_id"]].get("comparisons", [])
@@ -82,44 +82,14 @@ class HarnessAdoption:
                 or comparison.get("replay", {}).get("deny_all_verified") is not True):
             return False
         client = self.consultation_factory(persona.tenant_id)
-        memo = client.get_memo(memo_id)
-        if not memo or memo.get("status") != "published":
-            return False
-        request = client.get_request(memo["request_id"])
-        if (not request or request.get("tenant_id") != persona.tenant_id
-                or request.get("status") != "published"
-                or request.get("from_persona_id") != persona.persona_id
-                or request.get("target_type") != "harness_patch"
-                or request.get("target_id") != proposal["patch_id"]
-                or memo.get("target_type") != "harness_patch" or memo.get("target_id") != proposal["patch_id"]):
-            return False
         required = required_consultation("harness_patch", proposal["patch_id"],
             initiator_persona_id=persona.persona_id, touches=proposal["proposed_change"],
             target_version=str(proposal["base_version"]), candidate_digest=binding["candidate_digest"])
-        panel = request.get("metadata", {}).get("panel", {})
-        expected = required.to_panel_metadata()
-        if panel.get("gated_decision") != expected["gated_decision"] or panel.get("initiator_persona_id") != persona.persona_id:
-            return False
-        # Recompute from each real persona's transcript, not the synthesis' claimed gate.
-        recommendations = {}
-        for transcript in client.list_transcripts():
-            if transcript.get("request_id") != request["request_id"]:
-                continue
-            for event in transcript.get("events", []):
-                actor = event.get("actor", {})
-                if (actor.get("actor_type") == "persona" and event.get("evidence_refs")
-                        and event.get("event_type") == "persona_contribution"):
-                    recommendations[actor.get("actor_id")] = event.get("content", {}).get("recommendation")
-        participants = [p.to_dict() for p in required.participants]
-        gate = evaluate_gate(participants, recommendations)
-        if gate.operator_decision_required:
-            raise HarnessError("risk_persona_requires_operator", 409)
-        # Conditional approvals need their conditions resolved by governance.
-        if any(recommendations.get(p.persona_id) != "approve" for p in required.participants):
-            raise HarnessError("panel_conditions_require_operator", 409)
-        if memo.get("recommendation") != "approve":
-            raise HarnessError("panel_conditions_require_operator", 409)
-        return True
+        check = verify_published_memo(client, memo_id, tenant_id=persona.tenant_id,
+                                      persona_id=persona.persona_id, requirement=required)
+        if check.operator_decision_required:
+            raise HarnessError(check.reason, 409)
+        return check.ok
 
     def cooldown(self, state: dict, row: dict) -> None:
         until = (self.now() + timedelta(days=self.cooldown_days)).isoformat()
