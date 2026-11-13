@@ -48,6 +48,7 @@ READERS = {
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
     "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", ("viewer", "registry-reader")),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
+    "PERSONA_POOL_SOURCE_READ_TOKEN": ("pantheon-dev-persona-pool-source-reader", "source_ingest_reader"),
     "AGORA_PROJECTOR_SERVICE_JWT": ("pantheon-dev-agora-projector-reader", "source_ingest_reader"),
     # Preview worker -> Training API only: training-service role, no owner/decide roles.
     "TRAINING_SESSION_WORKER_TOKEN": ("training-session-preview-worker", "training-service"),
@@ -111,7 +112,7 @@ CONSUMER_FILES = {
     "registry": ("REGISTRY_GOVERNANCE_SERVICE_TOKEN",),
     "governance": ("GOVERNANCE_REGISTRY_SERVICE_TOKEN",),
     "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN"),
-    "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN", "PERSONA_RESEARCH_SERVICE_TOKEN"),
+    "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN", "PERSONA_RESEARCH_SERVICE_TOKEN", "PERSONA_POOL_SOURCE_READ_TOKEN"),
     "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
     "evolution": (
         "EVOLUTION_GOVERNANCE_SERVICE_TOKEN",

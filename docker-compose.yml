@@ -1822,6 +1822,15 @@ services:
       REGISTRY_URL: ${PERSONA_REGISTRY_BASE_URL:-http://registry:8087}
       PERSONA_POOL_CANONICAL_DATASET_PATH: ${PERSONA_POOL_CANONICAL_DATASET_PATH:-}
       PERSONA_POOL_THRESHOLD_POLICY_PATH: ${PERSONA_POOL_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
+      # Same DatasetVersion authority as training; direct dataset paths stay unset.
+      SOURCE_INGEST_API_URL: ${SOURCE_INGEST_API_URL:-http://source-ingest:8097}
+      PERSONA_POOL_SOURCE_CONNECTOR_ID: ${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-tw-twse-tpex-official-market}
+      PERSONA_POOL_SOURCE_DATASET_ID: ${TRAINING_SESSION_SOURCE_DATASET_ID:-tw_price_daily}
+      PERSONA_POOL_SOURCE_VOLUME_ROOT: /data/source-ingest
+      PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT: /data/bff/persona-pool-dataset-authority
+      PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS: ${PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS:-30}
+      PERSONA_POOL_SOURCE_READ_TOKEN_FILE: ${PERSONA_POOL_SOURCE_READ_TOKEN_FILE:-/run/pantheon-principals/PERSONA_POOL_SOURCE_READ_TOKEN}
+      PERSONA_POOL_SOURCE_READ_TENANT_ID: ${PANTHEON_DEV_BFF_TENANT_ID:-tenant-dev}
       PORT: "8002"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PERSONA_STORE_BACKEND: ${PERSONA_STORE_BACKEND:-postgres}
@@ -1849,6 +1858,7 @@ services:
     volumes:
       - bff-data:/data/bff
       - dev-paper-persona-tokens:/run/pantheon-principals:ro
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       postgres:
         condition: service_healthy
