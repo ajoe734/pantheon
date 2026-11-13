@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from services.control_plane.bff.core.owner_reads import request_read_scope
 from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.ports.persona_pool import PersonaPoolViewsPort
 from ..service import (
     _PERSONA_PATCH_SERVER_MANAGED_FIELDS,
     _bff_me_tenant_payload,
@@ -145,7 +146,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             _require_read_role(identity)
 
             # PS-02: Persona detail
-            persona = _service.get_persona(persona_id)
+            caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+            persona = _get_persona_record_for_detail(
+                persona_id, caller_tenant, fallback_owner=identity.operator_id,
+            )
             if not persona:
                 _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=utc_now()), label="Persona")
                 raise _bff_error(
@@ -541,6 +545,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 "activeIncidents": active_incidents_for_persona,
                 "latestTelemetry": latest_telemetry_summary,
             }
+            data["strategyPool"], pool_surfaces = PersonaPoolViewsPort(
+                read_store=ctx.read_store, authorization=authorization,
+            ).read(persona_id, caller_tenant, snapshot_at=snapshot_at)
+            surfaces.update(pool_surfaces)
 
             return {
                 "data": data,
@@ -596,6 +604,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                     snapshot_at=snapshot_at,
                     has_data=True,
                 )
+            dto["strategyPool"], pool_surfaces = PersonaPoolViewsPort(
+                read_store=ctx.read_store, authorization=authorization,
+            ).read(persona_id, caller_tenant, snapshot_at=snapshot_at)
+            meta.setdefault("surfaces", {}).update(pool_surfaces)
             return {
                 "data": dto,
                 "meta": meta,
