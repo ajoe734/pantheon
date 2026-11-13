@@ -10,7 +10,6 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from services.control_plane.bff.core.owner_reads import request_read_scope
 from services.control_plane.bff.models import ErrorCode
-from services.control_plane.bff.ports.persona_pool import PersonaPoolViewsPort
 from ..service import (
     _PERSONA_PATCH_SERVER_MANAGED_FIELDS,
     _bff_me_tenant_payload,
@@ -545,9 +544,9 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 "activeIncidents": active_incidents_for_persona,
                 "latestTelemetry": latest_telemetry_summary,
             }
-            data["strategyPool"], pool_surfaces = PersonaPoolViewsPort(
-                read_store=ctx.read_store, authorization=authorization,
-            ).read(persona_id, caller_tenant, snapshot_at=snapshot_at)
+            data["strategyPool"], pool_surfaces = _service.read_strategy_pool(
+                persona_id, caller_tenant, authorization=authorization, snapshot_at=snapshot_at,
+            )
             surfaces.update(pool_surfaces)
 
             return {
@@ -604,9 +603,9 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                     snapshot_at=snapshot_at,
                     has_data=True,
                 )
-            dto["strategyPool"], pool_surfaces = PersonaPoolViewsPort(
-                read_store=ctx.read_store, authorization=authorization,
-            ).read(persona_id, caller_tenant, snapshot_at=snapshot_at)
+            dto["strategyPool"], pool_surfaces = _service.read_strategy_pool(
+                persona_id, caller_tenant, authorization=authorization, snapshot_at=snapshot_at,
+            )
             meta.setdefault("surfaces", {}).update(pool_surfaces)
             return {
                 "data": dto,
