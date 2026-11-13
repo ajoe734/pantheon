@@ -983,3 +983,35 @@ def test_padded_pattern_scope_cannot_bypass_sample_and_regime_gates(client, tmp_
         assert resp.status_code == 422, resp.text
         assert client.get(f"/api/memory/trade-lessons/{cid}", headers=auth).json()["review_state"] != "merged"
         assert main._persona_store().get(f"pmem-lesson-{cid}") is None
+
+
+def test_scheduled_pattern_service_credential_registers_via_real_entry_points(client, tmp_path, monkeypatch):
+    """Scheduled path authenticates with the opaque persona service token; registrar mints a tenant-bound JWT for memory."""
+    from services.persona.lesson_governance import MemoryLessonRegistrar
+    from services.persona.test_trade_reflection_owner import JWT_SECRET, MockReflectionProvider, _auth_header, _setup_app
+    from services.persona.write_owner import create_app
+
+    _, owner, _ = _setup_app(str(tmp_path), monkeypatch)
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PERSONA_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", "persona-svc-token")
+    rows = [dict(trade_episode_id=f"ep-{i}", persona_id="p-alpha", tenant_id="tenant-1", status="closed") for i in range(3)]
+    persona = TestClient(create_app(owner=owner, reflection_provider=MockReflectionProvider(), pattern_episode_lister=lambda p, t: rows,
+                                    lesson_registrar=MemoryLessonRegistrar("http://memory.test", urlopen_fn=_bridge(client))))
+    path = "/api/personas/p-alpha/trade-reflections:pattern-review"
+    service = persona.post(path, json={"tenant_id": "tenant-1"}, headers={"Authorization": "Bearer persona-svc-token"})
+    assert service.status_code == 200, service.text
+    listed = client.get("/api/memory/trade-lessons", headers=_auth_header()).json()
+    assert listed["count"] >= 1 and all(c["tenant_id"] == "tenant-1" for c in listed["candidates"])
+    jwt = persona.post(path, json={"tenant_id": "tenant-1"}, headers=_auth_header())
+    assert jwt.status_code == 200, jwt.text
+
+
+def test_registrar_service_path_fails_closed_without_secret(monkeypatch):
+    from services.persona.lesson_governance import MemoryLessonRegistrar
+
+    monkeypatch.delenv("PERSONA_JWT_SECRET", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_JWT_SECRET", raising=False)
+    with pytest.raises(RuntimeError):
+        MemoryLessonRegistrar("http://memory.test", urlopen_fn=lambda *a, **k: None).register(
+            [{"lesson_candidate_id": "x", "tenant_id": "t"}], "Bearer opaque")

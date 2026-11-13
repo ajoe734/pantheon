@@ -99,10 +99,50 @@ class MemoryLessonRegistrar:
     def configured(self) -> bool:
         return bool(self.base_url)
 
+    @staticmethod
+    def _is_jwt(authorization: Optional[str]) -> bool:
+        token = str(authorization or "")
+        token = token[7:].strip() if token.lower().startswith("bearer ") else ""
+        return token.count(".") == 2
+
+    @staticmethod
+    def _mint_service_authorization(tenant_id: str) -> str:
+        """Short-lived tenant-bound memory-writer JWT for the admitted persona service path (never widens tenant)."""
+        import time
+
+        from services.runtime_auth_inbound import encode_jwt_hs256
+
+        secret = (os.getenv("PERSONA_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET") or "").strip()
+        if not secret:
+            raise RuntimeError("memory lesson registration requires PERSONA_JWT_SECRET for the service path")
+        now = int(time.time())
+        claims: Dict[str, Any] = {
+            "sub": os.getenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID") or "persona-service",
+            "service": "persona-lesson-registrar",
+            "tenant_id": tenant_id,
+            "allowed_tenants": [tenant_id],
+            "roles": ["memory-writer"],
+            "iat": now,
+            "exp": now + 120,
+        }
+        issuer = (os.getenv("PERSONA_JWT_ISSUER") or os.getenv("PANTHEON_BFF_JWT_ISSUER") or "").strip()
+        audience = (os.getenv("PERSONA_JWT_AUDIENCE") or os.getenv("PANTHEON_BFF_JWT_AUDIENCE") or "").strip()
+        if issuer:
+            claims["iss"] = issuer
+        if audience:
+            claims["aud"] = audience
+        return "Bearer " + encode_jwt_hs256(claims, secret=secret)
+
     def register(self, candidates: List[Dict[str, Any]], authorization: Optional[str]) -> Dict[str, Any]:
         """Returns {"registered": [...], "already_registered": [...]}; raises RuntimeError on failure."""
         import urllib.error
         import urllib.request
+
+        if candidates and not self._is_jwt(authorization):
+            tenants = {str(c.get("tenant_id") or "") for c in candidates}
+            if len(tenants) != 1 or "" in tenants:
+                raise RuntimeError("memory lesson registration requires exactly one tenant")
+            authorization = self._mint_service_authorization(tenants.pop())
 
         opener = self._urlopen or urllib.request.urlopen
         result: Dict[str, Any] = {"registered": [], "already_registered": []}
