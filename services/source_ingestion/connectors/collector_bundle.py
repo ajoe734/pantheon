@@ -36,6 +36,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -127,14 +128,26 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _utc(value: Any, field_name: str) -> datetime:
+def _parse_rfc2822_with_tz(text: str) -> datetime | None:
+    """Parse an RSS pubDate (RFC 2822) only when it carries an explicit timezone."""
+    try:
+        parsed = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError):
+        return None
+    # "-0000" / missing zone yields a naive value: timezone unknown, never guess.
+    return parsed if parsed is not None and parsed.tzinfo is not None else None
+
+
+def _utc(value: Any, field_name: str, *, allow_rfc2822: bool = False) -> datetime:
     text = str(value or "").strip()
     if not text:
         raise SourceEvidenceError(f"collector bundle {field_name} is required")
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise SourceEvidenceError(f"collector bundle {field_name} must be ISO-8601: {text!r}") from exc
+        parsed = _parse_rfc2822_with_tz(text) if allow_rfc2822 else None
+        if parsed is None:
+            raise SourceEvidenceError(f"collector bundle {field_name} must be ISO-8601: {text!r}") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -888,7 +901,7 @@ class CollectorBundleAdapter:
             raise SourceEvidenceError(f"collector item {item_id} has no url")
         fetched_at = _utc(row.get("fetched_at"), f"item {item_id} fetched_at")
         published_raw = row.get("published_at")
-        published_at = _utc(published_raw, f"item {item_id} published_at") if published_raw else fetched_at
+        published_at = _utc(published_raw, f"item {item_id} published_at", allow_rfc2822=True) if published_raw else fetched_at
         if self.source_type == "market" and row.get("trade_date"):
             published_at = self._market_event_time(item_id, row, published_raw, published_at)
         text = row.get("text")

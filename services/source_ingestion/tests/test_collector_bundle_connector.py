@@ -832,3 +832,51 @@ def test_public_path_never_exceeds_fetch_max_records_and_acks_accurately(tmp_pat
         connector=CollectorBundleAdapter(connector_id="conn-pub1", **config).connector(), fetch=fetch, trace_id="t"
     )
     assert len(one) == 1
+
+
+# COLLECTOR-NEWS-PUBLISHED-AT-20261113 ---------------------------------------------
+def _news_with_published(tmp_path, literal):
+    files, entry, _ = make_bundle(source_id="collector-x")
+    key = next(k for k in files if k.endswith("items.jsonl"))
+    rows = [json.loads(line) for line in files[key].decode().splitlines()]
+    for r in rows:
+        r["published_at"] = literal
+    files[key] = "\n".join(json.dumps(r) for r in rows).encode()
+    return adapter_for(files, [entry], tmp_path, source_id="collector-x", source_type="news",
+                       platform=None, publisher="cna")
+
+
+@pytest.mark.parametrize("literal", ["Tue, 10 Nov 2026 01:00:00 GMT", "2026-11-10T01:00:00Z",
+                                     "Tue, 10 Nov 2026 09:00:00 +0800"])
+def test_rss_rfc2822_and_iso_published_at_keep_the_same_instant(tmp_path, literal):
+    records = _news_with_published(tmp_path, literal).pull().records
+    assert {r.metadata["published_at"] for r in records} == {"2026-11-10T01:00:00Z"}
+
+
+@pytest.mark.parametrize("literal", ["Tue, 10 Nov 2026 01:00:00", "Tue, 10 Nov 2026 01:00:00 -0000",
+                                     "yesterday"])
+def test_rss_published_at_without_provable_timezone_or_malformed_still_fails(tmp_path, literal):
+    adapter = _news_with_published(tmp_path, literal)
+    with pytest.raises(SourceEvidenceError, match="ISO-8601"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+def test_rss_rfc2822_replay_is_stable_and_hash_mismatch_still_rejected(tmp_path):
+    literal = "Tue, 10 Nov 2026 01:00:00 GMT"
+    first = _news_with_published(tmp_path / "a", literal).pull().records
+    again = _news_with_published(tmp_path / "b", literal).pull().records
+    assert [r.metadata["content_hash"] for r in first] == [r.metadata["content_hash"] for r in again]
+    files, entry, _ = make_bundle(source_id="collector-x")
+    files[next(k for k in files if "/raw/" in k)] = b"tampered"
+    with pytest.raises(SourceEvidenceError):
+        adapter_for(files, [entry], tmp_path / "c", source_id="collector-x", source_type="news",
+                    platform=None, publisher="cna").pull()
+
+
+def test_rss_published_after_fetch_time_keeps_pit_failure(tmp_path):
+    # the exact retained literal is later than this bundle's fetched_at: no time substitution
+    adapter = _news_with_published(tmp_path, "Wed, 11 Nov 2026 04:37:00 GMT")
+    with pytest.raises(SourceEvidenceError, match="available_time must be >= event_time"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []

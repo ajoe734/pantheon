@@ -9,7 +9,8 @@ import os
 import re
 import xml.etree.ElementTree as ET
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
 from typing import Any, Mapping, Sequence
@@ -40,6 +41,21 @@ def read_secret(env_name: str) -> str | None:
 def _api_key_headers(env_name: str) -> dict[str, str]:
     key = read_secret(env_name)
     return {"x-goog-api-key": key} if key else {}
+
+
+def _rss_pub_iso(raw: str) -> str:
+    """Canonical UTC ISO for an RSS pubDate (RFC 2822) that carries an explicit zone.
+
+    Anything else (ISO, missing zone, malformed) is returned unchanged so the verified
+    reader keeps its truthful verdict; the raw item bytes are never touched.
+    """
+    try:
+        parsed = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError):
+        return raw
+    if parsed is None or parsed.tzinfo is None:
+        return raw
+    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _detect_tw_symbols(text: str) -> list[str]:
@@ -734,7 +750,7 @@ class RssHubPaperPoller:
             title = (item_el.findtext("title") or "").strip()
             link = (item_el.findtext("link") or url).strip()
             desc = (item_el.findtext("description") or "").strip()
-            pub_date = (item_el.findtext("pubDate") or fetched_iso).strip()
+            pub_date = _rss_pub_iso((item_el.findtext("pubDate") or fetched_iso).strip())
 
             raw_xml = ET.tostring(item_el, encoding="utf-8")
             items.append(
@@ -818,7 +834,7 @@ class RssHubNewsPoller:
                 title = (item_el.findtext("title") or "").strip()
                 link = (item_el.findtext("link") or url).strip()
                 desc = (item_el.findtext("description") or "").strip()
-                pub_date = (item_el.findtext("pubDate") or fetched_iso).strip()
+                pub_date = _rss_pub_iso((item_el.findtext("pubDate") or fetched_iso).strip())
                 combined = f"{title} — {desc}".strip()
 
                 raw_xml = ET.tostring(item_el, encoding="utf-8")
